@@ -196,7 +196,7 @@ func normalizeErrorDetail(detail json.RawMessage) json.RawMessage {
 	return detail
 }
 
-func (s *Server) apiV2AIProviderModels(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1AIProviderModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return

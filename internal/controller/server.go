@@ -147,6 +147,8 @@ type Server struct {
 	backupManager                 *backup.Manager
 	backupConfigured              bool
 	backupMu                      sync.Mutex
+	backupJobs                    chan controllerBackupJob
+	backupJobsStarted             bool
 	backupRestart                 func()
 	// deploymentMu serializes deployment preparation. Preparing a deployment
 	// repairs stored topology, refreshes derived roles and allocates one
@@ -206,7 +208,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
@@ -383,10 +385,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/audit/subscriptions/users/", s.auth(s.subscriptionAuditUser, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/ai-reviews", s.auth(s.auditAIReviews, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/audit/ai-reviews/", s.auth(s.auditAIReview, model.RoleAdmin))
-	s.registerAPIV2Routes(mux)
+	mux.HandleFunc("/api/v1/telegram/binding-code", s.apiAuth(s.apiV1TelegramBindingCode, model.RoleNone))
+	mux.HandleFunc("/api/v1/telegram/bindings", s.apiAuth(s.apiV1TelegramBindings, model.RoleNone))
+	mux.HandleFunc("/api/v1/telegram/bindings/", s.apiAuth(s.apiV1TelegramBindings, model.RoleNone))
+	mux.HandleFunc("/api/v1/notification-broadcasts", s.apiAuth(s.apiV1NotificationBroadcasts, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/notification-broadcasts/", s.apiAuth(s.apiV1NotificationBroadcasts, model.RoleAdmin))
+	machineMux := http.NewServeMux()
+	s.registerAPIV1Routes(machineMux)
+	s.registerOAuthManagementRoutes(machineMux)
 	s.registerOAuthRoutes(mux)
 	mcpHandler := s.newMCPHandler()
-	mux.Handle("/mcp", s.mcpAuth(mcpHandler))
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
 	mux.HandleFunc("/api/v1/agent/connect", s.agentConnect)
 	mux.HandleFunc("/api/v1/agent/task-results", s.agentTaskResults)
@@ -407,26 +415,51 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/downloads", notFound)
 	mux.HandleFunc("/downloads/", s.downloadArtifact)
 	mux.HandleFunc("/", s.static)
-	return s.withSubscriptionRelay(s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.managementAPIVersionGate(mux)))))))
+
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/api/v1/ui/", s.webAPIPrefix(mux))
+	rootMux.HandleFunc("/api/v1/ui", notFound)
+	rootMux.Handle("/api/v1/agent/", mux)
+	rootMux.HandleFunc("/api/v1/subscriptions", mux.ServeHTTP)
+	rootMux.Handle("/api/v1/subscriptions/", mux)
+	rootMux.HandleFunc("/s", mux.ServeHTTP)
+	rootMux.Handle("/s/", mux)
+	rootMux.Handle("/api/v1/subscription-relay/", mux)
+	rootMux.HandleFunc("/api/v1/version", mux.ServeHTTP)
+	rootMux.Handle("/api/v1/mcp", s.mcpAuth(mcpHandler))
+	rootMux.Handle("/api/v1/", machineMux)
+	rootMux.Handle("/install/", mux)
+	rootMux.Handle("/downloads/", mux)
+	rootMux.HandleFunc("/downloads", notFound)
+	rootMux.HandleFunc("/install", notFound)
+	rootMux.HandleFunc("/healthz", mux.ServeHTTP)
+	rootMux.Handle("/oauth/", mux)
+	rootMux.HandleFunc("/.well-known/oauth-authorization-server", mux.ServeHTTP)
+	rootMux.HandleFunc("/.well-known/oauth-protected-resource", mux.ServeHTTP)
+	rootMux.Handle("/", mux)
+	return s.withSubscriptionRelay(s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.apiVersionGate(rootMux)))))))
 }
 
-func (s *Server) managementAPIVersionGate(next http.Handler) http.Handler {
+// webAPIPrefix exposes the existing Web handler surface as /api/v1/ui while
+// preserving the internal /api/v1 route contracts used by handler path parsers.
+func (s *Server) webAPIPrefix(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v2/ui/") {
-			relative := strings.TrimPrefix(r.URL.Path, "/api/v2/ui/")
-			if relative == "agent" || strings.HasPrefix(relative, "agent/") || relative == "subscriptions" || strings.HasPrefix(relative, "subscriptions/") {
-				http.NotFound(w, r)
-				return
-			}
-			request := r.Clone(r.Context())
-			request.URL = new(url.URL)
-			*request.URL = *r.URL
-			request.URL.Path = "/api/v1/" + strings.TrimPrefix(r.URL.Path, "/api/v2/ui/")
-			request.URL.RawPath = ""
-			next.ServeHTTP(w, request)
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/ui/") {
+			http.NotFound(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/v1/") && !strings.HasPrefix(r.URL.Path, "/api/v1/agent/") && !strings.HasPrefix(r.URL.Path, "/api/v1/subscription-relay/") && r.URL.Path != "/api/v1/subscriptions" && !strings.HasPrefix(r.URL.Path, "/api/v1/subscriptions/") {
+		request := r.Clone(r.Context())
+		request.URL = new(url.URL)
+		*request.URL = *r.URL
+		request.URL.Path = "/api/v1/" + strings.TrimPrefix(r.URL.Path, "/api/v1/ui/")
+		request.URL.RawPath = ""
+		next.ServeHTTP(w, request)
+	})
+}
+
+func (s *Server) apiVersionGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v2") || r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -531,11 +564,11 @@ func (w *responseStatusWriter) Write(p []byte) (int, error) {
 
 func (s *Server) requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/api/v2/ui/poll-events" || !strings.HasPrefix(r.URL.Path, "/api/") {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/api/v1/ui/poll-events" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/api/v1/agent/connect" || r.URL.Path == "/api/v2/ui/events" {
+		if r.URL.Path == "/api/v1/agent/connect" || r.URL.Path == "/api/v1/ui/events" {
 			// #nosec G706 -- every request-derived field is stripped of control characters by safeLogField.
 			log.Printf("http method=%s path=%s remote=%s status=websocket", safeLogField(r.Method), safeLogField(r.URL.Path), safeLogField(clientIP(r)))
 			next.ServeHTTP(w, r)
@@ -13598,7 +13631,7 @@ verify_downloaded_release() {
 
 load_target_version() {
   need_base_url
-  version_json=$(curl -fsSL "$BASE_URL/api/v2/ui/version" 2>/dev/null || true)
+  version_json=$(curl -fsSL "$BASE_URL/api/v1/ui/version" 2>/dev/null || true)
   TARGET_VERSION=$(printf '%s' "$version_json" | json_value agent_expected_version 2>/dev/null || true)
   TARGET_BUILD=$(printf '%s' "$version_json" | json_value agent_expected_build 2>/dev/null || true)
   TARGET_KERNEL_BUILD=$(printf '%s' "$version_json" | json_value kernel_build 2>/dev/null || true)
@@ -14377,7 +14410,7 @@ verify_downloaded_release() {
 }
 
 load_target_version() {
-  version_json=$(curl -fsSL "$BASE_URL/api/v2/ui/version" 2>/dev/null || true)
+  version_json=$(curl -fsSL "$BASE_URL/api/v1/ui/version" 2>/dev/null || true)
   TARGET_VERSION=$(printf '%s' "$version_json" | json_value agent_expected_version 2>/dev/null || true)
   TARGET_BUILD=$(printf '%s' "$version_json" | json_value agent_expected_build 2>/dev/null || true)
   TARGET_KERNEL_BUILD=$(printf '%s' "$version_json" | json_value kernel_build 2>/dev/null || true)

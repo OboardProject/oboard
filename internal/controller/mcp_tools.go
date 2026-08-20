@@ -66,6 +66,7 @@ func (s *Server) registerMCPTools(server *mcp.Server, principal application.Prin
 		s.addMCPRetryWorkflowStepTool(server, principal)
 		s.addMCPRedeemExternalActionTool(server, principal)
 	}
+	s.registerMCPCapabilityTools(server, principal)
 }
 
 type mcpDiscoverInput struct {

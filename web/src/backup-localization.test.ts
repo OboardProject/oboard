@@ -26,6 +26,8 @@ describe('backup and update localization', () => {
     expect(main).toContain('setSettingsDialogOpen(true)')
     expect(main).toContain('backup-password-warning')
     expect(main).toContain('尚未设置恢复密码，请先设置至少 12 位的恢复密码后再创建备份。')
+    expect(main).toContain('备份已开始，正在后台创建')
+    expect(main).toContain('备份仍在后台执行，请稍后在备份记录中查看')
     expect(main).toContain('<button onClick={() => void createBackup()} disabled={Boolean(working)}>')
   })
 })

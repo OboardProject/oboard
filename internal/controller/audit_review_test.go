@@ -19,20 +19,20 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	handler := newTestServer(db, "test-secret", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	request(t, handler, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-operator-password", "role": "operator", "status": "active"}, http.StatusCreated)
-	operatorLogin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-operator-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-operator-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	operatorLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-operator-password"}, http.StatusOK)
 	operatorToken := operatorLogin["token"].(string)
 
-	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews", operatorToken, nil, http.StatusForbidden)
-	page := request(t, handler, http.MethodGet, "/api/v2/ui/page-data?page=audit", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews", operatorToken, nil, http.StatusForbidden)
+	page := request(t, handler, http.MethodGet, "/api/v1/ui/page-data?page=audit", adminToken, nil, http.StatusOK)
 	if _, ok := page["users"]; !ok {
 		t.Fatal("admin audit page omitted selectable users")
 	}
 
-	provider := request(t, handler, http.MethodPost, "/api/v2/ai/providers", adminToken, map[string]any{
+	provider := request(t, handler, http.MethodPost, "/api/v1/ai/providers", adminToken, map[string]any{
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "test", "api_key": "secret", "enabled": true,
 	}, http.StatusCreated)["data"].(map[string]any)
 	storedProvider, err := db.GetAIProvider(context.Background(), provider["id"].(string))
@@ -67,22 +67,22 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 		"evidence_types": []string{"subscription", "connection", "destination"},
 		"time_range":     map[string]any{"mode": "preset", "preset": "24h"},
 	}
-	first := request(t, handler, http.MethodPost, "/api/v2/ui/audit/ai-reviews", adminToken, body, http.StatusAccepted)["ai_audit_review"].(map[string]any)
-	second := request(t, handler, http.MethodPost, "/api/v2/ui/audit/ai-reviews", adminToken, body, http.StatusAccepted)["ai_audit_review"].(map[string]any)
+	first := request(t, handler, http.MethodPost, "/api/v1/ui/audit/ai-reviews", adminToken, body, http.StatusAccepted)["ai_audit_review"].(map[string]any)
+	second := request(t, handler, http.MethodPost, "/api/v1/ui/audit/ai-reviews", adminToken, body, http.StatusAccepted)["ai_audit_review"].(map[string]any)
 	if first["id"] != second["id"] {
 		t.Fatalf("idempotent IDs differ: %v != %v", first["id"], second["id"])
 	}
 	reviewID := first["id"].(string)
-	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusOK)
-	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID+"/evidence", adminToken, nil, http.StatusOK)
-	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID+"/jobs", adminToken, nil, http.StatusOK)
-	request(t, handler, http.MethodDelete, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusConflict)
-	request(t, handler, http.MethodPost, "/api/v2/ui/audit/ai-reviews/"+reviewID+"/cancel", adminToken, map[string]any{}, http.StatusOK)
-	deleted := request(t, handler, http.MethodDelete, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews/"+reviewID+"/evidence", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews/"+reviewID+"/jobs", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodDelete, "/api/v1/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/ui/audit/ai-reviews/"+reviewID+"/cancel", adminToken, map[string]any{}, http.StatusOK)
+	deleted := request(t, handler, http.MethodDelete, "/api/v1/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusOK)
 	if deleted["deleted"] != true || deleted["review_id"] != reviewID {
 		t.Fatalf("unexpected delete response: %#v", deleted)
 	}
-	request(t, handler, http.MethodGet, "/api/v2/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusNotFound)
+	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews/"+reviewID, adminToken, nil, http.StatusNotFound)
 }
 
 func TestAuditReviewTimeRangeValidation(t *testing.T) {

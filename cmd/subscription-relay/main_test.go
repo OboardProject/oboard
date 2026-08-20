@@ -54,7 +54,7 @@ func TestRelaySignsAndRestrictsRequests(t *testing.T) {
 	}
 
 	recorder = httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v2/ui/settings", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/ui/settings", nil))
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("management path status = %d", recorder.Code)
 	}

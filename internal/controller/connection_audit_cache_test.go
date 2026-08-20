@@ -172,7 +172,7 @@ func TestDashboardConnectionAuditPageData(t *testing.T) {
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
 	_, token := loginTestAdmin(t, db)
-	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dashboard", token, nil, http.StatusOK)
 	audit, ok := page["connection_audit"].(map[string]any)
 	if !ok {
 		t.Fatalf("dashboard connection_audit missing: %#v", page["connection_audit"])

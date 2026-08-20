@@ -34,14 +34,14 @@ type nodeIncidentConfirmationPayload struct {
 	TelegramUserID int64   `json:"telegram_user_id,omitempty"`
 }
 
-func (s *Server) apiV2NodeIncidents(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1NodeIncidents(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if !roleAllows(principal.Role, model.RoleOperator) {
 		v2Error(w, r, http.StatusForbidden, "capability_denied", "当前角色不能查看或处置节点运维事件")
 		return
 	}
-	parts := pathParts(r.URL.Path, "/api/v2/node-incidents/")
-	if r.URL.Path == "/api/v2/node-incidents" {
+	parts := pathParts(r.URL.Path, "/api/v1/node-incidents/")
+	if r.URL.Path == "/api/v1/node-incidents" {
 		parts = nil
 	}
 	if len(parts) == 0 {
@@ -101,17 +101,17 @@ func (s *Server) apiV2NodeIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "preview" && r.Method == http.MethodPost {
-		s.apiV2NodeIncidentPreview(w, r, principal, *event)
+		s.apiV1NodeIncidentPreview(w, r, principal, *event)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "confirm" && r.Method == http.MethodPost {
-		s.apiV2NodeIncidentConfirm(w, r, principal, *event)
+		s.apiV1NodeIncidentConfirm(w, r, principal, *event)
 		return
 	}
 	v2Error(w, r, http.StatusNotFound, "not_found", "节点事件操作不存在")
 }
 
-func (s *Server) apiV2NodeIncidentPreview(w http.ResponseWriter, r *http.Request, principal application.Principal, event model.NodeIncident) {
+func (s *Server) apiV1NodeIncidentPreview(w http.ResponseWriter, r *http.Request, principal application.Principal, event model.NodeIncident) {
 	if principal.UserID == nil || !principal.Interactive {
 		v2Error(w, r, http.StatusForbidden, "interactive_required", "节点处置需要人工登录")
 		return
@@ -163,7 +163,7 @@ func (s *Server) apiV2NodeIncidentPreview(w http.ResponseWriter, r *http.Request
 	v2Write(w, r, http.StatusOK, preview, nil)
 }
 
-func (s *Server) apiV2NodeIncidentConfirm(w http.ResponseWriter, r *http.Request, principal application.Principal, event model.NodeIncident) {
+func (s *Server) apiV1NodeIncidentConfirm(w http.ResponseWriter, r *http.Request, principal application.Principal, event model.NodeIncident) {
 	if principal.UserID == nil || !principal.Interactive {
 		v2Error(w, r, http.StatusForbidden, "interactive_required", "节点处置需要人工登录")
 		return
@@ -336,7 +336,7 @@ func (s *Server) nodeIncidentImpactPreview(ctx context.Context, event model.Node
 	}, nil
 }
 
-func (s *Server) apiV2NotificationBroadcasts(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1NotificationBroadcasts(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if principal.Role != model.RoleAdmin || principal.UserID == nil || !principal.Interactive {
 		v2Error(w, r, http.StatusForbidden, "capability_denied", "管理员广播需要当前管理员账户")
@@ -355,9 +355,9 @@ func (s *Server) apiV2NotificationBroadcasts(w http.ResponseWriter, r *http.Requ
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
 	}
-	actionPath := strings.TrimPrefix(r.URL.Path, "/api/v2/notification-broadcasts/")
+	actionPath := strings.TrimPrefix(r.URL.Path, "/api/v1/notification-broadcasts/")
 	if actionPath == r.URL.Path {
-		actionPath = strings.TrimPrefix(r.URL.Path, "/api/v2/ui/notification-broadcasts/")
+		actionPath = strings.TrimPrefix(r.URL.Path, "/api/v1/ui/notification-broadcasts/")
 	}
 	if actionPath == r.URL.Path {
 		actionPath = strings.TrimPrefix(r.URL.Path, "/api/v1/notification-broadcasts/")
@@ -417,7 +417,7 @@ func (s *Server) apiV2NotificationBroadcasts(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (s *Server) apiV2TelegramBindingCode(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1TelegramBindingCode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -465,7 +465,7 @@ func (s *Server) apiV2TelegramBindingCode(w http.ResponseWriter, r *http.Request
 	v2Write(w, r, http.StatusCreated, model.TelegramBindingCode{Code: code, ChannelID: channel.ID, UserID: user.ID, ExpiresAt: expiresAt}, nil)
 }
 
-func (s *Server) apiV2TelegramBindings(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1TelegramBindings(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if principal.UserID == nil || !principal.Interactive {
 		v2Error(w, r, http.StatusForbidden, "interactive_required", "Telegram 绑定需要当前登录用户")
@@ -481,9 +481,9 @@ func (s *Server) apiV2TelegramBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodDelete {
-		rawID := strings.TrimPrefix(r.URL.Path, "/api/v2/telegram/bindings/")
+		rawID := strings.TrimPrefix(r.URL.Path, "/api/v1/telegram/bindings/")
 		if rawID == r.URL.Path {
-			rawID = strings.TrimPrefix(r.URL.Path, "/api/v2/ui/telegram/bindings/")
+			rawID = strings.TrimPrefix(r.URL.Path, "/api/v1/ui/telegram/bindings/")
 		}
 		if rawID == r.URL.Path {
 			rawID = strings.TrimPrefix(r.URL.Path, "/api/v1/telegram/bindings/")

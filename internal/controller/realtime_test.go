@@ -141,13 +141,13 @@ func TestRealtimeInvalidationPreservesAPIV2ReadSemantics(t *testing.T) {
 	handler := app.realtimeInvalidation(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v2/query", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/query", nil))
 	select {
 	case <-client.wake:
 		t.Fatal("capability query emitted a mutation event")
 	default:
 	}
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v2/changesets/cs_1/apply", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/v1/changesets/cs_1/apply", nil))
 	<-client.wake
 	event, ok := client.drain()
 	if !ok || event.Type != "invalidate" || !slices.Equal(event.Resources, []string{"all"}) {
@@ -166,7 +166,7 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 	server := httptest.NewServer(app.Handler())
 	defer server.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v2/ui/events"
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/ui/events"
 	if conn, response, err := websocket.DefaultDialer.Dial(wsURL, nil); err == nil {
 		conn.Close()
 		t.Fatal("unauthenticated websocket unexpectedly connected")
@@ -198,7 +198,7 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 	}
 
 	body := bytes.NewBufferString(`{"name":"live-node","listen_ip":"0.0.0.0","port_range_start":10000,"port_range_end":10100}`)
-	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v2/ui/servers", body)
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/ui/servers", body)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := server.Client().Do(request)
@@ -220,7 +220,7 @@ func TestUIRealtimeEventsRequireCookieAndSameOrigin(t *testing.T) {
 		t.Fatalf("server telemetry event = %#v", event)
 	}
 
-	pollRequest, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v2/ui/poll-events?since="+strconv.FormatUint(ready.Sequence, 10), nil)
+	pollRequest, _ := http.NewRequest(http.MethodGet, server.URL+"/api/v1/ui/poll-events?since="+strconv.FormatUint(ready.Sequence, 10), nil)
 	pollRequest.Header.Set("Authorization", "Bearer "+token)
 	pollResponse, err := server.Client().Do(pollRequest)
 	if err != nil {
@@ -263,8 +263,8 @@ func TestRealtimeRequestResourcesKeepRuntimeEventsNarrow(t *testing.T) {
 		path string
 		want []string
 	}{
-		{path: "/api/v2/ui/servers/1", want: []string{"servers", "topology", "subscriptions"}},
-		{path: "/api/v2/ui/proxy-paths/1", want: []string{"topology", "subscriptions", "servers", "deployments", "user_overview"}},
+		{path: "/api/v1/ui/servers/1", want: []string{"servers", "topology", "subscriptions"}},
+		{path: "/api/v1/ui/proxy-paths/1", want: []string{"topology", "subscriptions", "servers", "deployments", "user_overview"}},
 		{path: "/api/v1/agent/traffic-reports", want: []string{"traffic", "user_overview"}},
 		{path: "/api/v1/agent/task-results", want: nil},
 	}
@@ -288,14 +288,14 @@ func TestUIRealtimeEventsRespectBasePath(t *testing.T) {
 	_, cookie, _ := realtimeLogin(t, server.URL+"/panel")
 	header := http.Header{"Cookie": []string{cookie.String()}, "Origin": []string{server.URL}}
 
-	unprefixed := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v2/ui/events"
+	unprefixed := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/v1/ui/events"
 	if conn, response, err := websocket.DefaultDialer.Dial(unprefixed, header); err == nil {
 		conn.Close()
 		t.Fatal("unprefixed websocket unexpectedly connected")
 	} else if response == nil || response.StatusCode != http.StatusNotFound {
 		t.Fatalf("unprefixed status = %#v, err=%v", response, err)
 	}
-	prefixed := "ws" + strings.TrimPrefix(server.URL, "http") + "/panel/api/v2/ui/events"
+	prefixed := "ws" + strings.TrimPrefix(server.URL, "http") + "/panel/api/v1/ui/events"
 	conn, _, err := websocket.DefaultDialer.Dial(prefixed, header)
 	if err != nil {
 		t.Fatal(err)
@@ -347,11 +347,11 @@ func realtimeLogin(t *testing.T, baseURL string) (string, *http.Cookie, string) 
 		response.Body.Close()
 		return response, result
 	}
-	response, _ := postJSON("/api/v2/ui/auth/bootstrap", map[string]any{"username": "admin", "password": "very-secure-password"})
+	response, _ := postJSON("/api/v1/ui/auth/bootstrap", map[string]any{"username": "admin", "password": "very-secure-password"})
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("bootstrap status = %d", response.StatusCode)
 	}
-	response, result := postJSON("/api/v2/ui/auth/login", map[string]any{"username": "admin", "password": "very-secure-password"})
+	response, result := postJSON("/api/v1/ui/auth/login", map[string]any{"username": "admin", "password": "very-secure-password"})
 	if response.StatusCode != http.StatusOK || len(response.Cookies()) != 1 {
 		t.Fatalf("login status/cookies = %d/%d", response.StatusCode, len(response.Cookies()))
 	}

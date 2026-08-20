@@ -123,7 +123,7 @@ func TestUserDashboardPageDataIsSelfScopedForViewerAndNone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		page := request(t, handler, "GET", "/api/v2/ui/page-data?page=dashboard", token, nil, 200)
+		page := request(t, handler, "GET", "/api/v1/ui/page-data?page=dashboard", token, nil, 200)
 		overview, ok := page["user_overview"].(map[string]any)
 		if !ok || overview["assigned_node_count"] != float64(0) || overview["account_status"] != userDashboardStatusAttention {
 			t.Fatalf("%s dashboard overview = %#v", role, page["user_overview"])
@@ -170,7 +170,7 @@ func TestUserDashboardAnnouncementsAreSelfScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := request(t, newTestServer(db, "test-secret", "").Handler(), "GET", "/api/v2/ui/page-data?page=dashboard", token, nil, 200)
+	page := request(t, newTestServer(db, "test-secret", "").Handler(), "GET", "/api/v1/ui/page-data?page=dashboard", token, nil, 200)
 	items, ok := page["user_announcements"].([]any)
 	if !ok || len(items) != 2 {
 		t.Fatalf("target announcements = %#v", page["user_announcements"])

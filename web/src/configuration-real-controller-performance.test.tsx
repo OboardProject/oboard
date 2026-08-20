@@ -75,13 +75,13 @@ describe('real Controller cross-session UI convergence SLO', () => {
     await waitFor(async () => {
       try { return (await nativeFetch(`${baseURL}/healthz`)).ok } catch { return false }
     }, 15_000)
-    const loginResponse = await nativeFetch(`${baseURL}/api/v2/ui/auth/login`, {
+    const loginResponse = await nativeFetch(`${baseURL}/api/v1/ui/auth/login`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'very-secure-password' }),
     })
     const login = await loginResponse.json() as any
     if (!loginResponse.ok || !login.token) throw new Error(`login failed: ${JSON.stringify(login)}`)
     token = login.token
-    const createdResponse = await nativeFetch(`${baseURL}/api/v2/ui/servers`, {
+    const createdResponse = await nativeFetch(`${baseURL}/api/v1/ui/servers`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ name: 'real-ui-00', listen_ip: '0.0.0.0', port_range_start: 10000, port_range_end: 11000 }),
     })
@@ -123,7 +123,7 @@ describe('real Controller cross-session UI convergence SLO', () => {
     const latencies: number[] = []
     for (let index = 1; index <= samples; index++) {
       const name = `real-ui-${String(index).padStart(2, '0')}`
-      const response = await nativeFetch(`${baseURL}/api/v2/ui/servers/${serverID}`, {
+      const response = await nativeFetch(`${baseURL}/api/v1/ui/servers/${serverID}`, {
         method: 'PATCH', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ name }),
       })
       const result = await response.json() as any

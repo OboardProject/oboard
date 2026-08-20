@@ -162,13 +162,13 @@ func (c *Catalog) OpenAPI(basePath string) map[string]any {
 	security := []map[string][]string{{"bearerAuth": {}}}
 	return map[string]any{
 		"openapi": "3.1.0",
-		"info":    map[string]any{"title": "OBoard Capability API", "version": "v2"},
+		"info":    map[string]any{"title": "OBoard Capability API", "version": "v1"},
 		"servers": []map[string]string{{"url": basePath}},
 		"paths": map[string]any{
-			"/api/v2/capabilities":             map[string]any{"get": map[string]any{"operationId": "listCapabilities", "security": security, "responses": okResponse("Authorized capability descriptors")}},
-			"/api/v2/query":                    map[string]any{"post": map[string]any{"operationId": "queryCapability", "security": security, "requestBody": jsonBody(map[string]any{"type": "object", "required": []string{"capability", "arguments"}, "properties": map[string]any{"capability": map[string]string{"type": "string"}, "arguments": map[string]string{"type": "object"}}}), "responses": okResponse("Capability result")}},
-			"/api/v2/changesets":               map[string]any{"get": map[string]any{"operationId": "listChangesets", "security": security, "responses": okResponse("Changesets")}, "post": map[string]any{"operationId": "createChangeset", "security": security, "responses": okResponse("Created Changeset")}},
-			"/api/v2/changesets/{id}/{action}": map[string]any{"post": map[string]any{"operationId": "actOnChangeset", "security": security, "parameters": []map[string]any{{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}, {"name": "action", "in": "path", "required": true, "schema": map[string]any{"type": "string", "enum": []string{"validate", "approve", "apply"}}}}, "responses": okResponse("Changeset state")}},
+			"/api/v1/capabilities":             map[string]any{"get": map[string]any{"operationId": "listCapabilities", "security": security, "responses": okResponse("Authorized capability descriptors")}},
+			"/api/v1/query":                    map[string]any{"post": map[string]any{"operationId": "queryCapability", "security": security, "requestBody": jsonBody(map[string]any{"type": "object", "required": []string{"capability", "arguments"}, "properties": map[string]any{"capability": map[string]string{"type": "string"}, "arguments": map[string]string{"type": "object"}}}), "responses": okResponse("Capability result")}},
+			"/api/v1/changesets":               map[string]any{"get": map[string]any{"operationId": "listChangesets", "security": security, "responses": okResponse("Changesets")}, "post": map[string]any{"operationId": "createChangeset", "security": security, "responses": okResponse("Created Changeset")}},
+			"/api/v1/changesets/{id}/{action}": map[string]any{"post": map[string]any{"operationId": "actOnChangeset", "security": security, "parameters": []map[string]any{{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}, {"name": "action", "in": "path", "required": true, "schema": map[string]any{"type": "string", "enum": []string{"validate", "approve", "apply"}}}}, "responses": okResponse("Changeset state")}},
 		},
 		"components":            map[string]any{"securitySchemes": map[string]any{"bearerAuth": map[string]string{"type": "http", "scheme": "bearer"}}},
 		"x-oboard-capabilities": capabilities,
@@ -432,10 +432,10 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		"subscription_custom_path_policy": map[string]any{"type": "string", "enum": []string{"inherit", "allow", "deny"}},
 	})
 	return []Descriptor{
-		adminRead("users.get", "读取单个用户的管理摘要，不含任何凭据", schemaObject(map[string]any{"id": positiveID}, "id"), rawSchema(userFull)),
-		adminRead("user_groups.list", "列出全部用户分组", schemaObject(nil), rawSchema(arrayOf(userGroup))),
-		adminRead("user_group_members.list", "列出全部用户分组与用户的成员关系", schemaObject(nil), rawSchema(arrayOf(userGroupMember))),
-		adminRead("user_devices.list", "列出指定用户的已登记设备", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"devices": arrayOf(userDevice)}, "devices")),
+		adminRead("users.get", "读取单个用户的管理摘要，不含任何凭据", rawSchema(userFull), schemaObject(map[string]any{"id": positiveID}, "id")),
+		adminRead("user_groups.list", "列出全部用户分组", rawSchema(arrayOf(userGroup)), schemaObject(nil)),
+		adminRead("user_group_members.list", "列出全部用户分组与用户的成员关系", rawSchema(arrayOf(userGroupMember)), schemaObject(nil)),
+		adminRead("user_devices.list", "列出指定用户的已登记设备", schemaObject(map[string]any{"devices": arrayOf(userDevice)}, "devices"), schemaObject(map[string]any{"user_id": positiveID}, "user_id")),
 		adminWrite("users.create", "创建面板用户并分配角色与额度", schemaObject(map[string]any{"user": userCreate}, "user"), schemaObject(map[string]any{"user": userFull}, "user"), 2, false),
 		adminWrite("users.update", "修改用户角色、状态、额度与订阅设置", schemaObject(map[string]any{"user_id": positiveID, "changes": userUpdateChanges}, "user_id", "changes"), schemaObject(map[string]any{"user": userFull, "changed_fields": stringArray(1, 32)}, "user"), 2, false),
 		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID}, "deleted"), 3, true),

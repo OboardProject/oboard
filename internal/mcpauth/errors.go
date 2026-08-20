@@ -1,7 +1,7 @@
 package mcpauth
 
 // MCPError is the structured business error body carried inside the
-// schema_version=2 error envelope for MCP tool and resource failures.
+// schema_version=1 error envelope for MCP tool and resource failures.
 type MCPError struct {
 	SchemaVersion string      `json:"schema_version"`
 	Status        string      `json:"status"`

@@ -19,28 +19,28 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		path   string
 		want   bool
 	}{
-		{method: "POST", path: "/api/v2/ui/servers", want: true},
-		{method: "PATCH", path: "/api/v2/ui/servers/4", want: true},
-		{method: "POST", path: "/api/v2/ui/servers/4/dns-policy", want: true},
-		{method: "POST", path: "/api/v2/ui/servers/4/dns-test", want: false},
-		{method: "POST", path: "/api/v2/ui/servers/4/agent-update", want: false},
-		{method: "POST", path: "/api/v2/ui/inbounds", want: true},
-		{method: "POST", path: "/api/v2/ui/inbounds/8/probe", want: false},
-		{method: "POST", path: "/api/v2/ui/proxy-paths/reuse", want: true},
-		{method: "POST", path: "/api/v2/ui/proxy-paths/reuse-preview", want: false},
-		{method: "POST", path: "/api/v2/ui/proxy-paths/8/probe-egress", want: false},
-		{method: "POST", path: "/api/v2/ui/external-outbounds/import", want: true},
-		{method: "POST", path: "/api/v2/ui/routing-rules/place", want: true},
-		{method: "PUT", path: "/api/v2/ui/dns-lists/3", want: true},
-		{method: "POST", path: "/api/v2/ui/dns-lists/3/set-default", want: true},
-		{method: "POST", path: "/api/v2/ui/routing-rule-sets/3/refresh", want: false},
-		{method: "POST", path: "/api/v2/ui/port-forwards/8/probe", want: false},
-		{method: "PATCH", path: "/api/v2/ui/tunnels/8", want: true},
-		{method: "POST", path: "/api/v2/ui/subscription-plans/8/changes/apply", want: false},
-		{method: "POST", path: "/api/v2/ui/subscription-plans", want: true},
-		{method: "POST", path: "/api/v2/ui/user-node-exceptions", want: true},
-		{method: "POST", path: "/api/v2/changesets/cs_1/apply", want: false},
-		{method: "GET", path: "/api/v2/ui/inbounds", want: false},
+		{method: "POST", path: "/api/v1/ui/servers", want: true},
+		{method: "PATCH", path: "/api/v1/ui/servers/4", want: true},
+		{method: "POST", path: "/api/v1/ui/servers/4/dns-policy", want: true},
+		{method: "POST", path: "/api/v1/ui/servers/4/dns-test", want: false},
+		{method: "POST", path: "/api/v1/ui/servers/4/agent-update", want: false},
+		{method: "POST", path: "/api/v1/ui/inbounds", want: true},
+		{method: "POST", path: "/api/v1/ui/inbounds/8/probe", want: false},
+		{method: "POST", path: "/api/v1/ui/proxy-paths/reuse", want: true},
+		{method: "POST", path: "/api/v1/ui/proxy-paths/reuse-preview", want: false},
+		{method: "POST", path: "/api/v1/ui/proxy-paths/8/probe-egress", want: false},
+		{method: "POST", path: "/api/v1/ui/external-outbounds/import", want: true},
+		{method: "POST", path: "/api/v1/ui/routing-rules/place", want: true},
+		{method: "PUT", path: "/api/v1/ui/dns-lists/3", want: true},
+		{method: "POST", path: "/api/v1/ui/dns-lists/3/set-default", want: true},
+		{method: "POST", path: "/api/v1/ui/routing-rule-sets/3/refresh", want: false},
+		{method: "POST", path: "/api/v1/ui/port-forwards/8/probe", want: false},
+		{method: "PATCH", path: "/api/v1/ui/tunnels/8", want: true},
+		{method: "POST", path: "/api/v1/ui/subscription-plans/8/changes/apply", want: false},
+		{method: "POST", path: "/api/v1/ui/subscription-plans", want: true},
+		{method: "POST", path: "/api/v1/ui/user-node-exceptions", want: true},
+		{method: "POST", path: "/api/v1/changesets/cs_1/apply", want: false},
+		{method: "GET", path: "/api/v1/ui/inbounds", want: false},
 	}
 	for _, item := range paths {
 		if got := configurationMutationPath(item.path, item.method); got != item.want {
@@ -88,17 +88,17 @@ func TestConfigurationMutationAffectedServerScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := srv.configurationMutationServerIDs(ctx, "/api/v2/ui/servers/"+itoa(first.ID), "PATCH"); len(got) != 1 || got[0] != first.ID {
+	if got := srv.configurationMutationServerIDs(ctx, "/api/v1/ui/servers/"+itoa(first.ID), "PATCH"); len(got) != 1 || got[0] != first.ID {
 		t.Fatalf("server patch scope = %v", got)
 	}
-	if got := srv.configurationMutationServerIDs(ctx, "/api/v2/ui/servers/"+itoa(first.ID), "DELETE"); got != nil {
+	if got := srv.configurationMutationServerIDs(ctx, "/api/v1/ui/servers/"+itoa(first.ID), "DELETE"); got != nil {
 		t.Fatalf("server delete scope = %v, want all", got)
 	}
 	forward := &model.PortForward{Name: "scope-forward", SourceServerID: first.ID, TargetServerID: second.ID, ListenPort: 12000, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, ProbeMode: "never", ProbeIntervalSeconds: 300, ConfigJSON: "{}", Enabled: true}
 	if err := db.CreatePortForward(ctx, forward); err != nil {
 		t.Fatal(err)
 	}
-	got := srv.configurationMutationServerIDs(ctx, "/api/v2/ui/port-forwards/"+itoa(forward.ID), "DELETE")
+	got := srv.configurationMutationServerIDs(ctx, "/api/v1/ui/port-forwards/"+itoa(forward.ID), "DELETE")
 	if len(got) != 2 || got[0] != first.ID || got[1] != second.ID {
 		t.Fatalf("forward delete scope = %v", got)
 	}
@@ -151,10 +151,10 @@ func TestConfigurationWriteRespondsBeforeAsyncDeployment(t *testing.T) {
 	srv := newTestServer(db, "test-secret", "")
 	srv.configurationDelay = 20 * time.Millisecond
 	handler := srv.Handler()
-	request(t, handler, "POST", "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
-	login := request(t, handler, "POST", "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
+	request(t, handler, "POST", "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
+	login := request(t, handler, "POST", "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
 	token := login["token"].(string)
-	created := request(t, handler, "POST", "/api/v2/ui/servers", token, map[string]any{"name": "async-save", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, 201)
+	created := request(t, handler, "POST", "/api/v1/ui/servers", token, map[string]any{"name": "async-save", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, 201)
 	server := created["server"].(map[string]any)
 	serverID := int64(server["id"].(float64))
 	if created["desired_revision"] == nil {
@@ -191,10 +191,10 @@ func TestInvalidConfigurationWriteDoesNotCreateDesiredState(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	handler := srv.Handler()
-	request(t, handler, "POST", "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
-	login := request(t, handler, "POST", "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
+	request(t, handler, "POST", "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
+	login := request(t, handler, "POST", "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
 	token := login["token"].(string)
-	request(t, handler, "POST", "/api/v2/ui/servers", token, map[string]any{"name": "invalid", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 10000}, 400)
+	request(t, handler, "POST", "/api/v1/ui/servers", token, map[string]any{"name": "invalid", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 10000}, 400)
 	states, err := db.ListAllConfigurationSyncStates(context.Background())
 	if err != nil || len(states) != 0 {
 		t.Fatalf("invalid save created desired state = %#v err=%v", states, err)
@@ -210,8 +210,8 @@ func TestConfigurationSyncRetryOnlyReopensFailures(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(db, "test-secret", "")
 	handler := srv.Handler()
-	request(t, handler, "POST", "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
-	login := request(t, handler, "POST", "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
+	request(t, handler, "POST", "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
+	login := request(t, handler, "POST", "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
 	token := login["token"].(string)
 	server := &model.Server{Name: "retry-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -226,7 +226,7 @@ func TestConfigurationSyncRetryOnlyReopensFailures(t *testing.T) {
 	if err := db.MarkConfigurationSyncPreparationFailure(ctx, server.ID, 90, "invalid desired state"); err != nil {
 		t.Fatal(err)
 	}
-	response := request(t, handler, "POST", "/api/v2/ui/configuration-sync/retry", token, map[string]any{"server_ids": []int64{server.ID}}, 202)
+	response := request(t, handler, "POST", "/api/v1/ui/configuration-sync/retry", token, map[string]any{"server_ids": []int64{server.ID}}, 202)
 	if response["retried"] != float64(1) {
 		t.Fatalf("retry response = %#v", response)
 	}
@@ -234,7 +234,7 @@ func TestConfigurationSyncRetryOnlyReopensFailures(t *testing.T) {
 	if err != nil || state.State != "pending" || state.RetryCount != 0 {
 		t.Fatalf("retry state = %#v err=%v", state, err)
 	}
-	request(t, handler, "POST", "/api/v2/ui/configuration-sync/retry", token, map[string]any{"server_ids": []int64{server.ID}}, 409)
+	request(t, handler, "POST", "/api/v1/ui/configuration-sync/retry", token, map[string]any{"server_ids": []int64{server.ID}}, 409)
 }
 
 func TestChangesetConfigurationObserverExcludesCommandOperations(t *testing.T) {

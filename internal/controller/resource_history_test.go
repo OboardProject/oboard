@@ -22,10 +22,10 @@ func TestServerResourceMetricsReturnsLiveStateWhenHistoryDisabled(t *testing.T) 
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "resource-node", "resource_history_enabled": false}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "resource-node", "resource_history_enabled": false}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
 	server, err := db.GetServer(context.Background(), serverID)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestServerResourceMetricsReturnsLiveStateWhenHistoryDisabled(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	response := request(t, h, http.MethodGet, "/api/v2/ui/servers/"+itoa(serverID)+"/resource-metrics?hours=24", token, nil, http.StatusOK)
+	response := request(t, h, http.MethodGet, "/api/v1/ui/servers/"+itoa(serverID)+"/resource-metrics?hours=24", token, nil, http.StatusOK)
 	if response["history_enabled"] != false {
 		t.Fatalf("history_enabled = %#v", response["history_enabled"])
 	}

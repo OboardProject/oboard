@@ -124,22 +124,22 @@ func TestRoutingRuleSetRESTLifecycleAndCrossStagePlacement(t *testing.T) {
 		return &fetchedRoutingRuleSet{content: []byte(`{"version":1,"rules":[{"domain":["example.com"]}]}`), revision: revision, etag: `"` + revision + `"`}, nil
 	}
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	created := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rule-sets", token, map[string]any{"name": "shared", "url": "https://rules.example/shared.json", "format": model.RoutingRuleSetFormatSingBoxSource}, http.StatusCreated)
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/routing-rule-sets", token, map[string]any{"name": "shared", "url": "https://rules.example/shared.json", "format": model.RoutingRuleSetFormatSingBoxSource}, http.StatusCreated)
 	ruleSetID := int64(created["routing_rule_set"].(map[string]any)["id"].(float64))
-	listed := request(t, handler, http.MethodGet, "/api/v2/ui/routing-rule-sets", token, nil, http.StatusOK)["routing_rule_sets"].([]any)
+	listed := request(t, handler, http.MethodGet, "/api/v1/ui/routing-rule-sets", token, nil, http.StatusOK)["routing_rule_sets"].([]any)
 	if len(listed) != 1 {
 		t.Fatalf("rule set list = %#v", listed)
 	}
-	request(t, handler, http.MethodPatch, "/api/v2/ui/routing-rule-sets/"+itoa(ruleSetID), token, map[string]any{"name": "shared-renamed", "url": "https://rules.example/shared.json", "format": model.RoutingRuleSetFormatSingBoxSource}, http.StatusOK)
+	request(t, handler, http.MethodPatch, "/api/v1/ui/routing-rule-sets/"+itoa(ruleSetID), token, map[string]any{"name": "shared-renamed", "url": "https://rules.example/shared.json", "format": model.RoutingRuleSetFormatSingBoxSource}, http.StatusOK)
 	revision = "revision-2"
-	refreshed := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rule-sets/"+itoa(ruleSetID)+"/refresh", token, map[string]any{}, http.StatusOK)
+	refreshed := request(t, handler, http.MethodPost, "/api/v1/ui/routing-rule-sets/"+itoa(ruleSetID)+"/refresh", token, map[string]any{}, http.StatusOK)
 	if changed, _ := refreshed["changed"].(bool); !changed {
 		t.Fatalf("refresh did not report changed content: %#v", refreshed)
 	}
-	request(t, handler, http.MethodDelete, "/api/v2/ui/routing-rule-sets/"+itoa(ruleSetID), token, nil, http.StatusOK)
+	request(t, handler, http.MethodDelete, "/api/v1/ui/routing-rule-sets/"+itoa(ruleSetID), token, nil, http.StatusOK)
 
 	serverA := &model.Server{Name: "A", PublicIPv4: "1.1.1.1", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100, Status: model.ServerOnline}
 	serverB := &model.Server{Name: "B", PublicIPv4: "8.8.8.8", ListenIP: "0.0.0.0", PortRangeStart: 31000, PortRangeEnd: 31100, Status: model.ServerOnline}
@@ -168,12 +168,12 @@ func TestRoutingRuleSetRESTLifecycleAndCrossStagePlacement(t *testing.T) {
 		if stageStepID != nil {
 			body["stage_step_id"] = stageStepID
 		}
-		response := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rules", token, body, http.StatusCreated)
+		response := request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules", token, body, http.StatusCreated)
 		return int64(response["routing_rule"].(map[string]any)["id"].(float64))
 	}
 	ruleAID := createRule("at-a", nil, model.RouteActionDirect)
 	ruleBID := createRule("at-b", step.ID, model.RouteActionBlock)
-	request(t, handler, http.MethodPost, "/api/v2/ui/routing-rules/place", token, map[string]any{"proxy_path_id": path.ID, "placements": []map[string]any{{"rule_id": ruleBID, "sort_position": 0}, {"rule_id": ruleAID, "stage_step_id": step.ID, "sort_position": 0}}}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules/place", token, map[string]any{"proxy_path_id": path.ID, "placements": []map[string]any{{"rule_id": ruleBID, "sort_position": 0}, {"rule_id": ruleAID, "stage_step_id": step.ID, "sort_position": 0}}}, http.StatusOK)
 	movedA, err := db.GetRoutingRule(ctx, ruleAID)
 	if err != nil {
 		t.Fatal(err)
@@ -185,12 +185,12 @@ func TestRoutingRuleSetRESTLifecycleAndCrossStagePlacement(t *testing.T) {
 	if movedA.ServerID != serverB.ID || movedA.StageStepID == nil || movedB.ServerID != serverA.ID || movedB.StageStepID != nil {
 		t.Fatalf("REST placement did not move rules across stages: A=%#v B=%#v", movedA, movedB)
 	}
-	syncedResponse := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{
+	syncedResponse := request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{
 		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": path.ID, "sort_position": 1,
 		"sync_source_rule_id": movedA.ID, "sync_enabled": true, "action": model.RouteActionBlock, "enabled": true,
 	}, http.StatusCreated)
 	syncedID := int64(syncedResponse["routing_rule"].(map[string]any)["id"].(float64))
-	copyResponse := request(t, handler, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{
+	copyResponse := request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{
 		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": path.ID, "sort_position": 2,
 		"sync_source_rule_id": movedA.ID, "sync_enabled": false, "action": model.RouteActionDirect, "enabled": true,
 	}, http.StatusCreated)
@@ -198,7 +198,7 @@ func TestRoutingRuleSetRESTLifecycleAndCrossStagePlacement(t *testing.T) {
 	movedA, _ = db.GetRoutingRule(ctx, movedA.ID)
 	movedA.Name = "shared-updated"
 	movedA.MatchJSON = `{"domain":["shared-updated.example"]}`
-	request(t, handler, http.MethodPatch, "/api/v2/ui/routing-rules/"+itoa(movedA.ID), token, movedA, http.StatusOK)
+	request(t, handler, http.MethodPatch, "/api/v1/ui/routing-rules/"+itoa(movedA.ID), token, movedA, http.StatusOK)
 	syncedRule, _ := db.GetRoutingRule(ctx, syncedID)
 	independentRule, _ := db.GetRoutingRule(ctx, copyID)
 	if syncedRule.Name != movedA.Name || syncedRule.MatchJSON != movedA.MatchJSON || syncedRule.Action != model.RouteActionBlock || syncedRule.SyncGroupID == "" {

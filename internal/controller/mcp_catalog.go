@@ -43,7 +43,7 @@ When a Workflow reports failed, read its error message first. For access_change 
 
 Keep the requested blast radius as small as possible. Explain required approvals, external actions, unresolved assumptions, rollback considerations, and recovery actions.`
 
-// newMCPHandler builds the /mcp HTTP handler. Authentication is handled by the
+// newMCPHandler builds the /api/v1/mcp HTTP handler. Authentication is handled by the
 // dedicated mcpAuth middleware; here we only assemble the transport, origin,
 // and host protections.
 func (s *Server) newMCPHandler() http.Handler {

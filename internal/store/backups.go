@@ -69,6 +69,11 @@ func (s *Store) UpdateControllerBackupLocal(ctx context.Context, id, localPath, 
 	return err
 }
 
+func (s *Store) CompleteControllerBackup(ctx context.Context, id, name, localPath string, size int64, sourceVersion string, formatVersion int) error {
+	_, err := s.db.ExecContext(ctx, `update controller_backups set name=?,local_path=?,local_status=?,size_bytes=?,source_version=?,format_version=?,updated_at=? where id=?`, name, localPath, "available", size, sourceVersion, formatVersion, now(), id)
+	return err
+}
+
 func (s *Store) ExpireControllerBackupLocal(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `update controller_backups set local_path='',local_status='expired',updated_at=? where id=?`, now(), id)
 	return err

@@ -728,7 +728,7 @@ func (s *Service) detectInstallation() (string, string, string) {
 
 func (s *Service) currentBuildInfo() BuildInfo {
 	info := BuildInfo{Version: version.Version, Build: version.Build, Commit: version.Commit, Date: version.Date}
-	for _, url := range s.healthURLs("/api/v2/ui/version") {
+	for _, url := range s.healthURLs("/api/v1/ui/version") {
 		resp, err := s.config.HealthClient.Get(url)
 		if err != nil {
 			continue

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,64 @@ func TestSettingsCapabilities(t *testing.T) {
 	encoded, _ := json.Marshal(payload)
 	if len(encoded) == 0 || string(encoded) == "{}" {
 		t.Fatalf("empty settings payload")
+	}
+}
+
+func TestBackupCapabilityRunsInBackground(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	root := t.TempDir()
+	t.Setenv("OBOARD_BACKUP_DIR", filepath.Join(root, "backups"))
+	t.Setenv("OBOARD_ACME_HOME", filepath.Join(root, "acme"))
+	server := newTestServer(db, "test-secret", "")
+	server.ConfigureControllerBackups(filepath.Join(root, "oboard.sqlite"))
+	ctx := context.Background()
+	admin := &model.User{Username: "backup-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111113", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	plain, err := json.Marshal(controllerBackupSecrets{RecoveryPassword: "backup-recovery-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := security.EncryptSecret(server.sessionSecret, controllerBackupSecretsSetting, string(plain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSettings(ctx, map[string]string{controllerBackupSecretsSetting: wrapped}); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	applied := applyAutomationChangesetResult(t, server, principal, "backup-create", automation.OperationRequest{Capability: "backups.create", Input: json.RawMessage(`{"upload_remote":false}`)})
+	var result struct {
+		Operations []struct {
+			Backup struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"backup"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(applied.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Operations) != 1 || result.Operations[0].Backup.ID == "" || result.Operations[0].Backup.Status != "pending" {
+		t.Fatalf("async backup result = %#v", result)
+	}
+	backupID := result.Operations[0].Backup.ID
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		items, err := db.ListControllerBackups(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.ID == backupID && item.LocalStatus == "available" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("async backup did not complete: %#v", items)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 

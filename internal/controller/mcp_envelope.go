@@ -12,7 +12,7 @@ import (
 	"github.com/OboardProject/oboard/internal/security"
 )
 
-const mcpSchemaVersion = "2"
+const mcpSchemaVersion = "1"
 
 type mcpAffectedResource struct {
 	Type string `json:"type"`
@@ -35,7 +35,7 @@ type mcpNextActionBody struct {
 	ResourceURI string `json:"resource_uri"`
 }
 
-// ToolEnvelope is the unified schema_version=2 envelope for every tool result.
+// ToolEnvelope is the unified schema_version=1 envelope for every tool result.
 type ToolEnvelope struct {
 	SchemaVersion     string                `json:"schema_version"`
 	Status            string                `json:"status"`
@@ -101,7 +101,7 @@ func mcpPlainFailureResult(correlationID, message string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}}
 }
 
-// ResourceEnvelope is the unified schema_version=2 resource body.
+// ResourceEnvelope is the unified schema_version=1 resource body.
 type ResourceEnvelope struct {
 	SchemaVersion string                `json:"schema_version"`
 	ResourceURI   string                `json:"resource_uri"`

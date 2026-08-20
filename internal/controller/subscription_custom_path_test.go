@@ -72,12 +72,12 @@ func TestSubscriptionCustomPathSelfServiceAndLifecycle(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "custom-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminToken := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "custom-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
 	userID := int64(created["id"].(float64))
 	persistentToken := created["subscription_token"].(string)
-	groups := request(t, h, http.MethodGet, "/api/v2/ui/user-groups", adminToken, nil, http.StatusOK)["user_groups"].([]any)
+	groups := request(t, h, http.MethodGet, "/api/v1/ui/user-groups", adminToken, nil, http.StatusOK)["user_groups"].([]any)
 	var usersGroupID int64
 	for _, raw := range groups {
 		group := raw.(map[string]any)
@@ -88,11 +88,11 @@ func TestSubscriptionCustomPathSelfServiceAndLifecycle(t *testing.T) {
 	if usersGroupID == 0 {
 		t.Fatal("built-in users group not found")
 	}
-	request(t, h, http.MethodPatch, "/api/v2/ui/settings", adminToken, map[string]any{"subscription_custom_path_mode": "selective"}, http.StatusOK)
-	request(t, h, http.MethodPatch, "/api/v2/ui/user-groups/"+itoa(usersGroupID)+"/subscription-custom-path-policy", adminToken, map[string]any{"mode": "allow"}, http.StatusOK)
-	viewerToken := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "custom-user", "password": "long-user-password"}, http.StatusOK)["token"].(string)
-	request(t, h, http.MethodPut, "/api/v2/ui/me/subscription-custom-path", viewerToken, map[string]any{"alias": "friendly-user"}, http.StatusOK)
-	request(t, h, http.MethodPut, "/api/v2/ui/me/subscription-custom-path", viewerToken, map[string]any{"alias": "Bad Alias"}, http.StatusBadRequest)
+	request(t, h, http.MethodPatch, "/api/v1/ui/settings", adminToken, map[string]any{"subscription_custom_path_mode": "selective"}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/user-groups/"+itoa(usersGroupID)+"/subscription-custom-path-policy", adminToken, map[string]any{"mode": "allow"}, http.StatusOK)
+	viewerToken := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "custom-user", "password": "long-user-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPut, "/api/v1/ui/me/subscription-custom-path", viewerToken, map[string]any{"alias": "friendly-user"}, http.StatusOK)
+	request(t, h, http.MethodPut, "/api/v1/ui/me/subscription-custom-path", viewerToken, map[string]any{"alias": "Bad Alias"}, http.StatusBadRequest)
 
 	fetch := func(path string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -103,18 +103,18 @@ func TestSubscriptionCustomPathSelfServiceAndLifecycle(t *testing.T) {
 	if response := fetch("/s/friendly-user?format=sing-box"); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"outbounds"`) {
 		t.Fatalf("custom subscription status=%d body=%s", response.Code, response.Body.String())
 	}
-	request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": true}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": true}, http.StatusOK)
 	if response := fetch("/api/v1/subscriptions/" + persistentToken); response.Code != http.StatusOK || response.Header().Get("X-OBoard-Subscription") != "burned-after-read" {
 		t.Fatalf("persistent burn status=%d headers=%#v", response.Code, response.Header())
 	}
 	if response := fetch("/s/friendly-user"); response.Code != http.StatusOK {
 		t.Fatalf("custom path was burned with persistent token: %d %s", response.Code, response.Body.String())
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/rotate", adminToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/rotate", adminToken, map[string]any{}, http.StatusOK)
 	if response := fetch("/s/friendly-user"); response.Code != http.StatusOK {
 		t.Fatalf("custom path did not survive rotation: %d", response.Code)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/revoke", adminToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/revoke", adminToken, map[string]any{}, http.StatusOK)
 	if response := fetch("/s/friendly-user"); response.Code != http.StatusNotFound {
 		t.Fatalf("custom path survived revocation: %d %s", response.Code, response.Body.String())
 	}

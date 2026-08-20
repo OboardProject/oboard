@@ -26,9 +26,9 @@ func TestAIProviderModelDiscoveryUsesDraftAndStoredCredentials(t *testing.T) {
 	defer db.Close()
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	provider := request(t, handler, http.MethodPost, "/api/v2/ai/providers", token, map[string]any{
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	provider := request(t, handler, http.MethodPost, "/api/v1/ai/providers", token, map[string]any{
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "manual", "api_key": "stored-key", "enabled": true,
 	}, http.StatusCreated)["data"].(map[string]any)
 	providerID := provider["id"].(string)
@@ -71,7 +71,7 @@ func TestAIProviderModelDiscoveryUsesDraftAndStoredCredentials(t *testing.T) {
 				}
 				workerErr <- testRPCJSON(workerClient, "/v1/model-discovery/"+lease.Request.ID+"/complete", airpc.ModelDiscoveryCompleteRequest{WorkerID: "worker-1", Models: []string{"z-model", "a-model", "z-model"}}, nil)
 			}()
-			response := request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, testCase.requestBody, http.StatusOK)
+			response := request(t, handler, http.MethodPost, "/api/v1/ai/provider-models", token, testCase.requestBody, http.StatusOK)
 			if err := <-workerErr; err != nil {
 				t.Fatal(err)
 			}
@@ -96,11 +96,11 @@ func TestAIProviderModelDiscoveryRejectsMissingCredentialAndTimesOut(t *testing.
 	server := newTestServer(db, "test-secret", "")
 	server.aiModelDiscoveryTimeout = 20 * time.Millisecond
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1"}, http.StatusBadRequest)
-	request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1?key=value", "api_key": "secret"}, http.StatusBadRequest)
-	request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1", "api_key": "secret"}, http.StatusServiceUnavailable)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1"}, http.StatusBadRequest)
+	request(t, handler, http.MethodPost, "/api/v1/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1?key=value", "api_key": "secret"}, http.StatusBadRequest)
+	request(t, handler, http.MethodPost, "/api/v1/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1", "api_key": "secret"}, http.StatusServiceUnavailable)
 }
 
 func TestAIModelDiscoveryFailureSurfacesWorkerDetail(t *testing.T) {
@@ -127,8 +127,8 @@ func TestAIModelDiscoveryFailureSurfacesWorkerDetail(t *testing.T) {
 	waitForSocket(t, socketPath)
 	workerClient := testUnixClient(socketPath)
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
 	workerErr := make(chan error, 1)
 	go func() {
@@ -143,7 +143,7 @@ func TestAIModelDiscoveryFailureSurfacesWorkerDetail(t *testing.T) {
 		}
 		workerErr <- testRPCJSON(workerClient, "/v1/model-discovery/"+lease.Request.ID+"/fail", airpc.ModelDiscoveryFailRequest{WorkerID: "worker-detail", Error: "model list endpoint returned HTTP 401: invalid api key"}, nil)
 	}()
-	response := request(t, handler, http.MethodPost, "/api/v2/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1", "api_key": "secret", "api_format": "responses"}, http.StatusBadGateway)
+	response := request(t, handler, http.MethodPost, "/api/v1/ai/provider-models", token, map[string]any{"base_url": "https://api.example.com/v1", "api_key": "secret", "api_format": "responses"}, http.StatusBadGateway)
 	if err := <-workerErr; err != nil {
 		t.Fatal(err)
 	}

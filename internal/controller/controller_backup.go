@@ -37,9 +37,19 @@ const (
 	controllerBackupRestoreReconcileSetting = "controller_backup_restore_reconcile"
 )
 
+var errBackupRecoveryPasswordRequired = errors.New("请先设置备份恢复密码")
+
 type controllerBackupSecrets struct {
 	RecoveryPassword string               `json:"recovery_password"`
 	Remote           backup.RemoteSecrets `json:"remote"`
+}
+
+type controllerBackupJob struct {
+	ID           string
+	Settings     controllerBackupSettingsState
+	Origin       string
+	UploadRemote bool
+	Protected    bool
 }
 
 type controllerBackupSettingsState struct {
@@ -94,12 +104,85 @@ func (s *Server) SetControllerBackupRestart(restart func()) {
 	s.backupRestart = restart
 }
 
+func (s *Server) enqueueControllerBackup(ctx context.Context, origin string, uploadRemote, protected bool) (*model.ControllerBackup, error) {
+	s.backupMu.Lock()
+	defer s.backupMu.Unlock()
+	settings, err := s.loadControllerBackupSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
+		return nil, errBackupRecoveryPasswordRequired
+	}
+	return s.enqueueControllerBackupSettings(ctx, settings, origin, uploadRemote, protected)
+}
+
+func (s *Server) enqueueControllerBackupSettings(ctx context.Context, settings controllerBackupSettingsState, origin string, uploadRemote, protected bool) (*model.ControllerBackup, error) {
+	id, err := backup.NewID()
+	if err != nil {
+		return nil, err
+	}
+	item := &model.ControllerBackup{ID: id, Origin: origin, LocalStatus: "pending", RemoteStatus: "disabled", SourceVersion: version.Version}
+	if err := s.store.CreateControllerBackup(ctx, item); err != nil {
+		return nil, err
+	}
+	if !s.backupJobsStarted {
+		s.backupJobsStarted = true
+		go s.runControllerBackupJobs()
+	}
+	job := controllerBackupJob{ID: id, Settings: settings, Origin: origin, UploadRemote: uploadRemote, Protected: protected}
+	select {
+	case s.backupJobs <- job:
+		return item, nil
+	default:
+		_ = s.store.UpdateControllerBackupLocal(ctx, id, "", "failed", 0)
+		return nil, errors.New("备份任务队列已满，请稍后重试")
+	}
+}
+
+func (s *Server) runControllerBackupJobs() {
+	for job := range s.backupJobs {
+		s.runControllerBackupJob(job)
+	}
+}
+
+func (s *Server) runControllerBackupJob(job controllerBackupJob) {
+	ctx := context.Background()
+	s.backupMu.Lock()
+	defer s.backupMu.Unlock()
+	item, err := s.createControllerDataBackupWithPasswordAndID(ctx, job.Settings, job.Settings.Secrets.RecoveryPassword, job.Origin, job.UploadRemote, job.Protected, job.ID)
+	if err != nil {
+		if item == nil {
+			_ = s.store.UpdateControllerBackupLocal(ctx, job.ID, "", "failed", 0)
+		}
+		_ = s.store.SetSetting(ctx, controllerBackupLastErrorSetting, "手动备份失败："+localizeBackupErrorMessage(err.Error()))
+		return
+	}
+	_ = s.store.SetSetting(ctx, controllerBackupLastErrorSetting, "")
+}
+
+func (s *Server) failPendingControllerBackupJobs(ctx context.Context) {
+	items, err := s.store.ListControllerBackups(ctx)
+	if err != nil {
+		log.Printf("mark pending Controller backups failed: %v", err)
+		return
+	}
+	for _, item := range items {
+		if item.LocalStatus != "pending" {
+			continue
+		}
+		_ = s.store.UpdateControllerBackupLocal(ctx, item.ID, "", "failed", 0)
+		_ = s.store.SetSetting(ctx, controllerBackupLastErrorSetting, "上次手动备份未完成，请重试")
+	}
+}
+
 func (s *Server) StartControllerBackups(ctx context.Context) {
 	if !s.backupConfigured || s.backupManager == nil {
 		return
 	}
 	startupCtx := context.WithoutCancel(ctx)
 	s.backupMu.Lock()
+	s.failPendingControllerBackupJobs(startupCtx)
 	s.reconcileControllerBackupFiles(startupCtx)
 	s.backupMu.Unlock()
 	go s.reconcileRestoredDeployment(startupCtx)
@@ -279,28 +362,21 @@ func (s *Server) controllerBackups(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &req) {
 			return
 		}
-		s.backupMu.Lock()
-		defer s.backupMu.Unlock()
-		settings, err := s.loadControllerBackupSettings(r.Context())
-		if err != nil {
-			fail(w, localizeBackupError(err), 500)
-			return
-		}
-		if strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
-			fail(w, errors.New("请先设置备份恢复密码"), http.StatusConflict)
-			return
-		}
 		uploadRemote := true
 		if req.UploadRemote != nil {
 			uploadRemote = *req.UploadRemote
 		}
-		item, err := s.createControllerDataBackup(r.Context(), settings, "manual", uploadRemote, false)
+		item, err := s.enqueueControllerBackup(r.Context(), "manual", uploadRemote, false)
 		if err != nil {
-			fail(w, localizeBackupError(err), 500)
+			if errors.Is(err, errBackupRecoveryPasswordRequired) {
+				fail(w, err, http.StatusConflict)
+			} else {
+				fail(w, localizeBackupError(err), 500)
+			}
 			return
 		}
 		auditReq(s, r, "create", "controller-backup", item.ID)
-		write(w, http.StatusCreated, map[string]any{"backup": item})
+		write(w, http.StatusAccepted, map[string]any{"backup": item})
 	default:
 		method(w)
 	}
@@ -696,16 +772,25 @@ func (s *Server) createControllerDataBackup(ctx context.Context, settings contro
 }
 
 func (s *Server) createControllerDataBackupWithPassword(ctx context.Context, settings controllerBackupSettingsState, password, origin string, uploadRemote bool, protected bool) (*model.ControllerBackup, error) {
+	return s.createControllerDataBackupWithPasswordAndID(ctx, settings, password, origin, uploadRemote, protected, "")
+}
+
+func (s *Server) createControllerDataBackupWithPasswordAndID(ctx context.Context, settings controllerBackupSettingsState, password, origin string, uploadRemote bool, protected bool, id string) (*model.ControllerBackup, error) {
 	if s.backupManager == nil {
 		return nil, errors.New("主控备份目录不可用")
 	}
 	s.cleanupZeroByteControllerBackupFiles(ctx)
-	created, err := s.backupManager.Create(ctx, password)
+	created, err := s.backupManager.CreateWithID(ctx, password, id)
 	if err != nil {
 		return nil, err
 	}
 	item := &model.ControllerBackup{ID: created.Manifest.ID, Name: filepath.Base(created.Path), Origin: origin, LocalPath: created.Path, LocalStatus: "available", RemoteStatus: "disabled", SizeBytes: created.Size, SourceVersion: created.Manifest.SourceVersion, FormatVersion: created.Manifest.FormatVersion, Protected: protected}
-	if err := s.store.CreateControllerBackup(ctx, item); err != nil {
+	if id != "" {
+		if err := s.store.CompleteControllerBackup(ctx, item.ID, item.Name, item.LocalPath, item.SizeBytes, item.SourceVersion, item.FormatVersion); err != nil {
+			_ = s.backupManager.RemoveLocal(created.Path)
+			return nil, err
+		}
+	} else if err := s.store.CreateControllerBackup(ctx, item); err != nil {
 		_ = s.backupManager.RemoveLocal(created.Path)
 		return nil, err
 	}

@@ -85,7 +85,7 @@ func (s *Server) apiPrincipalManage(w http.ResponseWriter, r *http.Request, id s
 	v2Write(w, r, http.StatusOK, item, nil)
 }
 
-func (s *Server) apiV2ApprovalPolicies(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1ApprovalPolicies(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		items, err := s.store.ListApprovalPolicies(r.Context(), strings.TrimSpace(r.URL.Query().Get("principal_id")))
 		if err != nil {
@@ -140,12 +140,12 @@ func (s *Server) apiV2ApprovalPolicies(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, item, nil)
 }
 
-func (s *Server) apiV2ApprovalPolicy(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1ApprovalPolicy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
 	}
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v2/approval-policies/"), "/")
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/approval-policies/"), "/")
 	if err := s.store.DeleteApprovalPolicy(r.Context(), id); err != nil {
 		v2HandleError(w, r, err)
 		return
@@ -153,7 +153,7 @@ func (s *Server) apiV2ApprovalPolicy(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, map[string]bool{"deleted": true}, nil)
 }
 
-func (s *Server) apiV2ToolAudits(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1ToolAudits(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -167,7 +167,7 @@ func (s *Server) apiV2ToolAudits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) oauthClient(w http.ResponseWriter, r *http.Request) {
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v2/oauth-clients/"), "/")
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/oauth-clients/"), "/")
 	item, err := s.store.GetOAuthClient(r.Context(), id)
 	if err != nil {
 		v2HandleError(w, r, err)

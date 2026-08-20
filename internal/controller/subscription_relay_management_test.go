@@ -24,18 +24,18 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	}
 	defer db.Close()
 	handler := newTestServer(db, "test-session-secret-at-least-32", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	created := request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays", token, map[string]any{"name": "domestic", "public_url": "https://relay.example"}, http.StatusCreated)
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays", token, map[string]any{"name": "domestic", "public_url": "https://relay.example"}, http.StatusCreated)
 	relay := created["subscription_relay"].(map[string]any)
 	relayID := int64(relay["id"].(float64))
 	enrollmentToken := created["enrollment_token"].(string)
 	if enrollmentToken == "" || relay["active"] != false || relay["enrolled"] != false {
 		t.Fatalf("unexpected created relay: %#v", created)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/activate", token, map[string]any{}, http.StatusConflict)
-	request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays", token, map[string]any{"name": "duplicate", "public_url": "https://relay.example/"}, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/activate", token, map[string]any{}, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays", token, map[string]any{"name": "duplicate", "public_url": "https://relay.example/"}, http.StatusConflict)
 
 	enrolled := request(t, handler, http.MethodPost, "/api/v1/subscription-relay/enroll", "", map[string]any{"enrollment_token": enrollmentToken}, http.StatusOK)
 	relayToken := enrolled["relay_token"].(string)
@@ -79,12 +79,12 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	if err != nil || settings[settingSubscriptionRelayURL] != "https://relay.example" || settings[settingSubscriptionControllerDirectEnabled] != "false" {
 		t.Fatalf("initial relay access settings: %#v err=%v", settings, err)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{"subscription_controller_direct_enabled": true}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"subscription_controller_direct_enabled": true}, http.StatusOK)
 	settings, err = db.ListSettings(t.Context())
 	if err != nil || settings[settingSubscriptionControllerDirectEnabled] != "true" {
 		t.Fatalf("direct access setting was not enabled: value=%q err=%v", settings[settingSubscriptionControllerDirectEnabled], err)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/update", token, map[string]any{}, http.StatusAccepted)
+	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/update", token, map[string]any{}, http.StatusAccepted)
 	if action := checkedHeartbeat("old-build"); action["action"] != "update" || action["target_build"] != version.Build {
 		t.Fatalf("unexpected update action %#v", action)
 	}
@@ -92,7 +92,7 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 		t.Fatalf("completed update action %v", action)
 	}
 
-	listed := request(t, handler, http.MethodGet, "/api/v2/ui/subscription-relays", token, nil, http.StatusOK)["subscription_relays"].([]any)
+	listed := request(t, handler, http.MethodGet, "/api/v1/ui/subscription-relays", token, nil, http.StatusOK)["subscription_relays"].([]any)
 	if len(listed) != 1 || listed[0].(map[string]any)["status"] != "online" || listed[0].(map[string]any)["active"] != true || listed[0].(map[string]any)["token_hash"] != nil {
 		t.Fatalf("unexpected public relay list: %#v", listed)
 	}

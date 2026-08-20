@@ -75,8 +75,8 @@ func TestServerDNSCanBeSavedTestedAndDeployedOnDemand(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	ctx := context.Background()
 	first := &model.Server{Name: "dns-edge", AgentID: "dns-agent", AgentTokenHash: security.HashSecret("dns-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline}
@@ -93,7 +93,7 @@ func TestServerDNSCanBeSavedTestedAndDeployedOnDemand(t *testing.T) {
 	}
 	encrypted, _ := db.GetDNSList(ctx, policy.EncryptedListID)
 	bootstrap, _ := db.GetDNSList(ctx, policy.BootstrapListID)
-	benchmark := request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/servers/%d/dns-test", first.ID), token, map[string]any{"action": "test_and_apply"}, http.StatusAccepted)
+	benchmark := request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/servers/%d/dns-test", first.ID), token, map[string]any{"action": "test_and_apply"}, http.StatusAccepted)
 	task := benchmark["task"].(map[string]any)
 	if task["type"] != model.AgentTaskTypeBenchmarkDNS {
 		t.Fatalf("dns task = %#v", task)
@@ -139,7 +139,7 @@ func TestServerDNSCanBeSavedTestedAndDeployedOnDemand(t *testing.T) {
 		t.Fatalf("targeted dns apply tasks = %#v, err=%v", tasks, err)
 	}
 
-	fallbackBenchmark := request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/servers/%d/dns-test", first.ID), token, map[string]any{"action": "test_and_apply"}, http.StatusAccepted)
+	fallbackBenchmark := request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/servers/%d/dns-test", first.ID), token, map[string]any{"action": "test_and_apply"}, http.StatusAccepted)
 	fallbackRun := fallbackBenchmark["run"].(map[string]any)
 	fallbackResult := model.DNSBenchmarkResult{
 		ReportID: "report-fallback", RequestID: fallbackRun["request_id"].(string), PolicyRevision: policy.Revision,
@@ -192,28 +192,28 @@ func TestDNSListCRUDValidationAndDefaultProtection(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/dns-lists", token, nil, http.StatusOK)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/dns-lists", token, nil, http.StatusOK)
 	defaults := listed["dns_lists"].([]any)
 	if len(defaults) != 2 || defaults[0].(map[string]any)["protected"] != true || defaults[1].(map[string]any)["protected"] != true {
 		t.Fatalf("default dns lists = %#v", defaults)
 	}
-	updatedDefault := request(t, h, http.MethodPut, fmt.Sprintf("/api/v2/ui/dns-lists/%d", int64(defaults[0].(map[string]any)["id"].(float64))), token, map[string]any{
+	updatedDefault := request(t, h, http.MethodPut, fmt.Sprintf("/api/v1/ui/dns-lists/%d", int64(defaults[0].(map[string]any)["id"].(float64))), token, map[string]any{
 		"name": "changed", "kind": defaults[0].(map[string]any)["kind"], "enabled": false, "candidates": defaults[0].(map[string]any)["candidates"],
 	}, http.StatusOK)["dns_list"].(map[string]any)
 	if updatedDefault["name"] != "changed" || updatedDefault["protected"] != true || updatedDefault["enabled"] != true {
 		t.Fatalf("updated default dns list = %#v", updatedDefault)
 	}
-	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v2/ui/dns-lists/%d", int64(updatedDefault["id"].(float64))), token, nil, http.StatusConflict)
-	request(t, h, http.MethodPost, "/api/v2/ui/dns-lists", token, map[string]any{
+	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/dns-lists/%d", int64(updatedDefault["id"].(float64))), token, nil, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v1/ui/dns-lists", token, map[string]any{
 		"name": "invalid bootstrap", "kind": "bootstrap", "candidates": []map[string]any{
 			{"tag": "domain", "transport": "udp", "server": "dns.example", "port": 53},
 			{"tag": "public", "transport": "tcp", "server": "8.8.8.8", "port": 53},
 		},
 	}, http.StatusBadRequest)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/dns-lists", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v1/ui/dns-lists", token, map[string]any{
 		"name": "mixed encrypted", "kind": "encrypted", "candidates": []map[string]any{
 			{"tag": "one", "transport": "doh", "server": "global.novaxns.one", "port": 443, "path": "/@hockey2168/dns-query", "tls_name": "global.novaxns.one"},
 			{"tag": "two", "transport": "doq", "server": "dns.quad9.net", "port": 853, "tls_name": "dns.quad9.net"},
@@ -223,7 +223,7 @@ func TestDNSListCRUDValidationAndDefaultProtection(t *testing.T) {
 	if list["revision"] != float64(1) || len(list["candidates"].([]any)) != 2 {
 		t.Fatalf("created dns list = %#v", list)
 	}
-	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v2/ui/dns-lists/%d", int64(list["id"].(float64))), token, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/ui/dns-lists/%d", int64(list["id"].(float64))), token, nil, http.StatusOK)
 }
 
 func TestNormalizeBasePath(t *testing.T) {
@@ -288,7 +288,7 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 
 	h := New(db, "test-secret", staticDir, "/hidden-panel", nil).Handler()
 	for _, path := range []string{
-		"/", "/healthz", "/api/v2/ui/version", "/api/v1/agent/connect",
+		"/", "/healthz", "/api/v1/ui/version", "/api/v1/agent/connect",
 		"/assets/app.js", "/install/agent.sh", "/downloads/release-manifest.json",
 		"/hidden-panel-other/healthz", "/hidden-panel//healthz",
 		"/hidden-panel/downloads", "/hidden-panel/api/v1/subscriptions",
@@ -312,7 +312,7 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 		{"/hidden-panel/dashboard", http.StatusOK, `<base href="/hidden-panel/" />`},
 		{"/hidden-panel/assets/app.js", http.StatusOK, "asset"},
 		{"/hidden-panel/healthz", http.StatusOK, `"ok":true`},
-		{"/hidden-panel/api/v2/ui/version", http.StatusOK, `"api_prefix":"/hidden-panel/api/v1"`},
+		{"/hidden-panel/api/v1/ui/version", http.StatusOK, `"api_prefix":"/hidden-panel/api/v1"`},
 		{"/hidden-panel/api/v1/agent/connect", http.StatusUnauthorized, "invalid agent credentials"},
 		{"/hidden-panel/install/agent.sh", http.StatusOK, "http://example.com/hidden-panel"},
 		{"/hidden-panel/downloads/release-manifest.json", http.StatusOK, `"version":"test"`},
@@ -377,8 +377,8 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	server := &model.Server{Name: "ssh-edge", ListenIP: "0.0.0.0", PublicIPv4: "203.0.113.20", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -390,9 +390,9 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	}
 
 	base := map[string]any{"server_id": server.ID, "name": "ssh proxy", "protocol": "ssh", "listen_ip": "0.0.0.0", "port": 2222, "entry_ip_mode": "ipv4", "config_json": `{"access_mode":"restricted_proxy"}`, "enabled": true}
-	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, base, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, base, http.StatusBadRequest)
 	base["config_json"] = `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`
-	created := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, base, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, base, http.StatusCreated)
 	inboundID := int64(created["inbound"].(map[string]any)["id"].(float64))
 	directPath := &model.ProxyPath{Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: inboundID, Secret: "direct-secret", Enabled: true}
 	if err := db.CreateProxyPath(ctx, directPath); err != nil {
@@ -898,26 +898,26 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"server_default_mtu_mode":    "apply",
 		"server_default_bbr_enabled": true,
 	}, http.StatusOK)
-	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=servers", token, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	defaults := page["server_creation_defaults"].(map[string]any)
 	if defaults["mtu_mode"] != "apply" || defaults["bbr_enabled"] != true {
 		t.Fatalf("server creation defaults = %#v", defaults)
 	}
-	proxyPage := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
+	proxyPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
 	proxyDefaults := proxyPage["server_creation_defaults"].(map[string]any)
 	if proxyDefaults["mtu_mode"] != "apply" || proxyDefaults["bbr_enabled"] != true {
 		t.Fatalf("proxy-path server creation defaults = %#v", proxyDefaults)
 	}
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "default-server"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "default-server"}, http.StatusCreated)
 	defaultID := int64(created["server"].(map[string]any)["id"].(float64))
 	defaultServer, err := db.GetServer(ctx, defaultID)
 	if err != nil {
@@ -927,7 +927,7 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 		t.Fatalf("default server policy = %#v", defaultServer)
 	}
 
-	overridden := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{
+	overridden := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
 		"name": "override-server", "mtu_mode": "disabled", "bbr_enabled": false,
 	}, http.StatusCreated)
 	overrideID := int64(overridden["server"].(map[string]any)["id"].(float64))
@@ -939,7 +939,7 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 		t.Fatalf("explicit server policy = %#v", overrideServer)
 	}
 
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{"server_default_mtu_mode": "always"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"server_default_mtu_mode": "always"}, http.StatusBadRequest)
 }
 
 func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
@@ -951,8 +951,8 @@ func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
 	ctx := context.Background()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	server := &model.Server{Name: "deployment-server", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -962,17 +962,17 @@ func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=servers", token, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	status := page["deployment_status"].(map[string]any)
 	if status["failure_dismissed"] != false {
 		t.Fatalf("initial deployment status = %#v", status)
 	}
-	dismissed := request(t, h, http.MethodPost, "/api/v2/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusOK)
+	dismissed := request(t, h, http.MethodPost, "/api/v1/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusOK)
 	dismissedStatus := dismissed["deployment_status"].(map[string]any)
 	if dismissedStatus["failure_dismissed"] != true || dismissedStatus["failure_dismissed_at"] == nil {
 		t.Fatalf("dismiss response = %#v", dismissedStatus)
 	}
-	page = request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
+	page = request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
 	status = page["deployment_status"].(map[string]any)
 	if status["failure_dismissed"] != true {
 		t.Fatalf("dismissal was not persisted across page loads: %#v", status)
@@ -981,17 +981,17 @@ func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
 	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: "{}", Status: "failed", ResultJSON: `{"error":"next"}`, ConfigVersion: 101, Nonce: "failed-101"}); err != nil {
 		t.Fatal(err)
 	}
-	page = request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=servers", token, nil, http.StatusOK)
+	page = request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	status = page["deployment_status"].(map[string]any)
 	if status["config_version"] != float64(101) || status["failure_dismissed"] != false {
 		t.Fatalf("next deployment inherited previous dismissal: %#v", status)
 	}
-	dismissedLatest := request(t, h, http.MethodPost, "/api/v2/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusOK)
+	dismissedLatest := request(t, h, http.MethodPost, "/api/v1/ui/deployments/100/dismiss-failure", token, map[string]any{}, http.StatusOK)
 	latestStatus := dismissedLatest["deployment_status"].(map[string]any)
 	if latestStatus["config_version"] != float64(101) || latestStatus["failure_dismissed"] != true {
 		t.Fatalf("stale dismissal did not dismiss latest failure: %#v", latestStatus)
 	}
-	page = request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	page = request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dashboard", token, nil, http.StatusOK)
 	status = page["deployment_status"].(map[string]any)
 	if status["config_version"] != float64(101) || status["failure_dismissed"] != true {
 		t.Fatalf("latest dismissal was not persisted: %#v", status)
@@ -1288,16 +1288,16 @@ func TestControllerFormalAPI(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	version := request(t, h, http.MethodGet, "/api/v2/ui/version", token, nil, http.StatusOK)
+	version := request(t, h, http.MethodGet, "/api/v1/ui/version", token, nil, http.StatusOK)
 	if version["name"] != "OBoard" {
 		t.Fatalf("unexpected version response: %#v", version)
 	}
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverPayload := createdServer["server"].(map[string]any)
 	if _, ok := serverPayload["ssh_port"]; ok {
 		t.Fatalf("server API still exposes ssh_port: %#v", serverPayload)
@@ -1309,42 +1309,42 @@ func TestControllerFormalAPI(t *testing.T) {
 		t.Fatalf("server telemetry defaults missing: %#v", serverPayload)
 	}
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	createdServer2 := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s2", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
+	createdServer2 := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s2", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
 	server2ID := int64(createdServer2["server"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodGet, "/api/v2/ui/servers/"+itoa(serverID), token, nil, http.StatusOK)
-	metrics := request(t, h, http.MethodGet, "/api/v2/ui/servers/"+itoa(serverID)+"/metrics", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/servers/"+itoa(serverID), token, nil, http.StatusOK)
+	metrics := request(t, h, http.MethodGet, "/api/v1/ui/servers/"+itoa(serverID)+"/metrics", token, nil, http.StatusOK)
 	if _, ok := metrics["server_metrics"]; !ok {
 		t.Fatalf("server metrics missing: %#v", metrics)
 	}
-	tasks := request(t, h, http.MethodGet, "/api/v2/ui/servers/"+itoa(serverID)+"/tasks", token, nil, http.StatusOK)
+	tasks := request(t, h, http.MethodGet, "/api/v1/ui/servers/"+itoa(serverID)+"/tasks", token, nil, http.StatusOK)
 	if _, ok := tasks["tasks"]; !ok {
 		t.Fatalf("tasks missing: %#v", tasks)
 	}
-	createdForward := request(t, h, http.MethodPost, "/api/v2/ui/port-forwards", token, map[string]any{"name": "s1-to-s2", "source_server_id": serverID, "target_server_id": server2ID, "listen_ip": "0.0.0.0", "listen_port": 443, "target_port": 8443, "protocol": "tcp", "backend": "auto", "priority": 10, "config_json": "{}"}, http.StatusCreated)
+	createdForward := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards", token, map[string]any{"name": "s1-to-s2", "source_server_id": serverID, "target_server_id": server2ID, "listen_ip": "0.0.0.0", "listen_port": 443, "target_port": 8443, "protocol": "tcp", "backend": "auto", "priority": 10, "config_json": "{}"}, http.StatusCreated)
 	forwardID := int64(createdForward["port_forward"].(map[string]any)["id"].(float64))
 	if forwardID == 0 {
 		t.Fatalf("port forward missing id: %#v", createdForward)
 	}
-	probe := request(t, h, http.MethodPost, "/api/v2/ui/port-forwards/"+itoa(forwardID)+"/probe", token, map[string]any{}, http.StatusAccepted)
+	probe := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards/"+itoa(forwardID)+"/probe", token, map[string]any{}, http.StatusAccepted)
 	if probe["task"].(map[string]any)["type"] != "probe_port_forwards" {
 		t.Fatalf("unexpected probe task: %#v", probe)
 	}
-	mtuTask := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/mtu-detect", token, map[string]any{"target_host": "1.1.1.1", "target_port": 443, "overhead_bytes": 80, "sample_count": 2}, http.StatusAccepted)
+	mtuTask := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/mtu-detect", token, map[string]any{"target_host": "1.1.1.1", "target_port": 443, "overhead_bytes": 80, "sample_count": 2}, http.StatusAccepted)
 	if mtuTask["task"].(map[string]any)["type"] != "detect_mtu" || mtuTask["plan"].(map[string]any)["overhead_bytes"].(float64) != 80 {
 		t.Fatalf("unexpected MTU task: %#v", mtuTask)
 	}
-	logTask := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/logs", token, map[string]any{"lines": 80, "services": "agent"}, http.StatusAccepted)
+	logTask := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/logs", token, map[string]any{"lines": 80, "services": "agent"}, http.StatusAccepted)
 	if logTask["task"].(map[string]any)["type"] != "collect_logs" {
 		t.Fatalf("unexpected log task: %#v", logTask)
 	}
 
-	createdTunnel := request(t, h, http.MethodPost, "/api/v2/ui/tunnels", token, map[string]any{"name": "ssh-s1-to-s2", "source_server_id": serverID, "target_server_id": server2ID, "type": "ssh", "priority": 20, "config_json": `{"user":"root"}`}, http.StatusCreated)
+	createdTunnel := request(t, h, http.MethodPost, "/api/v1/ui/tunnels", token, map[string]any{"name": "ssh-s1-to-s2", "source_server_id": serverID, "target_server_id": server2ID, "type": "ssh", "priority": 20, "config_json": `{"user":"root"}`}, http.StatusCreated)
 	if createdTunnel["tunnel"].(map[string]any)["id"] == nil {
 		t.Fatalf("tunnel missing id: %#v", createdTunnel)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/tunnels", token, map[string]any{"name": "cycle", "source_server_id": server2ID, "target_server_id": serverID, "type": "ssh", "priority": 20, "config_json": `{"user":"root"}`}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/tunnels", token, map[string]any{"name": "cycle", "source_server_id": server2ID, "target_server_id": serverID, "type": "ssh", "priority": 20, "config_json": `{"user":"root"}`}, http.StatusBadRequest)
 
-	deployment := request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	deployment := request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	taskItems := deployment["tasks"].([]any)
 	if len(taskItems) != 2 {
 		t.Fatalf("deployment created %d tasks for 2 servers, want one per server: %#v", len(taskItems), deployment)
@@ -1374,32 +1374,32 @@ func TestControllerFormalAPI(t *testing.T) {
 		t.Fatalf("deployment missing source server task: %#v", deployment)
 	}
 
-	createdUser := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	createdUser := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	userID := int64(createdUser["user"].(map[string]any)["id"].(float64))
-	usersPage := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=users", token, nil, http.StatusOK)
+	usersPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=users", token, nil, http.StatusOK)
 	pageUsers := usersPage["users"].([]any)
 	if len(pageUsers) == 0 || pageUsers[0].(map[string]any)["traffic_period_key"] == nil || pageUsers[0].(map[string]any)["traffic_quota_state"] != "active" {
 		t.Fatalf("users page missing current traffic period status: %#v", usersPage)
 	}
-	createdGroup := request(t, h, http.MethodPost, "/api/v2/ui/user-groups", token, map[string]any{"name": "vip", "description": "VIP", "enabled": true}, http.StatusCreated)
+	createdGroup := request(t, h, http.MethodPost, "/api/v1/ui/user-groups", token, map[string]any{"name": "vip", "description": "VIP", "enabled": true}, http.StatusCreated)
 	groupID := int64(createdGroup["user_group"].(map[string]any)["id"].(float64))
-	patchedGroup := request(t, h, http.MethodPatch, "/api/v2/ui/user-groups/"+itoa(groupID), token, map[string]any{"description": "VIP users"}, http.StatusOK)
+	patchedGroup := request(t, h, http.MethodPatch, "/api/v1/ui/user-groups/"+itoa(groupID), token, map[string]any{"description": "VIP users"}, http.StatusOK)
 	if _, exists := patchedGroup["user_group"].(map[string]any)["speed_limit_mbps"]; exists {
 		t.Fatalf("user group still exposes traffic limits: %#v", patchedGroup)
 	}
-	patchedUser := request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(userID), token, map[string]any{"speed_limit_mbps": 50, "traffic_limit_bytes": 268435456}, http.StatusOK)
+	patchedUser := request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(userID), token, map[string]any{"speed_limit_mbps": 50, "traffic_limit_bytes": 268435456}, http.StatusOK)
 	if patchedUser["user"].(map[string]any)["speed_limit_mbps"].(float64) != 50 {
 		t.Fatalf("user limit patch missing: %#v", patchedUser)
 	}
-	passwordOnly := request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(userID), token, map[string]any{"password": "another-long-password"}, http.StatusOK)
+	passwordOnly := request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(userID), token, map[string]any{"password": "another-long-password"}, http.StatusOK)
 	if passwordOnly["user"].(map[string]any)["speed_limit_mbps"].(float64) != 50 {
 		t.Fatalf("password-only patch should preserve user limits: %#v", passwordOnly)
 	}
-	rotated := request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/rotate", token, map[string]any{}, http.StatusOK)
+	rotated := request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/rotate", token, map[string]any{}, http.StatusOK)
 	if rotated["subscription_token"] == "" {
 		t.Fatal("rotated token missing")
 	}
-	revoked := request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/revoke", token, map[string]any{}, http.StatusOK)
+	revoked := request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/revoke", token, map[string]any{}, http.StatusOK)
 	if revoked["subscription_token"] != "" {
 		t.Fatalf("expected revoked token: %#v", revoked)
 	}
@@ -1474,15 +1474,15 @@ func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "one-time", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "one-time", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	user := created["user"].(map[string]any)
 	userID := int64(user["id"].(float64))
 	oneTimeToken := user["subscription_token"].(string)
 
-	policy := request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": true}, http.StatusOK)
+	policy := request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": true}, http.StatusOK)
 	if policy["user"].(map[string]any)["subscription_burn_after_read"] != true {
 		t.Fatalf("burn-after-read policy was not enabled: %#v", policy)
 	}
@@ -1506,14 +1506,14 @@ func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 		t.Fatalf("second one-time fetch status=%d body=%s", second.Code, second.Body.String())
 	}
 
-	stored := request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID), adminToken, nil, http.StatusOK)["user"].(map[string]any)
+	stored := request(t, h, http.MethodGet, "/api/v1/ui/users/"+itoa(userID), adminToken, nil, http.StatusOK)["user"].(map[string]any)
 	if stored["subscription_token"] != nil || stored["subscription_burned_at"] == nil || stored["subscription_burn_after_read"] != true {
 		t.Fatalf("burned subscription state missing: %#v", stored)
 	}
 
-	rotated := request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/rotate", adminToken, map[string]any{}, http.StatusOK)
+	rotated := request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/rotate", adminToken, map[string]any{}, http.StatusOK)
 	persistentToken := rotated["subscription_token"].(string)
-	request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": false}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": false}, http.StatusOK)
 	if got := fetch(persistentToken); got.Code != http.StatusOK || got.Header().Get("X-OBoard-Subscription") != "" || got.Header().Get("Content-Type") != "application/json" || !strings.Contains(got.Body.String(), `"outbounds"`) {
 		t.Fatalf("persistent subscription first fetch status=%d headers=%#v", got.Code, got.Header())
 	}
@@ -1540,15 +1540,15 @@ func TestQuickOneTimeSubscriptionDoesNotChangePersistentPolicy(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "quick-once", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "quick-once", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	user := created["user"].(map[string]any)
 	userID := int64(user["id"].(float64))
 	persistentToken := user["subscription_token"].(string)
 
-	oneTime := request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(userID)+"/subscription-token/one-time", adminToken, map[string]any{}, http.StatusCreated)
+	oneTime := request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/one-time", adminToken, map[string]any{}, http.StatusCreated)
 	oneTimeToken := oneTime["subscription_token"].(string)
 	if oneTimeToken == "" || oneTimeToken == persistentToken || oneTime["burn_after_read"] != true {
 		t.Fatalf("unexpected quick one-time response: %#v", oneTime)
@@ -1573,7 +1573,7 @@ func TestQuickOneTimeSubscriptionDoesNotChangePersistentPolicy(t *testing.T) {
 		}
 	}
 
-	stored := request(t, h, http.MethodGet, "/api/v2/ui/users/"+itoa(userID), adminToken, nil, http.StatusOK)["user"].(map[string]any)
+	stored := request(t, h, http.MethodGet, "/api/v1/ui/users/"+itoa(userID), adminToken, nil, http.StatusOK)["user"].(map[string]any)
 	if stored["subscription_token"] != persistentToken || stored["subscription_burn_after_read"] != false || stored["subscription_burned_at"] != nil {
 		t.Fatalf("quick one-time link changed persistent subscription state: %#v", stored)
 	}
@@ -1596,11 +1596,11 @@ func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "edge", "listen_ip": "0.0.0.0", "status": "online"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "listen_ip": "0.0.0.0", "status": "online"}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
 	server, err := db.GetServer(context.Background(), serverID)
 	if err != nil {
@@ -1613,7 +1613,7 @@ func TestAgentUpdateAllowedForSelfUpdateCapableOlderBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/agent-update", token, map[string]any{}, http.StatusAccepted)
+	res := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/agent-update", token, map[string]any{}, http.StatusAccepted)
 	task := res["task"].(map[string]any)
 	if task["type"] != "update_agent" {
 		t.Fatalf("unexpected update response: %#v", res)
@@ -1688,26 +1688,26 @@ func TestInboundPortPatchAffectsDeploymentConfig(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000, "status": "online"}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000, "status": "online"}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	createdInbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "edge-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443, "entry_ip_mode": "auto", "config_json": `{"tls":{"enabled":true,"reality":{"enabled":true,"handshake":{"server":"cdn.icloud-content.com","server_port":443},"private_key":"QQgMqPRP3R8xz_Bu1ejHvZIAZvHD21UkHjzpX2YODVU","short_id":"6adc1d56"},"server_name":"cdn.icloud-content.com"}}`, "enabled": true}, http.StatusCreated)
+	createdInbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "edge-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443, "entry_ip_mode": "auto", "config_json": `{"tls":{"enabled":true,"reality":{"enabled":true,"handshake":{"server":"cdn.icloud-content.com","server_port":443},"private_key":"QQgMqPRP3R8xz_Bu1ejHvZIAZvHD21UkHjzpX2YODVU","short_id":"6adc1d56"},"server_name":"cdn.icloud-content.com"}}`, "enabled": true}, http.StatusCreated)
 	inbound := createdInbound["inbound"].(map[string]any)
 	inboundID := int64(inbound["id"].(float64))
 
-	patched := request(t, h, http.MethodPatch, "/api/v2/ui/inbounds/"+itoa(inboundID), token, map[string]any{"server_id": serverID, "name": "edge-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 55555, "entry_ip_mode": "auto", "config_json": inbound["config_json"], "enabled": true}, http.StatusOK)
+	patched := request(t, h, http.MethodPatch, "/api/v1/ui/inbounds/"+itoa(inboundID), token, map[string]any{"server_id": serverID, "name": "edge-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 55555, "entry_ip_mode": "auto", "config_json": inbound["config_json"], "enabled": true}, http.StatusOK)
 	if got := int(patched["inbound"].(map[string]any)["port"].(float64)); got != 55555 {
 		t.Fatalf("patched inbound port = %d, want 55555: %#v", got, patched)
 	}
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/inbounds/"+itoa(inboundID), token, nil, http.StatusOK)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/inbounds/"+itoa(inboundID), token, nil, http.StatusOK)
 	if got := int(listed["inbound"].(map[string]any)["port"].(float64)); got != 55555 {
 		t.Fatalf("stored inbound port = %d, want 55555: %#v", got, listed)
 	}
 
-	deployment := request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	deployment := request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	for _, raw := range deployment["tasks"].([]any) {
 		task := raw.(map[string]any)
 		if task["type"] != "apply_deployment" || task["server_id"].(float64) != float64(serverID) {
@@ -1779,19 +1779,19 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "v6-edge", "listen_ip": "::", "ip_stack": "auto", "public_ipv6": "2001:db8::8", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "v6-edge", "listen_ip": "::", "ip_stack": "auto", "public_ipv6": "2001:db8::8", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
 
-	badExternal := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds", token, map[string]any{"server_id": serverID, "scope": "server", "name": "bad-v4", "protocol": "vless", "target_address": "1.1.1.1", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusBadRequest)
+	badExternal := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds", token, map[string]any{"server_id": serverID, "scope": "server", "name": "bad-v4", "protocol": "vless", "target_address": "1.1.1.1", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusBadRequest)
 	if badExternal["error"] == "" {
 		t.Fatalf("expected IPv6-only validation error: %#v", badExternal)
 	}
 
-	imported := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": `[{"type":"hysteria2","tag":"hy2-import","server":"edge.example.com","server_port":443}]`}, http.StatusCreated)
+	imported := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": `[{"type":"hysteria2","tag":"hy2-import","server":"edge.example.com","server_port":443}]`}, http.StatusCreated)
 	external := imported["external_outbounds"].([]any)[0].(map[string]any)
 	if external["protocol"] != "hy2" {
 		t.Fatalf("hysteria2 import protocol = %v, want hy2", external["protocol"])
@@ -1801,43 +1801,43 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	}
 	externalID := int64(external["id"].(float64))
 
-	outbound := request(t, h, http.MethodPost, "/api/v2/ui/outbounds", token, map[string]any{"server_id": serverID, "name": "local-vless", "protocol": "vless", "target_address": "next.example.com", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusCreated)
+	outbound := request(t, h, http.MethodPost, "/api/v1/ui/outbounds", token, map[string]any{"server_id": serverID, "name": "local-vless", "protocol": "vless", "target_address": "next.example.com", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	outboundID := int64(outbound["outbound"].(map[string]any)["id"].(float64))
 
-	directRule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "direct-lan", "priority": 10, "match_json": `{"domain_suffix":["lan"]}`, "action": "direct", "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "local-out", "priority": 20, "match_json": `{"domain_suffix":["example.org"]}`, "action": "outbound", "outbound_id": outboundID, "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "imported-out", "priority": 30, "match_json": `{"domain_suffix":["example.net"]}`, "action": "external", "external_outbound_id": externalID, "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusBadRequest)
+	directRule := request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "direct-lan", "priority": 10, "match_json": `{"domain_suffix":["lan"]}`, "action": "direct", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "local-out", "priority": 20, "match_json": `{"domain_suffix":["example.org"]}`, "action": "outbound", "outbound_id": outboundID, "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "imported-out", "priority": 30, "match_json": `{"domain_suffix":["example.net"]}`, "action": "external", "external_outbound_id": externalID, "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusBadRequest)
 	directRuleID := int64(directRule["routing_rule"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPatch, "/api/v2/ui/routing-rules/"+strconv.FormatInt(directRuleID, 10), token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusBadRequest)
-	warps := request(t, h, http.MethodGet, "/api/v2/ui/warp-profiles", token, nil, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/routing-rules/"+strconv.FormatInt(directRuleID, 10), token, map[string]any{"server_id": serverID, "name": "warp-out", "priority": 40, "match_json": `{"domain_suffix":["cloudflare.com"]}`, "action": "warp", "enabled": true}, http.StatusBadRequest)
+	warps := request(t, h, http.MethodGet, "/api/v1/ui/warp-profiles", token, nil, http.StatusOK)
 	warpItems := warps["warp_profiles"].([]any)
 	if len(warpItems) != 0 {
 		t.Fatalf("routing rule created WARP state: %#v", warps)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/warp-profiles", token, map[string]any{"server_id": serverID}, http.StatusMethodNotAllowed)
-	inboundResult := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "warp-entry", "protocol": "vless", "listen_ip": "::", "port": 10005, "config_json": "{}", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/warp-profiles", token, map[string]any{"server_id": serverID}, http.StatusMethodNotAllowed)
+	inboundResult := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "warp-entry", "protocol": "vless", "listen_ip": "::", "port": 10005, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	inboundID := int64(inboundResult["inbound"].(map[string]any)["id"].(float64))
-	pathResult := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	pathResult := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(pathResult["proxy_path"].(map[string]any)["id"].(float64))
-	warpStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "warp", "transport_mode": "singbox", "config_json": "{}"}, http.StatusCreated)
+	warpStep := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "warp", "transport_mode": "singbox", "config_json": "{}"}, http.StatusCreated)
 	if warpStep["proxy_path_step"].(map[string]any)["node_type"] != "warp" {
 		t.Fatalf("WARP path step did not round-trip: %#v", warpStep)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox", "config_json": "{}"}, http.StatusBadRequest)
-	warps = request(t, h, http.MethodGet, "/api/v2/ui/warp-profiles", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox", "config_json": "{}"}, http.StatusBadRequest)
+	warps = request(t, h, http.MethodGet, "/api/v1/ui/warp-profiles", token, nil, http.StatusOK)
 	warpItems = warps["warp_profiles"].([]any)
 	if len(warpItems) != 1 || int64(warpItems[0].(map[string]any)["server_id"].(float64)) != serverID {
 		t.Fatalf("WARP path did not create the exit server profile: %#v", warps)
 	}
 	warpProfileID := int64(warpItems[0].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "ssh-via-wan6", "priority": 45, "match_json": `{"port":[22]}`, "action": "interface", "interface_name": "eth1", "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "dynamic-v6", "priority": 46, "match_json": `{"domain_suffix":["v6.example"]}`, "action": "source_prefix", "source_prefix": "2001:db8:55::1234/64", "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-prefix", "priority": 47, "match_json": `{"domain_suffix":["bad.example"]}`, "action": "source_prefix", "source_prefix": "2001:db8::/129", "enabled": true}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-port", "priority": 50, "match_json": `{"port":[0]}`, "action": "direct", "enabled": true}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-interface", "priority": 50, "match_json": `{"port":[443]}`, "action": "interface", "interface_name": "eth1;id", "enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "ssh-via-wan6", "priority": 45, "match_json": `{"port":[22]}`, "action": "interface", "interface_name": "eth1", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "dynamic-v6", "priority": 46, "match_json": `{"domain_suffix":["v6.example"]}`, "action": "source_prefix", "source_prefix": "2001:db8:55::1234/64", "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-prefix", "priority": 47, "match_json": `{"domain_suffix":["bad.example"]}`, "action": "source_prefix", "source_prefix": "2001:db8::/129", "enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-port", "priority": 50, "match_json": `{"port":[0]}`, "action": "direct", "enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"server_id": serverID, "name": "bad-interface", "priority": 50, "match_json": `{"port":[443]}`, "action": "interface", "interface_name": "eth1;id", "enabled": true}, http.StatusBadRequest)
 
-	listedRules := request(t, h, http.MethodGet, "/api/v2/ui/routing-rules", token, nil, http.StatusOK)
+	listedRules := request(t, h, http.MethodGet, "/api/v1/ui/routing-rules", token, nil, http.StatusOK)
 	if len(listedRules["routing_rules"].([]any)) != 5 {
 		t.Fatalf("routing rules missing: %#v", listedRules)
 	}
@@ -1858,7 +1858,7 @@ func TestRoutingExternalOutboundAndWARPPathPublicAPI(t *testing.T) {
 	if !foundSourcePrefix {
 		t.Fatalf("source-prefix routing rule did not round-trip: %#v", listedRules)
 	}
-	deployment := request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	deployment := request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	foundWARPRequest := false
 	for _, raw := range deployment["tasks"].([]any) {
 		task := raw.(map[string]any)
@@ -1910,26 +1910,26 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))
-	server2 := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s2", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
+	server2 := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s2", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
 	server2ID := int64(server2["server"].(map[string]any)["id"].(float64))
-	user := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	user := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	userID := int64(user["user"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
 
-	imported := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds/import", token, map[string]any{"scope": "global", "expose_to_users": true, "content": "socks5://user:pass@socks.example.com:1080#SOCKS-A"}, http.StatusCreated)
+	imported := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds/import", token, map[string]any{"scope": "global", "expose_to_users": true, "content": "socks5://user:pass@socks.example.com:1080#SOCKS-A"}, http.StatusCreated)
 	external := imported["external_outbounds"].([]any)[0].(map[string]any)
 	if external["protocol"] != "socks" || external["target_address"] != "socks.example.com" || external["expose_to_users"] != true {
 		t.Fatalf("bad imported socks: %#v", external)
 	}
 	externalID := int64(external["id"].(float64))
 
-	grantPlan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "imported", "enabled": true, "nodes": []map[string]any{{"node_type": "external_outbound", "node_id": externalID}}}, http.StatusCreated)
+	grantPlan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "imported", "enabled": true, "nodes": []map[string]any{{"node_type": "external_outbound", "node_id": externalID}}}, http.StatusCreated)
 	if grantPlan["subscription_plan"].(map[string]any)["id"] == nil {
 		t.Fatalf("plan missing id: %#v", grantPlan)
 	}
@@ -1937,37 +1937,37 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "via-socks", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "via-socks", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	step := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "imported", "external_outbound_id": externalID}, http.StatusCreated)
+	step := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "imported", "external_outbound_id": externalID}, http.StatusCreated)
 	if step["proxy_path_step"].(map[string]any)["id"] == nil {
 		t.Fatalf("step missing id: %#v", step)
 	}
 	importedStepID := int64(step["proxy_path_step"].(map[string]any)["id"].(float64))
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths", token, nil, http.StatusOK)
 	if len(listed["proxy_paths"].([]any)) != 1 {
 		t.Fatalf("proxy path not listed: %#v", listed)
 	}
 
-	serverPath := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "via-server", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	serverPath := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "via-server", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	serverPathID := int64(serverPath["proxy_path"].(map[string]any)["id"].(float64))
-	serverStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 1, "node_type": "server_inbound", "server_id": server2ID}, http.StatusCreated)
+	serverStep := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 1, "node_type": "server_inbound", "server_id": server2ID}, http.StatusCreated)
 	serverStepValue := serverStep["proxy_path_step"].(map[string]any)
 	serverStepID := int64(serverStepValue["id"].(float64))
 	if got := serverStepValue["server_id"]; int64(got.(float64)) != server2ID {
 		t.Fatalf("server-only step did not persist target server: %#v", serverStep)
 	}
-	plan := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(serverPathID)+"/plan", token, nil, http.StatusOK)
+	plan := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(serverPathID)+"/plan", token, nil, http.StatusOK)
 	steps := plan["plan"].(map[string]any)["steps"].([]any)
 	if len(steps) != 1 || int64(steps[0].(map[string]any)["server_id"].(float64)) != server2ID {
 		t.Fatalf("server-only path plan missing target server: %#v", plan)
 	}
-	direct := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	direct := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
 	if direct["kind"] != "direct" || direct["name"] != "s1" {
 		t.Fatalf("bad direct path: %#v", direct)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusBadRequest)
-	branched := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusBadRequest)
+	branched := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusCreated)
 	branchedPath := branched["proxy_path"].(map[string]any)
 	if branchedPath["kind"] != "direct" || branchedPath["name"] != "s1｜s2｜直出" || int64(branchedPath["branch_source_step_id"].(float64)) != serverStepID {
 		t.Fatalf("bad intermediate direct branch: %#v", branched)
@@ -1977,19 +1977,19 @@ func TestImportedNodeURIProxyPathAndGrantAPI(t *testing.T) {
 		t.Fatalf("intermediate direct branch did not copy its prefix: %#v", branched)
 	}
 	branchedStepID := int64(branchedSteps[0].(map[string]any)["id"].(float64))
-	plan = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(serverPathID)+"/plan", token, nil, http.StatusOK)
+	plan = request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(serverPathID)+"/plan", token, nil, http.StatusOK)
 	if got := len(plan["plan"].(map[string]any)["steps"].([]any)); got != 1 {
 		t.Fatalf("creating direct branch changed original chain: %#v", plan)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": importedStepID}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "branch_source_step_id": serverStepID, "enabled": false}, http.StatusBadRequest)
-	request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(branchedStepID), token, map[string]any{"config_json": `{}`}, http.StatusOK)
-	updatedBranch := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(int64(branchedPath["id"].(float64))), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": serverStepID}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": importedStepID}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "branch_source_step_id": serverStepID, "enabled": false}, http.StatusBadRequest)
+	request(t, h, http.MethodPatch, "/api/v1/ui/proxy-path-steps/"+itoa(branchedStepID), token, map[string]any{"config_json": `{}`}, http.StatusOK)
+	updatedBranch := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(int64(branchedPath["id"].(float64))), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if _, ok := updatedBranch["branch_source_step_id"]; ok {
 		t.Fatalf("edited direct branch retained stale source reference: %#v", updatedBranch)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 2, "node_type": "server_inbound", "server_id": serverID}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 2, "node_type": "server_inbound", "server_id": serverID}, http.StatusBadRequest)
 }
 
 func TestRoutingFallbackDirectBranchCanContinueToImportedNode(t *testing.T) {
@@ -2000,19 +2000,19 @@ func TestRoutingFallbackDirectBranchCanContinueToImportedNode(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "entry", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "entry", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))
-	targetServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "target", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 11000, "port_range_end": 11010}, http.StatusCreated)
+	targetServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "target", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 11000, "port_range_end": 11010}, http.StatusCreated)
 	targetServerID := int64(targetServer["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	imported := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": "socks5://user:pass@socks.example.com:1080#SOCKS"}, http.StatusCreated)
+	imported := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": "socks5://user:pass@socks.example.com:1080#SOCKS"}, http.StatusCreated)
 	externalID := int64(imported["external_outbounds"].([]any)[0].(map[string]any)["id"].(float64))
 	createRootRule := func(pathID int64, name string) int64 {
-		rule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": name, "match_json": `{"geoip":["cn"]}`, "action": "direct", "enabled": true}, http.StatusCreated)["routing_rule"].(map[string]any)
+		rule := request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": name, "match_json": `{"geoip":["cn"]}`, "action": "direct", "enabled": true}, http.StatusCreated)["routing_rule"].(map[string]any)
 		return int64(rule["id"].(float64))
 	}
 	assertRootRule := func(ruleID, pathID int64) {
@@ -2023,32 +2023,32 @@ func TestRoutingFallbackDirectBranchCanContinueToImportedNode(t *testing.T) {
 		}
 	}
 
-	direct := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	direct := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
 	pathID := int64(direct["id"].(float64))
 	ruleID := createRootRule(pathID, "cn-imported")
 
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
-	updated := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
+	updated := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if updated["kind"] != "chain" {
 		t.Fatalf("routing fallback path kind = %v, want chain: %#v", updated["kind"], updated)
 	}
 	assertRootRule(ruleID, pathID)
 
-	warpDirect := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	warpDirect := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
 	warpPathID := int64(warpDirect["id"].(float64))
 	warpRuleID := createRootRule(warpPathID, "cn-warp")
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": warpPathID, "position": 1, "node_type": "warp", "transport_mode": "singbox"}, http.StatusCreated)
-	updated = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(warpPathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": warpPathID, "position": 1, "node_type": "warp", "transport_mode": "singbox"}, http.StatusCreated)
+	updated = request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(warpPathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if updated["kind"] != "chain" {
 		t.Fatalf("WARP fallback path kind = %v, want chain: %#v", updated["kind"], updated)
 	}
 	assertRootRule(warpRuleID, warpPathID)
 
-	serverDirect := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
+	serverDirect := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)["proxy_path"].(map[string]any)
 	serverPathID := int64(serverDirect["id"].(float64))
 	serverRuleID := createRootRule(serverPathID, "cn-server")
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 1, "node_type": "server_inbound", "server_id": targetServerID, "transport_mode": "singbox"}, http.StatusCreated)
-	updated = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(serverPathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": serverPathID, "position": 1, "node_type": "server_inbound", "server_id": targetServerID, "transport_mode": "singbox"}, http.StatusCreated)
+	updated = request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(serverPathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if updated["kind"] != "direct" {
 		t.Fatalf("controlled-server fallback path kind = %v, want direct: %#v", updated["kind"], updated)
 	}
@@ -2063,30 +2063,30 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	serverC := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	imported := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": "socks5://user:pass@socks.example.com:1080#SOCKS-P"}, http.StatusCreated)
+	imported := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds/import", token, map[string]any{"scope": "global", "content": "socks5://user:pass@socks.example.com:1080#SOCKS-P"}, http.StatusCreated)
 	externalID := int64(imported["external_outbounds"].([]any)[0].(map[string]any)["id"].(float64))
 
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "A-B-C-P", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "A-B-C-P", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	transparentStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
+	transparentStep := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
 	transparentStepID := int64(transparentStep["proxy_path_step"].(map[string]any)["id"].(float64))
-	processingStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward", "processing_role": true}, http.StatusCreated)
+	processingStep := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward", "processing_role": true}, http.StatusCreated)
 	processingStepID := int64(processingStep["proxy_path_step"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 3, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 3, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "singbox"}, http.StatusCreated)
 
-	plan := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID)+"/plan", token, nil, http.StatusOK)
+	plan := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID)+"/plan", token, nil, http.StatusOK)
 	steps := plan["plan"].(map[string]any)["steps"].([]any)
 	if len(steps) != 3 || int64(steps[0].(map[string]any)["server_id"].(float64)) != serverBID || int64(steps[1].(map[string]any)["server_id"].(float64)) != serverCID {
 		t.Fatalf("bad proxy path plan: %#v", plan)
@@ -2108,12 +2108,12 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 			}
 		}
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": transparentStepID}, http.StatusBadRequest)
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": transparentStepID}, http.StatusBadRequest)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths", token, nil, http.StatusOK)
 	if got := len(listed["proxy_paths"].([]any)); got != 1 {
 		t.Fatalf("failed transparent direct branch left partial path: %#v", listed)
 	}
-	branched := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": processingStepID}, http.StatusCreated)
+	branched := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": processingStepID}, http.StatusCreated)
 	branchedPath := branched["proxy_path"].(map[string]any)
 	if branchedPath["kind"] != "direct" || int64(branchedPath["branch_source_step_id"].(float64)) != processingStepID {
 		t.Fatalf("bad direct branch at transparent processing server: %#v", branched)
@@ -2122,14 +2122,14 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 	if len(branchedSteps) != 2 || int64(branchedSteps[0].(map[string]any)["server_id"].(float64)) != serverBID || int64(branchedSteps[1].(map[string]any)["server_id"].(float64)) != serverCID {
 		t.Fatalf("processing-server direct branch did not preserve the transparent prefix: %#v", branched)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": processingStepID}, http.StatusBadRequest)
-	listed = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"source_step_id": processingStepID}, http.StatusBadRequest)
+	listed = request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths", token, nil, http.StatusOK)
 	if got := len(listed["proxy_paths"].([]any)); got != 2 {
 		t.Fatalf("failed duplicate transparent branch left a partial path: %#v", listed)
 	}
 
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "singbox"}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "port_forward"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "singbox"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 4, "node_type": "imported", "external_outbound_id": externalID, "transport_mode": "port_forward"}, http.StatusBadRequest)
 }
 
 func TestProxyPathRejectsExplicitIPv6TargetFromIPv4OnlySource(t *testing.T) {
@@ -2140,26 +2140,26 @@ func TestProxyPathRejectsExplicitIPv6TargetFromIPv4OnlySource(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	source := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{
+	source := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
 		"name": "IPv4 source", "public_ipv4": "198.51.100.10", "entry_ip_mode": "ipv4", "listen_ip": "0.0.0.0", "ip_stack": "ipv4_only", "port_range_start": 30000, "port_range_end": 30100,
 	}, http.StatusCreated)["server"].(map[string]any)
-	target := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{
+	target := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
 		"name": "dual target", "public_ipv4": "203.0.113.20", "public_ipv6": "2001:db8::20", "entry_ip_mode": "ipv6", "listen_ip": "::", "ip_stack": "dual_stack", "port_range_start": 31000, "port_range_end": 31100,
 	}, http.StatusCreated)["server"].(map[string]any)
 	sourceID := int64(source["id"].(float64))
 	targetID := int64(target["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
 		"server_id": sourceID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true,
 	}, http.StatusCreated)["inbound"].(map[string]any)
 	inboundID := int64(inbound["id"].(float64))
 
-	enabled := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "enabled-invalid", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	enabled := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "enabled-invalid", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
 	enabledID := int64(enabled["id"].(float64))
-	badStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": enabledID, "node_type": "server_inbound", "server_id": targetID, "transport_mode": "singbox"}, http.StatusBadRequest)
+	badStep := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": enabledID, "node_type": "server_inbound", "server_id": targetID, "transport_mode": "singbox"}, http.StatusBadRequest)
 	if message := fmt.Sprint(badStep["error"]); !strings.Contains(message, "IPv4 source") || !strings.Contains(message, "dual target") || !strings.Contains(message, "IPv6") {
 		t.Fatalf("step error is not actionable: %q", message)
 	}
@@ -2167,10 +2167,10 @@ func TestProxyPathRejectsExplicitIPv6TargetFromIPv4OnlySource(t *testing.T) {
 		t.Fatalf("rejected step persisted: steps=%#v err=%v", steps, err)
 	}
 
-	disabled := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "stored-invalid", "inbound_id": inboundID, "enabled": false}, http.StatusCreated)["proxy_path"].(map[string]any)
+	disabled := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "stored-invalid", "inbound_id": inboundID, "enabled": false}, http.StatusCreated)["proxy_path"].(map[string]any)
 	disabledID := int64(disabled["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": disabledID, "node_type": "server_inbound", "server_id": targetID, "transport_mode": "singbox"}, http.StatusCreated)
-	enableError := request(t, h, http.MethodPatch, "/api/v2/ui/proxy-paths/"+itoa(disabledID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": disabledID, "node_type": "server_inbound", "server_id": targetID, "transport_mode": "singbox"}, http.StatusCreated)
+	enableError := request(t, h, http.MethodPatch, "/api/v1/ui/proxy-paths/"+itoa(disabledID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
 	if message := fmt.Sprint(enableError["error"]); !strings.Contains(message, "IPv6") {
 		t.Fatalf("enable error is not actionable: %q", message)
 	}
@@ -2187,7 +2187,7 @@ func TestProxyPathRejectsExplicitIPv6TargetFromIPv4OnlySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyError := request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	applyError := request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
 	if message := fmt.Sprint(applyError["error"]); !strings.Contains(message, "IPv6") || strings.Contains(message, "internal server error") {
 		t.Fatalf("deployment error is not actionable: %q", message)
 	}
@@ -2208,23 +2208,23 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "香港", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "香港", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "洛杉矶", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "洛杉矶", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	serverC := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "东京", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "东京", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	createdPath := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name_mode": "auto", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	createdPath := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name_mode": "auto", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(createdPath["proxy_path"].(map[string]any)["id"].(float64))
-	createdStep := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
+	createdStep := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
 	stepID := int64(createdStep["proxy_path_step"].(map[string]any)["id"].(float64))
 
-	path := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	path := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if path["name"] != "香港｜洛杉矶" || path["name_mode"] != "auto" {
 		t.Fatalf("automatic path = %#v", path)
 	}
@@ -2234,7 +2234,7 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 		{"kind": "literal", "value": "｜"},
 		{"kind": "server", "server_id": serverBID},
 	}
-	path = request(t, h, http.MethodPatch, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"name_mode": "custom", "name_template": template}, http.StatusOK)["proxy_path"].(map[string]any)
+	path = request(t, h, http.MethodPatch, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"name_mode": "custom", "name_template": template}, http.StatusOK)["proxy_path"].(map[string]any)
 	if path["name"] != "专线 香港｜洛杉矶" || path["name_mode"] != "custom" {
 		t.Fatalf("custom path = %#v", path)
 	}
@@ -2247,12 +2247,12 @@ func TestProxyPathAutomaticAndCustomNamesFollowTopology(t *testing.T) {
 	if err := db.UpdateServer(context.Background(), storedB); err != nil {
 		t.Fatal(err)
 	}
-	path = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	path = request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if path["name"] != "专线 香港｜纽约" {
 		t.Fatalf("renamed custom path = %#v", path)
 	}
-	request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusOK)
-	path = request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
+	request(t, h, http.MethodPatch, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusOK)
+	path = request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)["proxy_path"].(map[string]any)
 	if path["name"] != "香港｜东京" || path["name_mode"] != "auto" {
 		t.Fatalf("topology fallback path = %#v", path)
 	}
@@ -2266,21 +2266,21 @@ func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	serverC := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "A-B-C", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "A-B-C", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "processing_role": true, "config_json": `{}`}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "processing_role": true, "config_json": `{}`}, http.StatusCreated)
 	step := created["proxy_path_step"].(map[string]any)
 	stepID := int64(step["id"].(float64))
 	if step["processing_role"] != false {
@@ -2290,18 +2290,18 @@ func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 		t.Fatalf("sing-box chain method did not default to SS2022-128: %#v", step)
 	}
 	for _, invalidMethod := range []string{"aes-128-gcm", "2022-blake3-aes-192-gcm"} {
-		request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{"chain_method":"` + invalidMethod + `"}`}, http.StatusBadRequest)
+		request(t, h, http.MethodPatch, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{"chain_method":"` + invalidMethod + `"}`}, http.StatusBadRequest)
 	}
 
-	changed := request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward", "processing_role": false, "config_json": `{}`}, http.StatusOK)
+	changed := request(t, h, http.MethodPatch, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward", "processing_role": false, "config_json": `{}`}, http.StatusOK)
 	if changed["proxy_path_step"].(map[string]any)["processing_role"] != true {
 		t.Fatalf("last transparent step must become processor: %#v", changed)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "enabled": true}, http.StatusBadRequest)
-	second := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"kind": "direct", "inbound_id": inboundID, "enabled": true}, http.StatusBadRequest)
+	second := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
 	secondID := int64(second["proxy_path_step"].(map[string]any)["id"].(float64))
 
-	changed = request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "processing_role": true, "config_json": `{}`}, http.StatusOK)
+	changed = request(t, h, http.MethodPatch, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "processing_role": true, "config_json": `{}`}, http.StatusOK)
 	if changed["proxy_path_step"].(map[string]any)["processing_role"] != false {
 		t.Fatalf("switching back to chain proxy must clear transparent processor: %#v", changed)
 	}
@@ -2310,12 +2310,12 @@ func TestProxyPathTransportCanChangeAndDeleteCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deleted := request(t, h, http.MethodDelete, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
+	deleted := request(t, h, http.MethodDelete, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
 	if int(deleted["deleted_steps"].(float64)) != 2 || deleted["path_deleted"] != true {
 		t.Fatalf("delete must remove this and downstream steps: %#v", deleted)
 	}
-	request(t, h, http.MethodGet, "/api/v2/ui/proxy-path-steps/"+itoa(secondID), token, nil, http.StatusNotFound)
-	paths := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/proxy-path-steps/"+itoa(secondID), token, nil, http.StatusNotFound)
+	paths := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths", token, nil, http.StatusOK)
 	if paths["proxy_paths"] != nil && len(paths["proxy_paths"].([]any)) != 0 {
 		t.Fatalf("empty path should be removed: %#v", paths)
 	}
@@ -2335,18 +2335,18 @@ func TestProxyPathWireGuardTunnelCreatesManagedPair(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "A-WG-B", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "A-WG-B", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": `{"type":"wireguard","source_private_key":"user-controlled","source_public_key":"user-controlled","target_private_key":"user-controlled","target_public_key":"user-controlled"}`}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": `{"type":"wireguard","source_private_key":"user-controlled","source_public_key":"user-controlled","target_private_key":"user-controlled","target_public_key":"user-controlled"}`}, http.StatusCreated)
 	step := created["proxy_path_step"].(map[string]any)
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(step["config_json"].(string)), &cfg); err != nil {
@@ -2372,7 +2372,7 @@ func TestProxyPathWireGuardTunnelCreatesManagedPair(t *testing.T) {
 		}
 	}
 	storedConfig := stored.ConfigJSON
-	request(t, h, http.MethodPatch, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": step["config_json"]}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": step["config_json"]}, http.StatusOK)
 	stored, err = db.GetProxyPathStep(context.Background(), stepID)
 	if err != nil {
 		t.Fatal(err)
@@ -2380,7 +2380,7 @@ func TestProxyPathWireGuardTunnelCreatesManagedPair(t *testing.T) {
 	if stored.ConfigJSON != storedConfig {
 		t.Fatalf("ordinary patch changed shared WireGuard conditions: before=%s after=%s", storedConfig, stored.ConfigJSON)
 	}
-	plan := request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID)+"/plan", token, nil, http.StatusOK)
+	plan := request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID)+"/plan", token, nil, http.StatusOK)
 	if len(plan["plan"].(map[string]any)["tunnels"].([]any)) != 1 {
 		t.Fatalf("WireGuard path missing tunnel plan: %#v", plan)
 	}
@@ -2403,21 +2403,21 @@ func TestProxyPathSSHTunnelOwnsAndHidesManagedKey(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "A-SSH-B", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "A-SSH-B", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": `{"type":"ssh"}`}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": `{"type":"ssh"}`}, http.StatusBadRequest)
 	attackerPrivate, attackerPublic := "attacker-private-key", "ssh-ed25519 attacker-public-key"
 	malicious, _ := json.Marshal(map[string]any{"type": "ssh", "ssh_port": 31005, "client_private_key": attackerPrivate, "client_public_key": attackerPublic})
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": string(malicious)}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "tunnel", "config_json": string(malicious)}, http.StatusCreated)
 	step := created["proxy_path_step"].(map[string]any)
 	if strings.Contains(fmt.Sprint(step), "PRIVATE KEY") || strings.Contains(fmt.Sprint(step), attackerPublic) {
 		t.Fatalf("SSH step response leaked managed key: %#v", step)
@@ -2446,33 +2446,33 @@ func TestDeletingServerCutsDependentProxyPath(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	serverC := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"name": "A-B-C", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"name": "A-B-C", "inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	first := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
+	first := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
 	firstID := int64(first["proxy_path_step"].(map[string]any)["id"].(float64))
-	second := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
+	second := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox", "config_json": `{}`}, http.StatusCreated)
 	secondID := int64(second["proxy_path_step"].(map[string]any)["id"].(float64))
 
-	request(t, h, http.MethodDelete, "/api/v2/ui/servers/"+itoa(serverCID), token, nil, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/proxy-path-steps/"+itoa(secondID), token, nil, http.StatusNotFound)
-	remaining := request(t, h, http.MethodGet, "/api/v2/ui/proxy-path-steps/"+itoa(firstID), token, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverCID), token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/proxy-path-steps/"+itoa(secondID), token, nil, http.StatusNotFound)
+	remaining := request(t, h, http.MethodGet, "/api/v1/ui/proxy-path-steps/"+itoa(firstID), token, nil, http.StatusOK)
 	if int64(remaining["proxy_path_step"].(map[string]any)["server_id"].(float64)) != serverBID {
 		t.Fatalf("path prefix was not preserved: %#v", remaining)
 	}
 
-	request(t, h, http.MethodDelete, "/api/v2/ui/servers/"+itoa(serverBID), token, nil, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusNotFound)
+	request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverBID), token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusNotFound)
 }
 
 func TestAgentPortForwardProbeAcceptsDerivedProxyPathRule(t *testing.T) {
@@ -2531,26 +2531,26 @@ func TestProtocolAuthDefaultsArePersisted(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	outbound := request(t, h, http.MethodPost, "/api/v2/ui/outbounds", token, map[string]any{"server_id": serverID, "name": "auto-vless", "protocol": "vless", "target_address": "next.example.com", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusCreated)
+	outbound := request(t, h, http.MethodPost, "/api/v1/ui/outbounds", token, map[string]any{"server_id": serverID, "name": "auto-vless", "protocol": "vless", "target_address": "next.example.com", "target_port": 443, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	outboundCfg := configJSONFrom(t, outbound["outbound"].(map[string]any))
 	if outboundCfg["uuid"] == "" || outboundCfg["_oboard"].(map[string]any)["username"] == "" {
 		t.Fatalf("vless auth defaults missing: %#v", outboundCfg)
 	}
 
 	customUUID := "11111111-1111-4111-8111-111111111111"
-	custom := request(t, h, http.MethodPost, "/api/v2/ui/outbounds", token, map[string]any{"server_id": serverID, "name": "custom-vless", "protocol": "vless", "target_address": "custom.example.com", "target_port": 443, "config_json": `{"uuid":"` + customUUID + `","_oboard":{"username":"custom-node"}}`, "enabled": true}, http.StatusCreated)
+	custom := request(t, h, http.MethodPost, "/api/v1/ui/outbounds", token, map[string]any{"server_id": serverID, "name": "custom-vless", "protocol": "vless", "target_address": "custom.example.com", "target_port": 443, "config_json": `{"uuid":"` + customUUID + `","_oboard":{"username":"custom-node"}}`, "enabled": true}, http.StatusCreated)
 	customCfg := configJSONFrom(t, custom["outbound"].(map[string]any))
 	if customCfg["uuid"] != customUUID || customCfg["_oboard"].(map[string]any)["username"] != "custom-node" {
 		t.Fatalf("custom auth overwritten: %#v", customCfg)
 	}
 
-	external := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds", token, map[string]any{"scope": "global", "name": "ss-ext", "protocol": "shadowsocks", "target_address": "ss.example.com", "target_port": 8388, "config_json": "{}", "enabled": true}, http.StatusCreated)
+	external := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds", token, map[string]any{"scope": "global", "name": "ss-ext", "protocol": "shadowsocks", "target_address": "ss.example.com", "target_port": 8388, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	externalCfg := configJSONFrom(t, external["external_outbound"].(map[string]any))
 	if externalCfg["method"] == "" || externalCfg["password"] == "" || externalCfg["_oboard"].(map[string]any)["username"] == "" {
 		t.Fatalf("external ss auth defaults missing: %#v", externalCfg)
@@ -2565,23 +2565,23 @@ func TestSingleUserInboundPlanCapacityPreview(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))
-	userA := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	userB := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	userA := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	userB := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	userAID, userBID := int64(userA["user"].(map[string]any)["id"].(float64)), int64(userB["user"].(map[string]any)["id"].(float64))
 
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "single-password-ss", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "config_json": `{"method":"chacha20-ietf-poly1305"}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "single-password-ss", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "config_json": `{"method":"chacha20-ietf-poly1305"}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "single", "enabled": true, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusCreated)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "single", "enabled": true, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusCreated)
 	planID := int64(plan["subscription_plan"].(map[string]any)["id"].(float64))
 	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: userAID, PlanID: planID}, {UserID: userBID, PlanID: planID}}); err != nil {
 		t.Fatal(err)
 	}
-	preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+strconv.FormatInt(planID, 10)+"/nodes/preview", token, map[string]any{"op": "replace", "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusOK)
+	preview := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+strconv.FormatInt(planID, 10)+"/nodes/preview", token, map[string]any{"op": "replace", "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusOK)
 	capacity := preview["preview"].(map[string]any)["capacity_issues"].([]any)
 	if len(capacity) == 0 {
 		t.Fatalf("single-user inbound overflow was not reported: %#v", preview)
@@ -2596,17 +2596,17 @@ func TestPlanGrantedSubscriptionIncludesInboundNode(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))
-	user := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	user := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	userID := int64(user["user"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
 
-	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "vip", "enabled": true, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusCreated)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "vip", "enabled": true, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusCreated)
 	planID := int64(plan["subscription_plan"].(map[string]any)["id"].(float64))
 	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: userID, PlanID: planID}}); err != nil {
 		t.Fatal(err)
@@ -2629,19 +2629,19 @@ func TestPlanNodeSyncChangesOnlyTheDraftRevision(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0"}, http.StatusCreated)["server"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "listen_ip": "0.0.0.0"}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(server["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
 	inboundID := int64(inbound["id"].(float64))
-	pathA := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
-	pathB := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	pathA := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	pathB := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
 	pathAID, pathBID := int64(pathA["id"].(float64)), int64(pathB["id"].(float64))
-	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{"name": "paths", "enabled": true, "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathAID}}}, http.StatusCreated)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "paths", "enabled": true, "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathAID}}}, http.StatusCreated)
 	planID := int64(plan["subscription_plan"].(map[string]any)["id"].(float64))
 
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+strconv.FormatInt(planID, 10)+"/nodes/sync", token, map[string]any{"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathBID}}}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+strconv.FormatInt(planID, 10)+"/nodes/sync", token, map[string]any{"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": pathBID}}}, http.StatusOK)
 	activeNodes, err := db.ListActivePlanNodes(context.Background(), planID)
 	if err != nil {
 		t.Fatal(err)
@@ -2670,11 +2670,11 @@ func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	pair := request(t, h, http.MethodPost, "/api/v2/ui/reality/keypair", token, map[string]any{}, http.StatusOK)
+	pair := request(t, h, http.MethodPost, "/api/v1/ui/reality/keypair", token, map[string]any{}, http.StatusOK)
 	privateKey := pair["private_key"].(string)
 	publicKey := pair["public_key"].(string)
 	shortID := pair["short_id"].(string)
@@ -2685,9 +2685,9 @@ func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
 		t.Fatalf("public key mismatch: got %q want %q", got, publicKey)
 	}
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "edge", "entry_ip_mode": "custom", "entry_address": "203.0.113.10", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "entry_ip_mode": "custom", "entry_address": "203.0.113.10", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
 		"server_id":   serverID,
 		"name":        "reality-auto",
 		"protocol":    "vless",
@@ -2801,11 +2801,11 @@ func TestDNSCredentialMaskedAndInboundValidation(t *testing.T) {
 	srv.dnsEndpoints.cloudflare = cf.URL
 	h := srv.Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "zone_id": "zone-1", "config": map[string]any{"api_token": "secret-token"}}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "zone_id": "zone-1", "config": map[string]any{"api_token": "secret-token"}}, http.StatusCreated)
 	credential := created["dns_credential"].(map[string]any)
 	credentialID := int64(credential["id"].(float64))
 	if credential["configured"] != true || credential["config"] != nil || strings.Contains(fmt.Sprint(created), "secret-token") {
@@ -2815,18 +2815,18 @@ func TestDNSCredentialMaskedAndInboundValidation(t *testing.T) {
 	if !ok || len(zones) != 1 || zones[0].(map[string]any)["zone_name"] != "example.com" {
 		t.Fatalf("DNS credential zones = %#v", credential["zones"])
 	}
-	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusOK)
 	secretTokenActive = false
-	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusBadRequest)
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/dns-credentials", token, nil, http.StatusOK)["dns_credentials"].([]any)[0].(map[string]any)
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusBadRequest)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/dns-credentials", token, nil, http.StatusOK)["dns_credentials"].([]any)[0].(map[string]any)
 	if listed["configured"] != true || listed["verified_at"] != nil || listed["last_error"] == "" || strings.Contains(fmt.Sprint(listed), "secret-token") {
 		t.Fatalf("unexpected failed verification state: %#v", listed)
 	}
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "s1", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "missing-domain", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "entry_ip_mode": "auto", "dns_sync_enabled": true, "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "bad-domain", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "entry_ip_mode": "custom", "external_ip": "203.0.113.20", "dns_domain": "not a domain", "dns_sync_enabled": true, "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "missing-domain", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "entry_ip_mode": "auto", "dns_sync_enabled": true, "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "bad-domain", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "entry_ip_mode": "custom", "external_ip": "203.0.113.20", "dns_domain": "not a domain", "dns_sync_enabled": true, "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}, http.StatusBadRequest)
 }
 
 func TestDeploymentSyncsDNSBeforeCreatingTasks(t *testing.T) {
@@ -2872,18 +2872,18 @@ func TestDeploymentSyncsDNSBeforeCreatingTasks(t *testing.T) {
 	srv := newTestServer(db, "test-secret", "")
 	srv.dnsEndpoints.cloudflare = cf.URL
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	createdCredential := request(t, h, http.MethodPost, "/api/v2/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)
+	createdCredential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)
 	credentialID := int64(createdCredential["dns_credential"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "dns-ss", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "entry_ip_mode": "auto", "dns_credential_id": credentialID, "dns_domain": "entry.example.com", "dns_sync_enabled": true, "dns_record_types": "a", "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "dns-ss", "protocol": "shadowsocks", "listen_ip": "0.0.0.0", "port": 8388, "entry_ip_mode": "auto", "dns_credential_id": credentialID, "dns_domain": "entry.example.com", "dns_sync_enabled": true, "dns_record_types": "a", "config_json": `{"method":"2022-blake3-aes-128-gcm"}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
 
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
 	tasks, err := db.ListTasksByServer(context.Background(), serverID, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -2892,8 +2892,8 @@ func TestDeploymentSyncsDNSBeforeCreatingTasks(t *testing.T) {
 		t.Fatalf("deployment created tasks despite failed DNS sync: %#v", tasks)
 	}
 
-	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	if postedRecord["type"] != "A" || postedRecord["name"] != "entry.example.com" || postedRecord["content"] != "203.0.113.10" || postedRecord["proxied"] != false || postedRecord["comment"] != "OBoard: 入口 dns-ss / 服务器 edge" {
 		t.Fatalf("unexpected Cloudflare record payload: %#v", postedRecord)
 	}
@@ -2904,7 +2904,7 @@ func TestDeploymentSyncsDNSBeforeCreatingTasks(t *testing.T) {
 	if storedInbound.DNSSyncError != "" || storedInbound.DNSSyncStatus == "" || storedInbound.DNSLastSyncedAt == nil {
 		t.Fatalf("sync result not persisted: %#v", storedInbound)
 	}
-	manual := request(t, h, http.MethodPost, "/api/v2/ui/dns-sync", token, map[string]any{"inbound_id": inboundID}, http.StatusOK)
+	manual := request(t, h, http.MethodPost, "/api/v1/ui/dns-sync", token, map[string]any{"inbound_id": inboundID}, http.StatusOK)
 	if manual["success_count"] != float64(1) {
 		t.Fatalf("unexpected manual DNS sync result: %#v", manual)
 	}
@@ -2919,8 +2919,8 @@ func TestDeployFailsTasksForOfflineAgentImmediately(t *testing.T) {
 	ctx := context.Background()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	offline := &model.Server{Name: "offline-edge", AgentID: "agent-offline", AgentTokenHash: security.HashSecret("token-offline"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOffline}
@@ -2931,7 +2931,7 @@ func TestDeployFailsTasksForOfflineAgentImmediately(t *testing.T) {
 		}
 	}
 
-	deployment := request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	deployment := request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	tasks := deployment["tasks"].([]any)
 	if len(tasks) == 0 {
 		t.Fatalf("expected deployment tasks, got %#v", deployment)
@@ -3107,8 +3107,8 @@ func TestAgentsUpdateAllCreatesTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	online := &model.Server{Name: "online", AgentID: "agent-1", AgentTokenHash: security.HashSecret("t1"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
@@ -3120,7 +3120,7 @@ func TestAgentsUpdateAllCreatesTasks(t *testing.T) {
 		}
 	}
 
-	res := request(t, h, http.MethodPost, "/api/v2/ui/agents/update-all", token, map[string]any{}, http.StatusAccepted)
+	res := request(t, h, http.MethodPost, "/api/v1/ui/agents/update-all", token, map[string]any{}, http.StatusAccepted)
 	summary := res["summary"].(map[string]any)
 	if int(summary["total"].(float64)) != 3 {
 		t.Fatalf("total = %#v, want 3", summary)
@@ -3149,18 +3149,18 @@ func TestDeploymentListenerConflictQueuesNoPartialTasks(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	first := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "first", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
-	second := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "second", "public_ipv4": "203.0.113.11", "listen_ip": "0.0.0.0", "port_range_start": 11000, "port_range_end": 11010}, http.StatusCreated)
+	first := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "first", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	second := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "second", "public_ipv4": "203.0.113.11", "listen_ip": "0.0.0.0", "port_range_start": 11000, "port_range_end": 11010}, http.StatusCreated)
 	firstID := int64(first["server"].(map[string]any)["id"].(float64))
 	secondID := int64(second["server"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": secondID, "name": "core-443", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/port-forwards", token, map[string]any{"name": "forward-443", "source_server_id": secondID, "target_server_id": firstID, "listen_ip": "192.0.2.20", "listen_port": 443, "target_address": "203.0.113.10", "target_port": 8443, "protocol": "tcp", "backend": "builtin", "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": secondID, "name": "core-443", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/port-forwards", token, map[string]any{"name": "forward-443", "source_server_id": secondID, "target_server_id": firstID, "listen_ip": "192.0.2.20", "listen_port": 443, "target_address": "203.0.113.10", "target_port": 8443, "protocol": "tcp", "backend": "builtin", "config_json": `{}`, "enabled": true}, http.StatusCreated)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
 	tasks, err := db.ListTasks(context.Background(), 100)
 	if err != nil {
 		t.Fatal(err)
@@ -3178,25 +3178,25 @@ func TestDisabledProxyPathDoesNotBlockPageDataOrDeployment(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
 
-	serverC := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
 
 	// Build a branch while it is disabled, then force a shape that path semantics
 	// reject: a transparent forward after sing-box already decrypted the traffic.
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": false}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": false}, http.StatusCreated)
 	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "singbox"}, http.StatusCreated)
 	steps, err := db.ListProxyPathStepsForPath(context.Background(), pathID)
 	if err != nil {
 		t.Fatal(err)
@@ -3211,8 +3211,8 @@ func TestDisabledProxyPathDoesNotBlockPageDataOrDeployment(t *testing.T) {
 
 	// A disabled half-configured branch must not take down the page or block the
 	// deployment of every other server.
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 
 	// Enabling it is the point where the operator must be told it is invalid. The
 	// complete projection runs before any write, so neither the row nor the
@@ -3221,7 +3221,7 @@ func TestDisabledProxyPathDoesNotBlockPageDataOrDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodPatch, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
+	request(t, h, http.MethodPatch, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, map[string]any{"enabled": true}, http.StatusBadRequest)
 	afterRevision, err := db.ConfigurationRevision(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -3246,21 +3246,21 @@ func TestProxyPathStepConfigDropsUnsupportedKeys(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
 
 	// internal_port is read by the config generator. Accepting it would bypass
 	// port allocation and desynchronize the plan from the generated config.
-	step := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{"chain_method":"2022-blake3-aes-256-gcm","internal_port":45678,"unknown":"x"}`}, http.StatusCreated)
+	step := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox", "config_json": `{"chain_method":"2022-blake3-aes-256-gcm","internal_port":45678,"unknown":"x"}`}, http.StatusCreated)
 	cfg := map[string]any{}
 	if err := json.Unmarshal([]byte(step["proxy_path_step"].(map[string]any)["config_json"].(string)), &cfg); err != nil {
 		t.Fatal(err)
@@ -3275,7 +3275,7 @@ func TestProxyPathStepConfigDropsUnsupportedKeys(t *testing.T) {
 		t.Fatalf("chain_method must survive: %#v", cfg)
 	}
 	// An invalid forward backend is rejected instead of being stored verbatim.
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "port_forward", "config_json": `{"backend":"bogus"}`}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverAID, "transport_mode": "port_forward", "config_json": `{"backend":"bogus"}`}, http.StatusBadRequest)
 }
 
 func TestProxyPathStepDeleteKeepsChainWhenValidationFails(t *testing.T) {
@@ -3286,27 +3286,27 @@ func TestProxyPathStepDeleteKeepsChainWhenValidationFails(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	serverC := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
+	serverC := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "C", "entry_ip_mode": "custom", "entry_address": "203.0.113.3", "listen_ip": "0.0.0.0", "port_range_start": 32000, "port_range_end": 32100}, http.StatusCreated)
 	serverCID := int64(serverC["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
 
 	// A transparent prefix whose processing hop is the second step.
-	first := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
+	first := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "port_forward"}, http.StatusCreated)
 	firstID := int64(first["proxy_path_step"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 2, "node_type": "server_inbound", "server_id": serverCID, "transport_mode": "port_forward"}, http.StatusCreated)
 
 	// Deleting from the first hop removes the whole chain, so the path goes too.
-	result := request(t, h, http.MethodDelete, "/api/v2/ui/proxy-path-steps/"+itoa(firstID), token, nil, http.StatusOK)
+	result := request(t, h, http.MethodDelete, "/api/v1/ui/proxy-path-steps/"+itoa(firstID), token, nil, http.StatusOK)
 	if result["path_deleted"] != true || int(result["deleted_steps"].(float64)) != 2 {
 		t.Fatalf("delete result = %#v", result)
 	}
@@ -3327,20 +3327,20 @@ func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(created["proxy_path"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	allocations, err := db.ListProxyPathPortAllocations(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -3356,8 +3356,8 @@ func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
 	// A manual inbound must not be allowed to take a persisted generated port.
 	// Letting the write succeed makes the next deployment fail after the
 	// operator has already saved an apparently valid topology.
-	request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverBID, "name": "squatter", "protocol": "vless", "listen_ip": "0.0.0.0", "port": assigned, "config_json": `{}`, "enabled": true}, http.StatusConflict)
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverBID, "name": "squatter", "protocol": "vless", "listen_ip": "0.0.0.0", "port": assigned, "config_json": `{}`, "enabled": true}, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	after, err := db.ListProxyPathPortAllocations(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -3367,8 +3367,8 @@ func TestDeploymentPersistsAndReusesGeneratedPorts(t *testing.T) {
 	}
 
 	// Removing the branch releases the record so the port returns to the pool.
-	request(t, h, http.MethodDelete, "/api/v2/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodDelete, "/api/v1/ui/proxy-paths/"+itoa(pathID), token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 	released, err := db.ListProxyPathPortAllocations(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -3386,23 +3386,23 @@ func TestProxyPathStepDeletePreservesRootRoutingRulesAsDirectPath(t *testing.T) 
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
-	serverA := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
+	serverA := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "A", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 30000, "port_range_end": 30100}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
-	serverB := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
+	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "B", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 31000, "port_range_end": 31100}, http.StatusCreated)
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
-	inbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverAID, "name": "entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
 	inboundID := int64(inbound["inbound"].(map[string]any)["id"].(float64))
-	path := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": inboundID, "enabled": true}, http.StatusCreated)
 	pathID := int64(path["proxy_path"].(map[string]any)["id"].(float64))
-	step := request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
+	step := request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": pathID, "position": 1, "node_type": "server_inbound", "server_id": serverBID, "transport_mode": "singbox"}, http.StatusCreated)
 	stepID := int64(step["proxy_path_step"].(map[string]any)["id"].(float64))
-	rule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": "all-via-eth0", "match_json": `{}`, "action": "interface", "interface_name": "eth0", "enabled": true}, http.StatusCreated)
+	rule := request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": "all-via-eth0", "match_json": `{}`, "action": "interface", "interface_name": "eth0", "enabled": true}, http.StatusCreated)
 	ruleID := int64(rule["routing_rule"].(map[string]any)["id"].(float64))
 
-	deleted := request(t, h, http.MethodDelete, "/api/v2/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
+	deleted := request(t, h, http.MethodDelete, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
 	if deleted["path_deleted"] != false || int(deleted["deleted_steps"].(float64)) != 1 {
 		t.Fatalf("delete result = %#v", deleted)
 	}
@@ -3414,7 +3414,7 @@ func TestProxyPathStepDeletePreservesRootRoutingRulesAsDirectPath(t *testing.T) 
 	if err != nil || storedRule.ProxyPathID == nil || *storedRule.ProxyPathID != pathID || storedRule.StageStepID != nil {
 		t.Fatalf("root routing rule disappeared after removing its downstream hop: %#v err=%v", storedRule, err)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 }
 
 func TestTrustedForwardAgentBuildGateAndSecretScrubbing(t *testing.T) {
@@ -3510,10 +3510,10 @@ func TestDNSListSetDefault(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/dns-lists", token, nil, http.StatusOK)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/dns-lists", token, nil, http.StatusOK)
 	defaults := listed["dns_lists"].([]any)
 	var defaultBootstrapID int64
 	for _, raw := range defaults {
@@ -3526,13 +3526,13 @@ func TestDNSListSetDefault(t *testing.T) {
 		{"tag": "one", "transport": "doh", "server": "global.novaxns.one", "port": 443, "path": "/@hockey2168/dns-query", "tls_name": "global.novaxns.one"},
 		{"tag": "two", "transport": "doq", "server": "dns.quad9.net", "port": 853, "tls_name": "dns.quad9.net"},
 	}
-	created := request(t, h, http.MethodPost, "/api/v2/ui/dns-lists", token, map[string]any{"name": "default candidate", "kind": "encrypted", "candidates": candidates}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/dns-lists", token, map[string]any{"name": "default candidate", "kind": "encrypted", "candidates": candidates}, http.StatusCreated)
 	list := created["dns_list"].(map[string]any)
-	setDefault := request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-lists/%d/set-default", int64(list["id"].(float64))), token, nil, http.StatusOK)["dns_list"].(map[string]any)
+	setDefault := request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-lists/%d/set-default", int64(list["id"].(float64))), token, nil, http.StatusOK)["dns_list"].(map[string]any)
 	if setDefault["protected"] != true || setDefault["enabled"] != true {
 		t.Fatalf("set-default response = %#v", setDefault)
 	}
-	after := request(t, h, http.MethodGet, "/api/v2/ui/dns-lists", token, nil, http.StatusOK)["dns_lists"].([]any)
+	after := request(t, h, http.MethodGet, "/api/v1/ui/dns-lists", token, nil, http.StatusOK)["dns_lists"].([]any)
 	encryptedDefaults := 0
 	for _, raw := range after {
 		item := raw.(map[string]any)
@@ -3553,10 +3553,10 @@ func TestDNSListSetDefault(t *testing.T) {
 	if encryptedDefaults != 1 {
 		t.Fatalf("encrypted defaults = %d, want 1", encryptedDefaults)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/dns-lists/999999/set-default", token, nil, http.StatusNotFound)
-	disabled := request(t, h, http.MethodPost, "/api/v2/ui/dns-lists", token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "candidates": candidates}, http.StatusCreated)["dns_list"].(map[string]any)
-	request(t, h, http.MethodPut, fmt.Sprintf("/api/v2/ui/dns-lists/%d", int64(disabled["id"].(float64))), token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "enabled": false, "candidates": candidates}, http.StatusOK)
-	request(t, h, http.MethodPost, fmt.Sprintf("/api/v2/ui/dns-lists/%d/set-default", int64(disabled["id"].(float64))), token, nil, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/dns-lists/999999/set-default", token, nil, http.StatusNotFound)
+	disabled := request(t, h, http.MethodPost, "/api/v1/ui/dns-lists", token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "candidates": candidates}, http.StatusCreated)["dns_list"].(map[string]any)
+	request(t, h, http.MethodPut, fmt.Sprintf("/api/v1/ui/dns-lists/%d", int64(disabled["id"].(float64))), token, map[string]any{"name": "disabled candidate", "kind": "encrypted", "enabled": false, "candidates": candidates}, http.StatusOK)
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-lists/%d/set-default", int64(disabled["id"].(float64))), token, nil, http.StatusBadRequest)
 }
 
 func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
@@ -3566,8 +3566,8 @@ func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	ctx := context.Background()
 	server := &model.Server{Name: "port-edge", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline}
@@ -3581,7 +3581,7 @@ func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
 
 	// Narrowing the public range below a managed chain-service port must be
 	// rejected with the preview instead of silently saving.
-	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100}, http.StatusConflict)
+	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100}, http.StatusConflict)
 	if blocked["error"] != "port_migration_required" {
 		t.Fatalf("conflict body = %#v", blocked)
 	}
@@ -3608,7 +3608,7 @@ func TestServerPortRangePatchRejectsManagedPortExclusion(t *testing.T) {
 	}
 
 	// Widening the range touches nothing and saves normally.
-	widened := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 9000, "port_range_end": 20000}, http.StatusOK)
+	widened := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "port-edge", "listen_ip": "0.0.0.0", "port_range_start": 9000, "port_range_end": 20000}, http.StatusOK)
 	if updated := widened["server"].(map[string]any); int(updated["port_range_start"].(float64)) != 9000 {
 		t.Fatalf("widened server = %#v", updated)
 	}
@@ -3621,8 +3621,8 @@ func TestServerPortRangePatchSeparatesPublicAndInternalPools(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 	ctx := context.Background()
 	server := &model.Server{Name: "pool-edge", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999, Status: model.ServerOnline}
@@ -3637,10 +3637,10 @@ func TestServerPortRangePatchSeparatesPublicAndInternalPools(t *testing.T) {
 	}
 
 	// Moving the public range must not be blocked by loopback allocations.
-	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 30000, "internal_port_range_end": 59999}, http.StatusOK)
+	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 30000, "internal_port_range_end": 59999}, http.StatusOK)
 
 	// Excluding the loopback allocation from the internal pool is a conflict.
-	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 60000, "internal_port_range_end": 61000}, http.StatusConflict)
+	blocked := request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", server.ID), token, map[string]any{"name": "pool-edge", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20100, "internal_port_range_start": 60000, "internal_port_range_end": 61000}, http.StatusConflict)
 	if blocked["error"] != "port_migration_required" {
 		t.Fatalf("conflict body = %#v", blocked)
 	}

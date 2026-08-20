@@ -225,10 +225,10 @@ func TestSubscriptionAbnormalNotificationQueuesOncePerHour(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	createdChannel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "sub", "type": "telegram", "enabled": true, "events": notificationSubscriptionAbnormal, "config_json": `{}`}, http.StatusCreated)["notification_channel"].(map[string]any)
+	createdChannel := request(t, h, http.MethodPost, "/api/v1/ui/notification-channels", adminToken, map[string]any{"name": "sub", "type": "telegram", "enabled": true, "events": notificationSubscriptionAbnormal, "config_json": `{}`}, http.StatusCreated)["notification_channel"].(map[string]any)
 	bindTestTelegramChannel(t, srv, db, int64(createdChannel["id"].(float64)), 1)
 	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "alice-uuid", ProxyPassword: "alice-pass", SubscriptionToken: "sub-token"}
 	if err := db.CreateUser(context.Background(), user); err != nil {
@@ -398,14 +398,14 @@ func TestServerPatchKeepsOfflineNotifyDisabled(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "quiet", "offline_notify_enabled": false}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "quiet", "offline_notify_enabled": false}, http.StatusCreated)
 	id := int64(created["server"].(map[string]any)["id"].(float64))
-	request(t, h, http.MethodPatch, "/api/v2/ui/servers/"+strconv.FormatInt(id, 10), token, map[string]any{"name": "quiet", "offline_notify_enabled": false, "offline_after_seconds": 0}, http.StatusOK)
-	request(t, h, http.MethodPatch, "/api/v2/ui/servers/"+strconv.FormatInt(id, 10), token, map[string]any{"name": "quiet-renamed"}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+strconv.FormatInt(id, 10), token, map[string]any{"name": "quiet", "offline_notify_enabled": false, "offline_after_seconds": 0}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+strconv.FormatInt(id, 10), token, map[string]any{"name": "quiet-renamed"}, http.StatusOK)
 	server, err := db.GetServer(ctx, id)
 	if err != nil {
 		t.Fatal(err)

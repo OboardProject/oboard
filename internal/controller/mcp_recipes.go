@@ -14,7 +14,7 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const mcpRecipeVersion = "2"
+const mcpRecipeVersion = "1"
 
 type mcpRecipe struct {
 	ID      string

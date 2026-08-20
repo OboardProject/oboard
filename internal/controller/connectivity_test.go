@@ -225,11 +225,11 @@ func TestServerConnectivityAPIWindowsAndErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := newTestServer(db, "test-secret", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
 	for _, key := range []string{"", "1h", "6h", "12h", "24h", "7d", "30d"} {
-		path := "/api/v2/ui/servers/" + strconv.FormatInt(server.ID, 10) + "/connectivity"
+		path := "/api/v1/ui/servers/" + strconv.FormatInt(server.ID, 10) + "/connectivity"
 		if key != "" {
 			path += "?window=" + key
 		}
@@ -256,6 +256,6 @@ func TestServerConnectivityAPIWindowsAndErrors(t *testing.T) {
 			t.Fatalf("outages must be a JSON array: %#v", response["outages"])
 		}
 	}
-	request(t, handler, http.MethodGet, "/api/v2/ui/servers/"+strconv.FormatInt(server.ID, 10)+"/connectivity?window=1y", token, nil, http.StatusBadRequest)
-	request(t, handler, http.MethodGet, "/api/v2/ui/servers/999999/connectivity", token, nil, http.StatusNotFound)
+	request(t, handler, http.MethodGet, "/api/v1/ui/servers/"+strconv.FormatInt(server.ID, 10)+"/connectivity?window=1y", token, nil, http.StatusBadRequest)
+	request(t, handler, http.MethodGet, "/api/v1/ui/servers/999999/connectivity", token, nil, http.StatusNotFound)
 }

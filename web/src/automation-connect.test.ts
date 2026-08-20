@@ -11,14 +11,14 @@ import {
 describe('automation MCP connection artifacts', () => {
   it('normalizes the public controller URL and preserves its base path', () => {
     expect(normalizeAutomationControllerURL(' https://panel.example.com/oboard/// ')).toBe('https://panel.example.com/oboard')
-    expect(automationMCPURL('https://panel.example.com/oboard/')).toBe('https://panel.example.com/oboard/mcp')
+    expect(automationMCPURL('https://panel.example.com/oboard/')).toBe('https://panel.example.com/oboard/api/v1/mcp')
     expect(normalizeAutomationControllerURL('https://user:secret@example.com')).toBe('')
     expect(normalizeAutomationControllerURL('https://panel.example.com/?token=secret')).toBe('')
   })
 
   it.each<AutomationConnectClient>(['codex', 'claude', 'generic'])('generates a complete %s OAuth guide without a secret', client => {
     const artifacts = automationConnectArtifacts(client, 'https://panel.example.com/base')
-    expect(artifacts.config).toContain('https://panel.example.com/base/mcp')
+    expect(artifacts.config).toContain('https://panel.example.com/base/api/v1/mcp')
     expect(artifacts.prompt).toContain('Streamable HTTP')
     expect(artifacts.prompt).toContain('保留其他服务器配置')
     expect(artifacts.prompt).not.toContain('obk_super-secret-token')
@@ -30,7 +30,7 @@ describe('automation MCP connection artifacts', () => {
     const codex = automationConnectArtifacts('codex', 'https://panel.example.com')
     expect(codex.command).toContain('codex mcp login oboard')
     expect(codex.config).toContain('auth = "oauth"')
-    expect(codex.config).toContain('oauth_resource = "https://panel.example.com/mcp"')
+    expect(codex.config).toContain('oauth_resource = "https://panel.example.com/api/v1/mcp"')
     expect(codex.config).toContain('default_tools_approval_mode = "writes"')
     for (const scope of codexOAuthScopes) expect(codex.config).toContain(`"${scope}"`)
     for (const scope of codexOAuthRisk2Scopes) expect(codex.config).toContain(`"${scope}"`)
@@ -55,7 +55,7 @@ describe('automation MCP connection artifacts', () => {
 
   it('uses RFC well-known locations when the controller has a base path', () => {
     const generic = automationConnectArtifacts('generic', 'https://panel.example.com/qzq')
-    expect(generic.config).toContain('https://panel.example.com/.well-known/oauth-protected-resource/qzq/mcp')
+    expect(generic.config).toContain('https://panel.example.com/.well-known/oauth-protected-resource/qzq/api/v1/mcp')
     expect(generic.config).toContain('https://panel.example.com/.well-known/oauth-authorization-server/qzq')
     expect(generic.config).not.toContain('/qzq/.well-known/')
   })

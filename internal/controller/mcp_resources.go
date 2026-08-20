@@ -99,6 +99,7 @@ func (s *Server) registerMCPResources(server *mcp.Server, principal application.
 		def := def
 		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: def.uri, Title: def.title, Name: def.name, Description: def.description, MIMEType: "application/json"}, s.mcpResourceReadHandler(def))
 	}
+	s.registerMCPCapabilityResources(server, principal)
 }
 
 func (s *Server) mcpResourceTemplateDefs() []mcpResourceDef {
@@ -187,6 +188,8 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 		return s.queryMCPResource(ctx, def.capability, json.RawMessage(`{}`))
 	case "query_id":
 		return s.queryMCPResourceTemplate(ctx, def, uri)
+	case "query_capability", "query_capability_template":
+		return s.readMCPCapabilityResource(ctx, principal, def, uri)
 	case "query_health":
 		payload, err := s.queryMCPResourceTemplate(ctx, def, uri)
 		if err != nil {
@@ -711,6 +714,28 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 		return err
 	}
 	var input any
+	if uri == "oboard://capability/"+capabilityName {
+		return nil
+	}
+	if strings.HasPrefix(uri, "oboard://capability/"+capabilityName+"/") {
+		property := mcpCapabilitySingleScalarID(descriptor)
+		if property == "" {
+			return errors.New("capability has no scalar resource template")
+		}
+		id := strings.TrimPrefix(uri, "oboard://capability/"+capabilityName+"/")
+		if id == "" || strings.ContainsAny(id, "/?#") {
+			return errors.New("invalid capability resource id")
+		}
+		value := any(id)
+		if descriptorSchemaProperty(descriptor, property) == "integer" {
+			parsed, parseErr := strconv.ParseInt(id, 10, 64)
+			if parseErr != nil || parsed <= 0 {
+				return errors.New("invalid " + property)
+			}
+			value = parsed
+		}
+		input = map[string]any{property: value}
+	}
 	switch capabilityName {
 	case "servers.get":
 		id := strings.TrimPrefix(uri, "oboard://servers/")
@@ -945,7 +970,7 @@ func (s *Server) staticMCPResource(ctx context.Context, uri string) (any, error)
 	}
 	switch uri {
 	case "oboard://system/version":
-		return map[string]any{"controller": version.Version, "api": "v2", "mcp_protocol": "2026-07-28", "mcp_transport": "streamable_http", "agent_protocol": "v1"}, nil
+		return map[string]any{"controller": version.Version, "api": "v1", "mcp_protocol": "2026-07-28", "mcp_transport": "streamable_http", "agent_protocol": "v1"}, nil
 	case "oboard://system/capabilities", "oboard://docs/capabilities":
 		return mcpCapabilityViews(s.capabilities.ListMCP(principal)), nil
 	case "oboard://context/bootstrap":

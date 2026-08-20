@@ -208,12 +208,22 @@ func (m *Manager) CreateLocal(name string) (string, *os.File, error) {
 }
 
 func (m *Manager) Create(ctx context.Context, password string) (Created, error) {
+	return m.CreateWithID(ctx, password, "")
+}
+
+func (m *Manager) CreateWithID(ctx context.Context, password, requestedID string) (Created, error) {
 	if strings.TrimSpace(password) == "" {
 		return Created{}, errors.New("请设置备份恢复密码")
+	}
+	if requestedID != "" && !validBackupID(requestedID) {
+		return Created{}, errors.New("备份文件ID无效")
 	}
 	id, err := randomID()
 	if err != nil {
 		return Created{}, err
+	}
+	if requestedID != "" {
+		id = requestedID
 	}
 	work, err := os.MkdirTemp(m.config.Root, ".backup-")
 	if err != nil {
@@ -764,6 +774,10 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func NewID() (string, error) {
+	return randomID()
 }
 
 func validBackupID(value string) bool {

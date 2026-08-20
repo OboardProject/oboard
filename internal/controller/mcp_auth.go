@@ -18,7 +18,7 @@ import (
 
 type mcpGrantPrincipalContextKey struct{}
 
-// mcpAuth is the ONLY authentication path for /mcp. It accepts OAuth 2.1
+// mcpAuth is the ONLY authentication path for /api/v1/mcp. It accepts OAuth 2.1
 // Authorization Code + PKCE S256 Bearer access tokens bound to the exact
 // canonical MCP resource. Browser session cookies, API keys (obk_),
 // Basic/Client Secret auth, URL query tokens, and custom signed tokens are
@@ -39,7 +39,7 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 			s.writeMCPInvalidBearer(w, r)
 			return
 		}
-		resource := strings.TrimRight(canonical, "/") + "/mcp"
+		resource := strings.TrimRight(canonical, "/") + "/api/v1/mcp"
 		storedToken, _, userStatus, _, err := s.store.AuthenticateMCPAccessToken(r.Context(), security.HashAPISecret(s.sessionSecret, token), resource, time.Now().UTC())
 		if err != nil || errors.Is(err, sql.ErrNoRows) {
 			s.writeMCPInvalidBearer(w, r)

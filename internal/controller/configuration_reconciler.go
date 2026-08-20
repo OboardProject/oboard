@@ -208,7 +208,7 @@ func configurationMutationPath(path, method string) bool {
 }
 
 func normalizeConfigurationPath(path string) string {
-	for _, prefix := range []string{"/api/v2/ui/", "/api/v2/", "/api/v1/"} {
+	for _, prefix := range []string{"/api/v1/ui/", "/api/v1/", "/api/v1/"} {
 		if strings.HasPrefix(path, prefix) {
 			return strings.TrimPrefix(path, prefix)
 		}

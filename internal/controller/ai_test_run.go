@@ -63,7 +63,7 @@ func validateAITestCapability(capability *model.AIProviderCapability) error {
 	return nil
 }
 
-func (s *Server) apiV2AIProviderTest(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1AIProviderTest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -178,7 +178,7 @@ func auditTestMessage(capability *model.AIProviderCapability) string {
 	}
 }
 
-func (s *Server) apiV2AIProviderTestLogs(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1AIProviderTestLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return

@@ -43,18 +43,18 @@ func TestConfigurationPerformanceSLO(t *testing.T) {
 		defer db.Close()
 		srv := newTestServer(db, "test-secret", "")
 		handler := srv.Handler()
-		request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-		login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+		request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+		login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 		token := login["token"].(string)
-		created := request(t, handler, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "perf-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, http.StatusCreated)
+		created := request(t, handler, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "perf-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, http.StatusCreated)
 		serverID := int64(created["server"].(map[string]any)["id"].(float64))
 
 		// Warm the same route and SQLite statement/cache path before sampling.
-		request(t, handler, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", serverID), token, map[string]any{"name": "perf-warm"}, http.StatusOK)
+		request(t, handler, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, map[string]any{"name": "perf-warm"}, http.StatusOK)
 		samples := make([]time.Duration, 0, configurationPerformanceSamples)
 		for index := 0; index < configurationPerformanceSamples; index++ {
 			started := time.Now()
-			request(t, handler, http.MethodPatch, fmt.Sprintf("/api/v2/ui/servers/%d", serverID), token, map[string]any{"name": fmt.Sprintf("perf-%02d", index)}, http.StatusOK)
+			request(t, handler, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, map[string]any{"name": fmt.Sprintf("perf-%02d", index)}, http.StatusOK)
 			samples = append(samples, time.Since(started))
 		}
 		p95 := durationP95(samples)

@@ -50,7 +50,7 @@ type aiEndpointRequest struct {
 	AllowPrivateNetwork *bool             `json:"allow_private_network"`
 }
 
-func (s *Server) apiV2AIProviders(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1AIProviders(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		items, err := s.store.ListAIProviders(r.Context())
@@ -153,8 +153,8 @@ func normalizeAIProviderCreate(request aiProviderRequest) (*model.AIProvider, []
 	return item, endpoints, nil
 }
 
-func (s *Server) apiV2AIProvider(w http.ResponseWriter, r *http.Request) {
-	parts := pathParts(r.URL.Path, "/api/v2/ai/providers/")
+func (s *Server) apiV1AIProvider(w http.ResponseWriter, r *http.Request) {
+	parts := pathParts(r.URL.Path, "/api/v1/ai/providers/")
 	if len(parts) == 0 || parts[0] == "" {
 		v2Error(w, r, http.StatusBadRequest, "invalid_id", "缺少 Provider ID")
 		return

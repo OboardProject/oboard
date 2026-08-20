@@ -83,22 +83,22 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	app.controllerUpdater = controllerupdate.NewClient(socketPath)
 	app.controllerBackupDir = filepath.Join(root, "backups")
 	handler := app.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
-	status := request(t, handler, http.MethodGet, "/api/v2/ui/controller-update", adminToken, nil, http.StatusOK)
+	status := request(t, handler, http.MethodGet, "/api/v1/ui/controller-update", adminToken, nil, http.StatusOK)
 	if _, exists := status["install_method"]; exists || status["channel"] != "pinned" || status["status"] != "pinned" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
 	if status["auto_update_interval_hours"] != float64(controllerUpdateDefaultIntervalHours) {
 		t.Fatalf("unexpected default update interval: %#v", status["auto_update_interval_hours"])
 	}
-	settingsResponse := request(t, handler, http.MethodGet, "/api/v2/ui/settings", adminToken, nil, http.StatusOK)
+	settingsResponse := request(t, handler, http.MethodGet, "/api/v1/ui/settings", adminToken, nil, http.StatusOK)
 	defaults := settingsResponse["settings"].(map[string]any)
 	if defaults[agentAutoUpdateSetting] != false || defaults[subscriptionRelayAutoUpdateSetting] != false || defaults[updateWindowEnabledSetting] != false || defaults[updateWindowStartHourSetting] != float64(3) || defaults[updateWindowEndHourSetting] != float64(7) {
 		t.Fatalf("unexpected managed update defaults: %#v", defaults)
 	}
-	settingsResponse = request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{
+	settingsResponse = request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{
 		agentAutoUpdateSetting: true, subscriptionRelayAutoUpdateSetting: true,
 		updateWindowEnabledSetting: true, updateWindowStartHourSetting: 22, updateWindowEndHourSetting: 4,
 	}, http.StatusOK)
@@ -106,24 +106,24 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	if saved[agentAutoUpdateSetting] != true || saved[subscriptionRelayAutoUpdateSetting] != true || saved[updateWindowEnabledSetting] != true || saved[updateWindowStartHourSetting] != float64(22) || saved[updateWindowEndHourSetting] != float64(4) {
 		t.Fatalf("unexpected managed update settings: %#v", saved)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{updateWindowStartHourSetting: 24}, http.StatusBadRequest)
-	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/check", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{updateWindowStartHourSetting: 24}, http.StatusBadRequest)
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/check", adminToken, nil, http.StatusOK)
 	for _, interval := range []int{1, 6, 24, 72, 168} {
-		settings := request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusOK)
+		settings := request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusOK)
 		if got := settings["settings"].(map[string]any)["controller_auto_update_interval_hours"]; got != float64(interval) {
 			t.Fatalf("unexpected saved update interval: got %#v, want %d", got, interval)
 		}
 	}
 	for _, interval := range []int{2, 12} {
-		request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusBadRequest)
+		request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{"controller_auto_update_interval_hours": interval}, http.StatusBadRequest)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
-	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/install", adminToken, nil, http.StatusConflict)
-	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/cancel", adminToken, nil, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/install", adminToken, nil, http.StatusConflict)
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/cancel", adminToken, nil, http.StatusConflict)
 
-	request(t, handler, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	viewerLogin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
-	request(t, handler, http.MethodGet, "/api/v2/ui/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
+	request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewerLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v1/ui/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
 
 	firstBackup, err := app.createControllerBackup(context.Background())
 	if err != nil {
@@ -248,7 +248,7 @@ func TestWriteControllerUpdateStatusLocalizesUpdaterError(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v2/ui/controller-update", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/ui/controller-update", nil)
 	app.writeControllerUpdateStatus(recorder, request, controllerupdate.Status{LastError: "updater: read-only file system"})
 	var decoded struct {
 		LastError string `json:"last_error"`
@@ -366,7 +366,7 @@ func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
 
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v2/ui/controller-update/install", nil).WithContext(requestCtx)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ui/controller-update/install", nil).WithContext(requestCtx)
 	handlerDone := make(chan struct{})
 	go func() {
 		app.controllerUpdateInstall(recorder, request)
@@ -536,16 +536,16 @@ func TestControllerUpdateChannelAPI(t *testing.T) {
 	app := newTestServer(db, "test-secret", "")
 	app.controllerUpdater = controllerupdate.NewClient(socketPath)
 	handler := app.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
 
-	status := request(t, handler, http.MethodGet, "/api/v2/ui/controller-update", adminToken, nil, http.StatusOK)
+	status := request(t, handler, http.MethodGet, "/api/v1/ui/controller-update", adminToken, nil, http.StatusOK)
 	if status["channel"] != "pinned" || status["status"] != "pinned" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/channel", adminToken, map[string]any{"channel": "nightly"}, http.StatusBadRequest)
-	switched := request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/channel", adminToken, map[string]any{"channel": "dev"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/channel", adminToken, map[string]any{"channel": "nightly"}, http.StatusBadRequest)
+	switched := request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/channel", adminToken, map[string]any{"channel": "dev"}, http.StatusOK)
 	if switched["channel"] != "dev" || switched["status"] != "idle" {
 		t.Fatalf("unexpected switched status: %#v", switched)
 	}
@@ -554,7 +554,7 @@ func TestControllerUpdateChannelAPI(t *testing.T) {
 		t.Fatalf("channel was not persisted: %q, %v", data, err)
 	}
 
-	request(t, handler, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	viewerLogin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
-	request(t, handler, http.MethodPost, "/api/v2/ui/controller-update/channel", viewerLogin["token"].(string), map[string]any{"channel": "stable"}, http.StatusForbidden)
+	request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewerLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/channel", viewerLogin["token"].(string), map[string]any{"channel": "stable"}, http.StatusForbidden)
 }

@@ -378,5 +378,5 @@ func TestViewerCannotReadConnectionAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request(t, newTestServer(db, "test-secret", "").Handler(), http.MethodGet, "/api/v2/ui/audit/overview", token, nil, http.StatusForbidden)
+	request(t, newTestServer(db, "test-secret", "").Handler(), http.MethodGet, "/api/v1/ui/audit/overview", token, nil, http.StatusForbidden)
 }

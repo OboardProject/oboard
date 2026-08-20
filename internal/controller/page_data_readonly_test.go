@@ -16,8 +16,8 @@ import (
 func loginTestAdmin(t *testing.T, db *store.Store) (http.Handler, string) {
 	t.Helper()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	return h, login["token"].(string)
 }
 
@@ -53,7 +53,7 @@ func TestDashboardPageDataDoesNotExpireTasksOrMarkServersOffline(t *testing.T) {
 	}
 	h, token := loginTestAdmin(t, db)
 
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dashboard", token, nil, http.StatusOK)
 	assertTaskStatus(t, db, task.ID, "pending")
 	assertServerStatus(t, db, server.ID, model.ServerOnline)
 
@@ -76,7 +76,7 @@ func TestServersGETDoesNotMarkServersOffline(t *testing.T) {
 	server := seedStaleOnlineServer(t, db, now)
 	h, token := loginTestAdmin(t, db)
 
-	request(t, h, http.MethodGet, "/api/v2/ui/servers", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/servers", token, nil, http.StatusOK)
 	assertServerStatus(t, db, server.ID, model.ServerOnline)
 
 	srv := newTestServer(db, "test-secret", "")
@@ -104,13 +104,13 @@ func TestTasksGETDoesNotExpireTasks(t *testing.T) {
 	}
 	h, token := loginTestAdmin(t, db)
 
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=tasks", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=tasks", token, nil, http.StatusOK)
 	assertTaskStatus(t, db, task.ID, "pending")
 
-	request(t, h, http.MethodGet, "/api/v2/ui/servers/"+itoa(server.ID)+"/tasks", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/servers/"+itoa(server.ID)+"/tasks", token, nil, http.StatusOK)
 	assertTaskStatus(t, db, task.ID, "pending")
 
-	request(t, h, http.MethodGet, "/api/v2/ui/agent-tasks", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks", token, nil, http.StatusOK)
 	assertTaskStatus(t, db, task.ID, "pending")
 }
 
@@ -157,7 +157,7 @@ func TestProxyPathsPageDataIsReadOnly(t *testing.T) {
 	before := proxyPathTableSnapshot(t, db)
 	h, token := loginTestAdmin(t, db)
 
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
 	after := proxyPathTableSnapshot(t, db)
 	for key := range before {
 		if after[key] != before[key] {

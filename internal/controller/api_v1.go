@@ -25,49 +25,39 @@ import (
 
 type apiPrincipalContextKey struct{}
 
-func (s *Server) registerAPIV2Routes(mux *http.ServeMux) {
-	mux.HandleFunc("/api/v2/openapi.json", s.apiAuth(s.apiV2OpenAPI, model.RoleViewer))
-	mux.HandleFunc("/api/v2/capabilities", s.apiAuth(s.apiV2Capabilities, model.RoleViewer))
-	mux.HandleFunc("/api/v2/query", s.apiAuth(s.apiV2Query, model.RoleViewer))
-	mux.HandleFunc("/api/v2/servers", s.apiAuth(s.apiV2Servers, model.RoleViewer))
-	mux.HandleFunc("/api/v2/servers/", s.apiAuth(s.apiV2Server, model.RoleViewer))
-	mux.HandleFunc("/api/v2/latency-probes", s.apiAuth(s.apiV2LatencyProbes, model.RoleViewer))
-	mux.HandleFunc("/api/v2/users", s.apiAuth(s.apiV2Users, model.RoleViewer))
-	mux.HandleFunc("/api/v2/topology", s.apiAuth(s.apiV2Topology, model.RoleViewer))
-	mux.HandleFunc("/api/v2/audit/incidents", s.apiAuth(s.apiV2AuditIncidents, model.RoleViewer))
-	mux.HandleFunc("/api/v2/audit/incidents/", s.apiAuth(s.apiV2AuditIncident, model.RoleViewer))
-	mux.HandleFunc("/api/v2/node-incidents", s.apiAuth(s.apiV2NodeIncidents, model.RoleViewer))
-	mux.HandleFunc("/api/v2/node-incidents/", s.apiAuth(s.apiV2NodeIncidents, model.RoleViewer))
-	mux.HandleFunc("/api/v2/telegram/binding-code", s.apiAuth(s.apiV2TelegramBindingCode, model.RoleNone))
-	mux.HandleFunc("/api/v2/telegram/bindings", s.apiAuth(s.apiV2TelegramBindings, model.RoleNone))
-	mux.HandleFunc("/api/v2/telegram/bindings/", s.apiAuth(s.apiV2TelegramBindings, model.RoleNone))
-	mux.HandleFunc("/api/v2/ui/telegram/binding-code", s.apiAuth(s.apiV2TelegramBindingCode, model.RoleNone))
-	mux.HandleFunc("/api/v2/ui/telegram/bindings", s.apiAuth(s.apiV2TelegramBindings, model.RoleNone))
-	mux.HandleFunc("/api/v2/ui/telegram/bindings/", s.apiAuth(s.apiV2TelegramBindings, model.RoleNone))
-	mux.HandleFunc("/api/v1/telegram/binding-code", s.apiAuth(s.apiV2TelegramBindingCode, model.RoleNone))
-	mux.HandleFunc("/api/v1/telegram/bindings", s.apiAuth(s.apiV2TelegramBindings, model.RoleNone))
-	mux.HandleFunc("/api/v1/telegram/bindings/", s.apiAuth(s.apiV2TelegramBindings, model.RoleNone))
-	mux.HandleFunc("/api/v2/notification-broadcasts", s.apiAuth(s.apiV2NotificationBroadcasts, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/notification-broadcasts/", s.apiAuth(s.apiV2NotificationBroadcasts, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ui/notification-broadcasts", s.apiAuth(s.apiV2NotificationBroadcasts, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ui/notification-broadcasts/", s.apiAuth(s.apiV2NotificationBroadcasts, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/notification-broadcasts", s.apiAuth(s.apiV2NotificationBroadcasts, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/notification-broadcasts/", s.apiAuth(s.apiV2NotificationBroadcasts, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/changesets", s.apiAuth(s.apiV2Changesets, model.RoleViewer))
-	mux.HandleFunc("/api/v2/changesets/", s.apiAuth(s.apiV2Changeset, model.RoleViewer))
-	mux.HandleFunc("/api/v2/api-principals", s.auth(s.apiPrincipals, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/api-principals/", s.auth(s.apiPrincipalSubroutes, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/providers", s.auth(s.apiV2AIProviders, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/providers/", s.auth(s.apiV2AIProvider, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/provider-models", s.auth(s.apiV2AIProviderModels, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/provider-test", s.auth(s.apiV2AIProviderTest, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/ai/provider-test-logs", s.auth(s.apiV2AIProviderTestLogs, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/approval-policies", s.auth(s.apiV2ApprovalPolicies, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/approval-policies/", s.auth(s.apiV2ApprovalPolicy, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/tool-audits", s.auth(s.apiV2ToolAudits, model.RoleAdmin))
+func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/openapi.json", s.apiAuth(s.apiV1OpenAPI, model.RoleViewer))
+	mux.HandleFunc("/api/v1/capabilities", s.apiAuth(s.apiV1Capabilities, model.RoleViewer))
+	mux.HandleFunc("/api/v1/query", s.apiAuth(s.apiV1Query, model.RoleViewer))
+	mux.HandleFunc("/api/v1/servers", s.apiAuth(s.apiV1Servers, model.RoleViewer))
+	mux.HandleFunc("/api/v1/servers/", s.apiAuth(s.apiV1Server, model.RoleViewer))
+	mux.HandleFunc("/api/v1/latency-probes", s.apiAuth(s.apiV1LatencyProbes, model.RoleViewer))
+	mux.HandleFunc("/api/v1/users", s.apiAuth(s.apiV1Users, model.RoleViewer))
+	mux.HandleFunc("/api/v1/topology", s.apiAuth(s.apiV1Topology, model.RoleViewer))
+	mux.HandleFunc("/api/v1/audit/incidents", s.apiAuth(s.apiV1AuditIncidents, model.RoleViewer))
+	mux.HandleFunc("/api/v1/audit/incidents/", s.apiAuth(s.apiV1AuditIncident, model.RoleViewer))
+	mux.HandleFunc("/api/v1/node-incidents", s.apiAuth(s.apiV1NodeIncidents, model.RoleViewer))
+	mux.HandleFunc("/api/v1/node-incidents/", s.apiAuth(s.apiV1NodeIncidents, model.RoleViewer))
+	mux.HandleFunc("/api/v1/telegram/binding-code", s.apiAuth(s.apiV1TelegramBindingCode, model.RoleNone))
+	mux.HandleFunc("/api/v1/telegram/bindings", s.apiAuth(s.apiV1TelegramBindings, model.RoleNone))
+	mux.HandleFunc("/api/v1/telegram/bindings/", s.apiAuth(s.apiV1TelegramBindings, model.RoleNone))
+	mux.HandleFunc("/api/v1/notification-broadcasts", s.apiAuth(s.apiV1NotificationBroadcasts, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/notification-broadcasts/", s.apiAuth(s.apiV1NotificationBroadcasts, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/changesets", s.apiAuth(s.apiV1Changesets, model.RoleViewer))
+	mux.HandleFunc("/api/v1/changesets/", s.apiAuth(s.apiV1Changeset, model.RoleViewer))
+	mux.HandleFunc("/api/v1/api-principals", s.auth(s.apiPrincipals, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/api-principals/", s.auth(s.apiPrincipalSubroutes, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ai/providers", s.auth(s.apiV1AIProviders, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ai/providers/", s.auth(s.apiV1AIProvider, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ai/provider-models", s.auth(s.apiV1AIProviderModels, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ai/provider-test", s.auth(s.apiV1AIProviderTest, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/ai/provider-test-logs", s.auth(s.apiV1AIProviderTestLogs, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/approval-policies", s.auth(s.apiV1ApprovalPolicies, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/approval-policies/", s.auth(s.apiV1ApprovalPolicy, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/tool-audits", s.auth(s.apiV1ToolAudits, model.RoleAdmin))
 }
 
-func (s *Server) apiV2LatencyProbes(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1LatencyProbes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -90,7 +80,7 @@ func (s *Server) apiV2LatencyProbes(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, map[string]any{"server_id": serverID, "results": items}, nil)
 }
 
-func (s *Server) apiV2AuditIncidents(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1AuditIncidents(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if !principal.HasScope("audit:read") {
 		v2Error(w, r, http.StatusForbidden, "scope_denied", "缺少 audit:read 权限")
@@ -108,8 +98,8 @@ func (s *Server) apiV2AuditIncidents(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
 }
 
-func (s *Server) apiV2AuditIncident(w http.ResponseWriter, r *http.Request) {
-	parts := pathParts(r.URL.Path, "/api/v2/audit/incidents/")
+func (s *Server) apiV1AuditIncident(w http.ResponseWriter, r *http.Request) {
+	parts := pathParts(r.URL.Path, "/api/v1/audit/incidents/")
 	if len(parts) == 0 || parts[0] == "" {
 		v2Error(w, r, http.StatusBadRequest, "invalid_id", "缺少 Incident ID")
 		return
@@ -161,7 +151,7 @@ func (s *Server) apiV2AuditIncident(w http.ResponseWriter, r *http.Request) {
 	v2Error(w, r, http.StatusNotFound, "not_found", "Incident 操作不存在")
 }
 
-func (s *Server) apiV2OpenAPI(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -174,7 +164,7 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 		authorization := strings.TrimSpace(r.Header.Get("Authorization"))
 		token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 		if strings.HasPrefix(token, "obk_") {
-			if r.URL.Path == "/mcp" {
+			if r.URL.Path == "/api/v1/mcp" {
 				s.writeMCPAuthenticationRequired(w, r, true)
 				return
 			}
@@ -184,7 +174,7 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 		if strings.HasPrefix(token, "oba_") {
 			stored, err := s.authenticateOAuthToken(r, token)
 			if err != nil {
-				if r.URL.Path == "/mcp" {
+				if r.URL.Path == "/api/v1/mcp" {
 					s.writeMCPAuthenticationRequired(w, r, true)
 					return
 				}
@@ -196,7 +186,7 @@ func (s *Server) apiAuth(next http.HandlerFunc, minimumRole model.Role) http.Han
 			s.machinePrincipalAuth(next, w, r, principal)
 			return
 		}
-		if r.URL.Path == "/mcp" {
+		if r.URL.Path == "/api/v1/mcp" {
 			s.writeMCPAuthenticationRequired(w, r, authorization != "")
 			return
 		}
@@ -217,7 +207,7 @@ func (s *Server) machineAPIAuth(next http.HandlerFunc, w http.ResponseWriter, r 
 	now := time.Now().UTC()
 	stored, _, err := s.store.AuthenticateAPIToken(r.Context(), security.HashAPISecret(s.sessionSecret, token), now)
 	if err != nil {
-		if r.URL.Path == "/mcp" {
+		if r.URL.Path == "/api/v1/mcp" {
 			s.writeMCPAuthenticationRequired(w, r, true)
 			return
 		}
@@ -265,7 +255,7 @@ func (s *Server) machinePrincipalAuth(next http.HandlerFunc, w http.ResponseWrit
 		principal.ClientName = r.Header.Get("User-Agent")
 	}
 	authenticated := r.WithContext(context.WithValue(r.Context(), apiPrincipalContextKey{}, principal))
-	if r.URL.Path == "/mcp" {
+	if r.URL.Path == "/api/v1/mcp" {
 		next(w, authenticated)
 		return
 	}
@@ -280,7 +270,7 @@ func (s *Server) machinePrincipalAuth(next http.HandlerFunc, w http.ResponseWrit
 		result = "failed"
 	}
 	classification := capability.DataInternal
-	if strings.HasPrefix(r.URL.Path, "/api/v2/users") || strings.HasPrefix(r.URL.Path, "/api/v2/audit") {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/users") || strings.HasPrefix(r.URL.Path, "/api/v1/audit") {
 		classification = capability.DataSensitive
 	}
 	s.recordToolCall(r.Context(), principal, "http."+strings.ToLower(r.Method)+":"+r.URL.Path, map[string]string{"query": r.URL.RawQuery}, result, classification)
@@ -327,7 +317,7 @@ func apiPrincipal(r *http.Request) (application.Principal, bool) {
 	return principal, ok
 }
 
-func (s *Server) apiV2Capabilities(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Capabilities(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -336,7 +326,7 @@ func (s *Server) apiV2Capabilities(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, s.capabilities.List(principal), nil)
 }
 
-func (s *Server) apiV2Query(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Query(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
@@ -364,7 +354,7 @@ func (s *Server) apiV2Query(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, result, nil)
 }
 
-func (s *Server) apiV2Servers(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Servers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "服务器变更必须通过 Changeset")
 		return
@@ -382,12 +372,12 @@ func (s *Server) apiV2Servers(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
 }
 
-func (s *Server) apiV2Server(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "服务器变更必须通过 Changeset")
 		return
 	}
-	id, err := application.ParseID(strings.TrimPrefix(r.URL.Path, "/api/v2/servers/"))
+	id, err := application.ParseID(strings.TrimPrefix(r.URL.Path, "/api/v1/servers/"))
 	if err != nil {
 		v2HandleError(w, r, err)
 		return
@@ -405,7 +395,7 @@ func (s *Server) apiV2Server(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, item, nil)
 }
 
-func (s *Server) apiV2Users(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Users(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "用户变更必须通过 Changeset")
 		return
@@ -423,7 +413,7 @@ func (s *Server) apiV2Users(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
 }
 
-func (s *Server) apiV2Topology(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Topology(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "拓扑变更必须通过 Changeset")
 		return
@@ -441,7 +431,7 @@ func (s *Server) apiV2Topology(w http.ResponseWriter, r *http.Request) {
 	v2Write(w, r, http.StatusOK, item, nil)
 }
 
-func (s *Server) apiV2Changesets(w http.ResponseWriter, r *http.Request) {
+func (s *Server) apiV1Changesets(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	switch r.Method {
 	case http.MethodGet:
@@ -469,8 +459,8 @@ func (s *Server) apiV2Changesets(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) apiV2Changeset(w http.ResponseWriter, r *http.Request) {
-	parts := pathParts(r.URL.Path, "/api/v2/changesets/")
+func (s *Server) apiV1Changeset(w http.ResponseWriter, r *http.Request) {
+	parts := pathParts(r.URL.Path, "/api/v1/changesets/")
 	if len(parts) == 0 || parts[0] == "" {
 		v2Error(w, r, http.StatusBadRequest, "invalid_id", "缺少 Changeset ID")
 		return
@@ -570,7 +560,7 @@ func (s *Server) apiPrincipals(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiPrincipalSubroutes(w http.ResponseWriter, r *http.Request) {
-	parts := pathParts(r.URL.Path, "/api/v2/api-principals/")
+	parts := pathParts(r.URL.Path, "/api/v1/api-principals/")
 	if len(parts) < 1 || parts[0] == "" {
 		v2Error(w, r, http.StatusBadRequest, "invalid_id", "缺少 API Principal ID")
 		return

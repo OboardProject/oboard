@@ -1389,7 +1389,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
     if (mutation) onMutationResponse?.(path, { mutation_pending: true }, method)
     let res: Response
     try {
-      res = await fetch(appPath('/api/v2/ui' + path), {
+      res = await fetch(appPath('/api/v1/ui' + path), {
         ...init,
         credentials: 'same-origin',
         headers: {
@@ -1421,7 +1421,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
     if (mutation) onMutationResponse?.(path, { mutation_pending: true }, method)
     let res: Response
     try {
-      res = await fetch(appPath('/api/v2' + path), {
+      res = await fetch(appPath('/api/v1' + path), {
         ...init,
         credentials: 'same-origin',
         headers: {
@@ -1449,7 +1449,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
     return payload.data as T
   }
   async function download(path: string): Promise<{ blob: Blob; filename: string }> {
-    const res = await fetch(appPath('/api/v2/ui' + path), { credentials: 'same-origin', headers: authHeaders })
+    const res = await fetch(appPath('/api/v1/ui' + path), { credentials: 'same-origin', headers: authHeaders })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
       throw apiRequestError(data, res)
@@ -1459,7 +1459,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
     return { blob: await res.blob(), filename }
   }
   async function upload<T = any>(path: string, body: FormData): Promise<T> {
-    const res = await fetch(appPath('/api/v2/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
+    const res = await fetch(appPath('/api/v1/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw apiRequestError(data, res)
     return data
@@ -1596,7 +1596,7 @@ export function App() {
     let cancelled = false
     const restore = async () => {
       try {
-        const response = await fetch(appPath('/api/v2/ui/auth/session'), { credentials: 'same-origin' })
+        const response = await fetch(appPath('/api/v1/ui/auth/session'), { credentials: 'same-origin' })
         const result = await response.json().catch(() => ({})) as { csrf_token?: string; user?: SessionUser; error?: string }
         if (cancelled) return
         if (response.status === 401) {
@@ -1841,7 +1841,7 @@ export function App() {
 
   const realtimeStatus = usePollingEvents(Boolean(token), client.request, handleRealtimeEvent)
   const serverTelemetryEnabled = Boolean(token && sessionUser && roleRanks[sessionUser.role] >= roleRanks.operator)
-  const serverTelemetryStatus = useServerTelemetry(serverTelemetryEnabled, appWebSocketURL('/api/v2/ui/events'), handleServerTelemetry)
+  const serverTelemetryStatus = useServerTelemetry(serverTelemetryEnabled, appWebSocketURL('/api/v1/ui/events'), handleServerTelemetry)
 
   useEffect(() => {
     if (!serverTelemetryEnabled || tab !== 'dashboard' || serverTelemetryStatus === 'open') return
@@ -2846,7 +2846,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
               <Switch checked={connectRisk2} onChange={setConnectRisk2} ariaLabel="申请风险 2 级写权限" />
             </div></div>
           </div>
-          <div className="automation-connect-endpoint"><span>MCP 地址</span><CopyBlock value={`${publicControllerURL}/mcp`} /></div>
+          <div className="automation-connect-endpoint"><span>MCP 地址</span><CopyBlock value={`${publicControllerURL}/api/v1/mcp`} /></div>
           <div className="automation-connect-notice"><ShieldCheck size={18} /><div><strong>浏览器确认授权</strong><span>OBoard MCP 仅接受 OAuth Access Token。权限、资源范围和自动审批级别均由授权页和服务端策略决定。</span></div></div>
           {connectReady && <div className="automation-connect-results">
             {connectArtifacts.command && <section className="automation-connect-output"><div className="automation-connect-output-head"><strong>配置命令</strong><span>写入当前用户配置</span></div><CommandCopyBlock value={connectArtifacts.command} /></section>}
@@ -4143,8 +4143,22 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
     setWorking('create')
     try {
       const result = await client.request('/backups', { method: 'POST', body: JSON.stringify({ upload_remote: true }) }) as { backup: ControllerBackup }
-      notify?.(result.backup?.remote_status === 'failed' ? '本地备份已创建，但第三方上传失败' : '备份已创建', result.backup?.remote_status === 'failed' ? 'error' : 'success')
-      await refresh(true)
+      notify?.('备份已开始，正在后台创建', 'info')
+      for (let attempt = 0; attempt < 150; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, 2000))
+        const next = await client.request('/backups') as ControllerBackupSnapshot
+        setSnapshot(next)
+        setDraft(next.settings || emptySettings)
+        const item = next.backups?.find((entry: ControllerBackup) => entry.id === result.backup?.id)
+        if (item?.local_status === 'failed') {
+          throw new Error(next.settings?.last_error || '备份创建失败，请稍后重试')
+        }
+        if (item && item.local_status !== 'pending') {
+          notify?.(item.remote_status === 'failed' ? '本地备份已创建，但第三方上传失败' : '备份已创建', item.remote_status === 'failed' ? 'error' : 'success')
+          return
+        }
+      }
+      throw new Error('备份仍在后台执行，请稍后在备份记录中查看')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -4271,12 +4285,14 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
   const scheduleDescription = savedSettings.enabled
     ? `${savedSettings.schedule === 'weekly' ? `每${weekdayNames[savedSettings.weekday] || '周日'}` : '每天'} ${savedSettings.time || '03:00'} 自动创建，本地保留 ${savedSettings.local_retention || 1} 份。`
     : '当前只会在您点击“创建备份”时备份。'
-  const backupStatus = (item: ControllerBackup) => item.remote_status === 'failed'
-    ? (item.local_status === 'available' ? '本地可用，远端失败' : '副本不可用')
-    : item.local_status === 'available' && item.remote_status === 'available' ? '本地和远端可用'
-      : item.local_status === 'available' ? '本地可用'
-        : item.remote_retrievable ? '可从第三方取回'
-          : item.remote_status === 'available' ? '保留在旧目标' : '副本不可用'
+  const backupStatus = (item: ControllerBackup) => item.local_status === 'pending'
+    ? '备份创建中'
+    : item.remote_status === 'failed'
+      ? (item.local_status === 'available' ? '本地可用，远端失败' : '副本不可用')
+      : item.local_status === 'available' && item.remote_status === 'available' ? '本地和远端可用'
+        : item.local_status === 'available' ? '本地可用'
+          : item.remote_retrievable ? '可从第三方取回'
+            : item.remote_status === 'available' ? '保留在旧目标' : '副本不可用'
   return <>
   <section className="settings-card controller-backup-card">
     <div className="settings-card-head">
@@ -4296,7 +4312,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
     </section>
     <section className="backup-records">
       <div className="settings-card-head"><div><h3>备份记录</h3><p className="muted">恢复会先创建保护备份。受保护备份不会被自动滚动删除。</p></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
-      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))} · 来源 {item.source_version || '-'}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working)}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item, uploadPassword)} disabled={Boolean(working)}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
+      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {item.local_status === 'pending' ? '等待后台完成' : formatBytes(Number(item.size_bytes || 0)) + ' · 来源 ' + (item.source_version || '-')}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.local_status === 'pending' ? 'warning' : item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item, uploadPassword)} disabled={Boolean(working) || item.local_status === 'pending'}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
     </section>
   </section>
   <AnimatePresence>{settingsDialogOpen && <MotionDialogPanel onCancel={closeSettingsDialog} className="backup-settings-dialog">

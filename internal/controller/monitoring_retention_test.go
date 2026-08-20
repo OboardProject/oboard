@@ -22,19 +22,19 @@ func TestServerMonitoringRetentionSettingsAndAggregatedHistory(t *testing.T) {
 	defer db.Close()
 	app := newTestServer(db, "test-secret", "")
 	handler := app.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	settingsResponse := request(t, handler, http.MethodGet, "/api/v2/ui/settings", token, nil, http.StatusOK)
+	settingsResponse := request(t, handler, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)
 	settings := settingsResponse["settings"].(map[string]any)
 	if settings[store.ServerMonitoringRetentionDaysSetting] != float64(7) {
 		t.Fatalf("default monitoring retention = %#v", settings[store.ServerMonitoringRetentionDaysSetting])
 	}
 	for _, days := range []int{0, store.MaxServerMonitoringRetentionDays + 1} {
-		request(t, handler, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{store.ServerMonitoringRetentionDaysSetting: days}, http.StatusBadRequest)
+		request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{store.ServerMonitoringRetentionDaysSetting: days}, http.StatusBadRequest)
 	}
-	request(t, handler, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{store.ServerMonitoringRetentionDaysSetting: 7}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{store.ServerMonitoringRetentionDaysSetting: 7}, http.StatusOK)
 
 	mcpInput := json.RawMessage(`{"changes":{"server_monitoring_retention_days":15}}`)
 	changed, err := app.settingsUpdateCandidate(ctx, mcpInput, true)
@@ -48,9 +48,9 @@ func TestServerMonitoringRetentionSettingsAndAggregatedHistory(t *testing.T) {
 		t.Fatal("MCP settings validation accepted retention above maximum")
 	}
 
-	created := request(t, handler, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "retention-node"}, http.StatusCreated)
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "retention-node"}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
-	resourceResponse := request(t, handler, http.MethodGet, fmt.Sprintf("/api/v2/ui/servers/%d/resource-metrics?hours=24", serverID), token, nil, http.StatusOK)
+	resourceResponse := request(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/ui/servers/%d/resource-metrics?hours=24", serverID), token, nil, http.StatusOK)
 	if resourceResponse["retention_days"] != float64(15) {
 		t.Fatalf("resource retention days = %#v", resourceResponse["retention_days"])
 	}
@@ -84,7 +84,7 @@ func TestServerMonitoringRetentionSettingsAndAggregatedHistory(t *testing.T) {
 		}
 	}
 
-	connectivityResponse := request(t, handler, http.MethodGet, fmt.Sprintf("/api/v2/ui/servers/%d/connectivity?window=24h", serverID), token, nil, http.StatusOK)
+	connectivityResponse := request(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/ui/servers/%d/connectivity?window=24h", serverID), token, nil, http.StatusOK)
 	if connectivityResponse["retention_days"] != float64(15) {
 		t.Fatalf("connectivity retention days = %#v", connectivityResponse["retention_days"])
 	}

@@ -757,8 +757,8 @@ func (w *realtimeStatusWriter) flush(body []byte) {
 
 func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		managedAPI := strings.HasPrefix(r.URL.Path, "/api/v2/ui/") || strings.HasPrefix(r.URL.Path, "/api/v2/") || strings.HasPrefix(r.URL.Path, "/api/v1/agent/")
-		readOnlyPost := r.URL.Path == "/api/v2/query"
+		managedAPI := strings.HasPrefix(r.URL.Path, "/api/v1/ui/") || strings.HasPrefix(r.URL.Path, "/api/v1/") || strings.HasPrefix(r.URL.Path, "/api/v1/agent/")
+		readOnlyPost := r.URL.Path == "/api/v1/query"
 		if !managedAPI || readOnlyPost || r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions || websocket.IsWebSocketUpgrade(r) {
 			next.ServeHTTP(w, r)
 			return
@@ -789,7 +789,7 @@ func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
 }
 
 func realtimeResourcesForRequest(path string) []string {
-	for _, prefix := range []string{"/api/v2/ui/", "/api/v2/", "/api/v1/agent/"} {
+	for _, prefix := range []string{"/api/v1/ui/", "/api/v1/agent/", "/api/v1/"} {
 		if strings.HasPrefix(path, prefix) {
 			path = strings.TrimPrefix(path, prefix)
 			break

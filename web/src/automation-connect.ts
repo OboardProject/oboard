@@ -43,7 +43,7 @@ export function normalizeAutomationControllerURL(raw: string) {
 
 export function automationMCPURL(controllerURL: string) {
   const base = normalizeAutomationControllerURL(controllerURL)
-  return base ? `${base}/mcp` : ''
+  return base ? `${base}/api/v1/mcp` : ''
 }
 
 export function automationConnectArtifacts(client: AutomationConnectClient, controllerURL: string, permissions: AutomationConnectPermissions = {}): AutomationConnectArtifacts {
@@ -51,7 +51,7 @@ export function automationConnectArtifacts(client: AutomationConnectClient, cont
   if (!base) return { command: '', config: '', prompt: '' }
   const includeRisk2 = permissions.risk2 !== false
   const scopes = includeRisk2 ? [...codexOAuthScopes, ...codexOAuthRisk2Scopes] : codexOAuthScopes
-  const mcpURL = `${base}/mcp`
+  const mcpURL = `${base}/api/v1/mcp`
   const command = clientCommand(client, mcpURL)
   const config = clientConfig(client, mcpURL, base, scopes)
   const completion = client === 'codex'
@@ -107,7 +107,7 @@ function clientConfig(client: AutomationConnectClient, mcpURL: string, baseURL: 
   return JSON.stringify({
     mcp: { name: 'oboard', transport: 'streamable-http', ...server },
     oauth: {
-      protected_resource_metadata: automationWellKnownURL(baseURL, 'oauth-protected-resource', '/mcp'),
+      protected_resource_metadata: automationWellKnownURL(baseURL, 'oauth-protected-resource', '/api/v1/mcp'),
       authorization_server_metadata: automationWellKnownURL(baseURL, 'oauth-authorization-server'),
       pkce: 'S256',
       resource: mcpURL,

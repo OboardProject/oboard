@@ -25,12 +25,12 @@ func TestTOTPEnrollmentLoginReplayProtectionAndRecoveryCodes(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-session-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	oldToken := login["token"].(string)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/me/totp/setup/begin", oldToken, map[string]any{"current_password": "wrong-password"}, http.StatusForbidden)
-	setup := request(t, h, http.MethodPost, "/api/v2/ui/me/totp/setup/begin", oldToken, map[string]any{"current_password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/me/totp/setup/begin", oldToken, map[string]any{"current_password": "wrong-password"}, http.StatusForbidden)
+	setup := request(t, h, http.MethodPost, "/api/v1/ui/me/totp/setup/begin", oldToken, map[string]any{"current_password": "very-secure-password"}, http.StatusOK)
 	secret := setup["secret"].(string)
 	if secret == "" || setup["qr_data_url"] == "" {
 		t.Fatalf("incomplete setup response: %#v", setup)
@@ -51,39 +51,39 @@ func TestTOTPEnrollmentLoginReplayProtectionAndRecoveryCodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	confirmed := request(t, h, http.MethodPost, "/api/v2/ui/me/totp/setup/confirm", oldToken, map[string]any{"code": enrollmentCode}, http.StatusOK)
+	confirmed := request(t, h, http.MethodPost, "/api/v1/ui/me/totp/setup/confirm", oldToken, map[string]any{"code": enrollmentCode}, http.StatusOK)
 	newToken := confirmed["token"].(string)
 	recoveryCodes := confirmed["recovery_codes"].([]any)
 	if len(recoveryCodes) != 10 {
 		t.Fatalf("recovery codes = %d, want 10", len(recoveryCodes))
 	}
-	request(t, h, http.MethodGet, "/api/v2/ui/me", oldToken, nil, http.StatusUnauthorized)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", newToken, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", oldToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", newToken, nil, http.StatusOK)
 
-	passwordLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	passwordLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	if required, _ := passwordLogin["two_factor_required"].(bool); !required || passwordLogin["token"] != nil {
 		t.Fatalf("password login did not require TOTP: %#v", passwordLogin)
 	}
 	challenge := passwordLogin["challenge_token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/totp/verify", "", map[string]any{"challenge_token": challenge, "code": enrollmentCode}, http.StatusUnauthorized)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/totp/verify", "", map[string]any{"challenge_token": challenge, "code": enrollmentCode}, http.StatusUnauthorized)
 
 	nextCode, err := totp.GenerateCode(secret, time.Now().UTC().Add(30*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	verified := request(t, h, http.MethodPost, "/api/v2/ui/auth/totp/verify", "", map[string]any{"challenge_token": challenge, "code": nextCode}, http.StatusOK)
+	verified := request(t, h, http.MethodPost, "/api/v1/ui/auth/totp/verify", "", map[string]any{"challenge_token": challenge, "code": nextCode}, http.StatusOK)
 	if verified["token"] == "" {
 		t.Fatalf("TOTP login token missing: %#v", verified)
 	}
 
-	recoveryLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	recoveryLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	recoveryCode := recoveryCodes[0].(string)
-	recovered := request(t, h, http.MethodPost, "/api/v2/ui/auth/totp/verify", "", map[string]any{"challenge_token": recoveryLogin["challenge_token"], "code": recoveryCode}, http.StatusOK)
+	recovered := request(t, h, http.MethodPost, "/api/v1/ui/auth/totp/verify", "", map[string]any{"challenge_token": recoveryLogin["challenge_token"], "code": recoveryCode}, http.StatusOK)
 	recoveredToken := recovered["token"].(string)
 
-	reuseLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/totp/verify", "", map[string]any{"challenge_token": reuseLogin["challenge_token"], "code": recoveryCode}, http.StatusUnauthorized)
-	status := request(t, h, http.MethodGet, "/api/v2/ui/me/authentication", recoveredToken, nil, http.StatusOK)
+	reuseLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/totp/verify", "", map[string]any{"challenge_token": reuseLogin["challenge_token"], "code": recoveryCode}, http.StatusUnauthorized)
+	status := request(t, h, http.MethodGet, "/api/v1/ui/me/authentication", recoveredToken, nil, http.StatusOK)
 	if status["totp_enabled"] != true || int(status["recovery_codes_remaining"].(float64)) != 9 {
 		t.Fatalf("authentication status after recovery login: %#v", status)
 	}
@@ -114,8 +114,8 @@ func TestPasskeyRegistrationBeginRequiresPasswordAndSealsChallenge(t *testing.T)
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-session-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	perform := func(password string, want int) map[string]any {
@@ -124,7 +124,7 @@ func TestPasskeyRegistrationBeginRequiresPasswordAndSealsChallenge(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		req := httptest.NewRequest(http.MethodPost, "https://panel.example/api/v2/ui/me/passkeys/register/begin", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "https://panel.example/api/v1/ui/me/passkeys/register/begin", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
 		rr := httptest.NewRecorder()
@@ -167,7 +167,7 @@ func TestPasskeyLoginBeginAllowsDiscoverableCredentialWithoutUsername(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "https://panel.example/api/v2/ui/auth/passkey/login/begin", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "https://panel.example/api/v1/ui/auth/passkey/login/begin", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)

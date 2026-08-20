@@ -88,7 +88,7 @@ func newMCPTestEnvironment(t *testing.T, accessLevel string, scopes []string) (*
 		db.Close()
 		t.Fatal(err)
 	}
-	request(t, server.Handler(), http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, server.Handler(), http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		httpServer.Close()
@@ -125,10 +125,10 @@ func newMCPTestEnvironment(t *testing.T, accessLevel string, scopes []string) (*
 		}
 	}
 	plain := "oba_test-token-" + randomTestID()
-	issueTestMCPToken(t, db, grant, principal, client, user.ID, httpServer.URL+"/mcp", plain)
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, httpServer.URL+"/api/v1/mcp", plain)
 	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
 	sessionClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	session, err := sessionClient.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", HTTPClient: httpClient}, nil)
+	session, err := sessionClient.Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/api/v1/mcp", HTTPClient: httpClient}, nil)
 	if err != nil {
 		httpServer.Close()
 		db.Close()
@@ -173,12 +173,18 @@ func TestMCPOperateGrantListsOnlyFinalTools(t *testing.T) {
 	for _, tool := range tools.Tools {
 		byName[tool.Name] = tool
 	}
-	if len(byName) != len(finalToolNames) {
-		t.Fatalf("tools/list returned %d tools, want %d: %#v", len(byName), len(finalToolNames), tools.Tools)
+	if len(byName) < len(finalToolNames) {
+		t.Fatalf("tools/list returned %d tools, want at least %d: %#v", len(byName), len(finalToolNames), tools.Tools)
 	}
 	for _, name := range finalToolNames {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("tools/list is missing %q", name)
+		}
+	}
+	for _, capability := range []string{"servers.list", "users.create", "routing_rules.place"} {
+		name := mcpCapabilityToolName(capability)
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("tools/list is missing dynamic capability tool %q", name)
 		}
 	}
 	if alwaysLoad, ok := byName["oboard_task"].Meta["anthropic/alwaysLoad"].(bool); !ok || !alwaysLoad {
@@ -299,7 +305,7 @@ func TestMCPDiscoverReturnsGrantSummary(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(result.StructuredContent)
 	body := string(encoded)
-	for _, fragment := range []string{`"schema_version":"2"`, `"access_level":"operate"`, `"grant_id":"` + principal.OAuthGrantID, `"authorized_capabilities"`, `"workflow_rules"`, `"limits"`, `"recommended_actions"`} {
+	for _, fragment := range []string{`"schema_version":"1"`, `"access_level":"operate"`, `"grant_id":"` + principal.OAuthGrantID, `"authorized_capabilities"`, `"workflow_rules"`, `"limits"`, `"recommended_actions"`} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("discover output missing %q: %s", fragment, body)
 		}
@@ -322,7 +328,7 @@ func TestMCPGrantResourceRead(t *testing.T) {
 		t.Fatalf("grant resource contents = %#v", got.Contents)
 	}
 	text := got.Contents[0].Text
-	for _, fragment := range []string{`"schema_version":"2"`, `"access_level":"operate"`, `"resource_uri":"oboard://auth/grant"`, `"authorization"`, `"revision":"rev_`} {
+	for _, fragment := range []string{`"schema_version":"1"`, `"access_level":"operate"`, `"resource_uri":"oboard://auth/grant"`, `"authorization"`, `"revision":"rev_`} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("grant resource missing %q: %s", fragment, text)
 		}
@@ -340,15 +346,15 @@ func TestMCPAuthRejectsApiKeyAndSessionAndWrongAudience(t *testing.T) {
 	}
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := testOAuthClient(t, db, "oc_auth", "Auth test", []string{"http://127.0.0.1/callback"})
 	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read"})
-	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/mcp", "oba_correct-audience")
-	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://other.example.com/mcp", "oba_wrong-audience")
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/api/v1/mcp", "oba_correct-audience")
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://other.example.com/api/v1/mcp", "oba_wrong-audience")
 
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1"}}}`
 	for _, test := range []struct {
@@ -364,7 +370,7 @@ func TestMCPAuthRejectsApiKeyAndSessionAndWrongAudience(t *testing.T) {
 		{name: "correct audience", authorization: "Bearer oba_correct-audience", wantStatus: http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "https://panel.example.com/mcp", strings.NewReader(initialize))
+			req := httptest.NewRequest(http.MethodPost, "https://panel.example.com/api/v1/mcp", strings.NewReader(initialize))
 			req.Host = "panel.example.com"
 			if test.authorization != "" {
 				req.Header.Set("Authorization", test.authorization)
@@ -396,7 +402,7 @@ func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 	}
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -432,8 +438,8 @@ func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 	if persisted.IdentityType != "preregistered" {
 		t.Fatalf("client identity type = %q", persisted.IdentityType)
 	}
-	adminToken := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	listed := request(t, handler, http.MethodGet, "/api/v2/oauth-grants", adminToken, nil, http.StatusOK)
+	adminToken := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	listed := request(t, handler, http.MethodGet, "/api/v1/oauth-grants", adminToken, nil, http.StatusOK)
 	items, _ := listed["data"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("grant list data = %#v", listed["data"])
@@ -443,8 +449,8 @@ func TestMCPAdminInheritsOperateWhenClientRequestsReadScope(t *testing.T) {
 		t.Fatalf("grant list did not project the current user role: %#v", item)
 	}
 
-	request(t, handler, http.MethodDelete, "/api/v2/oauth-grants/"+grant.ID, adminToken, nil, http.StatusOK)
-	listed = request(t, handler, http.MethodGet, "/api/v2/oauth-grants", adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodDelete, "/api/v1/oauth-grants/"+grant.ID, adminToken, nil, http.StatusOK)
+	listed = request(t, handler, http.MethodGet, "/api/v1/oauth-grants", adminToken, nil, http.StatusOK)
 	items, _ = listed["data"].([]any)
 	if len(items) != 0 {
 		t.Fatalf("revoked grant remained in management list: %#v", listed["data"])
@@ -466,14 +472,14 @@ func TestOAuthViewerInheritsReadWhenClientRequestsOperateScope(t *testing.T) {
 	}
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	admin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	request(t, handler, http.MethodPost, "/api/v2/ui/users", admin, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
-	viewer := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	admin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/users", admin, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	viewer := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)["token"].(string)
 	client := testOAuthClient(t, db, "oc_viewer_operate", "Viewer operate", []string{"https://client.example/callback"})
 	verifier := strings.Repeat("v", 43)
 	sum := sha256.Sum256([]byte(verifier))
-	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read oboard:operate"}, "state": {"s"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read oboard:operate"}, "state": {"s"}, "resource": {"https://panel.example.com/api/v1/mcp"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
 	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer "+viewer)
@@ -501,8 +507,8 @@ func TestOAuthRejectsUnknownCoarseScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := newTestServer(db, "test-secret", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	admin := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	admin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	client := testOAuthClient(t, db, "oc_scope", "Scope client", []string{"https://client.example/callback"})
 	form := oauthTestAuthorizationForm(client, "topology:write", base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("x", 43))[:43]))
 	form.Set("decision", "approve")
@@ -548,7 +554,7 @@ func TestOAuthMetadataRemovesRegistrationEndpoint(t *testing.T) {
 	}
 
 	resource := httptest.NewRecorder()
-	handler.ServeHTTP(resource, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/mcp", nil))
+	handler.ServeHTTP(resource, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-protected-resource/api/v1/mcp", nil))
 	var resourceMetadata map[string]any
 	if err := json.Unmarshal(resource.Body.Bytes(), &resourceMetadata); err != nil {
 		t.Fatal(err)
@@ -591,14 +597,14 @@ func TestOAuthProtectedResourceChallengeRequestsDurableAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(db, "test-secret", "", "/hidden", nil).Handler()
-	req := httptest.NewRequest(http.MethodPost, "/hidden/mcp", nil)
+	req := httptest.NewRequest(http.MethodPost, "/hidden/api/v1/mcp", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	challenge := response.Header().Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/mcp"`) || !strings.Contains(challenge, `scope="oboard:read offline_access"`) {
+	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/api/v1/mcp"`) || !strings.Contains(challenge, `scope="oboard:read offline_access"`) {
 		t.Fatalf("challenge=%q", challenge)
 	}
 }
@@ -657,7 +663,7 @@ func TestMCPPlanValidateSubmitWorkflow(t *testing.T) {
 	}
 	submitJSON, _ := json.Marshal(submitResult.StructuredContent)
 	body := string(submitJSON)
-	for _, fragment := range []string{`"schema_version":"2"`, `"changeset_id":"chg_`, `"workflow_id":"wf_`, `"changeset_status":"succeeded"`} {
+	for _, fragment := range []string{`"schema_version":"1"`, `"changeset_id":"chg_`, `"workflow_id":"wf_`, `"changeset_status":"succeeded"`} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("submit output missing %q: %s", fragment, body)
 		}
@@ -693,7 +699,7 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 	}
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -703,14 +709,14 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 
 	now := time.Now().UTC()
 	accessRaw, refreshRaw := "oba_reuse-v2-access", "obr_reuse-v2-refresh"
-	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", accessRaw), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
-	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", refreshRaw), FamilyID: "family-v2", GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/mcp", ExpiresAt: now.Add(time.Hour)}
+	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", accessRaw), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/api/v1/mcp", ExpiresAt: now.Add(time.Hour)}
+	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", refreshRaw), FamilyID: "family-v2", GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/api/v1/mcp", ExpiresAt: now.Add(time.Hour)}
 	if err := db.CreateOAuthTokens(context.Background(), access, refresh); err != nil {
 		t.Fatal(err)
 	}
 
 	rotate := func(refreshToken string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/mcp"}}.Encode()))
+		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/api/v1/mcp"}}.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		out := httptest.NewRecorder()
 		handler.ServeHTTP(out, req)
@@ -734,7 +740,7 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 	if afterFamily.Code != http.StatusBadRequest {
 		t.Fatalf("rotated token after family revocation status=%d body=%s", afterFamily.Code, afterFamily.Body.String())
 	}
-	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", accessRaw), "https://panel.example.com/mcp", time.Now().UTC()); err == nil {
+	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", accessRaw), "https://panel.example.com/api/v1/mcp", time.Now().UTC()); err == nil {
 		t.Fatal("access token remained valid after refresh reuse")
 	}
 }
@@ -749,18 +755,18 @@ func TestOAuthGrantRevocationInvalidatesTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := newTestServer(db, "test-secret", "")
-	request(t, server.Handler(), http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, server.Handler(), http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := testOAuthClient(t, db, "oc_revoke_v2", "Revoke v2", []string{"https://client.example/callback"})
 	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read", "offline_access"})
-	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/mcp", "oba_revoke-v2-token")
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/api/v1/mcp", "oba_revoke-v2-token")
 	if err := db.RevokeOAuthGrant(context.Background(), grant.ID, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", "oba_revoke-v2-token"), "https://panel.example.com/mcp", time.Now().UTC()); err == nil {
+	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", "oba_revoke-v2-token"), "https://panel.example.com/api/v1/mcp", time.Now().UTC()); err == nil {
 		t.Fatal("revoked grant access token remained valid")
 	}
 }
@@ -775,7 +781,7 @@ func TestOAuthWithoutOfflineAccessDoesNotIssueRefreshToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := newTestServer(db, "test-secret", "")
-	request(t, server.Handler(), http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, server.Handler(), http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -784,11 +790,11 @@ func TestOAuthWithoutOfflineAccessDoesNotIssueRefreshToken(t *testing.T) {
 	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read"})
 	verifier := strings.Repeat("d", 43)
 	sum := sha256.Sum256([]byte(verifier))
-	code := &model.OAuthAuthorizationCode{CodeHash: security.HashAPISecret("test-secret", "online-v2-code"), GrantID: grant.ID, ClientID: client.ID, UserID: user.ID, PrincipalID: principal.ID, RedirectURI: client.RedirectURIs[0], Resource: "https://panel.example.com/mcp", CodeChallenge: base64.RawURLEncoding.EncodeToString(sum[:]), ExpiresAt: time.Now().Add(time.Minute)}
+	code := &model.OAuthAuthorizationCode{CodeHash: security.HashAPISecret("test-secret", "online-v2-code"), GrantID: grant.ID, ClientID: client.ID, UserID: user.ID, PrincipalID: principal.ID, RedirectURI: client.RedirectURIs[0], Resource: "https://panel.example.com/api/v1/mcp", CodeChallenge: base64.RawURLEncoding.EncodeToString(sum[:]), ExpiresAt: time.Now().Add(time.Minute)}
 	if err := db.CreateOAuthAuthorizationCode(context.Background(), code); err != nil {
 		t.Fatal(err)
 	}
-	values := url.Values{"grant_type": {"authorization_code"}, "code": {"online-v2-code"}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/mcp"}}
+	values := url.Values{"grant_type": {"authorization_code"}, "code": {"online-v2-code"}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/api/v1/mcp"}}
 	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -819,14 +825,14 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 	}
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	sessionToken := login["token"].(string)
 	client := testOAuthClient(t, db, "oc_pkce_v2", "PKCE v2", []string{"https://client.example/callback"})
 	verifier := strings.Repeat("a", 43)
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read offline_access"}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read offline_access"}, "state": {"state-test"}, "resource": {"https://panel.example.com/api/v1/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
 	authorize := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
 	authorize.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
@@ -841,7 +847,7 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 	}
 	code := location.Query().Get("code")
 	exchange := func() *httptest.ResponseRecorder {
-		values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/mcp"}}
+		values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/api/v1/mcp"}}
 		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		out := httptest.NewRecorder()
@@ -886,7 +892,7 @@ func TestMCPRejectsInvalidOriginHeader(t *testing.T) {
 	server := New(db, "test-secret", "", "/hidden", nil)
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
-	request(t, server.Handler(), http.MethodPost, "/hidden/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, server.Handler(), http.MethodPost, "/hidden/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	user, err := db.GetUserByUsername(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
@@ -894,7 +900,7 @@ func TestMCPRejectsInvalidOriginHeader(t *testing.T) {
 	client := testOAuthClient(t, db, "oc_origin_v2", "Origin v2", []string{"http://127.0.0.1/callback"})
 	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read"})
 	plain := "oba_origin-v2-token"
-	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/hidden/mcp", plain)
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "https://panel.example.com/hidden/api/v1/mcp", plain)
 	initialize := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client","version":"1"}}}`
 	for _, test := range []struct {
 		name       string
@@ -908,7 +914,7 @@ func TestMCPRejectsInvalidOriginHeader(t *testing.T) {
 		{name: "path in origin", origin: "https://panel.example.com/hidden", wantStatus: http.StatusForbidden},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodPost, httpServer.URL+"/hidden/mcp", strings.NewReader(initialize))
+			req, err := http.NewRequest(http.MethodPost, httpServer.URL+"/hidden/api/v1/mcp", strings.NewReader(initialize))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -941,8 +947,8 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 	}
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	sessionToken := login["token"].(string)
 	client := testOAuthClient(t, db, "oc_consent", "Consent client", []string{"https://client.example/callback"})
 	verifier := strings.Repeat("c", 43)
@@ -992,5 +998,5 @@ func oauthSuccessRedirectURL(body string) (*url.URL, error) {
 }
 
 func oauthTestAuthorizationForm(client *model.OAuthClient, scope, challenge string) url.Values {
-	return url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {scope}, "state": {"state-test"}, "resource": {"https://panel.example.com/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}}
+	return url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {scope}, "state": {"state-test"}, "resource": {"https://panel.example.com/api/v1/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}}
 }

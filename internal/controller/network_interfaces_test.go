@@ -22,8 +22,8 @@ func TestNetworkInterfacesEndpointQueuesSupportedAgentTask(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	server := &model.Server{
@@ -39,7 +39,7 @@ func TestNetworkInterfacesEndpointQueuesSupportedAgentTask(t *testing.T) {
 	if err := db.CreateServer(context.Background(), server); err != nil {
 		t.Fatal(err)
 	}
-	path := fmt.Sprintf("/api/v2/ui/servers/%d/network-interfaces", server.ID)
+	path := fmt.Sprintf("/api/v1/ui/servers/%d/network-interfaces", server.ID)
 	request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusConflict)
 
 	server.AgentBuild = agentBuildMinNetworkInterfaces

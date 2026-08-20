@@ -165,12 +165,12 @@ func TestGoogleEABCertificateAPIEncryptsAndPreservesSecret(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	const hmacKey = "test-google-eab-hmac-key"
-	created := request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v1/ui/certificates", token, map[string]any{
 		"name":           "google-eab",
 		"domains":        []string{"entry.example.com"},
 		"challenge_type": model.CertificateChallengeDNSManual,
@@ -203,7 +203,7 @@ func TestGoogleEABCertificateAPIEncryptsAndPreservesSecret(t *testing.T) {
 	}
 	originalEncrypted := stored.EABHMACKeyEncrypted
 
-	request(t, h, http.MethodPatch, "/api/v2/ui/certificates/"+strconv.FormatInt(id, 10), token, map[string]any{"eab_key_id": "google-key-id"}, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/certificates/"+strconv.FormatInt(id, 10), token, map[string]any{"eab_key_id": "google-key-id"}, http.StatusOK)
 	stored, err = db.GetCertificate(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
@@ -211,12 +211,12 @@ func TestGoogleEABCertificateAPIEncryptsAndPreservesSecret(t *testing.T) {
 	if stored.EABHMACKeyEncrypted != originalEncrypted {
 		t.Fatal("PATCH without an HMAC key replaced the saved secret")
 	}
-	request(t, h, http.MethodPatch, "/api/v2/ui/certificates/"+strconv.FormatInt(id, 10), token, map[string]any{"eab_key_id": "different-key-id"}, http.StatusBadRequest)
+	request(t, h, http.MethodPatch, "/api/v1/ui/certificates/"+strconv.FormatInt(id, 10), token, map[string]any{"eab_key_id": "different-key-id"}, http.StatusBadRequest)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/certificates", token, map[string]any{
 		"name": "missing-eab", "domains": []string{"missing.example.com"}, "challenge_type": model.CertificateChallengeDNSManual, "acme_ca": "google",
 	}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/certificates", token, map[string]any{
 		"name": "http-eab", "domains": []string{"http.example.com"}, "challenge_type": model.CertificateChallengeHTTP, "issuance_server_id": 1, "acme_ca": "google", "eab_key_id": "kid", "eab_hmac_key": "secret",
 	}, http.StatusBadRequest)
 }
@@ -241,12 +241,12 @@ func TestSavedGoogleEABCredentialAPIAndCertificateSelection(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
 	const hmacKey = "saved-google-eab-hmac-key"
-	created := request(t, h, http.MethodPost, "/api/v2/ui/google-eab-credentials", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v1/ui/google-eab-credentials", token, map[string]any{
 		"key_id": "saved-google-key-id", "hmac_key": hmacKey, "remark": "生产账号",
 	}, http.StatusCreated)["google_eab_credential"].(map[string]any)
 	if created["key_id"] != "saved-google-key-id" || created["remark"] != "生产账号" || created["usage_count"] != float64(0) {
@@ -266,28 +266,28 @@ func TestSavedGoogleEABCredentialAPIAndCertificateSelection(t *testing.T) {
 	if err != nil || plain != hmacKey || storedCredential.HMACKeyEncrypted == hmacKey {
 		t.Fatalf("stored saved EAB HMAC: value=%q err=%v", plain, err)
 	}
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/google-eab-credentials", token, nil, http.StatusOK)["google_eab_credentials"].([]any)
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/google-eab-credentials", token, nil, http.StatusOK)["google_eab_credentials"].([]any)
 	if len(listed) != 1 {
 		t.Fatalf("saved Google EAB list = %#v", listed)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"certificate_auto_issue_acme_ca": "google",
 	}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"certificate_auto_issue_acme_ca": "google", "certificate_auto_issue_google_eab_credential_id": credentialID + 1,
 	}, http.StatusBadRequest)
-	settingsResponse := request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	settingsResponse := request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"certificate_auto_issue_acme_ca": "google", "certificate_auto_issue_google_eab_credential_id": credentialID,
 	}, http.StatusOK)["settings"].(map[string]any)
 	if settingsResponse[settingCertificateAutoIssueACMECA] != "google" || settingsResponse[settingCertificateAutoIssueGoogleEABCredential] != strconv.FormatInt(credentialID, 10) {
 		t.Fatalf("automatic certificate issuer settings = %#v", settingsResponse)
 	}
-	request(t, h, http.MethodDelete, "/api/v2/ui/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusConflict)
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	request(t, h, http.MethodDelete, "/api/v1/ui/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"certificate_auto_issue_acme_ca": "letsencrypt",
 	}, http.StatusOK)
 
-	createdCertificate := request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
+	createdCertificate := request(t, h, http.MethodPost, "/api/v1/ui/certificates", token, map[string]any{
 		"name": "saved-google-eab", "domains": []string{"saved.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
 		"acme_ca": "google", "google_eab_credential_id": credentialID,
 	}, http.StatusCreated)["certificate"].(map[string]any)
@@ -303,11 +303,11 @@ func TestSavedGoogleEABCredentialAPIAndCertificateSelection(t *testing.T) {
 	if err != nil || keyID != "saved-google-key-id" || resolvedHMAC != hmacKey {
 		t.Fatalf("resolved saved EAB = key_id=%q hmac=%q err=%v", keyID, resolvedHMAC, err)
 	}
-	request(t, h, http.MethodDelete, "/api/v2/ui/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusConflict)
-	request(t, h, http.MethodDelete, "/api/v2/ui/certificates/"+strconv.FormatInt(certificateID, 10), token, nil, http.StatusOK)
-	request(t, h, http.MethodDelete, "/api/v2/ui/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, "/api/v1/ui/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusConflict)
+	request(t, h, http.MethodDelete, "/api/v1/ui/certificates/"+strconv.FormatInt(certificateID, 10), token, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, "/api/v1/ui/google-eab-credentials/"+strconv.FormatInt(credentialID, 10), token, nil, http.StatusOK)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/certificates", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/certificates", token, map[string]any{
 		"name": "missing-saved-eab", "domains": []string{"missing.example.com"}, "challenge_type": model.CertificateChallengeDNSManual,
 		"acme_ca": "google", "google_eab_credential_id": credentialID,
 	}, http.StatusBadRequest)

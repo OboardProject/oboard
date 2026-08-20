@@ -452,51 +452,51 @@ func TestServerOnboardingEnrollmentTokenIsReturnedOnlyOnce(t *testing.T) {
 func TestAutomationAdminCanDisableAndRotateCredentials(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	handler := newTestServer(db, "test-secret", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	request(t, handler, http.MethodPost, "/api/v2/api-principals", token, map[string]any{
+	request(t, handler, http.MethodPost, "/api/v1/api-principals", token, map[string]any{
 		"name": "Future grant", "scopes": []string{"future:write"}, "resource_filter": map[string]any{},
 	}, http.StatusBadRequest)
-	request(t, handler, http.MethodPost, "/api/v2/api-principals", token, map[string]any{
+	request(t, handler, http.MethodPost, "/api/v1/api-principals", token, map[string]any{
 		"name": "Typo filter", "scopes": []string{"inventory:read"}, "resource_filter": map[string]any{"servers_ids": []int64{1}},
 	}, http.StatusBadRequest)
 
-	created := request(t, handler, http.MethodPost, "/api/v2/api-principals", token, map[string]any{
+	created := request(t, handler, http.MethodPost, "/api/v1/api-principals", token, map[string]any{
 		"name": "Codex", "scopes": []string{"inventory:read"}, "resource_filter": map[string]any{}, "allowed_cidrs": []string{"192.0.2.0/24"},
 	}, http.StatusCreated)["data"].(map[string]any)
 	principalID := created["id"].(string)
-	first := request(t, handler, http.MethodPost, "/api/v2/api-principals/"+principalID+"/tokens", token, map[string]any{}, http.StatusCreated)["data"].(map[string]any)
-	second := request(t, handler, http.MethodPost, "/api/v2/api-principals/"+principalID+"/tokens", token, map[string]any{}, http.StatusCreated)["data"].(map[string]any)
+	first := request(t, handler, http.MethodPost, "/api/v1/api-principals/"+principalID+"/tokens", token, map[string]any{}, http.StatusCreated)["data"].(map[string]any)
+	second := request(t, handler, http.MethodPost, "/api/v1/api-principals/"+principalID+"/tokens", token, map[string]any{}, http.StatusCreated)["data"].(map[string]any)
 	if first["token"] == second["token"] {
 		t.Fatal("token rotation returned the same plaintext token")
 	}
 	machineToken := second["token"].(string)
-	request(t, handler, http.MethodGet, "/api/v2/capabilities", machineToken, nil, http.StatusOK)
+	request(t, handler, http.MethodGet, "/api/v1/capabilities", machineToken, nil, http.StatusOK)
 	audits, err := db.ListToolCallAudits(context.Background(), principalID, 10)
-	if err != nil || len(audits) == 0 || audits[0].Capability != "http.get:/api/v2/capabilities" {
+	if err != nil || len(audits) == 0 || audits[0].Capability != "http.get:/api/v1/capabilities" {
 		t.Fatalf("direct API access audit=%#v err=%v", audits, err)
 	}
 	firstInfo := first["token_info"].(map[string]any)
-	request(t, handler, http.MethodDelete, "/api/v2/api-principals/"+principalID+"/tokens/"+firstInfo["id"].(string), token, nil, http.StatusOK)
-	request(t, handler, http.MethodPatch, "/api/v2/api-principals/"+principalID, token, map[string]any{"enabled": false}, http.StatusOK)
+	request(t, handler, http.MethodDelete, "/api/v1/api-principals/"+principalID+"/tokens/"+firstInfo["id"].(string), token, nil, http.StatusOK)
+	request(t, handler, http.MethodPatch, "/api/v1/api-principals/"+principalID, token, map[string]any{"enabled": false}, http.StatusOK)
 	storedPrincipal, err := db.GetAPIPrincipal(context.Background(), principalID)
 	if err != nil || storedPrincipal.Enabled {
 		t.Fatalf("service account disable failed: %#v err=%v", storedPrincipal, err)
 	}
-	request(t, handler, http.MethodDelete, "/api/v2/api-principals/"+principalID, token, nil, http.StatusOK)
+	request(t, handler, http.MethodDelete, "/api/v1/api-principals/"+principalID, token, nil, http.StatusOK)
 	if storedPrincipal, err := db.GetAPIPrincipal(context.Background(), principalID); err == nil {
 		t.Fatalf("service account delete failed: %#v", storedPrincipal)
 	}
-	request(t, handler, http.MethodGet, "/api/v2/capabilities", machineToken, nil, http.StatusUnauthorized)
+	request(t, handler, http.MethodGet, "/api/v1/capabilities", machineToken, nil, http.StatusUnauthorized)
 
-	provider := request(t, handler, http.MethodPost, "/api/v2/ai/providers", token, map[string]any{
+	provider := request(t, handler, http.MethodPost, "/api/v1/ai/providers", token, map[string]any{
 		"name": "local", "base_url": "http://127.0.0.1:11434/v1", "model": "test", "api_key": "first-key", "enabled": true,
 	}, http.StatusCreated)["data"].(map[string]any)
 	providerID := provider["id"].(string)
 	endpointID := provider["endpoints"].([]any)[0].(map[string]any)["id"].(string)
-	request(t, handler, http.MethodPatch, "/api/v2/ai/providers/"+providerID+"/endpoints/"+endpointID, token, map[string]any{"api_key": "second-key"}, http.StatusOK)
-	request(t, handler, http.MethodPatch, "/api/v2/ai/providers/"+providerID, token, map[string]any{"enabled": false}, http.StatusOK)
+	request(t, handler, http.MethodPatch, "/api/v1/ai/providers/"+providerID+"/endpoints/"+endpointID, token, map[string]any{"api_key": "second-key"}, http.StatusOK)
+	request(t, handler, http.MethodPatch, "/api/v1/ai/providers/"+providerID, token, map[string]any{"enabled": false}, http.StatusOK)
 	storedProvider, err := db.GetAIProvider(context.Background(), providerID)
 	if err != nil || storedProvider.Enabled {
 		t.Fatalf("AI Provider disable failed: %#v err=%v", storedProvider, err)

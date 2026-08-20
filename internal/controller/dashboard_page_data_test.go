@@ -27,11 +27,11 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dashboard", token, nil, http.StatusOK)
 	tasks, ok := page["agent_tasks"].([]any)
 	if !ok || len(tasks) != 1 {
 		t.Fatalf("dashboard agent_tasks = %#v", page["agent_tasks"])
@@ -56,7 +56,7 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 		t.Fatalf("dashboard connection_audit missing elevated_risk_count: %#v", audit)
 	}
 
-	auditPage := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=audit", token, nil, http.StatusOK)
+	auditPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=audit", token, nil, http.StatusOK)
 	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk"} {
 		if value, exists := auditPage[key]; exists && value != nil {
 			t.Fatalf("audit page-data should not embed the heavy risk overview (%q present: %#v); the console refetches /audit/risk-overview", key, value)
@@ -73,11 +73,11 @@ func TestDashboardPageDataSendsServerTiming(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v2/ui/page-data?page=dashboard", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ui/page-data?page=dashboard", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

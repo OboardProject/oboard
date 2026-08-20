@@ -200,17 +200,17 @@ func TestTelegramBindingCodeRequiresConfiguredGlobalBot(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{"channel_id": 1}, http.StatusNotFound)
-	request(t, h, http.MethodPut, "/api/v2/ui/telegram-bot", token, map[string]any{"enabled": true, "bot_token": "global-token"}, http.StatusOK)
-	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/telegram/binding-code", token, map[string]any{"channel_id": 1}, http.StatusNotFound)
+	request(t, h, http.MethodPut, "/api/v1/ui/telegram-bot", token, map[string]any{"enabled": true, "bot_token": "global-token"}, http.StatusOK)
+	channel := request(t, h, http.MethodPost, "/api/v1/ui/notification-channels", token, map[string]any{
 		"name": "personal", "type": "telegram", "enabled": true, "events": notificationServerOffline,
 		"config_json": `{}`,
 	}, http.StatusCreated)["notification_channel"].(map[string]any)
 	channelID := int64(channel["id"].(float64))
-	created := request(t, h, http.MethodPost, "/api/v2/ui/telegram/binding-code", token, map[string]any{"channel_id": channelID}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/telegram/binding-code", token, map[string]any{"channel_id": channelID}, http.StatusCreated)
 	data, _ := created["data"].(map[string]any)
 	if strings.TrimSpace(data["code"].(string)) == "" {
 		t.Fatal("binding code is empty")

@@ -16,9 +16,9 @@ func TestUserDeviceLifecycleAndLimit(t *testing.T) {
 	defer db.Close()
 
 	handler := newTestServer(db, "test-secret", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminToken := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	createdUser := request(t, handler, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminToken := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	createdUser := request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{
 		"username":     "device-user",
 		"password":     "long-user-password",
 		"role":         "viewer",
@@ -26,7 +26,7 @@ func TestUserDeviceLifecycleAndLimit(t *testing.T) {
 		"device_limit": 1,
 	}, http.StatusCreated)
 	userID := int64(createdUser["user"].(map[string]any)["id"].(float64))
-	devicesPath := "/api/v2/ui/users/" + itoa(userID) + "/devices"
+	devicesPath := "/api/v1/ui/users/" + itoa(userID) + "/devices"
 
 	created := request(t, handler, http.MethodPost, devicesPath, adminToken, map[string]any{"name": "Phone"}, http.StatusCreated)
 	firstToken, _ := created["device_token"].(string)

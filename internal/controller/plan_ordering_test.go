@@ -18,14 +18,14 @@ import (
 func setupOrderingTestTopology(t *testing.T) (http.Handler, *Server, string, map[string]int64) {
 	t.Helper()
 	h, srv, token := setupPlansAPITestServer(t)
-	s1 := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "tokyo", "region_mode": "manual", "region_code": "JP", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
-	s2 := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "singapore", "region_mode": "manual", "region_code": "SG", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 10020, "port_range_end": 10030}, http.StatusCreated)["server"].(map[string]any)
-	i1 := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": s1["id"], "name": "tokyo-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
-	i2 := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": s2["id"], "name": "sg-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 8443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
-	p1 := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": i1["id"], "name": "东京直连", "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
-	p2 := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{"inbound_id": i1["id"], "name": "东京-新加坡", "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps", token, map[string]any{"path_id": p2["id"], "position": 1, "node_type": "server_inbound", "server_id": s2["id"], "transport_mode": "singbox"}, http.StatusCreated)
-	plan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{
+	s1 := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "tokyo", "region_mode": "manual", "region_code": "JP", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	s2 := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "singapore", "region_mode": "manual", "region_code": "SG", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 10020, "port_range_end": 10030}, http.StatusCreated)["server"].(map[string]any)
+	i1 := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": s1["id"], "name": "tokyo-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	i2 := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": s2["id"], "name": "sg-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 8443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	p1 := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": i1["id"], "name": "东京直连", "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	p2 := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": i1["id"], "name": "东京-新加坡", "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": p2["id"], "position": 1, "node_type": "server_inbound", "server_id": s2["id"], "transport_mode": "singbox"}, http.StatusCreated)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{
 		"name": "ordering-plan", "enabled": true,
 		"nodes": []map[string]any{
 			{"node_type": "proxy_path", "node_id": p1["id"]},
@@ -53,18 +53,18 @@ func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
 	h, _, token, ids := setupOrderingTestTopology(t)
 	planAID := ids["plan"]
 	p1Key, p2Key := "proxy_path:"+itoa(ids["p1"]), "proxy_path:"+itoa(ids["p2"])
-	planB := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{
+	planB := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{
 		"name": "copy-target", "enabled": true,
 		"nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}, {"node_type": "proxy_path", "node_id": ids["p2"]}, {"node_type": "inbound", "node_id": ids["i2"]}},
 	}, http.StatusCreated)["subscription_plan"].(map[string]any)
 	planBID := int64(planB["id"].(float64))
 
-	stateA := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planAID)+"/ordering", token, nil, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planAID)+"/ordering/versions", token, map[string]any{
+	stateA := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planAID)+"/ordering", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planAID)+"/ordering/versions", token, map[string]any{
 		"base_revision_id": int64(stateA["base_revision_id"].(float64)), "expected_lock_version": int64(stateA["lock_version"].(float64)),
 		"policy": orderingPolicy("manual", "exit_region", []string{"JP", "SG"}), "manual_node_order": []string{p2Key, p1Key},
 	}, http.StatusOK)
-	stateB := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering", token, nil, http.StatusOK)
+	stateB := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planBID)+"/ordering", token, nil, http.StatusOK)
 	baseRequest := map[string]any{"source_plan_id": planAID, "base_revision_id": int64(stateB["base_revision_id"].(float64))}
 	for _, tc := range []struct{ mode, wantMode, first string }{
 		{"copy_rules_preserve_manual", "manual", p1Key},
@@ -76,7 +76,7 @@ func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
 			body[key] = value
 		}
 		body["mode"] = tc.mode
-		preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering/copy-preview", token, body, http.StatusOK)
+		preview := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planBID)+"/ordering/copy-preview", token, body, http.StatusOK)
 		if preview["policy"].(map[string]any)["mode"] != tc.wantMode {
 			t.Fatalf("%s policy = %#v", tc.mode, preview["policy"])
 		}
@@ -85,8 +85,8 @@ func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
 		}
 	}
 	apply := map[string]any{"source_plan_id": planAID, "base_revision_id": int64(stateB["base_revision_id"].(float64)), "expected_lock_version": int64(stateB["lock_version"].(float64)), "mode": "copy_effective_order"}
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering/copy-from-plan", token, apply, http.StatusOK)
-	copied := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planBID)+"/ordering", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planBID)+"/ordering/copy-from-plan", token, apply, http.StatusOK)
+	copied := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planBID)+"/ordering", token, nil, http.StatusOK)
 	if int64(copied["order_source_plan_id"].(float64)) != planAID || copied["order_source_mode"] != "copy_effective_order" {
 		t.Fatalf("copy provenance = %#v", copied)
 	}
@@ -94,12 +94,12 @@ func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
 		t.Fatalf("copied order = %#v", copied["nodes"])
 	}
 
-	rulePlan := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans", token, map[string]any{
+	rulePlan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{
 		"name": "rule-target", "enabled": true, "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
 	}, http.StatusCreated)["subscription_plan"].(map[string]any)
 	rulePlanID := int64(rulePlan["id"].(float64))
-	policy := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules", token, nil, http.StatusOK)
-	rulePreview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules/preview", token, map[string]any{
+	policy := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules", token, nil, http.StatusOK)
+	rulePreview := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(rulePlanID)+"/membership-rules/preview", token, map[string]any{
 		"base_revision_id": int64(policy["base_revision_id"].(float64)), "rules": []map[string]any{{"rule_id": 1, "kind": "exit_region", "scope_key": "SG"}}, "exclusions": []any{},
 	}, http.StatusOK)
 	added := rulePreview["added_node_keys"].([]any)
@@ -121,7 +121,7 @@ func TestPlanOrderingAPI(t *testing.T) {
 
 	// New plans default to exit_region; GET defaults to the latest saved
 	// version which is editable (read_only=false).
-	latest := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
+	latest := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
 	if latest["read_only"] != false {
 		t.Fatalf("latest ordering read_only = %#v", latest["read_only"])
 	}
@@ -139,33 +139,33 @@ func TestPlanOrderingAPI(t *testing.T) {
 	lockVersion := int64(latest["lock_version"].(float64))
 
 	// Invalid revision selector.
-	request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering?revision=bogus", token, nil, http.StatusNotFound)
-	request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering?revision_id=bogus", token, nil, http.StatusNotFound)
+	request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering?revision=bogus", token, nil, http.StatusNotFound)
+	request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering?revision_id=bogus", token, nil, http.StatusNotFound)
 
 	// Invalid mode.
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": lockVersion, "policy": orderingPolicy("bogus", "exit_region", nil), "manual_node_order": []string{},
 	}, http.StatusBadRequest)
 
 	// Missing expected_lock_version.
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": 0, "policy": orderingPolicy("manual", "exit_region", nil), "manual_node_order": []string{},
 	}, http.StatusBadRequest)
 
 	// Manual mode with a node outside the version node set.
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": lockVersion, "policy": orderingPolicy("manual", "exit_region", nil),
 		"manual_node_order": []string{"proxy_path:999999"},
 	}, http.StatusBadRequest)
 
 	// Manual mode with duplicate keys.
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": lockVersion, "policy": orderingPolicy("manual", "exit_region", nil),
 		"manual_node_order": []string{keyP1, keyP1},
 	}, http.StatusBadRequest)
 
 	// Valid manual save creates a version that becomes current immediately.
-	saved := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	saved := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": lockVersion, "policy": orderingPolicy("manual", "entry", nil),
 		"manual_node_order": []string{keyP1},
 	}, http.StatusOK)
@@ -173,7 +173,7 @@ func TestPlanOrderingAPI(t *testing.T) {
 		t.Fatalf("manual save = %#v", saved)
 	}
 	versionID := int64(saved["revision_id"].(float64))
-	manual := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering?revision_id="+itoa(versionID), token, nil, http.StatusOK)
+	manual := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering?revision_id="+itoa(versionID), token, nil, http.StatusOK)
 	if manual["read_only"] != false || manual["is_current"] != true {
 		t.Fatalf("manual version state = %#v", manual)
 	}
@@ -197,7 +197,7 @@ func TestPlanOrderingAPI(t *testing.T) {
 
 	// Stale expected_lock_version conflicts with the current lock + latest
 	// version in the body.
-	conflict := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	conflict := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": 1, "policy": orderingPolicy("exit_region", "exit_region", nil), "manual_node_order": []string{},
 	}, http.StatusConflict)
 	if conflict["code"] != "plan_version_conflict" {
@@ -206,10 +206,10 @@ func TestPlanOrderingAPI(t *testing.T) {
 	nextLock := int64(conflict["current_lock_version"].(float64))
 
 	// Switching back to an auto mode keeps the manual positions (spec 4.4).
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": nextLock, "policy": orderingPolicy("exit_region", "exit_region", []string{"JP"}), "manual_node_order": []string{},
 	}, http.StatusOK)
-	auto := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
+	auto := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
 	kept := 0
 	for _, raw := range auto["nodes"].([]any) {
 		if raw.(map[string]any)["manual_position"] != nil {
@@ -229,7 +229,7 @@ func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
 	h, srv, token, ids := setupOrderingTestTopology(t)
 	planID := ids["plan"]
 
-	applied := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+	applied := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
 	}, http.StatusOK)
 	changeID := int64(applied["access_change_id"].(float64))
@@ -241,12 +241,12 @@ func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
 		t.Fatalf("failed unactivated plan change should be abandonable: change=%#v err=%v", failedChange, err)
 	}
 
-	request(t, h, http.MethodPost, "/api/v2/ui/access-changes/"+itoa(changeID)+"/cancel", token, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/access-changes/"+itoa(changeID)+"/cancel", token, map[string]any{}, http.StatusOK)
 	cancelledChange, err := srv.store.GetAccessChange(t.Context(), changeID)
 	if err != nil || cancelledChange.Status != model.AccessChangeCancelled || cancelledChange.Error != "server 41 task 5028 failed" {
 		t.Fatalf("cancelled change lost failure audit: change=%#v err=%v", cancelledChange, err)
 	}
-	detail := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
+	detail := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
 	plan := detail["subscription_plan"].(map[string]any)
 	if pending, _ := plan["pending_revision_id"].(float64); pending != 0 {
 		t.Fatalf("abandoned plan still has pending revision: %#v", plan)
@@ -255,7 +255,7 @@ func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
 		t.Fatalf("abandoned plan did not restore current version: %#v", plan)
 	}
 
-	second := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+	second := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}},
 	}, http.StatusOK)
 	secondChangeID := int64(second["access_change_id"].(float64))
@@ -302,7 +302,7 @@ func TestPlanOrderingPreviewUsesBackendSorter(t *testing.T) {
 	planID := ids["plan"]
 	// The two-hop path exits in SG, the direct path exits in JP. Custom exit
 	// order [SG, JP] must place the SG path first.
-	res := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/preview", token, map[string]any{
+	res := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/preview", token, map[string]any{
 		"policy": orderingPolicy("exit_region", "exit_region", []string{"SG", "JP"}), "manual_node_order": []string{},
 	}, http.StatusOK)
 	nodes := res["nodes"].([]any)
@@ -314,7 +314,7 @@ func TestPlanOrderingPreviewUsesBackendSorter(t *testing.T) {
 		t.Fatalf("first preview node = %#v, want SG exit first", first)
 	}
 	// Preview never writes: the latest version stays at v1.
-	latest := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
+	latest := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
 	if latest["version_no"].(float64) != 1 {
 		t.Fatalf("preview wrote a version: %#v", latest["version_no"])
 	}
@@ -330,7 +330,7 @@ func TestAssignableNodeScopePreview(t *testing.T) {
 		for k, v := range extra {
 			scope[k] = v
 		}
-		return request(t, h, http.MethodPost, "/api/v2/ui/assignable-node-scopes/preview", token, map[string]any{
+		return request(t, h, http.MethodPost, "/api/v1/ui/assignable-node-scopes/preview", token, map[string]any{
 			"anchor_node_key": anchor, "scope": scope, "include_disabled": false,
 		}, http.StatusOK)
 	}
@@ -368,11 +368,11 @@ func TestAssignableNodeScopePreview(t *testing.T) {
 		t.Fatalf("exit_region scope = %#v", res)
 	}
 	// Unknown anchor is rejected.
-	request(t, h, http.MethodPost, "/api/v2/ui/assignable-node-scopes/preview", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/assignable-node-scopes/preview", token, map[string]any{
 		"anchor_node_key": "proxy_path:999999", "scope": map[string]any{"kind": "node"}, "include_disabled": false,
 	}, http.StatusBadRequest)
 	// Invalid kind is rejected.
-	request(t, h, http.MethodPost, "/api/v2/ui/assignable-node-scopes/preview", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/assignable-node-scopes/preview", token, map[string]any{
 		"anchor_node_key": keyP1, "scope": map[string]any{"kind": "bogus"}, "include_disabled": false,
 	}, http.StatusBadRequest)
 	// selection_hash is deterministic for the same scope.
@@ -384,7 +384,7 @@ func TestAssignableNodeScopePreview(t *testing.T) {
 
 	// Imported exits have no OBoard root inbound: "仅选择此节点" must still
 	// work while entry-based scopes stay rejected.
-	imported := request(t, h, http.MethodPost, "/api/v2/ui/external-outbounds/import", token, map[string]any{
+	imported := request(t, h, http.MethodPost, "/api/v1/ui/external-outbounds/import", token, map[string]any{
 		"scope": "global", "expose_to_users": true, "content": "socks5://user:pass@socks.example.com:1080#SOCKS-I",
 	}, http.StatusCreated)
 	externalID := int64(imported["external_outbounds"].([]any)[0].(map[string]any)["id"].(float64))
@@ -393,7 +393,7 @@ func TestAssignableNodeScopePreview(t *testing.T) {
 	if res["count"].(float64) != 1 {
 		t.Fatalf("external node scope = %#v", res)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/assignable-node-scopes/preview", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/assignable-node-scopes/preview", token, map[string]any{
 		"anchor_node_key": externalKey, "scope": map[string]any{"kind": "entry_inbound"}, "include_disabled": false,
 	}, http.StatusBadRequest)
 }
@@ -401,8 +401,8 @@ func TestAssignableNodeScopePreview(t *testing.T) {
 func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 	h, _, token, ids := setupOrderingTestTopology(t)
 	keyP1 := "proxy_path:" + itoa(ids["p1"])
-	user1 := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
-	user2 := request(t, h, http.MethodPost, "/api/v2/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	user1 := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	user2 := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "bob", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
 	userIDs := []int64{int64(user1["id"].(float64)), int64(user2["id"].(float64))}
 	node := map[string]any{"node_type": "proxy_path", "node_id": ids["p1"]}
 	body := func() map[string]any {
@@ -412,12 +412,12 @@ func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 		}
 	}
 	// Preview reports 2 created.
-	preview := request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions/batch/preview", token, body(), http.StatusOK)
+	preview := request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/preview", token, body(), http.StatusOK)
 	if preview["created"].(float64) != 2 || preview["updated"].(float64) != 0 || preview["skipped"].(float64) != 0 {
 		t.Fatalf("batch preview = %#v", preview)
 	}
 	// Apply creates exactly one aggregate access change for both rows.
-	applied := request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions/batch/apply", token, body(), http.StatusOK)
+	applied := request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, body(), http.StatusOK)
 	if applied["created"].(float64) != 2 {
 		t.Fatalf("batch apply = %#v", applied)
 	}
@@ -426,7 +426,7 @@ func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 		t.Fatalf("batch apply missing access change: %#v", applied)
 	}
 	// The same payload again is fully skipped and creates no new change.
-	again := request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions/batch/apply", token, body(), http.StatusOK)
+	again := request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, body(), http.StatusOK)
 	if again["created"].(float64) != 0 || again["updated"].(float64) != 0 || again["skipped"].(float64) != 2 {
 		t.Fatalf("idempotent batch apply = %#v", again)
 	}
@@ -436,17 +436,17 @@ func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 	// The opposite effect updates the existing rows in place.
 	denyBody := body()
 	denyBody["effect"] = "deny"
-	flipped := request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions/batch/apply", token, denyBody, http.StatusOK)
+	flipped := request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, denyBody, http.StatusOK)
 	if flipped["updated"].(float64) != 2 || flipped["created"].(float64) != 0 {
 		t.Fatalf("opposite-effect apply = %#v", flipped)
 	}
 	// Invalid input is rejected before any write.
 	bad := body()
 	bad["reason"] = ""
-	request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions/batch/apply", token, bad, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, bad, http.StatusBadRequest)
 	bad = body()
 	bad["expires_at"] = time.Now().Add(-time.Hour).Format(time.RFC3339)
-	request(t, h, http.MethodPost, "/api/v2/ui/user-node-exceptions/batch/apply", token, bad, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, bad, http.StatusBadRequest)
 	_ = keyP1
 }
 
@@ -456,13 +456,13 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 
 	// Ordering-only save is presentation-only: effective immediately, no
 	// access change, and the current version advances.
-	saved := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	saved := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": 1, "policy": orderingPolicy("exit_region", "exit_region", []string{"JP"}), "manual_node_order": []string{},
 	}, http.StatusOK)
 	if saved["effective_immediately"] != true || saved["current_revision_id"].(float64) == 1 {
 		t.Fatalf("ordering save = %#v", saved)
 	}
-	ordering := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
+	ordering := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
 	if ordering["read_only"] != false || ordering["version_no"].(float64) != 2 {
 		t.Fatalf("ordering state after save = %#v", ordering)
 	}
@@ -472,7 +472,7 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 
 	// A node membership change is authorization: pending version + access
 	// change; the current snapshot stays until activation.
-	applied := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+	applied := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
 	}, http.StatusOK)
 	changeID := int64(applied["access_change_id"].(float64))
@@ -480,14 +480,14 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 	if pendingID == 0 || applied["access_change_status"] == "" {
 		t.Fatalf("nodes/apply = %#v", applied)
 	}
-	detail := request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
+	detail := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
 	plan := detail["subscription_plan"].(map[string]any)
 	if int64(plan["pending_revision_id"].(float64)) != pendingID {
 		t.Fatalf("plan pending = %#v", plan)
 	}
 	// The pending version previews as authorization with agent tasks (the
 	// affected server is reachable).
-	preview := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/preview", token, map[string]any{}, http.StatusOK)
+	preview := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/changes/preview", token, map[string]any{}, http.StatusOK)
 	if preview["change_class"] != "authorization" || preview["membership_changed"] != true {
 		t.Fatalf("authorization preview = %#v", preview)
 	}
@@ -499,7 +499,7 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 	// An ordering save while a version is pending is rejected; after the
 	// pending version finalizes, reusing the old preview hash conflicts.
 	currentLock := int64(plan["lock_version"].(float64))
-	conflict := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	conflict := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": currentLock, "policy": orderingPolicy("manual", "entry", nil), "manual_node_order": []string{},
 	}, http.StatusConflict)
 	if conflict["code"] != "plan_version_applying" {
@@ -509,7 +509,7 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 	if terminal["status"] != "finalized" {
 		t.Fatalf("node change = %#v", terminal)
 	}
-	detail = request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
+	detail = request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
 	plan = detail["subscription_plan"].(map[string]any)
 	pendingAfter := int64(0)
 	if v, ok := plan["pending_revision_id"].(float64); ok {
@@ -519,12 +519,12 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 		t.Fatalf("plan after activation = %#v", plan)
 	}
 	// Stale hash against the old pending version conflicts after finalize.
-	request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/changes/apply", token, map[string]any{"preview_hash": hash}, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/changes/apply", token, map[string]any{"preview_hash": hash}, http.StatusConflict)
 
 	// Manual position changes alter the digest: an ordering save is a new
 	// version and the manual version's policy is persisted.
 	keyP2 := "proxy_path:" + itoa(ids["p2"])
-	manualSave := request(t, h, http.MethodPost, "/api/v2/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+	manualSave := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
 		"expected_lock_version": int64(plan["lock_version"].(float64)), "policy": orderingPolicy("manual", "entry", nil), "manual_node_order": []string{keyP2},
 	}, http.StatusOK)
 	if manualSave["effective_immediately"] != true {

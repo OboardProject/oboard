@@ -17,21 +17,21 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	createdServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "compose-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, http.StatusCreated)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "compose-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
-	createdInbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "compose-entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443, "config_json": "{}", "enabled": true}, http.StatusCreated)
+	createdInbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "compose-entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	inboundID := int64(createdInbound["inbound"].(map[string]any)["id"].(float64))
 
-	createdTargetServer := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{"name": "compose-target", "listen_ip": "0.0.0.0", "public_ipv4": "198.51.100.2", "entry_address": "198.51.100.2", "port_range_start": 11001, "port_range_end": 12000}, http.StatusCreated)
+	createdTargetServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "compose-target", "listen_ip": "0.0.0.0", "public_ipv4": "198.51.100.2", "entry_address": "198.51.100.2", "port_range_start": 11001, "port_range_end": 12000}, http.StatusCreated)
 	targetServerID := int64(createdTargetServer["server"].(map[string]any)["id"].(float64))
-	createdTargetInbound := request(t, h, http.MethodPost, "/api/v2/ui/inbounds", token, map[string]any{"server_id": targetServerID, "name": "compose-target-entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10444, "config_json": "{}", "enabled": true}, http.StatusCreated)
+	createdTargetInbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": targetServerID, "name": "compose-target-entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10444, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	targetInboundID := int64(createdTargetInbound["inbound"].(map[string]any)["id"].(float64))
 
 	before := configurationRevisionForTest(t, db)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{
 		"name_mode": "auto", "inbound_id": inboundID, "enabled": true,
 		"initial_steps": []map[string]any{{"position": 1, "node_type": "server_inbound", "inbound_id": targetInboundID, "transport_mode": "singbox", "config_json": "{}"}},
 	}, http.StatusCreated)
@@ -44,7 +44,7 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 		t.Fatalf("composed topology did not advance desired revision: %d -> %d", before, after)
 	}
 
-	invalid := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{
+	invalid := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{
 		"name_mode": "auto", "inbound_id": inboundID, "enabled": true,
 		"initial_steps": []map[string]any{{"position": 1, "node_type": "imported", "transport_mode": "singbox", "config_json": "{}"}},
 	}, http.StatusBadRequest)
@@ -59,12 +59,12 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 		t.Fatalf("invalid composed topology left partial path: %#v", paths)
 	}
 
-	rule := request(t, h, http.MethodPost, "/api/v2/ui/routing-rules", token, map[string]any{
+	rule := request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{
 		"scope": "path_stage", "proxy_path_id": pathID, "name": "composed-rule", "priority": 100,
 		"match_json": `{"domain_suffix":["example.com"]}`, "action": "direct", "enabled": true,
 	}, http.StatusCreated)["routing_rule"].(map[string]any)
 	ruleID := int64(rule["id"].(float64))
-	bound := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths", token, map[string]any{
+	bound := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{
 		"name_mode": "auto", "inbound_id": inboundID, "enabled": true, "routing_rule_id": ruleID,
 		"initial_steps": []map[string]any{{"position": 1, "node_type": "server_inbound", "inbound_id": targetInboundID, "transport_mode": "singbox", "config_json": "{}"}},
 	}, http.StatusCreated)
@@ -78,7 +78,7 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 		t.Fatalf("atomic path/rule binding not stored: %#v err=%v", storedRule, err)
 	}
 
-	request(t, h, http.MethodPost, "/api/v2/ui/proxy-path-steps/batch", token, map[string]any{"steps": []map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/proxy-path-steps/batch", token, map[string]any{"steps": []map[string]any{
 		{"path_id": boundPathID, "position": 2, "node_type": "warp", "transport_mode": "singbox", "config_json": "{}"},
 		{"path_id": boundPathID, "position": 2, "node_type": "warp", "transport_mode": "singbox", "config_json": "{}"},
 	}}, http.StatusBadRequest)
@@ -87,7 +87,7 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 		t.Fatalf("failed batch left partial steps: %#v err=%v", storedSteps, err)
 	}
 
-	directResult := request(t, h, http.MethodPost, "/api/v2/ui/proxy-paths/direct-branches", token, map[string]any{
+	directResult := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{
 		"inbound_id": inboundID,
 		"routing_rule": map[string]any{
 			"server_id": serverID, "scope": "path_stage", "name": "atomic-direct-rule", "priority": 100,
@@ -105,11 +105,11 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 		t.Fatalf("atomic direct branch/rule not stored: %#v err=%v", storedDirectRule, err)
 	}
 
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules/batch-delete", token, map[string]any{"ids": []int64{ruleID, 999999}}, http.StatusConflict)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules/batch-delete", token, map[string]any{"ids": []int64{ruleID, 999999}}, http.StatusConflict)
 	if _, err := db.GetRoutingRule(context.Background(), ruleID); err != nil {
 		t.Fatalf("failed batch delete removed an existing rule: %v", err)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/routing-rules/batch-delete", token, map[string]any{"ids": []int64{ruleID, directRuleID}}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/routing-rules/batch-delete", token, map[string]any{"ids": []int64{ruleID, directRuleID}}, http.StatusOK)
 	if _, err := db.GetRoutingRule(context.Background(), ruleID); err == nil {
 		t.Fatal("successful batch delete kept first rule")
 	}

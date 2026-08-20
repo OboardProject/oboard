@@ -596,20 +596,11 @@ func (s *Server) registerBackupOperations() {
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		s.backupMu.Lock()
-		defer s.backupMu.Unlock()
-		settings, err := s.loadControllerBackupSettings(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(settings.Secrets.RecoveryPassword) == "" {
-			return nil, errors.New("请先设置备份恢复密码")
-		}
 		uploadRemote := true
 		if request.UploadRemote != nil {
 			uploadRemote = *request.UploadRemote
 		}
-		item, err := s.createControllerDataBackup(ctx, settings, "manual", uploadRemote, false)
+		item, err := s.enqueueControllerBackup(ctx, "manual", uploadRemote, false)
 		if err != nil {
 			return nil, err
 		}

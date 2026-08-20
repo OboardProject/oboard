@@ -348,7 +348,7 @@ func (s *Store) CreateOAuthTokens(ctx context.Context, access, refresh *model.OA
 	return tx.Commit()
 }
 
-// AuthenticateMCPAccessToken resolves an access token for the /mcp audience,
+// AuthenticateMCPAccessToken resolves an access token for the /api/v1/mcp audience,
 // returning the live grant policy, the token, the effective user role, and the
 // user status. MCP authorization derives everything from the grant policy; the
 // API principal row is kept only for audit identity and rate limiting.

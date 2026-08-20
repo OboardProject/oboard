@@ -61,7 +61,7 @@ func TestBasePathMigrationWaitsForAgentCallbackOnNewPath(t *testing.T) {
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
 	app.ConfigureControllerUpdates(dbPath, "127.0.0.1:2787")
 	handler := app.Handler()
-	redirect, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v2/ui/settings", nil), "/new")
+	redirect, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v1/ui/settings", nil), "/new")
 	if err != nil || !migrated || redirect != "/new/settings" {
 		t.Fatalf("start migration = redirect %q, migrated %v, err %v", redirect, migrated, err)
 	}
@@ -131,7 +131,7 @@ func TestBasePathMigrationRequiresSubscriptionRelayDisabled(t *testing.T) {
 	}
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
 	defer app.Close()
-	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v2/ui/settings", nil), "/new"); err == nil || migrated || migrationConflictStatus(err) != http.StatusConflict {
+	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v1/ui/settings", nil), "/new"); err == nil || migrated || migrationConflictStatus(err) != http.StatusConflict {
 		t.Fatalf("migration with active relay = migrated %v, err %v", migrated, err)
 	}
 }
@@ -156,7 +156,7 @@ func TestBasePathMigrationRestoresAndRetriesFailedAgents(t *testing.T) {
 
 	staticDir := basePathTestStaticDir(t)
 	app := New(db, "test-secret", staticDir, "", nil)
-	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/api/v2/ui/settings", nil), "/private"); err != nil || !migrated {
+	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/ui/settings", nil), "/private"); err != nil || !migrated {
 		t.Fatalf("start migration = %v, %v", migrated, err)
 	}
 	progress, err := app.basePathMigrationProgress(ctx)
@@ -221,7 +221,7 @@ func TestBasePathMigrationToRootRetiresOldPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
-	if _, migrated, err := app.startBasePathMigration(context.Background(), httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v2/ui/settings", nil), ""); err != nil || !migrated {
+	if _, migrated, err := app.startBasePathMigration(context.Background(), httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v1/ui/settings", nil), ""); err != nil || !migrated {
 		t.Fatalf("migrate to root = %v, %v", migrated, err)
 	}
 	handler := app.Handler()

@@ -330,15 +330,15 @@ func TestProxyPathReuseUIRouteRespectsBasePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := New(fixture.db, "test-secret", "", "/panel", nil).Handler()
-	request(t, handler, http.MethodPost, "/panel/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	token := request(t, handler, http.MethodPost, "/panel/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/panel/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/panel/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	body := map[string]any{"sources": []map[string]any{{"inbound_id": fixture.secondRoot.ID}}, "target_server_id": fixture.servers["B"].ID, "target_kind": "generated"}
-	preview := request(t, handler, http.MethodPost, "/panel/api/v2/ui/proxy-paths/reuse-preview", token, body, http.StatusOK)
+	preview := request(t, handler, http.MethodPost, "/panel/api/v1/ui/proxy-paths/reuse-preview", token, body, http.StatusOK)
 	if preview["valid"] != true {
 		t.Fatalf("base-path preview = %#v", preview)
 	}
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v2/ui/proxy-paths/reuse-preview", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/ui/proxy-paths/reuse-preview", nil))
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("route outside base path = %d, want 404", recorder.Code)
 	}

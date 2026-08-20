@@ -26,10 +26,10 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 	app := newTestServer(db, "test-session-secret-with-at-least-thirty-two-characters", "")
 	app.ConfigureControllerBackups(filepath.Join(root, "oboard.sqlite"))
 	h := app.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-	settings := request(t, h, http.MethodPut, "/api/v2/ui/backups/settings", token, map[string]any{
+	settings := request(t, h, http.MethodPut, "/api/v1/ui/backups/settings", token, map[string]any{
 		"enabled":           true,
 		"schedule":          "daily",
 		"time":              "03:00",
@@ -53,13 +53,16 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 	if storedSettings[controllerBackupSecretsSetting] == "" || storedSettings[controllerBackupSecretsSetting] == "backup-recovery-password" {
 		t.Fatalf("backup recovery password was not encrypted: %#v", storedSettings[controllerBackupSecretsSetting])
 	}
-	first := request(t, h, http.MethodPost, "/api/v2/ui/backups", token, map[string]any{"upload_remote": false}, http.StatusCreated)
-	if first["backup"].(map[string]any)["local_status"] != "available" {
+	first := request(t, h, http.MethodPost, "/api/v1/ui/backups", token, map[string]any{"upload_remote": false}, http.StatusAccepted)
+	if first["backup"].(map[string]any)["local_status"] != "pending" {
 		t.Fatalf("first backup = %#v", first)
 	}
-	second := request(t, h, http.MethodPost, "/api/v2/ui/backups", token, map[string]any{"upload_remote": false}, http.StatusCreated)
+	firstID := first["backup"].(map[string]any)["id"].(string)
+	waitForControllerBackup(t, h, token, firstID, "available")
+	second := request(t, h, http.MethodPost, "/api/v1/ui/backups", token, map[string]any{"upload_remote": false}, http.StatusAccepted)
 	secondID := second["backup"].(map[string]any)["id"].(string)
-	listed := request(t, h, http.MethodGet, "/api/v2/ui/backups", token, nil, http.StatusOK)
+	waitForControllerBackup(t, h, token, secondID, "available")
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/backups", token, nil, http.StatusOK)
 	backups := listed["backups"].([]any)
 	if len(backups) != 2 {
 		t.Fatalf("backup records = %#v", backups)
@@ -152,6 +155,24 @@ func TestScheduledBackupPeriodRunsAfterMissedTime(t *testing.T) {
 	tuesday := time.Date(2026, time.July, 28, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	if period, due := scheduledBackupPeriod(settings, tuesday); !due || period != "weekly:2026-31" {
 		t.Fatalf("weekly backup after missed schedule = %q, %v", period, due)
+	}
+}
+
+func waitForControllerBackup(t *testing.T, h http.Handler, token, id, status string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		listed := request(t, h, http.MethodGet, "/api/v1/ui/backups", token, nil, http.StatusOK)
+		for _, raw := range listed["backups"].([]any) {
+			item := raw.(map[string]any)
+			if item["id"] == id && item["local_status"] == status {
+				return item
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("backup %s did not reach status %s: %#v", id, status, listed["backups"])
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 

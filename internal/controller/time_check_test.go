@@ -21,11 +21,11 @@ func TestTimeCheckSettingsAndServerModeChangeQueueImmediately(t *testing.T) {
 	defer db.Close()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	settings := request(t, h, http.MethodGet, "/api/v2/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
+	settings := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
 	if settings[settingServerDefaultTimeCorrection] != string(model.TimeCorrectionOff) {
 		t.Fatalf("default time correction = %#v", settings[settingServerDefaultTimeCorrection])
 	}
@@ -33,12 +33,12 @@ func TestTimeCheckSettingsAndServerModeChangeQueueImmediately(t *testing.T) {
 	if !ok || len(servers) != 3 {
 		t.Fatalf("default NTP servers = %#v", settings[settingTimeCheckNTPServers])
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"server_default_time_correction_mode": model.TimeCorrectionAuto,
 		"time_check_ntp_servers":              []string{"ntp1.example.com", "ntp2.example.com", "ntp3.example.com"},
 	}, http.StatusOK)
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", token, map[string]any{
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
 		"name": "edge", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010,
 	}, http.StatusCreated)["server"].(map[string]any)
 	serverID := int64(created["id"].(float64))
@@ -56,7 +56,7 @@ func TestTimeCheckSettingsAndServerModeChangeQueueImmediately(t *testing.T) {
 		t.Fatal(err)
 	}
 	server.TimeCorrectionMode = model.TimeCorrectionNTP
-	response := request(t, h, http.MethodPatch, "/api/v2/ui/servers/"+itoa(serverID), token, server, http.StatusOK)
+	response := request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+itoa(serverID), token, server, http.StatusOK)
 	if response["time_check_task"] == nil {
 		t.Fatalf("mode change did not queue an immediate time check: %#v", response)
 	}
@@ -95,15 +95,15 @@ func TestDailyTimeCheckStoresResultAndNotifiesAdminsOnce(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	viewer := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
-	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
+	viewer := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-viewer-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-viewer-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
-	channel := request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", adminToken, map[string]any{"name": "admin-clock", "type": "telegram", "enabled": true, "events": notificationServerOffline, "config_json": `{}`}, http.StatusCreated)["notification_channel"].(map[string]any)
+	channel := request(t, h, http.MethodPost, "/api/v1/ui/notification-channels", adminToken, map[string]any{"name": "admin-clock", "type": "telegram", "enabled": true, "events": notificationServerOffline, "config_json": `{}`}, http.StatusCreated)["notification_channel"].(map[string]any)
 	bindTestTelegramChannel(t, srv, db, int64(channel["id"].(float64)), 1)
-	request(t, h, http.MethodPost, "/api/v2/ui/notification-channels", viewerToken, map[string]any{"name": "viewer-other", "type": "bark", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"device_key":"viewer"}`}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/notification-channels", viewerToken, map[string]any{"name": "viewer-other", "type": "bark", "enabled": true, "events": notificationAdminAnnouncement, "config_json": `{"device_key":"viewer"}`}, http.StatusCreated)
 
 	var sentMu sync.Mutex
 	sentOwners := []int64{}

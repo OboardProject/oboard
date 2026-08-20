@@ -42,10 +42,13 @@ func (s *Server) registerOAuthRoutes(mux *http.ServeMux) {
 	// structured 410 so old clients fail loudly instead of silently dropping
 	// their write scopes; the final version removes the route entirely.
 	mux.HandleFunc("/oauth/register", s.oauthDynamicRegisterGone)
-	mux.HandleFunc("/api/v2/oauth-clients", s.auth(s.oauthClients, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/oauth-clients/", s.auth(s.oauthClient, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/oauth-grants", s.auth(s.oauthGrants, model.RoleAdmin))
-	mux.HandleFunc("/api/v2/oauth-grants/", s.auth(s.oauthGrant, model.RoleAdmin))
+}
+
+func (s *Server) registerOAuthManagementRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/oauth-clients", s.auth(s.oauthClients, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/oauth-clients/", s.auth(s.oauthClient, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/oauth-grants", s.auth(s.oauthGrants, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/oauth-grants/", s.auth(s.oauthGrant, model.RoleAdmin))
 }
 
 func (s *Server) oauthAuthorizationMetadata(w http.ResponseWriter, r *http.Request) {
@@ -68,12 +71,12 @@ func (s *Server) oauthAuthorizationMetadata(w http.ResponseWriter, r *http.Reque
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
 		"scopes_supported":                      []string{mcpauth.ScopeRead, mcpauth.ScopeOperate, mcpauth.ScopeOffline},
-		"resource":                              base + "/mcp",
+		"resource":                              base + "/api/v1/mcp",
 	})
 }
 
 func oauthProtectedResourceMetadataURL(base string) string {
-	return oauthWellKnownURL(base, oauthProtectedResourcePath, "/mcp")
+	return oauthWellKnownURL(base, oauthProtectedResourcePath, "/api/v1/mcp")
 }
 
 func oauthWellKnownURL(base, prefix, suffix string) string {
@@ -97,7 +100,7 @@ func (s *Server) matchOAuthWellKnownPath(requestPath string) (string, string, bo
 		if requestPath == oauthAuthorizationMetadataPath+basePath {
 			return basePath, oauthAuthorizationMetadataPath, true
 		}
-		if requestPath == oauthProtectedResourcePath+basePath+"/mcp" {
+		if requestPath == oauthProtectedResourcePath+basePath+"/api/v1/mcp" {
 			return basePath, oauthProtectedResourcePath, true
 		}
 	}
@@ -115,7 +118,7 @@ func (s *Server) oauthProtectedResourceMetadata(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":                 base + "/mcp",
+		"resource":                 base + "/api/v1/mcp",
 		"authorization_servers":    []string{base},
 		"bearer_methods_supported": []string{"header"},
 		"scopes_supported":         []string{mcpauth.ScopeRead, mcpauth.ScopeOperate, mcpauth.ScopeOffline},
@@ -214,7 +217,7 @@ func (s *Server) oauthGrants(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) oauthGrant(w http.ResponseWriter, r *http.Request) {
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v2/oauth-grants/"), "/")
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/oauth-grants/"), "/")
 	if id == "" || strings.Contains(id, "/") {
 		v2Error(w, r, http.StatusNotFound, "not_found", "OAuth Grant 不存在")
 		return
@@ -381,7 +384,7 @@ func (s *Server) validateOAuthAuthorizationRequest(r *http.Request) (oauthAuthor
 		return request, nil, errors.New("redirect_uri does not exactly match the registered client")
 	}
 	base, err := s.publicBaseURL(r.Context())
-	if err != nil || request.Resource != base+"/mcp" {
+	if err != nil || request.Resource != base+"/api/v1/mcp" {
 		return request, nil, errors.New("invalid resource audience")
 	}
 	if len(request.Scope) == 0 {
@@ -685,7 +688,7 @@ func (s *Server) authenticateOAuthToken(r *http.Request, raw string) (*model.API
 		return nil, err
 	}
 	base, err := s.publicBaseURL(r.Context())
-	if err != nil || token.Resource != base+"/mcp" {
+	if err != nil || token.Resource != base+"/api/v1/mcp" {
 		return nil, sql.ErrNoRows
 	}
 	client, err := s.store.GetOAuthClient(r.Context(), token.ClientID)

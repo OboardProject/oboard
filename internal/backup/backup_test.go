@@ -112,6 +112,17 @@ func TestEncryptedBackupRestoresDataAndRewrapsSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requestedID, err := NewID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdWithID, err := manager.CreateWithID(ctx, "recovery-password", requestedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdWithID.Manifest.ID != requestedID {
+		t.Fatalf("backup id = %q, want %q", createdWithID.Manifest.ID, requestedID)
+	}
 	if _, err := manager.Validate(created.Path, "wrong-password"); err == nil {
 		t.Fatal("backup accepted an incorrect password")
 	}

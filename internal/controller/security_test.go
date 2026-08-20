@@ -27,12 +27,12 @@ func TestAuthRechecksUserStatusAndRole(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
 
-	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
-	opLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	opLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	opToken := opLogin["token"].(string)
 
 	u, err := db.GetUserByUsername(context.Background(), "operator")
@@ -43,13 +43,13 @@ func TestAuthRechecksUserStatusAndRole(t *testing.T) {
 	if err := db.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodGet, "/api/v2/ui/servers", opToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/servers", opToken, nil, http.StatusForbidden)
 
 	u.Status = "disabled"
 	if err := db.UpdateUser(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodGet, "/api/v2/ui/dashboard/summary", opToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodGet, "/api/v1/ui/dashboard/summary", opToken, nil, http.StatusUnauthorized)
 }
 
 func TestLogoutAndAdminSessionRevocationInvalidateTokens(t *testing.T) {
@@ -60,24 +60,24 @@ func TestLogoutAndAdminSessionRevocationInvalidateTokens(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "member", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "member", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	memberID := int64(created["user"].(map[string]any)["id"].(float64))
 
-	firstLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	firstLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
 	firstToken := firstLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/logout", firstToken, map[string]any{}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", firstToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/logout", firstToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", firstToken, nil, http.StatusUnauthorized)
 
-	secondLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	secondLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
 	secondToken := secondLogin["token"].(string)
-	thirdLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	thirdLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
 	thirdToken := thirdLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/users/"+itoa(memberID)+"/sessions/revoke", adminToken, map[string]any{}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", secondToken, nil, http.StatusUnauthorized)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", thirdToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(memberID)+"/sessions/revoke", adminToken, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", secondToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", thirdToken, nil, http.StatusUnauthorized)
 }
 
 func TestConcurrentLoginsRemainIndependent(t *testing.T) {
@@ -88,18 +88,18 @@ func TestConcurrentLoginsRemainIndependent(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	first := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
-	second := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	first := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	second := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	if first == second {
 		t.Fatal("separate logins returned the same token")
 	}
 
-	request(t, h, http.MethodGet, "/api/v2/ui/me", first, nil, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", second, nil, http.StatusOK)
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/logout", first, map[string]any{}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", first, nil, http.StatusUnauthorized)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", second, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", first, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", second, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/logout", first, map[string]any{}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", first, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", second, nil, http.StatusOK)
 }
 
 func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
@@ -109,9 +109,9 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/login", bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`))
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/ui/auth/login", bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginResponse := httptest.NewRecorder()
 	h.ServeHTTP(loginResponse, loginRequest)
@@ -137,7 +137,7 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 		t.Fatalf("session cookie is not persistent for 24 hours: %#v", sessionCookie)
 	}
 
-	readRequest := httptest.NewRequest(http.MethodGet, "/api/v2/ui/auth/session", nil)
+	readRequest := httptest.NewRequest(http.MethodGet, "/api/v1/ui/auth/session", nil)
 	readRequest.AddCookie(sessionCookie)
 	readResponse := httptest.NewRecorder()
 	h.ServeHTTP(readResponse, readRequest)
@@ -160,7 +160,7 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 		}
 	}
 
-	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/logout", nil)
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/v1/ui/auth/logout", nil)
 	logoutRequest.AddCookie(sessionCookie)
 	logoutResponse := httptest.NewRecorder()
 	h.ServeHTTP(logoutResponse, logoutRequest)
@@ -168,7 +168,7 @@ func TestCookieSessionsRequireCSRFForWrites(t *testing.T) {
 		t.Fatalf("cookie-authenticated write without CSRF status = %d body=%s", logoutResponse.Code, logoutResponse.Body.String())
 	}
 
-	logoutRequest = httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/logout", nil)
+	logoutRequest = httptest.NewRequest(http.MethodPost, "/api/v1/ui/auth/logout", nil)
 	logoutRequest.AddCookie(sessionCookie)
 	logoutRequest.Header.Set("X-OBoard-CSRF", loginPayload.CSRFToken)
 	logoutResponse = httptest.NewRecorder()
@@ -189,9 +189,9 @@ func TestCookieSessionRejectsChangedUserAgent(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/login", bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`))
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/ui/auth/login", bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginRequest.Header.Set("User-Agent", "OBoard-Browser/1")
 	loginResponse := httptest.NewRecorder()
@@ -201,7 +201,7 @@ func TestCookieSessionRejectsChangedUserAgent(t *testing.T) {
 	}
 	sessionCookie := loginResponse.Result().Cookies()[0]
 
-	restoreRequest := httptest.NewRequest(http.MethodGet, "/api/v2/ui/auth/session", nil)
+	restoreRequest := httptest.NewRequest(http.MethodGet, "/api/v1/ui/auth/session", nil)
 	restoreRequest.Header.Set("User-Agent", "OBoard-Browser/2")
 	restoreRequest.AddCookie(sessionCookie)
 	restoreResponse := httptest.NewRecorder()
@@ -313,16 +313,16 @@ func TestTrustedProxySettingsApplyImmediatelyAndPersist(t *testing.T) {
 	defer db.Close()
 	app := newTestServer(db, "test-secret", "")
 	handler := app.Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, handler, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
-	before, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v2/ui/me/authentication", token, nil, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
+	before, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v1/ui/me/authentication", token, nil, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
 	if before["passkey_supported"] != false {
 		t.Fatalf("untrusted proxy enabled passkeys: %#v", before)
 	}
 
-	saved, response := trustedProxyTestRequest(t, handler, http.MethodPost, "/api/v2/ui/settings", token, map[string]any{
+	saved, response := trustedProxyTestRequest(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"trusted_proxy_cidrs": []string{"2001:db8::1", "172.18.0.2", "172.18.0.2/32"},
 	}, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
 	settings := saved["settings"].(map[string]any)
@@ -340,11 +340,11 @@ func TestTrustedProxySettingsApplyImmediatelyAndPersist(t *testing.T) {
 		t.Fatal("bearer-authenticated settings request unexpectedly set a session cookie")
 	}
 
-	after, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v2/ui/me/authentication", token, nil, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
+	after, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v1/ui/me/authentication", token, nil, "172.18.0.2:43000", "198.51.100.40", "https", http.StatusOK)
 	if after["passkey_supported"] != true {
 		t.Fatalf("trusted HTTPS proxy did not enable passkeys: %#v", after)
 	}
-	environmentStatus, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v2/ui/settings", token, nil, "10.9.8.7:43000", "198.51.100.41", "https", http.StatusOK)
+	environmentStatus, _ := trustedProxyTestRequest(t, handler, http.MethodGet, "/api/v1/ui/settings", token, nil, "10.9.8.7:43000", "198.51.100.41", "https", http.StatusOK)
 	environmentProxy := environmentStatus["reverse_proxy_status"].(map[string]any)
 	if environmentProxy["peer_trusted"] != true || environmentProxy["client_ip"] != "198.51.100.41" {
 		t.Fatalf("environment proxy was not additive: %#v", environmentProxy)
@@ -368,7 +368,7 @@ func TestTrustedProxySettingsApplyImmediatelyAndPersist(t *testing.T) {
 	}
 
 	restarted := newTestServer(db, "test-secret", "").Handler()
-	restartedStatus, _ := trustedProxyTestRequest(t, restarted, http.MethodGet, "/api/v2/ui/settings", token, nil, "172.18.0.2:43000", "198.51.100.42", "https", http.StatusOK)
+	restartedStatus, _ := trustedProxyTestRequest(t, restarted, http.MethodGet, "/api/v1/ui/settings", token, nil, "172.18.0.2:43000", "198.51.100.42", "https", http.StatusOK)
 	restartedProxy := restartedStatus["reverse_proxy_status"].(map[string]any)
 	if restartedProxy["peer_trusted"] != true || restartedProxy["https"] != true || restartedProxy["client_ip"] != "198.51.100.42" {
 		t.Fatalf("persisted trusted proxy status = %#v", restartedProxy)
@@ -383,10 +383,10 @@ func TestTrustedProxySettingsRefreshSecureSessionCookie(t *testing.T) {
 	}
 	defer db.Close()
 	handler := newTestServer(db, "test-secret", "").Handler()
-	request(t, handler, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 
 	loginBody := bytes.NewBufferString(`{"username":"admin","password":"very-secure-password"}`)
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/auth/login", loginBody)
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/ui/auth/login", loginBody)
 	loginRequest.RemoteAddr = "172.19.0.2:43000"
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginRequest.Header.Set("X-Forwarded-Proto", "https")
@@ -405,7 +405,7 @@ func TestTrustedProxySettingsRefreshSecureSessionCookie(t *testing.T) {
 	}
 
 	settingsBody := bytes.NewBufferString(`{"trusted_proxy_cidrs":["172.19.0.2"]}`)
-	settingsRequest := httptest.NewRequest(http.MethodPost, "/api/v2/ui/settings", settingsBody)
+	settingsRequest := httptest.NewRequest(http.MethodPost, "/api/v1/ui/settings", settingsBody)
 	settingsRequest.RemoteAddr = "172.19.0.2:43000"
 	settingsRequest.Header.Set("Content-Type", "application/json")
 	settingsRequest.Header.Set("X-OBoard-CSRF", login["csrf_token"].(string))
@@ -459,21 +459,21 @@ func TestUserDisableAndDirectRoleDemotionRevokeSessions(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
 	operatorID := int64(created["user"].(map[string]any)["id"].(float64))
 
-	operatorLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	operatorLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	operatorToken := operatorLogin["token"].(string)
-	request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(operatorID), adminToken, map[string]any{"role": "viewer"}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/servers", operatorToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(operatorID), adminToken, map[string]any{"role": "viewer"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/servers", operatorToken, nil, http.StatusUnauthorized)
 
-	viewerLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	viewerLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	viewerToken := viewerLogin["token"].(string)
-	request(t, h, http.MethodPatch, "/api/v2/ui/users/"+itoa(operatorID), adminToken, map[string]any{"status": "disabled"}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", viewerToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(operatorID), adminToken, map[string]any{"status": "disabled"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", viewerToken, nil, http.StatusUnauthorized)
 }
 
 func TestSafeLogFieldRemovesControlCharacters(t *testing.T) {
@@ -507,7 +507,7 @@ func TestViewerCannotReadTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodGet, "/api/v2/ui/agent-tasks/"+itoa(task.ID), token, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks/"+itoa(task.ID), token, nil, http.StatusForbidden)
 }
 
 func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
@@ -529,14 +529,14 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
-	dashboard := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dashboard", token, nil, http.StatusOK)
+	dashboard := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dashboard", token, nil, http.StatusOK)
 	if _, ok := dashboard["user_overview"].(map[string]any); !ok {
 		t.Fatalf("viewer dashboard overview missing: %#v", dashboard)
 	}
-	request(t, h, http.MethodGet, "/api/v2/ui/dashboard/summary", token, nil, http.StatusForbidden)
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=plans", token, nil, http.StatusForbidden)
-	request(t, h, http.MethodGet, "/api/v2/ui/subscription-plans", token, nil, http.StatusForbidden)
-	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=account", token, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/dashboard/summary", token, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=plans", token, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans", token, nil, http.StatusForbidden)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=account", token, nil, http.StatusOK)
 	current := page["current_user"].(map[string]any)
 	if current["username"] != "viewer" || current["role"] != "viewer" {
 		t.Fatalf("unexpected current user: %#v", current)
@@ -547,7 +547,7 @@ func TestPageDataIncludesMinimalCurrentUser(t *testing.T) {
 		}
 	}
 
-	subscriptions := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=subscriptions", token, nil, http.StatusOK)
+	subscriptions := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=subscriptions", token, nil, http.StatusOK)
 	if subscriptions["subscription_public_base_url"] != "https://relay.example" {
 		t.Fatalf("viewer subscription base URL = %#v", subscriptions["subscription_public_base_url"])
 	}
@@ -570,15 +570,15 @@ func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
-	operatorLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	operatorLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	operatorToken := operatorLogin["token"].(string)
 
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dns", operatorToken, nil, http.StatusForbidden)
-	dnsPage := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dns", adminToken, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns", operatorToken, nil, http.StatusForbidden)
+	dnsPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns", adminToken, nil, http.StatusOK)
 	for _, key := range []string{"dns_lists", "server_dns_policies", "dns_benchmarks"} {
 		if _, ok := dnsPage[key]; !ok {
 			t.Fatalf("DNS settings page missing %s: %#v", key, dnsPage)
@@ -588,8 +588,8 @@ func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {
 		t.Fatalf("DNS settings page unexpectedly included domain account data: %#v", dnsPage)
 	}
 
-	request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dns-records", operatorToken, nil, http.StatusForbidden)
-	recordsPage := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=dns-records", adminToken, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns-records", operatorToken, nil, http.StatusForbidden)
+	recordsPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns-records", adminToken, nil, http.StatusOK)
 	for _, key := range []string{"dns_credentials", "inbounds", "servers"} {
 		if _, ok := recordsPage[key]; !ok {
 			t.Fatalf("domain records page missing %s: %#v", key, recordsPage)
@@ -599,7 +599,7 @@ func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {
 		t.Fatalf("domain records page unexpectedly included resolver settings: %#v", recordsPage)
 	}
 
-	settingsPage := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=settings", adminToken, nil, http.StatusOK)
+	settingsPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=settings", adminToken, nil, http.StatusOK)
 	if _, ok := settingsPage["dns_lists"]; ok {
 		t.Fatalf("system settings page unexpectedly included resolver settings: %#v", settingsPage)
 	}
@@ -613,10 +613,10 @@ func TestBuiltinGroupsAndGroupAdminRole(t *testing.T) {
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "owner", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "owner", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "owner", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "owner", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
-	page := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=users", adminToken, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=users", adminToken, nil, http.StatusOK)
 	groups := page["user_groups"].([]any)
 	var adminGroupID, usersGroupID int64
 	for _, raw := range groups {
@@ -643,13 +643,13 @@ func TestBuiltinGroupsAndGroupAdminRole(t *testing.T) {
 	if ownerMembershipID == 0 {
 		t.Fatal("bootstrap admin was not assigned to the administrators group")
 	}
-	request(t, h, http.MethodDelete, "/api/v2/ui/user-groups/"+itoa(adminGroupID), adminToken, nil, http.StatusBadRequest)
-	request(t, h, http.MethodDelete, "/api/v2/ui/user-group-members/"+itoa(ownerMembershipID), adminToken, nil, http.StatusBadRequest)
-	request(t, h, http.MethodDelete, "/api/v2/ui/users/"+itoa(ownerID), adminToken, nil, http.StatusBadRequest)
+	request(t, h, http.MethodDelete, "/api/v1/ui/user-groups/"+itoa(adminGroupID), adminToken, nil, http.StatusBadRequest)
+	request(t, h, http.MethodDelete, "/api/v1/ui/user-group-members/"+itoa(ownerMembershipID), adminToken, nil, http.StatusBadRequest)
+	request(t, h, http.MethodDelete, "/api/v1/ui/users/"+itoa(ownerID), adminToken, nil, http.StatusBadRequest)
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "member", "nickname": "普通成员", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "member", "nickname": "普通成员", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	memberID := int64(created["user"].(map[string]any)["id"].(float64))
-	page = request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=users", adminToken, nil, http.StatusOK)
+	page = request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=users", adminToken, nil, http.StatusOK)
 	foundDefault := false
 	for _, raw := range page["user_group_members"].([]any) {
 		member := raw.(map[string]any)
@@ -661,26 +661,26 @@ func TestBuiltinGroupsAndGroupAdminRole(t *testing.T) {
 		t.Fatal("new viewer was not assigned to the default users group")
 	}
 
-	adminGroup := request(t, h, http.MethodPost, "/api/v2/ui/user-groups", adminToken, map[string]any{"name": "运维管理员", "role": "admin", "enabled": true}, http.StatusCreated)
+	adminGroup := request(t, h, http.MethodPost, "/api/v1/ui/user-groups", adminToken, map[string]any{"name": "运维管理员", "role": "admin", "enabled": true}, http.StatusCreated)
 	groupID := int64(adminGroup["user_group"].(map[string]any)["id"].(float64))
-	membership := request(t, h, http.MethodPost, "/api/v2/ui/user-group-members", adminToken, map[string]any{"group_id": groupID, "user_id": memberID, "enabled": true}, http.StatusCreated)
+	membership := request(t, h, http.MethodPost, "/api/v1/ui/user-group-members", adminToken, map[string]any{"group_id": groupID, "user_id": memberID, "enabled": true}, http.StatusCreated)
 	membershipID := int64(membership["user_group_member"].(map[string]any)["id"].(float64))
-	memberLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
+	memberLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "member", "password": "long-user-password"}, http.StatusOK)
 	memberToken := memberLogin["token"].(string)
 	if memberLogin["user"].(map[string]any)["role"] != "admin" {
 		t.Fatalf("group role did not promote member: %#v", memberLogin)
 	}
-	request(t, h, http.MethodGet, "/api/v2/ui/users", memberToken, nil, http.StatusOK)
-	request(t, h, http.MethodDelete, "/api/v2/ui/user-group-members/"+itoa(membershipID), adminToken, nil, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/users", memberToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/users", memberToken, nil, http.StatusOK)
+	request(t, h, http.MethodDelete, "/api/v1/ui/user-group-members/"+itoa(membershipID), adminToken, nil, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/users", memberToken, nil, http.StatusForbidden)
 
-	request(t, h, http.MethodPatch, "/api/v2/ui/me", memberToken, map[string]any{"nickname": "新昵称"}, http.StatusOK)
-	account := request(t, h, http.MethodGet, "/api/v2/ui/page-data?page=account", memberToken, nil, http.StatusOK)
+	request(t, h, http.MethodPatch, "/api/v1/ui/me", memberToken, map[string]any{"nickname": "新昵称"}, http.StatusOK)
+	account := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=account", memberToken, nil, http.StatusOK)
 	if account["account_user"].(map[string]any)["nickname"] != "新昵称" {
 		t.Fatalf("nickname was not updated: %#v", account)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/password", memberToken, map[string]any{"current_password": "long-user-password", "new_password": "new-long-password"}, http.StatusOK)
-	newLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "member", "password": "new-long-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/password", memberToken, map[string]any{"current_password": "long-user-password", "new_password": "new-long-password"}, http.StatusOK)
+	newLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "member", "password": "new-long-password"}, http.StatusOK)
 	if newLogin["user"].(map[string]any)["role"] != "viewer" {
 		t.Fatalf("group promotion leaked into the user's direct role: %#v", newLogin)
 	}
@@ -694,30 +694,30 @@ func TestAgentHostOperationsRequireAdminButOperatorCanProbeForward(t *testing.T)
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
-	operatorLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	operatorLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	operatorToken := operatorLogin["token"].(string)
 
-	sourceResponse := request(t, h, http.MethodPost, "/api/v2/ui/servers", adminToken, map[string]any{"name": "source", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	sourceResponse := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "source", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	sourceID := int64(sourceResponse["server"].(map[string]any)["id"].(float64))
-	targetResponse := request(t, h, http.MethodPost, "/api/v2/ui/servers", adminToken, map[string]any{"name": "target", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
+	targetResponse := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "target", "entry_ip_mode": "custom", "entry_address": "203.0.113.2", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
 	targetID := int64(targetResponse["server"].(map[string]any)["id"].(float64))
-	forwardResponse := request(t, h, http.MethodPost, "/api/v2/ui/port-forwards", operatorToken, map[string]any{"name": "probe", "source_server_id": sourceID, "target_server_id": targetID, "listen_ip": "0.0.0.0", "listen_port": 10000, "target_port": 20000, "protocol": "tcp", "backend": "auto", "probe_mode": "apply", "priority": 100, "config_json": "{}"}, http.StatusCreated)
+	forwardResponse := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards", operatorToken, map[string]any{"name": "probe", "source_server_id": sourceID, "target_server_id": targetID, "listen_ip": "0.0.0.0", "listen_port": 10000, "target_port": 20000, "protocol": "tcp", "backend": "auto", "probe_mode": "apply", "priority": 100, "config_json": "{}"}, http.StatusCreated)
 	forwardID := int64(forwardResponse["port_forward"].(map[string]any)["id"].(float64))
 
 	for _, endpoint := range []string{
-		"/api/v2/ui/servers/" + itoa(sourceID) + "/agent-config",
-		"/api/v2/ui/servers/" + itoa(sourceID) + "/agent-update",
-		"/api/v2/ui/servers/" + itoa(sourceID) + "/diagnose",
-		"/api/v2/ui/servers/" + itoa(sourceID) + "/logs",
-		"/api/v2/ui/servers/" + itoa(sourceID) + "/enroll-token",
+		"/api/v1/ui/servers/" + itoa(sourceID) + "/agent-config",
+		"/api/v1/ui/servers/" + itoa(sourceID) + "/agent-update",
+		"/api/v1/ui/servers/" + itoa(sourceID) + "/diagnose",
+		"/api/v1/ui/servers/" + itoa(sourceID) + "/logs",
+		"/api/v1/ui/servers/" + itoa(sourceID) + "/enroll-token",
 	} {
 		request(t, h, http.MethodPost, endpoint, operatorToken, map[string]any{}, http.StatusForbidden)
 	}
-	probe := request(t, h, http.MethodPost, "/api/v2/ui/port-forwards/"+itoa(forwardID)+"/probe", operatorToken, map[string]any{}, http.StatusAccepted)
+	probe := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards/"+itoa(forwardID)+"/probe", operatorToken, map[string]any{}, http.StatusAccepted)
 	if probe["task"].(map[string]any)["type"] != "probe_port_forwards" {
 		t.Fatalf("unexpected operator probe response: %#v", probe)
 	}
@@ -730,9 +730,9 @@ func TestAgentHostOperationsRequireAdminButOperatorCanProbeForward(t *testing.T)
 	if err := db.UpdateServer(context.Background(), source); err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(sourceID)+"/agent-config", adminToken, map[string]any{"restart_command": "sh -c reboot"}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(sourceID)+"/agent-config", adminToken, map[string]any{"time_sync_interval_seconds": 1}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(sourceID)+"/agent-config", adminToken, map[string]any{"heartbeat_interval_seconds": 30}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(sourceID)+"/agent-config", adminToken, map[string]any{"restart_command": "sh -c reboot"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(sourceID)+"/agent-config", adminToken, map[string]any{"time_sync_interval_seconds": 1}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(sourceID)+"/agent-config", adminToken, map[string]any{"heartbeat_interval_seconds": 30}, http.StatusBadRequest)
 }
 
 func TestEnrollmentTokenIsOneTimeAndAgentAuthUsesConstantTimePath(t *testing.T) {
@@ -742,13 +742,13 @@ func TestEnrollmentTokenIsOneTimeAndAgentAuthUsesConstantTimePath(t *testing.T) 
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
 
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", adminToken, map[string]any{"name": "node-1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "node-1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
-	enroll := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
+	enroll := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
 	enrollmentToken := enroll["enrollment_token"].(string)
 	if enrollmentToken == "" {
 		t.Fatal("missing enrollment token")
@@ -966,17 +966,17 @@ func TestAgentConfigPathAllowlistAndPasswordPolicy(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
 
 	// short password rejected on create
-	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "shorty", "password": "short", "role": "viewer", "status": "active"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "shorty", "password": "short", "role": "viewer", "status": "active"}, http.StatusBadRequest)
 
 	// change password requires >= 8
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/password", adminToken, map[string]any{"current_password": "very-secure-password", "new_password": "shortpw"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/password", adminToken, map[string]any{"current_password": "very-secure-password", "new_password": "shortpw"}, http.StatusBadRequest)
 
-	server := request(t, h, http.MethodPost, "/api/v2/ui/servers", adminToken, map[string]any{"name": "node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(server["server"].(map[string]any)["id"].(float64))
 	src, err := db.GetServer(context.Background(), serverID)
 	if err != nil {
@@ -987,11 +987,11 @@ func TestAgentConfigPathAllowlistAndPasswordPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// reject dangerous core_binary / state_dir
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"core_binary": "/tmp/evil"}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"core_binary": "/usr/local/bin/evil"}, http.StatusBadRequest)
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"state_dir": "/etc/oboard-agent"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"core_binary": "/tmp/evil"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"core_binary": "/usr/local/bin/evil"}, http.StatusBadRequest)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"state_dir": "/etc/oboard-agent"}, http.StatusBadRequest)
 	// accept managed paths
-	request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"core_binary": "/usr/local/bin/oboard-sb", "state_dir": "/var/lib/oboard-agent"}, http.StatusAccepted)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/agent-config", adminToken, map[string]any{"core_binary": "/usr/local/bin/oboard-sb", "state_dir": "/var/lib/oboard-agent"}, http.StatusAccepted)
 }
 
 func TestValidateAgentManagedPathHelpers(t *testing.T) {
@@ -1033,12 +1033,12 @@ func TestPasswordChangeRevokesSession(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	oldToken := login["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/password", oldToken, map[string]any{"current_password": "very-secure-password", "new_password": "brand-new-password"}, http.StatusOK)
-	request(t, h, http.MethodGet, "/api/v2/ui/me", oldToken, nil, http.StatusUnauthorized)
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "brand-new-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/password", oldToken, map[string]any{"current_password": "very-secure-password", "new_password": "brand-new-password"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/me", oldToken, nil, http.StatusUnauthorized)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "brand-new-password"}, http.StatusOK)
 }
 
 func TestOperatorTaskPayloadScrubsSecrets(t *testing.T) {
@@ -1048,11 +1048,11 @@ func TestOperatorTaskPayloadScrubsSecrets(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	adminLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	adminLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := adminLogin["token"].(string)
-	request(t, h, http.MethodPost, "/api/v2/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
-	opLogin := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "operator", "password": "long-user-password", "role": "operator", "status": "active"}, http.StatusCreated)
+	opLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	opToken := opLogin["token"].(string)
 
 	server := &model.Server{Name: "s1", AgentID: "a1", AgentTokenHash: security.HashSecret("t"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010}
@@ -1063,7 +1063,7 @@ func TestOperatorTaskPayloadScrubsSecrets(t *testing.T) {
 	if err := db.CreateTask(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
-	out := request(t, h, http.MethodGet, "/api/v2/ui/agent-tasks/"+itoa(task.ID), opToken, nil, http.StatusOK)
+	out := request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks/"+itoa(task.ID), opToken, nil, http.StatusOK)
 	got := out["task"].(map[string]any)
 	if got["nonce"] != "<redacted>" {
 		t.Fatalf("operator should not see nonce: %#v", got)
@@ -1078,7 +1078,7 @@ func TestOperatorTaskPayloadScrubsSecrets(t *testing.T) {
 	if strings.Contains(result, "secret-token") || !resultRedacted {
 		t.Fatalf("operator result not scrubbed: %s", result)
 	}
-	adminOut := request(t, h, http.MethodGet, "/api/v2/ui/agent-tasks/"+itoa(task.ID), adminToken, nil, http.StatusOK)
+	adminOut := request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks/"+itoa(task.ID), adminToken, nil, http.StatusOK)
 	adminTask := adminOut["task"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(adminTask["payload_json"]), "abc") {
 		t.Fatalf("admin should see payload secrets: %#v", adminTask)
@@ -1092,12 +1092,12 @@ func TestEnrollmentTokenIncludesExpiry(t *testing.T) {
 	}
 	defer db.Close()
 	h := newTestServer(db, "test-secret", "").Handler()
-	request(t, h, http.MethodPost, "/api/v2/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
-	login := request(t, h, http.MethodPost, "/api/v2/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	adminToken := login["token"].(string)
-	created := request(t, h, http.MethodPost, "/api/v2/ui/servers", adminToken, map[string]any{"name": "node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	id := int64(created["server"].(map[string]any)["id"].(float64))
-	enroll := request(t, h, http.MethodPost, "/api/v2/ui/servers/"+itoa(id)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
+	enroll := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(id)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
 	if enroll["enrollment_token"] == nil || enroll["expires_at"] == nil {
 		t.Fatalf("missing expiry fields: %#v", enroll)
 	}
@@ -1136,12 +1136,12 @@ func TestDiagnosticRoutesRequireOperator(t *testing.T) {
 	operatorToken := tokenFor(operator)
 	h := newTestServer(db, "test-secret", "").Handler()
 
-	for _, path := range []string{"/api/v2/ui/dns-benchmarks", "/api/v2/ui/mtu-detections", "/api/v2/ui/port-forward-probes", "/api/v2/ui/inbound-probes"} {
+	for _, path := range []string{"/api/v1/ui/dns-benchmarks", "/api/v1/ui/mtu-detections", "/api/v1/ui/port-forward-probes", "/api/v1/ui/inbound-probes"} {
 		request(t, h, http.MethodGet, path, viewerToken, nil, http.StatusForbidden)
 		request(t, h, http.MethodGet, path, operatorToken, nil, http.StatusOK)
 	}
 
 	// The audit trail records admin activity and must stay admin-only.
-	request(t, h, http.MethodGet, "/api/v2/ui/audit-logs", viewerToken, nil, http.StatusForbidden)
-	request(t, h, http.MethodGet, "/api/v2/ui/audit-logs", operatorToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/audit-logs", viewerToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/audit-logs", operatorToken, nil, http.StatusForbidden)
 }
