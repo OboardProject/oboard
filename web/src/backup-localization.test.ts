@@ -19,4 +19,10 @@ describe('backup and update localization', () => {
     expect(main).toContain('setInstallFailure(localizeErrorMessage(result.last_error')
     expect(main).toContain('{localizeErrorMessage(failure ||')
   })
+
+  it('prompts for a recovery password before creating a manual backup', () => {
+    expect(main).toContain("if (!snapshot.settings?.password_configured && !draft.password_configured) {")
+    expect(main).toContain("notify?.('请先设置备份恢复密码', 'error')")
+    expect(main).toContain('<button onClick={() => void createBackup()} disabled={Boolean(working)}>')
+  })
 })

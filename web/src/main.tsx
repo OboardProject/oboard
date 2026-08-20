@@ -4141,6 +4141,11 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
   }
   const createBackup = async () => {
     if (working) return
+    if (!snapshot.settings?.password_configured && !draft.password_configured) {
+      notify?.('请先设置备份恢复密码', 'error')
+      setSettingsDialogOpen(true)
+      return
+    }
     setWorking('create')
     try {
       const result = await client.request('/backups', { method: 'POST', body: JSON.stringify({ upload_remote: true }) }) as { backup: ControllerBackup }
@@ -4289,7 +4294,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       <span className={`backup-settings-summary-icon${savedSettings.enabled ? ' active' : ''}`}><CalendarSync size={18} /></span>
       <div><strong>{savedSettings.enabled ? '自动备份已开启' : '自动备份未开启'}</strong><span>{scheduleDescription}</span><small>{savedDestination.enabled ? `新备份会同时上传到${savedDestinationName}，远端保留 ${savedSettings.remote_retention || 1} 份。` : '第三方备份未启用，新备份只保存在本机。'}</small></div>
     </div>
-    <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working) || !draft.password_configured}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
+    <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working)}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
     <section className="backup-import">
       <div><h3>导入与恢复密码</h3><p className="muted">这里的密码也用于恢复列表中的备份。上传时会先验证密码和完整性。</p></div>
       <div className="backup-import-actions"><input ref={uploadRef} type="file" accept=".obk,application/octet-stream" onChange={event => { void uploadBackup(event.target.files?.[0]); event.currentTarget.value = '' }} /><input type="password" value={uploadPassword} onChange={event => setUploadPassword(event.target.value)} placeholder="该备份的恢复密码" /><button className="ghost" onClick={() => uploadRef.current?.click()} disabled={Boolean(working)}><ArrowUp size={15} />{working === 'upload' ? '上传中...' : '上传备份'}</button></div>
