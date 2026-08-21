@@ -1385,6 +1385,8 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	if raw, ok := out[settingSubscriptionRelayURL].(string); ok && strings.TrimSpace(raw) != "" {
 		if normalized, err := s.normalizeSubscriptionRelayURL(raw); err == nil {
 			out[settingSubscriptionRelayURL] = normalized
+		} else if value, err := s.subscriptionPublicBaseURL(ctx); err == nil && value != "" {
+			out[settingSubscriptionRelayURL] = value
 		} else {
 			out[settingSubscriptionRelayURL] = ""
 		}
@@ -1612,13 +1614,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	addSubscriptionPublicBaseURL := func() error {
-		configuredURL, err := s.store.GetSetting(ctx, settingSubscriptionRelayURL)
+		value, err := s.subscriptionPublicBaseURL(ctx)
 		if err != nil {
 			return err
-		}
-		value := ""
-		if normalized, normalizeErr := s.normalizeSubscriptionRelayURL(configuredURL); normalizeErr == nil {
-			value = normalized
 		}
 		out["subscription_public_base_url"] = value
 		return nil
@@ -14930,6 +14928,28 @@ func (s *Server) publicBaseURL(ctx context.Context) (string, error) {
 		return "", errors.New("controller_url 无效")
 	}
 	return normalized, nil
+}
+
+func (s *Server) subscriptionPublicBaseURL(ctx context.Context) (string, error) {
+	configuredURL, err := s.store.GetSetting(ctx, settingSubscriptionRelayURL)
+	if err != nil {
+		return "", err
+	}
+	if normalized, normalizeErr := s.normalizeSubscriptionRelayURL(configuredURL); normalizeErr == nil && normalized != "" {
+		return normalized, nil
+	}
+	relays, err := s.publicSubscriptionRelays(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, relay := range relays {
+		if active, _ := relay["active"].(bool); active {
+			if url, _ := relay["public_url"].(string); url != "" {
+				return url, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 func (s *Server) normalizeSubscriptionRelayURL(raw string) (string, error) {

@@ -185,7 +185,8 @@ function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refr
     const users = data.users || []
     const user = users.find((item: any) => item.id === workspace.subject.id) || data.account_user || data.current_user
     if (!user?.subscription_token) { message('该用户没有可复制的旧式订阅凭证', 'warning'); return }
-    const base = String(data.subscription_public_base_url || window.location.origin).replace(/\/$/, '')
+    const activeRelay = (data.subscription_relays || []).find((relay: any) => relay.active)
+    const base = String(data.subscription_public_base_url || data.settings?.subscription_relay_url || activeRelay?.public_url || window.location.origin).replace(/\/$/, '')
     const query = new URLSearchParams({ format, profile_id: String(selected.id) })
     await navigator.clipboard.writeText(`${base}/api/v1/subscriptions/${user.subscription_token}?${query}`)
     message('组合订阅链接已复制')

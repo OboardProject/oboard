@@ -1917,7 +1917,8 @@ export function App() {
   }
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<any>({})
-  subscriptionPublicBaseURL = subscriptionBaseURL(String(data.subscription_public_base_url || data.settings?.subscription_relay_url || ''), appControllerURL())
+  const activeSubscriptionRelay = (data.subscription_relays || []).find((relay: any) => relay.active)
+  subscriptionPublicBaseURL = subscriptionBaseURL(String(data.subscription_public_base_url || data.settings?.subscription_relay_url || activeSubscriptionRelay?.public_url || ''), appControllerURL())
   const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
   const [restoreError, setRestoreError] = useState('')
   const [, setAttentionDismissRevision] = useState(0)

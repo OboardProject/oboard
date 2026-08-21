@@ -12,10 +12,45 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/subrelay"
 	"github.com/OboardProject/oboard/internal/version"
 )
+
+func TestSubscriptionPublicBaseURLFallsBackToActiveRelay(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := newTestServer(db, "test-secret", "")
+	ctx := t.Context()
+	if err := db.SetSetting(ctx, "controller_url", "https://panel.example"); err != nil {
+		t.Fatal(err)
+	}
+	relay := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://relay.example/qzq", Status: "pending"}
+	if err := db.CreateSubscriptionRelay(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSettings(ctx, map[string]string{settingSubscriptionRelayURL: "https://relay.example/qzq", settingSubscriptionControllerDirectEnabled: "false"}); err != nil {
+		t.Fatal(err)
+	}
+	value, err := server.subscriptionPublicBaseURL(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "https://relay.example/qzq" {
+		t.Fatalf("subscription public base URL=%q", value)
+	}
+	settings, err := db.ListSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if public := server.publicSettings(ctx, settings); public[settingSubscriptionRelayURL] != "https://relay.example/qzq" {
+		t.Fatalf("public settings relay URL=%q", public[settingSubscriptionRelayURL])
+	}
+}
 
 func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -84,6 +119,10 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	settings, err := db.ListSettings(t.Context())
 	if err != nil || settings[settingSubscriptionRelayURL] != "https://relay.example" || settings[settingSubscriptionControllerDirectEnabled] != "false" {
 		t.Fatalf("initial relay access settings: %#v err=%v", settings, err)
+	}
+	nodes := request(t, handler, http.MethodGet, "/api/v1/ui/page-data?page=nodes", token, nil, http.StatusOK)
+	if base, _ := nodes["subscription_public_base_url"].(string); base != "https://relay.example" {
+		t.Fatalf("nodes page subscription base URL=%q", base)
 	}
 	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"subscription_controller_direct_enabled": true}, http.StatusOK)
 	settings, err = db.ListSettings(t.Context())

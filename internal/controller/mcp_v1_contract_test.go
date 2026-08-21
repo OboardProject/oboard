@@ -7,8 +7,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 func TestV1UnifiedRoutesRemoveLegacyPrefixes(t *testing.T) {
@@ -42,6 +46,101 @@ func TestV1UnifiedRoutesRemoveLegacyPrefixes(t *testing.T) {
 	h.ServeHTTP(mcp, httptest.NewRequest(http.MethodPost, "/api/v1/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`)))
 	if mcp.Code != http.StatusUnauthorized && mcp.Code != http.StatusServiceUnavailable {
 		t.Fatalf("POST /api/v1/mcp status = %d; want 401 before authentication", mcp.Code)
+	}
+}
+
+func TestMCPChangesPublishRealtimeInvalidation(t *testing.T) {
+	db, server, session, _, closeServer := newMCPTestEnvironment(t, "", []string{"oboard:read", "oboard:operate", "offline_access"})
+	defer closeServer()
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: mcpCapabilityToolName("settings.update"),
+		Arguments: map[string]any{
+			"capability_input":    map[string]any{"changes": map[string]any{"subscription_controller_direct_enabled": true}},
+			"reason":              "realtime regression test",
+			"idempotency_key":     "realtime-regression-123",
+			"approval_preference": "use_preapproval_if_available",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		var text string
+		for _, content := range result.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text += item.Text
+			}
+		}
+		t.Fatalf("settings.update returned an error result: %s", text)
+	}
+
+	server.realtime.mu.Lock()
+	sequence := server.realtime.sequence.Load()
+	allSequence := server.realtime.resourceSequences["all"]
+	server.realtime.mu.Unlock()
+	if sequence == 0 || allSequence == 0 {
+		t.Fatalf("MCP mutation did not publish realtime invalidation: sequence=%d all=%d", sequence, allSequence)
+	}
+	_ = db
+}
+
+func TestMCPRelayActivationPublishesRealtimeAndKeepsPublicURL(t *testing.T) {
+	db, server, session, _, closeServer := newMCPTestEnvironment(t, "", []string{"oboard:read", "oboard:operate", "offline_access"})
+	defer closeServer()
+
+	expiresAt := time.Now().Add(time.Hour)
+	relay := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://relay.example", Status: "pending", EnrollmentHash: security.HashSecret("enroll-token"), EnrollmentExpiresAt: &expiresAt}
+	if err := db.CreateSubscriptionRelay(context.Background(), relay); err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := security.EncryptSecret(server.sessionSecret, subscriptionRelaySecretPurpose, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimSubscriptionRelayEnrollment(context.Background(), security.HashSecret("enroll-token"), security.HashSecret("relay-token"), encrypted); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: mcpCapabilityToolName("subscription_relays.activate"),
+		Arguments: map[string]any{
+			"capability_input":    map[string]any{"relay_id": relay.ID},
+			"reason":              "relay realtime regression test",
+			"idempotency_key":     "relay-realtime-regression-123",
+			"approval_preference": "use_preapproval_if_available",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		var text string
+		for _, content := range result.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text += item.Text
+			}
+		}
+		t.Fatalf("subscription_relays.activate returned an error result: %s", text)
+	}
+
+	settings, err := db.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings[settingSubscriptionRelayURL] != "https://relay.example" || settings[settingSubscriptionControllerDirectEnabled] != "false" {
+		t.Fatalf("relay settings after MCP activation=%#v", settings)
+	}
+	public := server.publicSettings(context.Background(), settings)
+	if public[settingSubscriptionRelayURL] != "https://relay.example" {
+		t.Fatalf("public settings relay URL=%q", public[settingSubscriptionRelayURL])
+	}
+
+	server.realtime.mu.Lock()
+	allSequence := server.realtime.resourceSequences["all"]
+	server.realtime.mu.Unlock()
+	if allSequence == 0 {
+		t.Fatal("MCP relay activation did not publish realtime invalidation")
 	}
 }
 
