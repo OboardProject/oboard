@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   automationConnectArtifacts,
   automationMCPURL,
-  codexOAuthRisk2Scopes,
-  codexOAuthScopes,
   normalizeAutomationControllerURL,
+  oboardOAuthScopes,
   type AutomationConnectClient,
 } from './automation-connect'
 
@@ -32,25 +31,24 @@ describe('automation MCP connection artifacts', () => {
     expect(codex.config).toContain('auth = "oauth"')
     expect(codex.config).toContain('oauth_resource = "https://panel.example.com/api/v1/mcp"')
     expect(codex.config).toContain('default_tools_approval_mode = "writes"')
-    for (const scope of codexOAuthScopes) expect(codex.config).toContain(`"${scope}"`)
-    for (const scope of codexOAuthRisk2Scopes) expect(codex.config).toContain(`"${scope}"`)
+    for (const scope of oboardOAuthScopes) expect(codex.config).toContain(`"${scope}"`)
     const claude = automationConnectArtifacts('claude', 'https://panel.example.com')
     expect(claude.command).toContain('claude mcp add --transport http --scope user')
     expect(claude.config).not.toContain('Authorization')
   })
 
-  it('adds risk 2 write scopes to the request only when enabled', () => {
-    const enabled = automationConnectArtifacts('codex', 'https://panel.example.com', { risk2: true })
-    for (const scope of codexOAuthRisk2Scopes) {
-      expect(enabled.config).toContain(`"${scope}"`)
-      expect(enabled.prompt).toContain(`- ${scope}`)
+  it('uses only the current coarse OAuth scopes, not legacy fine-grained scopes', () => {
+    const artifacts = automationConnectArtifacts('codex', 'https://panel.example.com')
+    for (const scope of oboardOAuthScopes) {
+      expect(artifacts.config).toContain(`"${scope}"`)
+      expect(artifacts.prompt).toContain(`- ${scope}`)
     }
-    expect(enabled.prompt).toContain('已勾选')
-    const disabled = automationConnectArtifacts('codex', 'https://panel.example.com', { risk2: false })
-    for (const scope of codexOAuthRisk2Scopes) expect(disabled.config).not.toContain(`"${scope}"`)
-    for (const scope of codexOAuthScopes) expect(disabled.config).toContain(`"${scope}"`)
-    expect(disabled.prompt).toContain('未勾选')
-    expect(disabled.prompt).not.toContain('- servers:onboard')
+    for (const legacy of ['inventory:read', 'servers:onboard', 'topology:write', 'deployments:apply']) {
+      expect(artifacts.config).not.toContain(legacy)
+      expect(artifacts.prompt).not.toContain(legacy)
+    }
+    expect(artifacts.prompt).toContain('跟随当前 OBoard 用户角色')
+    expect(artifacts.prompt).not.toContain('风险 2 级写权限')
   })
 
   it('uses RFC well-known locations when the controller has a base path', () => {

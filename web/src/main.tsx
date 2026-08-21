@@ -3157,7 +3157,6 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [connectClient, setConnectClient] = useState<AutomationConnectClient>('codex')
-  const [connectRisk2, setConnectRisk2] = useState(true)
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
   const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
   const refresh = async () => {
@@ -3195,7 +3194,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
-  const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL, { risk2: connectRisk2 })
+  const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL)
   const connectReady = true
   return <Panel title="自动化" className="automation-panel">
     <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
@@ -3237,10 +3236,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
             <div><span>客户端</span><div className="automation-connect-segments" role="radiogroup" aria-label="客户端">{([
               ['codex', 'Codex'], ['claude', 'Claude Code'], ['generic', '通用 MCP'],
             ] as [AutomationConnectClient, string][]).map(([value, label]) => <button type="button" role="radio" aria-checked={connectClient === value} className={connectClient === value ? 'active' : ''} key={value} onClick={() => setConnectClient(value)}>{label}</button>)}</div></div>
-            <div><span>权限范围</span><div className="automation-connect-permission" title="勾选后申请风险 2 级写权限：接入服务器、恢复订阅访问、订阅自定义路径">
-              <span><strong>风险 2 级写权限</strong><small>接入服务器、恢复订阅、订阅自定义路径</small></span>
-              <em>风险 2</em>
-              <Switch checked={connectRisk2} onChange={setConnectRisk2} ariaLabel="申请风险 2 级写权限" />
+            <div><span>权限说明</span><div className="automation-connect-permission">
+              <span><strong>跟随当前用户权限</strong><small>授权后由服务端按角色、资源边界和审批策略实时检查</small></span>
             </div></div>
           </div>
           <div className="automation-connect-endpoint"><span>MCP 地址</span><CopyBlock value={`${publicControllerURL}/api/v1/mcp`} /></div>

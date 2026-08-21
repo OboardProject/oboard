@@ -6,28 +6,11 @@ export type AutomationConnectArtifacts = {
   prompt: string
 }
 
-export const codexOAuthScopes = [
-  'inventory:read',
-  'servers:read',
-  'servers:plan',
-  'topology:read',
-  'topology:plan',
-  'topology:write',
-  'deployments:plan',
-  'deployments:validate',
-  'deployments:apply',
+export const oboardOAuthScopes = [
+  'oboard:read',
+  'oboard:operate',
   'offline_access',
 ]
-
-export const codexOAuthRisk2Scopes = [
-  'servers:onboard',
-  'subscriptions:resume',
-  'subscriptions:manage',
-]
-
-export type AutomationConnectPermissions = {
-  risk2?: boolean
-}
 
 export function normalizeAutomationControllerURL(raw: string) {
   const value = String(raw || '').trim().replace(/\/+$/, '')
@@ -46,11 +29,10 @@ export function automationMCPURL(controllerURL: string) {
   return base ? `${base}/api/v1/mcp` : ''
 }
 
-export function automationConnectArtifacts(client: AutomationConnectClient, controllerURL: string, permissions: AutomationConnectPermissions = {}): AutomationConnectArtifacts {
+export function automationConnectArtifacts(client: AutomationConnectClient, controllerURL: string): AutomationConnectArtifacts {
   const base = normalizeAutomationControllerURL(controllerURL)
   if (!base) return { command: '', config: '', prompt: '' }
-  const includeRisk2 = permissions.risk2 !== false
-  const scopes = includeRisk2 ? [...codexOAuthScopes, ...codexOAuthRisk2Scopes] : codexOAuthScopes
+  const scopes = oboardOAuthScopes
   const mcpURL = `${base}/api/v1/mcp`
   const command = clientCommand(client, mcpURL)
   const config = clientConfig(client, mcpURL, base, scopes)
@@ -68,10 +50,11 @@ export function automationConnectArtifacts(client: AutomationConnectClient, cont
 - 服务名称：oboard
 - 认证：使用服务端 OAuth 2.1 discovery；需要我在浏览器中登录并确认 OBoard 展示的权限与资源范围
 
-权限选择（风险 2 级）：
-${includeRisk2 ? '- 已勾选：接入服务器（servers:onboard）、恢复订阅访问（subscriptions:resume）、订阅自定义路径（subscriptions:manage）' : '- 未勾选：不申请接入服务器、恢复订阅、订阅自定义路径等风险 2 级写权限'}
+权限说明：
+- MCP 能力跟随当前 OBoard 用户角色；授权后由服务端按角色、资源边界与审批策略实时检查。
+- OAuth scope 只控制访问级别和是否离线刷新，不再细分业务权限。
 
-请在 OAuth 授权页核对「申请的权限」清单与上述选择一致后再允许授权。需要申请的范围：
+请在 OAuth 授权页核对「继承当前账号权限」与能力预览后再允许授权。需要申请的范围：
 ${scopes.map(scope => `- ${scope}`).join('\n')}
 
 请先检查现有的用户级 MCP 配置，仅幂等新增或更新 oboard，保留其他服务器配置，不要修改当前项目或仓库文件。
