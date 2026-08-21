@@ -317,6 +317,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/routing-rules/", s.auth(s.routingRules, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rule-sets", s.auth(s.routingRuleSets, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rule-sets/", s.auth(s.routingRuleSets, model.RoleOperator))
+	mux.HandleFunc("/api/v1/routing-rule-catalog", s.auth(s.routingRuleCatalog, model.RoleOperator))
 	mux.HandleFunc("/api/v1/external-outbounds", s.auth(s.externalOutbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/external-outbounds/", s.auth(s.externalOutbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/proxy-paths", s.auth(s.proxyPaths, model.RoleOperator))
@@ -6559,6 +6560,7 @@ func (s *Server) prepareRoutingRuleReuse(ctx context.Context, v *model.RoutingRu
 	v.Name = source.Name
 	v.MatchSource = source.MatchSource
 	v.RuleSetID = source.RuleSetID
+	v.DNSResolver = source.DNSResolver
 	v.MatchJSON = source.MatchJSON
 	if !v.SyncEnabled {
 		return 0, nil
@@ -6625,6 +6627,10 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 	}
 	if strings.TrimSpace(v.Name) == "" {
 		return errors.New("name required")
+	}
+	v.DNSResolver = strings.TrimSpace(v.DNSResolver)
+	if err := core.ValidateRoutingRuleDNSResolver(v.DNSResolver); err != nil {
+		return err
 	}
 	if v.Priority == 0 {
 		v.Priority = 100

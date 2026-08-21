@@ -34,7 +34,7 @@ func Convert(format string, content []byte) ([]byte, error) {
 		return canonicalSource(content)
 	case model.RoutingRuleSetFormatSingBoxBinary:
 		return append([]byte(nil), content...), nil
-	case model.RoutingRuleSetFormatMihomoDomain, model.RoutingRuleSetFormatMihomoIPCIDR, model.RoutingRuleSetFormatMihomoClassical:
+	case model.RoutingRuleSetFormatMihomoDomain, model.RoutingRuleSetFormatMihomoIPCIDR, model.RoutingRuleSetFormatMihomoClassical, model.RoutingRuleSetFormatBlackmatrixClassical:
 		return convertMihomo(format, content)
 	default:
 		return nil, fmt.Errorf("unsupported rule set format %q", format)
@@ -86,6 +86,9 @@ func convertMihomo(format string, content []byte) ([]byte, error) {
 			rule, err = convertClassical(entry.value)
 		}
 		if err != nil {
+			if format == model.RoutingRuleSetFormatBlackmatrixClassical && (strings.Contains(err.Error(), "not a domain rule") || strings.Contains(err.Error(), "not supported for domain routing")) {
+				continue
+			}
 			return nil, fmt.Errorf("line %d: %w", entry.line, err)
 		}
 		rules = append(rules, rule)
@@ -198,6 +201,10 @@ func convertClassical(value string) (map[string]any, error) {
 			return nil, errors.New("domain keyword is empty")
 		}
 		return map[string]any{"domain_keyword": []string{target}}, nil
+	case "URL-REGEX":
+		return nil, errors.New("URL-REGEX is not a domain rule")
+	case "USER-AGENT", "PROCESS-NAME", "IP-ASN":
+		return nil, fmt.Errorf("rule type %q is not supported for domain routing", kind)
 	case "IP-CIDR", "IP-CIDR6":
 		return convertIPCIDR(target)
 	case "GEOIP":

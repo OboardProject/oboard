@@ -423,6 +423,19 @@ func ValidateNetworkInterfaceName(name string) error {
 	return nil
 }
 
+func ValidateRoutingRuleDNSResolver(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	switch value {
+	case primaryRemoteDNSTag, "remote-secondary", primaryBootstrapDNSTag, "bootstrap-secondary", "local":
+		return nil
+	default:
+		return fmt.Errorf("unsupported dns_resolver %q", value)
+	}
+}
+
 // ValidateRoutingMatchJSON validates the structured destination-port fields
 // exposed by OBoard while leaving the rest of sing-box's rule surface intact.
 func ValidateRoutingMatchJSON(raw string) error {
@@ -538,6 +551,11 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.DNS = dns
+	if dnsRules, err := buildDNSRules(server, opts.RoutingRules, opts.RoutingRuleSets); err != nil {
+		return "", err
+	} else if len(dnsRules) > 0 {
+		dns["rules"] = dnsRules
+	}
 	config.Route["default_domain_resolver"] = defaultDomainResolver(dns, server)
 	for _, inbound := range inbounds {
 		if inbound.ServerID != server.ID || !inbound.Enabled {
@@ -2327,6 +2345,57 @@ func buildRouteRuleSets(server model.Server, rules []model.RoutingRule, sets []m
 	}
 	sort.SliceStable(result, func(i, j int) bool { return fmt.Sprint(result[i]["tag"]) < fmt.Sprint(result[j]["tag"]) })
 	return result
+}
+
+func buildDNSRules(server model.Server, rules []model.RoutingRule, sets []model.RoutingRuleSet) ([]map[string]any, error) {
+	filtered := make([]model.RoutingRule, 0)
+	for _, rule := range rules {
+		if rule.ServerID == server.ID && rule.Enabled && strings.TrimSpace(rule.DNSResolver) != "" {
+			filtered = append(filtered, rule)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		if filtered[i].Priority == filtered[j].Priority {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return filtered[i].Priority < filtered[j].Priority
+	})
+	result := make([]map[string]any, 0, len(filtered))
+	for _, rule := range filtered {
+		item := map[string]any{}
+		if rule.MatchSource == model.RoutingMatchSourceRuleSet {
+			if rule.RuleSetID == nil {
+				return nil, fmt.Errorf("routing rule %s: rule_set_id required", rule.Name)
+			}
+			found := false
+			for _, set := range sets {
+				if set.ID == *rule.RuleSetID && set.Revision != "" {
+					item["rule_set"] = []string{routingRuleSetTag(set.ID)}
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("routing rule %s: rule set %d has no successful snapshot", rule.Name, *rule.RuleSetID)
+			}
+		} else if strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}" {
+			var match map[string]any
+			if err := json.Unmarshal([]byte(rule.MatchJSON), &match); err != nil {
+				return nil, fmt.Errorf("routing rule %s match_json: %w", rule.Name, err)
+			}
+			for _, key := range []string{"domain", "domain_suffix", "domain_keyword", "domain_regex", "geosite", "geoip", "ip_cidr"} {
+				if value, ok := match[key]; ok {
+					item[key] = value
+				}
+			}
+		}
+		if len(item) == 0 {
+			continue
+		}
+		item["server"] = strings.TrimSpace(rule.DNSResolver)
+		result = append(result, item)
+	}
+	return result, nil
 }
 
 func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds []model.Outbound, external []model.ExternalOutbound) (string, bool, error) {

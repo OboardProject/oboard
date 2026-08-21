@@ -89,6 +89,7 @@ func TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema(t *testing.T) {
 		`drop index idx_routing_rules_target_path`,
 		`alter table routing_rules drop column sync_group_id`,
 		`alter table routing_rules drop column target_proxy_path_id`,
+		`alter table routing_rules drop column dns_resolver`,
 	} {
 		if _, err := raw.Exec(statement); err != nil {
 			t.Fatalf("prepare previous routing schema with %q: %v", statement, err)
@@ -102,7 +103,7 @@ func TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, column := range []string{"target_proxy_path_id", "sync_group_id"} {
+	for _, column := range []string{"target_proxy_path_id", "sync_group_id", "dns_resolver"} {
 		var count int
 		if err := db.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('routing_rules') where name=?`, column).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("routing_rules.%s migration count=%d err=%v", column, count, err)

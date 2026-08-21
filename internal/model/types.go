@@ -1193,6 +1193,7 @@ type RoutingRule struct {
 	SortPosition       int         `json:"sort_position"`
 	MatchSource        string      `json:"match_source"`
 	RuleSetID          *int64      `json:"rule_set_id,omitempty"`
+	DNSResolver        string      `json:"dns_resolver,omitempty"`
 	Name               string      `json:"name"`
 	Priority           int         `json:"priority"`
 	MatchJSON          string      `json:"match_json"`
@@ -1244,15 +1245,16 @@ type RoutingRulePlacement struct {
 }
 
 const (
-	RoutingRuleSetFormatSingBoxSource   = "singbox_source"
-	RoutingRuleSetFormatSingBoxBinary   = "singbox_binary"
-	RoutingRuleSetFormatMihomoDomain    = "mihomo_domain"
-	RoutingRuleSetFormatMihomoIPCIDR    = "mihomo_ipcidr"
-	RoutingRuleSetFormatMihomoClassical = "mihomo_classical"
-	RoutingRuleSetStatusPending         = "pending"
-	RoutingRuleSetStatusReady           = "ready"
-	RoutingRuleSetStatusRefreshing      = "refreshing"
-	RoutingRuleSetStatusError           = "error"
+	RoutingRuleSetFormatSingBoxSource        = "singbox_source"
+	RoutingRuleSetFormatSingBoxBinary        = "singbox_binary"
+	RoutingRuleSetFormatMihomoDomain         = "mihomo_domain"
+	RoutingRuleSetFormatMihomoIPCIDR         = "mihomo_ipcidr"
+	RoutingRuleSetFormatMihomoClassical      = "mihomo_classical"
+	RoutingRuleSetFormatBlackmatrixClassical = "blackmatrix_classical"
+	RoutingRuleSetStatusPending              = "pending"
+	RoutingRuleSetStatusReady                = "ready"
+	RoutingRuleSetStatusRefreshing           = "refreshing"
+	RoutingRuleSetStatusError                = "error"
 )
 
 type ExternalOutbound struct {

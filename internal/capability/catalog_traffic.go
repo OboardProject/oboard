@@ -34,7 +34,7 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 	routingRule := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 		"scope": stringValue, "proxy_path_id": nullableInteger(), "stage_step_id": nullableInteger(),
-		"sort_position": map[string]any{"type": "integer"}, "match_source": stringValue, "rule_set_id": nullableInteger(),
+		"sort_position": map[string]any{"type": "integer"}, "match_source": stringValue, "rule_set_id": nullableInteger(), "dns_resolver": stringValue,
 		"priority": map[string]any{"type": "integer"}, "action": stringValue,
 		"outbound_id": nullableInteger(), "external_outbound_id": nullableInteger(),
 		"target_proxy_path_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
@@ -54,6 +54,7 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"sort_position":        map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 0, "description": "path_stage 节点内的稳定排序位置"},
 		"match_source":         map[string]any{"type": "string", "enum": []string{"inline", "rule_set"}, "default": "inline", "description": "inline 使用 match_json；rule_set 使用已成功抓取的远程规则集"},
 		"rule_set_id":          nullablePositiveID("match_source=rule_set 时必填；远程规则集仅适用于 path_stage"),
+		"dns_resolver":         map[string]any{"type": "string", "enum": []string{"", "remote-primary", "remote-secondary", "bootstrap-primary", "bootstrap-secondary", "local"}, "default": "", "description": "可选：仅命中规则时使用指定 DNS 服务器；留空使用服务器默认 DNS"},
 		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "规则名称；从 sync_source_rule_id 复用匹配条件时可省略"},
 		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 100, "description": "server scope 的匹配优先级；path_stage 优先使用 sort_position"},
 		"match_json":           map[string]any{"type": "string", "maxLength": 8192, "default": "{}", "description": "inline 匹配对象的 JSON 字符串；rule_set 模式会规范化为 {}"},
@@ -93,8 +94,8 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 	routingRuleSetProperties := map[string]any{
 		"name":            map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "远程规则集名称"},
 		"url":             map[string]any{"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048, "description": "不含凭据或 fragment 的 HTTPS URL；创建和来源变更会立即抓取校验"},
-		"format":          map[string]any{"type": "string", "enum": []string{"singbox_source", "singbox_binary", "mihomo_domain", "mihomo_ipcidr", "mihomo_classical"}, "description": "sing-box source/binary 或受支持的 Mihomo 文本格式；.mrs 不受支持"},
-		"mihomo_behavior": map[string]any{"type": "string", "enum": []string{"", "domain", "ipcidr", "classical"}, "description": "由 format 规范化，通常无需显式提供"},
+		"format":          map[string]any{"type": "string", "enum": []string{"singbox_source", "singbox_binary", "mihomo_domain", "mihomo_ipcidr", "mihomo_classical", "blackmatrix_classical"}, "description": "sing-box source/binary 或受支持的 Mihomo/Blackmatrix7 文本格式；.mrs 不受支持"},
+		"mihomo_behavior": map[string]any{"type": "string", "enum": []string{"", "domain", "ipcidr", "classical", "blackmatrix_classical"}, "description": "由 format 规范化，通常无需显式提供"},
 	}
 	routingRuleSetFields := closedObject(routingRuleSetProperties)
 	routingRuleSetFields["minProperties"] = 1

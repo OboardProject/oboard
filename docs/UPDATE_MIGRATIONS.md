@@ -54,8 +54,29 @@
 | `controller-db-20260818-node-workspace` | Controller | SQLite schema / data backfill | `dev-7ab2640d5900` | 待发布 | 生效中 | - |
 | `controller-db-20260818-telegram-operations` | Controller | SQLite schema / data lifecycle | `dev-61ea3fa84687` | 待发布 | 生效中 | - |
 | `controller-db-20260819-configuration-revision-watermark` | Controller | SQLite schema / runtime recovery | `dev-25ab8ae0b776` | 待发布 | 生效中 | - |
+| `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-938338eec42f` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260821-routing-rule-dns-resolver
+
+- **引入日期：** 2026-08-21
+- **引入提交：** `OboardProject/oboard@938338eec42fe9c845937cf2cc311a1868d8ed82`
+- **引入版本：** `dev-938338eec42f`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/core`
+- **类别：** SQLite schema
+- **原因：** 分流规则需要按手动域名或远程规则集选择 DNS 解析器；路由规则本身需要持久保存用户选择的解析服务。
+- **源状态：** `routing_rules` 没有 DNS 解析器字段，Controller 无法为单条规则生成独立 DNS 规则。
+- **目标状态：** `routing_rules` 新增非空默认空字符串的 `dns_resolver`；Controller 使用规则匹配与 `rule_set` 生成 `dns.rules`，把命中规则交给所选 DNS 服务器，旧规则保持默认 DNS 行为。
+- **实现位置：** `oboard/internal/store/store.go`、`oboard/internal/model/types.go`、`oboard/internal/core/protocols.go`、`oboard/internal/controller/server.go`；Web 编排器与 MCP schema 同步增加字段。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `migrateRoutingRuleScopes` 幂等补列。
+- **数据影响：** 新增列，已有规则默认空值，不改变任何现有配置或匹配语义。
+- **重复执行：** `pragma_table_info` 检查已存在列后跳过；重复执行不修改业务数据。
+- **失败行为：** DDL 失败阻止 Controller 打开数据库，不留下部分配置。
+- **回归测试：** `TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema` 从缺少 `dns_resolver` 的旧表启动，验证补列与重复迁移幂等。
+- **移除条件：** 在通用删除门槛之外，所有支持数据库和备份恢复路径必须已包含该列，且不存在未保存 DNS 选择的规则。
+- **移除状态：** 生效中。
 
 ### controller-db-20260819-configuration-revision-watermark
 

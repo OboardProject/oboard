@@ -301,8 +301,9 @@ type NotificationChannel = { id: number; owner_user_id: number; owner_username?:
 type TelegramBinding = { id: number; channel_id: number; user_id: number; chat_id: number; telegram_user_id: number; chat_type: string; created_at: string; updated_at: string }
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'proxy_path' | 'interface' | 'source_prefix'
-type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_proxy_path_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; sync_group_id?: string; enabled: boolean; updated_at?: string }
-type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
+type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; dns_resolver?: string; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_proxy_path_id?: number; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; sync_group_id?: string; enabled: boolean; updated_at?: string }
+type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical' | 'blackmatrix_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
+type RoutingRuleCatalogItem = { name: string; path: string; url: string; format: RoutingRuleSet['format']; category: string; size: number }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
@@ -8967,7 +8968,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
+type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
 type TransportMode = 'port-forward' | 'tunnel'
 type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
@@ -10269,6 +10270,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		sort_position: ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage' && rule.proxy_path_id === proxyPathID && Number(rule.stage_step_id || 0) === routingDraft.stage_step_id).length,
 		match_source: routingDraft.match_source,
 		rule_set_id: routingDraft.match_source === 'rule_set' ? routingDraft.rule_set_id : undefined,
+        dns_resolver: routingDraft.dns_resolver || undefined,
         name: routingDraft.name,
 		match_json: routingDraft.match_source === 'inline' ? routingMatchJSON(routingDraft.match_kind, routingDraft.match_value) : '{}',
         action: routingDraft.action,
@@ -11679,7 +11681,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
+  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
 }
 
 function routingDraftMatch(rule: RoutingRule): { match_kind: RoutingMatchKind; match_value: string } {
@@ -11699,6 +11701,7 @@ function routingDraftFromRule(rule: RoutingRule): Partial<RoutingDraft> {
     name: rule.name,
     match_source: rule.match_source || 'inline',
     rule_set_id: Number(rule.rule_set_id || 0),
+    dns_resolver: rule.dns_resolver || '',
     ...routingDraftMatch(rule),
     action: rule.action,
     outbound_id: Number(rule.outbound_id || 0),
@@ -11814,6 +11817,9 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const [ruleSetQuery, setRuleSetQuery] = useState('')
   const [showRuleSetCreate, setShowRuleSetCreate] = useState(false)
   const [ruleSetDraft, setRuleSetDraft] = useState({ name: '', url: '', format: 'singbox_source' as RoutingRuleSet['format'] })
+  const [catalogQuery, setCatalogQuery] = useState('')
+  const [catalogItems, setCatalogItems] = useState<RoutingRuleCatalogItem[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
   const [mobileTab, setMobileTab] = useState<'editor' | 'list'>('editor')
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
@@ -11826,6 +11832,24 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const allRules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage')
   const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
   const filteredRuleSets = ruleSets.filter(set => `${set.name} ${set.url} ${set.format}`.toLowerCase().includes(ruleSetQuery.trim().toLowerCase()))
+  useEffect(() => {
+    if (draft.match_source !== 'rule_set') return
+    const query = catalogQuery.trim()
+    if (!query) { setCatalogItems([]); return }
+    let cancelled = false
+    setCatalogLoading(true)
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await client.request(`/routing-rule-catalog?q=${encodeURIComponent(query)}`) as { items?: RoutingRuleCatalogItem[] }
+        if (!cancelled) setCatalogItems(result.items || [])
+      } catch {
+        if (!cancelled) setCatalogItems([])
+      } finally {
+        if (!cancelled) setCatalogLoading(false)
+      }
+    }, 260)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [catalogQuery, draft.match_source])
   const serverOutbounds = (data.outbounds || []).filter((item: Outbound) => item.server_id === Number(selectedStage?.serverID || draft.server_id))
   const externalOutbounds = (data.external_outbounds || []).filter((item: ExternalOutbound) => item.scope === 'global' || !item.server_id || item.server_id === Number(selectedStage?.serverID || draft.server_id))
   const sourcePath = paths.find(path => path.id === draft.proxy_path_id)
@@ -12269,6 +12293,15 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                       aria-label="搜索规则集"
                     />
                   </label>
+                  <label title="搜索 blackmatrix7/ios_rule_script">
+                    <Search size={14} aria-hidden="true" />
+                    <input
+                      value={catalogQuery}
+                      onChange={event => setCatalogQuery(event.target.value)}
+                      placeholder="搜索 Blackmatrix7 规则..."
+                      aria-label="搜索 Blackmatrix7 规则"
+                    />
+                  </label>
                   <button
                     type="button"
                     className="ghost"
@@ -12277,6 +12310,19 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                     <Plus size={14} aria-hidden="true" /> 新建规则集
                   </button>
                 </div>
+
+                {catalogQuery.trim() && (
+                  <div className="routing-rule-set-grid-list">
+                    {catalogLoading && <small className="muted">正在搜索 Blackmatrix7...</small>}
+                    {!catalogLoading && catalogItems.map(item => (
+                      <button type="button" key={item.path} className="routing-ruleset-card" onClick={() => { setRuleSetDraft({ name: item.name, url: item.url, format: item.format }); setShowRuleSetCreate(true) }}>
+                        <div className="routing-ruleset-info"><strong>{item.name}</strong><small>{item.category} · Blackmatrix7 · {Math.ceil(item.size / 1024)} KiB</small></div>
+                        <Plus size={14} aria-hidden="true" />
+                      </button>
+                    ))}
+                    {!catalogLoading && !catalogItems.length && <small className="muted">没有找到匹配的规则文件</small>}
+                  </div>
+                )}
 
                 {showRuleSetCreate && (
                   <div className="routing-rule-set-create">
@@ -12302,6 +12348,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                       <option value="mihomo_domain">Mihomo domain</option>
                       <option value="mihomo_ipcidr">Mihomo ipcidr</option>
                       <option value="mihomo_classical">Mihomo classical</option>
+                      <option value="blackmatrix_classical">Blackmatrix7 domain rules</option>
                     </Select>
                     <button type="button" onClick={createRuleSet}>校验并创建</button>
                   </div>
@@ -12346,6 +12393,19 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
               </div>
             )}
           </section>
+
+          <div className="routing-rule-dns-resolver">
+            <FormField label="规则域名 DNS（可选）" hint="只影响命中本条规则时的域名解析；留空使用服务器默认 DNS。">
+              <Select value={draft.dns_resolver} onChange={event => update({ dns_resolver: event.target.value })}>
+                <option value="">服务器默认 DNS</option>
+                <option value="remote-primary">加密 DNS · 主解析</option>
+                <option value="remote-secondary">加密 DNS · 备用</option>
+                <option value="bootstrap-primary">Bootstrap DNS · 主解析</option>
+                <option value="bootstrap-secondary">Bootstrap DNS · 备用</option>
+                <option value="local">系统本地 DNS</option>
+              </Select>
+            </FormField>
+          </div>
 
           {/* Section 3: 处理动作与目标出口 */}
           <section className="routing-config-section">
@@ -14752,6 +14812,7 @@ function RoutingRules({ data, client, load }: any) {
         sort_position: rules.filter(rule => rule.proxy_path_id === draft.proxy_path_id && Number(rule.stage_step_id || 0) === draft.stage_step_id).length,
         match_source: draft.match_source,
         rule_set_id: draft.match_source === 'rule_set' ? draft.rule_set_id : undefined,
+        dns_resolver: draft.dns_resolver || undefined,
         name: draft.name,
         match_json: draft.match_source === 'inline' ? routingMatchJSON(draft.match_kind, draft.match_value) : '{}',
         action: draft.action,

@@ -2140,6 +2140,36 @@ func TestGenerateServerConfigRejectsLegacyWARPRoutingAction(t *testing.T) {
 	}
 }
 
+func TestRoutingRuleDNSResolverEmitsDNSRules(t *testing.T) {
+	server := model.Server{ID: 1, Name: "edge"}
+	rulesetID := int64(9)
+	rules := []model.RoutingRule{
+		{ID: 1, ServerID: 1, Name: "inline-dns", Priority: 10, MatchJSON: `{"domain_suffix":["example.com"]}`, DNSResolver: "local", Action: model.RouteActionDirect, Enabled: true},
+		{ID: 2, ServerID: 1, Name: "ruleset-dns", Priority: 20, MatchSource: model.RoutingMatchSourceRuleSet, RuleSetID: &rulesetID, DNSResolver: "remote-primary", Action: model.RouteActionDirect, Enabled: true},
+	}
+	sets := []model.RoutingRuleSet{{ID: rulesetID, Name: "remote", Revision: "rev-1", Status: model.RoutingRuleSetStatusReady}}
+	config, err := GenerateServerConfigWithOptions(server, nil, nil, nil, nil, ConfigOptions{RoutingRules: rules, RoutingRuleSets: sets})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed SingBoxConfig
+	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	rulesValue, ok := parsed.DNS["rules"].([]any)
+	if !ok || len(rulesValue) != 2 {
+		t.Fatalf("dns rules = %#v", parsed.DNS["rules"])
+	}
+	first := rulesValue[0].(map[string]any)
+	if first["server"] != "local" || first["domain_suffix"] == nil {
+		t.Fatalf("inline dns rule = %#v", first)
+	}
+	second := rulesValue[1].(map[string]any)
+	if second["server"] != "remote-primary" || second["rule_set"] == nil {
+		t.Fatalf("ruleset dns rule = %#v", second)
+	}
+}
+
 func TestValidateRoutingMatchJSONPorts(t *testing.T) {
 	for _, valid := range []string{`{"port":22}`, `{"port":[22,443]}`, `{"port_range":"1000:2000"}`, `{"port_range":["1000:2000","8443:8443"]}`} {
 		if err := ValidateRoutingMatchJSON(valid); err != nil {

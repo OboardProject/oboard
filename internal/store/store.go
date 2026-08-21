@@ -1262,6 +1262,7 @@ func (s *Store) migrateRoutingRuleScopes(ctx context.Context) error {
 		{"rule_set_id", `alter table routing_rules add column rule_set_id integer references routing_rule_sets(id) on delete restrict`},
 		{"target_proxy_path_id", `alter table routing_rules add column target_proxy_path_id integer references proxy_paths(id) on delete cascade`},
 		{"sync_group_id", `alter table routing_rules add column sync_group_id text not null default ''`},
+		{"dns_resolver", `alter table routing_rules add column dns_resolver text not null default ''`},
 	}
 	for _, column := range columns {
 		var count int
@@ -3369,7 +3370,7 @@ func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3389,11 +3390,11 @@ func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	}
 	defer tx.Rollback()
 	ts := now()
-	if _, err := tx.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_proxy_path_id=?,target_server_id=?,outbound_tag=?,sync_group_id=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, v.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,dns_resolver=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_proxy_path_id=?,target_server_id=?,outbound_tag=?,sync_group_id=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, v.ID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(v.SyncGroupID) != "" {
-		if _, err := tx.ExecContext(ctx, `update routing_rules set name=?,match_source=?,rule_set_id=?,match_json=?,updated_at=? where sync_group_id=? and id<>?`, v.Name, v.MatchSource, v.RuleSetID, v.MatchJSON, ts, v.SyncGroupID, v.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update routing_rules set name=?,match_source=?,rule_set_id=?,dns_resolver=?,match_json=?,updated_at=? where sync_group_id=? and id<>?`, v.Name, v.MatchSource, v.RuleSetID, v.DNSResolver, v.MatchJSON, ts, v.SyncGroupID, v.ID); err != nil {
 			return err
 		}
 	}
@@ -3460,7 +3461,7 @@ func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRul
 		v.OutboundTag = v.SourcePrefix
 	}
 	ts := now()
-	res, err := tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
+	res, err := tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3470,7 +3471,7 @@ func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRul
 }
 
 func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at from routing_rules order by case when scope='path_stage' then 0 else 1 end,proxy_path_id,sort_position,priority,id`)
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at from routing_rules order by case when scope='path_stage' then 0 else 1 end,proxy_path_id,sort_position,priority,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -3481,7 +3482,7 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 		var pathID, stageStepID, ruleSetID, outboundID, externalID, targetPathID, targetID sql.NullInt64
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ServerID, &v.Scope, &pathID, &stageStepID, &v.SortPosition, &v.MatchSource, &ruleSetID, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetPathID, &targetID, &v.OutboundTag, &v.SyncGroupID, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.ServerID, &v.Scope, &pathID, &stageStepID, &v.SortPosition, &v.MatchSource, &ruleSetID, &v.DNSResolver, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetPathID, &targetID, &v.OutboundTag, &v.SyncGroupID, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if pathID.Valid {
@@ -3715,7 +3716,7 @@ func (s *Store) ActivateProxyPathWithRoutingRule(ctx context.Context, pathID int
 		}
 		rule.SyncGroupID = sourceGroup
 	}
-	result, err = tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, rule.ServerID, rule.Scope, rule.ProxyPathID, rule.StageStepID, rule.SortPosition, rule.MatchSource, rule.RuleSetID, rule.Name, rule.Priority, rule.MatchJSON, rule.Action, rule.OutboundID, rule.ExternalOutboundID, rule.TargetProxyPathID, rule.TargetServerID, rule.OutboundTag, rule.SyncGroupID, boolInt(rule.Enabled), ts, ts)
+	result, err = tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, rule.ServerID, rule.Scope, rule.ProxyPathID, rule.StageStepID, rule.SortPosition, rule.MatchSource, rule.RuleSetID, rule.DNSResolver, rule.Name, rule.Priority, rule.MatchJSON, rule.Action, rule.OutboundID, rule.ExternalOutboundID, rule.TargetProxyPathID, rule.TargetServerID, rule.OutboundTag, rule.SyncGroupID, boolInt(rule.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}

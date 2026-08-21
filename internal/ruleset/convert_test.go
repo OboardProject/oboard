@@ -35,6 +35,20 @@ func TestConvertMihomoFormats(t *testing.T) {
 	}
 }
 
+func TestConvertBlackmatrixClassicalSkipsNonDomainRules(t *testing.T) {
+	converted, err := Convert(model.RoutingRuleSetFormatBlackmatrixClassical, []byte("payload:\n  - DOMAIN-SUFFIX,example.com\n  - PROCESS-NAME,curl\n  - URL-REGEX,^https://.*,REJECT\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document sourceDocument
+	if err := json.Unmarshal(converted, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Rules) != 1 || document.Rules[0]["domain_suffix"] == nil {
+		t.Fatalf("converted rules = %s", converted)
+	}
+}
+
 func TestConvertMihomoFailsStrictlyWithLine(t *testing.T) {
 	_, err := Convert(model.RoutingRuleSetFormatMihomoClassical, []byte("payload:\n  - DOMAIN,example.com\n  - PROCESS-NAME,curl\n"))
 	if err == nil || !strings.Contains(err.Error(), "line 3") || !strings.Contains(err.Error(), "PROCESS-NAME") {

@@ -101,7 +101,7 @@ func (s *Server) prepareOutboundRecipe(ctx context.Context, principal applicatio
 
 var routingRuleRecipeFields = []string{
 	"server_id", "scope", "proxy_path_id", "stage_step_id", "sort_position",
-	"match_source", "rule_set_id", "name", "priority", "match_json", "action",
+	"match_source", "rule_set_id", "dns_resolver", "name", "priority", "match_json", "action",
 	"outbound_id", "external_outbound_id", "target_proxy_path_id",
 	"interface_name", "source_prefix", "enabled",
 }

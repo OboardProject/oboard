@@ -115,6 +115,11 @@ func (v *configValidator) validateDNS(dns map[string]any) {
 			v.addf("dns.servers[%d].domain_resolver references unknown dns server %q", i, resolver)
 		}
 	}
+	for i, rule := range mapList(dns["rules"]) {
+		if server := stringFromAny(rule["server"]); server != "" && !v.dnsTag[server] {
+			v.addf("dns.rules[%d].server references unknown dns server %q", i, server)
+		}
+	}
 }
 
 func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
@@ -290,6 +295,9 @@ func (v *configValidator) validateRoute(route map[string]any) {
 		}
 		if outbound := stringFromAny(rule["outbound"]); outbound != "" && !v.routeTarget[outbound] {
 			v.addf("route.rules[%d].outbound references unknown outbound/endpoint %q", i, outbound)
+		}
+		if resolver := stringFromAny(rule["domain_resolver"]); resolver != "" && !v.dnsTag[resolver] {
+			v.addf("route.rules[%d].domain_resolver references unknown dns server %q", i, resolver)
 		}
 	}
 }

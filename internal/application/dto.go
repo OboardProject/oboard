@@ -114,6 +114,7 @@ type RoutingRuleDTO struct {
 	SortPosition       int               `json:"sort_position"`
 	MatchSource        string            `json:"match_source"`
 	RuleSetID          *int64            `json:"rule_set_id"`
+	DNSResolver        string            `json:"dns_resolver"`
 	Priority           int               `json:"priority"`
 	Action             model.RouteAction `json:"action"`
 	OutboundID         *int64            `json:"outbound_id"`
@@ -241,7 +242,7 @@ func routingRuleDTO(item model.RoutingRule) RoutingRuleDTO {
 		ID: item.ID, Revision: revision(item.UpdatedAt), ServerID: item.ServerID, Name: item.Name,
 		Scope: item.Scope, ProxyPathID: item.ProxyPathID, StageStepID: item.StageStepID,
 		SortPosition: item.SortPosition, MatchSource: item.MatchSource, RuleSetID: item.RuleSetID,
-		Priority: item.Priority, Action: item.Action, OutboundID: item.OutboundID,
+		DNSResolver: item.DNSResolver, Priority: item.Priority, Action: item.Action, OutboundID: item.OutboundID,
 		ExternalOutboundID: item.ExternalOutboundID, TargetProxyPathID: item.TargetProxyPathID,
 		OutboundTag:   item.OutboundTag,
 		InterfaceName: item.InterfaceName, SourcePrefix: item.SourcePrefix, SyncGroupID: item.SyncGroupID,

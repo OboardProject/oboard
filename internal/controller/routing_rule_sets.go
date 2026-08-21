@@ -182,6 +182,8 @@ func validateRoutingRuleSetInput(item *model.RoutingRuleSet) error {
 		item.MihomoBehavior = "ipcidr"
 	case model.RoutingRuleSetFormatMihomoClassical:
 		item.MihomoBehavior = "classical"
+	case model.RoutingRuleSetFormatBlackmatrixClassical:
+		item.MihomoBehavior = "blackmatrix_classical"
 	default:
 		return errors.New("unsupported rule set format; Mihomo .mrs is not supported")
 	}

@@ -285,7 +285,7 @@ var routingRuleAutomationFields = map[string]bool{
 	"outbound_id": true, "external_outbound_id": true,
 	"target_proxy_path_id": true, "sync_source_rule_id": true, "sync_enabled": true,
 	"interface_name": true, "source_prefix": true, "enabled": true, "scope": true, "proxy_path_id": true,
-	"stage_step_id": true, "sort_position": true, "match_source": true, "rule_set_id": true,
+	"stage_step_id": true, "sort_position": true, "match_source": true, "rule_set_id": true, "dns_resolver": true,
 }
 
 func (s *Server) registerRoutingRuleOperations() {
