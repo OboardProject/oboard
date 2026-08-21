@@ -10,21 +10,28 @@ OBoard is a Linux control plane for multi-node proxy networks. It manages server
 - **Deployment scheduling**: generate and deliver signed per-server configuration with online tasks, health checks, retries, and visible task states
 - **Subscriptions and distribution**: render subscriptions, serve verified Agent/kernel packages, and support `OBOARD_BASE_PATH`
 - **Security boundaries**: one-time enrollment tokens, signed tasks, encrypted storage, audit controls, and restricted operations
-- **Simple installation**: one script covers install, update, uninstall, and stable/development channel switching
+- **Simple installation**: one script covers install, update, uninstall, and the install command can select stable or development releases
 
 ## Installation
 
 OBoard Controller supports Linux only. Official packages are available for `amd64` and `arm64`. The default install root is `/opt/oboard`, the default port is `2787`, and the installer automatically detects systemd or OpenRC.
 
+### Release Selection
+
+Install and update commands use `VERSION` to select the target release:
+
+- Stable: `VERSION=latest`
+- Development: `VERSION=dev`
+
 ### Install
 
-Install the latest stable release (the installer falls back to the development release when no stable release exists yet):
+Install the stable release (the installer falls back to the development release when no stable release exists yet):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env bash
+curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=latest bash
 ```
 
-Install the development release explicitly (the development release is a mutable build that follows `main` and is intended for testing):
+Install the development release (the development release is a mutable build that follows `main` and is intended for testing):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=dev bash
@@ -38,15 +45,9 @@ curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/i
 
 ### Update
 
-Run the install script again. When an existing Controller is detected, it updates in place and preserves the existing configuration, accounts, and data.
+Run the install script again. When an existing Controller is detected, it updates in place and preserves the existing configuration, accounts, and data. The update target is selected with `VERSION` as well.
 
-Keep the currently saved update channel:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env bash
-```
-
-Update to the latest stable release:
+Update to the stable release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=latest bash
@@ -57,24 +58,6 @@ Update to the development release:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=dev bash
 ```
-
-### Switching Between Stable and Development Releases
-
-Channel switching uses the same commands as updating. The installer writes the channel to `OBOARD_UPDATE_CHANNEL` in `$INSTALL_DIR/config/controller.env`:
-
-Switch to stable:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=latest bash
-```
-
-Switch to development:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=dev bash
-```
-
-After switching, running an update without `VERSION` follows the saved channel. If a pinned version is installed, the script requires an explicit `VERSION=latest` or `VERSION=dev` before updating.
 
 ### Uninstall
 
