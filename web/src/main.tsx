@@ -130,6 +130,7 @@ import { isConfigurationMutationPath, mergeConfigurationMutationResponse, Mutati
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
+import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue } from './server-expiry'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import {
   controllerUpdatePendingToast,
@@ -457,51 +458,8 @@ function trafficTimezoneLabel(timezone: string) {
     return timezone
   }
 }
-function serverExpiryInputValue(iso?: string) {
-  if (!iso) return ''
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function serverExpiryOutputValue(date: string) {
-  if (!date) return undefined
-  const [year, month, day] = date.split('-').map(Number)
-  if (!year || !month || !day) return undefined
-  return new Date(year, month - 1, day, 0, 0, 0, 0).toISOString()
-}
-
 function serverExpiryStatus(server: Server) {
-  if (!server.expires_at) return { label: '未设置', tone: 'muted' as const }
-  const date = new Date(server.expires_at)
-  if (Number.isNaN(date.getTime())) return { label: '未设置', tone: 'muted' as const }
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const expiry = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const days = Math.round((expiry.getTime() - today.getTime()) / 86400000)
-  if (days < 0) {
-    return server.auto_renew_enabled
-      ? { label: '等待自动续期', tone: 'warning' as const }
-      : { label: '已到期', tone: 'danger' as const }
-  }
-  if (days === 0) return { label: '今天到期', tone: 'danger' as const }
-  if (days <= 7) return { label: '即将到期', tone: 'warning' as const }
-  return { label: `${days} 天后到期`, tone: 'ok' as const }
-}
-
-function serverExpiryDateLabel(iso?: string) {
-  if (!iso) return '未设置'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '未设置'
-  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
-}
-
-function addDaysToExpiryDate(value: string, days: number) {
-  const date = value ? new Date(`${value}T00:00:00`) : new Date()
-  date.setDate(date.getDate() + days)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return serverExpiryStatusValue(server.expires_at, server.auto_renew_enabled)
 }
 
 function ServerExpiryBadge({ server }: { server: Server }) {

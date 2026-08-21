@@ -2,12 +2,15 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/OboardProject/oboard/internal/automation"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
@@ -151,6 +154,31 @@ func TestServerExpiryNotificationEventIsAdminScoped(t *testing.T) {
 	}
 	if notificationEventsTargetUsers(notificationServerExpiry) {
 		t.Fatal("server expiry should not require user targets")
+	}
+}
+
+func TestServerExtendExpiryMCPOperation(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111112", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	expiry := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	server := &model.Server{Name: "mcp-lease", Status: model.ServerOnline, ExpiresAt: &expiry}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(map[string]any{"server_id": server.ID, "days": 3})
+	applyAutomationChangeset(t, srv, principal, "extend-expiry", automation.OperationRequest{Capability: "servers.extend_expiry", Input: input})
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ExpiresAt == nil || stored.ExpiresAt.In(time.FixedZone("Asia/Shanghai", 8*3600)).Format("2006-01-02") != "2026-09-04" {
+		t.Fatalf("MCP extended expiry = %v, want 2026-09-04", stored.ExpiresAt)
 	}
 }
 

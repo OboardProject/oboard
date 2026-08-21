@@ -5,6 +5,7 @@
 | 领域 | 直接 Web/REST 写入口 | Capability / 后台入口 | 自动协调 | 影响范围 |
 | --- | --- | --- | --- | --- |
 | 服务器 | `POST /servers`, `PATCH/DELETE /servers/:id` | `servers.onboard`, `servers.update` | 完整部署 | 新增/修改为目标服务器；删除为剩余完整拓扑 |
+| 服务器到期 | `PATCH /servers/:id` 到期字段, `POST /servers/:id/extend-expiry` | `servers.update`, `servers.extend_expiry` | 不触发 Agent | 仅主控到期元数据、自动续期和通知调度 |
 | 入口 | `POST/PATCH/DELETE /inbounds` | `inbounds.create/update/delete` | 完整部署 | 完整拓扑（入口可能是多路径根） |
 | 管理出口 | `POST/PATCH/DELETE /outbounds` | `outbounds.*` | 完整部署 | owner 与 next server |
 | 第三方出口 | create/update/delete/import | `external_outbounds.*` | 完整部署 | scope server 或所有服务器；路径引用由部署影响分析扩展 |

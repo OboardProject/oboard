@@ -55,8 +55,29 @@
 | `controller-db-20260818-telegram-operations` | Controller | SQLite schema / data lifecycle | `dev-61ea3fa84687` | 待发布 | 生效中 | - |
 | `controller-db-20260819-configuration-revision-watermark` | Controller | SQLite schema / runtime recovery | `dev-25ab8ae0b776` | 待发布 | 生效中 | - |
 | `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-b5b1829cb668` | 待发布 | 生效中 | - |
+| `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260822-server-expiry
+
+- **引入日期：** 2026-08-22
+- **引入提交：** `OboardProject/oboard@49c99f6415e7`
+- **引入版本：** `dev-49c99f6415e7`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、Web
+- **类别：** SQLite schema
+- **原因：** 服务器到期日、自动续期和到期提醒需要新的运行管理字段；这些字段属于主控侧运维状态，不应放进 `servers` 主表触发路由/配置 revision。
+- **源状态：** `server_telemetry` 没有 `expires_at`、`renewal_cycle`、`auto_renew_enabled`、`expiry_notify_enabled`、`last_auto_renewed_at` 列。
+- **目标状态：** 上述列存在，旧服务器默认不自动续期、默认开启到期提醒、续期周期为月付；Controller 每分钟检查 3 天宽限后的自动续期和每日到期提醒。
+- **实现位置：** `oboard/internal/store/store.go`、`oboard/internal/store/server_expiry.go`；`oboard/internal/controller/server_expiry.go`、`notifications.go`、`server.go`；`oboard/web/src/main.tsx`、`components/proxy-path/types.ts`、`style.css`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时执行幂等 `ensureColumn` 迁移。
+- **数据影响：** 新增可空到期日和最近自动续期时间，以及三个带默认值的设置列；不重写既有业务数据，不改变 Agent 配置。
+- **重复执行：** `ensureColumn` 仅当列缺失时执行；迁移可重复打开和 `Migrate`，不会改写已保存的到期状态。
+- **失败行为：** 任一列扩展失败会阻止 Controller 打开数据库；到期/续期调度失败只记录日志，由下一分钟任务重试。
+- **回归测试：** `TestServerExpiryColumnsMigrateFromPreviousSchema` 从缺少新列的真实旧 schema 打开并验证默认值；`TestServerExpiryRoundTripAndRenewalState` 验证读写；Controller 测试覆盖自动续期、提醒去重、REST/MCP 延长。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含上述列；恢复入口不得导入缺少到期字段的 schema。
+- **移除状态：** 生效中。
 
 ### controller-db-20260821-routing-rule-dns-resolver
 
