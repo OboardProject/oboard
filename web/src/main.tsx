@@ -7202,7 +7202,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     </div>}
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
       <AlertTriangle size={18} />
-      <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存，否则会提示“请先在系统设置中配置主控公开地址（controller_url）”。</span></div>
+      <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存。</span></div>
       {role === 'admin' ? <button type="button" onClick={() => goTab('settings')}>前往设置</button> : <span className="controller-url-warning-role">请联系管理员配置</span>}
     </div>}
     {loading && !servers.length
