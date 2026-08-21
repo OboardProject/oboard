@@ -3273,26 +3273,29 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       }) })
     }, '通知提醒设置已保存')
   }
-  const settingsNavigation: Array<{ label: string; items: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> }> = [
-    { label: '基础与节点', items: [{ key: 'connection', label: '基础设置', icon: LinkIcon, description: '面板地址、路径和受信代理。' }, { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' }, { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' }] },
-    { label: '安全与服务', items: [{ key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' }, { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密和独立订阅入口。' }, { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' }] },
-    { label: '运维', items: [{ key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' }, { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' }, { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' }] },
-    { label: '关于', items: [{ key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' }] },
+  const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
+    { key: 'connection', label: '基础设置', icon: LinkIcon, description: '面板地址、路径和受信代理。' },
+    { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
+    { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' },
+    { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
+    { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密和独立订阅入口。' },
+    { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
+    { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
+    { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
+    { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
+    { key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' },
   ]
-  const activeNavigationItem = settingsNavigation.flatMap(group => group.items).find(item => item.key === activeSection) || settingsNavigation[0].items[0]
+  const activeNavigationItem = settingsNavigation.find(item => item.key === activeSection) || settingsNavigation[0]
   return <section className="settings-shell">
     <aside className="settings-sidebar">
-      <nav className="settings-nav-groups" aria-label="设置分类">
-        {settingsNavigation.map(group => <div className="settings-nav-group" key={group.label}>
-          <span className="settings-nav-label">{group.label}</span>
-          <div className="settings-tabs" role="tablist">
-            {group.items.map(item => {
-              const Icon = item.icon
-              const active = activeSection === item.key
-              return <button key={item.key} type="button" className={active ? 'active' : ''} role="tab" aria-selected={active} aria-controls={`settings-panel-${item.key}`} onClick={() => setActiveSection(item.key)}><Icon size={15} aria-hidden="true" />{item.label}</button>
-            })}
-          </div>
-        </div>)}
+      <nav className="settings-nav" aria-label="设置菜单">
+        <div className="settings-tabs" role="tablist">
+          {settingsNavigation.map(item => {
+            const Icon = item.icon
+            const active = activeSection === item.key
+            return <button key={item.key} type="button" className={active ? 'active' : ''} role="tab" aria-selected={active} aria-controls={`settings-panel-${item.key}`} onClick={() => setActiveSection(item.key)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span></button>
+          })}
+        </div>
       </nav>
     </aside>
     <div className="settings-content">
