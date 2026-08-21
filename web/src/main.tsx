@@ -694,30 +694,6 @@ function ServerRegionField({ draft, update, servers }: { draft: any; update: (pa
   )
 }
 
-function LatencyProbeSettingsField({ draft, update, regions, loading, error }: { draft: any; update: (patch: any) => void; regions: LatencyProbeRegion[]; loading?: boolean; error?: string }) {
-  if (!draft.latency_probe_enabled) return null
-  const selected: LatencyProbeRegion[] = Array.isArray(draft.latency_probe_regions) ? draft.latency_probe_regions : []
-  const keyOf = (region: LatencyProbeRegion) => `${region.province}\u0000${region.carrier}`
-  const availableKeys = new Set(regions.map(keyOf))
-  const options = Array.from(new Map([...regions, ...selected].map(region => [keyOf(region), region])).values()).sort((a, b) => a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN'))
-  const selectedKeys = new Set(selected.map(keyOf))
-  const grouped = options.reduce<Record<string, LatencyProbeRegion[]>>((result, region) => {
-    ;(result[region.province] ||= []).push(region)
-    return result
-  }, {})
-  const toggle = (region: LatencyProbeRegion) => update({ latency_probe_regions: selectedKeys.has(keyOf(region)) ? selected.filter(item => keyOf(item) !== keyOf(region)) : [...selected, region] })
-  const automaticDomain = connectivityProbeDomain(draft)
-  return <div className="latency-probe-settings">
-    <FormField label="测试方式" hint="TCP Ping 测试端口连接时间；ICMP Ping 测试 Echo 往返时间。"><Select aria-label="延迟测试方式" variant="segmented" value={draft.latency_probe_mode || 'tcp'} onChange={event => update({ latency_probe_mode: event.target.value as LatencyProbeMode })}><option value="tcp">TCP Ping</option><option value="icmp">ICMP Ping</option></Select></FormField>
-    <FormField label="公网目标" hint="用于断线期间判断公网是否可用。"><Select aria-label="延迟测试公网目标" value={draft.latency_probe_public_target || 'auto'} onChange={event => update({ latency_probe_public_target: event.target.value as ConnectivityProbeTarget })}><option value="auto">自动（当前：{automaticDomain}）</option><option value="cloudflare">cp.cloudflare.com</option><option value="12306">www.12306.cn</option><option value="google">www.gstatic.com</option></Select></FormField>
-    <FormField label="采样间隔（秒）" hint="Agent 按此间隔自动测试，断开主控后仍会继续。"><input aria-label="延迟测试采样间隔（秒）" type="number" min={30} max={86400} value={draft.latency_probe_interval_seconds || 60} onChange={e => update({ latency_probe_interval_seconds: Math.max(30, Math.min(86400, Number(e.target.value) || 60)) })} /></FormField>
-    <FormField label="每个目标样本数" hint="连续测试并计算平均、P95 与抖动。"><input aria-label="每个延迟目标样本数" type="number" min={1} max={10} value={draft.latency_probe_sample_count || 3} onChange={e => update({ latency_probe_sample_count: Math.max(1, Math.min(10, Number(e.target.value) || 3)) })} /></FormField>
-    <FormField label="地区目标" hint="按省份单独选择运营商；不选择时只测试公网目标。"><div className="latency-region-groups" aria-label="延迟测试地区目标" aria-busy={loading}>{Object.entries(grouped).map(([province, entries]) => <fieldset key={province}><legend>{province}</legend><div className="chip-checkboxes">{entries.map(region => { const key = keyOf(region); return <label key={key}><input type="checkbox" checked={selectedKeys.has(key)} onChange={() => toggle(region)} />{region.carrier}{!availableKeys.has(key) ? '（资源中已移除）' : ''}</label> })}</div></fieldset>)}{!loading && !options.length && <span className="muted">暂无可选地区</span>}</div></FormField>
-    {error && <p className="danger-text" role="alert">资源列表加载失败：{error}</p>}
-    <FormField label="单次最多目标数" hint="包含一个公网目标，限制总测试规模。"><input aria-label="单次最多目标数" type="number" min={1} max={256} value={draft.latency_probe_max_targets || 64} onChange={e => update({ latency_probe_max_targets: Math.max(1, Math.min(256, Number(e.target.value) || 64)) })} /></FormField>
-  </div>
-}
-
 function useLatencyProbeResource(client: any) {
   const [resource, setResource] = useState<{ regions: LatencyProbeRegion[]; loading: boolean; error: string }>({ regions: [], loading: true, error: '' })
   useEffect(() => {
@@ -737,6 +713,397 @@ function connectivityProbeDomain(server: Pick<Server, 'latency_probe_public_targ
   if (server.latency_probe_public_target === 'google') return 'www.gstatic.com'
   if (server.latency_probe_public_target === 'cloudflare') return 'cp.cloudflare.com'
   return serverRegionCode(server) === 'CN' ? 'www.12306.cn' : 'cp.cloudflare.com'
+}
+
+function LatencyProbeSettingsDialog({
+  draft,
+  onCancel,
+  onSave,
+  regions,
+  loading,
+  error,
+  nested = true,
+}: {
+  draft: any
+  onCancel: () => void
+  onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>
+  regions: LatencyProbeRegion[]
+  loading?: boolean
+  error?: string
+  nested?: boolean
+}) {
+  const [values, setValues] = useState({
+    latency_probe_mode: (draft.latency_probe_mode || 'tcp') as LatencyProbeMode,
+    latency_probe_public_target: (draft.latency_probe_public_target || 'auto') as ConnectivityProbeTarget,
+    latency_probe_interval_seconds: draft.latency_probe_interval_seconds || 60,
+    latency_probe_sample_count: draft.latency_probe_sample_count || 3,
+    latency_probe_max_targets: draft.latency_probe_max_targets || 64,
+  })
+  const [selected, setSelected] = useState<LatencyProbeRegion[]>(() =>
+    Array.isArray(draft.latency_probe_regions) ? [...draft.latency_probe_regions] : []
+  )
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [carrierFilter, setCarrierFilter] = useState('all')
+  const [saving, setSaving] = useState(false)
+
+  const updateParam = (patch: Partial<typeof values>) => setValues(old => ({ ...old, ...patch }))
+
+  const keyOf = (r: LatencyProbeRegion) => `${r.province}\u0000${r.carrier}`
+  const availableKeys = useMemo(() => new Set(regions.map(keyOf)), [regions])
+  const options = useMemo(() => {
+    const map = new Map<string, LatencyProbeRegion>()
+    for (const r of regions) map.set(keyOf(r), r)
+    for (const r of selected) if (!map.has(keyOf(r))) map.set(keyOf(r), r)
+    return Array.from(map.values()).sort((a, b) =>
+      a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN')
+    )
+  }, [regions, selected])
+
+  const selectedKeys = useMemo(() => new Set(selected.map(keyOf)), [selected])
+
+  const carrierOptions = useMemo(() => {
+    const carrierSet = new Set(options.map(o => o.carrier))
+    const priority = ['中国电信', '中国联通', '中国移动', '中国广电', '教育网']
+    return Array.from(carrierSet).sort((a, b) => {
+      const ia = priority.indexOf(a)
+      const ib = priority.indexOf(b)
+      if (ia !== -1 && ib !== -1) return ia - ib
+      if (ia !== -1) return -1
+      if (ib !== -1) return 1
+      return a.localeCompare(b, 'zh-CN')
+    })
+  }, [options])
+
+  const filteredOptions = useMemo(() => {
+    const q = searchKeyword.trim().toLowerCase()
+    return options.filter(r => {
+      if (carrierFilter !== 'all' && r.carrier !== carrierFilter) return false
+      if (!q) return true
+      return r.province.toLowerCase().includes(q) || r.carrier.toLowerCase().includes(q)
+    })
+  }, [options, carrierFilter, searchKeyword])
+
+  const grouped = useMemo(() => {
+    return filteredOptions.reduce<Record<string, LatencyProbeRegion[]>>((acc, r) => {
+      ;(acc[r.province] ||= []).push(r)
+      return acc
+    }, {})
+  }, [filteredOptions])
+
+  const toggle = (region: LatencyProbeRegion) => {
+    const key = keyOf(region)
+    if (selectedKeys.has(key)) {
+      setSelected(curr => curr.filter(item => keyOf(item) !== key))
+    } else {
+      setSelected(curr => [...curr, region])
+    }
+  }
+
+  const toggleProvince = (province: string) => {
+    const provinceEntries = options.filter(o => o.province === province)
+    const allSelected = provinceEntries.length > 0 && provinceEntries.every(e => selectedKeys.has(keyOf(e)))
+    if (allSelected) {
+      const keysToRemove = new Set(provinceEntries.map(keyOf))
+      setSelected(curr => curr.filter(item => !keysToRemove.has(keyOf(item))))
+    } else {
+      const missing = provinceEntries.filter(e => !selectedKeys.has(keyOf(e)))
+      setSelected(curr => [...curr, ...missing])
+    }
+  }
+
+  const selectAllFiltered = () => {
+    const missing = filteredOptions.filter(e => !selectedKeys.has(keyOf(e)))
+    setSelected(curr => [...curr, ...missing])
+  }
+
+  const deselectAllFiltered = () => {
+    const keysToRemove = new Set(filteredOptions.map(keyOf))
+    setSelected(curr => curr.filter(item => !keysToRemove.has(keyOf(item))))
+  }
+
+  const selectBigThree = () => {
+    const bigThree = options.filter(o => ['中国电信', '中国联通', '中国移动'].includes(o.carrier))
+    const missing = bigThree.filter(e => !selectedKeys.has(keyOf(e)))
+    setSelected(curr => [...curr, ...missing])
+  }
+
+  const clearAll = () => {
+    setSelected([])
+  }
+
+  const automaticDomain = connectivityProbeDomain(draft)
+
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave({
+        latency_probe_mode: values.latency_probe_mode,
+        latency_probe_public_target: values.latency_probe_public_target,
+        latency_probe_interval_seconds: values.latency_probe_interval_seconds,
+        latency_probe_sample_count: values.latency_probe_sample_count,
+        latency_probe_max_targets: values.latency_probe_max_targets,
+        latency_probe_regions: selected,
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const cancel = () => {
+    if (!saving) onCancel()
+  }
+
+  const isFilteredAllSelected = filteredOptions.length > 0 && filteredOptions.every(e => selectedKeys.has(keyOf(e)))
+  const totalAvailable = options.length
+  const selectedCount = selected.length
+  const maxTargets = values.latency_probe_max_targets
+  const isOverLimit = selectedCount + 1 > maxTargets
+
+  return (
+    <MotionDialogPanel onCancel={cancel} className="latency-dialog" nested={nested}>
+      <header className="dialog-head">
+        <div>
+          <h2 id="latency-dialog-title">延迟测试与地区目标设置</h2>
+          <p className="muted">配置探测参数，并按省份和运营商选择需要参与测试的地区目标节点。</p>
+        </div>
+        <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭">
+          <XIcon />
+        </button>
+      </header>
+
+      <div className="dialog-body latency-dialog-body">
+        <div className="latency-params-card">
+          <div className="form-section-title">探测参数</div>
+          <div className="latency-params-grid">
+            <FormField label="测试方式" hint="TCP 测试端口连接；ICMP 测试 Echo。">
+              <Select
+                aria-label="延迟测试方式"
+                variant="segmented"
+                value={values.latency_probe_mode}
+                onChange={event => updateParam({ latency_probe_mode: event.target.value as LatencyProbeMode })}
+              >
+                <option value="tcp">TCP Ping</option>
+                <option value="icmp">ICMP Ping</option>
+              </Select>
+            </FormField>
+
+            <FormField label="公网目标" hint="断线期间判断公网连通性。">
+              <Select
+                aria-label="延迟测试公网目标"
+                value={values.latency_probe_public_target}
+                onChange={event => updateParam({ latency_probe_public_target: event.target.value as ConnectivityProbeTarget })}
+              >
+                <option value="auto">自动（当前：{automaticDomain}）</option>
+                <option value="cloudflare">cp.cloudflare.com</option>
+                <option value="12306">www.12306.cn</option>
+                <option value="google">www.gstatic.com</option>
+              </Select>
+            </FormField>
+
+            <FormField label="采样间隔（秒）" hint="自动测试周期（30–86400 秒）。">
+              <input
+                aria-label="延迟测试采样间隔（秒）"
+                type="number"
+                min={30}
+                max={86400}
+                value={values.latency_probe_interval_seconds}
+                onChange={e => updateParam({ latency_probe_interval_seconds: Math.max(30, Math.min(86400, Number(e.target.value) || 60)) })}
+              />
+            </FormField>
+
+            <FormField label="每个目标样本数" hint="连续测试样本数（1–10）。">
+              <input
+                aria-label="每个延迟目标样本数"
+                type="number"
+                min={1}
+                max={10}
+                value={values.latency_probe_sample_count}
+                onChange={e => updateParam({ latency_probe_sample_count: Math.max(1, Math.min(10, Number(e.target.value) || 3)) })}
+              />
+            </FormField>
+
+            <FormField label="单次最多目标数" hint="含 1 个公网目标（1–256）。">
+              <input
+                aria-label="单次最多目标数"
+                type="number"
+                min={1}
+                max={256}
+                value={values.latency_probe_max_targets}
+                onChange={e => updateParam({ latency_probe_max_targets: Math.max(1, Math.min(256, Number(e.target.value) || 64)) })}
+              />
+            </FormField>
+          </div>
+        </div>
+
+        <div className="latency-regions-section">
+          <div className="latency-regions-header">
+            <div className="latency-regions-title-row">
+              <div className="form-section-title">地区目标选择</div>
+              <div className="latency-stats-badge">
+                <span>已选 <strong>{selectedCount}</strong> / 可用 {totalAvailable} 个节点</span>
+                {selectedCount > 0 && <span>覆盖 <strong>{new Set(selected.map(s => s.province)).size}</strong> 个省份</span>}
+              </div>
+            </div>
+            <div className="latency-toolbar">
+              <div className="latency-search-wrap">
+                <Search size={14} className="latency-search-icon" aria-hidden="true" />
+                <input
+                  type="text"
+                  placeholder="搜索省份或运营商（如：广东 / 电信）..."
+                  value={searchKeyword}
+                  onChange={e => setSearchKeyword(e.target.value)}
+                  className="latency-search-input"
+                />
+                {searchKeyword && (
+                  <button type="button" className="ghost icon-button latency-search-clear" onClick={() => setSearchKeyword('')} title="清空搜索">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              <div className="latency-quick-actions">
+                <div className="latency-carrier-filters" role="group" aria-label="运营商筛选">
+                  <button
+                    type="button"
+                    className={`latency-pill-btn ${carrierFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setCarrierFilter('all')}
+                  >
+                    全部运营商
+                  </button>
+                  {carrierOptions.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={`latency-pill-btn ${carrierFilter === c ? 'active' : ''}`}
+                      onClick={() => setCarrierFilter(carrierFilter === c ? 'all' : c)}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="latency-batch-btns">
+                  <button type="button" className="ghost latency-action-btn" onClick={selectBigThree}>
+                    全选三网
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost latency-action-btn"
+                    onClick={isFilteredAllSelected ? deselectAllFiltered : selectAllFiltered}
+                  >
+                    {isFilteredAllSelected ? (searchKeyword || carrierFilter !== 'all' ? '取消筛选全选' : '取消全选') : (searchKeyword || carrierFilter !== 'all' ? '全选筛选结果' : '全选所有')}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost latency-action-btn danger-hover"
+                    onClick={clearAll}
+                    disabled={selectedCount === 0}
+                  >
+                    清空已选
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {error && <p className="danger-text" role="alert">地区资源列表加载失败：{error}</p>}
+
+          <div className="latency-region-cards-container" aria-busy={loading}>
+            {loading && options.length === 0 ? (
+              <div className="latency-loading-state">
+                <Loader2 className="animate-spin" size={20} />
+                <span>正在加载地区目标资源...</span>
+              </div>
+            ) : Object.keys(grouped).length === 0 ? (
+              <div className="latency-empty-state">
+                <span>未找到匹配的地区或运营商节点</span>
+                {(searchKeyword || carrierFilter !== 'all') && (
+                  <button type="button" className="ghost" onClick={() => { setSearchKeyword(''); setCarrierFilter('all') }}>
+                    重置筛选条件
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="latency-province-grid">
+                {Object.entries(grouped).map(([province, entries]) => {
+                  const provinceAllEntries = options.filter(o => o.province === province)
+                  const provinceSelectedCount = provinceAllEntries.filter(e => selectedKeys.has(keyOf(e))).length
+                  const isAllProvinceSelected = provinceAllEntries.length > 0 && provinceSelectedCount === provinceAllEntries.length
+                  const hasSelectionInProvince = provinceSelectedCount > 0
+
+                  return (
+                    <div key={province} className={`latency-province-card ${hasSelectionInProvince ? 'has-selected' : ''}`}>
+                      <div className="latency-province-head">
+                        <div className="province-info">
+                          <strong>{province}</strong>
+                          <span className={`province-count-badge ${hasSelectionInProvince ? 'active' : ''}`}>
+                            {provinceSelectedCount}/{provinceAllEntries.length}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="ghost province-toggle-btn"
+                          onClick={() => toggleProvince(province)}
+                          title={isAllProvinceSelected ? `取消全选 ${province}` : `全选 ${province} 全部节点`}
+                        >
+                          {isAllProvinceSelected ? '取消全选' : '全选省份'}
+                        </button>
+                      </div>
+
+                      <div className="latency-carrier-chips">
+                        {entries.map(region => {
+                          const key = keyOf(region)
+                          const isSelected = selectedKeys.has(key)
+                          const isAvailable = availableKeys.has(key)
+                          return (
+                            <label
+                              key={key}
+                              className={`latency-carrier-chip ${isSelected ? 'is-selected' : ''} ${!isAvailable ? 'is-removed' : ''}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggle(region)}
+                              />
+                              <span className="carrier-label">{region.carrier}</span>
+                              {!isAvailable && <span className="removed-flag">已移除</span>}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <footer className="dialog-actions latency-dialog-actions">
+        <div className="latency-dialog-summary">
+          {isOverLimit ? (
+            <span className="danger-text" role="alert">
+              ⚠️ 已选 {selectedCount} 个目标，超过上限 {maxTargets - 1} 个（公网目标占用 1 个）
+            </span>
+          ) : (
+            <span className="muted">
+              已选 {selectedCount} 个目标节点 · 探测周期 {values.latency_probe_interval_seconds}s
+            </span>
+          )}
+        </div>
+        <div className="dialog-action-buttons">
+          <button type="button" className="ghost" onClick={cancel} disabled={saving}>
+            取消
+          </button>
+          <button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? '保存中...' : '确认并保存'}
+          </button>
+        </div>
+      </footer>
+    </MotionDialogPanel>
+  )
 }
 
 function connectivityStatusLabel(status: string) {
@@ -6985,6 +7352,7 @@ function CommandCopyBlock({ value, buttonText = '复制命令', language = 'bash
 function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
   const update = (patch: Record<string, any>) => setDraft((old: any) => ({ ...old, ...patch }))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
+  const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -7060,7 +7428,18 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
-          <LatencyProbeSettingsField draft={draft} update={update} {...latencyProbeResource} />
+          {Boolean(draft.latency_probe_enabled) && (
+            <div className="form-extra-row latency-probe-entry-row">
+              <button type="button" className="ghost" onClick={() => setLatencyDialogOpen(true)} aria-haspopup="dialog">
+                <Activity size={14} /> 地区延迟目标与探测设置
+              </button>
+              <span>
+                {Array.isArray(draft.latency_probe_regions) && draft.latency_probe_regions.length > 0
+                  ? `已选 ${draft.latency_probe_regions.length} 个地区目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`
+                  : `默认仅测试公网目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`}
+              </span>
+            </div>
+          )}
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -7082,6 +7461,16 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
         <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid}>{saving ? '创建中...' : '创建'}</button>
       </footer>
+      {latencyDialogOpen && (
+        <LatencyProbeSettingsDialog
+          draft={draft}
+          onCancel={() => setLatencyDialogOpen(false)}
+          onSave={patch => { update(patch); setLatencyDialogOpen(false) }}
+          regions={latencyProbeResource.regions}
+          loading={latencyProbeResource.loading}
+          error={latencyProbeResource.error}
+        />
+      )}
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
@@ -7101,6 +7490,7 @@ function serverToDraft(server: Server) {
 function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
+  const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -7154,7 +7544,18 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
-          <LatencyProbeSettingsField draft={draft} update={update} {...latencyProbeResource} />
+          {Boolean(draft.latency_probe_enabled) && (
+            <div className="form-extra-row latency-probe-entry-row">
+              <button type="button" className="ghost" onClick={() => setLatencyDialogOpen(true)} aria-haspopup="dialog">
+                <Activity size={14} /> 地区延迟目标与探测设置
+              </button>
+              <span>
+                {Array.isArray(draft.latency_probe_regions) && draft.latency_probe_regions.length > 0
+                  ? `已选 ${draft.latency_probe_regions.length} 个地区目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`
+                  : `默认仅测试公网目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`}
+              </span>
+            </div>
+          )}
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -7169,6 +7570,16 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid}>{saving ? '保存中...' : '保存'}</button></footer>
+      {latencyDialogOpen && (
+        <LatencyProbeSettingsDialog
+          draft={draft}
+          onCancel={() => setLatencyDialogOpen(false)}
+          onSave={patch => { update(patch); setLatencyDialogOpen(false) }}
+          regions={latencyProbeResource.regions}
+          loading={latencyProbeResource.loading}
+          error={latencyProbeResource.error}
+        />
+      )}
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
