@@ -1297,7 +1297,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionOff), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[updateWindowEnabledSetting] = false
@@ -1374,12 +1374,12 @@ func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool, mo
 
 func normalizeControllerTimeCorrectionMode(mode model.TimeCorrectionMode) model.TimeCorrectionMode {
 	switch model.TimeCorrectionMode(strings.ToLower(strings.TrimSpace(string(mode)))) {
-	case model.TimeCorrectionAuto:
-		return model.TimeCorrectionAuto
+	case model.TimeCorrectionOff:
+		return model.TimeCorrectionOff
 	case model.TimeCorrectionNTP:
 		return model.TimeCorrectionNTP
 	default:
-		return model.TimeCorrectionOff
+		return model.TimeCorrectionAuto
 	}
 }
 
@@ -14761,7 +14761,7 @@ with open(path, "r", encoding="utf-8") as f:
 data["reload_command"] = "auto"
 data["restart_command"] = "auto"
 data["time_sync_command"] = "auto"
-data.setdefault("time_correction_mode", "off")
+data.setdefault("time_correction_mode", "auto")
 data.setdefault("core_binary", install_dir + "/oboard-sb")
 data.setdefault("core_service", "oboard-sb")
 data.setdefault("update_repo", "OboardProject/oboard-agent")

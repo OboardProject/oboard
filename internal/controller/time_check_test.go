@@ -26,7 +26,7 @@ func TestTimeCheckSettingsAndServerModeChangeQueueImmediately(t *testing.T) {
 	token := login["token"].(string)
 
 	settings := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)["settings"].(map[string]any)
-	if settings[settingServerDefaultTimeCorrection] != string(model.TimeCorrectionOff) {
+	if settings[settingServerDefaultTimeCorrection] != string(model.TimeCorrectionAuto) {
 		t.Fatalf("default time correction = %#v", settings[settingServerDefaultTimeCorrection])
 	}
 	servers, ok := settings[settingTimeCheckNTPServers].([]any)
