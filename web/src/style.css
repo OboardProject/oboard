@@ -2076,6 +2076,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-monitorable .server-card-head-actions,
 .server-card-monitorable .server-list-actions,
 .server-card-monitorable .server-time-issue,
+.server-card-monitorable .server-expiry-badge,
 .server-card-monitorable .server-version-update {
   position: relative;
   z-index: 2;
@@ -2566,6 +2567,53 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-time-issue:active { transform: none; }
+
+.server-expiry-badge {
+  flex: 0 0 auto;
+  min-height: 24px;
+  height: 24px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: var(--radius-full);
+  color: var(--warning);
+  background: var(--warning-soft);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.server-expiry-badge.ok {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.server-expiry-badge.danger {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.server-expiry-quick-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.server-expiry-quick-row > span {
+  margin-right: 2px;
+}
+
+.server-expiry-quick-row button {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
 
 .server-version-warning {
   position: relative;
@@ -11033,21 +11081,66 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .connectivity-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 .connectivity-stat {
-  display: grid;
-  gap: 1px;
-  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface-solid);
+  min-width: 0;
 }
-.connectivity-stat strong { color: var(--text-strong); font-size: 13px; font-variant-numeric: tabular-nums; }
-.connectivity-stat span { color: var(--muted); font-size: 9px; }
+.connectivity-stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.connectivity-stat-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.connectivity-stat-badge {
+  font-size: 10.5px;
+  font-weight: 650;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.connectivity-stat-badge.ok {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.connectivity-stat-badge.danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.connectivity-stat strong {
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
 .connectivity-stat.ok strong { color: var(--success); }
 .connectivity-stat.danger strong { color: var(--danger); }
+.connectivity-stat-detail {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .connectivity-outages {
   margin: 0;

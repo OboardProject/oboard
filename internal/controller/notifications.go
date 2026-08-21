@@ -45,6 +45,7 @@ const (
 	notificationTaskTimeout          = "task_timeout"
 	notificationCertificateFailed    = "certificate_issuance_failed"
 	notificationCertificateExpiry    = "certificate_expiring"
+	notificationServerExpiry         = "server_expiring"
 	notificationBackupFailed         = "backup_failed"
 	notificationUpdateFailed         = "controller_update_failed"
 	notificationDNSSyncFailed        = "dns_sync_failed"
@@ -77,6 +78,7 @@ var notificationEventDefinitions = []notificationEventDefinition{
 	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationCertificateFailed, "证书签发失败", "证书首次签发或自动续期失败时提醒", []string{"CertificateName", "Domains", "Issuer", "EABKeyID", "Error", "Time"}},
 	{notificationCertificateExpiry, "证书到期", "证书有效期不足三十天或已经到期时提醒", []string{"CertificateName", "Domains", "Issuer", "ExpiresAt", "ExpiryStatus", "Time"}},
+	{notificationServerExpiry, "服务器到期", "服务器到期前提醒；默认剩余 7 天提醒一次，进入剩余 3 天后每天提醒到到期当天", []string{"ServerName", "ServerID", "ExpiresAt", "RemainingDays", "Status", "Time"}},
 	{notificationBackupFailed, "自动备份失败", "本地自动备份或第三方上传未完成时提醒", []string{"Stage", "Error", "Time"}},
 	{notificationUpdateFailed, "主控自动更新失败", "自动检查、备份或安装主控更新失败时提醒", []string{"Stage", "CurrentVersion", "TargetVersion", "Error", "Time"}},
 	{notificationDNSSyncFailed, "域名自动更新失败", "入口域名记录自动更新失败时提醒", []string{"InboundName", "Domain", "ServerName", "Error", "Time"}},
@@ -124,6 +126,10 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 		Title: "证书到期提醒 · {{.CertificateName}}",
 		Body:  "证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n状态：{{.ExpiryStatus}}\n到期时间：{{.ExpiresAt}}",
 	},
+	notificationServerExpiry: {
+		Title: "服务器到期提醒 · {{.ServerName}}",
+		Body:  "{{.ServerName}}\n状态：{{.Status}}\n剩余：{{.RemainingDays}} 天\n到期：{{.ExpiresAt}}\n时间：{{.Time}}",
+	},
 	notificationBackupFailed: {
 		Title: "自动备份失败 · {{.Stage}}",
 		Body:  "{{.Stage}}未完成\n原因：{{.Error}}\n时间：{{.Time}}",
@@ -162,6 +168,7 @@ func (s *Server) StartMonitor(ctx context.Context) {
 		{400 * time.Millisecond, 30 * time.Second, s.maybeFinalizeBasePathMigration},
 		{600 * time.Millisecond, time.Minute, s.schedulePeriodicInboundProbes},
 		{800 * time.Millisecond, time.Minute, s.scheduleDailyTimeChecks},
+		{time.Second, time.Minute, s.checkServerExpiry},
 		{time.Second, 10 * time.Minute, s.scheduleNodeSourceRefreshes},
 	}
 	var workers sync.WaitGroup
@@ -831,6 +838,7 @@ func allowedNotificationEventSet(role model.Role) map[string]bool {
 		allowed[notificationTaskTimeout] = true
 		allowed[notificationCertificateFailed] = true
 		allowed[notificationCertificateExpiry] = true
+		allowed[notificationServerExpiry] = true
 		allowed[notificationBackupFailed] = true
 		allowed[notificationUpdateFailed] = true
 		allowed[notificationDNSSyncFailed] = true
@@ -1163,7 +1171,7 @@ func (s *Server) wakeNotificationDelivery(ctx context.Context) {
 
 func notificationChannelEligible(channel model.NotificationChannel, ownerRole model.Role, event notificationEvent) bool {
 	switch event.Name {
-	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed, notificationSubscriptionRisk, notificationSubscriptionAbnormal:
+	case notificationServerOffline, notificationServerOnline, notificationTaskFailed, notificationTaskTimeout, notificationCertificateFailed, notificationCertificateExpiry, notificationServerExpiry, notificationBackupFailed, notificationUpdateFailed, notificationDNSSyncFailed, notificationSubscriptionRisk, notificationSubscriptionAbnormal:
 		return roleAllows(ownerRole, model.RoleAdmin)
 	case notificationTrafficQuota, notificationUserRisk:
 		if channel.OwnerUserID == event.TargetUserID {

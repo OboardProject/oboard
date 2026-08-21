@@ -45,6 +45,11 @@ type serverUpdateChanges struct {
 	TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode,omitempty"`
 	OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled,omitempty"`
 	OfflineAfterSeconds      *int                        `json:"offline_after_seconds,omitempty"`
+	ExpiresAt                *time.Time                  `json:"expires_at,omitempty"`
+	ClearExpiresAt           *bool                       `json:"clear_expires_at,omitempty"`
+	RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle,omitempty"`
+	AutoRenewEnabled         *bool                       `json:"auto_renew_enabled,omitempty"`
+	ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -152,6 +157,11 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("time_correction_mode", changes.TimeCorrectionMode != nil, func() { next.TimeCorrectionMode = *changes.TimeCorrectionMode })
 	set("offline_notify_enabled", changes.OfflineNotifyEnabled != nil, func() { next.OfflineNotifyEnabled = *changes.OfflineNotifyEnabled })
 	set("offline_after_seconds", changes.OfflineAfterSeconds != nil, func() { next.OfflineAfterSeconds = *changes.OfflineAfterSeconds })
+	set("expires_at", changes.ExpiresAt != nil, func() { next.ExpiresAt = changes.ExpiresAt })
+	set("clear_expires_at", changes.ClearExpiresAt != nil && *changes.ClearExpiresAt, func() { next.ExpiresAt = nil })
+	set("renewal_cycle", changes.RenewalCycle != nil, func() { next.RenewalCycle = normalizeServerRenewalCycle(*changes.RenewalCycle) })
+	set("auto_renew_enabled", changes.AutoRenewEnabled != nil, func() { next.AutoRenewEnabled = *changes.AutoRenewEnabled })
+	set("expiry_notify_enabled", changes.ExpiryNotifyEnabled != nil, func() { next.ExpiryNotifyEnabled = *changes.ExpiryNotifyEnabled })
 	return changed
 }
 

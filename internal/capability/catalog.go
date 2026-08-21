@@ -308,6 +308,7 @@ func defaultDescriptors() []Descriptor {
 	}{
 		{"servers.onboard", "servers:onboard", 2, true, DataInternal, nil},
 		{"servers.update", "servers:write", 2, true, DataInternal, nil},
+		{"servers.extend_expiry", "servers:write", 1, true, DataInternal, nil},
 		{"subscriptions.resume", "subscriptions:resume", 2, true, DataInternal, nil},
 		{"subscriptions.custom_paths.set_alias", "subscriptions:manage", 2, true, DataSensitive, []string{"alias"}},
 		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
@@ -500,7 +501,7 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return serverRefsFromIDs
 	case "servers.onboard":
 		return serverOnboardRefs
-	case "servers.update":
+	case "servers.update", "servers.extend_expiry":
 		return serverUpdateRefs
 	case "subscription_plans.nodes.update":
 		return subscriptionPlanNodesUpdateRefs
@@ -547,6 +548,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"resource_history_enabled": boolValue, "latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+			"expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
@@ -567,8 +569,11 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion},
 			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
+			"expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
+	case "servers.extend_expiry":
+		return schemaObject(map[string]any{"server_id": positiveID, "days": map[string]any{"type": "integer", "minimum": 1, "maximum": 3650}}, "server_id", "days"), simpleOutput(map[string]any{"server_id": positiveID, "expires_at": stringValue, "days": map[string]any{"type": "integer"}}), "server_ids"
 	case "deployments.apply":
 		return schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids"), simpleOutput(map[string]any{"deployment": closedObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "server_ids": idArray(0, 100), "status": stringValue})}), "server_ids"
 	case "inbounds.create", "inbounds.update":

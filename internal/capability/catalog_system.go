@@ -138,6 +138,8 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"server_monitoring_retention_days":          map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
 			"notification_server_offline_after_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
 			"notification_server_online_after_seconds":  map[string]any{"type": "integer", "minimum": 0, "maximum": 86400},
+			"server_expiry_notify_lead_days":            map[string]any{"type": "array", "minItems": 1, "maxItems": 10, "items": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}},
+			"server_expiry_notify_time":                 stringValue,
 			"trusted_proxy_cidrs":                       stringArray(0, 64), "controller_log_max_mb": map[string]any{"type": "integer"},
 			"controller_log_backups": map[string]any{"type": "integer"}, "registration_enabled": boolValue,
 			"agent_auto_update_enabled":              boolValue,

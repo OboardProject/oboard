@@ -41,6 +41,13 @@ const (
 	ServerDegraded ServerStatus = "degraded"
 )
 
+type ServerRenewalCycle string
+
+const (
+	ServerRenewalCycleMonthly   ServerRenewalCycle = "monthly"
+	ServerRenewalCycleQuarterly ServerRenewalCycle = "quarterly"
+)
+
 type EntryIPMode string
 
 const (
@@ -917,6 +924,11 @@ type Server struct {
 	ConnectionAuditEnabled      bool                 `json:"connection_audit_enabled"`
 	OfflineNotifyEnabled        bool                 `json:"offline_notify_enabled"`
 	OfflineAfterSeconds         int                  `json:"offline_after_seconds"`
+	ExpiresAt                   *time.Time           `json:"expires_at,omitempty"`
+	RenewalCycle                ServerRenewalCycle   `json:"renewal_cycle"`
+	AutoRenewEnabled            bool                 `json:"auto_renew_enabled"`
+	ExpiryNotifyEnabled         bool                 `json:"expiry_notify_enabled"`
+	LastAutoRenewedAt           *time.Time           `json:"last_auto_renewed_at,omitempty"`
 	TimeCorrectionMode          TimeCorrectionMode   `json:"time_correction_mode"`
 	TimeCheckStatus             string               `json:"time_check_status"`
 	TimeOffsetMS                int64                `json:"time_offset_ms"`

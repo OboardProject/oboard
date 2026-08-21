@@ -832,6 +832,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			NotificationOfflineAfter      *int               `json:"notification_server_offline_after_seconds"`
 			NotificationOnlineAfter       *int               `json:"notification_server_online_after_seconds"`
 			NotificationMergeOffline      *bool              `json:"notification_server_merge_offline"`
+			ServerExpiryNotifyLeadDays    *[]int             `json:"server_expiry_notify_lead_days"`
+			ServerExpiryNotifyTime        *string            `json:"server_expiry_notify_time"`
 			RegistrationEnabled           *bool              `json:"registration_enabled"`
 			RegistrationDefaultGroupID    *int64             `json:"registration_default_group_id"`
 		}
@@ -1244,6 +1246,31 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingNotificationServerMergeOffline)
 		}
+		if req.ServerExpiryNotifyLeadDays != nil {
+			leadDays, err := normalizeExpiryNotifyLeadDays(*req.ServerExpiryNotifyLeadDays)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			raw, _ := json.Marshal(leadDays)
+			if err := s.store.SetSetting(r.Context(), settingServerExpiryNotifyLeadDays, string(raw)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerExpiryNotifyLeadDays)
+		}
+		if req.ServerExpiryNotifyTime != nil {
+			notifyTime, err := normalizeExpiryNotifyTime(*req.ServerExpiryNotifyTime)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingServerExpiryNotifyTime, notifyTime); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingServerExpiryNotifyTime)
+		}
 		if req.RegistrationEnabled != nil {
 			if err := s.store.SetSetting(r.Context(), settingRegistrationEnabled, strconv.FormatBool(*req.RegistrationEnabled)); err != nil {
 				fail(w, err, http.StatusInternalServerError)
@@ -1297,7 +1324,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[updateWindowEnabledSetting] = false
@@ -1318,6 +1345,12 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[updateWindowStartHourSetting] = updateWindowHour(items, updateWindowStartHourSetting, updateWindowDefaultStartHour)
 	out[updateWindowEndHourSetting] = updateWindowHour(items, updateWindowEndHourSetting, updateWindowDefaultEndHour)
 	out[settingSubscriptionControllerDirectEnabled] = settingBool(items, settingSubscriptionControllerDirectEnabled, false)
+	if leadDays, err := parseExpiryNotifyLeadDays(items[settingServerExpiryNotifyLeadDays]); err == nil {
+		out[settingServerExpiryNotifyLeadDays] = leadDays
+	}
+	if notifyTime, err := normalizeExpiryNotifyTime(items[settingServerExpiryNotifyTime]); err == nil {
+		out[settingServerExpiryNotifyTime] = notifyTime
+	}
 	if raw := strings.TrimSpace(items[settingRegistrationEnabled]); raw != "" {
 		out[settingRegistrationEnabled] = settingBool(items, settingRegistrationEnabled, false)
 	}
@@ -3259,6 +3292,10 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			ConnectionAuditEnabled *bool                     `json:"connection_audit_enabled"`
 			OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled"`
 			OfflineAfterSeconds    *int                      `json:"offline_after_seconds"`
+			ExpiresAt              *time.Time                `json:"expires_at"`
+			AutoRenewEnabled       *bool                     `json:"auto_renew_enabled"`
+			RenewalCycle           *model.ServerRenewalCycle `json:"renewal_cycle"`
+			ExpiryNotifyEnabled    *bool                     `json:"expiry_notify_enabled"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3308,6 +3345,27 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.OfflineAfterSeconds != nil {
 			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
+		}
+		if input.ExpiresAt != nil {
+			expiresAt := *input.ExpiresAt
+			v.ExpiresAt = &expiresAt
+		} else {
+			v.ExpiresAt = nil
+		}
+		if input.AutoRenewEnabled == nil {
+			v.AutoRenewEnabled = false
+		} else {
+			v.AutoRenewEnabled = *input.AutoRenewEnabled
+		}
+		if input.ExpiryNotifyEnabled == nil {
+			v.ExpiryNotifyEnabled = true
+		} else {
+			v.ExpiryNotifyEnabled = *input.ExpiryNotifyEnabled
+		}
+		if input.RenewalCycle == nil {
+			v.RenewalCycle = model.ServerRenewalCycleMonthly
+		} else {
+			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
 		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
@@ -3477,6 +3535,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.serverLogsControl(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "extend-expiry" {
+		s.extendServerExpiryHandler(w, r, id)
+		return
+	}
 	if r.Method == http.MethodGet {
 		srv, err := s.store.GetServer(r.Context(), id)
 		if err != nil {
@@ -3502,6 +3564,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets"`
 			OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled"`
 			OfflineAfterSeconds      *int                        `json:"offline_after_seconds"`
+			ExpiresAt                *time.Time                  `json:"expires_at"`
+			ClearExpiresAt           *bool                       `json:"clear_expires_at"`
+			AutoRenewEnabled         *bool                       `json:"auto_renew_enabled"`
+			RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle"`
+			ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3542,6 +3609,29 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.OfflineAfterSeconds = current.OfflineAfterSeconds
 		} else {
 			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
+		}
+		if input.ClearExpiresAt != nil && *input.ClearExpiresAt {
+			v.ExpiresAt = nil
+		} else if input.ExpiresAt != nil {
+			expiresAt := *input.ExpiresAt
+			v.ExpiresAt = &expiresAt
+		} else {
+			v.ExpiresAt = current.ExpiresAt
+		}
+		if input.AutoRenewEnabled == nil {
+			v.AutoRenewEnabled = current.AutoRenewEnabled
+		} else {
+			v.AutoRenewEnabled = *input.AutoRenewEnabled
+		}
+		if input.ExpiryNotifyEnabled == nil {
+			v.ExpiryNotifyEnabled = current.ExpiryNotifyEnabled
+		} else {
+			v.ExpiryNotifyEnabled = *input.ExpiryNotifyEnabled
+		}
+		if input.RenewalCycle == nil {
+			v.RenewalCycle = current.RenewalCycle
+		} else {
+			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
 		}
 		v.LatencyProbeEnabled = current.LatencyProbeEnabled
 		v.LatencyProbeMode = current.LatencyProbeMode
@@ -4612,6 +4702,7 @@ func validateServer(v *model.Server) error {
 	if v.Name == "" {
 		return errors.New("name required")
 	}
+	v.RenewalCycle = normalizeServerRenewalCycle(v.RenewalCycle)
 	if v.OfflineAfterSeconds < 0 || v.OfflineAfterSeconds > 86400 {
 		return errors.New("offline_after_seconds must be between 0 and 86400")
 	}

@@ -276,6 +276,8 @@ var settingsAutomationFields = map[string]bool{
 	"server_monitoring_retention_days":          true,
 	"notification_server_offline_after_seconds": true,
 	"notification_server_online_after_seconds":  true,
+	"server_expiry_notify_lead_days":            true,
+	"server_expiry_notify_time":                 true,
 	"trusted_proxy_cidrs":                       true, "controller_log_max_mb": true, "controller_log_backups": true,
 	"agent_auto_update_enabled":              true,
 	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
@@ -521,6 +523,29 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, errors.New("notification_server_online_after_seconds must be between 0 and 86400")
 		}
 		updates[settingNotificationServerOnlineAfter] = strconv.Itoa(seconds)
+	}
+	if value, ok := fields["server_expiry_notify_lead_days"]; ok {
+		var leadDays []int
+		if err := json.Unmarshal(value, &leadDays); err != nil {
+			return nil, errors.New("server_expiry_notify_lead_days must be an integer array")
+		}
+		normalized, err := normalizeExpiryNotifyLeadDays(leadDays)
+		if err != nil {
+			return nil, err
+		}
+		encoded, _ := json.Marshal(normalized)
+		updates[settingServerExpiryNotifyLeadDays] = string(encoded)
+	}
+	if value, ok := fields["server_expiry_notify_time"]; ok {
+		var raw string
+		if err := json.Unmarshal(value, &raw); err != nil {
+			return nil, errors.New("server_expiry_notify_time must be a string")
+		}
+		normalized, err := normalizeExpiryNotifyTime(raw)
+		if err != nil {
+			return nil, err
+		}
+		updates[settingServerExpiryNotifyTime] = normalized
 	}
 	if value, ok := fields["time_check_ntp_servers"]; ok {
 		var servers []string

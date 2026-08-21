@@ -94,7 +94,13 @@ export type Server = {
   connectivity_checked_at?: string
   connectivity_error?: string
   telemetry_updated_at?: string
+  offline_notify_enabled?: boolean
   offline_after_seconds?: number
+  expires_at?: string
+  renewal_cycle?: 'monthly' | 'quarterly'
+  auto_renew_enabled?: boolean
+  expiry_notify_enabled?: boolean
+  last_auto_renewed_at?: string
   created_at?: string
   updated_at?: string
 }

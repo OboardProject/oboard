@@ -457,6 +457,59 @@ function trafficTimezoneLabel(timezone: string) {
     return timezone
   }
 }
+function serverExpiryInputValue(iso?: string) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function serverExpiryOutputValue(date: string) {
+  if (!date) return undefined
+  const [year, month, day] = date.split('-').map(Number)
+  if (!year || !month || !day) return undefined
+  return new Date(year, month - 1, day, 0, 0, 0, 0).toISOString()
+}
+
+function serverExpiryStatus(server: Server) {
+  if (!server.expires_at) return { label: '未设置', tone: 'muted' as const }
+  const date = new Date(server.expires_at)
+  if (Number.isNaN(date.getTime())) return { label: '未设置', tone: 'muted' as const }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const expiry = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const days = Math.round((expiry.getTime() - today.getTime()) / 86400000)
+  if (days < 0) {
+    return server.auto_renew_enabled
+      ? { label: '等待自动续期', tone: 'warning' as const }
+      : { label: '已到期', tone: 'danger' as const }
+  }
+  if (days === 0) return { label: '今天到期', tone: 'danger' as const }
+  if (days <= 7) return { label: '即将到期', tone: 'warning' as const }
+  return { label: `${days} 天后到期`, tone: 'ok' as const }
+}
+
+function serverExpiryDateLabel(iso?: string) {
+  if (!iso) return '未设置'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '未设置'
+  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+}
+
+function addDaysToExpiryDate(value: string, days: number) {
+  const date = value ? new Date(`${value}T00:00:00`) : new Date()
+  date.setDate(date.getDate() + days)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function ServerExpiryBadge({ server }: { server: Server }) {
+  const status = serverExpiryStatus(server)
+  if (status.tone === 'muted') return null
+  return <span className={`server-expiry-badge ${status.tone}`} title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>{status.label}</span>
+}
+
 const routeActions: Exclude<RouteAction, 'source_prefix'>[] = ['direct', 'block', 'outbound', 'external', 'proxy_path', 'interface']
 const outboundScopes = ['global', 'server']
 
@@ -3526,6 +3579,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [notificationOfflineAfter, setNotificationOfflineAfter] = useState(Number(data.settings?.notification_server_offline_after_seconds || 120))
   const [notificationOnlineAfter, setNotificationOnlineAfter] = useState(Number(data.settings?.notification_server_online_after_seconds || 300))
   const [notificationMergeOffline, setNotificationMergeOffline] = useState(data.settings?.notification_server_merge_offline !== false)
+  const [expiryNotifyLeadDays, setExpiryNotifyLeadDays] = useState<[number, number]>([
+    Number((data.settings?.server_expiry_notify_lead_days || [7, 3])?.[0] || 7),
+    Number((data.settings?.server_expiry_notify_lead_days || [7, 3])?.[1] || 3),
+  ])
+  const [expiryNotifyTime, setExpiryNotifyTime] = useState(String(data.settings?.server_expiry_notify_time || '00:00'))
   const [registrationEnabled, setRegistrationEnabled] = useState(settingEnabled(data.settings?.registration_enabled))
   const [registrationDefaultGroupID, setRegistrationDefaultGroupID] = useState(Number(data.settings?.registration_default_group_id || 0))
   const [saving, setSaving] = useState('')
@@ -3538,7 +3596,12 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
     setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 300))
     setNotificationMergeOffline(data.settings?.notification_server_merge_offline !== false)
-  }, [data.settings?.notification_server_offline_after_seconds, data.settings?.notification_server_online_after_seconds, data.settings?.notification_server_merge_offline])
+    setExpiryNotifyLeadDays([
+      Number((data.settings?.server_expiry_notify_lead_days || [7, 3])?.[0] || 7),
+      Number((data.settings?.server_expiry_notify_lead_days || [7, 3])?.[1] || 3),
+    ])
+    setExpiryNotifyTime(String(data.settings?.server_expiry_notify_time || '00:00'))
+  }, [data.settings?.notification_server_offline_after_seconds, data.settings?.notification_server_online_after_seconds, data.settings?.notification_server_merge_offline, data.settings?.server_expiry_notify_lead_days, data.settings?.server_expiry_notify_time])
   useEffect(() => {
     setRegistrationEnabled(settingEnabled(data.settings?.registration_enabled))
     setRegistrationDefaultGroupID(Number(data.settings?.registration_default_group_id || 0))
@@ -3652,6 +3715,8 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         notification_server_offline_after_seconds: notificationOfflineAfter,
         notification_server_online_after_seconds: notificationOnlineAfter,
         notification_server_merge_offline: notificationMergeOffline,
+        server_expiry_notify_lead_days: [expiryNotifyLeadDays[0], expiryNotifyLeadDays[1]],
+        server_expiry_notify_time: expiryNotifyTime,
       }) })
     }, '通知提醒设置已保存')
   }
@@ -3825,6 +3890,18 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             />
           </SettingsRow>
           <SettingsSwitchRow label="合并离线提醒" description="同时失联的多台服务器合并为一条通知发送。" checked={notificationMergeOffline} onChange={setNotificationMergeOffline} disabled={Boolean(saving)} ariaLabel="合并离线提醒" />
+          <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
+        </SettingsGroup>
+        <SettingsGroup title="服务器到期提醒" description="服务器表单中开启到期提醒，并在 Bark 或 Telegram 通知频道勾选“服务器到期”事件。">
+          <SettingsRow label="第一次提醒提前天数" description="剩余天数等于该值时提醒一次，默认 7 天。">
+            <input type="number" min={1} max={365} value={expiryNotifyLeadDays[0]} onChange={event => setExpiryNotifyLeadDays(current => [Math.max(1, Math.min(365, Number(event.target.value) || 1)), current[1]])} aria-label="第一次提醒提前天数" />
+          </SettingsRow>
+          <SettingsRow label="每日提醒提前天数" description="进入该天数后每天提醒到到期当天，默认 3 天。">
+            <input type="number" min={1} max={365} value={expiryNotifyLeadDays[1]} onChange={event => setExpiryNotifyLeadDays(current => [current[0], Math.max(1, Math.min(current[0], Number(event.target.value) || 1))])} aria-label="每日提醒提前天数" />
+          </SettingsRow>
+          <SettingsRow label="每日提醒时间" description="使用统计时区，默认 00:00。">
+            <input type="time" value={expiryNotifyTime} onChange={event => setExpiryNotifyTime(event.target.value || '00:00')} aria-label="每日提醒时间" />
+          </SettingsRow>
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </SettingsGroup>
       </section>}
@@ -6589,7 +6666,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
 }
 
 function GridViewIcon() {
@@ -6638,6 +6715,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [draft, setDraft] = useState(() => defaultServerDraft(creationDefaults))
   const [createOpen, setCreateOpen] = useState(false)
   const [editServer, setEditServer] = useState<Server | null>(null)
+  const [extendServer, setExtendServer] = useState<Server | null>(null)
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
   const [installTarget, setInstallTarget] = useState<{ server: Server; token: string } | null>(null)
   const [logServer, setLogServer] = useState<Server | null>(null)
@@ -6830,7 +6908,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const createServer = async () => {
     try {
-      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(draft) }) as { server?: Server }
+      const payload = { ...draft, expires_at: draft.expires_at ? serverExpiryOutputValue(draft.expires_at) : null }
+      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(payload) }) as { server?: Server }
       if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
       setServers(current => upsertServerSnapshot(current, result.server as Server))
       setCreateOpen(false)
@@ -6844,7 +6923,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const updateServer = async (next: any) => {
     try {
       const modeChanged = editServer?.time_correction_mode !== next.time_correction_mode
-      const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(next) }) as { server?: Server; time_check_error?: string }
+      const payload = {
+        ...next,
+        expires_at: next.expires_at ? serverExpiryOutputValue(next.expires_at) : null,
+        clear_expires_at: !next.expires_at,
+      }
+      const result = await client.request(`/servers/${next.id}`, { method: 'PATCH', body: JSON.stringify(payload) }) as { server?: Server; time_check_error?: string }
       if (!result.server?.id) throw new Error('服务器设置已保存，但接口未返回服务器数据')
       setServers(current => upsertServerSnapshot(current, result.server as Server))
       setEditServer(null)
@@ -6853,6 +6937,17 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       else notify?.('服务器设置已保存', 'success')
     } catch (error: any) {
       await dialogs.alert({ title: '保存服务器失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
+  const extendServerExpiry = async (server: Server, days: number) => {
+    try {
+      const result = await client.request(`/servers/${server.id}/extend-expiry`, { method: 'POST', body: JSON.stringify({ days }) }) as { server?: Server }
+      if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
+      setExtendServer(null)
+      revalidateServers()
+      notify?.(`${server.name || '服务器'} 到期日已延长 ${days} 天`, 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '延长到期失败', message: localizeErrorMessage(error?.message || error) })
     }
   }
   const enableAutomaticTimeCorrection = async (server: Server) => {
@@ -7019,6 +7114,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
     else if (type === 'edit') setEditServer(s)
+    else if (type === 'extend-expiry') setExtendServer(s)
     else if (type === 'mtu') setMtuServer(s)
     else if (type === 'dns') setDNSServer(s)
     else if (type === 'agent-config') setAgentConfigServer(s)
@@ -7213,6 +7309,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       : <MotionList className="server-list">{visibleServers.map(renderServerCard)}</MotionList>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
+    <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
@@ -7581,6 +7678,25 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
 
+          <div className="form-section-title">到期与续期</div>
+          <FormField label="到期日" hint="留空表示不追踪服务器到期。" placement="bottom">
+            <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
+          </FormField>
+          <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
+            <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
+          </FormField>
+          {Boolean(draft.auto_renew_enabled) && (
+            <FormField label="续期周期" hint="月付顺延到下月同日，季付顺延到三个月后的同日，月底日期自动取当月最后一天。">
+              <Select value={draft.renewal_cycle || 'monthly'} onChange={e => update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' })} aria-label="续期周期">
+                <option value="monthly">月付（下月同日）</option>
+                <option value="quarterly">季付（三个月后同日）</option>
+              </Select>
+            </FormField>
+          )}
+          <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
+            <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
+          </FormField>
+
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。">
             <Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
@@ -7683,6 +7799,10 @@ function serverToDraft(server: Server) {
     internal_port_range_start: server.internal_port_range_start || 30000,
     internal_port_range_end: server.internal_port_range_end || 59999,
     entry_ip_mode: (server.entry_ip_mode || 'auto') as EntryIPMode,
+    expires_at: serverExpiryInputValue(server.expires_at),
+    renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly',
+    auto_renew_enabled: Boolean(server.auto_renew_enabled),
+    expiry_notify_enabled: server.expiry_notify_enabled !== false,
   }
 }
 
@@ -7723,6 +7843,30 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           )}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          <div className="form-section-title">到期与续期</div>
+          <FormField label="到期日" hint="留空表示不追踪服务器到期。" placement="bottom">
+            <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
+            <div className="server-expiry-quick-row">
+              <span>快速延长</span>
+              {[1, 3, 7, 30].map(days => (
+                <button key={days} type="button" className="ghost" onClick={() => update({ expires_at: addDaysToExpiryDate(draft.expires_at, days) })}>+{days} 天</button>
+              ))}
+            </div>
+          </FormField>
+          <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
+            <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
+          </FormField>
+          {Boolean(draft.auto_renew_enabled) && (
+            <FormField label="续期周期" hint="月付顺延到下月同日，季付顺延到三个月后的同日，月底日期自动取当月最后一天。">
+              <Select value={draft.renewal_cycle || 'monthly'} onChange={e => update({ renewal_cycle: e.target.value as 'monthly' | 'quarterly' })} aria-label="续期周期">
+                <option value="monthly">月付（下月同日）</option>
+                <option value="quarterly">季付（三个月后同日）</option>
+              </Select>
+            </FormField>
+          )}
+          <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
+            <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
+          </FormField>
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
@@ -7792,6 +7936,43 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
         />
       )}
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
+  </MotionDialogPanel>
+}
+
+function ServerExtendExpiryDialog({ server, onCancel, onSubmit }: { server: Server; onCancel: () => void; onSubmit: (server: Server, days: number) => Promise<void> }) {
+  const [days, setDays] = useState(3)
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    if (busy || !Number.isInteger(days) || days < 1 || days > 3650) return
+    setBusy(true)
+    try {
+      await onSubmit(server, days)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <MotionDialogPanel onCancel={onCancel} className="server-dialog server-extend-dialog">
+    <header className="dialog-head">
+      <div><h2 id="server-extend-title">延长到期</h2><p className="muted">{server.name || `服务器 #${server.id}`} · 当前到期 {serverExpiryDateLabel(server.expires_at)}</p></div>
+      <button className="ghost dialog-close icon-button" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="form server-dialog-form labeled-form">
+        <FormField label="延长天数" hint="已有到期日时从当前到期日顺延；未设置到期日时从今天起算。" placement="bottom">
+          <input type="number" min={1} max={3650} value={days} onChange={e => setDays(Number(e.target.value))} aria-label="延长天数" />
+        </FormField>
+        <div className="server-expiry-quick-row">
+          <span>快捷选择</span>
+          {[1, 3, 7, 30].map(value => (
+            <button key={value} type="button" className={days === value ? 'ghost active' : 'ghost'} onClick={() => setDays(value)}>+{value} 天</button>
+          ))}
+        </div>
+      </div>
+    </div>
+    <footer className="dialog-actions">
+      <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
+      <button disabled={busy || !Number.isInteger(days) || days < 1 || days > 3650} onClick={() => void submit()}><CalendarDays size={15} />{busy ? '延长中...' : `延长 ${days} 天`}</button>
+    </footer>
   </MotionDialogPanel>
 }
 
@@ -8104,6 +8285,7 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
       title: '配置与策略',
       items: [
         { label: '基础设置', type: 'edit', icon: SlidersHorizontal },
+        { label: '延长到期', type: 'extend-expiry', icon: CalendarDays, admin: true },
         { label: 'DNS 设置', type: 'dns', icon: Globe },
         { label: 'MTU 设置', type: 'mtu', icon: Gauge },
         { label: 'Agent 设置', type: 'agent-config', icon: Sliders, admin: true },
@@ -8731,6 +8913,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               <strong className="server-list-name">{server.name || `server-${server.id}`}</strong>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
+              <ServerExpiryBadge server={server} />
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
               {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
             </div>
@@ -8823,6 +9006,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               </div>
             </div>
           )}
+          <ServerExpiryBadge server={server} />
           {timeIssue && <button
             type="button"
             className={`server-time-issue ${timeIssue.tone}`}
@@ -9496,19 +9680,57 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
             <section className="connectivity-section">
               <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{response.probes.total} 次实际探测</span></div>
               <div className="connectivity-stats">
-                <div className="connectivity-stat ok"><strong>{formatConnectivityDuration(response.summary.available_seconds)}</strong><span>可用时长</span></div>
-                <div className="connectivity-stat danger"><strong>{formatConnectivityDuration(response.summary.unavailable_seconds)}</strong><span>不可用时长</span></div>
-                <div className="connectivity-stat"><strong>{formatConnectivityDuration(response.summary.unknown_seconds)}</strong><span>未知 / 未观测</span></div>
-                <div className="connectivity-stat"><strong>{response.summary.coverage_percent.toFixed(1)}%</strong><span>统计覆盖率</span></div>
-                <div className="connectivity-stat"><strong>{response.summary.outage_count}</strong><span>中断次数</span></div>
-                <div className="connectivity-stat"><strong>{formatConnectivityDuration(response.summary.longest_outage_seconds)}</strong><span>最长中断</span></div>
-                <div className="connectivity-stat"><strong>{response.probes.total}</strong><span>实际探测次数</span></div>
-                <div className="connectivity-stat ok"><strong>{response.probes.available}</strong><span>成功探测</span></div>
-                <div className="connectivity-stat danger"><strong>{response.probes.failed}</strong><span>失败探测</span></div>
-                <div className="connectivity-stat"><strong>{formatLatency(response.latency.avg_ms)}</strong><span>平均延迟</span></div>
-                <div className="connectivity-stat"><strong>{formatLatency(response.latency.min_ms)}</strong><span>最低延迟</span></div>
-                <div className="connectivity-stat"><strong>{formatLatency(response.latency.max_ms)}</strong><span>最高延迟</span></div>
-                <div className="connectivity-stat"><strong>{formatLatency(response.latency.p95_ms)}</strong><span>P95 延迟</span></div>
+                <div className="connectivity-stat ok">
+                  <div className="connectivity-stat-head">
+                    <span className="connectivity-stat-label">可用时长</span>
+                    {response.summary.unavailable_seconds > 0 && <span className="connectivity-stat-badge danger">异常 {formatConnectivityDuration(response.summary.unavailable_seconds)}</span>}
+                  </div>
+                  <strong>{formatConnectivityDuration(response.summary.available_seconds)}</strong>
+                  <span className="connectivity-stat-detail">
+                    {response.summary.unknown_seconds > 0
+                      ? `未观测 ${formatConnectivityDuration(response.summary.unknown_seconds)} · 覆盖率 ${response.summary.coverage_percent.toFixed(1)}%`
+                      : `统计覆盖率 ${response.summary.coverage_percent.toFixed(1)}%`}
+                  </span>
+                </div>
+
+                <div className={`connectivity-stat ${response.summary.outage_count > 0 ? 'danger' : 'ok'}`}>
+                  <div className="connectivity-stat-head">
+                    <span className="connectivity-stat-label">中断情况</span>
+                    <span className={`connectivity-stat-badge ${response.summary.outage_count > 0 ? 'danger' : 'ok'}`}>
+                      {response.summary.outage_count > 0 ? `${response.summary.outage_count} 次` : '正常'}
+                    </span>
+                  </div>
+                  <strong>{response.summary.outage_count > 0 ? `${response.summary.outage_count} 次中断` : '无中断'}</strong>
+                  <span className="connectivity-stat-detail">
+                    {response.summary.outage_count > 0 && response.summary.longest_outage_seconds > 0
+                      ? `最长中断 ${formatConnectivityDuration(response.summary.longest_outage_seconds)}`
+                      : '监测期间未出现服务中断'}
+                  </span>
+                </div>
+
+                <div className={`connectivity-stat ${response.probes.failed > 0 ? 'danger' : 'ok'}`}>
+                  <div className="connectivity-stat-head">
+                    <span className="connectivity-stat-label">探测结果</span>
+                    <span className={`connectivity-stat-badge ${response.probes.failed > 0 ? 'danger' : 'ok'}`}>
+                      {response.probes.total > 0 ? `${((response.probes.available / response.probes.total) * 100).toFixed(1)}%` : '—'}
+                    </span>
+                  </div>
+                  <strong>{response.probes.available} / {response.probes.total} 次</strong>
+                  <span className="connectivity-stat-detail">
+                    成功 {response.probes.available} · 失败 {response.probes.failed}
+                  </span>
+                </div>
+
+                <div className="connectivity-stat">
+                  <div className="connectivity-stat-head">
+                    <span className="connectivity-stat-label">延迟表现</span>
+                    <span className="connectivity-stat-badge">P95 {formatLatency(response.latency.p95_ms)}</span>
+                  </div>
+                  <strong>{formatLatency(response.latency.avg_ms)}</strong>
+                  <span className="connectivity-stat-detail">
+                    最低 {formatLatency(response.latency.min_ms)} · 最高 {formatLatency(response.latency.max_ms)}
+                  </span>
+                </div>
               </div>
             </section>
 
@@ -9580,6 +9802,18 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="内部回环端口范围" value={internalPortRangeLabel(server)} />
             <ServerDetailItem label="安装时尝试 BBR + FQ" value={server.bbr_enabled ? '是' : '否'} />
             <ServerDetailItem label="延迟测试" value={connectivityLabel} />
+          </dl>
+        </section>
+
+        <section className="server-detail-section">
+          <div className="server-detail-section-head"><CalendarDays size={15} /><h3>到期信息</h3></div>
+          <dl className="server-detail-grid">
+            <ServerDetailItem label="到期日" value={serverExpiryDateLabel(server.expires_at)} />
+            <ServerDetailItem label="到期状态" value={serverExpiryStatus(server).label} />
+            <ServerDetailItem label="自动续期" value={server.auto_renew_enabled ? '开启' : '关闭'} />
+            <ServerDetailItem label="续期周期" value={server.renewal_cycle === 'quarterly' ? '季付' : server.auto_renew_enabled ? '月付' : '—'} />
+            <ServerDetailItem label="到期提醒" value={server.expiry_notify_enabled === false ? '关闭' : '开启'} />
+            <ServerDetailItem label="最近自动续期" value={server.last_auto_renewed_at ? formatTableTime(server.last_auto_renewed_at) : '—'} />
           </dl>
         </section>
 
@@ -10886,7 +11120,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const submitServerDraft = async () => {
     if (!serverDraft) return
     try {
-      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(serverDraft) }) as { server?: Server }
+      const payload = { ...serverDraft, expires_at: serverDraft.expires_at ? serverExpiryOutputValue(serverDraft.expires_at) : null }
+      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(payload) }) as { server?: Server }
       if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
       applyMutationResult(result)
       onServerSnapshot(result.server)
@@ -17460,6 +17695,7 @@ const fallbackNotificationEventOptions: NotificationEventDefinition[] = [
   { value: 'task_timeout', label: '任务超时', description: '任务等待或执行超过五分钟时提醒', variables: ['TaskType', 'TaskID', 'ServerName', 'Error', 'Time'] },
   { value: 'certificate_issuance_failed', label: '证书签发失败', description: '证书首次签发或自动续期失败时提醒', variables: ['CertificateName', 'Domains', 'Issuer', 'EABKeyID', 'Error', 'Time'] },
   { value: 'certificate_expiring', label: '证书到期', description: '证书有效期不足三十天或已经到期时提醒', variables: ['CertificateName', 'Domains', 'Issuer', 'ExpiresAt', 'ExpiryStatus', 'Time'] },
+  { value: 'server_expiring', label: '服务器到期', description: '服务器到期前提醒；默认剩余 7 天提醒一次，进入剩余 3 天后每天提醒到到期当天', variables: ['ServerName', 'ServerID', 'ExpiresAt', 'RemainingDays', 'Status', 'Time'] },
   { value: 'backup_failed', label: '自动备份失败', description: '本地自动备份或第三方上传未完成时提醒', variables: ['Stage', 'Error', 'Time'] },
   { value: 'controller_update_failed', label: '主控自动更新失败', description: '自动检查、备份或安装主控更新失败时提醒', variables: ['Stage', 'CurrentVersion', 'TargetVersion', 'Error', 'Time'] },
   { value: 'dns_sync_failed', label: '域名自动更新失败', description: '入口域名记录自动更新失败时提醒', variables: ['InboundName', 'Domain', 'ServerName', 'Error', 'Time'] },
@@ -17477,6 +17713,7 @@ const fallbackNotificationTemplates: Record<string, NotificationTemplate> = {
   task_timeout: { title: '任务超时 · {{.TaskType}}', body: '服务器：{{.ServerName}}\n任务：#{{.TaskID}} {{.TaskType}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   certificate_issuance_failed: { title: '证书签发失败 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n外部账号：{{.EABKeyID}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   certificate_expiring: { title: '证书到期提醒 · {{.CertificateName}}', body: '证书：{{.CertificateName}}\n域名：{{.Domains}}\n签发机构：{{.Issuer}}\n状态：{{.ExpiryStatus}}\n到期时间：{{.ExpiresAt}}' },
+  server_expiring: { title: '服务器到期提醒 · {{.ServerName}}', body: '{{.ServerName}}\n状态：{{.Status}}\n剩余：{{.RemainingDays}} 天\n到期：{{.ExpiresAt}}\n时间：{{.Time}}' },
   backup_failed: { title: '自动备份失败 · {{.Stage}}', body: '{{.Stage}}未完成\n原因：{{.Error}}\n时间：{{.Time}}' },
   controller_update_failed: { title: '主控自动更新失败 · {{.Stage}}', body: '当前版本：{{.CurrentVersion}}\n目标版本：{{.TargetVersion}}\n阶段：{{.Stage}}\n原因：{{.Error}}\n时间：{{.Time}}' },
   dns_sync_failed: { title: '域名自动更新失败 · {{.Domain}}', body: '服务器：{{.ServerName}}\n入口：{{.InboundName}}\n域名：{{.Domain}}\n原因：{{.Error}}\n时间：{{.Time}}' },

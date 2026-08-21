@@ -716,6 +716,7 @@ func (s *Server) newServicePrincipal(owner model.User, name string, scopes []str
 
 func (s *Server) registerAutomationHandlers() {
 	s.registerServerUpdateOperation()
+	s.registerServerExpiryOperation()
 	s.registerInboundAutomationOperations()
 	s.registerProxyPathAutomationOperations()
 	s.registerSubscriptionPlanAutomationOperations()
@@ -1279,6 +1280,12 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	}
 	if _, ok := envelope.Server["offline_notify_enabled"]; !ok {
 		request.Server.OfflineNotifyEnabled = true
+	}
+	if _, ok := envelope.Server["expiry_notify_enabled"]; !ok {
+		request.Server.ExpiryNotifyEnabled = true
+	}
+	if _, ok := envelope.Server["renewal_cycle"]; !ok {
+		request.Server.RenewalCycle = model.ServerRenewalCycleMonthly
 	}
 	if _, ok := envelope.Server["resource_history_enabled"]; !ok {
 		request.Server.ResourceHistoryEnabled = true
