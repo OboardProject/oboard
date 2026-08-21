@@ -3669,6 +3669,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       <header className="settings-content-head">
         <div><h2>{activeNavigationItem.label}</h2><p>{activeNavigationItem.description}</p></div>
       </header>
+      {!savedURL && <div className="controller-url-warning settings-controller-url-warning" role="status">
+        <AlertTriangle size={18} />
+        <div><strong>尚未保存主控公开地址</strong><span>Agent 安装和更新会失败。请确认下方地址是 Agent 可访问的 HTTPS 地址，然后在基础设置中保存。</span></div>
+        {activeSection !== 'connection' && <button type="button" onClick={() => setActiveSection('connection')}>前往基础设置</button>}
+      </div>}
       <div className="settings-grid">
       {activeSection === 'connection' && <section id="settings-panel-connection" role="tabpanel" className="settings-card">
         <SettingsGroup title="节点连接地址" description="Agent 连接面板的地址，留空时自动使用当前地址。">
@@ -7014,6 +7019,11 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
           {hasServerFilters && <button type="button" className="ghost icon-button server-list-filter-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
         </div>
       )}
+    </div>}
+    {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
+      <AlertTriangle size={18} />
+      <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存，否则会提示“请先在系统设置中配置主控公开地址（controller_url）”。</span></div>
+      {role === 'admin' ? <button type="button" onClick={() => goTab('settings')}>前往设置</button> : <span className="controller-url-warning-role">请联系管理员配置</span>}
     </div>}
     {loading && !servers.length
       ? <CardSkeleton />

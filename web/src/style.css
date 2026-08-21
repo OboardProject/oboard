@@ -20460,6 +20460,59 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   line-height: 1.55;
 }
 
+.controller-url-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.controller-url-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+.controller-url-warning > div {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.controller-url-warning strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.controller-url-warning span {
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.controller-url-warning button {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.controller-url-warning-role {
+  align-self: center;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.settings-controller-url-warning {
+  margin-bottom: 14px;
+}
+
 .settings-grid {
   gap: 14px;
 }
@@ -21088,6 +21141,20 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .output-preview > div { display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
 .output-preview pre { max-height: 360px; overflow: auto; margin: 0; border: 1px solid var(--border); background: var(--surface-subtle, var(--surface)); padding: 12px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .legacy-subscriptions-embedded { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 18px; }
+
+@media (max-width: 640px) {
+  .controller-url-warning {
+    flex-wrap: wrap;
+  }
+  .controller-url-warning > div {
+    flex-basis: calc(100% - 28px);
+  }
+  .controller-url-warning button,
+  .controller-url-warning-role {
+    width: 100%;
+    align-self: stretch;
+  }
+}
 
 @media (max-width: 760px) {
   .node-perspective-bar { align-items: stretch; }
