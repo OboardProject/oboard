@@ -1,81 +1,24 @@
 # OBoard
 
-**中文** | [English](README.en.md)
+OBoard 是一个面向多节点代理网络的 Linux 控制面，用于集中管理服务器、订阅、证书与部署。它提供 Web 面板、REST/WebSocket API、订阅渲染，以及已签名的 Agent / 内核分发。
 
-OBoard 是一个面向多节点代理网络的 Linux 控制面，集中管理服务器、配置、订阅、证书与部署。它提供 Web 面板、REST/WebSocket API、订阅渲染，以及已签名的 Agent / 内核发布分发。节点侧 Agent 与内置代理内核 `oboard-sb` 位于独立仓库 `OboardProject/oboard-agent`。
+## 特性
 
-## 概览
-
-- **集中管理**：通过面板和 API 管理服务器、用户、订阅、代理路径、证书与 DNS
-- **部署调度**：按服务器生成并下发已签名配置，支持在线任务、健康检查、失败重试与可见的任务状态
-- **订阅与分发**：渲染订阅，提供已校验的 Agent / 内核安装包，并支持 `OBOARD_BASE_PATH`
-- **安全边界**：一次性令牌注册、签名任务、加密存储、审计控制与受限操作
-- **简单安装**：一条脚本完成安装、更新、卸载，安装命令可选择稳定版或开发版
+- 集中管理服务器、用户、订阅、代理路径、证书与 DNS
+- 按服务器生成并下发已签名配置，支持在线任务、健康检查与失败重试
+- 渲染订阅并分发已校验的 Agent / 内核安装包，支持 `OBOARD_BASE_PATH`
+- 提供一次性令牌注册、签名任务、加密存储与审计控制
+- 官方 Linux 二进制安装脚本支持安装、更新、卸载，并可通过 `VERSION` 参数选择稳定版或开发版
 
 ## 安装方法
 
-OBoard Controller 仅支持 Linux，官方安装包支持 `amd64` 和 `arm64`。默认安装根目录为 `/opt/oboard`，默认端口为 `2787`；安装脚本会自动识别 systemd 或 OpenRC。
+OBoard Controller 以 Linux 二进制安装包发布，支持 `amd64` 和 `arm64`。官方安装脚本覆盖安装、更新与卸载，并通过 `VERSION=latest` 或 `VERSION=dev` 选择稳定版或开发版。
 
-### 版本选择
+默认安装根目录为 `/opt/oboard`，默认端口为 `2787`。
 
-安装和更新命令通过 `VERSION` 选择目标版本：
+## 相关仓库
 
-- 稳定版：`VERSION=latest`
-- 开发版：`VERSION=dev`
-
-### 安装
-
-安装稳定版（若当前没有稳定版，安装器会回退到开发版）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=latest bash
-```
-
-安装开发版（开发版是跟随 main 构建的可变发布，建议用于测试环境）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=dev bash
-```
-
-需要自定义安装根目录时，可传入 `INSTALL_DIR`：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env INSTALL_DIR=/data/oboard bash
-```
-
-### 更新
-
-重新执行安装脚本，检测到已安装的 Controller 后会自动执行更新，并保留现有配置、账号和数据。更新目标同样通过 `VERSION` 选择。
-
-更新到稳定版：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=latest bash
-```
-
-更新到开发版：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env VERSION=dev bash
-```
-
-### 卸载
-
-保留配置、数据库和证书（默认目录下再次安装时会自动沿用；自定义目录需重新传入同一 `INSTALL_DIR`）：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env OBOARD_ACTION=uninstall bash
-```
-
-连同整个安装根目录一起删除：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env OBOARD_ACTION=uninstall OBOARD_PURGE_DATA=1 bash
-```
-
-### 首位管理员
-
-首次安装时，安装器会提示创建超级管理员。若未设置密码，它会生成一次性随机密码并在安装完成界面显示一次；该密码只显示一次，请先保存再关闭窗口，登录后请立即修改。
+- [oboard-agent](https://github.com/OboardProject/oboard-agent)：节点侧 Agent 与内置代理内核 `oboard-sb`
 
 ## 许可证
 
