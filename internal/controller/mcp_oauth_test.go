@@ -542,6 +542,9 @@ func TestOAuthMetadataRemovesRegistrationEndpoint(t *testing.T) {
 	if _, ok := authMetadata["registration_endpoint"]; ok {
 		t.Fatalf("authorization metadata still advertises registration_endpoint: %#v", authMetadata)
 	}
+	if supported, _ := authMetadata["client_id_metadata_document_supported"].(bool); !supported {
+		t.Fatalf("authorization metadata does not advertise CIMD support: %#v", authMetadata)
+	}
 	scopes, _ := authMetadata["scopes_supported"].([]any)
 	scopeSet := map[string]bool{}
 	for _, scope := range scopes {
@@ -604,7 +607,7 @@ func TestOAuthProtectedResourceChallengeRequestsDurableAccess(t *testing.T) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	challenge := response.Header().Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/api/v1/mcp"`) || !strings.Contains(challenge, `scope="oboard:read offline_access"`) {
+	if !strings.Contains(challenge, `resource_metadata="https://panel.example.com/.well-known/oauth-protected-resource/hidden/api/v1/mcp"`) || !strings.Contains(challenge, `scope="oboard:read oboard:operate offline_access"`) {
 		t.Fatalf("challenge=%q", challenge)
 	}
 }

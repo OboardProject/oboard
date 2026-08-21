@@ -3464,6 +3464,7 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
                 <span>{relay.last_seen_at ? `最后心跳 ${formatTableTime(relay.last_seen_at)}` : '尚未接入'}</span>
               </div>
               {relay.last_update_error && <p className="subscription-relay-error"><AlertTriangle size={14} />{relay.last_update_error}</p>}
+              {!relay.enrolled && relay.install_command_preview && <div className="subscription-relay-install-preview"><code>{relay.install_command_preview}</code></div>}
             </div>
             <div className="subscription-relay-actions">
               {!relay.active && <button type="button" className="ghost" onClick={() => void activate(relay)} disabled={Boolean(busy)}><Check size={14} />设为入口</button>}

@@ -371,6 +371,15 @@ func (s *Server) publicSubscriptionRelays(ctx context.Context) ([]map[string]any
 		return nil, err
 	}
 	activeURL := strings.TrimRight(settings[settingSubscriptionRelayURL], "/")
+	controllerURL, _ := s.publicBaseURL(ctx)
+	installPreview := ""
+	if controllerURL != "" {
+		releaseVersion := version.Version
+		if strings.Contains(releaseVersion, "dev") {
+			releaseVersion = "dev"
+		}
+		installPreview = "curl -fsSL " + shellSingleQuote(controllerURL+"/install/subscription-relay.sh") + ` | env VERSION=` + shellSingleQuote(releaseVersion) + ` OBOARD_CONTROLLER_URL=` + shellSingleQuote(controllerURL) + ` OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN='<one-time-token>' /bin/sh`
+	}
 	now := time.Now().UTC()
 	out := make([]map[string]any, 0, len(items))
 	for _, relay := range items {
@@ -383,7 +392,7 @@ func (s *Server) publicSubscriptionRelays(ctx context.Context) ([]map[string]any
 		out = append(out, map[string]any{
 			"id": relay.ID, "name": relay.Name, "public_url": relay.PublicURL, "status": status,
 			"enrolled": relay.TokenHash != "", "active": activeURL != "" && strings.TrimRight(relay.PublicURL, "/") == activeURL,
-			"version": relay.Version, "build": relay.Build, "commit": relay.Commit, "os": relay.OS, "arch": relay.Arch,
+			"install_command_preview": installPreview, "version": relay.Version, "build": relay.Build, "commit": relay.Commit, "os": relay.OS, "arch": relay.Arch,
 			"service_manager": relay.ServiceManager, "update_target_version": relay.UpdateTargetVersion,
 			"update_target_build": relay.UpdateTargetBuild, "update_requested_at": relay.UpdateRequestedAt,
 			"last_update_error": relay.LastUpdateError, "last_seen_at": relay.LastSeenAt,

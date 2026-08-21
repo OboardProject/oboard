@@ -330,6 +330,26 @@ func (s *Store) ConsumeOAuthAuthorizationCode(ctx context.Context, codeHash stri
 	return &item, nil
 }
 
+// MigrateOAuthResource rewrites the exact MCP resource audience on every OAuth
+// record after a Controller base path migration. Tokens remain usable on the
+// new path without reauthorizing, while the audience stays exact per path.
+func (s *Store) MigrateOAuthResource(ctx context.Context, from, to string) error {
+	if from == "" || to == "" || from == to {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"oauth_access_tokens", "oauth_refresh_tokens", "oauth_authorization_codes"} {
+		if _, err := tx.ExecContext(ctx, `update `+table+` set resource=? where resource=?`, to, from); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) CreateOAuthTokens(ctx context.Context, access, refresh *model.OAuthToken) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

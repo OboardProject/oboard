@@ -118,6 +118,9 @@ func (s *Server) restoreBasePathState(ctx context.Context, startupPath string) {
 		state.MigrationStartedAt = settings[settingControllerBasePathMigrationStartedAt]
 		state.MigrationTargets = targets
 		state.MigrationControllerURL = strings.TrimSpace(settings[settingControllerBasePathMigrationController])
+		if err := s.migrateOAuthResourceForPreviousPath(ctx, state.Previous, state.MigrationControllerURL); err != nil {
+			log.Printf("migrate OAuth resource during Controller base path restore: %v", err)
+		}
 	}
 	s.basePaths.Store(state)
 }
@@ -219,6 +222,20 @@ func (s *Server) controllerURLForBasePath(settings map[string]string, basePath s
 	return target, nil
 }
 
+func (s *Server) migrateOAuthResourceForPreviousPath(ctx context.Context, previousPath, targetURL string) error {
+	if strings.TrimSpace(targetURL) == "" {
+		return nil
+	}
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return err
+	}
+	parsed.Path = previousPath
+	parsed.RawPath = ""
+	oldURL := strings.TrimRight(parsed.String(), "/")
+	return s.store.MigrateOAuthResource(ctx, oldURL+"/api/v1/mcp", strings.TrimRight(targetURL, "/")+"/api/v1/mcp")
+}
+
 func (s *Server) startBasePathMigration(ctx context.Context, r *http.Request, raw string) (string, bool, error) {
 	s.basePathMigrationMu.Lock()
 	defer s.basePathMigrationMu.Unlock()
@@ -244,6 +261,9 @@ func (s *Server) startBasePathMigration(ctx context.Context, r *http.Request, ra
 	targetURL, err := s.controllerURLForBasePath(settings, nextPath)
 	if err != nil {
 		return "", false, &basePathMigrationRequestError{status: http.StatusBadRequest, err: err}
+	}
+	if err := s.migrateOAuthResourceForPreviousPath(ctx, current.Current, targetURL); err != nil {
+		return "", false, err
 	}
 	servers, err := s.store.ListServers(ctx)
 	if err != nil {

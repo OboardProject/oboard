@@ -16,6 +16,7 @@ export type SubscriptionRelay = {
   update_requested_at?: string
   last_update_error?: string
   last_seen_at?: string
+  install_command_preview?: string
   enrollment_expires_at?: string
   created_at: string
   updated_at: string

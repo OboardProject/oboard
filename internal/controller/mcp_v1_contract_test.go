@@ -24,8 +24,8 @@ func TestV1UnifiedRoutesRemoveLegacyPrefixes(t *testing.T) {
 	} {
 		recorder := httptest.NewRecorder()
 		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-		if recorder.Code != http.StatusNotFound {
-			t.Errorf("GET %s status = %d; want 404", path, recorder.Code)
+		if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), `"not_found"`) || !strings.Contains(recorder.Body.String(), `"request_id"`) {
+			t.Errorf("GET %s status=%d body=%s; want structured 404", path, recorder.Code, recorder.Body.String())
 		}
 	}
 

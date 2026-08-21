@@ -18,7 +18,7 @@ func mcpCapabilityView(descriptor capability.Descriptor) map[string]any {
 	return map[string]any{
 		"name": descriptor.Name, "version": descriptor.Version, "description": descriptor.Description,
 		"input_schema": string(descriptor.InputSchema), "output_schema": string(descriptor.OutputSchema),
-		"required_scopes": mcpStringSlice(descriptor.RequiredScopes), "resource_types": mcpStringSlice(descriptor.ResourceTypes), "resource_filter_evaluator": descriptor.ResourceEvaluator,
+		"oauth_scopes": mcpStringSlice([]string{descriptor.MinimumAccess.RequiredScope()}), "resource_types": mcpStringSlice(descriptor.ResourceTypes), "resource_filter_evaluator": descriptor.ResourceEvaluator,
 		"risk_class": descriptor.RiskClass, "approval_policy": descriptor.ApprovalPolicy, "idempotent": descriptor.Idempotent, "read_only": descriptor.ReadOnly,
 		"data_classification": descriptor.DataClassification, "sensitive_fields": mcpStringSlice(descriptor.SensitiveFields), "sensitive_input_fields": mcpStringSlice(descriptor.SensitiveInput),
 		"sensitive_output_fields": mcpStringSlice(descriptor.SensitiveOutput), "destructive": descriptor.Destructive, "open_world": descriptor.OpenWorld,

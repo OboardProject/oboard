@@ -211,6 +211,57 @@ func TestBasePathMigrationUsesLongestOverlappingPrefix(t *testing.T) {
 	basePathRequest(t, handler, "/abc/new/settings", http.StatusOK, `<base href="/abc/new/" />`)
 }
 
+func TestUnknownRoutesReturnStructuredJSON(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := New(db, "test-secret", basePathTestStaticDir(t), "/qzq", nil)
+	defer app.Close()
+	handler := app.Handler()
+	for _, path := range []string{"/qzq/mcp", "/api/v2/oauth-clients", "/qzq/api/v1/does-not-exist"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil))
+		if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), `"request_id"`) || !strings.Contains(recorder.Body.String(), `"not_found"`) {
+			t.Fatalf("GET %s status=%d body=%s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestBasePathMigrationKeepsOAuthTokensUsableOnNewPath(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(ctx, "controller_url", "http://localhost/old"); err != nil {
+		t.Fatal(err)
+	}
+	app := New(db, "test-secret", basePathTestStaticDir(t), "/old", nil)
+	defer app.Close()
+
+	user := &model.User{Username: "oauth-basepath-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "33333333-3333-4333-8333-333333333333", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	client := testOAuthClient(t, db, "oc_basepath", "Base path client", []string{"http://127.0.0.1/callback"})
+	grant, principal := createTestGrant(t, app, *user, client, []string{"oboard:read", "offline_access"})
+	issueTestMCPToken(t, db, grant, principal, client, user.ID, "http://localhost/old/api/v1/mcp", "oba_basepath_old")
+
+	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/old/api/v1/ui/settings", nil), "/new"); err != nil || !migrated {
+		t.Fatalf("start migration = %v, %v", migrated, err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/new/api/v1/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+	req.Header.Set("Authorization", "Bearer oba_basepath_old")
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, req)
+	if response.Code == http.StatusUnauthorized {
+		t.Fatalf("migrated OAuth token was rejected: %s", response.Body.String())
+	}
+}
+
 func TestBasePathMigrationToRootRetiresOldPrefix(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

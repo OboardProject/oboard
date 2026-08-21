@@ -394,6 +394,7 @@ func (s *Server) Handler() http.Handler {
 	machineMux := http.NewServeMux()
 	s.registerAPIV1Routes(machineMux)
 	s.registerOAuthManagementRoutes(machineMux)
+	machineMux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { writeNotFoundJSON(w) })
 	s.registerOAuthRoutes(mux)
 	mcpHandler := s.newMCPHandler()
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
@@ -446,7 +447,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) webAPIPrefix(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/ui/") {
-			http.NotFound(w, r)
+			writeNotFoundJSON(w)
 			return
 		}
 		request := r.Clone(r.Context())
@@ -461,7 +462,7 @@ func (s *Server) webAPIPrefix(next http.Handler) http.Handler {
 func (s *Server) apiVersionGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v2") || r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/") {
-			http.NotFound(w, r)
+			writeNotFoundJSON(w)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -500,7 +501,7 @@ func NormalizeBasePath(raw string) (string, error) {
 func (s *Server) withBasePath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ambiguousRequestPath(r.URL.Path, r.URL.RawPath) {
-			http.NotFound(w, r)
+			writeNotFoundJSON(w)
 			return
 		}
 		if matched, target, ok := s.matchOAuthWellKnownPath(r.URL.Path); ok {
@@ -515,7 +516,7 @@ func (s *Server) withBasePath(next http.Handler) http.Handler {
 		}
 		matched, ok := s.matchBasePath(r.URL.Path)
 		if !ok {
-			http.NotFound(w, r)
+			writeNotFoundJSON(w)
 			return
 		}
 		request := r.Clone(r.Context())
@@ -5202,7 +5203,7 @@ func validDNSStrategy(strategy string) bool {
 	}
 }
 
-const enrollmentTokenTTL = 30 * time.Minute
+const enrollmentTokenTTL = 2 * time.Hour
 
 func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 	if r.Method != http.MethodPost {
@@ -15035,8 +15036,13 @@ func fail(w http.ResponseWriter, err error, status int) {
 	}
 	write(w, status, map[string]any{"error": err.Error()})
 }
-func method(w http.ResponseWriter)                    { fail(w, errors.New("method not allowed"), 405) }
-func notFound(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }
+func method(w http.ResponseWriter) { fail(w, errors.New("method not allowed"), 405) }
+func writeNotFoundJSON(w http.ResponseWriter) {
+	id, _ := security.RandomToken(18)
+	writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "404 page not found", "request_id": "req_" + id}})
+}
+
+func notFound(w http.ResponseWriter, r *http.Request) { writeNotFoundJSON(w) }
 func pathParts(path, prefix string) []string {
 	return strings.Split(strings.Trim(strings.TrimPrefix(path, prefix), "/"), "/")
 }

@@ -8844,6 +8844,23 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 .subscription-relay-error svg { flex: 0 0 auto; margin-top: 1px; }
 
+.subscription-relay-install-preview {
+  max-width: 720px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-inset);
+}
+.subscription-relay-install-preview code {
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
 .subscription-relay-actions {
   display: flex;
   align-items: center;

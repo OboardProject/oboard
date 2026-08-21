@@ -1102,7 +1102,7 @@ func TestEnrollmentTokenIncludesExpiry(t *testing.T) {
 	if enroll["enrollment_token"] == nil || enroll["expires_at"] == nil {
 		t.Fatalf("missing expiry fields: %#v", enroll)
 	}
-	if int(enroll["expires_in_seconds"].(float64)) != 1800 {
+	if int(enroll["expires_in_seconds"].(float64)) != 7200 {
 		t.Fatalf("expires_in_seconds=%v", enroll["expires_in_seconds"])
 	}
 }

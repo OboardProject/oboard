@@ -24,6 +24,9 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	}
 	defer db.Close()
 	handler := newTestServer(db, "test-session-secret-at-least-32", "").Handler()
+	if err := db.SetSetting(t.Context(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
 	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 
@@ -33,6 +36,9 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	enrollmentToken := created["enrollment_token"].(string)
 	if enrollmentToken == "" || relay["active"] != false || relay["enrolled"] != false {
 		t.Fatalf("unexpected created relay: %#v", created)
+	}
+	if preview, _ := relay["install_command_preview"].(string); !strings.Contains(preview, "<one-time-token>") || !strings.Contains(preview, "/install/subscription-relay.sh") || strings.Contains(preview, enrollmentToken) {
+		t.Fatalf("relay install preview did not stay non-sensitive: %q", preview)
 	}
 	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays/"+strconv.FormatInt(relayID, 10)+"/activate", token, map[string]any{}, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays", token, map[string]any{"name": "duplicate", "public_url": "https://relay.example/"}, http.StatusConflict)

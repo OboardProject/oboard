@@ -118,7 +118,7 @@ func (s *Server) writeMCPInvalidBearer(w http.ResponseWriter, r *http.Request) {
 		v2Error(w, r, http.StatusServiceUnavailable, "oauth_metadata_unavailable", err.Error())
 		return
 	}
-	challenge := `Bearer resource_metadata="` + oauthProtectedResourceMetadataURL(base) + `", error="invalid_token", error_description="The token is not valid for this MCP resource."`
+	challenge := `Bearer resource_metadata="` + oauthProtectedResourceMetadataURL(base) + `", scope="oboard:read oboard:operate offline_access", error="invalid_token", error_description="The token is not valid for this MCP resource."`
 	w.Header().Set("WWW-Authenticate", challenge)
 	v2Error(w, r, http.StatusUnauthorized, "invalid_token", "访问 Token 无效或已过期")
 }

@@ -105,7 +105,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 	}, "name", "type")
 	subscriptionRelay := closedObject(map[string]any{
 		"id": positiveID, "name": stringValue, "public_url": stringValue, "status": stringValue,
-		"enrolled": boolValue, "active": boolValue, "version": stringValue, "build": stringValue,
+		"enrolled": boolValue, "active": boolValue, "install_command_preview": stringValue, "version": stringValue, "build": stringValue,
 		"commit": stringValue, "os": stringValue, "arch": stringValue, "service_manager": stringValue,
 		"update_target_version": stringValue, "update_target_build": stringValue,
 		"update_requested_at": nullableString(), "last_seen_at": nullableString(), "last_update_error": stringValue,
