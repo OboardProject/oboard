@@ -54,15 +54,15 @@
 | `controller-db-20260818-node-workspace` | Controller | SQLite schema / data backfill | `dev-7ab2640d5900` | 待发布 | 生效中 | - |
 | `controller-db-20260818-telegram-operations` | Controller | SQLite schema / data lifecycle | `dev-61ea3fa84687` | 待发布 | 生效中 | - |
 | `controller-db-20260819-configuration-revision-watermark` | Controller | SQLite schema / runtime recovery | `dev-25ab8ae0b776` | 待发布 | 生效中 | - |
-| `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-938338eec42f` | 待发布 | 生效中 | - |
+| `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-b5b1829cb668` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
 ### controller-db-20260821-routing-rule-dns-resolver
 
 - **引入日期：** 2026-08-21
-- **引入提交：** `OboardProject/oboard@938338eec42fe9c845937cf2cc311a1868d8ed82`
-- **引入版本：** `dev-938338eec42f`
+- **引入提交：** `OboardProject/oboard@b5b1829cb6680120783f0050739ea4ab7d328846`
+- **引入版本：** `dev-b5b1829cb668`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/core`
 - **类别：** SQLite schema
