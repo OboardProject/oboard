@@ -5033,6 +5033,14 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 /* Rule Set Picker */
+.routing-rule-dns-resolver {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+
 .routing-rule-set-picker {
   display: flex;
   flex-direction: column;
@@ -5041,11 +5049,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .routing-rule-set-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .routing-rule-set-toolbar label {
-  flex: 1 1 auto;
+  flex: 1 1 200px;
   display: flex;
   align-items: center;
   gap: 7px;

@@ -989,6 +989,7 @@ const valueLabels: Record<string, string> = {
   admin: '管理员', operator: '操作员', viewer: '只读', active: '活跃', online: '在线', offline: '离线', unknown: '未知', healthy: '健康', unhealthy: '异常',
   enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', stale: '已过期', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
   rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', proxy_path: '代理链路', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
+  singbox_source: 'sing-box JSON', singbox_binary: 'sing-box SRS', mihomo_domain: 'Mihomo domain', mihomo_ipcidr: 'Mihomo IP-CIDR', mihomo_classical: 'Mihomo classical', blackmatrix_classical: 'Blackmatrix7 规则',
   global: '全局', server: '服务器', auto: '自动（IPv4 优先）', ipv4: 'IPv4', ipv6: 'IPv6', custom: '自定义', ipv4_only: '仅 IPv4', ipv6_only: '仅 IPv6', dual_stack: '双栈', prefer_ipv4: '优先 IPv4', prefer_ipv6: '优先 IPv6',
   a: 'A', aaaa: 'AAAA', both: 'A + AAAA',
   allow: '允许', uot: 'UoT', never: '从不', first_apply: '首次下发', periodic: '定期', always: '每次', sampled: '实际连接采样', periodic_sampled: '定期+采样',
@@ -11880,7 +11881,9 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
 
   const createRuleSet = async () => {
     try {
-      await client.request('/routing-rule-sets', { method: 'POST', body: JSON.stringify(ruleSetDraft) })
+      const result = await client.request('/routing-rule-sets', { method: 'POST', body: JSON.stringify(ruleSetDraft) }) as { routing_rule_set?: RoutingRuleSet }
+      if (result.routing_rule_set?.id) update({ rule_set_id: result.routing_rule_set.id })
+      await load()
       setRuleSetDraft({ name: '', url: '', format: 'singbox_source' })
       setShowRuleSetCreate(false)
     } catch (error: any) {
