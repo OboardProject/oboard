@@ -40,6 +40,14 @@ export function TrafficLimitInput({ bytes, onChange }: { bytes: number; onChange
   const [unit, setUnit] = useState<TrafficDisplayUnit>(() => bytes >= 1024 ** 4 ? 'TB' : 'GB')
   const multiplier = unit === 'TB' ? 1024 ** 4 : 1024 ** 3
   const displayValue = bytes > 0 ? Number((bytes / multiplier).toFixed(3)) : ''
+  const handleUnitChange = (nextUnit: TrafficDisplayUnit) => {
+    setUnit(nextUnit)
+    if (bytes > 0) {
+      const num = Number((bytes / multiplier).toFixed(3))
+      const nextMultiplier = nextUnit === 'TB' ? 1024 ** 4 : 1024 ** 3
+      onChange(Math.round(num * nextMultiplier))
+    }
+  }
   return <div className="traffic-limit-input">
     <input
       type="number"
@@ -56,6 +64,6 @@ export function TrafficLimitInput({ bytes, onChange }: { bytes: number; onChange
         }
       }}
     />
-    <Select variant="segmented" value={unit} onChange={e => setUnit(e.target.value as TrafficDisplayUnit)} aria-label="流量额度单位"><option value="GB">GB</option><option value="TB">TB</option></Select>
+    <Select variant="segmented" value={unit} onChange={e => handleUnitChange(e.target.value as TrafficDisplayUnit)} aria-label="流量额度单位"><option value="GB">GB</option><option value="TB">TB</option></Select>
   </div>
 }

@@ -12335,7 +12335,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .traffic-limit-input {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 116px;
+  grid-template-columns: minmax(0, 1fr) 104px;
   align-items: stretch;
 }
 
@@ -12364,18 +12364,48 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.input-with-unit:focus-within > span {
+.input-with-unit:focus-within > span,
+.traffic-limit-input:focus-within .ui-segmented-select {
   border-color: color-mix(in srgb, var(--primary) 66%, var(--border));
 }
 
 .traffic-limit-input .ui-segmented-select {
   min-width: 0;
   min-height: var(--control-height);
+  height: 100%;
+  box-sizing: border-box;
+  padding: 3px;
+  gap: 2px;
+  border: 1.5px solid var(--border);
   border-left: 0;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--surface-2);
+  transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+.traffic-limit-input .ui-segmented-indicator {
+  background: var(--surface-solid);
+  border-radius: calc(var(--radius-md) - 3px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
 .traffic-limit-input .ui-segmented-select button {
-  padding-inline: 5px;
+  min-height: calc(var(--control-height) - 6px - 3px);
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  border-radius: calc(var(--radius-md) - 3px);
+  transition: color 0.15s ease;
+}
+
+.traffic-limit-input .ui-segmented-select button:hover {
+  color: var(--text-strong);
+}
+
+.traffic-limit-input .ui-segmented-select button.active {
+  color: var(--text-strong);
+  font-weight: 700;
 }
 
 .user-group-list {
@@ -13111,10 +13141,44 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .ai-provider-model-control > .icon-button { width: var(--control-height); height: var(--control-height); }
 .ai-provider-model-status,
 .ai-provider-token-preview { color: var(--muted); font-size: 12px; }
-.token-limit-input { display: grid; grid-template-columns: minmax(0, 1fr) 170px; width: 100%; }
-.token-limit-input > input { min-width: 0; border-radius: var(--radius-md) 0 0 var(--radius-md); font-variant-numeric: tabular-nums; }
-.token-limit-input .ui-segmented-select { min-width: 0; min-height: var(--control-height); border-left: 0; border-radius: 0 var(--radius-md) var(--radius-md) 0; }
-.token-limit-input .ui-segmented-select button { padding-inline: 4px; white-space: nowrap; overflow-wrap: normal; }
+.token-limit-input { display: grid; grid-template-columns: minmax(0, 1fr) 150px; width: 100%; }
+.token-limit-input > input { min-width: 0; border-radius: var(--radius-md) 0 0 var(--radius-md) !important; font-variant-numeric: tabular-nums; }
+.token-limit-input .ui-segmented-select {
+  min-width: 0;
+  min-height: var(--control-height);
+  height: 100%;
+  box-sizing: border-box;
+  padding: 3px;
+  gap: 2px;
+  border: 1.5px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--surface-2);
+  transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.token-limit-input .ui-segmented-indicator {
+  background: var(--surface-solid);
+  border-radius: calc(var(--radius-md) - 3px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+.token-limit-input .ui-segmented-select button {
+  min-height: calc(var(--control-height) - 6px - 3px);
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  border-radius: calc(var(--radius-md) - 3px);
+  white-space: nowrap;
+  overflow-wrap: normal;
+  transition: color 0.15s ease;
+}
+.token-limit-input .ui-segmented-select button:hover {
+  color: var(--text-strong);
+}
+.token-limit-input .ui-segmented-select button.active {
+  color: var(--text-strong);
+  font-weight: 700;
+}
 .toggle-line { display: inline-flex; align-items: center; justify-self: start; gap: 8px; color: var(--text-strong); }
 .toggle-line input { width: 17px; height: 17px; min-height: 0; margin: 0; accent-color: var(--primary); }
 .automation-list { display: grid; gap: 0; }
