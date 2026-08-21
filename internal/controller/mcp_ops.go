@@ -154,6 +154,41 @@ func (s *Server) registerTaskTriggerOperations() {
 		return map[string]any{"task_id": task.ID, "task_status": task.Status, "existing": existing}, nil
 	})
 
+	s.automation.RegisterValidator("servers.uninstall_agent", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(server.AgentID) == "" {
+			return nil, errors.New("agent is not enrolled")
+		}
+		if server.Status == model.ServerOffline {
+			return nil, errors.New("服务器离线，无法远程卸载")
+		}
+		if !agentUninstallSupported(server) {
+			return nil, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再远程卸载")
+		}
+		return map[string]any{"server_id": server.ID}, nil
+	})
+	s.automation.RegisterRevisionResolver("servers.uninstall_agent", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"server:" + strconv.FormatInt(server.ID, 10): server.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("servers.uninstall_agent", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		server, err := s.serverTaskBoundary(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		task, existing, err := s.enqueueAgentUninstall(ctx, server, principal.UserID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"task_id": task.ID, "task_status": task.Status, "existing": existing}, nil
+	})
+
 	s.automation.RegisterValidator("agents.update_all", func(context.Context, application.Principal, json.RawMessage) (any, error) {
 		return map[string]any{}, nil
 	})

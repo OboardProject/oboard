@@ -161,6 +161,37 @@ func TestLatencyProbeCapabilityDeduplicatesActiveTask(t *testing.T) {
 	}
 }
 
+func TestUninstallAgentCapabilityQueuesTask(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111118", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	node := &model.Server{Name: "entry", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline, AgentID: "agent_1", AgentBuild: "dev"}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(map[string]any{"server_id": node.ID})
+	applyAutomationChangeset(t, server, principal, "ops-uninstall", automation.OperationRequest{Capability: "servers.uninstall_agent", Input: input})
+	tasks, err := db.ListTasksByServer(ctx, node.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, task := range tasks {
+		if task.Type == model.AgentTaskTypeUninstallAgent {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("uninstall_agent task was not queued: %#v", tasks)
+	}
+}
+
 func TestAgentsUpdateAllCapability(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

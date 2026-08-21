@@ -1816,6 +1816,7 @@ func taskTypeNotificationLabel(taskType string) string {
 		model.AgentTaskTypeApplyDeployment:       "配置部署",
 		model.AgentTaskTypeApplyCoreConfig:       "核心配置下发",
 		model.AgentTaskTypeUpdateAgent:           "Agent 更新",
+		model.AgentTaskTypeUninstallAgent:        "Agent 卸载",
 		model.AgentTaskTypeUpdateAgentConfig:     "Agent 设置同步",
 		model.AgentTaskTypeProbeInbounds:         "入口探测",
 		model.AgentTaskTypeProbeInboundsExternal: "外部入口探测",

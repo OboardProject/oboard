@@ -6118,6 +6118,9 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const serverRequestInFlightRef = useRef(false)
   const serversMountedRef = useRef(false)
   const pendingDeleteServerIDsRef = useRef(new Set<number>())
+  const [deleteServerDraft, setDeleteServerDraft] = useState<Server | null>(null)
+  const [deleteServerBusy, setDeleteServerBusy] = useState(false)
+  const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
 
   useEffect(() => {
     if (!serverActionOpen) return
@@ -6366,17 +6369,72 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       notify?.(localizeErrorMessage(err?.message || err), 'error')
     }
   }
-  const deleteServer = async (server: Server) => {
-    const confirmed = await dialogs.confirm({
-      title: '确认删除',
-      tone: 'danger',
-      confirmText: '删除',
-      message: <div>
-        <p>即将删除：<strong>{resourceLabel(server, `服务器 #${server.id}`)}</strong></p>
-        <p className="muted">关联入口、链路和 DNS 记录也会被清理。删除失败时服务器会恢复显示。</p>
-      </div>,
-    })
-    if (!confirmed || pendingDeleteServerIDsRef.current.has(server.id)) return
+  const waitForUninstallTask = async (serverID: number) => {
+    for (let attempt = 0; attempt < 120; attempt++) {
+      await sleep(1500)
+      try {
+        const res = await client.request(`/servers/${serverID}/tasks?limit=20`)
+        const task = (res.tasks || []).find((item: any) => item.type === 'uninstall_agent')
+        if (!task) return
+        if (task.status === 'succeeded') {
+          try {
+            await client.request(`/servers/${serverID}`, { method: 'DELETE' })
+          } catch (error: any) {
+            if (error?.status === 404) return
+            throw error
+          }
+          return
+        }
+        if (task.status === 'failed' || task.status === 'rollback_failed') {
+          const result = parseJSONLoose(task.result_json) || {}
+          throw new Error(String(result?.error || result?.message || `卸载任务${task.status}`))
+        }
+      } catch (error: any) {
+        if (error?.status === 404) return
+        throw error
+      }
+    }
+    throw new Error('等待远程卸载超时，请到任务中心查看结果')
+  }
+  const deleteServer = async (server: Server, uninstall: boolean) => {
+    if (pendingDeleteServerIDsRef.current.has(server.id)) return
+    if (uninstall) {
+      const id = server.id
+      setUninstallingServerIDs(current => new Set(current).add(id))
+      setDeleteServerBusy(true)
+      try {
+        const res = await client.request(`/servers/${id}/agent-uninstall`, { method: 'POST', body: '{}' })
+        setDeleteServerDraft(null)
+        setDeleteServerBusy(false)
+        notify?.(
+          res.existing
+            ? `${server.name || '服务器'} 已有卸载任务进行中，完成后自动删除`
+            : `${server.name || '服务器'} 已下发卸载，完成后自动删除`,
+          res.existing ? 'info' : 'success',
+        )
+        await waitForUninstallTask(id)
+        if (!serversMountedRef.current) return
+        setUninstallingServerIDs(current => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+        await refreshServers().catch(() => undefined)
+        notify?.(`服务器 ${server.name || `#${server.id}`} 已删除`, 'success')
+      } catch (error: any) {
+        if (!serversMountedRef.current) return
+        setUninstallingServerIDs(current => {
+          const next = new Set(current)
+          next.delete(id)
+          return next
+        })
+        await refreshServers()
+        await dialogs.alert({ title: '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
+      } finally {
+        if (serversMountedRef.current) setDeleteServerBusy(false)
+      }
+      return
+    }
 
     pendingDeleteServerIDsRef.current.add(server.id)
     setServers(current => removeServerSnapshot(current, server.id))
@@ -6406,7 +6464,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'logs') setLogServer(s)
     else if (type === 'diagnose') diagnose(s)
     else if (type === 'tasks') tasks(s)
-    else if (type === 'delete') await deleteServer(s)
+    else if (type === 'delete') {
+      if (uninstallingServerIDs.has(s.id)) {
+        notify?.('这台服务器正在卸载 Agent，请等待完成', 'info')
+        return
+      }
+      setDeleteServerDraft(s)
+    }
   }
   const role: Role = data.session?.role || 'viewer'
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
@@ -6453,7 +6517,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         ><GripVertical size={14} /></button>
         <button type="button" className="ghost icon-button" disabled={!next} onClick={() => next && moveCustomServer(server.id, next.id, 'after')} aria-label="向后移动" title="向后移动"><ArrowDown size={14} /></button>
       </div>}
-      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} onAction={handleServerAction} layout={view === 'list' ? 'list' : 'grid'} />
+      <ServerCard server={server} samples={metricsByServer.get(Number(server.id)) || []} role={role} expectedBuild={data.version?.agent_expected_build || data.version?.build || ''} uninstalling={uninstallingServerIDs.has(server.id)} onAction={handleServerAction} layout={view === 'list' ? 'list' : 'grid'} />
     </div>
   }
   return <section className="panel server-management-panel">
@@ -6594,6 +6658,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
+    <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     <AnimatePresence>{mtuServer && <MTUSettingsDialog draft={serverToDraft(mtuServer)} nested={false} onCancel={() => setMtuServer(null)} onSave={async (patch) => {
       try {
@@ -6685,6 +6750,30 @@ function agentBuildMismatch(server: Server, data: any) {
   const expected = String(data.version?.agent_expected_build || data.version?.build || '').trim()
   const actual = String(server.agent_build || '').trim()
   return Boolean(expected && actual && expected !== actual)
+}
+
+function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Server; busy: boolean; onCancel: () => void; onSubmit: (uninstall: boolean) => void }) {
+  const [uninstall, setUninstall] = useState(false)
+  return <MotionDialogPanel onCancel={busy ? () => undefined : onCancel} className="server-delete-dialog">
+    <header className="dialog-head">
+      <div><h2 id="server-delete-title">确认删除</h2><p className="muted">{resourceLabel(server, `服务器 #${server.id}`)}</p></div>
+      <button className="ghost dialog-close icon-button" onClick={onCancel} disabled={busy} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <p>关联入口、链路和 DNS 记录也会被清理。删除失败时服务器会恢复显示。</p>
+      <label className="server-delete-option">
+        <input type="checkbox" checked={uninstall} onChange={event => setUninstall(event.target.checked)} />
+        <span>
+          <strong>卸载 Agent 后删除</strong>
+          <small>先远程卸载 Agent 并清理本机配置，成功后自动删除服务器。</small>
+        </span>
+      </label>
+    </div>
+    <footer className="dialog-actions">
+      <button className="ghost" onClick={onCancel} disabled={busy}>取消</button>
+      <button className="danger-button" onClick={() => onSubmit(uninstall)} disabled={busy}>{busy ? '处理中...' : '删除'}</button>
+    </footer>
+  </MotionDialogPanel>
 }
 
 function AgentInstallDialog({ server, token, controllerURL, onClose }: { server: Server; token: string; controllerURL: string; onClose: () => void }) {
@@ -7874,7 +7963,7 @@ function formatTimeOffset(offsetMS: number) {
   return `${seconds > 0 ? '+' : ''}${seconds.toFixed(Math.abs(seconds) >= 10 ? 1 : 2)} 秒`
 }
 
-function ServerCard({ server, samples, role, expectedBuild, onAction, layout = 'grid' }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list' }) {
+function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalling = false, layout = 'grid' }: { server: Server; samples: ServerMetricSample[]; role?: Role; expectedBuild?: string; uninstalling?: boolean; onAction: (type: string, server: Server) => void; layout?: 'grid' | 'list' }) {
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
@@ -7899,6 +7988,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
+              {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
             </div>
             <div className="server-list-subinfo">
               <span>#{server.id}</span>
@@ -7999,6 +8089,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, layout = '
             <AlertTriangle size={12} aria-hidden="true" />
             <span>时间异常</span>
           </button>}
+          {uninstalling && <span className="status-pill warning">卸载中</span>}
           <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} />
 		  <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
@@ -17572,6 +17663,7 @@ function taskSummaryFromPayload(type: string, payload: any) {
   if (type === 'apply_core_config' && payload?.skipped) return '配置未变化，已跳过'
   if (type === 'apply_core_config' && payload?.config) return `配置体积 ${formatBytes(String(payload.config).length)}`
   if (type === 'update_agent') return payload?.source ? `来源 ${labelValue(payload.source)}` : '更新 Agent 与内核'
+  if (type === 'uninstall_agent') return payload?.purge ? '卸载 Agent 并清理本机数据' : '卸载 Agent'
   if (type === 'update_agent_config') return '同步 Agent 本机配置'
   if (type === 'detect_mtu') return payload?.mode ? `模式 ${labelValue(payload.mode)}` : 'MTU 检测'
   if (type === 'check_time') return `模式 ${timeCorrectionModeLabel(payload?.correction_mode as TimeCorrectionMode)}`

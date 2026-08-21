@@ -3456,6 +3456,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.serverAgentUpdate(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "agent-uninstall" {
+		s.serverAgentUninstall(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "diagnose" {
 		s.serverDiagnose(w, r, id)
 		return
@@ -3609,56 +3613,54 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodDelete {
-		if err := s.store.CleanupRoutingForServer(r.Context(), id); err != nil {
-			fail(w, err, 500)
+		if status, err := s.deleteServerRecord(r.Context(), id, requestActorID(r), clientIP(r)); err != nil {
+			fail(w, err, status)
 			return
 		}
-		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.store.DeleteServerTelemetry(r.Context(), id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if inbounds, err := s.store.ListInbounds(r.Context()); err != nil {
-			fail(w, err, 500)
-			return
-		} else {
-			for _, inbound := range inbounds {
-				if inbound.ServerID == id {
-					if _, err := s.store.RemoveAssignableNodeFromPlans(r.Context(), model.AssignableNodeInbound, inbound.ID); err != nil {
-						fail(w, err, http.StatusConflict)
-						return
-					}
-					if err := s.deleteDNSInboundRecords(r.Context(), inbound); err != nil {
-						fail(w, err, 502)
-						return
-					}
-					if err := s.store.DeleteProxyPathsForInbound(r.Context(), inbound.ID); err != nil {
-						fail(w, err, 500)
-						return
-					}
-					if err := s.store.DeleteInboundProbeResults(r.Context(), inbound.ID); err != nil {
-						fail(w, err, 500)
-						return
-					}
-					if err := s.store.Delete(r.Context(), "inbounds", inbound.ID); err != nil {
-						fail(w, err, 500)
-						return
-					}
-				}
-			}
-		}
-		if err := s.store.Delete(r.Context(), "servers", id); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		auditReq(s, r, "delete", "server", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true})
 		return
 	}
 	method(w)
+}
+
+func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int64, ip string) (int, error) {
+	if err := s.store.CleanupRoutingForServer(ctx, id); err != nil {
+		return 500, err
+	}
+	if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+		return 500, err
+	}
+	if err := s.store.DeleteServerTelemetry(ctx, id); err != nil {
+		return 500, err
+	}
+	if inbounds, err := s.store.ListInbounds(ctx); err != nil {
+		return 500, err
+	} else {
+		for _, inbound := range inbounds {
+			if inbound.ServerID == id {
+				if _, err := s.store.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeInbound, inbound.ID); err != nil {
+					return http.StatusConflict, err
+				}
+				if err := s.deleteDNSInboundRecords(ctx, inbound); err != nil {
+					return http.StatusBadGateway, err
+				}
+				if err := s.store.DeleteProxyPathsForInbound(ctx, inbound.ID); err != nil {
+					return 500, err
+				}
+				if err := s.store.DeleteInboundProbeResults(ctx, inbound.ID); err != nil {
+					return 500, err
+				}
+				if err := s.store.Delete(ctx, "inbounds", inbound.ID); err != nil {
+					return 500, err
+				}
+			}
+		}
+	}
+	if err := s.store.Delete(ctx, "servers", id); err != nil {
+		return 500, err
+	}
+	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
+	return 0, nil
 }
 
 func (s *Server) serverTasks(w http.ResponseWriter, r *http.Request, id int64) {
@@ -3855,6 +3857,85 @@ func (s *Server) serverAgentUpdate(w http.ResponseWriter, r *http.Request, id in
 // agentsUpdateAll queues update_agent tasks for every enrolled server.
 // Offline/unenrolled servers are still recorded (createAgentTask fails them immediately)
 // so operators can see results in the task center.
+func (s *Server) serverAgentUninstall(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	if !roleAllows(currentRole(r), model.RoleAdmin) {
+		fail(w, errors.New("admin role required for Agent uninstall"), 403)
+		return
+	}
+	server, err := s.store.GetServer(r.Context(), id)
+	if err != nil {
+		fail(w, err, 404)
+		return
+	}
+	if strings.TrimSpace(server.AgentID) == "" {
+		fail(w, errors.New("agent is not enrolled"), 400)
+		return
+	}
+	if server.Status == model.ServerOffline {
+		fail(w, errors.New("服务器离线，无法远程卸载；可取消勾选直接删除"), http.StatusConflict)
+		return
+	}
+	if !agentUninstallSupported(server) {
+		fail(w, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再远程卸载；也可取消勾选直接删除"), http.StatusConflict)
+		return
+	}
+	task, existing, err := s.enqueueAgentUninstall(r.Context(), server, requestActorID(r))
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "uninstall", "agent", fmt.Sprint(id))
+	write(w, 202, map[string]any{"task": task, "existing": existing})
+}
+
+func agentUninstallSupported(server *model.Server) bool {
+	if version.IsDev() {
+		return true
+	}
+	minBuild := strings.TrimSpace(version.AgentBuild)
+	if minBuild == "" || minBuild == "dev" {
+		return true
+	}
+	if strings.TrimSpace(server.AgentBuild) == "" {
+		return true
+	}
+	return agentBuildSupportsTask(server.AgentBuild, minBuild)
+}
+
+func (s *Server) enqueueAgentUninstall(ctx context.Context, server *model.Server, actorID *int64) (model.AgentTask, bool, error) {
+	if server == nil {
+		return model.AgentTask{}, false, errors.New("server not found")
+	}
+	if strings.TrimSpace(server.AgentID) == "" {
+		return model.AgentTask{}, false, errors.New("agent is not enrolled")
+	}
+	if server.Status == model.ServerOffline {
+		return model.AgentTask{}, false, errors.New("服务器离线，无法远程卸载")
+	}
+	if !agentUninstallSupported(server) {
+		return model.AgentTask{}, false, errors.New("服务器 Agent 版本过旧，请先更新 Agent")
+	}
+	_ = s.store.FailStaleActiveTasksByServerType(ctx, server.ID, model.AgentTaskTypeUninstallAgent, time.Now().Add(-10*time.Minute), `{"message":"卸载任务超时，已允许重新创建"}`)
+	if active, err := s.store.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeUninstallAgent); err == nil {
+		return *active, true, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return model.AgentTask{}, false, err
+	}
+	actorIDValue := int64(0)
+	if actorID != nil {
+		actorIDValue = *actorID
+	}
+	task, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUninstallAgent, model.UninstallAgentTaskPayload{Purge: true, ActorID: actorIDValue}, time.Now().Unix())
+	if err != nil {
+		return model.AgentTask{}, false, err
+	}
+	return task, false, nil
+}
+
 func (s *Server) agentsUpdateAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		method(w)
@@ -12446,6 +12527,21 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		var payload model.DeploymentTaskPayload
 		if json.Unmarshal([]byte(task.PayloadJSON), &payload) == nil && payload.ExternalInboundProbe != nil {
 			go s.runControllerInboundProbeTelemetry(context.WithoutCancel(r.Context()), *payload.ExternalInboundProbe)
+		}
+	}
+	if task.Type == model.AgentTaskTypeUninstallAgent && req.Status == "succeeded" {
+		var uninstallPayload model.UninstallAgentTaskPayload
+		if json.Unmarshal([]byte(task.PayloadJSON), &uninstallPayload) != nil {
+			uninstallPayload.ActorID = 0
+		}
+		var actorID *int64
+		if uninstallPayload.ActorID > 0 {
+			actorID = &uninstallPayload.ActorID
+		}
+		if deleteStatus, deleteErr := s.deleteServerRecord(context.WithoutCancel(r.Context()), task.ServerID, actorID, "controller"); deleteErr != nil {
+			log.Printf("delete server %d after agent uninstall: %v", task.ServerID, deleteErr)
+			fail(w, deleteErr, deleteStatus)
+			return
 		}
 	}
 	write(w, 200, map[string]any{"ok": true})

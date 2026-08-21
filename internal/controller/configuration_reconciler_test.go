@@ -24,6 +24,7 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		{method: "POST", path: "/api/v1/ui/servers/4/dns-policy", want: true},
 		{method: "POST", path: "/api/v1/ui/servers/4/dns-test", want: false},
 		{method: "POST", path: "/api/v1/ui/servers/4/agent-update", want: false},
+		{method: "POST", path: "/api/v1/ui/servers/4/agent-uninstall", want: false},
 		{method: "POST", path: "/api/v1/ui/inbounds", want: true},
 		{method: "POST", path: "/api/v1/ui/inbounds/8/probe", want: false},
 		{method: "POST", path: "/api/v1/ui/proxy-paths/reuse", want: true},
@@ -54,6 +55,7 @@ func TestConfigurationMutationClassification(t *testing.T) {
 	}{
 		{name: "servers.update", want: true},
 		{name: "servers.update_agent", want: false},
+		{name: "servers.uninstall_agent", want: false},
 		{name: "servers.dns_policy.set", want: true},
 		{name: "servers.dns_test", want: false},
 		{name: "inbounds.create", want: true},

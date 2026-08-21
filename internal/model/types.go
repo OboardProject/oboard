@@ -1802,6 +1802,7 @@ const (
 	AgentTaskTypeApplyDeployment       = "apply_deployment"
 	AgentTaskTypeApplyCoreConfig       = "apply_core_config"
 	AgentTaskTypeUpdateAgent           = "update_agent"
+	AgentTaskTypeUninstallAgent        = "uninstall_agent"
 	AgentTaskTypeUpdateAgentConfig     = "update_agent_config"
 	AgentTaskTypeDiagnoseNetwork       = "diagnose_network"
 	AgentTaskTypeListNetworkInterfaces = "list_network_interfaces"
@@ -2030,6 +2031,11 @@ type UpdateAgentTaskPayload struct {
 	ExpectedBuild string `json:"expected_build"`
 	Source        string `json:"source"`
 	GitHubRepo    string `json:"github_repo"`
+}
+
+type UninstallAgentTaskPayload struct {
+	Purge   bool  `json:"purge"`
+	ActorID int64 `json:"actor_id,omitempty"`
 }
 
 type AgentUpdateRequest struct {

@@ -510,6 +510,9 @@ func (s *Server) prepareHostOpsRecipe(ctx context.Context, principal application
 	case containsAnyFold(goal, "升级", "update agent", "更新 agent", "update_server_agent"):
 		operation := mcpOperationRef{Capability: "servers.update_agent", Input: map[string]any{"server_id": serverID}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "host_ops.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_agent", "server_id": serverID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "update_task_queued"}}}, nil
+	case containsAnyFold(goal, "卸载 agent", "uninstall agent", "remove agent"):
+		operation := mcpOperationRef{Capability: "servers.uninstall_agent", Input: map[string]any{"server_id": serverID}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "host_ops.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "uninstall_agent", "server_id": serverID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "uninstall_task_queued"}}}, nil
 	case containsAnyFold(goal, "mtu", "拉取日志", "collect logs", "日志", "轮转", "清空", "manage logs"):
 		if containsAnyFold(goal, "mtu") {
 			operation := mcpOperationRef{Capability: "servers.mtu_detect", Input: map[string]any{"server_id": serverID, "target_host": taskStringParam(input.Params, "target_host"), "target_port": taskIntParam(input.Params, "target_port")}}
@@ -526,7 +529,7 @@ func (s *Server) prepareHostOpsRecipe(ctx context.Context, principal application
 		operation := mcpOperationRef{Capability: "servers.collect_logs", Input: map[string]any{"server_id": serverID, "services": firstNonEmptyString(taskStringParam(input.Params, "services"), "all"), "lines": taskIntParam(input.Params, "lines")}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "host_ops.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "collect_logs", "server_id": serverID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "logs_task_queued"}}}, nil
 	default:
-		return recipeNeedInput("host_ops.manage", "operation", "需要指定操作：诊断、升级 Agent、读取网卡、MTU 检测或日志"), nil
+		return recipeNeedInput("host_ops.manage", "operation", "需要指定操作：诊断、升级/卸载 Agent、读取网卡、MTU 检测或日志"), nil
 	}
 }
 

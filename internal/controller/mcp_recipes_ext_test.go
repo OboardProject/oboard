@@ -28,6 +28,7 @@ func TestNewRecipeRouting(t *testing.T) {
 		{name: "diagnose", goal: "诊断服务器", want: "host_ops.manage", refs: []string{"server:1"}},
 		{name: "logs", goal: "拉取服务器日志", want: "host_ops.manage", refs: []string{"server:1"}},
 		{name: "network interfaces", goal: "读取服务器网卡", want: "host_ops.manage", refs: []string{"server:1"}},
+		{name: "uninstall agent", goal: "卸载 Agent", want: "host_ops.manage", refs: []string{"server:1"}},
 		{name: "controller update", goal: "检查主控更新", want: "controller_update.manage"},
 		{name: "notification", goal: "创建一个通知频道", want: "notification.manage", params: map[string]any{"notification_channel": map[string]any{"name": "tg", "type": "telegram"}}},
 		{name: "certificate", goal: "签发证书", want: "certificate.manage", params: map[string]any{"certificate_id": 3}},
@@ -52,6 +53,10 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 	interfaces, err := server.prepareHostOpsRecipe(t.Context(), application.Principal{}, mcpTaskInput{Goal: "读取网卡", Params: map[string]any{"server_id": 41}})
 	if err != nil || interfaces.Status != "ready" || interfaces.Operations[0].Capability != "servers.list_network_interfaces" || taskIntParam(interfaces.Operations[0].Input, "server_id") != 41 {
 		t.Fatalf("interfaces=%#v err=%v", interfaces, err)
+	}
+	uninstall, err := server.prepareHostOpsRecipe(t.Context(), application.Principal{}, mcpTaskInput{Goal: "卸载 Agent", Params: map[string]any{"server_id": 41}})
+	if err != nil || uninstall.Status != "ready" || uninstall.Operations[0].Capability != "servers.uninstall_agent" || taskIntParam(uninstall.Operations[0].Input, "server_id") != 41 {
+		t.Fatalf("uninstall=%#v err=%v", uninstall, err)
 	}
 	tests := []struct {
 		name, goal, capability string

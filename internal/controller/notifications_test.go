@@ -796,6 +796,12 @@ func TestTaskTypeNotificationLabelIncludesExternalEgress(t *testing.T) {
 	}
 }
 
+func TestTaskTypeNotificationLabelIncludesAgentUninstall(t *testing.T) {
+	if got := taskTypeNotificationLabel(model.AgentTaskTypeUninstallAgent); got != "Agent 卸载" {
+		t.Fatalf("task label = %q", got)
+	}
+}
+
 func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

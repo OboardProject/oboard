@@ -711,6 +711,7 @@ func TestAgentHostOperationsRequireAdminButOperatorCanProbeForward(t *testing.T)
 	for _, endpoint := range []string{
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/agent-config",
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/agent-update",
+		"/api/v1/ui/servers/" + itoa(sourceID) + "/agent-uninstall",
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/diagnose",
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/logs",
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/enroll-token",

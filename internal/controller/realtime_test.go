@@ -247,6 +247,7 @@ func TestRealtimeResourcesForTaskAreScoped(t *testing.T) {
 		{name: "mtu", taskType: model.AgentTaskTypeDetectMTU, want: []string{"mtu", "servers", "tasks"}},
 		{name: "port forward probe", taskType: model.AgentTaskTypeProbePortForwards, want: []string{"port_forwards", "probes", "tasks"}},
 		{name: "agent update", taskType: model.AgentTaskTypeUpdateAgent, want: []string{"server_runtime", "tasks"}},
+		{name: "agent uninstall", taskType: model.AgentTaskTypeUninstallAgent, want: []string{"server_runtime", "servers", "tasks"}},
 		{name: "diagnostic", taskType: model.AgentTaskTypeDiagnoseNetwork, want: []string{"tasks"}},
 	}
 	for _, tt := range tests {
