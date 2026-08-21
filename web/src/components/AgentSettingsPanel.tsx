@@ -78,7 +78,7 @@ function parseNTPServers(value: unknown): string[] {
 
 export function AgentSettingsPanel({ data, client, load, notify }: AgentSettingsPanelProps) {
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState<string>(String(data.settings?.server_default_mtu_mode || 'detect'))
-  const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState<boolean>(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
+  const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState<boolean>(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
   const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
   const [trafficTimezone, setTrafficTimezone] = useState<string>(data.settings?.traffic_timezone || 'Asia/Shanghai')
@@ -89,7 +89,7 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
 
   useEffect(() => {
     setServerDefaultMTUMode(String(data.settings?.server_default_mtu_mode || 'detect'))
-    setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled || 'false') === 'true')
+    setServerDefaultBBREnabled(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
     setServerDefaultTimeCorrectionMode((data.settings?.server_default_time_correction_mode || 'off') as TimeCorrectionMode)
     setTimeCheckNTPServers(parseNTPServers(data.settings?.time_check_ntp_servers))
   }, [data.settings?.server_default_mtu_mode, data.settings?.server_default_bbr_enabled, data.settings?.server_default_time_correction_mode, data.settings?.time_check_ntp_servers])

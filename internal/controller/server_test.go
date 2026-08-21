@@ -902,18 +902,33 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
 
+	initialPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
+	initialDefaults := initialPage["server_creation_defaults"].(map[string]any)
+	if initialDefaults["mtu_mode"] != "detect" || initialDefaults["bbr_enabled"] != true {
+		t.Fatalf("initial server creation defaults = %#v", initialDefaults)
+	}
+	initialCreated := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "initial-server"}, http.StatusCreated)
+	initialID := int64(initialCreated["server"].(map[string]any)["id"].(float64))
+	initialServer, err := db.GetServer(ctx, initialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initialServer.MTUMode != model.MTUModeDetect || !initialServer.BBREnabled {
+		t.Fatalf("initial server policy = %#v", initialServer)
+	}
+
 	request(t, h, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{
 		"server_default_mtu_mode":    "apply",
-		"server_default_bbr_enabled": true,
+		"server_default_bbr_enabled": false,
 	}, http.StatusOK)
 	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	defaults := page["server_creation_defaults"].(map[string]any)
-	if defaults["mtu_mode"] != "apply" || defaults["bbr_enabled"] != true {
+	if defaults["mtu_mode"] != "apply" || defaults["bbr_enabled"] != false {
 		t.Fatalf("server creation defaults = %#v", defaults)
 	}
 	proxyPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=proxy-paths", token, nil, http.StatusOK)
 	proxyDefaults := proxyPage["server_creation_defaults"].(map[string]any)
-	if proxyDefaults["mtu_mode"] != "apply" || proxyDefaults["bbr_enabled"] != true {
+	if proxyDefaults["mtu_mode"] != "apply" || proxyDefaults["bbr_enabled"] != false {
 		t.Fatalf("proxy-path server creation defaults = %#v", proxyDefaults)
 	}
 
@@ -923,19 +938,19 @@ func TestServerCreationDefaultsAndExplicitOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaultServer.MTUMode != model.MTUModeApply || !defaultServer.BBREnabled {
+	if defaultServer.MTUMode != model.MTUModeApply || defaultServer.BBREnabled {
 		t.Fatalf("default server policy = %#v", defaultServer)
 	}
 
 	overridden := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
-		"name": "override-server", "mtu_mode": "disabled", "bbr_enabled": false,
+		"name": "override-server", "mtu_mode": "disabled", "bbr_enabled": true,
 	}, http.StatusCreated)
 	overrideID := int64(overridden["server"].(map[string]any)["id"].(float64))
 	overrideServer, err := db.GetServer(ctx, overrideID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overrideServer.MTUMode != model.MTUModeDisabled || overrideServer.BBREnabled {
+	if overrideServer.MTUMode != model.MTUModeDisabled || !overrideServer.BBREnabled {
 		t.Fatalf("explicit server policy = %#v", overrideServer)
 	}
 

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -291,6 +292,24 @@ func TestFallbackControllerUpdateStatus(t *testing.T) {
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "1.2.3")
 	if status := (&Server{}).fallbackControllerUpdateStatus(); status.Channel != "pinned" {
 		t.Fatalf("exact binary version should be pinned: %#v", status)
+	}
+}
+
+func TestControllerUpdateBusyReturnsImmediately(t *testing.T) {
+	app := &Server{}
+	app.controllerUpdateRunMu.Lock()
+	defer app.controllerUpdateRunMu.Unlock()
+
+	startedAt := time.Now()
+	status, accepted, err := app.beginManualControllerUpdate(t.Context())
+	if !errors.Is(err, errControllerUpdateBusy) {
+		t.Fatalf("busy update error = %v, want %v", err, errControllerUpdateBusy)
+	}
+	if accepted || status != (controllerupdate.Status{}) {
+		t.Fatalf("busy update result = %#v, accepted=%v", status, accepted)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("busy update waited for operation lock: %s", elapsed)
 	}
 }
 

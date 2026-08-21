@@ -55,6 +55,12 @@ type Service struct {
 	installCancel  context.CancelFunc
 	installApprove chan struct{}
 	installRun     uint64
+	release        remoteRelease
+	releaseChannel string
+	releaseAt      time.Time
+	currentBuildMu sync.Mutex
+	currentBuild   BuildInfo
+	currentBuildAt time.Time
 }
 
 func DefaultServiceConfig() ServiceConfig {
@@ -72,7 +78,7 @@ func DefaultServiceConfig() ServiceConfig {
 		DownloadsRoot:      filepath.Join(installDir, "downloads"),
 		WorkRoot:           filepath.Join(dataDir, "controller-update"),
 		HTTPClient:         &http.Client{Timeout: 2 * time.Minute},
-		HealthClient:       &http.Client{Timeout: 3 * time.Second},
+		HealthClient:       &http.Client{Timeout: 2 * time.Second},
 		HealthTimeout:      90 * time.Second,
 		HealthPollInterval: time.Second,
 		ReadyWindow:        4 * time.Second,
@@ -430,6 +436,9 @@ func (s *Service) handleChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status.Channel = channel
+	s.release = remoteRelease{}
+	s.releaseChannel = ""
+	s.releaseAt = time.Time{}
 	status.Available = BuildInfo{}
 	status.UpdateAvailable = false
 	status.State = "idle"
@@ -455,7 +464,7 @@ func (s *Service) check(ctx context.Context) (Status, error) {
 		s.mu.Unlock()
 		return status, err
 	}
-	if isActiveUpdateState(status.State) {
+	if status.State == "checking" || isActiveUpdateState(status.State) {
 		s.mu.Unlock()
 		return status, nil
 	}
@@ -485,6 +494,9 @@ func (s *Service) check(ctx context.Context) (Status, error) {
 	}
 	status.Available = BuildInfo{Version: release.Manifest.Version, Build: release.Manifest.Build, Commit: release.Manifest.Commit, Date: release.Manifest.Date}
 	status.UpdateAvailable = updateAvailable(status.Channel, status.Current, release.Manifest)
+	s.release = release
+	s.releaseChannel = status.Channel
+	s.releaseAt = time.Now()
 	if status.UpdateAvailable {
 		status.State = "available"
 	} else {
@@ -507,9 +519,14 @@ func (s *Service) install(ctx context.Context, approval <-chan struct{}) (Status
 	}
 	s.mu.Unlock()
 
-	release, err := fetchRelease(ctx, s.config.HTTPClient, status.Channel)
-	if err != nil {
-		return s.finishInstallError(err)
+	release, ok := s.cachedRelease(status.Channel)
+	if !ok {
+		var err error
+		release, err = fetchRelease(ctx, s.config.HTTPClient, status.Channel)
+		if err != nil {
+			return s.finishInstallError(err)
+		}
+		s.cacheRelease(status.Channel, release)
 	}
 	available := BuildInfo{Version: release.Manifest.Version, Build: release.Manifest.Build, Commit: release.Manifest.Commit, Date: release.Manifest.Date}
 	s.mu.Lock()
@@ -726,10 +743,40 @@ func (s *Service) detectInstallation() (string, string, string) {
 	return channel, "", ""
 }
 
+func (s *Service) cachedRelease(channel string) (remoteRelease, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.releaseChannel != channel || s.release.Manifest.Version == "" || time.Since(s.releaseAt) >= 5*time.Minute {
+		return remoteRelease{}, false
+	}
+	return s.release, true
+}
+
+func (s *Service) cacheRelease(channel string, release remoteRelease) {
+	s.mu.Lock()
+	s.release = release
+	s.releaseChannel = channel
+	s.releaseAt = time.Now()
+	s.mu.Unlock()
+}
+
 func (s *Service) currentBuildInfo() BuildInfo {
 	info := BuildInfo{Version: version.Version, Build: version.Build, Commit: version.Commit, Date: version.Date}
+	s.currentBuildMu.Lock()
+	if !s.currentBuildAt.IsZero() && time.Since(s.currentBuildAt) < 10*time.Second {
+		cached := s.currentBuild
+		s.currentBuildMu.Unlock()
+		return cached
+	}
+	s.currentBuildMu.Unlock()
+	probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	for _, url := range s.healthURLs("/api/v1/ui/version") {
-		resp, err := s.config.HealthClient.Get(url)
+		req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := s.config.HealthClient.Do(req)
 		if err != nil {
 			continue
 		}
@@ -742,9 +789,14 @@ func (s *Service) currentBuildInfo() BuildInfo {
 		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&remote)
 		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusOK && decodeErr == nil && remote.Version != "" {
-			return BuildInfo{Version: remote.Version, Build: remote.Build, Commit: remote.Commit, Date: remote.BuiltAt}
+			info = BuildInfo{Version: remote.Version, Build: remote.Build, Commit: remote.Commit, Date: remote.BuiltAt}
+			break
 		}
 	}
+	s.currentBuildMu.Lock()
+	s.currentBuild = info
+	s.currentBuildAt = time.Now()
+	s.currentBuildMu.Unlock()
 	return info
 }
 

@@ -166,16 +166,12 @@ func (s *Server) registerControllerUpdateOperations() {
 			accepted := true
 			switch name {
 			case "controller_update.check":
-				s.controllerUpdateRunMu.Lock()
 				status, err = s.controllerUpdater.Check(ctx)
-				s.controllerUpdateRunMu.Unlock()
 				if err != nil {
 					err = controllerUpdateOperationError("检查主控更新失败", status, err)
 				}
 			case "controller_update.set_channel":
-				s.controllerUpdateRunMu.Lock()
 				status, err = s.controllerUpdater.SetChannel(ctx, request.Channel)
-				s.controllerUpdateRunMu.Unlock()
 				if err != nil {
 					err = controllerUpdateOperationError("切换更新通道失败", status, err)
 				}

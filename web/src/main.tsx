@@ -3438,6 +3438,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   const targetBuildRef = useRef('')
   const installRequestPendingRef = useRef(false)
   const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
+  const statusRefreshInFlightRef = useRef(false)
 
   useEffect(() => {
     if (tab === 'settings') {
@@ -3473,6 +3474,8 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   }
 
   const refresh = async () => {
+    if (statusRefreshInFlightRef.current) return
+    statusRefreshInFlightRef.current = true
     const request = statusRequestGuardRef.current.beginRequest()
     try {
       const result = await client.request('/controller-update') as ControllerUpdateStatus
@@ -3482,6 +3485,8 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     } catch (error: any) {
       if (!statusRequestGuardRef.current.isLatest(request)) return
       if (working && isExpectedControllerUpdateDisconnect(error)) setConnectionInterrupted(true)
+    } finally {
+      statusRefreshInFlightRef.current = false
     }
   }
 
@@ -3617,6 +3622,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const installRequestPendingRef = useRef(false)
   const installTargetBuildRef = useRef('')
   const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
+  const statusRefreshInFlightRef = useRef(false)
   const updateInstallExpected = (value: boolean) => {
     installExpectedRef.current = value
     setInstallExpected(value)
@@ -3666,6 +3672,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     else setInstallPhase('starting')
   }
   const refresh = async (quiet = false) => {
+    if (statusRefreshInFlightRef.current) return
+    statusRefreshInFlightRef.current = true
     const request = statusRequestGuardRef.current.beginRequest()
     if (!quiet) setWorking('load')
     try {
@@ -3681,6 +3689,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
         notify?.(localizeErrorMessage(error?.message || error), 'error')
       }
     } finally {
+      statusRefreshInFlightRef.current = false
       if (!quiet) setWorking('')
     }
   }
@@ -3688,7 +3697,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   useEffect(() => {
     if (realtimeRevision > 0 && realtimeStatus === 'open' && (realtimeResources.includes('controller_update') || realtimeResources.includes('all'))) void refresh(true)
   }, [realtimeRevision, realtimeStatus, realtimeResources])
-  usePausedInterval(() => { void refresh(true) }, 3000, realtimeStatus === 'fallback' && (installExpected || ['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status)))
+  usePausedInterval(() => { void refresh(true) }, 5000, realtimeStatus === 'fallback' && (installExpected || ['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status)))
   useEffect(() => {
     if (!isControllerUpdateInProgressStatus(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
@@ -6028,7 +6037,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: Boolean(defaults?.bbr_enabled), time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'off' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0 }
 }
 
 function GridViewIcon() {

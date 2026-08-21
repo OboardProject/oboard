@@ -277,7 +277,12 @@ func (s *Server) prepareServerOnboardRecipe(_ context.Context, _ application.Pri
 	if region == "" {
 		region = inferredRegionCode(input.Goal)
 	}
-	bbr := taskBoolParam(input.Params, false, "server.bbr_enabled", "bbr_enabled") || containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "enable bbr", "with bbr", "bbr")
+	bbr := taskBoolParam(input.Params, true, "server.bbr_enabled", "bbr_enabled")
+	if containsAnyFold(input.Goal, "关闭 bbr", "禁用 bbr", "不启用 bbr", "disable bbr", "without bbr", "no bbr") {
+		bbr = false
+	} else if containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "启用 bbr", "enable bbr", "with bbr") {
+		bbr = true
+	}
 	server := map[string]any{"name": name, "ip_stack": ipStack, "bbr_enabled": bbr}
 	copyTaskParams(server, input.Params, map[string]string{
 		"server.resource_history_enabled":       "resource_history_enabled",

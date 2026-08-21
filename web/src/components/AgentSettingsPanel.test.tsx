@@ -112,4 +112,28 @@ describe('AgentSettingsPanel', () => {
     })
     expect(mockNotify).toHaveBeenCalledWith('NTP 时间源已保存', 'success')
   })
+
+  it('defaults BBR + FQ to true and auto-saves when toggled', async () => {
+    const mockClient = { request: vi.fn(async () => ({ status: 'ok' })) }
+    const mockLoad = vi.fn(async () => undefined)
+    const mockNotify = vi.fn()
+
+    act(() => {
+      root.render(<AgentSettingsPanel data={{ settings: {} }} client={mockClient} load={mockLoad} notify={mockNotify} />)
+    })
+
+    const bbrSwitch = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="新服务器默认启用 BBR + FQ"]')!
+    expect(bbrSwitch).not.toBeNull()
+    expect(bbrSwitch.checked).toBe(true)
+
+    await act(async () => {
+      bbrSwitch.click()
+    })
+
+    expect(mockClient.request).toHaveBeenCalledWith('/settings', {
+      method: 'POST',
+      body: JSON.stringify({ server_default_bbr_enabled: false }),
+    })
+    expect(mockNotify).toHaveBeenCalledWith('BBR + FQ 设置已保存', 'success')
+  })
 })

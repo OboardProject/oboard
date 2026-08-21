@@ -3,11 +3,14 @@ package controllerupdate
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -205,6 +208,101 @@ func TestMatchingStableVersionStopsStaleUpdateProgress(t *testing.T) {
 	status := service.decorateStatus(service.status)
 	if status.State != "current" || status.UpdateAvailable || status.CanCancel {
 		t.Fatalf("matching stable version did not stop stale progress: %#v", status)
+	}
+}
+
+func TestConcurrentChecksReuseInFlightRequest(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "oboard-controller")
+	if err := os.WriteFile(binary, []byte("controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_UPDATE_CHANNEL=stable\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	var requests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if requests.Add(1) == 1 {
+			close(requestStarted)
+		}
+		select {
+		case <-releaseRequest:
+			return nil, errors.New("release check stopped")
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+	})}
+	service := NewService(ServiceConfig{
+		BinaryEnvPath:    binaryEnv,
+		ControllerBinary: binary,
+		StatePath:        filepath.Join(root, "status.json"),
+		HTTPClient:       client,
+	})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.check(t.Context())
+		firstDone <- err
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first release check did not start")
+	}
+
+	startedAt := time.Now()
+	status, err := service.check(t.Context())
+	if err != nil {
+		t.Fatalf("concurrent check failed: %v", err)
+	}
+	if status.State != "checking" {
+		t.Fatalf("concurrent check state = %q, want checking", status.State)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 200*time.Millisecond {
+		t.Fatalf("concurrent check waited for in-flight request: %s", elapsed)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("release requests = %d, want 1", got)
+	}
+	close(releaseRequest)
+	select {
+	case err := <-firstDone:
+		if err == nil {
+			t.Fatal("blocked release check unexpectedly succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first release check did not finish")
+	}
+}
+
+func TestCurrentBuildInfoCachesHealthProbe(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"version":"dev","build":"running-build","commit":"running-commit","built_at":"2026-08-20T00:00:00Z"}`)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_ADDR="+strings.TrimPrefix(server.URL, "http://")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{
+		BinaryEnvPath: binaryEnv,
+		StatePath:     filepath.Join(root, "status.json"),
+		HealthClient:  server.Client(),
+	})
+	for range 3 {
+		if build := service.currentBuildInfo(); build.Build != "running-build" {
+			t.Fatalf("unexpected current build: %#v", build)
+		}
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("health version requests = %d, want 1", got)
 	}
 }
 

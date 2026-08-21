@@ -89,7 +89,9 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 }
 
 func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
-	s.controllerUpdateRunMu.Lock()
+	if !s.controllerUpdateRunMu.TryLock() {
+		return
+	}
 	defer s.controllerUpdateRunMu.Unlock()
 	settings, settingsErr := s.store.ListSettings(ctx)
 	autoUpdateEnabled := settingsErr == nil && settingBool(settings, controllerAutoUpdateSetting, false)
@@ -347,8 +349,6 @@ func (s *Server) controllerUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	s.controllerUpdateRunMu.Lock()
-	defer s.controllerUpdateRunMu.Unlock()
 	status, err := s.controllerUpdater.Check(r.Context())
 	if err != nil {
 		fail(w, controllerUpdateOperationError("检查主控更新失败", status, err), http.StatusBadGateway)
@@ -378,7 +378,10 @@ func (s *Server) controllerUpdateChannel(w http.ResponseWriter, r *http.Request)
 		fail(w, errors.New("更新通道只能是 dev 或 stable"), http.StatusBadRequest)
 		return
 	}
-	s.controllerUpdateRunMu.Lock()
+	if !s.controllerUpdateRunMu.TryLock() {
+		fail(w, errControllerUpdateBusy, http.StatusConflict)
+		return
+	}
 	defer s.controllerUpdateRunMu.Unlock()
 	status, err := s.controllerUpdater.SetChannel(r.Context(), channel)
 	if err != nil {
@@ -404,7 +407,7 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 		switch {
 		case errors.Is(err, errControllerUpdaterUnavailable):
 			fail(w, err, http.StatusServiceUnavailable)
-		case errors.Is(err, errControllerUpdatePinned):
+		case errors.Is(err, errControllerUpdatePinned), errors.Is(err, errControllerUpdateBusy):
 			fail(w, err, http.StatusConflict)
 		default:
 			fail(w, err, http.StatusBadGateway)
@@ -418,10 +421,13 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 var (
 	errControllerUpdaterUnavailable = errors.New("主控更新器不可用，请检查 oboard-controller-updater 服务")
 	errControllerUpdatePinned       = errors.New("固定版本不能在面板内更新，请先按提示切换更新通道")
+	errControllerUpdateBusy         = errors.New("已有主控更新操作正在进行，请稍后查看更新状态")
 )
 
 func (s *Server) beginManualControllerUpdate(ctx context.Context) (controllerupdate.Status, bool, error) {
-	s.controllerUpdateRunMu.Lock()
+	if !s.controllerUpdateRunMu.TryLock() {
+		return controllerupdate.Status{}, false, errControllerUpdateBusy
+	}
 	backgroundStarted := false
 	defer func() {
 		if !backgroundStarted {

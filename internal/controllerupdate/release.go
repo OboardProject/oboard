@@ -17,6 +17,12 @@ import (
 
 const githubAPI = "https://api.github.com/repos/OboardProject/oboard/releases"
 
+const (
+	releaseMetadataTimeout = 15 * time.Second
+	devReleaseAttempts     = 2
+	releaseRetryDelay      = 500 * time.Millisecond
+)
+
 var (
 	hashPattern           = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	versionPattern        = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:[-+].*)?$`)
@@ -41,14 +47,16 @@ type remoteRelease struct {
 }
 
 func fetchRelease(ctx context.Context, client *http.Client, channel string) (remoteRelease, error) {
+		budgetCtx, cancel := context.WithTimeout(ctx, releaseMetadataTimeout)
+		defer cancel()
 	attempts := 1
 	if channel == "dev" {
-		attempts = 10
+		attempts = devReleaseAttempts
 	}
 	var result remoteRelease
 	var err error
 	for attempt := 0; attempt < attempts; attempt++ {
-		result, err = fetchReleaseOnce(ctx, client, channel)
+		result, err = fetchReleaseOnce(budgetCtx, client, channel)
 		if err == nil {
 			return result, nil
 		}
@@ -56,7 +64,7 @@ func fetchRelease(ctx context.Context, client *http.Client, channel string) (rem
 			select {
 			case <-ctx.Done():
 				return remoteRelease{}, ctx.Err()
-			case <-time.After(3 * time.Second):
+			case <-time.After(releaseRetryDelay):
 			}
 		}
 	}
