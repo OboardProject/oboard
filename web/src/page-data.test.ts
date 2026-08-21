@@ -58,4 +58,24 @@ describe('PageDataRequestCoordinator', () => {
 
     expect(requests.isCurrent('dashboard', await request)).toBe(false)
   })
+
+  it('cancelPrefetches aborts prefetch requests without touching active loads', () => {
+    const requests = new PageDataRequestCoordinator<string>()
+    const signals: AbortSignal[] = []
+    const prefetch = deferred<string>()
+    const background = deferred<string>()
+    const foreground = deferred<string>()
+    const prefetchRequest = requests.request('prefetch', signal => { signals[0] = signal; return prefetch.promise }, { priority: 'prefetch' })
+    const backgroundRequest = requests.request('background', signal => { signals[1] = signal; return background.promise }, { priority: 'background' })
+    const foregroundRequest = requests.request('foreground', signal => { signals[2] = signal; return foreground.promise }, { priority: 'foreground' })
+
+    requests.cancelPrefetches()
+
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[1].aborted).toBe(false)
+    expect(signals[2].aborted).toBe(false)
+    expect(requests.pending('prefetch')).toBeUndefined()
+    expect(requests.pending('background')).toBe(backgroundRequest)
+    expect(requests.pending('foreground')).toBe(foregroundRequest)
+  })
 })

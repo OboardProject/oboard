@@ -82,9 +82,10 @@ export function usePollingEvents(enabled: boolean, request: PollRequest, onEvent
     let retryTimer: number | undefined
     let controller: AbortController | null = null
     let failed = false
+    const isPageVisible = () => document.visibilityState === 'visible'
 
     const poll = async () => {
-      if (disposed || controller || !navigator.onLine) return
+      if (disposed || controller || !isPageVisible() || !navigator.onLine) return
       controller = new AbortController()
       try {
         const event = await request(`/poll-events?since=${sequence}`, { signal: controller.signal })
@@ -108,23 +109,42 @@ export function usePollingEvents(enabled: boolean, request: PollRequest, onEvent
         }, delay)
       } finally {
         controller = null
-        if (!disposed && retryTimer === undefined && navigator.onLine) void poll()
+        if (!disposed && retryTimer === undefined && isPageVisible() && navigator.onLine) void poll()
       }
     }
 
     const reconnectNow = () => {
-      if (disposed || controller) return
+      if (disposed || controller || !isPageVisible()) return
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
       retryTimer = undefined
       attempt = 0
       void poll()
     }
 
+    const handleVisibilityChange = () => {
+      if (isPageVisible()) {
+        if (retryTimer !== undefined) {
+          window.clearTimeout(retryTimer)
+          retryTimer = undefined
+        }
+        attempt = 0
+        void poll()
+        return
+      }
+      if (retryTimer !== undefined) {
+        window.clearTimeout(retryTimer)
+        retryTimer = undefined
+      }
+      controller?.abort()
+    }
+
     window.addEventListener('online', reconnectNow)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     void poll()
     return () => {
       disposed = true
       window.removeEventListener('online', reconnectNow)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
       controller?.abort()
     }
@@ -159,6 +179,7 @@ export function useServerTelemetry(enabled: boolean, url: string, onEvent: (even
     let connectionFailed = false
     let openedOnce = false
     let lastSequence = 0
+    const isPageVisible = () => document.visibilityState === 'visible'
 
     const clearHandshakeTimer = () => {
       if (handshakeTimer === undefined) return
@@ -167,7 +188,7 @@ export function useServerTelemetry(enabled: boolean, url: string, onEvent: (even
     }
 
     const scheduleReconnect = () => {
-      if (disposed || reconnectTimer !== undefined) return
+      if (disposed || reconnectTimer !== undefined || !isPageVisible()) return
       connectionFailed = true
       setStatus('fallback')
       const base = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5))
@@ -180,7 +201,7 @@ export function useServerTelemetry(enabled: boolean, url: string, onEvent: (even
     }
 
     const connect = () => {
-      if (disposed || socket) return
+      if (disposed || socket || !isPageVisible()) return
       if (!connectionFailed && !openedOnce) setStatus('connecting')
       let next: WebSocket
       try {
@@ -237,23 +258,50 @@ export function useServerTelemetry(enabled: boolean, url: string, onEvent: (even
       next.onclose = () => {
         clearHandshakeTimer()
         if (socket === next) socket = null
-        scheduleReconnect()
+        if (isPageVisible()) scheduleReconnect()
       }
     }
 
     const reconnectNow = () => {
-      if (disposed || socket || !navigator.onLine) return
+      if (disposed || socket || !isPageVisible() || !navigator.onLine) return
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       reconnectTimer = undefined
       attempt = 0
       connect()
     }
 
+    const handleVisibilityChange = () => {
+      if (isPageVisible()) {
+        if (reconnectTimer !== undefined) {
+          window.clearTimeout(reconnectTimer)
+          reconnectTimer = undefined
+        }
+        attempt = 0
+        connect()
+        return
+      }
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer)
+        reconnectTimer = undefined
+      }
+      clearHandshakeTimer()
+      if (socket) {
+        const closing = socket
+        socket.onerror = null
+        socket.onmessage = null
+        socket.onclose = null
+        socket = null
+        closing.close(1000, 'sleep')
+      }
+    }
+
     window.addEventListener('online', reconnectNow)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     connect()
     return () => {
       disposed = true
       window.removeEventListener('online', reconnectNow)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       clearHandshakeTimer()
       if (socket) {

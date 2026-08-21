@@ -41,6 +41,13 @@ function PollingHarness({ request, onStatus, onEvent }: { request: PollRequest; 
   return null
 }
 
+let visibilityOverride: 'visible' | 'hidden' = 'visible'
+function setVisibility(visible: boolean) {
+  visibilityOverride = visible ? 'visible' : 'hidden'
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibilityOverride })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
 describe('panel transports', () => {
   let root: Root
   let container: HTMLDivElement
@@ -52,6 +59,7 @@ describe('panel transports', () => {
     FakeWebSocket.instances = []
     vi.stubGlobal('WebSocket', FakeWebSocket)
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true })
+    setVisibility(true)
     container = document.createElement('div')
     root = createRoot(container)
   })
@@ -135,5 +143,58 @@ describe('panel transports', () => {
     expect(request.mock.calls[1][0]).toBe('/poll-events?since=7')
     expect(events).toEqual([{ type: 'invalidate', sequence: 7, resources: ['tasks'], reconnected: false }])
     expect(statuses[statuses.length - 1]).toBe('open')
+  })
+
+  it('pauses HTTP polling while hidden and resumes from the saved sequence', async () => {
+    const events: RealtimeEvent[] = []
+    let pendingSignal: AbortSignal | undefined
+    let rejectPending!: (error: Error) => void
+    const pending = new Promise<RealtimeEvent>((_resolve, reject) => { rejectPending = reject })
+    const request = vi.fn<PollRequest>()
+      .mockResolvedValueOnce({ type: 'invalidate', sequence: 7, resources: ['tasks'] })
+      .mockImplementation((_path, init) => {
+        pendingSignal = init?.signal
+        pendingSignal?.addEventListener('abort', () => rejectPending(new DOMException('aborted', 'AbortError')))
+        return pending
+      })
+
+    await act(async () => {
+      root.render(<PollingHarness request={request} onStatus={() => {}} onEvent={event => events.push(event)} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(request.mock.calls[1][0]).toBe('/poll-events?since=7')
+    expect(pendingSignal).toBeDefined()
+
+    await act(async () => {
+      setVisibility(false)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(pendingSignal?.aborted).toBe(true)
+    act(() => vi.advanceTimersByTime(30_000))
+    expect(request).toHaveBeenCalledTimes(2)
+
+    act(() => setVisibility(true))
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(request.mock.calls[2][0]).toBe('/poll-events?since=7')
+  })
+
+  it('closes telemetry while hidden and reconnects with reconnect ready on visible', () => {
+    const events: RealtimeEvent[] = []
+    act(() => root.render(<TelemetryHarness onStatus={() => {}} onEvent={event => events.push(event)} />))
+    act(() => FakeWebSocket.instances[0].emit({ type: 'ready', protocol: 2, sequence: 5, server_snapshots: [] }))
+    const first = FakeWebSocket.instances[0]
+
+    act(() => setVisibility(false))
+    expect(first.closed).toBe(true)
+    act(() => vi.advanceTimersByTime(30_000))
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    act(() => setVisibility(true))
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    act(() => FakeWebSocket.instances[1].emit({ type: 'ready', protocol: 2, sequence: 5, server_snapshots: [] }))
+    expect(events[events.length - 1]).toMatchObject({ type: 'ready', reconnected: true })
   })
 })

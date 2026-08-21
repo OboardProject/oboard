@@ -123,6 +123,7 @@ import clashClassicClientIcon from './assets/subscription-clients/clash-classic.
 import { PageDataRequestCoordinator } from './page-data'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
+import { usePausedInterval } from './visibility'
 import { ConfigurationSyncStatus } from './configuration-sync-ui'
 import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pages'
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
@@ -1870,9 +1871,18 @@ export function App() {
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState !== 'visible' || !realtimeVisibleRefreshPendingRef.current) return
+      if (document.visibilityState !== 'visible') {
+        realtimeVisibleRefreshPendingRef.current = false
+        if (realtimeRefreshTimerRef.current !== undefined) {
+          window.clearTimeout(realtimeRefreshTimerRef.current)
+          realtimeRefreshTimerRef.current = undefined
+        }
+        prefetchSchedulerRef.current?.pauseIdle()
+        pageRequestsRef.current.cancelPrefetches()
+        return
+      }
       realtimeVisibleRefreshPendingRef.current = false
-      if (dirtyPagesRef.current.has(tab)) scheduleRealtimePageRefresh(tab)
+      if (token) void load(tab, { background: true, forceFresh: true })
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -2913,21 +2923,15 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
   const [commandTarget, setCommandTarget] = useState<{ relay: SubscriptionRelay; token: string } | null>(null)
   const [busy, setBusy] = useState('')
 
+  const relaysMountedRef = useRef(true)
   useEffect(() => { setRelays(data.subscription_relays || []) }, [data.subscription_relays])
   useEffect(() => { setControllerDirectEnabled(settingEnabled(data.settings?.subscription_controller_direct_enabled, false)) }, [data.settings?.subscription_controller_direct_enabled])
-  useEffect(() => {
-    let cancelled = false
-    const refresh = async () => {
-      try {
-        const result = await client.request('/subscription-relays')
-        if (!cancelled) setRelays(result.subscription_relays || [])
-      } catch {
-        // The next normal page refresh will retry without disrupting settings work.
-      }
-    }
-    const timer = window.setInterval(() => { void refresh() }, 30000)
-    return () => { cancelled = true; window.clearInterval(timer) }
-  }, [client])
+  useEffect(() => () => { relaysMountedRef.current = false }, [])
+  usePausedInterval(() => {
+    void client.request('/subscription-relays').then(result => {
+      if (relaysMountedRef.current) setRelays(result.subscription_relays || [])
+    }).catch(() => undefined)
+  }, 30000)
 
   const hasActiveRelay = relays.some(relay => relay.active)
   const effectiveControllerDirectEnabled = !hasActiveRelay || controllerDirectEnabled
@@ -3144,11 +3148,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   useEffect(() => { setControllerURL(savedURL || currentOrigin) }, [savedURL, currentOrigin])
   useEffect(() => { setBasePath(currentBasePath) }, [currentBasePath])
   useEffect(() => { setTrustedProxyCIDRs(configuredTrustedProxyCIDRs.join('\n')) }, [data.settings?.trusted_proxy_cidrs])
-  useEffect(() => {
-    if (!migration.active || realtimeStatus !== 'fallback') return
-    const timer = window.setInterval(() => { void load('settings', { background: true }) }, 3000)
-    return () => window.clearInterval(timer)
-  }, [migration.active, migration.config_version, realtimeStatus])
+  usePausedInterval(() => { void load('settings', { background: true }) }, 3000, migration.active && realtimeStatus === 'fallback')
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
   useEffect(() => {
     setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
@@ -3504,11 +3504,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     void refresh()
   }, [realtimeRevision, realtimeStatus, realtimeResources])
 
-  useEffect(() => {
-    if ((!working && !['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)) || realtimeStatus !== 'fallback') return
-    const timer = window.setInterval(() => { void refresh() }, 3000)
-    return () => window.clearInterval(timer)
-  }, [working, phase, realtimeStatus])
+  usePausedInterval(() => { void refresh() }, 3000, (working || ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)) && realtimeStatus === 'fallback')
 
   const install = async () => {
     if (working || !snapshot?.update_available) return
@@ -3690,11 +3686,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   useEffect(() => {
     if (realtimeRevision > 0 && realtimeStatus === 'open' && (realtimeResources.includes('controller_update') || realtimeResources.includes('all'))) void refresh(true)
   }, [realtimeRevision, realtimeStatus, realtimeResources])
-  useEffect(() => {
-    if (realtimeStatus !== 'fallback' || (!installExpected && !['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status))) return
-    const timer = window.setInterval(() => { void refresh(true) }, 3000)
-    return () => window.clearInterval(timer)
-  }, [snapshot.status, installExpected, realtimeStatus])
+  usePausedInterval(() => { void refresh(true) }, 3000, realtimeStatus === 'fallback' && (installExpected || ['downloading', 'ready', 'installing', 'cancelling', 'checking'].includes(snapshot.status)))
   useEffect(() => {
     if (!isControllerUpdateInProgressStatus(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
@@ -5419,11 +5411,8 @@ function AIAuditReviews({ data, client, notify }: any) {
       if (!quiet) setLoadingReviews(false)
     }
   }
-  useEffect(() => {
-    void refresh()
-    const timer = window.setInterval(() => void refresh(true), 5000)
-    return () => window.clearInterval(timer)
-  }, [])
+  useEffect(() => { void refresh() }, [])
+  usePausedInterval(() => { void refresh(true) }, 5000)
 
   const openDetail = async (reviewID: string) => {
     setWorking(`detail-${reviewID}`)
@@ -5458,11 +5447,9 @@ function AIAuditReviews({ data, client, notify }: any) {
       setWorking('')
     }
   }
-  useEffect(() => {
-    if (!detail || detail.review.status !== 'queued' && detail.review.status !== 'running') return
-    const timer = window.setInterval(() => void openDetail(detail.review.id), 5000)
-    return () => window.clearInterval(timer)
-  }, [detail?.review.id, detail?.review.status])
+  usePausedInterval(() => {
+    if (detail) void openDetail(detail.review.id)
+  }, 5000, Boolean(detail && (detail.review.status === 'queued' || detail.review.status === 'running')))
   const loadMoreEvidence = async () => {
     if (!detail || evidence.length >= evidenceTotal) return
     setWorking('evidence-more')

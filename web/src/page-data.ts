@@ -91,6 +91,15 @@ export class PageDataRequestCoordinator<T> {
     this.requests.delete(page)
   }
 
+  // cancelPrefetches aborts only warm-up requests when the panel is hidden.
+  cancelPrefetches() {
+    Array.from(this.requests.entries()).forEach(([page, pending]) => {
+      if (pending.priority !== 'prefetch') return
+      pending.controller.abort()
+      this.requests.delete(page)
+    })
+  }
+
   private abort(page: string) {
     this.requests.get(page)?.controller.abort()
   }
