@@ -907,8 +907,14 @@ function LatencyProbeSettingsDialog({
                 type="number"
                 min={30}
                 max={86400}
-                value={values.latency_probe_interval_seconds}
-                onChange={e => updateParam({ latency_probe_interval_seconds: Math.max(30, Math.min(86400, Number(e.target.value) || 60)) })}
+                placeholder="60"
+                value={values.latency_probe_interval_seconds === '' ? '' : values.latency_probe_interval_seconds}
+                onChange={e => updateParam({ latency_probe_interval_seconds: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+                onBlur={e => {
+                  const num = Number(e.target.value)
+                  if (!e.target.value || isNaN(num) || num < 30) updateParam({ latency_probe_interval_seconds: 30 })
+                  else if (num > 86400) updateParam({ latency_probe_interval_seconds: 86400 })
+                }}
               />
             </FormField>
 
@@ -918,8 +924,14 @@ function LatencyProbeSettingsDialog({
                 type="number"
                 min={1}
                 max={10}
-                value={values.latency_probe_sample_count}
-                onChange={e => updateParam({ latency_probe_sample_count: Math.max(1, Math.min(10, Number(e.target.value) || 3)) })}
+                placeholder="3"
+                value={values.latency_probe_sample_count === '' ? '' : values.latency_probe_sample_count}
+                onChange={e => updateParam({ latency_probe_sample_count: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+                onBlur={e => {
+                  const num = Number(e.target.value)
+                  if (!e.target.value || isNaN(num) || num < 1) updateParam({ latency_probe_sample_count: 1 })
+                  else if (num > 10) updateParam({ latency_probe_sample_count: 10 })
+                }}
               />
             </FormField>
 
@@ -929,8 +941,14 @@ function LatencyProbeSettingsDialog({
                 type="number"
                 min={1}
                 max={256}
-                value={values.latency_probe_max_targets}
-                onChange={e => updateParam({ latency_probe_max_targets: Math.max(1, Math.min(256, Number(e.target.value) || 64)) })}
+                placeholder="64"
+                value={values.latency_probe_max_targets === '' ? '' : values.latency_probe_max_targets}
+                onChange={e => updateParam({ latency_probe_max_targets: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+                onBlur={e => {
+                  const num = Number(e.target.value)
+                  if (!e.target.value || isNaN(num) || num < 1) updateParam({ latency_probe_max_targets: 1 })
+                  else if (num > 256) updateParam({ latency_probe_max_targets: 256 })
+                }}
               />
             </FormField>
           </div>
@@ -3777,8 +3795,38 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       </section><SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
       {activeSection === 'notifications' && <section id="settings-panel-notifications" role="tabpanel" className="settings-card">
         <SettingsGroup title="服务器离线与恢复提醒" description="统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。">
-          <SettingsRow label="默认离线判断时间（秒）" description="超过该时长未上报心跳即判定离线并触发提醒。"><input type="number" min={30} max={86400} value={notificationOfflineAfter} onChange={event => setNotificationOfflineAfter(Math.max(30, Number(event.target.value) || 120))} aria-label="默认离线判断时间" /></SettingsRow>
-          <SettingsRow label="恢复提醒延迟（秒）" description="短时间反复掉线不会频繁打扰。"><input type="number" min={0} max={86400} value={notificationOnlineAfter} onChange={event => setNotificationOnlineAfter(Math.max(0, Number(event.target.value) || 0))} aria-label="恢复提醒延迟" /></SettingsRow>
+          <SettingsRow label="默认离线判断时间（秒）" description="超过该时长未上报心跳即判定离线并触发提醒。">
+            <input
+              type="number"
+              min={30}
+              max={86400}
+              placeholder="120"
+              value={(notificationOfflineAfter as any) === '' ? '' : notificationOfflineAfter}
+              onChange={event => setNotificationOfflineAfter(event.target.value === '' ? ('' as any) : Number(event.target.value))}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (!event.target.value || isNaN(n) || n < 30) setNotificationOfflineAfter(120)
+                else if (n > 86400) setNotificationOfflineAfter(86400)
+              }}
+              aria-label="默认离线判断时间"
+            />
+          </SettingsRow>
+          <SettingsRow label="恢复提醒延迟（秒）" description="短时间反复掉线不会频繁打扰。">
+            <input
+              type="number"
+              min={0}
+              max={86400}
+              placeholder="0"
+              value={(notificationOnlineAfter as any) === '' ? '' : notificationOnlineAfter}
+              onChange={event => setNotificationOnlineAfter(event.target.value === '' ? ('' as any) : Number(event.target.value))}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (event.target.value !== '' && (isNaN(n) || n < 0)) setNotificationOnlineAfter(0)
+                else if (n > 86400) setNotificationOnlineAfter(86400)
+              }}
+              aria-label="恢复提醒延迟"
+            />
+          </SettingsRow>
           <SettingsSwitchRow label="合并离线提醒" description="同时失联的多台服务器合并为一条通知发送。" checked={notificationMergeOffline} onChange={setNotificationMergeOffline} disabled={Boolean(saving)} ariaLabel="合并离线提醒" />
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </SettingsGroup>
@@ -4703,7 +4751,21 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
             <FormField label="备份频率"><Select value={draft.schedule} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value as 'daily' | 'weekly' }))}><option value="daily">每天</option><option value="weekly">每周</option></Select></FormField>
             {draft.schedule === 'weekly' && <FormField label="每周日期"><Select value={draft.weekday} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, weekday: Number(event.target.value) }))}>{weekdayNames.map((label, index) => <option key={label} value={index}>{label}</option>)}</Select></FormField>}
             <FormField label="执行时间" hint="使用“流量控制”中的统计时区"><input type="time" value={draft.time} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, time: event.target.value || '03:00' }))} /></FormField>
-            <FormField label="本地保留数量" hint="手动、自动和上传的备份共用此数量"><input type="number" min={1} max={100} value={draft.local_retention} onChange={event => setDraft(current => ({ ...current, local_retention: Math.max(1, Math.min(100, Number(event.target.value) || 1)) }))} /></FormField>
+            <FormField label="本地保留数量" hint="手动、自动和上传的备份共用此数量">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                placeholder="1"
+                value={(draft.local_retention as any) === '' ? '' : draft.local_retention}
+                onChange={event => setDraft(current => ({ ...current, local_retention: event.target.value === '' ? ('' as any) : Number(event.target.value) }))}
+                onBlur={event => {
+                  const n = Number(event.target.value)
+                  if (!event.target.value || isNaN(n) || n < 1) setDraft(c => ({ ...c, local_retention: 1 }))
+                  else if (n > 100) setDraft(c => ({ ...c, local_retention: 100 }))
+                }}
+              />
+            </FormField>
           </div>
         </section>
         <section className="backup-form-section">
@@ -4717,7 +4779,21 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
           <div className="backup-form-section-head"><div><strong>第三方备份</strong><span>启用后，新备份会同时上传一份到您自己的存储中。</span></div><Switch checked={destination.enabled} onChange={checked => updateDestination({ enabled: checked })} ariaLabel="启用第三方备份" /></div>
           {destination.enabled && <div className="backup-dialog-grid">
             <FormField label="存储类型"><Select value={destination.provider} onChange={event => updateDestination({ provider: event.target.value as BackupDestination['provider'] })}><option value="">请选择</option><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></Select></FormField>
-            <FormField label="第三方存储保留数量" hint="达到数量后，只清理当前存储位置中的旧备份"><input type="number" min={1} max={365} value={draft.remote_retention} onChange={event => setDraft(current => ({ ...current, remote_retention: Math.max(1, Math.min(365, Number(event.target.value) || 1)) }))} /></FormField>
+            <FormField label="第三方存储保留数量" hint="达到数量后，只清理当前存储位置中的旧备份">
+              <input
+                type="number"
+                min={1}
+                max={365}
+                placeholder="1"
+                value={(draft.remote_retention as any) === '' ? '' : draft.remote_retention}
+                onChange={event => setDraft(current => ({ ...current, remote_retention: event.target.value === '' ? ('' as any) : Number(event.target.value) }))}
+                onBlur={event => {
+                  const n = Number(event.target.value)
+                  if (!event.target.value || isNaN(n) || n < 1) setDraft(c => ({ ...c, remote_retention: 1 }))
+                  else if (n > 365) setDraft(c => ({ ...c, remote_retention: 365 }))
+                }}
+              />
+            </FormField>
             {destination.provider && <><FormField label={destination.provider === 'webdav' ? 'WebDAV 地址' : '服务地址'} hint="建议使用 HTTPS 地址"><input required value={destination.endpoint || ''} onChange={event => updateDestination({ endpoint: event.target.value })} placeholder={destination.provider === 'webdav' ? 'https://dav.example.com/oboard' : 'https://s3.example.com'} /></FormField>
             <FormField label="目录前缀" hint="系统只会管理此目录下由 OBoard 创建的备份"><input value={destination.prefix || ''} onChange={event => updateDestination({ prefix: event.target.value })} placeholder="oboard-backups" /></FormField></>}
             {destination.provider === 's3' && <><FormField label="存储桶"><input required value={destination.bucket || ''} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><FormField label="访问密钥"><input type="password" autoComplete="new-password" value={s3AccessKey} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" autoComplete="new-password" value={s3SecretKey} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><div className="switch-form-row backup-path-style"><span><strong>使用路径风格地址</strong><small>存储服务要求存储桶名称出现在地址路径中时开启。</small></span><Switch checked={Boolean(destination.force_path_style)} onChange={checked => updateDestination({ force_path_style: checked })} ariaLabel="使用路径风格地址" /></div></>}
@@ -5399,8 +5475,36 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
     <div className="settings-card-head"><div><h3>主控运行日志</h3><p className="muted">查看 API、后台任务和运行错误。日志会自动脱敏并按大小轮转。</p></div><span className="status-pill">{formatBytes(Number(snapshot?.total_size_bytes || 0))}</span></div>
     <SettingsDisclosure title="日志轮转策略" description="低频调整项，日志会按大小自动轮转。" summary={`${maxMB} MB · 保留 ${backups} 份`}>
       <div className="controller-log-policy">
-        <FormField label="单个日志上限" hint="1-1024 MB"><input type="number" min={1} max={1024} value={maxMB} onChange={e => setMaxMB(Math.max(1, Math.min(1024, Number(e.target.value) || 1)))} /></FormField>
-        <FormField label="保留备份数" hint="0-20 个"><input type="number" min={0} max={20} value={backups} onChange={e => setBackups(Math.max(0, Math.min(20, Number(e.target.value) || 0)))} /></FormField>
+        <FormField label="单个日志上限" hint="1-1024 MB">
+          <input
+            type="number"
+            min={1}
+            max={1024}
+            placeholder="10"
+            value={maxMB === '' ? '' : maxMB}
+            onChange={e => setMaxMB(e.target.value === '' ? ('' as any) : Number(e.target.value))}
+            onBlur={e => {
+              const n = Number(e.target.value)
+              if (!e.target.value || isNaN(n) || n < 1) setMaxMB(1)
+              else if (n > 1024) setMaxMB(1024)
+            }}
+          />
+        </FormField>
+        <FormField label="保留备份数" hint="0-20 个">
+          <input
+            type="number"
+            min={0}
+            max={20}
+            placeholder="5"
+            value={backups === '' ? '' : backups}
+            onChange={e => setBackups(e.target.value === '' ? ('' as any) : Number(e.target.value))}
+            onBlur={e => {
+              const n = Number(e.target.value)
+              if (e.target.value !== '' && (isNaN(n) || n < 0)) setBackups(0)
+              else if (n > 20) setBackups(20)
+            }}
+          />
+        </FormField>
         <button onClick={onSave} disabled={saving}>{saving ? '保存中...' : '保存策略'}</button>
       </div>
     </SettingsDisclosure>
@@ -5681,11 +5785,11 @@ function AuditPolicySettings({ initialPolicy, auditAction, client, notify, onSav
     setPolicy(cloneAuditPolicy(preset))
     setPresetMode(value as AuditPolicy['mode'])
   }
-  const updateThreshold = (key: keyof AuditPolicy, side: keyof AuditThreshold, value: number) => {
+  const updateThreshold = (key: keyof AuditPolicy, side: keyof AuditThreshold, value: number | string) => {
     setPresetMode('custom')
     setPolicy(current => {
       const threshold = current[key] as AuditThreshold
-      const next = Math.max(0, Math.round(value || 0))
+      const next = value === '' ? ('' as any) : Math.max(0, Math.round(Number(value) || 0))
       return { ...current, mode: 'custom', [key]: { ...threshold, [side]: next } }
     })
   }
@@ -5693,8 +5797,19 @@ function AuditPolicySettings({ initialPolicy, auditAction, client, notify, onSav
     if (saving) return
     setSaving(true)
     try {
-      const result = await client.request('/settings', { method: 'POST', body: JSON.stringify({ audit_policy: policy }) })
-      const savedPolicy = auditPolicyValue(result?.settings?.audit_policy || policy)
+      const sanitizedPolicy: any = { ...policy }
+      for (const [key] of thresholds) {
+        const t = (sanitizedPolicy as any)[key] as AuditThreshold
+        sanitizedPolicy[key] = {
+          soft: Math.max(0, Number(t?.soft) || 0),
+          hard: Math.max(1, Number(t?.hard) || 1),
+        }
+      }
+      sanitizedPolicy.clone_overlap_seconds = Math.max(10, Math.min(600, Number(policy.clone_overlap_seconds) || 10))
+      sanitizedPolicy.auto_action_confidence = Math.max(0.5, Math.min(1, Number(policy.auto_action_confidence) || 0.5))
+
+      const result = await client.request('/settings', { method: 'POST', body: JSON.stringify({ audit_policy: sanitizedPolicy }) })
+      const savedPolicy = auditPolicyValue(result?.settings?.audit_policy || sanitizedPolicy)
       setPolicy(savedPolicy)
       setPresetMode(auditPolicyMode(savedPolicy))
       onSaved(savedPolicy)
@@ -5733,17 +5848,82 @@ function AuditPolicySettings({ initialPolicy, auditAction, client, notify, onSav
           const threshold = policy[key] as AuditThreshold
           return <div className="audit-policy-threshold-row" key={key}>
             <label htmlFor={`audit-policy-${key}-soft`}><strong>{label}</strong><small>{hint}</small></label>
-            <input id={`audit-policy-${key}-soft`} type="number" min={0} max={999999} value={threshold.soft} aria-label={`${label}柔性阈值`} onChange={event => updateThreshold(key, 'soft', Number(event.target.value))} />
-            <input type="number" min={1} max={1000000} value={threshold.hard} aria-label={`${label}满分阈值`} onChange={event => updateThreshold(key, 'hard', Number(event.target.value))} />
+            <input
+              id={`audit-policy-${key}-soft`}
+              type="number"
+              min={0}
+              max={999999}
+              placeholder="0"
+              value={(threshold.soft as any) === '' ? '' : threshold.soft}
+              aria-label={`${label}柔性阈值`}
+              onChange={event => updateThreshold(key, 'soft', event.target.value === '' ? '' : Number(event.target.value))}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (event.target.value !== '' && (isNaN(n) || n < 0)) updateThreshold(key, 'soft', 0)
+              }}
+            />
+            <input
+              type="number"
+              min={1}
+              max={1000000}
+              placeholder="1"
+              value={(threshold.hard as any) === '' ? '' : threshold.hard}
+              aria-label={`${label}满分阈值`}
+              onChange={event => updateThreshold(key, 'hard', event.target.value === '' ? '' : Number(event.target.value))}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (!event.target.value || isNaN(n) || n < 1) updateThreshold(key, 'hard', 1)
+              }}
+            />
           </div>
         })}
       </div>
       <div className="audit-policy-guards">
         <FormField label="设备克隆重叠时间" hint="同一设备凭证在独立网络上持续有效传输后形成强信号。">
-          <div className="input-with-unit"><input type="number" min={10} max={600} value={policy.clone_overlap_seconds} onChange={event => { setPresetMode('custom'); setPolicy(current => ({ ...current, mode: 'custom', clone_overlap_seconds: Math.max(10, Number(event.target.value) || 10) })) }} /><span>秒</span></div>
+          <div className="input-with-unit">
+            <input
+              type="number"
+              min={10}
+              max={600}
+              placeholder="10"
+              value={(policy.clone_overlap_seconds as any) === '' ? '' : policy.clone_overlap_seconds}
+              onChange={event => {
+                setPresetMode('custom')
+                setPolicy(current => ({ ...current, mode: 'custom', clone_overlap_seconds: event.target.value === '' ? ('' as any) : Number(event.target.value) }))
+              }}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (!event.target.value || isNaN(n) || n < 10) setPolicy(c => ({ ...c, clone_overlap_seconds: 10 }))
+                else if (n > 600) setPolicy(c => ({ ...c, clone_overlap_seconds: 600 }))
+              }}
+            />
+            <span>秒</span>
+          </div>
         </FormField>
         <FormField label="自动动作最低置信度" hint="仍需至少两类独立证据、完整采集覆盖和设备专属身份。">
-          <div className="input-with-unit"><input type="number" min={50} max={100} value={Math.round(policy.auto_action_confidence * 100)} onChange={event => { setPresetMode('custom'); setPolicy(current => ({ ...current, mode: 'custom', auto_action_confidence: Math.max(.5, Math.min(1, Number(event.target.value) / 100 || .5)) })) }} /><span>%</span></div>
+          <div className="input-with-unit">
+            <input
+              type="number"
+              min={50}
+              max={100}
+              placeholder="80"
+              value={(policy.auto_action_confidence as any) === '' ? '' : Math.round(Number(policy.auto_action_confidence) * 100)}
+              onChange={event => {
+                setPresetMode('custom')
+                setPolicy(current => ({
+                  ...current,
+                  mode: 'custom',
+                  auto_action_confidence: event.target.value === '' ? ('' as any) : Number(event.target.value) / 100,
+                }))
+              }}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (!event.target.value || isNaN(n) || n < 50) setPolicy(c => ({ ...c, auto_action_confidence: 0.5 }))
+                else if (n > 100) setPolicy(c => ({ ...c, auto_action_confidence: 1 }))
+              }}
+            />
+            <span>%</span>
+          </div>
         </FormField>
       </div>
       <div className="settings-actions"><button type="button" onClick={() => void save()} disabled={saving} aria-busy={saving || undefined}>{saving ? '保存中...' : '保存风险策略'}</button></div>
@@ -7458,7 +7638,19 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
           </FormField>
           {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
-            <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
+            <input
+              type="number"
+              min={0}
+              max={86400}
+              placeholder="0"
+              value={draft.offline_after_seconds === '' || draft.offline_after_seconds === undefined || draft.offline_after_seconds === null ? '' : draft.offline_after_seconds}
+              onChange={e => update({ offline_after_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ offline_after_seconds: 0 })
+                else if (n > 86400) update({ offline_after_seconds: 86400 })
+              }}
+            />
           </FormField>}
 
           <div className="form-extra-row">
@@ -7574,7 +7766,19 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
             <Switch checked={Boolean(draft.offline_notify_enabled)} onChange={checked => update({ offline_notify_enabled: checked })} ariaLabel="离线与恢复提醒" />
           </FormField>
           {Boolean(draft.offline_notify_enabled) && <FormField label="离线判断时间（秒）" hint="留空或 0 表示使用设置中的默认值。">
-            <input type="number" min={0} max={86400} value={Number(draft.offline_after_seconds) || 0} onChange={e => update({ offline_after_seconds: Math.max(0, Number(e.target.value) || 0) })} />
+            <input
+              type="number"
+              min={0}
+              max={86400}
+              placeholder="0"
+              value={draft.offline_after_seconds === '' || draft.offline_after_seconds === undefined || draft.offline_after_seconds === null ? '' : draft.offline_after_seconds}
+              onChange={e => update({ offline_after_seconds: e.target.value === '' ? '' : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ offline_after_seconds: 0 })
+                else if (n > 86400) update({ offline_after_seconds: 86400 })
+              }}
+            />
           </FormField>}
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
         </div>
@@ -7622,15 +7826,85 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
           <FormField label="面板连接地址"><input value={cfg.controller_url} onChange={e => update({ controller_url: e.target.value })} /></FormField>
           <FormField label="内核路径"><input value={cfg.core_binary} onChange={e => update({ core_binary: e.target.value })} /></FormField>
           <FormField label="内核服务名"><input value={cfg.core_service} onChange={e => update({ core_service: e.target.value })} /></FormField>
-		  <FormField label="命令超时" hint="范围 5–120 秒。"><input type="number" min={5} max={120} value={cfg.command_timeout_seconds} onChange={e => update({ command_timeout_seconds: Number(e.target.value) })} /></FormField>
+		  <FormField label="命令超时" hint="范围 5–120 秒。">
+        <input
+          type="number"
+          min={5}
+          max={120}
+          placeholder="30"
+          value={(cfg.command_timeout_seconds as any) === '' ? '' : cfg.command_timeout_seconds}
+          onChange={e => update({ command_timeout_seconds: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+          onBlur={e => {
+            const n = Number(e.target.value)
+            if (!e.target.value || isNaN(n) || n < 5) update({ command_timeout_seconds: 5 })
+            else if (n > 120) update({ command_timeout_seconds: 120 })
+          }}
+        />
+      </FormField>
           <FormField label="热重载方式"><Select value={cfg.reload_command} onChange={e => update({ reload_command: e.target.value })}>{reloadCommands.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="重启方式"><Select value={cfg.restart_command} onChange={e => update({ restart_command: e.target.value })}>{restartCommands.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="时间同步方式"><Select value={cfg.time_sync_command} onChange={e => update({ time_sync_command: e.target.value })}>{timeSyncCommands.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <div className="form-section-title">日志保留</div>
-          <FormField label="Agent 单个日志上限" hint="1-1024 MB"><input type="number" min={1} max={1024} value={cfg.log_max_mb} onChange={e => update({ log_max_mb: Number(e.target.value) })} /></FormField>
-          <FormField label="Agent 备份数" hint="0-20 个"><input type="number" min={0} max={20} value={cfg.log_backups} onChange={e => update({ log_backups: Number(e.target.value) })} /></FormField>
-          <FormField label="内核单个日志上限" hint="1-1024 MB"><input type="number" min={1} max={1024} value={cfg.core_log_max_mb} onChange={e => update({ core_log_max_mb: Number(e.target.value) })} /></FormField>
-          <FormField label="内核备份数" hint="0-20 个"><input type="number" min={0} max={20} value={cfg.core_log_backups} onChange={e => update({ core_log_backups: Number(e.target.value) })} /></FormField>
+          <FormField label="Agent 单个日志上限" hint="1-1024 MB">
+            <input
+              type="number"
+              min={1}
+              max={1024}
+              placeholder="10"
+              value={(cfg.log_max_mb as any) === '' ? '' : cfg.log_max_mb}
+              onChange={e => update({ log_max_mb: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (!e.target.value || isNaN(n) || n < 1) update({ log_max_mb: 1 })
+                else if (n > 1024) update({ log_max_mb: 1024 })
+              }}
+            />
+          </FormField>
+          <FormField label="Agent 备份数" hint="0-20 个">
+            <input
+              type="number"
+              min={0}
+              max={20}
+              placeholder="3"
+              value={(cfg.log_backups as any) === '' ? '' : cfg.log_backups}
+              onChange={e => update({ log_backups: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ log_backups: 0 })
+                else if (n > 20) update({ log_backups: 20 })
+              }}
+            />
+          </FormField>
+          <FormField label="内核单个日志上限" hint="1-1024 MB">
+            <input
+              type="number"
+              min={1}
+              max={1024}
+              placeholder="10"
+              value={(cfg.core_log_max_mb as any) === '' ? '' : cfg.core_log_max_mb}
+              onChange={e => update({ core_log_max_mb: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (!e.target.value || isNaN(n) || n < 1) update({ core_log_max_mb: 1 })
+                else if (n > 1024) update({ core_log_max_mb: 1024 })
+              }}
+            />
+          </FormField>
+          <FormField label="内核备份数" hint="0-20 个">
+            <input
+              type="number"
+              min={0}
+              max={20}
+              placeholder="3"
+              value={(cfg.core_log_backups as any) === '' ? '' : cfg.core_log_backups}
+              onChange={e => update({ core_log_backups: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (e.target.value !== '' && (isNaN(n) || n < 0)) update({ core_log_backups: 0 })
+                else if (n > 20) update({ core_log_backups: 20 })
+              }}
+            />
+          </FormField>
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={() => onSubmit(cfg)}>同步到 Agent</button></footer>
@@ -7638,12 +7912,18 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
 }
 
 function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>; nested?: boolean }) {
-  const [value, setValue] = useState({
+  const [value, setValue] = useState<{
+    mtu_mode: string
+    mtu_value: number | string
+    mtu_probe_host: string
+    mtu_probe_port: number | string
+    mtu_overhead_bytes: number | string
+  }>({
     mtu_mode: draft.mtu_mode,
-    mtu_value: draft.mtu_value,
+    mtu_value: draft.mtu_value === 0 ? '' : draft.mtu_value,
     mtu_probe_host: draft.mtu_probe_host,
     mtu_probe_port: draft.mtu_probe_port,
-    mtu_overhead_bytes: draft.mtu_overhead_bytes,
+    mtu_overhead_bytes: draft.mtu_overhead_bytes === 0 ? '' : draft.mtu_overhead_bytes,
   })
   const [saving, setSaving] = useState(false)
   const update = (patch: Partial<typeof value>) => setValue(old => ({ ...old, ...patch }))
@@ -7651,7 +7931,13 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
     if (saving) return
     setSaving(true)
     try {
-      await onSave(value)
+      await onSave({
+        mtu_mode: value.mtu_mode,
+        mtu_value: Math.max(0, Number(value.mtu_value) || 0),
+        mtu_probe_host: value.mtu_probe_host || '1.1.1.1',
+        mtu_probe_port: Math.max(1, Math.min(65535, Number(value.mtu_probe_port) || 443)),
+        mtu_overhead_bytes: Math.max(0, Number(value.mtu_overhead_bytes) || 0),
+      })
     } finally {
       setSaving(false)
     }
@@ -7668,16 +7954,42 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
             <Select variant="segmented" value={value.mtu_mode} onChange={e => update({ mtu_mode: e.target.value })}>{mtuModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
           <FormField label="指定 MTU" hint="0 表示自动。">
-            <input type="number" value={value.mtu_value} onChange={e => update({ mtu_value: Number(e.target.value) })} placeholder="0" />
+            <input
+              type="number"
+              placeholder="0"
+              value={value.mtu_value === '' ? '' : value.mtu_value}
+              onChange={e => update({ mtu_value: e.target.value === '' ? '' : Number(e.target.value) })}
+              onBlur={e => {
+                if (e.target.value !== '' && Number(e.target.value) < 0) update({ mtu_value: 0 })
+              }}
+            />
           </FormField>
           <FormField label="探测目标主机" hint="默认 1.1.1.1">
             <input value={value.mtu_probe_host} onChange={e => update({ mtu_probe_host: e.target.value })} placeholder="1.1.1.1" />
           </FormField>
           <FormField label="探测目标端口" hint="默认 443">
-            <input type="number" value={value.mtu_probe_port} onChange={e => update({ mtu_probe_port: Number(e.target.value) })} placeholder="443" />
+            <input
+              type="number"
+              placeholder="443"
+              value={value.mtu_probe_port === '' ? '' : value.mtu_probe_port}
+              onChange={e => update({ mtu_probe_port: e.target.value === '' ? '' : Number(e.target.value) })}
+              onBlur={e => {
+                const n = Number(e.target.value)
+                if (!e.target.value || isNaN(n) || n < 1) update({ mtu_probe_port: 443 })
+                else if (n > 65535) update({ mtu_probe_port: 65535 })
+              }}
+            />
           </FormField>
           <FormField label="额外开销字节" hint="不确定时保持 0">
-            <input type="number" value={value.mtu_overhead_bytes} onChange={e => update({ mtu_overhead_bytes: Number(e.target.value) })} placeholder="0" />
+            <input
+              type="number"
+              placeholder="0"
+              value={value.mtu_overhead_bytes === '' ? '' : value.mtu_overhead_bytes}
+              onChange={e => update({ mtu_overhead_bytes: e.target.value === '' ? '' : Number(e.target.value) })}
+              onBlur={e => {
+                if (e.target.value !== '' && Number(e.target.value) < 0) update({ mtu_overhead_bytes: 0 })
+              }}
+            />
           </FormField>
         </div>
       </div>
@@ -15869,14 +16181,27 @@ function UserPasswordDialog({ user, onCancel, onSubmit }: { user: User; onCancel
 function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>> }) {
   return <>
     <FormField label="限速策略" hint="个人设置优先于套餐。">
-      <Select variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && draft.speed_limit_mbps <= 0 ? 10 : draft.speed_limit_mbps }) }}>
+      <Select variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && Number(draft.speed_limit_mbps) <= 0 ? 10 : draft.speed_limit_mbps }) }}>
         <option value="inherit">跟随套餐</option>
         <option value="unlimited">不限速</option>
         <option value="custom">自定义</option>
       </Select>
     </FormField>
     {draft.speed_limit_mode === 'custom' && <FormField label="用户限速">
-      <div className="input-with-unit"><input type="number" min={1} value={draft.speed_limit_mbps} onChange={e => setDraft({ ...draft, speed_limit_mbps: Number(e.target.value) })} /><span>Mbps</span></div>
+      <div className="input-with-unit">
+        <input
+          type="number"
+          min={1}
+          placeholder="10"
+          value={(draft.speed_limit_mbps as any) === '' || draft.speed_limit_mbps === 0 ? '' : draft.speed_limit_mbps}
+          onChange={e => setDraft({ ...draft, speed_limit_mbps: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
+          onBlur={e => {
+            const n = Number(e.target.value)
+            if (!e.target.value || isNaN(n) || n < 1) setDraft(d => ({ ...d, speed_limit_mbps: 1 }))
+          }}
+        />
+        <span>Mbps</span>
+      </div>
     </FormField>}
     <FormField label="流量策略" hint="个人设置优先于套餐。">
       <Select variant="segmented" value={draft.traffic_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, traffic_limit_mode: mode, traffic_limit_bytes: mode === 'custom' && draft.traffic_limit_bytes <= 0 ? 1073741824 : draft.traffic_limit_bytes }) }}>
@@ -15894,7 +16219,7 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
   </>
 }
 
-function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number; onChange: (patch: any) => void }) {
+function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number | string; onChange: (patch: any) => void }) {
   return <>
     <FormField label="流量重置">
       <Select variant="segmented" value={mode || 'monthly'} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
@@ -15903,7 +16228,19 @@ function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number
       </Select>
     </FormField>
     {(mode || 'monthly') === 'month_day' && <FormField label="重置日" hint="短月使用最后一天。">
-      <input type="number" min={1} max={31} value={day || 1} onChange={e => onChange({ traffic_reset_day: Number(e.target.value) })} />
+      <input
+        type="number"
+        min={1}
+        max={31}
+        placeholder="1"
+        value={day === '' || day === undefined || day === null ? '' : day}
+        onChange={e => onChange({ traffic_reset_day: e.target.value === '' ? '' : Number(e.target.value) })}
+        onBlur={e => {
+          const val = Number(e.target.value)
+          if (!e.target.value || isNaN(val) || val < 1) onChange({ traffic_reset_day: 1 })
+          else if (val > 31) onChange({ traffic_reset_day: 31 })
+        }}
+      />
     </FormField>}
   </>
 }

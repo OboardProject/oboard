@@ -20,7 +20,21 @@ export function EndpointEditor({ endpoint, index, canDelete, testing, onChange, 
     </div>
     <div className="two-column">
       <FormField label="Endpoint 名称" required><input required value={endpoint.name} onChange={event => update('name', event.target.value)} /></FormField>
-      <FormField label="优先级" hint="数值越小越优先"><input type="number" min={1} max={1000000} required value={endpoint.priority} onChange={event => update('priority', Number(event.target.value))} /></FormField>
+      <FormField label="优先级" hint="数值越小越优先">
+        <input
+          type="number"
+          min={1}
+          max={1000000}
+          placeholder="1"
+          required
+          value={(endpoint.priority as any) === '' || endpoint.priority === undefined ? '' : endpoint.priority}
+          onChange={event => update('priority', event.target.value === '' ? ('' as any) : Number(event.target.value))}
+          onBlur={event => {
+            const n = Number(event.target.value)
+            if (!event.target.value || isNaN(n) || n < 1) update('priority', 1)
+          }}
+        />
+      </FormField>
     </div>
     <FormField label="Base URL" required><input required value={endpoint.baseURL} onChange={event => update('baseURL', event.target.value)} placeholder="https://api.example.com/v1" /></FormField>
     <div className="two-column">
@@ -35,9 +49,43 @@ export function EndpointEditor({ endpoint, index, canDelete, testing, onChange, 
     <details className="automation-advanced">
       <summary><span><strong>高级设置</strong><small>路径、超时、重试、私网和 Header</small></span><ChevronDown size={16} /></summary>
       <div className="automation-advanced-body">
-        <div className="two-column"><FormField label="模型覆盖"><input value={endpoint.modelOverride} onChange={event => update('modelOverride', event.target.value)} /></FormField><FormField label="超时 (ms)"><input type="number" min={1000} max={600000} value={endpoint.timeoutMS} onChange={event => update('timeoutMS', Number(event.target.value))} /></FormField></div>
+        <div className="two-column">
+          <FormField label="模型覆盖"><input value={endpoint.modelOverride} onChange={event => update('modelOverride', event.target.value)} /></FormField>
+          <FormField label="超时 (ms)">
+            <input
+              type="number"
+              min={1000}
+              max={600000}
+              placeholder="30000"
+              value={(endpoint.timeoutMS as any) === '' || endpoint.timeoutMS === undefined ? '' : endpoint.timeoutMS}
+              onChange={event => update('timeoutMS', event.target.value === '' ? ('' as any) : Number(event.target.value))}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (!event.target.value || isNaN(n) || n < 1000) update('timeoutMS', 1000)
+                else if (n > 600000) update('timeoutMS', 600000)
+              }}
+            />
+          </FormField>
+        </div>
         <div className="two-column"><FormField label="Models Path"><input value={endpoint.modelsPath} onChange={event => update('modelsPath', event.target.value)} placeholder="/models" /></FormField><FormField label="Generate Path"><input value={endpoint.generatePath} onChange={event => update('generatePath', event.target.value)} placeholder="使用协议默认路径" /></FormField></div>
-        <div className="two-column"><FormField label="重试次数"><input type="number" min={0} max={10} value={endpoint.maxRetries} onChange={event => update('maxRetries', Number(event.target.value))} /></FormField><FormField label="Custom Headers" hint="每行 Name: Value"><textarea rows={3} value={endpoint.headers} onChange={event => update('headers', event.target.value)} placeholder="X-Tenant: production" /></FormField></div>
+        <div className="two-column">
+          <FormField label="重试次数">
+            <input
+              type="number"
+              min={0}
+              max={10}
+              placeholder="0"
+              value={(endpoint.maxRetries as any) === '' || endpoint.maxRetries === undefined ? '' : endpoint.maxRetries}
+              onChange={event => update('maxRetries', event.target.value === '' ? ('' as any) : Number(event.target.value))}
+              onBlur={event => {
+                const n = Number(event.target.value)
+                if (event.target.value !== '' && (isNaN(n) || n < 0)) update('maxRetries', 0)
+                else if (n > 10) update('maxRetries', 10)
+              }}
+            />
+          </FormField>
+          <FormField label="Custom Headers" hint="每行 Name: Value"><textarea rows={3} value={endpoint.headers} onChange={event => update('headers', event.target.value)} placeholder="X-Tenant: production" /></FormField>
+        </div>
         <div className="switch-form-row" style={{ padding: '4px 0' }}>
           <span className="switch-form-label">启用 Endpoint</span>
           <Switch checked={endpoint.enabled} onChange={checked => update('enabled', checked)} />

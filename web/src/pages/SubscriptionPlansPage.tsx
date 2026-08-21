@@ -1081,7 +1081,19 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             <FormField label="名称" required><Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" /></FormField>
             <FormField label="描述"><Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" /></FormField>
             <FormField label="速度上限" hint="0 表示不限速。">
-              <div className="input-with-unit"><Input type="number" min={0} placeholder="0" value={createDraft.speed_limit_mbps || ''} onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)) }))} /><span>Mbps</span></div>
+              <div className="input-with-unit">
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="0"
+                  value={(createDraft.speed_limit_mbps as any) === '' || createDraft.speed_limit_mbps === 0 ? '' : createDraft.speed_limit_mbps}
+                  onChange={e => setCreateDraft(d => ({ ...d, speed_limit_mbps: e.target.value === '' ? ('' as any) : Math.max(0, Number(e.target.value)) }))}
+                  onBlur={e => {
+                    if (e.target.value !== '' && Number(e.target.value) < 0) setCreateDraft(d => ({ ...d, speed_limit_mbps: 0 }))
+                  }}
+                />
+                <span>Mbps</span>
+              </div>
             </FormField>
             <FormField label="流量额度" hint="0 表示不限量。"><TrafficLimitInput bytes={createDraft.traffic_limit_bytes} onChange={v => setCreateDraft(d => ({ ...d, traffic_limit_bytes: v }))} /></FormField>
             <FormField label="重置方式">
@@ -1093,7 +1105,22 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
               </Select>
             </FormField>
             {createDraft.traffic_reset_mode === 'month_day' && <FormField label="重置日" hint="短月使用当月最后一天。">
-              <div className="input-with-unit"><Input type="number" min={1} max={31} value={createDraft.traffic_reset_day} onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} /><span>日</span></div>
+              <div className="input-with-unit">
+                <Input
+                  type="number"
+                  min={1}
+                  max={31}
+                  placeholder="1"
+                  value={(createDraft.traffic_reset_day as any) === '' ? '' : (createDraft.traffic_reset_day ?? '')}
+                  onChange={e => setCreateDraft(d => ({ ...d, traffic_reset_day: e.target.value === '' ? ('' as any) : Number(e.target.value) }))}
+                  onBlur={e => {
+                    const n = Number(e.target.value)
+                    if (!e.target.value || isNaN(n) || n < 1) setCreateDraft(d => ({ ...d, traffic_reset_day: 1 }))
+                    else if (n > 31) setCreateDraft(d => ({ ...d, traffic_reset_day: 31 }))
+                  }}
+                />
+                <span>日</span>
+              </div>
             </FormField>}
           </form>
           <div>
@@ -1148,7 +1175,16 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             </FormField>
             <FormField label="速度上限" hint="0 表示不限速。">
               <div className="input-with-unit">
-                <Input type="number" min={0} placeholder="0" value={editDraft.speed_limit_mbps || ''} onChange={e => setEditDraft(d => ({ ...d, speed_limit_mbps: e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)) }))} />
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="0"
+                  value={(editDraft.speed_limit_mbps as any) === '' || editDraft.speed_limit_mbps === 0 ? '' : editDraft.speed_limit_mbps}
+                  onChange={e => setEditDraft(d => ({ ...d, speed_limit_mbps: e.target.value === '' ? ('' as any) : Math.max(0, Number(e.target.value)) }))}
+                  onBlur={e => {
+                    if (e.target.value !== '' && Number(e.target.value) < 0) setEditDraft(d => ({ ...d, speed_limit_mbps: 0 }))
+                  }}
+                />
                 <span>Mbps</span>
               </div>
             </FormField>
@@ -1165,7 +1201,19 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
             </FormField>
             {editDraft.traffic_reset_mode === 'month_day' && <FormField label="重置日" hint="1–31；短月使用当月最后一天。">
               <div className="input-with-unit">
-                <Input type="number" min={1} max={31} value={editDraft.traffic_reset_day} onChange={e => setEditDraft(d => ({ ...d, traffic_reset_day: Number(e.target.value) }))} />
+                <Input
+                  type="number"
+                  min={1}
+                  max={31}
+                  placeholder="1"
+                  value={(editDraft.traffic_reset_day as any) === '' ? '' : (editDraft.traffic_reset_day ?? '')}
+                  onChange={e => setEditDraft(d => ({ ...d, traffic_reset_day: e.target.value === '' ? ('' as any) : Number(e.target.value) }))}
+                  onBlur={e => {
+                    const n = Number(e.target.value)
+                    if (!e.target.value || isNaN(n) || n < 1) setEditDraft(d => ({ ...d, traffic_reset_day: 1 }))
+                    else if (n > 31) setEditDraft(d => ({ ...d, traffic_reset_day: 31 }))
+                  }}
+                />
                 <span>日</span>
               </div>
             </FormField>}

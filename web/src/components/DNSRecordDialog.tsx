@@ -115,7 +115,23 @@ export function DNSRecordDialog({ zoneOptions, zoneID, setZoneID, draft, setDraf
           </div>
         </FormField>
         <FormField label="记录值" required><input aria-label="记录值" required value={draft.content} onChange={event => update({ content: event.target.value })} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder={draft.type === 'AAAA' ? '例如：2001:db8::1' : draft.type === 'CNAME' ? '例如：target.example.com' : draft.type === 'TXT' ? '例如：v=spf1...' : '例如：1.2.3.4'} /></FormField>
-        <FormField label="TTL" required hint={draft.proxied ? 'Cloudflare 代理开启时使用自动 TTL。' : '记录在解析缓存中的有效时间，单位为秒。'}><input aria-label="TTL" required type="number" min={1} step={1} disabled={draft.proxied} value={draft.ttl} onChange={event => update({ ttl: Math.max(1, Number(event.target.value) || 1) })} /></FormField>
+        <FormField label="TTL" required hint={draft.proxied ? 'Cloudflare 代理开启时使用自动 TTL。' : '记录在解析缓存中的有效时间，单位为秒。'}>
+          <input
+            aria-label="TTL"
+            required
+            type="number"
+            min={1}
+            step={1}
+            placeholder="60"
+            disabled={draft.proxied}
+            value={(draft.ttl as any) === '' || draft.ttl === undefined || draft.ttl === null ? '' : draft.ttl}
+            onChange={event => update({ ttl: event.target.value === '' ? ('' as any) : Number(event.target.value) })}
+            onBlur={event => {
+              const n = Number(event.target.value)
+              if (!event.target.value || isNaN(n) || n < 1) update({ ttl: 1 })
+            }}
+          />
+        </FormField>
         <FormField label="解析备注" hint="备注属于这条子域名解析；自动创建时会写入入口和服务器信息。"><input aria-label="解析备注" value={draft.comment} maxLength={100} onChange={event => update({ comment: event.target.value })} placeholder="例如：东京入口" /></FormField>
         {cloudflare && <div className="switch-form-row"><span className="switch-form-label">Cloudflare 代理</span><Switch checked={draft.proxied} disabled={draft.type === 'TXT'} onChange={checked => update({ proxied: checked, ttl: checked ? 1 : draft.ttl })} ariaLabel="Cloudflare 代理" /></div>}
       </form>
