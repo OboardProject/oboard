@@ -29,6 +29,16 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
+	request(t, h, http.MethodPut, "/api/v1/ui/backups/settings", token, map[string]any{
+		"enabled":           true,
+		"schedule":          "daily",
+		"time":              "03:00",
+		"weekday":           0,
+		"local_retention":   1,
+		"remote_retention":  3,
+		"destination":       map[string]any{"enabled": false},
+		"recovery_password": "12345",
+	}, http.StatusBadRequest)
 	settings := request(t, h, http.MethodPut, "/api/v1/ui/backups/settings", token, map[string]any{
 		"enabled":           true,
 		"schedule":          "daily",
@@ -37,7 +47,7 @@ func TestControllerBackupSettingsAndRetention(t *testing.T) {
 		"local_retention":   1,
 		"remote_retention":  3,
 		"destination":       map[string]any{"enabled": false},
-		"recovery_password": "backup-recovery-password",
+		"recovery_password": "123456",
 	}, http.StatusOK)
 	if settings["settings"].(map[string]any)["password_configured"] != true {
 		t.Fatalf("backup settings = %#v", settings)

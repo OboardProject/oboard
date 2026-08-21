@@ -448,8 +448,8 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if strings.TrimSpace(req.RecoveryPassword) != "" {
-		if len([]rune(req.RecoveryPassword)) < 12 {
-			fail(w, errors.New("恢复密码至少需要 12 个字符"), 400)
+		if len([]rune(req.RecoveryPassword)) < 6 {
+			fail(w, errors.New("恢复密码至少需要 6 个字符"), 400)
 			return
 		}
 		state.Secrets.RecoveryPassword = req.RecoveryPassword
