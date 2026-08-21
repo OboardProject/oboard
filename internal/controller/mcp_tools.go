@@ -21,6 +21,7 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
+	"github.com/OboardProject/oboard/internal/version"
 )
 
 type mcpOperationRef struct {
@@ -597,6 +598,64 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 			"expires_at":  operation["enrollment_expires_at"],
 			"sensitive":   true, "must_not_log": true,
 			"completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%v/health", server["id"]), "field": "agent_connected", "equals": true},
+		}
+		encoded, err := json.Marshal(action)
+		if err != nil {
+			return "", err
+		}
+		encrypted, err := security.EncryptSecret(s.sessionSecret, "external-action", string(encoded))
+		if err != nil {
+			return "", err
+		}
+		id, err := security.RandomToken(18)
+		if err != nil {
+			return "", err
+		}
+		expires, _ := operation["enrollment_expires_at"].(string)
+		expiresAt := time.Now().UTC().Add(enrollmentTokenTTL)
+		if parsed, parseErr := time.Parse(time.RFC3339Nano, expires); parseErr == nil {
+			expiresAt = parsed
+		}
+		actionID := "ext_" + id
+		if err := s.store.CreateExternalAction(ctx, &store.ExternalAction{ID: actionID, GrantID: principal.GrantID, WorkflowID: workflow.ID, Kind: "execute_on_target", Payload: encrypted, ExpiresAt: expiresAt}); err != nil {
+			if existing, findErr := s.store.FindExternalActionByWorkflow(ctx, workflow.ID); findErr == nil && existing.GrantID == principal.GrantID && existing.ConsumedAt == nil && existing.ExpiresAt.After(time.Now().UTC()) {
+				return existing.ID, nil
+			}
+			return "", err
+		}
+		return actionID, nil
+	}
+	for _, operation := range result.Operations {
+		token, _ := operation["enrollment_token"].(string)
+		if token == "" {
+			continue
+		}
+		relayID, relayName := int64(0), ""
+		if relay, ok := operation["subscription_relay"].(map[string]any); ok {
+			if id, ok := relay["id"].(float64); ok {
+				relayID = int64(id)
+			}
+			relayName, _ = relay["name"].(string)
+		} else if id, ok := operation["relay_id"].(float64); ok {
+			relayID = int64(id)
+		}
+		if relayID == 0 {
+			continue
+		}
+		base, err := s.publicBaseURL(ctx)
+		if err != nil {
+			return "", err
+		}
+		releaseVersion := version.Version
+		if strings.Contains(releaseVersion, "dev") {
+			releaseVersion = "dev"
+		}
+		action := map[string]any{
+			"type": "execute_on_target", "title": "安装 OBoard 订阅中继",
+			"command":     "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/subscription-relay.sh") + ` | env VERSION=` + shellSingleQuote(releaseVersion) + ` OBOARD_CONTROLLER_URL=` + shellSingleQuote(strings.TrimRight(base, "/")) + ` OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN="$OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN" /bin/sh`,
+			"environment": map[string]any{"VERSION": releaseVersion, "OBOARD_CONTROLLER_URL": strings.TrimRight(base, "/"), "OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN": token},
+			"relay_id":    relayID, "relay_name": relayName, "expires_at": operation["enrollment_expires_at"],
+			"sensitive": true, "must_not_log": true,
 		}
 		encoded, err := json.Marshal(action)
 		if err != nil {

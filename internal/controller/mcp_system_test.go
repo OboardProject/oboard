@@ -155,6 +155,65 @@ func TestSubscriptionRelayCapabilities(t *testing.T) {
 	}
 }
 
+func TestSubscriptionRelayEnrollmentProducesRedeemableExternalAction(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	admin := &model.User{Username: "relay-ext-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	principal.GrantID = "grt_relay_external"
+
+	applied := applyAutomationChangesetResult(t, server, principal, "relay-external-create", automation.OperationRequest{Capability: "subscription_relays.create", Input: json.RawMessage(`{"name":"阿里云","public_url":"https://relay.example.com"}`)})
+	workflow := &model.AutomationWorkflow{ID: "wf_relay_external_create", PrincipalID: principal.ID, GrantID: principal.GrantID, Status: model.WorkflowExternalActionRequired, ChangesetID: applied.ID}
+	actionID, err := server.storeOneTimeExternalAction(ctx, principal, workflow, applied)
+	if err != nil || actionID == "" {
+		t.Fatalf("relay create external action id=%q err=%v", actionID, err)
+	}
+	redeemed, err := db.ConsumeExternalAction(ctx, actionID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := security.DecryptSecret(server.sessionSecret, "external-action", redeemed.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["type"] != "execute_on_target" {
+		t.Fatalf("relay action type=%#v", payload["type"])
+	}
+	environment, _ := payload["environment"].(map[string]any)
+	if token, _ := environment["OBOARD_SUBSCRIPTION_RELAY_ENROLLMENT_TOKEN"].(string); token == "" {
+		t.Fatalf("relay action missing enrollment token: %s", plaintext)
+	}
+	if command, _ := payload["command"].(string); !strings.Contains(command, "/install/subscription-relay.sh") {
+		t.Fatalf("relay action missing install command: %s", plaintext)
+	}
+
+	relays, err := db.ListSubscriptionRelays(ctx)
+	if err != nil || len(relays) != 1 {
+		t.Fatalf("relays=%#v err=%v", relays, err)
+	}
+	issueInput, _ := json.Marshal(map[string]any{"relay_id": relays[0].ID})
+	issued := applyAutomationChangesetResult(t, server, principal, "relay-external-issue", automation.OperationRequest{Capability: "subscription_relays.issue_enrollment", Input: issueInput})
+	workflow.ID = "wf_relay_external_issue"
+	actionID, err = server.storeOneTimeExternalAction(ctx, principal, workflow, issued)
+	if err != nil || actionID == "" {
+		t.Fatalf("relay issue external action id=%q err=%v", actionID, err)
+	}
+	if _, err := db.GetExternalAction(ctx, actionID); err != nil {
+		t.Fatalf("relay issue action not stored: %v", err)
+	}
+}
+
 func TestApprovalPolicyAndNotificationCapabilities(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
