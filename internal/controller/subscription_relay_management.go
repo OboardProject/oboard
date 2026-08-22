@@ -121,6 +121,10 @@ func (s *Server) subscriptionRelaySubroutes(w http.ResponseWriter, r *http.Reque
 				fail(w, errors.New("中继尚未接入，不能设为订阅入口"), http.StatusConflict)
 				return
 			}
+			if !subscriptionRelayRecentlySeen(relay, time.Now()) {
+				fail(w, errors.New("中继当前不在线（最近 2 分钟没有心跳），请等待其恢复在线后再设为订阅入口"), http.StatusConflict)
+				return
+			}
 			if err := s.store.SetSettings(r.Context(), map[string]string{settingSubscriptionRelayURL: relay.PublicURL, settingSubscriptionControllerDirectEnabled: "false"}); err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
@@ -359,6 +363,30 @@ func (s *Server) subscriptionRelayInstallScript(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(payload)
+}
+
+func subscriptionRelayRecentlySeen(relay *model.SubscriptionRelay, now time.Time) bool {
+	return relay.LastSeenAt != nil && now.UTC().Sub(*relay.LastSeenAt) <= 2*time.Minute
+}
+
+// subscriptionRelayURLMatchesEnrolled reports whether raw equals the public URL
+// of at least one relay that finished enrollment. An empty value clears the
+// active entry and is always accepted.
+func (s *Server) subscriptionRelayURLMatchesEnrolled(ctx context.Context, raw string) (bool, error) {
+	value := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if value == "" {
+		return true, nil
+	}
+	items, err := s.store.ListSubscriptionRelays(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, relay := range items {
+		if relay.TokenHash != "" && strings.TrimRight(relay.PublicURL, "/") == value {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Server) publicSubscriptionRelays(ctx context.Context) ([]map[string]any, error) {

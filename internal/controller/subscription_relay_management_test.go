@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/subrelay"
 	"github.com/OboardProject/oboard/internal/version"
@@ -170,5 +172,91 @@ func TestManagedSubscriptionRelayEnrollmentHeartbeatAndUpdate(t *testing.T) {
 	settings, err = db.ListSettings(t.Context())
 	if err != nil || settings[settingSubscriptionRelayURL] != "" || settings[settingSubscriptionControllerDirectEnabled] != "true" {
 		t.Fatalf("relay access settings were not restored: %#v err=%v", settings, err)
+	}
+}
+
+func TestSubscriptionRelaySettingsURLMustMatchEnrolledRelay(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := newTestServer(db, "test-session-secret-at-least-32", "").Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	ctx := context.Background()
+	encrypted, err := security.EncryptSecret("test-session-secret-at-least-32", subscriptionRelaySecretPurpose, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	relay := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://relay.example", Status: "pending", EnrollmentHash: security.HashSecret("enroll-token"), EnrollmentExpiresAt: &expiresAt}
+	if err := db.CreateSubscriptionRelay(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	// A pending (not yet enrolled) relay URL must not be accepted as the entry.
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"subscription_relay_url": "https://relay.example"}, http.StatusBadRequest)
+	if _, err := db.ClaimSubscriptionRelayEnrollment(ctx, security.HashSecret("enroll-token"), security.HashSecret("relay-token"), encrypted); err != nil {
+		t.Fatal(err)
+	}
+	// After enrollment the same URL is a valid entry.
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"subscription_relay_url": "https://relay.example"}, http.StatusOK)
+	// A URL without any matching record is rejected.
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"subscription_relay_url": "https://other.example"}, http.StatusBadRequest)
+	// Empty clears the entry.
+	request(t, handler, http.MethodPost, "/api/v1/ui/settings", token, map[string]any{"subscription_relay_url": ""}, http.StatusOK)
+	settings, err := db.ListSettings(ctx)
+	if err != nil || settings[settingSubscriptionRelayURL] != "" {
+		t.Fatalf("relay URL setting after clear: %#v err=%v", settings, err)
+	}
+}
+
+func TestSubscriptionRelayActivateRequiresOnlineRelay(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := newTestServer(db, "test-session-secret-at-least-32", "").Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	ctx := context.Background()
+	encrypted, err := security.EncryptSecret("test-session-secret-at-least-32", subscriptionRelaySecretPurpose, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	relay := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://relay.example", Status: "pending", EnrollmentHash: security.HashSecret("enroll-token"), EnrollmentExpiresAt: &expiresAt}
+	if err := db.CreateSubscriptionRelay(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimSubscriptionRelayEnrollment(ctx, security.HashSecret("enroll-token"), security.HashSecret("relay-token"), encrypted); err != nil {
+		t.Fatal(err)
+	}
+	// Enrolled but without a recent heartbeat: activation must be refused so
+	// the Controller-direct subscription route is never cut onto a dead relay.
+	stale := time.Now().UTC().Add(-3 * time.Minute)
+	relay.Status = "online"
+	relay.LastSeenAt = &stale
+	if err := db.UpdateSubscriptionRelayHeartbeat(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays/"+strconv.FormatInt(relay.ID, 10)+"/activate", token, map[string]any{}, http.StatusConflict)
+	settings, err := db.ListSettings(ctx)
+	if err != nil || settings[settingSubscriptionRelayURL] != "" {
+		t.Fatalf("relay URL setting after refused activation: %#v err=%v", settings, err)
+	}
+	now := time.Now().UTC()
+	relay.Status = "online"
+	relay.LastSeenAt = &now
+	if err := db.UpdateSubscriptionRelayHeartbeat(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, http.MethodPost, "/api/v1/ui/subscription-relays/"+strconv.FormatInt(relay.ID, 10)+"/activate", token, map[string]any{}, http.StatusOK)
+	settings, err = db.ListSettings(ctx)
+	if err != nil || settings[settingSubscriptionRelayURL] != "https://relay.example" {
+		t.Fatalf("relay URL setting after activation: %#v err=%v", settings, err)
 	}
 }

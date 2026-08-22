@@ -151,6 +151,9 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		if relay.TokenHash == "" || relay.SigningSecretEncrypted == "" {
 			return nil, errors.New("中继尚未接入，不能设为订阅入口")
 		}
+		if !subscriptionRelayRecentlySeen(relay, time.Now()) {
+			return nil, errors.New("中继当前不在线（最近 2 分钟没有心跳），请等待其恢复在线后再设为订阅入口")
+		}
 		return result, nil
 	})
 	s.automation.Register("subscription_relays.activate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
@@ -164,6 +167,9 @@ func (s *Server) registerSubscriptionRelayOperations() {
 		}
 		if relay.TokenHash == "" || relay.SigningSecretEncrypted == "" {
 			return nil, errors.New("中继尚未接入，不能设为订阅入口")
+		}
+		if !subscriptionRelayRecentlySeen(relay, time.Now()) {
+			return nil, errors.New("中继当前不在线（最近 2 分钟没有心跳），请等待其恢复在线后再设为订阅入口")
 		}
 		if err := s.store.SetSettings(ctx, map[string]string{settingSubscriptionRelayURL: relay.PublicURL, settingSubscriptionControllerDirectEnabled: "false"}); err != nil {
 			return nil, err
@@ -461,6 +467,15 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		normalized, err := s.normalizeSubscriptionRelayURL(raw)
 		if err != nil {
 			return nil, err
+		}
+		if normalized != "" {
+			matches, err := s.subscriptionRelayURLMatchesEnrolled(ctx, normalized)
+			if err != nil {
+				return nil, err
+			}
+			if !matches {
+				return nil, errors.New("订阅中继地址必须与某个已接入中继的公开地址一致；如需关闭请传空字符串")
+			}
 		}
 		updates[settingSubscriptionRelayURL] = normalized
 	}

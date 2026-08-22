@@ -101,6 +101,12 @@ func TestMCPRelayActivationPublishesRealtimeAndKeepsPublicURL(t *testing.T) {
 	if _, err := db.ClaimSubscriptionRelayEnrollment(context.Background(), security.HashSecret("enroll-token"), security.HashSecret("relay-token"), encrypted); err != nil {
 		t.Fatal(err)
 	}
+	now := time.Now().UTC()
+	relay.Status = "online"
+	relay.LastSeenAt = &now
+	if err := db.UpdateSubscriptionRelayHeartbeat(context.Background(), relay); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: mcpCapabilityToolName("subscription_relays.activate"),

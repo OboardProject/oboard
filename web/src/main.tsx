@@ -3331,6 +3331,10 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
   }, 30000)
 
   const hasActiveRelay = relays.some(relay => relay.active)
+  const activeRelay = relays.find(relay => relay.active)
+  const activeRelayDown = Boolean(activeRelay && !['online', 'updating'].includes(String(activeRelay.status || '')))
+  const configuredRelayURL = String(data.settings?.subscription_relay_url || '').trim()
+  const orphanRelayURL = Boolean(configuredRelayURL) && !activeRelay
   const effectiveControllerDirectEnabled = !hasActiveRelay || controllerDirectEnabled
   const reload = () => { void load('settings', { background: true, forceFresh: true }) }
   const saveControllerDirectAccess = async (enabled: boolean) => {
@@ -3339,6 +3343,19 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_controller_direct_enabled: enabled }) })
       setControllerDirectEnabled(enabled)
       notify?.(enabled ? '主控直连订阅已开启' : '主控直连订阅已关闭', 'success')
+      reload()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  const clearRelayURL = async () => {
+    setBusy('clear-relay-url')
+    try {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_relay_url: '' }) })
+      setControllerDirectEnabled(true)
+      notify?.('已清除订阅中继地址，主控直连订阅恢复', 'success')
       reload()
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -3439,7 +3456,7 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
       <button type="button" onClick={() => setEditor({})}><Plus size={15} />创建中继</button>
     </div>
     <div className={`subscription-relay-access-row ${!hasActiveRelay ? 'is-locked' : ''}`}>
-      <div><strong>主控直连订阅</strong><span id="subscription-controller-direct-description">{!hasActiveRelay ? '没有当前中继，主控直连保持开启。' : effectiveControllerDirectEnabled ? '主控和当前中继地址都可获取订阅。' : '仅当前中继可获取订阅，主控直连返回 404。'}</span></div>
+      <div><strong>主控直连订阅</strong><span id="subscription-controller-direct-description">{!hasActiveRelay ? '没有当前中继，主控直连保持开启。' : activeRelayDown ? '当前入口中继不可用，订阅请求会失败；可先恢复主控直连。' : effectiveControllerDirectEnabled ? '主控和当前中继地址都可获取订阅。' : '仅当前中继可获取订阅，主控直连返回 404。'}</span></div>
       <div className="subscription-relay-switch-wrap">
         <Switch checked={effectiveControllerDirectEnabled} disabled={!hasActiveRelay || Boolean(busy)} onChange={checked => void saveControllerDirectAccess(checked)} ariaLabel="允许主控直连订阅" aria-describedby="subscription-controller-direct-description" />
         {!hasActiveRelay && (
@@ -3450,6 +3467,20 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
         )}
       </div>
     </div>
+    {activeRelayDown && activeRelay && (
+      <div className="subscription-relay-warning" role="alert">
+        <AlertTriangle size={15} />
+        <div><strong>订阅入口中继「{activeRelay.name}」当前不可用</strong><span>所有订阅请求（包括中继地址）当前都会失败，且主控直连已关闭。可以先恢复主控直连避免中断，或等待中继恢复在线。</span></div>
+        <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void saveControllerDirectAccess(true)}>恢复主控直连</button>
+      </div>
+    )}
+    {orphanRelayURL && !activeRelayDown && (
+      <div className="subscription-relay-warning warn" role="alert">
+        <AlertTriangle size={15} />
+        <div><strong>已配置订阅中继地址，但没有匹配的中继记录</strong><span>主控直连订阅当前已关闭，直接请求订阅会返回 404。请接入中继并设为入口，或清除该地址恢复主控直连。</span></div>
+        <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void clearRelayURL()}>清除地址并恢复直连</button>
+      </div>
+    )}
     {relays.length === 0
       ? <div className="subscription-relay-empty"><Network size={22} /><div><strong>尚未创建中继</strong><span>创建后，在国内主机执行一次安装命令即可接入。</span></div></div>
       : <div className="subscription-relay-list" role="list">
@@ -19035,7 +19066,7 @@ function AuthFields({ value, setValue }: any) {
     <FormField label="用户名 / 标签"><input value={auth.username} onChange={e => setAuth({ username: e.target.value })} /></FormField>
     {protocol === 'vless' && <FormField label="UUID" required><input value={auth.uuid} onChange={e => setAuth({ uuid: e.target.value })} /></FormField>}
     {(protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks') && <FormField label="密码" required><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
-    {protocol === 'snell' && <FormField label="PSK" hint="至少 8 字符；留空时使用已绑定用户的代理密码"><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
+    {protocol === 'snell' && <FormField label="PSK" hint={Number(parseConfig(value.config_json)?.version || 4) >= 6 ? 'v6 要求 12-255 字节；留空时使用已绑定用户的代理密码' : '至少 8 字符；留空时使用已绑定用户的代理密码'}><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
     {protocol === 'shadowsocks' && <FormField label="加密方法"><input value={auth.method} onChange={e => setAuth({ method: e.target.value })} /></FormField>}
   </div>
 }

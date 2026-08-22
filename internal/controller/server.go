@@ -10225,23 +10225,30 @@ func validateSnellProfile(v model.SnellProfile) error {
 	if v.Version != core.SnellVersionV4 && v.Version != core.SnellVersionV6 {
 		return fmt.Errorf("unsupported snell version %d", v.Version)
 	}
-	if psk := strings.TrimSpace(v.PSK); psk != "" && len(psk) < 8 {
-		return errors.New("snell psk must be at least 8 characters")
+	if psk := strings.TrimSpace(v.PSK); psk != "" {
+		switch v.Version {
+		case core.SnellVersionV6:
+			if len([]byte(psk)) < 12 || len([]byte(psk)) > 255 {
+				return errors.New("snell v6 psk must be between 12 and 255 bytes")
+			}
+		default:
+			if len([]byte(psk)) < 8 {
+				return errors.New("snell psk must be at least 8 characters")
+			}
+		}
 	}
 	switch strings.ToLower(strings.TrimSpace(v.ObfsMode)) {
 	case "", "none":
 		v.ObfsMode = "none"
-	case "http", "tls":
-		v.ObfsMode = strings.ToLower(strings.TrimSpace(v.ObfsMode))
+	case "http":
+		v.ObfsMode = "http"
 	default:
-		return fmt.Errorf("unsupported snell obfs_mode %q", v.ObfsMode)
+		return fmt.Errorf("unsupported snell obfs_mode %q (only none or http)", v.ObfsMode)
 	}
 	if v.Version == core.SnellVersionV6 && v.ObfsMode != "none" {
 		return errors.New("snell v6 does not support obfs_mode")
 	}
-	if v.ObfsMode == "http" && strings.TrimSpace(v.ObfsHost) == "" {
-		return errors.New("snell http obfs requires obfs_host")
-	}
+	// obfs_host is optional; sing-box defaults it to bing.com for http obfs.
 	switch strings.ToLower(strings.TrimSpace(v.Mode)) {
 	case "", "default":
 		v.Mode = "default"

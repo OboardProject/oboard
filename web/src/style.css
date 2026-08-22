@@ -8844,6 +8844,30 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 .subscription-relay-error svg { flex: 0 0 auto; margin-top: 1px; }
 
+.subscription-relay-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.subscription-relay-warning.warn {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--warning);
+}
+.subscription-relay-warning > svg { flex: 0 0 auto; margin-top: 1px; }
+.subscription-relay-warning > div { min-width: 0; }
+.subscription-relay-warning strong { display: block; color: currentColor; }
+.subscription-relay-warning span { display: block; margin-top: 2px; color: var(--muted); }
+.subscription-relay-warning button { flex: 0 0 auto; margin-left: auto; }
+
 .subscription-relay-install-preview {
   max-width: 720px;
   margin-top: 8px;

@@ -23,6 +23,18 @@ func TestSettingsCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
+	enrolledRelay, err := security.EncryptSecret("test-secret", subscriptionRelaySecretPurpose, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	relay := &model.SubscriptionRelay{Name: "relay", PublicURL: "https://subscriptions.example.com", Status: "pending", EnrollmentHash: security.HashSecret("enroll-token"), EnrollmentExpiresAt: &expiresAt}
+	if err := db.CreateSubscriptionRelay(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimSubscriptionRelayEnrollment(ctx, security.HashSecret("enroll-token"), security.HashSecret("relay-token"), enrolledRelay); err != nil {
+		t.Fatal(err)
+	}
 	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true}})
 	applyAutomationChangeset(t, server, principal, "settings-update", automation.OperationRequest{Capability: "settings.update", Input: updateInput})
 	settings, err := db.ListSettings(ctx)
@@ -35,6 +47,10 @@ func TestSettingsCapabilities(t *testing.T) {
 	invalidInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "http://subscriptions.example.com"}})
 	if _, err := server.settingsUpdateCandidate(ctx, invalidInput, false); err == nil {
 		t.Fatal("settings.update validation accepted an insecure relay URL")
+	}
+	unmatchedInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "https://other.example.com"}})
+	if _, err := server.settingsUpdateCandidate(ctx, unmatchedInput, false); err == nil || !strings.Contains(err.Error(), "已接入中继") {
+		t.Fatalf("settings.update validation accepted a relay URL without an enrolled record: %v", err)
 	}
 	payload, err := server.readSystemResource(ctx, principal, "settings")
 	if err != nil {
@@ -138,6 +154,22 @@ func TestSubscriptionRelayCapabilities(t *testing.T) {
 	}
 	issueInput, _ := json.Marshal(map[string]any{"relay_id": relayID})
 	applyAutomationChangeset(t, server, principal, "relay-issue", automation.OperationRequest{Capability: "subscription_relays.issue_enrollment", Input: issueInput})
+	stale := time.Now().UTC().Add(-3 * time.Minute)
+	updated.Status = "online"
+	updated.LastSeenAt = &stale
+	if err := db.UpdateSubscriptionRelayHeartbeat(ctx, updated); err != nil {
+		t.Fatal(err)
+	}
+	offlineInput, _ := json.Marshal(map[string]any{"relay_id": relayID})
+	if _, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "subscription_relays.activate", Input: offlineInput}}}); err == nil || !strings.Contains(err.Error(), "不在线") {
+		t.Fatalf("activation of an offline relay was accepted: %v", err)
+	}
+	now := time.Now().UTC()
+	updated.Status = "online"
+	updated.LastSeenAt = &now
+	if err := db.UpdateSubscriptionRelayHeartbeat(ctx, updated); err != nil {
+		t.Fatal(err)
+	}
 	activateInput, _ := json.Marshal(map[string]any{"relay_id": relayID})
 	applyAutomationChangeset(t, server, principal, "relay-activate", automation.OperationRequest{Capability: "subscription_relays.activate", Input: activateInput})
 	settings, _ := db.ListSettings(ctx)
