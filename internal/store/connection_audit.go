@@ -436,6 +436,13 @@ func scanConnectionAuditOverviewUsers(rows *sql.Rows) ([]model.ConnectionAuditUs
 // by the batched overview driver and the parity reference implementation, so
 // batching queries can never drift from the per-user algorithm.
 func evaluateConnectionAuditUser(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, episodes []model.ConnectionProbeEpisode, robustZ float64, presence []model.ConnectionPresenceEvent, policy model.AuditPolicy, sharedRoutes map[string]int, at time.Time) {
+	item.UploadBytes, item.DownloadBytes = 0, 0
+	for _, report := range selectedReports {
+		if connectionAuditMeaningfulReport(report) {
+			item.UploadBytes += report.UploadBytes
+			item.DownloadBytes += report.DownloadBytes
+		}
+	}
 	item.SourceRegionCount = connectionAuditDistinctCountries(selectedReports)
 	events := buildConnectionAuditRiskEvents(selectedReports, policy, sharedRoutes)
 	var strongest *model.ConnectionAuditRiskEvent
@@ -620,6 +627,13 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	robustZ, err := s.connectionAuditRobustZ(ctx, userID, at)
 	if err != nil {
 		return nil, err
+	}
+	item.UploadBytes, item.DownloadBytes = 0, 0
+	for _, report := range selected {
+		if connectionAuditMeaningfulReport(report) {
+			item.UploadBytes += report.UploadBytes
+			item.DownloadBytes += report.DownloadBytes
+		}
 	}
 	evaluateConnectionAuditRisk(&item, selected, robustZ, presence, episodes, policy, strongest, sharedRoutes, at)
 	return &item, nil

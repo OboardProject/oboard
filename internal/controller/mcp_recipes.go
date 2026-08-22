@@ -35,6 +35,7 @@ type mcpPreparedRecipe struct {
 	Summary      map[string]any
 	Verification map[string]any
 	Fallback     []string
+	DirectResult any
 }
 
 func (s *Server) mcpRecipes() []mcpRecipe {
@@ -44,6 +45,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
 		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
 		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "修改服务器", "服务器设置"}, Verbs: []string{"update", "change", "set", "modify", "修改", "设置", "调整", "开启", "关闭"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
+		{ID: "server.metrics.query", Version: mcpRecipeVersion, Aliases: []string{"server.metrics.query", "server query", "server metrics", "服务器指标", "看流量", "查看流量", "查询流量", "连接数", "延迟", "负载"}, Verbs: []string{"view", "read", "query", "show", "check", "查看", "看", "查询", "读取", "检查"}, Nouns: []string{"server metrics", "server traffic", "traffic", "latency", "connection count", "resource metrics", "指标", "流量", "延迟", "连接数", "负载", "资源"}, Prepare: s.prepareServerMetricsQueryRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},

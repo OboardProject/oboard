@@ -202,58 +202,20 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 			return nil, err
 		}
 		serverID, parseErr := strconv.ParseInt(id, 10, 64)
-		if parseErr != nil || serverID <= 0 || !principal.AllowsInt64("server_ids", serverID) {
+		if parseErr != nil || serverID <= 0 {
 			return nil, errors.New("invalid server id")
 		}
-		items, err := s.store.ListLatencyProbeResults(ctx, serverID, 512)
-		if err != nil {
-			return nil, err
-		}
-		server, err := s.store.GetServer(ctx, serverID)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"server_id": serverID, "enabled": server.LatencyProbeEnabled, "resource_version": server.LatencyProbeResourceVersion, "results": items, "count": len(items)}, nil
+		return s.serverLatencyProbesRead(ctx, principal, serverID, 512)
 	case "query_server_resource_metrics":
 		id, err := mcpTemplateID(uri, "oboard://servers/", "/resource-metrics")
 		if err != nil {
 			return nil, err
 		}
 		serverID, parseErr := strconv.ParseInt(id, 10, 64)
-		if parseErr != nil || serverID <= 0 || !principal.AllowsInt64("server_ids", serverID) {
+		if parseErr != nil || serverID <= 0 {
 			return nil, errors.New("invalid server id")
 		}
-		server, err := s.store.GetServer(ctx, serverID)
-		if err != nil {
-			return nil, err
-		}
-		points := []model.ServerResourceMetricPoint{}
-		if server.ResourceHistoryEnabled {
-			points, err = s.store.ListServerResourceMetricPoints(ctx, serverID, time.Now().UTC().Add(-24*time.Hour), 10*time.Minute)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return map[string]any{
-			"server_id":       serverID,
-			"history_enabled": server.ResourceHistoryEnabled,
-			"window_hours":    24,
-			"bucket_seconds":  600,
-			"points":          points,
-			"current": map[string]any{
-				"cpu_usage_percent":    server.CPUUsagePercent,
-				"memory_used_bytes":    server.MemoryUsedBytes,
-				"memory_total_bytes":   server.MemoryTotalBytes,
-				"disk_used_bytes":      server.DiskBytes,
-				"disk_total_bytes":     server.DiskTotalBytes,
-				"tcp_connection_count": server.TCPConnectionCount,
-				"udp_connection_count": server.UDPConnectionCount,
-				"process_count":        server.ProcessCount,
-				"network_upload_bps":   server.NetworkUploadBPS,
-				"network_download_bps": server.NetworkDownloadBPS,
-				"sampled_at":           server.TelemetryUpdatedAt,
-			},
-		}, nil
+		return s.serverMetricsRead(ctx, principal, serverID, 24)
 	case "query_user":
 		return s.queryMCPResource(ctx, "users.list", json.RawMessage(`{}`))
 	case "query_user_by_id":
@@ -419,7 +381,7 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 	case "query_audit_risk":
 		return s.mcpAuditRiskOverview(ctx, principal, 24)
 	case "query_audit_logs":
-		return s.mcpAuditLogs(ctx, principal, 100)
+		return s.mcpAuditLogs(ctx, principal, 100, 0, "")
 	case "query_ai_reviews":
 		return s.mcpAuditAIReviews(ctx, principal, 50)
 	case "query_access_changes":
@@ -542,6 +504,70 @@ func (s *Server) readMCPResource(ctx context.Context, principal application.Prin
 	default:
 		return nil, errors.New("unsupported resource")
 	}
+}
+
+func (s *Server) serverMetricsRead(ctx context.Context, principal application.Principal, serverID, windowHours int64) (any, error) {
+	if serverID <= 0 || !principal.AllowsInt64("server_ids", serverID) {
+		return nil, errors.New("invalid server id")
+	}
+	if windowHours < 1 {
+		windowHours = 24
+	}
+	if windowHours > 72 {
+		windowHours = 72
+	}
+	server, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	points := []model.ServerResourceMetricPoint{}
+	if server.ResourceHistoryEnabled {
+		points, err = s.store.ListServerResourceMetricPoints(ctx, serverID, time.Now().UTC().Add(-time.Duration(windowHours)*time.Hour), 10*time.Minute)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{
+		"server_id":       serverID,
+		"history_enabled": server.ResourceHistoryEnabled,
+		"window_hours":    windowHours,
+		"bucket_seconds":  600,
+		"points":          points,
+		"current": map[string]any{
+			"cpu_usage_percent":    server.CPUUsagePercent,
+			"memory_used_bytes":    server.MemoryUsedBytes,
+			"memory_total_bytes":   server.MemoryTotalBytes,
+			"disk_used_bytes":      server.DiskBytes,
+			"disk_total_bytes":     server.DiskTotalBytes,
+			"tcp_connection_count": server.TCPConnectionCount,
+			"udp_connection_count": server.UDPConnectionCount,
+			"process_count":        server.ProcessCount,
+			"network_upload_bps":   server.NetworkUploadBPS,
+			"network_download_bps": server.NetworkDownloadBPS,
+			"sampled_at":           server.TelemetryUpdatedAt,
+		},
+	}, nil
+}
+
+func (s *Server) serverLatencyProbesRead(ctx context.Context, principal application.Principal, serverID, limit int64) (any, error) {
+	if serverID <= 0 || !principal.AllowsInt64("server_ids", serverID) {
+		return nil, errors.New("invalid server id")
+	}
+	if limit < 1 {
+		limit = 100
+	}
+	if limit > 512 {
+		limit = 512
+	}
+	items, err := s.store.ListLatencyProbeResults(ctx, serverID, int(limit))
+	if err != nil {
+		return nil, err
+	}
+	server, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"server_id": serverID, "enabled": server.LatencyProbeEnabled, "resource_version": server.LatencyProbeResourceVersion, "results": items, "count": len(items)}, nil
 }
 
 // listDNSZoneRecords reads one zone's live records from the configured DNS

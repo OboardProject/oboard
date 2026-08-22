@@ -278,8 +278,9 @@ export function validateRouteCandidate(
     .map(obstacle => obstacle.id)
   const overlapLength = routeSegments(route).reduce((total, segment) => total + reservations.overlapLength(segment, edge.id), 0)
   const crossings = routeSegments(route).reduce((total, segment) => total + reservations.crossingCount(segment, edge.id), 0)
+  const allowCrossings = edge.routingClass === 'belongs' || edge.routingClass === 'auxiliary'
   return {
-    valid: nodeIntersections.length === 0 && overlapLength === 0 && crossings === 0,
+    valid: nodeIntersections.length === 0 && overlapLength === 0 && (allowCrossings || crossings === 0),
     nodeIntersections,
     overlapLength,
     crossings,
@@ -292,6 +293,7 @@ function preferredRoute(
   targetPort: GraphRoutePort,
   input: GraphRoutingInput,
   outerLaneIndex: number,
+  belongsTracks?: Map<string, number>,
 ): GraphPoint[] {
   const source = sourcePort.point
   const target = targetPort.point
@@ -301,6 +303,11 @@ function preferredRoute(
     return normalizeOrthogonalPoints([source, { x: source.x, y }, { x: target.x, y }, target])
   }
   if (source.x === target.x) return [source, target]
+  if (edge.routingClass === 'belongs') {
+    const trackY = belongsTracks?.get(edge.id)
+      ?? routingCoordinate(source.y + (target.y - source.y) / 2)
+    return normalizeOrthogonalPoints([source, { x: source.x, y: trackY }, { x: target.x, y: trackY }, target])
+  }
   const channel = input.layerChannels?.find(item => item.sourceRank === edge.sourceRank && item.targetRank === edge.targetRank)
   const trackY = channel?.tracks[edge.id]
     ?? routingCoordinate(source.y + (target.y - source.y) / 2)
@@ -603,6 +610,33 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
   const reservations = new EdgeReservationIndex()
   const routes: Record<string, GraphEdgeRoute> = {}
   let auxiliaryIndex = 0
+  const belongsEdges = edges.filter(edge => edge.routingClass === 'belongs')
+  const belongsEdgesByTarget = new Map<string, RoutingEdge[]>()
+  belongsEdges.forEach(edge => {
+    belongsEdgesByTarget.set(edge.target, [...(belongsEdgesByTarget.get(edge.target) || []), edge])
+  })
+  const belongsTracks = new Map<string, number>()
+  belongsEdgesByTarget.forEach((targetEdges, targetNodeID) => {
+    const targetNode = nodeByID.get(targetNodeID)
+    if (!targetNode) return
+    const sorted = targetEdges.slice().sort((left, right) => {
+      const leftSource = nodeByID.get(left.source)
+      const rightSource = nodeByID.get(right.source)
+      const leftX = leftSource ? leftSource.rect.left : 0
+      const rightX = rightSource ? rightSource.rect.left : 0
+      return leftX - rightX || left.id.localeCompare(right.id)
+    })
+    const count = sorted.length
+    sorted.forEach((edge, index) => {
+      const sourceNode = nodeByID.get(edge.source)
+      const sourceY = sourceNode ? sourceNode.rect.bottom : targetNode.rect.top - 120
+      const targetY = targetNode.rect.top
+      const gap = Math.max(ROUTING_TRACK_GAP * 2, targetY - sourceY)
+      const base = sourceY + (gap * 0.4)
+      const offset = (index - (count - 1) / 2) * ROUTING_TRACK_GAP
+      belongsTracks.set(edge.id, routingCoordinate(base + offset))
+    })
+  })
   edges.forEach(edge => {
     const sourcePort = sourcePorts.get(edge.id)
     const targetPort = targetPorts.get(edge.id)
@@ -610,7 +644,7 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
       routes[edge.id] = { points: [], quality: 'failed' }
       return
     }
-    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex)
+    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, belongsTracks)
     if (edge.routingClass === 'auxiliary') auxiliaryIndex++
     const preferredValidation = validateRouteCandidate(edge, preferred, routingInput.nodes, reservations)
     let points: GraphPoint[] | undefined

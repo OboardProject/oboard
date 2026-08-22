@@ -144,6 +144,62 @@ func TestMCPRelayActivationPublishesRealtimeAndKeepsPublicURL(t *testing.T) {
 	}
 }
 
+func TestMCPMetricsCapabilitiesReturnExistingData(t *testing.T) {
+	db, _, session, _, closeServer := newMCPTestEnvironment(t, "", []string{"oboard:read", "oboard:operate", "offline_access"})
+	defer closeServer()
+
+	server := &model.Server{Name: "metrics-edge", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline, ResourceHistoryEnabled: true, LatencyProbeEnabled: true}
+	if err := db.CreateServer(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		capability string
+		arguments  map[string]any
+		check      string
+	}{
+		{"servers.metrics.read", map[string]any{"server_id": server.ID}, "server_id"},
+		{"servers.latency_probes.read", map[string]any{"server_id": server.ID, "limit": 10}, "server_id"},
+	} {
+		result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: mcpCapabilityToolName(test.capability), Arguments: test.arguments})
+		if err != nil {
+			t.Fatalf("%s call: %v", test.capability, err)
+		}
+		if result.IsError {
+			var text string
+			for _, content := range result.Content {
+				if item, ok := content.(*mcp.TextContent); ok {
+					text += item.Text
+				}
+			}
+			t.Fatalf("%s returned an error result: %s", test.capability, text)
+		}
+		var text string
+		for _, content := range result.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text += item.Text
+			}
+		}
+		if !strings.Contains(text, test.check) {
+			t.Fatalf("%s output missing %q: %s", test.capability, test.check, text)
+		}
+	}
+
+	query, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "oboard_task", Arguments: map[string]any{"goal": "查看服务器流量和连接数", "params": map[string]any{"server_id": server.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.IsError {
+		var text string
+		for _, content := range query.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text += item.Text
+			}
+		}
+		t.Fatalf("oboard_task metrics query returned an error result: %s", text)
+	}
+}
+
 func TestMCPCapabilityToolAndResourceCoverage(t *testing.T) {
 	_, _, session, _, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()

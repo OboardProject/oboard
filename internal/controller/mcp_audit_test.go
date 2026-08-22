@@ -43,7 +43,19 @@ func TestAuditReadSurfaces(t *testing.T) {
 	if _, ok := risk.(model.CombinedAuditOverview); !ok {
 		t.Fatalf("unexpected risk payload: %#v", risk)
 	}
-	logs, err := server.mcpAuditLogs(ctx, principal, 100)
+	for index := 0; index < 3; index++ {
+		if err := db.AddAudit(ctx, model.AuditLog{ActorID: &admin.ID, Action: "pagination-test", Target: "audit-log", Detail: "test", IP: "192.0.2.1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logs, err := server.mcpAuditLogs(ctx, principal, 1, 0, "pagination-test")
+	if err != nil {
+		t.Fatalf("audit logs: %v", err)
+	}
+	if logs.(map[string]any)["count"] != 1 || logs.(map[string]any)["next_offset"] != 1 {
+		t.Fatalf("unexpected paginated audit logs: %#v", logs)
+	}
+	logs, err = server.mcpAuditLogs(ctx, principal, 100, 0, "")
 	if err != nil {
 		t.Fatalf("audit logs: %v", err)
 	}

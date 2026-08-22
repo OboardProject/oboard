@@ -248,8 +248,8 @@ func (s *Server) mcpAuditRiskOverview(ctx context.Context, principal application
 	return combined, nil
 }
 
-func (s *Server) mcpAuditLogs(ctx context.Context, principal application.Principal, limit int) (any, error) {
-	items, err := s.store.ListAuditPage(ctx, limit, 0, "")
+func (s *Server) mcpAuditLogs(ctx context.Context, principal application.Principal, limit, offset int, action string) (any, error) {
+	items, err := s.store.ListAuditPage(ctx, limit, offset, action)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,8 @@ func (s *Server) mcpAuditLogs(ctx context.Context, principal application.Princip
 			"detail": item.Detail, "ip": item.IP, "created_at": item.CreatedAt,
 		})
 	}
-	return map[string]any{"logs": logs, "count": len(logs)}, nil
+	nextOffset := offset + len(logs)
+	return map[string]any{"logs": logs, "count": len(logs), "offset": offset, "next_offset": nextOffset}, nil
 }
 
 func (s *Server) mcpAuditAIReviews(ctx context.Context, principal application.Principal, limit int) (any, error) {

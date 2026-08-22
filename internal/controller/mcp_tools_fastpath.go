@@ -133,6 +133,10 @@ func (s *Server) prepareMCPTask(ctx context.Context, principal application.Princ
 	if prepared.Status == "fallback_required" {
 		return newToolEnvelope("fallback_required", "", map[string]any{"intent": recipe.ID, "recipe_version": recipe.Version, "reason": "the matched Recipe cannot safely express this operation with the current executable capability catalog", "recommended_capabilities": prepared.Fallback})
 	}
+	if prepared.Status == "query_ready" && prepared.DirectResult != nil {
+		s.recordToolCall(ctx, principal, "fastpath.query:"+recipe.ID+"@"+recipe.Version, map[string]any{"intent": recipe.ID, "target_ref_count": len(input.TargetRefs)}, "succeeded", capability.DataInternal)
+		return newToolEnvelope("succeeded", "", prepared.DirectResult)
+	}
 	if prepared.Status != "ready" {
 		return fastPathError("recipe_failed", "recipe did not produce a prepared operation", true, "fallback")
 	}

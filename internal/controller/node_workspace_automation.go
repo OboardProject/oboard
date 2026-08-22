@@ -42,7 +42,7 @@ func (s *Server) queryNodeWorkspaceCapability(ctx context.Context, principal app
 	case "subscription_outputs.preview":
 		output, err := s.store.GetSubscriptionOutput(ctx, user.ID, request.OutputID)
 		if err != nil || !output.Enabled {
-			return nil, errors.New("subscription output not found")
+			return nil, errors.New("authorized subscription output not found or disabled")
 		}
 		nodes, _, err := s.workspaceSubscriptionNodes(ctx, *user, output)
 		if err != nil {

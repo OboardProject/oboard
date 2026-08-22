@@ -23,6 +23,10 @@ func serverRefFromID(ctx context.Context, input any) ([]mcpauth.ResourceRef, err
 	return refsFromSingleID(ctx, input, "id", "server")
 }
 
+func serverRefFromServerID(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromSingleID(ctx, input, "server_id", "server")
+}
+
 func userRefFromID(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
 	return refsFromSingleID(ctx, input, "user_id", "user")
 }

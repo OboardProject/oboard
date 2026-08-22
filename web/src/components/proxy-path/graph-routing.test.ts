@@ -121,4 +121,30 @@ describe('global proxy graph routing', () => {
     expect(result.routes.tunnel.quality).toBe('outer-gutter')
     expect(result.routes.tunnel.points.some(point => point.y >= 680)).toBe(true)
   })
+
+  it('routes multiple belongs entry edges to the same server cleanly with dedicated tracks', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'entry-1', rect: { left: 100, top: 50, right: 300, bottom: 180 } },
+        { id: 'entry-2', rect: { left: 350, top: 50, right: 550, bottom: 180 } },
+        {
+          id: 'server-1',
+          rect: { left: 200, top: 300, right: 460, bottom: 480 },
+          handles: {
+            'target-1': { x: 260, y: 300 },
+            'target-2': { x: 400, y: 300 },
+          },
+        },
+      ],
+      edges: [
+        { id: 'belongs-1', source: 'entry-1', target: 'server-1', targetHandle: 'target-1', routingClass: 'belongs', pathIDs: [] },
+        { id: 'belongs-2', source: 'entry-2', target: 'server-1', targetHandle: 'target-2', routingClass: 'belongs', pathIDs: [] },
+      ],
+    }
+    const result = expectClean(input)
+    expect(result.routes['belongs-1'].quality).toBe('preferred')
+    expect(result.routes['belongs-2'].quality).toBe('preferred')
+    expect(result.routes['belongs-1'].points.every(p => p.y <= 300)).toBe(true)
+    expect(result.routes['belongs-2'].points.every(p => p.y <= 300)).toBe(true)
+  })
 })

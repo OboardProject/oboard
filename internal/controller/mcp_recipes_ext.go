@@ -43,6 +43,37 @@ func recipeNeedInput(intent, field, reason string) *mcpPreparedRecipe {
 	return &mcpPreparedRecipe{Status: "needs_input", Intent: intent, Questions: []map[string]any{{"field": field, "type": "string", "reason": reason}}}
 }
 
+// prepareServerMetricsQueryRecipe is a read-only Fast Path that returns
+// existing server metric data directly instead of producing a Changeset.
+func (s *Server) prepareServerMetricsQueryRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	serverID := int64(taskIntParam(input.Params, "server_id"))
+	if serverID <= 0 {
+		serverID = taskResourceRefID(input, "server")
+	}
+	if serverID <= 0 {
+		return recipeNeedInput("server.metrics.query", "server_id", "需要指定要查询指标的服务器 ID"), nil
+	}
+	windowHours := int64(taskIntParam(input.Params, "window_hours"))
+	lowerGoal := strings.ToLower(input.Goal)
+	latencyQuery := strings.Contains(lowerGoal, "latency") || strings.Contains(input.Goal, "延迟")
+	var data any
+	var err error
+	if latencyQuery {
+		limit := int64(taskIntParam(input.Params, "limit"))
+		data, err = s.serverLatencyProbesRead(ctx, principal, serverID, limit)
+	} else {
+		data, err = s.serverMetricsRead(ctx, principal, serverID, windowHours)
+	}
+	if err != nil {
+		return nil, err
+	}
+	action := "read_metrics"
+	if latencyQuery {
+		action = "read_latency_probes"
+	}
+	return &mcpPreparedRecipe{Status: "query_ready", Intent: "server.metrics.query", DirectResult: data, Summary: map[string]any{"server_id": serverID, "action": action}, Verification: map[string]any{}, Fallback: []string{"oboard_capability_servers_metrics_read", "oboard_capability_servers_latency_probes_read"}}, nil
+}
+
 // prepareOutboundRecipe routes outbound create / update / delete.
 func (s *Server) prepareOutboundRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
 	deleting := containsAnyFold(input.Goal, "删除", "delete", "remove")

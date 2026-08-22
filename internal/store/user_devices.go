@@ -59,6 +59,15 @@ func (s *Store) ListUserDevices(ctx context.Context, userID int64) ([]model.User
 	return scanUserDevices(rows)
 }
 
+func (s *Store) ListAllUserDevices(ctx context.Context) ([]model.UserDevice, error) {
+	rows, err := s.db.QueryContext(ctx, userDeviceSelect+` order by user_id,created_at,id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserDevices(rows)
+}
+
 func (s *Store) ListActiveUserDevices(ctx context.Context) ([]model.UserDevice, error) {
 	rows, err := s.db.QueryContext(ctx, userDeviceSelect+` where status='active' order by user_id,created_at,id`)
 	if err != nil {

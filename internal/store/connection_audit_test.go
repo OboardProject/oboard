@@ -399,6 +399,9 @@ func TestConnectionAuditProbeBudgetOverflowBackfillsFanout(t *testing.T) {
 	if detail.Summary.NodeFanout != 20 || len(detail.Summary.RiskSignals) == 0 {
 		t.Fatalf("overflow traffic was not backfilled: %#v", detail.Summary)
 	}
+	if detail.Summary.DownloadBytes != int64(20*512*1024) {
+		t.Fatalf("summary download bytes=%d, want %d", detail.Summary.DownloadBytes, 20*512*1024)
+	}
 }
 
 func TestConnectionAuditOnlineDeviceUsesStableIdentity(t *testing.T) {

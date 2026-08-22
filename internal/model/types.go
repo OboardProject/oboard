@@ -2554,6 +2554,8 @@ type ConnectionAuditUserSummary struct {
 	ActivePeak            int64      `json:"active_peak"`
 	ActiveConnectionCount int64      `json:"active_connection_count"`
 	ReportCount           int64      `json:"report_count"`
+	UploadBytes           int64      `json:"upload_bytes"`
+	DownloadBytes         int64      `json:"download_bytes"`
 	LastSeenAt            time.Time  `json:"last_seen_at"`
 }
 

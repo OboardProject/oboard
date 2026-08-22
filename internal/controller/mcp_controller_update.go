@@ -20,6 +20,34 @@ type controllerUpdateAutomationInput struct {
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
 	switch capabilityName {
+	case "servers.metrics.read":
+		var request struct {
+			ServerID    int64 `json:"server_id"`
+			WindowHours int64 `json:"window_hours"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return s.serverMetricsRead(ctx, principal, request.ServerID, request.WindowHours)
+	case "servers.latency_probes.read":
+		var request struct {
+			ServerID int64 `json:"server_id"`
+			Limit    int64 `json:"limit"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return s.serverLatencyProbesRead(ctx, principal, request.ServerID, request.Limit)
+	case "audit.logs.list":
+		var request struct {
+			Limit  int    `json:"limit"`
+			Offset int    `json:"offset"`
+			Action string `json:"action"`
+		}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return s.mcpAuditLogs(ctx, principal, request.Limit, request.Offset, strings.TrimSpace(request.Action))
 	case "node_library.list", "node_groups.list", "node_sources.list", "subscription_outputs.list", "subscription_outputs.preview":
 		return s.queryNodeWorkspaceCapability(ctx, principal, capabilityName, input)
 	case "node_incidents.list":
