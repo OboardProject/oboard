@@ -29,6 +29,7 @@ func TestMCPRecipeRouting(t *testing.T) {
 		{name: "english", goal: "deploy all configuration changes", want: "deployment.apply"},
 		{name: "structured proxy ref", goal: "", want: "proxy_path.manage"},
 		{name: "structured server settings", goal: "", want: "server.manage"},
+		{name: "structured server expiry", goal: "", want: "server.manage"},
 		{name: "ambiguous", goal: "apply server", ambiguous: true},
 		{name: "ambiguous server ref", goal: "", ambiguous: true},
 		{name: "no match", goal: "explain the weather", fallback: true},
@@ -41,6 +42,8 @@ func TestMCPRecipeRouting(t *testing.T) {
 				input.TargetRefs = []string{"inbound:7"}
 			case "structured server settings":
 				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"bbr_enabled": true}
+			case "structured server expiry":
+				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"expires_at": "2027-01-02T03:04:05Z", "renewal_cycle": "quarterly"}
 			case "explicit inbound":
 				input.TargetRefs, input.Params = []string{"server:7"}, map[string]any{"protocol": "vless", "port": 443}
 			case "ambiguous server ref":
@@ -106,6 +109,23 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 
 	prepared, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{
 		"name":                           "Tokyo-03",
+		"listen_ip":                      "0.0.0.0",
+		"entry_ip_mode":                  "custom",
+		"entry_address":                  "203.0.113.1",
+		"region_mode":                    "manual",
+		"region_code":                    "JP",
+		"port_range_start":               12000,
+		"port_range_end":                 13000,
+		"internal_port_range_start":      40000,
+		"internal_port_range_end":        45000,
+		"connection_audit_enabled":       false,
+		"time_correction_mode":           "auto",
+		"offline_notify_enabled":         false,
+		"offline_after_seconds":          120,
+		"expires_at":                     "2027-01-02T03:04:05Z",
+		"auto_renew_enabled":             true,
+		"renewal_cycle":                  "quarterly",
+		"expiry_notify_enabled":          false,
 		"latency_probe_enabled":          true,
 		"latency_probe_mode":             "icmp",
 		"latency_probe_public_target":    "google",
@@ -118,6 +138,18 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		t.Fatalf("prepared=%#v err=%v", prepared, err)
 	}
 	serverInput := prepared.Operations[0].Input["server"].(map[string]any)
+	if serverInput["listen_ip"] != "0.0.0.0" || serverInput["entry_ip_mode"] != "custom" || serverInput["entry_address"] != "203.0.113.1" || serverInput["region_mode"] != "manual" || serverInput["region_code"] != "JP" {
+		t.Fatalf("server addressing settings were not forwarded: %#v", serverInput)
+	}
+	if serverInput["port_range_start"] != 12000 || serverInput["port_range_end"] != 13000 || serverInput["internal_port_range_start"] != 40000 || serverInput["internal_port_range_end"] != 45000 {
+		t.Fatalf("port ranges were not forwarded: %#v", serverInput)
+	}
+	if serverInput["expires_at"] != "2027-01-02T03:04:05Z" || serverInput["auto_renew_enabled"] != true || serverInput["renewal_cycle"] != "quarterly" || serverInput["expiry_notify_enabled"] != false {
+		t.Fatalf("expiry settings were not forwarded: %#v", serverInput)
+	}
+	if serverInput["connection_audit_enabled"] != false || serverInput["time_correction_mode"] != "auto" || serverInput["offline_notify_enabled"] != false || serverInput["offline_after_seconds"] != 120 {
+		t.Fatalf("operational settings were not forwarded: %#v", serverInput)
+	}
 	if serverInput["latency_probe_mode"] != "icmp" || serverInput["latency_probe_public_target"] != "google" || serverInput["latency_probe_interval_seconds"] != 90 || serverInput["latency_probe_sample_count"] != 5 || serverInput["latency_probe_max_targets"] != 16 {
 		t.Fatalf("latency settings were not forwarded: %#v", serverInput)
 	}

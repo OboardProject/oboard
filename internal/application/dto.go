@@ -13,28 +13,50 @@ type ServerDTO struct {
 	Name                        string                     `json:"name"`
 	Status                      model.ServerStatus         `json:"status"`
 	EntryAddress                string                     `json:"entry_address"`
+	EntryIPMode                 model.EntryIPMode          `json:"entry_ip_mode"`
+	RegionMode                  string                     `json:"region_mode"`
+	RegionCode                  string                     `json:"region_code"`
+	DetectedRegionCode          string                     `json:"detected_region_code"`
 	PublicIPv4                  string                     `json:"public_ipv4"`
 	PublicIPv6                  string                     `json:"public_ipv6"`
 	InterfaceIPv6               string                     `json:"interface_ipv6"`
-	RegionCode                  string                     `json:"region_code"`
-	DetectedRegionCode          string                     `json:"detected_region_code"`
 	IPStack                     model.IPStack              `json:"ip_stack"`
+	ListenIP                    string                     `json:"listen_ip"`
 	ListenMode                  model.ListenMode           `json:"listen_mode"`
 	UDPInboundMode              model.UDPInboundMode       `json:"udp_inbound_mode"`
 	MTUMode                     model.MTUMode              `json:"mtu_mode"`
 	MTUValue                    int                        `json:"mtu_value"`
+	MTUProbeHost                string                     `json:"mtu_probe_host"`
+	MTUProbePort                int                        `json:"mtu_probe_port"`
+	MTUOverheadBytes            int                        `json:"mtu_overhead_bytes"`
 	BBREnabled                  bool                       `json:"bbr_enabled"`
+	PortRangeStart              int                        `json:"port_range_start"`
+	PortRangeEnd                int                        `json:"port_range_end"`
+	InternalPortRangeStart      int                        `json:"internal_port_range_start"`
+	InternalPortRangeEnd        int                        `json:"internal_port_range_end"`
+	PortPolicyRevision          int64                      `json:"port_policy_revision"`
 	AgentConnected              bool                       `json:"agent_connected"`
 	AgentVersion                string                     `json:"agent_version"`
 	AgentBuild                  string                     `json:"agent_build"`
 	KernelVersion               string                     `json:"kernel_version"`
 	ConnectionAuditEnabled      bool                       `json:"connection_audit_enabled"`
+	ResourceHistoryEnabled      bool                       `json:"resource_history_enabled"`
+	MonitoringMode              string                     `json:"monitoring_mode"`
+	TrafficResetMode            string                     `json:"traffic_reset_mode"`
+	TrafficResetDay             int                        `json:"traffic_reset_day"`
+	OfflineNotifyEnabled        bool                       `json:"offline_notify_enabled"`
+	OfflineAfterSeconds         int                        `json:"offline_after_seconds"`
+	ExpiresAt                   *time.Time                 `json:"expires_at,omitempty"`
+	RenewalCycle                model.ServerRenewalCycle   `json:"renewal_cycle"`
+	AutoRenewEnabled            bool                       `json:"auto_renew_enabled"`
+	ExpiryNotifyEnabled         bool                       `json:"expiry_notify_enabled"`
+	LastAutoRenewedAt           *time.Time                 `json:"last_auto_renewed_at,omitempty"`
 	LatencyProbeEnabled         bool                       `json:"latency_probe_enabled"`
 	LatencyProbeMode            model.LatencyProbeMode     `json:"latency_probe_mode"`
 	LatencyProbePublicTarget    model.ConnectivityTarget   `json:"latency_probe_public_target"`
 	LatencyProbeIntervalSeconds int                        `json:"latency_probe_interval_seconds"`
 	LatencyProbeSampleCount     int                        `json:"latency_probe_sample_count"`
-	LatencyProbeRegions         []model.LatencyProbeRegion `json:"latency_probe_regions"`
+	LatencyProbeRegions         []model.LatencyProbeRegion `json:"latency_probe_regions,omitempty"`
 	LatencyProbeMaxTargets      int                        `json:"latency_probe_max_targets"`
 	LatencyProbeResourceVersion string                     `json:"latency_probe_resource_version"`
 	TimeCorrectionMode          model.TimeCorrectionMode   `json:"time_correction_mode"`
@@ -210,12 +232,21 @@ func subscriptionPlanNodeDTOs(items []model.SubscriptionPlanNode) []Subscription
 func serverDTO(item model.Server) ServerDTO {
 	return ServerDTO{
 		ID: item.ID, Revision: revision(item.UpdatedAt), Name: item.Name, Status: item.Status,
-		EntryAddress: item.EntryAddress, PublicIPv4: item.PublicIPv4, PublicIPv6: item.PublicIPv6,
-		InterfaceIPv6: item.InterfaceIPv6, RegionCode: item.RegionCode, DetectedRegionCode: item.DetectedRegionCode,
-		IPStack: item.IPStack, ListenMode: item.ListenMode,
-		UDPInboundMode: item.UDPInboundMode, MTUMode: item.MTUMode, MTUValue: item.MTUValue, BBREnabled: item.BBREnabled,
-		AgentConnected: item.AgentID != "", AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild,
-		KernelVersion: item.SingBoxVersion, ConnectionAuditEnabled: item.ConnectionAuditEnabled,
+		EntryAddress: item.EntryAddress, EntryIPMode: item.EntryIPMode, RegionMode: item.RegionMode,
+		RegionCode: item.RegionCode, DetectedRegionCode: item.DetectedRegionCode, PublicIPv4: item.PublicIPv4,
+		PublicIPv6: item.PublicIPv6, InterfaceIPv6: item.InterfaceIPv6, IPStack: item.IPStack,
+		ListenIP: item.ListenIP, ListenMode: item.ListenMode, UDPInboundMode: item.UDPInboundMode,
+		MTUMode: item.MTUMode, MTUValue: item.MTUValue, MTUProbeHost: item.MTUProbeHost,
+		MTUProbePort: item.MTUProbePort, MTUOverheadBytes: item.MTUOverheadBytes, BBREnabled: item.BBREnabled,
+		PortRangeStart: item.PortRangeStart, PortRangeEnd: item.PortRangeEnd,
+		InternalPortRangeStart: item.InternalPortRangeStart, InternalPortRangeEnd: item.InternalPortRangeEnd,
+		PortPolicyRevision: item.PortPolicyRevision, AgentConnected: item.AgentID != "",
+		AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild, KernelVersion: item.SingBoxVersion,
+		ConnectionAuditEnabled: item.ConnectionAuditEnabled, ResourceHistoryEnabled: item.ResourceHistoryEnabled,
+		MonitoringMode: item.MonitoringMode, TrafficResetMode: item.TrafficResetMode, TrafficResetDay: item.TrafficResetDay,
+		OfflineNotifyEnabled: item.OfflineNotifyEnabled, OfflineAfterSeconds: item.OfflineAfterSeconds,
+		ExpiresAt: item.ExpiresAt, RenewalCycle: item.RenewalCycle, AutoRenewEnabled: item.AutoRenewEnabled,
+		ExpiryNotifyEnabled: item.ExpiryNotifyEnabled, LastAutoRenewedAt: item.LastAutoRenewedAt,
 		LatencyProbeEnabled: item.LatencyProbeEnabled, LatencyProbeMode: item.LatencyProbeMode,
 		LatencyProbePublicTarget: item.LatencyProbePublicTarget, LatencyProbeIntervalSeconds: item.LatencyProbeIntervalSeconds,
 		LatencyProbeSampleCount: item.LatencyProbeSampleCount, LatencyProbeRegions: item.LatencyProbeRegions,
