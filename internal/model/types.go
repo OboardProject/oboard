@@ -359,15 +359,56 @@ type ImportedNode struct {
 	UpdatedAt       time.Time                   `json:"updated_at"`
 }
 
+// SubscriptionOutputFilterType is one rule kind of a subscription output's
+// ordered filter pipeline (Sub-Store style). Rules run in order against the
+// final merged node list; a node dropped by any rule stays removed.
+const (
+	// SubscriptionOutputFilterKeepName keeps nodes whose effective name
+	// (region-flag prefix stripped) matches the Go regexp in Value.
+	SubscriptionOutputFilterKeepName = "keep_name"
+	// SubscriptionOutputFilterDropName removes nodes whose effective name
+	// (region-flag prefix stripped) matches the Go regexp in Value.
+	SubscriptionOutputFilterDropName = "drop_name"
+	// SubscriptionOutputFilterKeepProtocol keeps nodes whose protocol type
+	// equals Value (lowercase protocol key).
+	SubscriptionOutputFilterKeepProtocol = "keep_protocol"
+	// SubscriptionOutputFilterDropProtocol removes nodes whose protocol type
+	// equals Value.
+	SubscriptionOutputFilterDropProtocol = "drop_protocol"
+	// SubscriptionOutputFilterKeepRegion keeps nodes whose exit region (or
+	// entry region fallback) equals Value (ISO 3166-1 alpha-2). Nodes
+	// without a region never match.
+	SubscriptionOutputFilterKeepRegion = "keep_region"
+	// SubscriptionOutputFilterDropRegion removes nodes whose exit region (or
+	// entry region fallback) equals Value. Nodes without a region never
+	// match and therefore survive.
+	SubscriptionOutputFilterDropRegion = "drop_region"
+	// SubscriptionOutputFilterKeepGroup keeps nodes that belong to the node
+	// group whose ID equals Value.
+	SubscriptionOutputFilterKeepGroup = "keep_group"
+	// SubscriptionOutputFilterDropGroup removes nodes that belong to the
+	// node group whose ID equals Value.
+	SubscriptionOutputFilterDropGroup = "drop_group"
+)
+
+// SubscriptionOutputFilter is one ordered filter rule of a subscription
+// output. The ordered rule list is a pipeline applied at render time to the
+// final merged node list of the profile.
+type SubscriptionOutputFilter struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
 type SubscriptionOutput struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"user_id"`
-	Name      string    `json:"name"`
-	IsDefault bool      `json:"is_default"`
-	Enabled   bool      `json:"enabled"`
-	GroupIDs  []int64   `json:"group_ids"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64                      `json:"id"`
+	UserID    int64                      `json:"user_id"`
+	Name      string                     `json:"name"`
+	IsDefault bool                       `json:"is_default"`
+	Enabled   bool                       `json:"enabled"`
+	GroupIDs  []int64                    `json:"group_ids"`
+	Filters   []SubscriptionOutputFilter `json:"filters"`
+	CreatedAt time.Time                  `json:"created_at"`
+	UpdatedAt time.Time                  `json:"updated_at"`
 }
 
 // AssignableNodeType identifies a client-visible node in the assignable node

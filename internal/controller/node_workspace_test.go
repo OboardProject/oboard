@@ -208,3 +208,155 @@ func TestNodeWorkspaceProfileParticipatesInSubscriptionETag(t *testing.T) {
 		t.Fatalf("different profiles with identical content reused ETag %q", other)
 	}
 }
+
+func TestSubscriptionOutputFilterRESTValidationAndPreviewStats(t *testing.T) {
+	db := openNodeWorkspaceTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	workspace := request(t, handler, http.MethodGet, "/api/v1/ui/node-workspace", token, nil, http.StatusOK)
+	oboardGroupID := int64(workspace["node_groups"].([]any)[0].(map[string]any)["id"].(float64))
+
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/node-groups", token, map[string]any{
+		"name": "机场 B", "kind": "manual", "content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Filter-Keep\ntrojan://secret@8.8.8.8:443?sni=example.com#Filter-Drop",
+	}, http.StatusCreated)
+	manualGroupID := int64(created["node_group"].(map[string]any)["id"].(float64))
+
+	output := request(t, handler, http.MethodPost, "/api/v1/ui/subscription-outputs", token, map[string]any{
+		"name": "过滤组合", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{
+			{"type": "drop_name", "value": "Drop$"},
+			{"type": "keep_protocol", "value": "shadowsocks"},
+		},
+	}, http.StatusCreated)["subscription_output"].(map[string]any)
+	outputID := int64(output["id"].(float64))
+	savedFilters := output["filters"].([]any)
+	if len(savedFilters) != 2 || savedFilters[0].(map[string]any)["type"] != "drop_name" {
+		t.Fatalf("created output filters = %#v", savedFilters)
+	}
+
+	preview := request(t, handler, http.MethodPost, "/api/v1/ui/subscription-outputs/"+itoa(outputID)+"/preview", token, map[string]any{"format": "sing-box"}, http.StatusOK)
+	nodes := preview["preview"].(map[string]any)["nodes"].([]any)
+	if len(nodes) != 1 || nodes[0].(map[string]any)["name"] != "Filter-Keep" {
+		t.Fatalf("filtered preview nodes = %#v", nodes)
+	}
+	stats := preview["preview"].(map[string]any)["filter_stats"].([]any)
+	if len(stats) != 2 || stats[0].(map[string]any)["dropped"] != float64(1) || stats[1].(map[string]any)["dropped"] != float64(0) {
+		t.Fatalf("filter_stats = %#v", stats)
+	}
+	if preview["preview"].(map[string]any)["filter_dropped"] != float64(1) {
+		t.Fatalf("filter_dropped = %#v", preview["preview"].(map[string]any)["filter_dropped"])
+	}
+
+	// PATCH with filters replaces the pipeline; omitting filters keeps it.
+	patched := request(t, handler, http.MethodPatch, "/api/v1/ui/subscription-outputs/"+itoa(outputID), token, map[string]any{"name": "过滤组合", "group_ids": []int64{manualGroupID}}, http.StatusOK)["subscription_output"].(map[string]any)
+	if len(patched["filters"].([]any)) != 2 {
+		t.Fatalf("omitting filters cleared the pipeline: %#v", patched["filters"])
+	}
+	cleared := request(t, handler, http.MethodPatch, "/api/v1/ui/subscription-outputs/"+itoa(outputID), token, map[string]any{"name": "不过滤", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{}}, http.StatusOK)["subscription_output"].(map[string]any)
+	if len(cleared["filters"].([]any)) != 0 {
+		t.Fatalf("explicit empty filters not applied: %#v", cleared["filters"])
+	}
+
+	// Invalid rules are rejected with 400 and never saved.
+	invalidBodies := []map[string]any{
+		{"name": "x", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{{"type": "keep_name", "value": "(unclosed"}}},
+		{"name": "x", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{{"type": "keep_protocol", "value": "wireguard"}}},
+		{"name": "x", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{{"type": "keep_region", "value": "JPX"}}},
+		{"name": "x", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{{"type": "keep_all", "value": "a"}}},
+		{"name": "x", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{{"type": "drop_group", "value": "999999"}}},
+		{"name": "x", "group_ids": []int64{oboardGroupID}, "filters": []map[string]any{{"type": "drop_name", "value": ""}}},
+	}
+	for index, body := range invalidBodies {
+		request(t, handler, http.MethodPatch, "/api/v1/ui/subscription-outputs/"+itoa(outputID), token, body, http.StatusBadRequest)
+		_ = index
+	}
+	// A group rule referencing one of the user's own groups stays valid.
+	request(t, handler, http.MethodPatch, "/api/v1/ui/subscription-outputs/"+itoa(outputID), token, map[string]any{"name": "x", "group_ids": []int64{manualGroupID}, "filters": []map[string]any{{"type": "drop_group", "value": itoa(oboardGroupID)}}}, http.StatusOK)
+}
+
+func TestSubscriptionOutputFiltersApplyToSubscriptionPull(t *testing.T) {
+	db := openNodeWorkspaceTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	subscriptionToken := created["user"].(map[string]any)["subscription_token"].(string)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, handler, http.MethodPost, "/api/v1/ui/node-groups", token, map[string]any{
+		"name": "机场 C", "kind": "manual", "content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Keep-Me\ntrojan://secret@8.8.8.8:443?sni=example.com#Drop-Me",
+	}, http.StatusCreated)
+
+	output := request(t, handler, http.MethodPost, "/api/v1/ui/subscription-outputs", token, map[string]any{
+		"name": "下拉过滤", "group_ids": []int64{int64(request(t, handler, http.MethodGet, "/api/v1/ui/node-workspace", token, nil, http.StatusOK)["node_groups"].([]any)[1].(map[string]any)["id"].(float64))},
+		"filters": []map[string]any{{"type": "drop_name", "value": "Drop-Me"}},
+	}, http.StatusCreated)["subscription_output"].(map[string]any)
+	outputID := int64(output["id"].(float64))
+
+	fetch := func() string {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/"+subscriptionToken+"?format=sing-box&profile_id="+itoa(outputID), nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("subscription status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		return recorder.Body.String()
+	}
+	filteredBody := fetch()
+	if !strings.Contains(filteredBody, "Keep-Me") || strings.Contains(filteredBody, "Drop-Me") {
+		t.Fatalf("filtered subscription body = %s", filteredBody)
+	}
+	request(t, handler, http.MethodPatch, "/api/v1/ui/subscription-outputs/"+itoa(outputID), token, map[string]any{"name": "下拉过滤", "group_ids": []int64{int64(output["group_ids"].([]any)[0].(float64))}, "filters": []map[string]any{}}, http.StatusOK)
+	unfilteredBody := fetch()
+	if !strings.Contains(unfilteredBody, "Drop-Me") {
+		t.Fatalf("cleared filters did not restore nodes: %s", unfilteredBody)
+	}
+}
+
+func TestSubscriptionOutputFilterAutomationSave(t *testing.T) {
+	db := openNodeWorkspaceTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	first := &model.User{Username: "automation-filter", PasswordHash: "x", Status: "active", Role: model.RoleNone}
+	if err := db.CreateUser(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	output, err := db.GetDefaultSubscriptionOutput(t.Context(), first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := application.Principal{ID: "first", UserID: &first.ID, Role: model.RoleNone}
+	groups, err := db.ListNodeGroups(t.Context(), first.ID)
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("groups=%#v err=%v", groups, err)
+	}
+	validInput, _ := json.Marshal(map[string]any{
+		"user_id": first.ID, "output_id": output.ID, "name": "过滤", "group_ids": output.GroupIDs,
+		"filters": []map[string]any{{"type": "keep_region", "value": "JP"}, {"type": "keep_group", "value": itoa(groups[0].ID)}},
+	})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "subscription_outputs.save", validInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.applyNodeWorkspaceOperation(t.Context(), principal, "subscription_outputs.save", validInput); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := db.GetSubscriptionOutput(t.Context(), first.ID, output.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Filters) != 2 || updated.Filters[0].Value != "JP" || updated.Filters[1].Value != itoa(groups[0].ID) {
+		t.Fatalf("automation saved filters = %#v", updated.Filters)
+	}
+	invalidInput, _ := json.Marshal(map[string]any{
+		"user_id": first.ID, "output_id": output.ID, "name": "过滤", "group_ids": output.GroupIDs,
+		"filters": []map[string]any{{"type": "keep_name", "value": "["}},
+	})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "subscription_outputs.save", invalidInput); err == nil {
+		t.Fatal("automation accepted an invalid regex filter")
+	}
+	foreignGroupInput, _ := json.Marshal(map[string]any{
+		"user_id": first.ID, "output_id": output.ID, "name": "过滤", "group_ids": output.GroupIDs,
+		"filters": []map[string]any{{"type": "drop_group", "value": "12345"}},
+	})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "subscription_outputs.save", foreignGroupInput); err == nil {
+		t.Fatal("automation accepted a filter referencing a foreign node group")
+	}
+}

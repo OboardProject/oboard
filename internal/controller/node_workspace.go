@@ -56,12 +56,16 @@ type subscriptionPreviewNodeSummary struct {
 	Protocol string `json:"protocol"`
 }
 
-func subscriptionPreviewView(preview core.SubscriptionPreview, includeContent bool) map[string]any {
+func subscriptionPreviewView(preview core.SubscriptionPreview, includeContent bool, filterStats ...core.SubscriptionFilterStats) map[string]any {
 	nodes := make([]subscriptionPreviewNodeSummary, 0, len(preview.Nodes))
 	for _, node := range preview.Nodes {
 		nodes = append(nodes, subscriptionPreviewNodeSummary{ID: node.Key, Name: node.Name, Group: node.Group, Protocol: strings.ToLower(stringFromNodeType(node.Raw["type"]))})
 	}
 	view := map[string]any{"nodes": nodes, "filtered_count": preview.FilteredCount, "invalid_reasons": preview.InvalidReasons}
+	if len(filterStats) > 0 && len(filterStats[0].Rules) > 0 {
+		view["filter_stats"] = filterStats[0].Rules
+		view["filter_dropped"] = filterStats[0].TotalDropped
+	}
 	if includeContent {
 		view["content"] = preview.Content
 	}
@@ -394,13 +398,19 @@ func (s *Server) subscriptionOutputs(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"subscription_outputs": items})
 	case http.MethodPost:
 		var request struct {
-			Name     string  `json:"name"`
-			GroupIDs []int64 `json:"group_ids"`
+			Name     string                            `json:"name"`
+			GroupIDs []int64                           `json:"group_ids"`
+			Filters  *[]model.SubscriptionOutputFilter `json:"filters"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		item := &model.SubscriptionOutput{UserID: user.ID, Name: request.Name, GroupIDs: request.GroupIDs, Enabled: true}
+		filters, filterErr := s.normalizeSubscriptionOutputFilterRequest(r.Context(), user.ID, request.Filters)
+		if filterErr != nil {
+			nodeWorkspaceFail(w, filterErr)
+			return
+		}
+		item := &model.SubscriptionOutput{UserID: user.ID, Name: request.Name, GroupIDs: request.GroupIDs, Filters: filters, Enabled: true}
 		if err := s.store.SaveSubscriptionOutput(r.Context(), item); err != nil {
 			fail(w, err, 400)
 			return
@@ -439,7 +449,7 @@ func (s *Server) subscriptionOutput(w http.ResponseWriter, r *http.Request) {
 			nodeWorkspaceFail(w, sql.ErrNoRows)
 			return
 		}
-		nodes, _, deduplicatedCount, buildErr := s.workspaceSubscriptionNodesWithStats(r.Context(), *user, output)
+		nodes, _, deduplicatedCount, filterStats, buildErr := s.workspaceSubscriptionNodesWithStats(r.Context(), *user, output)
 		if buildErr != nil {
 			fail(w, buildErr, 500)
 			return
@@ -449,7 +459,7 @@ func (s *Server) subscriptionOutput(w http.ResponseWriter, r *http.Request) {
 			fail(w, previewErr, 500)
 			return
 		}
-		write(w, 200, map[string]any{"profile_id": output.ID, "preview": subscriptionPreviewView(preview, true), "deduplicated_count": deduplicatedCount})
+		write(w, 200, map[string]any{"profile_id": output.ID, "preview": subscriptionPreviewView(preview, true, filterStats), "deduplicated_count": deduplicatedCount})
 		return
 	}
 	if len(parts) != 1 {
@@ -464,14 +474,23 @@ func (s *Server) subscriptionOutput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var request struct {
-			Name     string  `json:"name"`
-			GroupIDs []int64 `json:"group_ids"`
-			Enabled  *bool   `json:"enabled"`
+			Name     string                            `json:"name"`
+			GroupIDs []int64                           `json:"group_ids"`
+			Filters  *[]model.SubscriptionOutputFilter `json:"filters"`
+			Enabled  *bool                             `json:"enabled"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
 		current.Name, current.GroupIDs = request.Name, request.GroupIDs
+		if request.Filters != nil {
+			filters, filterErr := s.normalizeSubscriptionOutputFilterRequest(r.Context(), user.ID, request.Filters)
+			if filterErr != nil {
+				nodeWorkspaceFail(w, filterErr)
+				return
+			}
+			current.Filters = filters
+		}
 		if request.Enabled != nil {
 			current.Enabled = *request.Enabled
 		}
@@ -489,6 +508,21 @@ func (s *Server) subscriptionOutput(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) normalizeSubscriptionOutputFilterRequest(ctx context.Context, userID int64, filters *[]model.SubscriptionOutputFilter) ([]model.SubscriptionOutputFilter, error) {
+	if filters == nil {
+		return nil, nil
+	}
+	groups, err := s.store.ListNodeGroups(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	knownGroups := map[int64]bool{}
+	for _, group := range groups {
+		knownGroups[group.ID] = true
+	}
+	return core.NormalizeSubscriptionOutputFilters(*filters, knownGroups)
 }
 
 func (s *Server) importManualNodes(ctx context.Context, userID, groupID int64, content string) (*core.PrivateImportResult, error) {
@@ -617,36 +651,36 @@ func (s *Server) scheduleNodeSourceRefreshes(ctx context.Context) {
 }
 
 func (s *Server) workspaceSubscriptionNodes(ctx context.Context, user model.User, output *model.SubscriptionOutput) ([]core.SubscriptionNode, []model.NodeGroup, error) {
-	nodes, groups, _, err := s.workspaceSubscriptionNodesWithStats(ctx, user, output)
+	nodes, groups, _, _, err := s.workspaceSubscriptionNodesWithStats(ctx, user, output)
 	return nodes, groups, err
 }
 
-func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user model.User, output *model.SubscriptionOutput) ([]core.SubscriptionNode, []model.NodeGroup, int, error) {
+func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user model.User, output *model.SubscriptionOutput) ([]core.SubscriptionNode, []model.NodeGroup, int, core.SubscriptionFilterStats, error) {
 	groups, err := s.store.ListNodeGroups(ctx, user.ID)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	if output == nil {
 		output, err = s.store.GetDefaultSubscriptionOutput(ctx, user.ID)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, 0, core.SubscriptionFilterStats{}, err
 		}
 	}
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	snapshot, err := s.buildAccessSnapshot(ctx, data)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	orderPolicy, orderPositions, planNodeNames, err := s.store.GetEffectiveSubscriptionNodePresentation(ctx, user.ID, time.Now())
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	metadata, err := s.store.ListNodeMetadata(ctx)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	globalNames := map[string]*string{}
 	for key, item := range metadata {
@@ -658,15 +692,15 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	}
 	oboardNodes, err := core.BuildSubscriptionNodes(user, data.Servers, data.Inbounds, opts)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	for i := range groups {
 		if groups[i].Kind == model.NodeGroupOBoard {
 			groups[i].NodeCount = len(oboardNodes)
 		}
 	}
-	merged, deduplicatedCount, err := s.mergeWorkspaceOutputNodesWithStats(ctx, user, output, oboardNodes)
-	return merged, groups, deduplicatedCount, err
+	merged, deduplicatedCount, filterStats, err := s.mergeWorkspaceOutputNodesWithStats(ctx, user, output, oboardNodes)
+	return merged, groups, deduplicatedCount, filterStats, err
 }
 
 func (s *Server) workspaceAllNodes(ctx context.Context, user model.User) ([]core.SubscriptionNode, []model.NodeGroup, error) {
@@ -682,14 +716,14 @@ func (s *Server) workspaceAllNodes(ctx context.Context, user model.User) ([]core
 }
 
 func (s *Server) mergeWorkspaceOutputNodes(ctx context.Context, user model.User, output *model.SubscriptionOutput, oboardNodes []core.SubscriptionNode) ([]core.SubscriptionNode, error) {
-	nodes, _, err := s.mergeWorkspaceOutputNodesWithStats(ctx, user, output, oboardNodes)
+	nodes, _, _, err := s.mergeWorkspaceOutputNodesWithStats(ctx, user, output, oboardNodes)
 	return nodes, err
 }
 
-func (s *Server) mergeWorkspaceOutputNodesWithStats(ctx context.Context, user model.User, output *model.SubscriptionOutput, oboardNodes []core.SubscriptionNode) ([]core.SubscriptionNode, int, error) {
+func (s *Server) mergeWorkspaceOutputNodesWithStats(ctx context.Context, user model.User, output *model.SubscriptionOutput, oboardNodes []core.SubscriptionNode) ([]core.SubscriptionNode, int, core.SubscriptionFilterStats, error) {
 	groups, err := s.store.ListNodeGroups(ctx, user.ID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	groupByID := map[int64]model.NodeGroup{}
 	for _, group := range groups {
@@ -697,7 +731,7 @@ func (s *Server) mergeWorkspaceOutputNodesWithStats(ctx context.Context, user mo
 	}
 	privateNodes, err := s.store.ListImportedNodes(ctx, user.ID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	privateByGroup := map[int64][]core.SubscriptionNode{}
 	for _, item := range privateNodes {
@@ -719,6 +753,7 @@ func (s *Server) mergeWorkspaceOutputNodesWithStats(ctx context.Context, user mo
 	merged := []core.SubscriptionNode{}
 	seen := map[string]bool{}
 	deduplicatedCount := 0
+	groupByNodeKey := map[string]int64{}
 	for _, groupID := range output.GroupIDs {
 		group, ok := groupByID[groupID]
 		if !ok {
@@ -738,10 +773,13 @@ func (s *Server) mergeWorkspaceOutputNodesWithStats(ctx context.Context, user mo
 				continue
 			}
 			seen[fingerprint] = true
+			groupByNodeKey[node.Key] = groupID
 			merged = append(merged, node)
 		}
 	}
-	return disambiguateWorkspaceNodeNames(merged), deduplicatedCount, nil
+	ordered := disambiguateWorkspaceNodeNames(merged)
+	filtered, stats := core.ApplySubscriptionOutputFilters(ordered, output.Filters, groupByNodeKey)
+	return filtered, deduplicatedCount, stats, nil
 }
 
 func fetchNodeSource(ctx context.Context, rawURL, etag, lastModified string) ([]byte, string, string, bool, error) {

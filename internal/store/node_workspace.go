@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -16,7 +17,31 @@ const (
 	maxNodeGroupsPerUser = 50
 	maxOutputsPerUser    = 50
 	maxImportedNodesUser = 5000
+	// maxSubscriptionOutputFiltersBytes bounds the persisted filter pipeline.
+	maxSubscriptionOutputFiltersBytes = 8192
 )
+
+func marshalSubscriptionOutputFilters(filters []model.SubscriptionOutputFilter) (string, error) {
+	raw, err := json.Marshal(filters)
+	if err != nil {
+		return "", errors.New("invalid subscription output filters")
+	}
+	if len(raw) > maxSubscriptionOutputFiltersBytes {
+		return "", errors.New("subscription output filters are too large")
+	}
+	return string(raw), nil
+}
+
+func parseSubscriptionOutputFilters(raw string) []model.SubscriptionOutputFilter {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var filters []model.SubscriptionOutputFilter
+	if err := json.Unmarshal([]byte(raw), &filters); err != nil {
+		return nil
+	}
+	return filters
+}
 
 type nodeWorkspaceExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -352,7 +377,7 @@ func (s *Store) AddManualImportedNodes(ctx context.Context, userID, groupID int6
 }
 
 func (s *Store) ListSubscriptionOutputs(ctx context.Context, userID int64) ([]model.SubscriptionOutput, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,name,is_default,enabled,created_at,updated_at from subscription_outputs where user_id=? order by is_default desc,id`, userID)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,name,is_default,enabled,filters_json,created_at,updated_at from subscription_outputs where user_id=? order by is_default desc,id`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -360,12 +385,14 @@ func (s *Store) ListSubscriptionOutputs(ctx context.Context, userID int64) ([]mo
 	for rows.Next() {
 		var v model.SubscriptionOutput
 		var def, en int
+		var filters string
 		var c, u string
-		if err := rows.Scan(&v.ID, &v.UserID, &v.Name, &def, &en, &c, &u); err != nil {
+		if err := rows.Scan(&v.ID, &v.UserID, &v.Name, &def, &en, &filters, &c, &u); err != nil {
 			return nil, err
 		}
 		v.IsDefault, v.Enabled = def != 0, en != 0
 		v.CreatedAt, v.UpdatedAt = parseTime(c), parseTime(u)
+		v.Filters = parseSubscriptionOutputFilters(filters)
 		items = append(items, v)
 	}
 	if err := rows.Err(); err != nil {
@@ -429,6 +456,10 @@ func (s *Store) SaveSubscriptionOutput(ctx context.Context, value *model.Subscri
 	if value == nil || value.UserID <= 0 || strings.TrimSpace(value.Name) == "" || len([]rune(strings.TrimSpace(value.Name))) > 80 || len(value.GroupIDs) == 0 || len(value.GroupIDs) > maxNodeGroupsPerUser {
 		return errors.New("invalid subscription output")
 	}
+	filtersJSON, err := marshalSubscriptionOutputFilters(value.Filters)
+	if err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -437,7 +468,7 @@ func (s *Store) SaveSubscriptionOutput(ctx context.Context, value *model.Subscri
 	ts := now()
 	created := value.ID == 0
 	if created {
-		res, err := tx.ExecContext(ctx, `insert into subscription_outputs(user_id,name,is_default,enabled,created_at,updated_at) select ?,?,0,1,?,? where (select count(*) from subscription_outputs where user_id=?)<?`, value.UserID, strings.TrimSpace(value.Name), ts, ts, value.UserID, maxOutputsPerUser)
+		res, err := tx.ExecContext(ctx, `insert into subscription_outputs(user_id,name,is_default,enabled,filters_json,created_at,updated_at) select ?,?,0,1,?,?,? where (select count(*) from subscription_outputs where user_id=?)<?`, value.UserID, strings.TrimSpace(value.Name), filtersJSON, ts, ts, value.UserID, maxOutputsPerUser)
 		if err != nil {
 			return err
 		}
@@ -446,7 +477,7 @@ func (s *Store) SaveSubscriptionOutput(ctx context.Context, value *model.Subscri
 		}
 		value.ID, _ = res.LastInsertId()
 	} else {
-		res, err := tx.ExecContext(ctx, `update subscription_outputs set name=?,enabled=?,updated_at=? where id=? and user_id=?`, strings.TrimSpace(value.Name), boolInt(value.Enabled), ts, value.ID, value.UserID)
+		res, err := tx.ExecContext(ctx, `update subscription_outputs set name=?,enabled=?,filters_json=?,updated_at=? where id=? and user_id=?`, strings.TrimSpace(value.Name), boolInt(value.Enabled), filtersJSON, ts, value.ID, value.UserID)
 		if err != nil {
 			return err
 		}

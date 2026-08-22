@@ -588,6 +588,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureSSHPasswordDeploymentDeviceIdentity(ctx); err != nil {
 		return err
 	}
+	// Subscription output filters: each output carries an ordered Sub-Store style
+	// filter pipeline applied at render time over the merged node list. Existing
+	// outputs default to an empty rule list (no filtering).
+	if err := s.ensureColumn(ctx, "subscription_outputs", "filters_json", `alter table subscription_outputs add column filters_json text not null default ''`); err != nil {
+		return err
+	}
 	// Subscription node ordering: each revision carries a versioned JSON
 	// ordering policy and each revision node carries an optional manual
 	// position. Existing revisions default to the legacy comparator so an

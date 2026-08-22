@@ -44,7 +44,7 @@ func (s *Server) queryNodeWorkspaceCapability(ctx context.Context, principal app
 		if err != nil || !output.Enabled {
 			return nil, errors.New("authorized subscription output not found or disabled")
 		}
-		nodes, _, err := s.workspaceSubscriptionNodes(ctx, *user, output)
+		nodes, _, _, filterStats, err := s.workspaceSubscriptionNodesWithStats(ctx, *user, output)
 		if err != nil {
 			return nil, err
 		}
@@ -52,7 +52,7 @@ func (s *Server) queryNodeWorkspaceCapability(ctx context.Context, principal app
 		if err != nil {
 			return nil, err
 		}
-		return subscriptionPreviewView(preview, false), nil
+		return subscriptionPreviewView(preview, false, filterStats), nil
 	case "node_library.list":
 		nodes, groups, err := s.workspaceAllNodes(ctx, *user)
 		if err != nil {
@@ -113,6 +113,7 @@ type nodeWorkspaceOperation struct {
 	URL      string              `json:"url"`
 	Content  string              `json:"content"`
 	GroupIDs []int64             `json:"group_ids"`
+	Filters  []model.SubscriptionOutputFilter `json:"filters"`
 	Enabled  *bool               `json:"enabled"`
 }
 
@@ -152,6 +153,9 @@ func (s *Server) validateNodeWorkspaceOperation(ctx context.Context, principal a
 			if _, err := s.store.GetSubscriptionOutput(ctx, request.UserID, request.OutputID); err != nil {
 				return nil, err
 			}
+		}
+		if _, err := s.normalizeSubscriptionOutputFilterRequest(ctx, request.UserID, &request.Filters); err != nil {
+			return nil, err
 		}
 	case "subscription_outputs.delete":
 		output, err := s.store.GetSubscriptionOutput(ctx, request.UserID, request.OutputID)
@@ -212,7 +216,7 @@ func (s *Server) applyNodeWorkspaceOperation(ctx context.Context, principal appl
 		}
 		return map[string]any{"source_id": source.ID, "node_count": len(result.Nodes), "issues": result.Issues}, nil
 	case "subscription_outputs.save":
-		output := &model.SubscriptionOutput{ID: request.OutputID, UserID: request.UserID, Name: request.Name, GroupIDs: request.GroupIDs, Enabled: true}
+		output := &model.SubscriptionOutput{ID: request.OutputID, UserID: request.UserID, Name: request.Name, GroupIDs: request.GroupIDs, Filters: request.Filters, Enabled: true}
 		if request.OutputID > 0 {
 			current, err := s.store.GetSubscriptionOutput(ctx, request.UserID, request.OutputID)
 			if err != nil {

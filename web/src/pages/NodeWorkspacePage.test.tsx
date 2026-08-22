@@ -65,6 +65,71 @@ describe('NodeWorkspacePage', () => {
     expect(Array.from(container.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 自建 C', '3. 机场 B'])
   })
 
+  it('edits subscription output filters and shows preview filter stats', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [
+        { id: 1, kind: 'oboard', system_key: 'oboard', name: 'OBoard', node_count: 1 },
+        { id: 2, kind: 'manual', name: '机场 B', node_count: 2 },
+      ],
+      node_sources: [],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: [1, 2], filters: [{ type: 'drop_name', value: '广告' }] }],
+    }
+    const patched: any[] = []
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/node-workspace') return workspace
+      if (path === '/node-library') return { nodes: [] }
+      if (path === '/subscription-outputs/2' && init?.method === 'PATCH') {
+        patched.push(JSON.parse(String(init.body)))
+        return { subscription_output: workspace.subscription_outputs[0] }
+      }
+      if (path === '/subscription-outputs/2/preview') {
+        return {
+          preview: {
+            nodes: [{ id: 'private:1', name: '香港 01' }],
+            content: '{}',
+            filter_dropped: 1,
+            filter_stats: [{ type: 'drop_name', value: '广告', matched: 1, dropped: 1, remaining: 1 }],
+          },
+          deduplicated_count: 0,
+        }
+      }
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => {
+      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
+
+    expect(container.textContent).toContain('过滤规则')
+    expect(container.querySelectorAll('.output-filter-row').length).toBe(1)
+    expect(container.querySelector('.output-filter-row input')?.getAttribute('value')).toBe('广告')
+
+    const valueInput = () => container.querySelector('.output-filter-row input') as HTMLInputElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(valueInput(), '广告|测试')
+      valueInput().dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('添加规则')) as HTMLButtonElement).click())
+    expect(container.querySelectorAll('.output-filter-row').length).toBe(2)
+    act(() => (container.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).value = 'drop_protocol')
+    act(() => (container.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
+    act(() => (container.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).value = 'trojan')
+    act(() => (container.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
+    act(() => (Array.from(container.querySelectorAll('.output-actions button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    await flushEffects()
+
+    expect(patched.length).toBe(1)
+    expect(patched[0].filters).toEqual([{ type: 'drop_name', value: '广告|测试' }, { type: 'drop_protocol', value: 'trojan' }])
+    expect(patched[0].group_ids).toEqual([1, 2])
+
+    act(() => (Array.from(container.querySelectorAll('.output-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
+    await flushEffects()
+    expect(container.textContent).toContain('规则过滤 1 个')
+    expect(container.querySelector('.filter-stat')?.textContent).toContain('名字正则排除')
+  })
+
   it('switches to the administrator global view when the session role arrives after mount', async () => {
     const workspace = {
       subject: { id: 1, username: 'admin' },

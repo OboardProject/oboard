@@ -5,7 +5,7 @@ import { NodeAssignmentsPage } from './NodeAssignmentsPage'
 type Client = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 type Group = { id: number; kind: 'oboard' | 'remote' | 'manual'; system_key?: string; name: string; node_count: number }
 type Source = { id: number; group_id: number; url_display: string; status: string; last_error?: string; last_success_at?: string }
-type Output = { id: number; name: string; is_default: boolean; enabled: boolean; group_ids: number[] }
+type Output = { id: number; name: string; is_default: boolean; enabled: boolean; group_ids: number[]; filters?: Array<{ type: string; value: string }> }
 type Node = { id: string; group_id: number; name: string; protocol: string; source: string; copyable: boolean }
 type ImportPreview = { nodes: Array<{ name: string; protocol: string; fingerprint: string }>; issues: Array<{ index: number; name?: string; message: string }> }
 type Workspace = { subject: { id: number; username: string; nickname?: string }; node_groups: Group[]; node_sources: Source[]; subscription_outputs: Output[] }
@@ -161,14 +161,24 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
   </section>
 }
 
+type FilterRule = { type: string; value: string }
+const filterTypeLabels: Record<string, string> = {
+  keep_name: '名字正则保留', drop_name: '名字正则排除',
+  keep_protocol: '协议保留', drop_protocol: '协议排除',
+  keep_region: '地区保留', drop_region: '地区排除',
+  keep_group: '分组保留', drop_group: '分组排除',
+}
+const filterProtocols = ['vless', 'vmess', 'trojan', 'tuic', 'hysteria2', 'anytls', 'shadowsocks', 'socks5', 'socks', 'snell', 'mieru', 'ssh']
+
 function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refresh, message, legacySubscriptions }: { workspace: Workspace; data: any; client: Client; subjectQuery: string; busy: boolean; refresh: () => Promise<void>; message: (value: string, tone?: 'success' | 'error' | 'warning') => void; legacySubscriptions?: React.ReactNode }) {
   const [selectedID, setSelectedID] = React.useState(workspace.subscription_outputs[0]?.id || 0)
   const selected = workspace.subscription_outputs.find(item => item.id === selectedID) || workspace.subscription_outputs[0]
   const [name, setName] = React.useState(selected?.name || '')
   const [groupIDs, setGroupIDs] = React.useState<number[]>(selected?.group_ids || [])
+  const [filters, setFilters] = React.useState<FilterRule[]>(selected?.filters || [])
   const [format, setFormat] = React.useState('mihomo')
   const [preview, setPreview] = React.useState<any>(null)
-  React.useEffect(() => { setName(selected?.name || ''); setGroupIDs(selected?.group_ids || []); setPreview(null) }, [selected?.id])
+  React.useEffect(() => { setName(selected?.name || ''); setGroupIDs(selected?.group_ids || []); setFilters(selected?.filters || []); setPreview(null) }, [selected?.id])
   if (!selected) return <section className="node-workspace-panel"><div className="node-workspace-state">暂无组合订阅</div></section>
   const orderedGroups = [...groupIDs.map(id => workspace.node_groups.find(group => group.id === id)).filter((group): group is Group => Boolean(group)), ...workspace.node_groups.filter(group => !groupIDs.includes(group.id))]
   const moveGroup = (groupID: number, offset: -1 | 1) => setGroupIDs(current => {
@@ -179,7 +189,26 @@ function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refr
     ;[next[from], next[to]] = [next[to], next[from]]
     return next
   })
-  const save = async () => { try { await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'PATCH', body: JSON.stringify({ name, group_ids: groupIDs, enabled: true }) }); message('组合订阅已保存'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }
+  const filteredHasValue = filters.every(rule => rule.value.trim() !== '')
+  const updateFilter = (index: number, patch: Partial<FilterRule>) => setFilters(current => current.map((rule, position) => position === index ? { ...rule, ...patch } : rule))
+  const moveFilter = (index: number, offset: -1 | 1) => setFilters(current => {
+    const to = index + offset
+    if (to < 0 || to >= current.length) return current
+    const next = [...current]
+    ;[next[index], next[to]] = [next[to], next[index]]
+    return next
+  })
+  const filterValueControl = (rule: FilterRule, index: number) => {
+    if (rule.type === 'keep_protocol' || rule.type === 'drop_protocol') {
+      return <select value={rule.value} aria-label={`第 ${index + 1} 条规则协议`} onChange={event => updateFilter(index, { value: event.target.value })}>{filterProtocols.map(protocol => <option key={protocol} value={protocol}>{protocol}</option>)}</select>
+    }
+    if (rule.type === 'keep_group' || rule.type === 'drop_group') {
+      return <select value={rule.value} aria-label={`第 ${index + 1} 条规则分组`} onChange={event => updateFilter(index, { value: event.target.value })}><option value="">选择节点组</option>{workspace.node_groups.map(group => <option key={group.id} value={String(group.id)}>{group.name}</option>)}</select>
+    }
+    const placeholder = rule.type.endsWith('region') ? '如 JP、HK、US' : '正则表达式，如 香港|东京'
+    return <input value={rule.value} aria-label={`第 ${index + 1} 条规则值`} placeholder={placeholder} maxLength={256} onChange={event => updateFilter(index, { value: event.target.value })} />
+  }
+  const save = async () => { try { await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'PATCH', body: JSON.stringify({ name, group_ids: groupIDs, filters, enabled: true }) }); message('组合订阅已保存'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }
   const runPreview = async () => { try { const result = await client.request<any>(`/subscription-outputs/${selected.id}/preview${subjectQuery}`, { method: 'POST', body: JSON.stringify({ format }) }); setPreview(result) } catch (error: any) { message(error?.message || String(error), 'error') } }
   const copyURL = async () => {
     const users = data.users || []
@@ -201,7 +230,21 @@ function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refr
         <button type="button" className="icon-button" title="下移" aria-label={`下移 ${group.name}`} disabled={!selectedGroup || position === groupIDs.length - 1} onClick={() => moveGroup(group.id, 1)}><ArrowDown size={14} /></button>
       </div></div>
     })}</fieldset>
-    <div className="output-actions"><select value={format} onChange={event => setFormat(event.target.value)} aria-label="客户端格式">{formats.map(item => <option key={item}>{item}</option>)}</select><button type="button" onClick={() => void save()} disabled={busy || !name.trim() || groupIDs.length === 0}><Check size={15} />保存</button><button type="button" className="ghost" onClick={() => void runPreview()} disabled={busy}><Eye size={15} />预览</button><button type="button" className="ghost" onClick={() => void copyURL()}><Copy size={15} />复制订阅</button>{!selected.is_default && <button type="button" className="ghost danger" disabled={busy} onClick={async () => { if (!window.confirm(`删除组合订阅“${selected.name}”？`)) return; try { await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'DELETE' }); message('组合订阅已删除'); setSelectedID(0); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><Trash2 size={15} />删除组合</button>}</div>
-    {preview && <div className="output-preview"><div><span>输出 {preview.preview?.nodes?.length || 0} 个</span><span>过滤 {preview.preview?.filtered_count || 0} 个</span><span>去重 {preview.deduplicated_count || 0} 个</span><span>错误 {preview.preview?.invalid_reasons?.length || 0} 个</span></div><pre>{preview.preview?.content || '此格式没有兼容节点'}</pre></div>}
+    <fieldset><legend>过滤规则（按顺序执行，被排除的节点不会被后续规则恢复）</legend>
+      {filters.length === 0 && <p className="muted" style={{ margin: '0 0 6px', fontSize: 12 }}>未设置过滤规则，输出全部节点。规则作用于去除国旗前缀后的节点名。</p>}
+      {filters.map((rule, index) => <div className="output-filter-row" key={index}>
+        <span className="filter-position">{index + 1}</span>
+        <select value={rule.type} aria-label={`第 ${index + 1} 条规则类型`} onChange={event => updateFilter(index, { type: event.target.value, value: event.target.value === rule.type ? rule.value : '' })}>{Object.entries(filterTypeLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select>
+        {filterValueControl(rule, index)}
+        <div className="output-group-order" aria-label={`第 ${index + 1} 条规则顺序`}>
+          <button type="button" className="icon-button" title="上移" aria-label={`上移规则 ${index + 1}`} disabled={index === 0} onClick={() => moveFilter(index, -1)}><ArrowUp size={14} /></button>
+          <button type="button" className="icon-button" title="下移" aria-label={`下移规则 ${index + 1}`} disabled={index === filters.length - 1} onClick={() => moveFilter(index, 1)}><ArrowDown size={14} /></button>
+        </div>
+        <button type="button" className="icon-button danger-text" title="删除" aria-label={`删除规则 ${index + 1}`} onClick={() => setFilters(current => current.filter((_, position) => position !== index))}><Trash2 size={14} /></button>
+      </div>)}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="button" className="ghost" disabled={filters.length >= 32} onClick={() => setFilters(current => [...current, { type: 'keep_name', value: '' }])}><Plus size={14} />添加规则</button></div>
+    </fieldset>
+    <div className="output-actions"><select value={format} onChange={event => setFormat(event.target.value)} aria-label="客户端格式">{formats.map(item => <option key={item}>{item}</option>)}</select><button type="button" onClick={() => void save()} disabled={busy || !name.trim() || groupIDs.length === 0 || !filteredHasValue}><Check size={15} />保存</button><button type="button" className="ghost" onClick={() => void runPreview()} disabled={busy}><Eye size={15} />预览</button><button type="button" className="ghost" onClick={() => void copyURL()}><Copy size={15} />复制订阅</button>{!selected.is_default && <button type="button" className="ghost danger" disabled={busy} onClick={async () => { if (!window.confirm(`删除组合订阅“${selected.name}”？`)) return; try { await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'DELETE' }); message('组合订阅已删除'); setSelectedID(0); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><Trash2 size={15} />删除组合</button>}</div>
+    {preview && <div className="output-preview"><div><span>输出 {preview.preview?.nodes?.length || 0} 个</span><span>格式过滤 {preview.preview?.filtered_count || 0} 个</span><span>规则过滤 {preview.preview?.filter_dropped || 0} 个</span><span>去重 {preview.deduplicated_count || 0} 个</span><span>错误 {preview.preview?.invalid_reasons?.length || 0} 个</span></div>{Array.isArray(preview.preview?.filter_stats) && preview.preview.filter_stats.length > 0 && <div className="filter-stats">{preview.preview.filter_stats.map((stat: any, index: number) => <span key={index} className={`filter-stat ${stat.dropped > 0 ? 'filter-stat-dropped' : ''}`}>{filterTypeLabels[stat.type] || stat.type} · {stat.value}{stat.skip_reason ? ` · ${stat.skip_reason}` : ` · 命中 ${stat.matched} / 丢弃 ${stat.dropped} / 剩余 ${stat.remaining}`}</span>)}</div>}<pre>{preview.preview?.content || '此格式没有兼容节点'}</pre></div>}
   </div></div>{legacySubscriptions && <div className="legacy-subscriptions-embedded">{legacySubscriptions}</div>}</section>
 }
