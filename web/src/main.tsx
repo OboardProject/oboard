@@ -14062,7 +14062,7 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
     <div className="form-section-title">Snell v4 设置</div>
     <div className="access-note compact"><strong>协议形态</strong><span>v4 单 PSK；UDP relay 随 TCP 流承载，无需单独 UDP 端口。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
-    <FormField label="混淆模式"><Select value={String(config.obfs_mode || 'none')} onChange={event => updateConfig({ obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? undefined : config.obfs_host })}><option value="none">无</option><option value="http">HTTP</option><option value="tls">TLS</option></Select></FormField>
+    <FormField label="混淆模式"><Select value={String(config.obfs_mode || 'none')} onChange={event => updateConfig({ obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? undefined : config.obfs_host })}><option value="none">无</option><option value="http">HTTP</option></Select></FormField>
     {String(config.obfs_mode || 'none') !== 'none' && <FormField label="混淆 Host"><input value={String(config.obfs_host || '')} onChange={event => updateConfig({ obfs_host: event.target.value })} placeholder="例如 bing.com" /></FormField>}
   </div>
   return <div className="preset-fields">

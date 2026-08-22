@@ -27,8 +27,8 @@ func (s *Store) CreateSnellProfile(ctx context.Context, v *model.SnellProfile) e
 
 func normalizeSnellObfsMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "http", "tls":
-		return strings.ToLower(strings.TrimSpace(mode))
+	case "http":
+		return "http"
 	default:
 		return "none"
 	}

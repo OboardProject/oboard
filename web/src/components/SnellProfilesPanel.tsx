@@ -13,7 +13,7 @@ export interface SnellProfilesPanelProps {
 type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
 
 const versions = [4, 6]
-const obfsModes = ['none', 'http', 'tls']
+const obfsModes = ['none', 'http']
 const v6Modes = ['default', 'unshaped', 'unsafe-raw']
 
 type Draft = {
@@ -67,13 +67,13 @@ function ProfileEditor({ draft, setDraft, onSave, onCancel, saving }: { draft: D
           {versions.map(version => <option key={version} value={String(version)}>v{version}</option>)}
         </Select>
       </SettingsRow>
-      <SettingsRow label="PSK" description="至少 8 字符。留空时入口会使用绑定用户的代理密码。">
+      <SettingsRow label="PSK" description={isV6 ? 'v6 要求 12-255 字节。留空时入口会使用绑定用户的代理密码。' : '至少 8 字符。留空时入口会使用绑定用户的代理密码。'}>
         <input value={draft.psk} onChange={event => setDraft({ ...draft, psk: event.target.value })} placeholder="留空 = 使用用户密码" autoComplete="new-password" />
       </SettingsRow>
       {!isV6 && <>
-        <SettingsRow label="混淆模式" description={draft.obfs_mode === 'tls' ? 'TLS 混淆仅 v5 客户端使用；v4 客户端使用 HTTP。' : 'HTTP 混淆需要填写混淆 Host。'}>
+        <SettingsRow label="混淆模式" description="HTTP 混淆；Host 留空时客户端使用默认 bing.com。">
           <Select value={draft.obfs_mode} onChange={event => setDraft({ ...draft, obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? '' : draft.obfs_host })} aria-label="混淆模式">
-            {obfsModes.map(mode => <option key={mode} value={mode}>{mode === 'none' ? '无' : mode === 'http' ? 'HTTP' : 'TLS'}</option>)}
+            {obfsModes.map(mode => <option key={mode} value={mode}>{mode === 'none' ? '无' : 'HTTP'}</option>)}
           </Select>
         </SettingsRow>
         {draft.obfs_mode !== 'none' && <SettingsRow label="混淆 Host" description="客户端握手时使用的伪装域名。">

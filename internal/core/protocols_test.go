@@ -2098,6 +2098,22 @@ func TestSnellAdapterVersionMapping(t *testing.T) {
 	if _, err := adapter.Inbound(model.Inbound{ID: 11, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6162, ConfigJSON: `{"version":5,"psk":"secret-psk-1234"}`, Enabled: true}, nil); err == nil {
 		t.Fatal("snell panel version 5 must be rejected")
 	}
+	// v6 psk length contract: 12-255 bytes per sing-box 1.14 docs and
+	// sing-snell v6 server validation.
+	shortV6 := model.Inbound{ID: 12, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 7160, ConfigJSON: `{"version":6,"psk":"short-psk"}`, Enabled: true}
+	if _, err := adapter.Inbound(shortV6, nil); err == nil {
+		t.Fatal("snell v6 psk shorter than 12 bytes must be rejected")
+	}
+	// tls obfs is not exposed for v4 either (sing-box 1.14 / Surge docs).
+	tlsObfs := model.Inbound{ID: 13, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6163, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"tls"}`, Enabled: true}
+	if _, err := adapter.Inbound(tlsObfs, nil); err == nil {
+		t.Fatal("snell v4 tls obfs must be rejected")
+	}
+	// http obfs without explicit host is valid (sing-box defaults bing.com).
+	nohost := model.Inbound{ID: 14, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6164, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http"}`, Enabled: true}
+	if _, err := adapter.Inbound(nohost, nil); err != nil {
+		t.Fatalf("snell v4 http obfs without host must be accepted: %v", err)
+	}
 }
 
 func TestSnellAdapterOutboundVersionMapping(t *testing.T) {
@@ -2105,12 +2121,12 @@ func TestSnellAdapterOutboundVersionMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outbound := model.Outbound{ID: 5, Protocol: model.ProtocolSnell, TargetAddress: "example.com", TargetPort: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"tls","obfs_host":"cdn.example.com","reuse":true}`, Enabled: true}
+	outbound := model.Outbound{ID: 5, Protocol: model.ProtocolSnell, TargetAddress: "example.com", TargetPort: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http","obfs_host":"cdn.example.com","reuse":true}`, Enabled: true}
 	out, err := adapter.Outbound(outbound, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out["version"] != 4 || out["obfs_mode"] != "tls" || out["obfs_host"] != "cdn.example.com" || out["reuse"] != true {
+	if out["version"] != 4 || out["obfs_mode"] != "http" || out["obfs_host"] != "cdn.example.com" || out["reuse"] != true {
 		t.Fatalf("snell v4 outbound = %#v", out)
 	}
 	v6out := model.Outbound{ID: 6, Protocol: model.ProtocolSnell, TargetAddress: "example.com", TargetPort: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unsafe-raw"}`, Enabled: true}

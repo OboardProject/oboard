@@ -82,7 +82,7 @@ func TestSnellProfilesCRUDAndReferenceGuard(t *testing.T) {
 	}
 	// Update with normalization.
 	got.PSK = "new-psk-5678"
-	got.ObfsMode = "tls"
+	got.ObfsMode = "http"
 	got.Mode = "unshaped"
 	changed, err := s.UpdateSnellProfile(ctx, got)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestSnellProfilesCRUDAndReferenceGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.PSK != "new-psk-5678" || after.ObfsMode != "tls" || after.Mode != "unshaped" {
+	if after.PSK != "new-psk-5678" || after.ObfsMode != "http" || after.Mode != "unshaped" {
 		t.Fatalf("update not applied: %#v", after)
 	}
 	// Referenced profiles cannot be deleted.

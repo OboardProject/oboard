@@ -69,14 +69,14 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 	}, "encrypted_list_id", "bootstrap_list_id")
 	snellProfile := closedObject(map[string]any{
 		"id": positiveID, "name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
-		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http", "tls"}},
+		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http"}},
 		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
 		"reuse": boolValue, "remark": stringValue, "builtin": boolValue, "enabled": boolValue,
 		"usage_count": map[string]any{"type": "integer"},
 	})
 	snellProfileFields := closedObject(map[string]any{
 		"name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
-		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http", "tls"}},
+		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http"}},
 		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
 		"reuse": boolValue, "remark": stringValue, "enabled": boolValue,
 	}, "name", "version", "psk")

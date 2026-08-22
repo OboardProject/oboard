@@ -3434,10 +3434,10 @@ func normalizeSnellObfsMode(mode string) (string, error) {
 		return "none", nil
 	case "http":
 		return "http", nil
-	case "tls":
-		return "tls", nil
 	default:
-		return "", fmt.Errorf("unsupported snell obfs_mode %q", mode)
+		// sing-box and Surge document Snell v4/v5 obfs as none/http only;
+		// TLS obfs (v1-3 era) is intentionally not exposed by the panel.
+		return "", fmt.Errorf("unsupported snell obfs_mode %q (only none or http)", mode)
 	}
 }
 
@@ -3479,22 +3479,49 @@ func snellPanelVersion(extra map[string]any) (int, error) {
 	}
 }
 
+// snellPSK resolves the single PSK for an inbound: config_json.psk wins, then
+// the first bound user's proxy password, then the profile/user fallback error.
+// Length policy follows the sing-box 1.14 documentation and sing-snell v6
+// server validation: v6 requires 12-255 bytes; v4 keeps a generous 8-byte
+// floor consistent with panel user password strength.
 func snellPSK(extra map[string]any, users []model.User) (string, error) {
-	if psk := strings.TrimSpace(stringValue(extra, "psk", "")); psk != "" {
-		if len(psk) < 8 {
-			return "", errors.New("snell psk must be at least 8 characters")
-		}
-		return psk, nil
-	}
-	for _, user := range users {
-		if psk := strings.TrimSpace(user.ProxyPassword); psk != "" {
-			if len(psk) < 8 {
-				return "", fmt.Errorf("snell psk for user %d is too short", user.ID)
+	psk := strings.TrimSpace(stringValue(extra, "psk", ""))
+	if psk == "" {
+		for _, user := range users {
+			if candidate := strings.TrimSpace(user.ProxyPassword); candidate != "" {
+				psk = candidate
+				break
 			}
-			return psk, nil
 		}
 	}
-	return "", errors.New("snell psk required (config_json.psk or a bound user password)")
+	if psk == "" {
+		return "", errors.New("snell psk required (config_json.psk or a bound user password)")
+	}
+	version, err := snellPanelVersion(extra)
+	if err != nil {
+		return "", err
+	}
+	if err := validateSnellPSKLength(psk, version); err != nil {
+		return "", err
+	}
+	return psk, nil
+}
+
+// validateSnellPSKLength enforces the sing-box 1.14 Snell contract: v6 PSKs
+// must be 12-255 bytes (sing-snell v6 server rejects anything else); v4 keeps
+// an 8-byte floor consistent with panel user password strength.
+func validateSnellPSKLength(psk string, version int) error {
+	length := len([]byte(psk))
+	if version == SnellVersionV6 {
+		if length < 12 || length > 255 {
+			return fmt.Errorf("snell v6 psk must be between 12 and 255 bytes")
+		}
+		return nil
+	}
+	if length < 8 {
+		return errors.New("snell psk must be at least 8 characters")
+	}
+	return nil
 }
 
 func snellReuse(extra map[string]any) bool {
@@ -3516,17 +3543,18 @@ func validateSnellOptions(extra map[string]any) error {
 	if version == SnellVersionV6 && obfs != "none" {
 		return errors.New("snell v6 does not support obfs_mode")
 	}
-	if obfs == "http" {
-		if host := strings.TrimSpace(stringValue(extra, "obfs_host", "")); host == "" {
-			return errors.New("snell http obfs requires obfs_host")
-		}
-	}
+	// obfs_host is optional: sing-box defaults it to bing.com for http obfs.
 	if _, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
 		return err
 	}
 	if raw, exists := extra["reuse"]; exists {
 		if _, ok := raw.(bool); !ok {
 			return errors.New("snell reuse must be boolean")
+		}
+	}
+	if psk := strings.TrimSpace(stringValue(extra, "psk", "")); psk != "" {
+		if err := validateSnellPSKLength(psk, version); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -3608,8 +3636,10 @@ func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 	if psk == "" {
 		return nil, errors.New("snell psk required")
 	}
-	if len(psk) < 8 {
-		return nil, errors.New("snell psk must be at least 8 characters")
+	if clientVersion == SnellVersionV6 {
+		if err := validateSnellPSKLength(psk, SnellVersionV6); err != nil {
+			return nil, err
+		}
 	}
 	item := map[string]any{"type": "snell", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "version": clientVersion, "psk": psk}
 	if snellReuse(extra) {

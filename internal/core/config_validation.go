@@ -353,8 +353,15 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 		psk := stringFromAny(item["psk"])
 		if strings.TrimSpace(psk) == "" {
 			v.addf("%s missing psk", path)
-		} else if len(psk) < 8 {
-			v.addf("%s psk too short", path)
+		} else {
+			version := intFromAny(item["version"])
+			if version == 6 {
+				if len([]byte(psk)) < 12 || len([]byte(psk)) > 255 {
+					v.addf("%s snell v6 psk must be between 12 and 255 bytes", path)
+				}
+			} else if len(psk) < 8 {
+				v.addf("%s psk too short", path)
+			}
 		}
 		v.validateSnellVersionFields(path, item, false)
 	case "socks":
@@ -383,18 +390,30 @@ func (v *configValidator) validateSnellVersionFields(path string, item map[strin
 		}
 		return
 	}
+	// v4 (outbound) and v5 (inbound) support http obfs only; tls obfs is not
+	// exposed by OBoard, matching the sing-box 1.14 and Surge documentation.
 	if obfs := strings.ToLower(strings.TrimSpace(stringFromAny(item["obfs_mode"]))); obfs != "" {
 		switch obfs {
-		case "none", "http", "tls":
+		case "none", "http":
 		default:
-			v.addf("%s invalid snell obfs_mode %q", path, obfs)
+			v.addf("%s invalid snell obfs_mode %q (only none or http)", path, obfs)
 		}
 	}
 }
 
 func (v *configValidator) validateSnellInbound(path string, inbound map[string]any) {
-	if strings.TrimSpace(stringFromAny(inbound["psk"])) == "" {
+	psk := stringFromAny(inbound["psk"])
+	if strings.TrimSpace(psk) == "" {
 		v.addf("%s missing psk", path)
+	} else {
+		version := intFromAny(inbound["version"])
+		if version == 6 {
+			if len([]byte(psk)) < 12 || len([]byte(psk)) > 255 {
+				v.addf("%s snell v6 psk must be between 12 and 255 bytes", path)
+			}
+		} else if len(psk) < 8 {
+			v.addf("%s psk too short", path)
+		}
 	}
 	v.validateSnellVersionFields(path, inbound, true)
 }

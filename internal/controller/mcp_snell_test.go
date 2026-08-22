@@ -34,10 +34,10 @@ func TestSnellProfileAutomationLifecycle(t *testing.T) {
 	if profile == nil || profile.Version != 4 || profile.PSK != "secret-psk-1234" || profile.ObfsMode != "http" || profile.ObfsHost != "bing.com" {
 		t.Fatalf("created profile missing: %#v", profiles)
 	}
-	updateInput, _ := json.Marshal(map[string]any{"snell_profile_id": profile.ID, "changes": map[string]any{"psk": "new-psk-5678", "obfs_mode": "tls"}})
+	updateInput, _ := json.Marshal(map[string]any{"snell_profile_id": profile.ID, "changes": map[string]any{"psk": "new-psk-5678", "obfs_mode": "http"}})
 	applyAutomationChangeset(t, server, adminPrincipal, "snell-profile-update", automation.OperationRequest{Capability: "snell_profiles.update", Input: updateInput})
 	after, err := db.GetSnellProfile(ctx, profile.ID)
-	if err != nil || after.PSK != "new-psk-5678" || after.ObfsMode != "tls" {
+	if err != nil || after.PSK != "new-psk-5678" || after.ObfsMode != "http" {
 		t.Fatalf("profile after update: %#v err=%v", after, err)
 	}
 	// Deleting an unreferenced custom profile succeeds.
