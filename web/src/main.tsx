@@ -5043,14 +5043,31 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
     if (!draft.name.trim() || !zones.length || zones.some((zone: any) => !zone.zone_name)) return dialogs.alert({ title: '信息不完整', message: '请填写账号名称和至少一个域名。' })
     if (provider === 'tencent_esa' && zones.some((zone: any) => !zone.provider_zone_id)) return dialogs.alert({ title: '信息不完整', message: '腾讯云 ESA 的每个域名都需要 Zone ID。' })
     if (!editingID && dnsProviderFields[provider].some(field => !field.optional && !config[field.key])) return dialogs.alert({ title: '信息不完整', message: '请填写当前服务商要求的全部账号信息。' })
+    const shouldAutoVerify = Object.keys(config).length > 0
+    const savedEditingID = editingID
     setWorking('credential-save')
     try {
       const payload: any = { name: draft.name.trim(), provider, zones, enabled: Boolean(draft.enabled) }
       if (Object.keys(config).length) payload.config = config
-      await client.request(editingID ? `/dns-credentials/${editingID}` : '/dns-credentials', { method: editingID ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
+      const result: any = await client.request(savedEditingID ? `/dns-credentials/${savedEditingID}` : '/dns-credentials', { method: savedEditingID ? 'PATCH' : 'POST', body: JSON.stringify(payload) })
+      const savedID = savedEditingID || Number(result?.dns_credential?.id || 0)
       closeCredentialDialog()
+      if (shouldAutoVerify && savedID) {
+        setWorking(`verify-${savedID}`)
+        try {
+          await client.request(`/dns-credentials/${savedID}/verify`, { method: 'POST', body: '{}' })
+          await load()
+          notify?.('域名服务账号已验证并可用', 'success')
+        } catch (verifyError: any) {
+          await load()
+          notify?.(localizeErrorMessage(verifyError?.message || verifyError) || '账号已创建，但验证失败，请检查密钥或 Zone ID', 'error')
+        } finally {
+          setWorking('')
+        }
+        return
+      }
       await load()
-      notify?.(editingID ? '域名服务账号已更新' : '域名服务账号已创建', 'success')
+      notify?.(savedEditingID ? '域名服务账号已更新' : '域名服务账号已创建', 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const verifyCredential = async (credential: DNSCredential) => {
