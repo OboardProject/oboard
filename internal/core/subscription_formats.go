@@ -43,6 +43,11 @@ type subscriptionProxy struct {
 	ObfsType       string
 	ObfsPassword   string
 	UoT            bool
+	Version        int
+	PSK            string
+	ObfsHost       string
+	Mode           string
+	Reuse          bool
 	PaddingScheme  any
 	Multiplexing   string
 	TrafficPattern string
@@ -171,6 +176,12 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 	}
 	proxy.TLS = normalizeSubscriptionTLS(raw["tls"], proxy.Type)
 	proxy.ObfsType, proxy.ObfsPassword = normalizeSubscriptionObfs(raw)
+	proxy.ObfsType = strings.ToLower(proxy.ObfsType)
+	proxy.Version = intFromAny(raw["version"])
+	proxy.PSK = stringFromAny(raw["psk"])
+	proxy.ObfsHost = stringFromAny(raw["obfs_host"])
+	proxy.Mode = strings.ToLower(strings.TrimSpace(stringFromAny(raw["mode"])))
+	proxy.Reuse = boolValue(raw["reuse"])
 	if err := validateNormalizedSubscriptionProxy(proxy); err != nil {
 		return subscriptionProxy{}, err
 	}
@@ -239,6 +250,16 @@ func validateNormalizedSubscriptionProxy(proxy subscriptionProxy) error {
 		if _, err := mieruPortsFromValue(proxy.Port, proxy.ServerPorts); err != nil {
 			return fmt.Errorf("subscription node %s has invalid mieru ports: %w", proxy.Name, err)
 		}
+	case "snell":
+		if proxy.PSK == "" {
+			return missing("snell psk")
+		}
+		if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
+			return fmt.Errorf("subscription node %s has unsupported snell version %d", proxy.Name, proxy.Version)
+		}
+		if proxy.Version == SnellVersionV6 && proxy.ObfsType != "" {
+			return fmt.Errorf("subscription node %s carries obfs on snell v6, which does not support obfs", proxy.Name)
+		}
 	default:
 		return fmt.Errorf("unsupported subscription proxy type %q", proxy.Type)
 	}
@@ -291,6 +312,9 @@ func normalizeSubscriptionTLS(value any, proxyType string) subscriptionTLS {
 }
 
 func normalizeSubscriptionObfs(raw map[string]any) (string, string) {
+	if mode := strings.ToLower(strings.TrimSpace(stringFromAny(raw["obfs_mode"]))); mode != "" && mode != "none" {
+		return mode, ""
+	}
 	switch value := raw["obfs"].(type) {
 	case map[string]any:
 		return stringFromAny(value["type"]), stringFromAny(value["password"])
@@ -317,6 +341,7 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 		"socks5":    {"version", "username", "password", "network", "udp_over_tcp"},
 		"ssh":       {"password", "host_key"},
 		"mieru":     {"server_ports", "transport", "username", "password", "multiplexing", "traffic_pattern"},
+		"snell":     {"version", "psk", "obfs_mode", "obfs_host", "mode", "reuse", "network"},
 	}
 	typeName := map[string]string{"ss": "shadowsocks", "socks5": "socks"}[proxy.Type]
 	if typeName == "" {
@@ -400,6 +425,9 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 		default:
 			return false
 		}
+	}
+	if proxy.Type == "snell" {
+		return snellFormatSupports(format, proxy)
 	}
 	switch format {
 	case model.SubscriptionFormatSingBox, model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket:
@@ -486,6 +514,46 @@ func qxSupports(proxy subscriptionProxy) bool {
 		return stashCipher(proxy.Method)
 	default:
 		return true
+	}
+}
+
+// snellFormatSupports mirrors the Sub-Store capability matrix for Snell
+// nodes (checked against v4/v6 nodes OBoard emits):
+//
+//   - Surge and Surge Mac: native Snell v1-v6, both v4 and v6 nodes.
+//   - Surfboard: Snell v1-v5 only, so v6 nodes are filtered.
+//   - Clash Meta / mihomo: Snell v1-v5 only, v6 filtered.
+//   - sing-box: v4 and v6 outbounds, both rendered.
+//   - Stash: Sub-Store filters Snell v4+; OBoard only emits v4/v6, so all
+//     Snell nodes are filtered for Stash (same silent-filter convention as
+//     Mieru).
+//   - Egern: Snell v1-v5, v6 filtered.
+//   - Shadowrocket: Sub-Store accepts Snell v1-v6 but emits a Clash-style
+//     YAML body, while OBoard renders the shadowrocket format as a line URI
+//     list; Snell has no standard URI scheme, so nodes are filtered and the
+//     capability is documented in docs/SUBSCRIPTION_CONVERSION.md.
+//   - Loon, Quantumult X, classic Clash, and V2Ray URI formats: no Snell.
+func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
+	if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
+		return false
+	}
+	switch format {
+	case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac:
+		return true
+	case model.SubscriptionFormatSurfboard:
+		return proxy.Version == SnellVersionV4
+	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo:
+		return proxy.Version == SnellVersionV4
+	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+		return true
+	case model.SubscriptionFormatEgern:
+		return proxy.Version == SnellVersionV4
+	case model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatClash,
+		model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket,
+		model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
+		return false
+	default:
+		return false
 	}
 }
 
@@ -757,6 +825,21 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 			setNonEmpty(out, "multiplexing", proxy.Multiplexing)
 		}
 		setNonEmpty(out, "traffic-pattern", proxy.TrafficPattern)
+	case "snell":
+		out["type"] = "snell"
+		out["psk"] = proxy.PSK
+		out["version"] = proxy.Version
+		out["udp"] = true
+		if proxy.Reuse {
+			out["reuse"] = true
+		}
+		if proxy.ObfsType != "" {
+			opts := map[string]any{"mode": proxy.ObfsType}
+			if proxy.ObfsHost != "" {
+				opts["host"] = proxy.ObfsHost
+			}
+			out["obfs-opts"] = opts
+		}
 	}
 	return out, nil
 }
@@ -871,6 +954,15 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 		out["username"] = proxy.Username
 		out["password"] = proxy.Password
 		out["host_keys"] = append([]string(nil), proxy.HostKeys...)
+	case "snell":
+		out["psk"] = proxy.PSK
+		out["version"] = proxy.Version
+		out["udp_relay"] = true
+		if proxy.Reuse {
+			out["reuse"] = true
+		}
+		setNonEmpty(out, "obfs", proxy.ObfsType)
+		setNonEmpty(out, "obfs_host", proxy.ObfsHost)
 	}
 	return map[string]any{typeName: out}
 }
@@ -1089,6 +1181,22 @@ func renderSurgeLine(proxy subscriptionProxy) (string, error) {
 		parts = append(parts, "udp-relay=true")
 	case "ssh":
 		parts = append(parts, fmt.Sprintf("%s=ssh,%s,%d", name, host, proxy.Port), "username="+quoteConf(proxy.Username), "password="+quoteConf(proxy.Password), "server-fingerprint="+quoteConf(strings.Join(proxy.HostKeys, ",")))
+	case "snell":
+		parts = append(parts, fmt.Sprintf("%s=snell,%s,%d", name, host, proxy.Port), "version="+strconv.Itoa(proxy.Version), "psk="+quoteConf(proxy.PSK))
+		if proxy.Version == SnellVersionV6 {
+			if proxy.Mode != "" && proxy.Mode != "default" {
+				parts = append(parts, "mode="+proxy.Mode)
+			}
+			parts = append(parts, "udp-relay=true")
+		} else {
+			if proxy.ObfsType != "" {
+				parts = append(parts, "obfs="+proxy.ObfsType)
+				if proxy.ObfsHost != "" {
+					parts = append(parts, "obfs-host="+quoteConf(proxy.ObfsHost))
+				}
+			}
+			parts = append(parts, "udp-relay=true")
+		}
 	default:
 		return "", fmt.Errorf("Surge does not support subscription proxy type %q", proxy.Type)
 	}

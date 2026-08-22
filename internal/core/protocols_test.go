@@ -20,7 +20,7 @@ import (
 
 func TestProtocolAdaptersGenerateSingBoxBlocks(t *testing.T) {
 	users := []model.User{{Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}}
-	protocols := []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSocks}
+	protocols := []model.Protocol{model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell, model.ProtocolSocks}
 	for _, protocol := range protocols {
 		adapter, err := AdapterFor(protocol)
 		if err != nil {
@@ -152,6 +152,48 @@ func TestConnectionAuditMetadataIsOnlyEmittedWhenEnabled(t *testing.T) {
 	}
 	if !strings.Contains(enabled, `"connection_audit"`) || !strings.Contains(enabled, `"enabled": true`) {
 		t.Fatalf("enabled server omitted connection audit metadata: %s", enabled)
+	}
+}
+
+func TestSnellGeneratedConfigAcrossUDPModes(t *testing.T) {
+	for _, mode := range []model.UDPInboundMode{model.UDPInboundAllow, model.UDPInboundBlock, model.UDPInboundUoT} {
+		t.Run(string(mode), func(t *testing.T) {
+			server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", UDPInboundMode: model.UDPInboundMode(mode)}
+			v4 := model.Inbound{ID: 2, ServerID: 1, Name: "snell-v4", Protocol: model.ProtocolSnell, ListenIP: "", Port: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http","obfs_host":"bing.com"}`, Enabled: true}
+			v6 := model.Inbound{ID: 3, ServerID: 1, Name: "snell-v6", Protocol: model.ProtocolSnell, ListenIP: "", Port: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unshaped"}`, Enabled: true}
+			config, err := GenerateServerConfigWithOptions(server, []model.Inbound{v4, v6}, nil, testDNSState(1), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyPassword: "user-pass"}}, ConfigOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed SingBoxConfig
+			if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+				t.Fatal(err)
+			}
+			var foundV4, foundV6 bool
+			for _, inbound := range parsed.Inbounds {
+				if inbound["type"] != "snell" {
+					continue
+				}
+				switch inbound["version"] {
+				case float64(5):
+					foundV4 = true
+					if inbound["psk"] != "secret-psk-1234" || inbound["obfs_mode"] != "http" || inbound["listen_port"] != float64(6160) {
+						t.Fatalf("snell v4 inbound block = %#v", inbound)
+					}
+				case float64(6):
+					foundV6 = true
+					if inbound["psk"] != "secret-psk-1234" || inbound["mode"] != "unshaped" || inbound["listen_port"] != float64(7177) {
+						t.Fatalf("snell v6 inbound block = %#v", inbound)
+					}
+				}
+			}
+			if !foundV4 || !foundV6 {
+				t.Fatalf("snell inbounds not both generated (%v/%v): %s", foundV4, foundV6, config)
+			}
+			if strings.Contains(config, `"network": "tcp"`) {
+				t.Fatalf("snell inbound must stay TCP-only listener without network field: %s", config)
+			}
+		})
 	}
 }
 
@@ -1991,6 +2033,8 @@ func testInboundConfig(protocol model.Protocol) string {
 		return `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"}}`
 	case model.ProtocolMieru:
 		return `{"transport":"TCP"}`
+	case model.ProtocolSnell:
+		return `{"version":4,"psk":"secret-psk-1234"}`
 	default:
 		return `{}`
 	}
@@ -2000,7 +2044,83 @@ func testOutboundConfig(protocol model.Protocol) string {
 	if protocol == model.ProtocolMieru {
 		return `{"transport":"TCP","username":"node","password":"pass"}`
 	}
+	if protocol == model.ProtocolSnell {
+		return `{"version":4,"psk":"secret-psk-1234"}`
+	}
 	return `{}`
+}
+
+func TestSnellAdapterVersionMapping(t *testing.T) {
+	adapter, err := AdapterFor(model.ProtocolSnell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Panel v4 maps to the sing-box v5 inbound (compatible with v4 clients)
+	// and advertises v4 to clients.
+	inbound := model.Inbound{ID: 7, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http","obfs_host":"bing.com"}`, Enabled: true}
+	block, err := adapter.Inbound(inbound, []model.User{{Username: "alice", ProxyPassword: "pass-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block["version"] != 5 || block["psk"] != "secret-psk-1234" || block["obfs_mode"] != "http" {
+		t.Fatalf("snell v4 inbound block = %#v", block)
+	}
+	node, err := adapter.SubscriptionNode(model.User{Username: "alice", ProxyPassword: "pass-a"}, inbound, model.Server{EntryAddress: "203.0.113.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node["version"] != 4 || node["psk"] != "secret-psk-1234" || node["obfs_mode"] != "http" || node["obfs_host"] != "bing.com" {
+		t.Fatalf("snell v4 subscription node = %#v", node)
+	}
+	// Panel v6 maps to the sing-box v6 inbound and advertises v6; obfs is
+	// rejected.
+	v6 := model.Inbound{ID: 8, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unshaped"}`, Enabled: true}
+	block6, err := adapter.Inbound(v6, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block6["version"] != 6 || block6["mode"] != "unshaped" {
+		t.Fatalf("snell v6 inbound block = %#v", block6)
+	}
+	if _, err := adapter.Inbound(model.Inbound{ID: 9, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 7178, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","obfs_mode":"http"}`, Enabled: true}, nil); err == nil {
+		t.Fatal("snell v6 with obfs must be rejected")
+	}
+	// PSK falls back to the bound user password when config_json has none.
+	pskless := model.Inbound{ID: 10, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6161, ConfigJSON: `{"version":4}`, Enabled: true}
+	blockUser, err := adapter.Inbound(pskless, []model.User{{Username: "alice", ProxyPassword: "12345678-abcdef"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockUser["psk"] != "12345678-abcdef" {
+		t.Fatalf("snell psk fallback = %#v", blockUser)
+	}
+	// Unsupported panel versions are rejected.
+	if _, err := adapter.Inbound(model.Inbound{ID: 11, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6162, ConfigJSON: `{"version":5,"psk":"secret-psk-1234"}`, Enabled: true}, nil); err == nil {
+		t.Fatal("snell panel version 5 must be rejected")
+	}
+}
+
+func TestSnellAdapterOutboundVersionMapping(t *testing.T) {
+	adapter, err := AdapterFor(model.ProtocolSnell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outbound := model.Outbound{ID: 5, Protocol: model.ProtocolSnell, TargetAddress: "example.com", TargetPort: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"tls","obfs_host":"cdn.example.com","reuse":true}`, Enabled: true}
+	out, err := adapter.Outbound(outbound, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["version"] != 4 || out["obfs_mode"] != "tls" || out["obfs_host"] != "cdn.example.com" || out["reuse"] != true {
+		t.Fatalf("snell v4 outbound = %#v", out)
+	}
+	v6out := model.Outbound{ID: 6, Protocol: model.ProtocolSnell, TargetAddress: "example.com", TargetPort: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unsafe-raw"}`, Enabled: true}
+	out6, err := adapter.Outbound(v6out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out6["version"] != 6 || out6["mode"] != "unsafe-raw" {
+		t.Fatalf("snell v6 outbound = %#v", out6)
+	}
 }
 
 func TestHY2LatestFieldsPassThrough(t *testing.T) {

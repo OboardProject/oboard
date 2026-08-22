@@ -107,6 +107,7 @@ import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
+import { SnellProfilesPanel } from './components/SnellProfilesPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
@@ -389,9 +390,9 @@ type SessionUser = Pick<User, 'id' | 'username' | 'nickname' | 'role' | 'status'
 type UserDraft = { username: string; nickname: string; password?: string; role: Role; status: string; speed_limit_mbps: number; traffic_limit_bytes: number; traffic_reset_mode: string; traffic_reset_day: number; speed_limit_mode: LimitMode; traffic_limit_mode: LimitMode }
 type UserGroupDraft = { name: string; description: string; role: Role; enabled: boolean }
 
-const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks', 'ssh']
-const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks']
-const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'socks']
+const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks', 'ssh']
+const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks']
+const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks']
 const forwardProtocols: ForwardProtocol[] = ['tcp', 'udp', 'tcp_udp']
 const forwardBackends: ForwardBackend[] = ['auto', 'realm', 'nft', 'builtin']
 const probeModes: ProbeMode[] = ['never', 'apply', 'periodic', 'sampled', 'periodic_sampled']
@@ -3522,7 +3523,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'about'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'snell' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3690,6 +3691,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
     { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
     { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
+    { key: 'snell', label: 'Snell 预设', icon: Layers, description: 'Snell 参数预设：多入口共享一套参数。' },
     { key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' },
   ]
   const activeNavigationItem = settingsNavigation.find(item => item.key === activeSection) || settingsNavigation[0]
@@ -3879,6 +3881,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         onSave={saveControllerLogs}
       />}
       {activeSection === 'about' && <AboutSettingsPanel version={data.version} />}
+      {activeSection === 'snell' && <SnellProfilesPanel data={data} client={client} load={load} notify={notify} />}
       </div>
     </div>
   </section>
@@ -13708,6 +13711,7 @@ function preferredProtocolPortInRange(protocol: Protocol, start: number, end: nu
     anytls: [443, 8443, 10443],
     shadowsocks: [8388, 18388, 38388],
     mieru: [25250, 35250, 45250],
+    snell: [6160, 6161, 7177],
 		socks: [1080, 11080, 21080],
     ssh: [2222, 22022, 22222],
   }
@@ -13930,7 +13934,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} />}
+          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} />}
         </div>
         <details className="advanced-config">
           <summary>高级：查看生成配置</summary>
@@ -13948,7 +13952,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   </MotionDialogPanel>
 }
 
-function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean }) {
+function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true, snellProfiles = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[] }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
   const headers = objectConfig(transport.headers)
@@ -13994,7 +13998,49 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     {!String(config.method || '').startsWith('2022-') && <div className="access-note compact"><strong>单用户入口</strong><span>多人使用请选择 SS 2022 或其他多用户协议。</span></div>}
   </div>
   if (presetID === 'mieru-basic') return <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint />
+  if (presetID === 'snell-v4') return <SnellPresetFields config={config} updateConfig={updateConfig} version={4} snellProfiles={snellProfiles} />
+  if (presetID === 'snell-v6') return <SnellPresetFields config={config} updateConfig={updateConfig} version={6} snellProfiles={snellProfiles} />
   return null
+}
+
+// SnellPresetFields renders the Snell parameter form plus a reusable-profile
+// selector. Profiles let operators share one parameter set across many server
+// inbounds; selecting one writes `snell_profile_id` and the profile's params
+// into config_json (inbound-level explicit values win).
+function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; version: number; snellProfiles: SnellProfile[] }) {
+  const profiles = snellProfiles.filter(p => p.enabled && Number(p.version) === version)
+  const currentID = Number(config.snell_profile_id || 0)
+  const applyProfile = (profileID: number) => {
+    if (!profileID) {
+      updateConfig({ snell_profile_id: undefined })
+      return
+    }
+    const profile = snellProfiles.find(p => p.id === profileID)
+    if (!profile) return
+    updateConfig({
+      snell_profile_id: profile.id,
+      version: profile.version,
+      psk: config.psk || profile.psk || undefined,
+      obfs_mode: profile.obfs_mode && profile.obfs_mode !== 'none' ? profile.obfs_mode : undefined,
+      obfs_host: profile.obfs_host || undefined,
+      mode: profile.mode && profile.mode !== 'default' ? profile.mode : undefined,
+      reuse: profile.reuse || undefined,
+    })
+  }
+  if (version === 4) return <div className="preset-fields">
+    <div className="form-section-title">Snell v4 设置</div>
+    <div className="access-note compact"><strong>协议形态</strong><span>v4 单 PSK；UDP relay 随 TCP 流承载，无需单独 UDP 端口。</span></div>
+    {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
+    <FormField label="混淆模式"><Select value={String(config.obfs_mode || 'none')} onChange={event => updateConfig({ obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? undefined : config.obfs_host })}><option value="none">无</option><option value="http">HTTP</option><option value="tls">TLS</option></Select></FormField>
+    {String(config.obfs_mode || 'none') !== 'none' && <FormField label="混淆 Host"><input value={String(config.obfs_host || '')} onChange={event => updateConfig({ obfs_host: event.target.value })} placeholder="例如 bing.com" /></FormField>}
+  </div>
+  return <div className="preset-fields">
+    <div className="form-section-title">Snell v6 设置</div>
+    <div className="access-note compact"><strong>测试版协议</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
+    {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
+    <FormField label="传输模式"><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value })}><option value="default">默认</option><option value="unshaped">无整形</option><option value="unsafe-raw">unsafe-raw</option></Select></FormField>
+    <div className="switch-form-row"><span className="switch-form-label">连接复用（reuse）</span><Switch checked={Boolean(config.reuse)} onChange={checked => updateConfig({ reuse: checked || undefined })} ariaLabel="Snell 连接复用" /></div>
+  </div>
 }
 
 function MieruConfigFields({ config, updateConfig, rangeKey, udpAllowed = true, showUserHint = false }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; rangeKey: 'listen_ports' | 'server_ports'; udpAllowed?: boolean; showUserHint?: boolean }) {
@@ -18714,6 +18760,9 @@ function Panel({ title, children, className = '', actions = null }: any) {
 
 type ProtocolAuth = { username: string; uuid: string; password: string; method: string }
 
+// SnellProfile mirrors model.SnellProfile from the Controller REST contract.
+type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
+
 type InboundPreset = { id: string; protocol: Protocol; label: string; description: string; defaultPort: number }
 
 const inboundPresets: InboundPreset[] = [
@@ -18728,6 +18777,8 @@ const inboundPresets: InboundPreset[] = [
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
   { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
   { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250 },
+  { id: 'snell-v4', protocol: 'snell', label: 'Snell v4', description: 'v4 基础参数，可选 HTTP 混淆', defaultPort: 6160 },
+  { id: 'snell-v6', protocol: 'snell', label: 'Snell v6', description: 'v6 测试版协议（Surge iOS 5.20+/Mac 6.7+ 可用）', defaultPort: 7177 },
   { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080 },
   { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '密码认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]
@@ -18795,6 +18846,7 @@ function defaultInboundPreset(protocol: Protocol) {
     anytls: 'anytls-basic',
     shadowsocks: 'ss-2022-128',
     mieru: 'mieru-basic',
+    snell: 'snell-v4',
 		socks: 'socks5-auth',
     ssh: 'ssh-restricted',
   }
@@ -18825,6 +18877,9 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
   if (protocol === 'hy2') return 'hy2-tls'
   if (protocol === 'anytls') return 'anytls-basic'
   if (protocol === 'mieru') return 'mieru-basic'
+  if (protocol === 'snell') {
+    return Number(cfg.version || 4) >= 6 ? 'snell-v6' : 'snell-v4'
+  }
   if (protocol === 'socks') return 'socks5-auth'
   if (protocol === 'ssh') return 'ssh-restricted'
   return defaultInboundPreset(protocol)
@@ -18883,6 +18938,14 @@ function buildInboundPresetConfig(id: string) {
     cfg.multiplexing = 'MULTIPLEXING_DEFAULT'
     cfg.user_hint_is_mandatory = true
   }
+  if (preset.id === 'snell-v4') {
+    cfg.version = 4
+    cfg.obfs_mode = 'none'
+  }
+  if (preset.id === 'snell-v6') {
+    cfg.version = 6
+    cfg.mode = 'default'
+  }
   return JSON.stringify(cfg, null, 2)
 }
 
@@ -18912,7 +18975,7 @@ function readAuth(configJson: string, protocol: Protocol): ProtocolAuth {
   return {
     username: (protocol === 'mieru' || protocol === 'socks') && typeof cfg.username === 'string' ? cfg.username : typeof meta.username === 'string' ? meta.username : '',
     uuid: protocol === 'vless' && typeof cfg.uuid === 'string' ? cfg.uuid : '',
-    password: (protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks') && typeof cfg.password === 'string' ? cfg.password : '',
+    password: (protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks' || protocol === 'snell') && typeof cfg.password === 'string' ? cfg.password : protocol === 'snell' && typeof cfg.psk === 'string' ? cfg.psk : '',
     method: protocol === 'shadowsocks' && typeof cfg.method === 'string' ? cfg.method : '2022-blake3-aes-128-gcm',
   }
 }
@@ -18935,6 +18998,9 @@ function writeAuth(configJson: string, protocol: Protocol, auth: ProtocolAuth) {
     cfg.password = auth.password
     cfg.transport = typeof cfg.transport === 'string' ? cfg.transport : 'TCP'
     cfg.multiplexing = typeof cfg.multiplexing === 'string' ? cfg.multiplexing : 'MULTIPLEXING_DEFAULT'
+  }
+  if (protocol === 'snell') {
+    cfg.psk = auth.password
   }
 	if (protocol === 'socks') {
 		cfg.password = auth.password
@@ -18969,6 +19035,7 @@ function AuthFields({ value, setValue }: any) {
     <FormField label="用户名 / 标签"><input value={auth.username} onChange={e => setAuth({ username: e.target.value })} /></FormField>
     {protocol === 'vless' && <FormField label="UUID" required><input value={auth.uuid} onChange={e => setAuth({ uuid: e.target.value })} /></FormField>}
     {(protocol === 'hy2' || protocol === 'anytls' || protocol === 'shadowsocks' || protocol === 'mieru' || protocol === 'socks') && <FormField label="密码" required><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
+    {protocol === 'snell' && <FormField label="PSK" hint="至少 8 字符；留空时使用已绑定用户的代理密码"><input value={auth.password} onChange={e => setAuth({ password: e.target.value })} /></FormField>}
     {protocol === 'shadowsocks' && <FormField label="加密方法"><input value={auth.method} onChange={e => setAuth({ method: e.target.value })} /></FormField>}
   </div>
 }

@@ -59,6 +59,18 @@ func subscriptionFormatFixtureNodes() []SubscriptionNode {
 				"multiplexing": "MULTIPLEXING_HIGH", "traffic_pattern": "AA==",
 			},
 		},
+		{
+			Name: "Snell v4", Group: "备用", Raw: map[string]any{
+				"type": "snell", "tag": "Snell v4", "server": "snell.example.com", "server_port": 6160,
+				"version": 4, "psk": "snell-v4-psk", "obfs_mode": "http", "obfs_host": "bing.com",
+			},
+		},
+		{
+			Name: "Snell v6", Group: "备用", Raw: map[string]any{
+				"type": "snell", "tag": "Snell v6", "server": "snell6.example.com", "server_port": 7177,
+				"version": 6, "psk": "snell-v6-psk", "mode": "unshaped",
+			},
+		},
 	}
 }
 
@@ -83,21 +95,21 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		contains   []string
 		excludes   []string
 	}{
-		{format: model.SubscriptionFormatSingBox, proxyCount: 5, contains: []string{`"udp_over_tcp": {`, `"version": 2`}, excludes: []string{`"type": "mieru"`, `"version": 1`, "oboard_group", "must-not-leak"}},
-		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 6, contains: []string{`"type": "mieru"`, `"server_port": 25250`}, excludes: []string{"oboard_group", "must-not-leak"}},
-		{format: model.SubscriptionFormatMieru, proxyCount: 1, contains: []string{"mierus://", "25251-25252", "protocol=TCP"}, excludes: []string{"vless://"}},
-		{format: model.SubscriptionFormatClashMeta, proxyCount: 6, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA=="}, excludes: []string{"udp-over-tcp-version: 1"}},
-		{format: model.SubscriptionFormatMihomo, proxyCount: 6, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252"}},
-		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru"}},
-		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"vless://", "hysteria2://", "mierus://"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
-		{format: model.SubscriptionFormatEgern, proxyCount: 5, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:"}, excludes: []string{"mieru:"}},
-		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru"}},
-		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"udp-over-tcp=sp.v1", "hysteria2=", "mieru"}},
-		{format: model.SubscriptionFormatSurge, proxyCount: 4, contains: []string{"=hysteria2,", "=anytls,", "download-bandwidth=200", "udp-relay=true"}, excludes: []string{"=vless,", "mieru"}},
-		{format: model.SubscriptionFormatSurgeMac, proxyCount: 4, contains: []string{"=hysteria2,"}, excludes: []string{"=vless,", "mieru"}},
-		{format: model.SubscriptionFormatSurfboard, proxyCount: 4, contains: []string{"=hysteria2,", "download-bandwidth=200", `SOCKS=socks5,socks.example.com,1080,"alice","socks-pass"`}, excludes: []string{"=vless,", "mieru"}},
-		{format: model.SubscriptionFormatClash, proxyCount: 2, contains: []string{"type: ss", "type: socks5"}, excludes: []string{"type: vless", "type: hysteria2", "type: anytls", "type: mieru"}},
-		{format: model.SubscriptionFormatV2RayURI, proxyCount: 5, contains: []string{"vless://", "hysteria2://", "anytls://", "ss://", "socks://"}, excludes: []string{"mierus://"}},
+		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, "oboard_group", "must-not-leak"}},
+		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 8, contains: []string{`"type": "mieru"`, `"server_port": 25250`, `"type": "snell"`}, excludes: []string{"oboard_group", "must-not-leak"}},
+		{format: model.SubscriptionFormatMieru, proxyCount: 1, contains: []string{"mierus://", "25251-25252", "protocol=TCP"}, excludes: []string{"vless://", "snell"}},
+		{format: model.SubscriptionFormatClashMeta, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
+		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252", "type: snell", "psk: snell-v4-psk"}, excludes: []string{"snell-v6-psk"}},
+		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru", "type: snell"}},
+		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"vless://", "hysteria2://", "mierus://"}, excludes: []string{"proxies:", "proxy-groups:", "rules:", "snell"}},
+		{format: model.SubscriptionFormatEgern, proxyCount: 6, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:", "snell:", "psk: snell-v4-psk"}, excludes: []string{"mieru:", "snell-v6-psk"}},
+		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru", "snell"}},
+		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"udp-over-tcp=sp.v1", "hysteria2=", "mieru", "snell"}},
+		{format: model.SubscriptionFormatSurge, proxyCount: 6, contains: []string{"=hysteria2,", "=anytls,", "download-bandwidth=200", "udp-relay=true", "=snell,", "psk=\"snell-v4-psk\"", "version=4", "obfs=http", "obfs-host=\"bing.com\"", "version=6", "mode=unshaped"}, excludes: []string{"=vless,", "mieru"}},
+		{format: model.SubscriptionFormatSurgeMac, proxyCount: 6, contains: []string{"=hysteria2,", "=snell,", "snell-v6"}, excludes: []string{"=vless,", "mieru"}},
+		{format: model.SubscriptionFormatSurfboard, proxyCount: 5, contains: []string{"=hysteria2,", "download-bandwidth=200", `SOCKS=socks5,socks.example.com,1080,"alice","socks-pass"`, "=snell,", "snell-v4"}, excludes: []string{"=vless,", "mieru", "snell-v6", "mode=unshaped"}},
+		{format: model.SubscriptionFormatClash, proxyCount: 2, contains: []string{"type: ss", "type: socks5"}, excludes: []string{"type: vless", "type: hysteria2", "type: anytls", "type: mieru", "type: snell"}},
+		{format: model.SubscriptionFormatV2RayURI, proxyCount: 5, contains: []string{"vless://", "hysteria2://", "anytls://", "ss://", "socks://"}, excludes: []string{"mierus://", "snell"}},
 	}
 	for _, test := range tests {
 		t.Run(string(test.format), func(t *testing.T) {
@@ -495,7 +507,7 @@ func TestV2RaySubscriptionEncodesURIListWithoutMieru(t *testing.T) {
 }
 
 func TestSubscriptionTargetEmptyOutputsAreValid(t *testing.T) {
-	mieruOnly := subscriptionFormatFixtureNodes()[5:]
+	mieruOnly := subscriptionFormatFixtureNodes()[5:6]
 	for _, format := range []model.SubscriptionFormat{
 		model.SubscriptionFormatStash,
 		model.SubscriptionFormatClash,

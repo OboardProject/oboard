@@ -147,7 +147,7 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 			if err != nil || !prefix.IsValid() {
 				v.addf("%s missing prefix", path)
 			}
-		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks":
+		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "snell", "socks":
 			v.validateRemoteAdapter(path, typ, outbound)
 		default:
 			v.addf("%s unsupported outbound type %q", path, typ)
@@ -248,6 +248,8 @@ func (v *configValidator) validateInbounds(inbounds []map[string]any) {
 			v.validateShadowsocksInbound(path, inbound)
 		case "mieru":
 			v.validateMieruInbound(path, inbound)
+		case "snell":
+			v.validateSnellInbound(path, inbound)
 		case "socks":
 			v.validateSocksInbound(path, inbound)
 		default:
@@ -347,9 +349,54 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 			v.addf("%s password exceeds 64 bytes", path)
 		}
 		v.validateMieruTransport(path, item)
+	case "snell":
+		psk := stringFromAny(item["psk"])
+		if strings.TrimSpace(psk) == "" {
+			v.addf("%s missing psk", path)
+		} else if len(psk) < 8 {
+			v.addf("%s psk too short", path)
+		}
+		v.validateSnellVersionFields(path, item, false)
 	case "socks":
 		// Username/password are optional for unauthenticated third-party SOCKS5.
 	}
+}
+
+func (v *configValidator) validateSnellVersionFields(path string, item map[string]any, inbound bool) {
+	version := intFromAny(item["version"])
+	switch version {
+	case 4, 5, 6:
+	default:
+		v.addf("%s missing or unsupported snell version", path)
+		return
+	}
+	if version == 6 {
+		if obfs := strings.TrimSpace(stringFromAny(item["obfs_mode"])); obfs != "" {
+			v.addf("%s snell v6 must not carry obfs_mode", path)
+		}
+		if mode := strings.ToLower(strings.TrimSpace(stringFromAny(item["mode"]))); mode != "" {
+			switch mode {
+			case "default", "unshaped", "unsafe-raw":
+			default:
+				v.addf("%s invalid snell v6 mode %q", path, mode)
+			}
+		}
+		return
+	}
+	if obfs := strings.ToLower(strings.TrimSpace(stringFromAny(item["obfs_mode"]))); obfs != "" {
+		switch obfs {
+		case "none", "http", "tls":
+		default:
+			v.addf("%s invalid snell obfs_mode %q", path, obfs)
+		}
+	}
+}
+
+func (v *configValidator) validateSnellInbound(path string, inbound map[string]any) {
+	if strings.TrimSpace(stringFromAny(inbound["psk"])) == "" {
+		v.addf("%s missing psk", path)
+	}
+	v.validateSnellVersionFields(path, inbound, true)
 }
 
 func (v *configValidator) validateMieruInbound(path string, inbound map[string]any) {

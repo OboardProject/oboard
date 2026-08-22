@@ -67,7 +67,21 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"auto_test":         map[string]any{"type": "string", "enum": []string{"never", "first_apply", "periodic"}},
 		"test_interval_seconds": map[string]any{"type": "integer", "minimum": 60},
 	}, "encrypted_list_id", "bootstrap_list_id")
+	snellProfile := closedObject(map[string]any{
+		"id": positiveID, "name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
+		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http", "tls"}},
+		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
+		"reuse": boolValue, "remark": stringValue, "builtin": boolValue, "enabled": boolValue,
+		"usage_count": map[string]any{"type": "integer"},
+	})
+	snellProfileFields := closedObject(map[string]any{
+		"name": stringValue, "version": map[string]any{"type": "integer", "enum": []int{4, 6}},
+		"psk": stringValue, "obfs_mode": map[string]any{"type": "string", "enum": []string{"none", "http", "tls"}},
+		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
+		"reuse": boolValue, "remark": stringValue, "enabled": boolValue,
+	}, "name", "version", "psk")
 	reads := []Descriptor{
+		{Name: "snell_profiles.list", Description: "列出全部 Snell 参数预设（含内置预设与引用计数）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(snellProfile)), RequiredScopes: []string{"snell_profiles:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"snell_profile"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "dns_lists.list", Description: "列出全部加密与引导 DNS 解析列表", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(dnsList)), RequiredScopes: []string{"dns_lists:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "dns_credentials.list", Description: "列出 DNS 服务商账号元数据与绑定区域，不含任何凭据", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(dnsCredential)), RequiredScopes: []string{"dns_credentials:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"dns_credential"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "dns_records.list", Description: "列出指定 DNS 区域的全部解析记录（实时读取服务商）", InputSchema: schemaObject(map[string]any{"dns_zone_id": positiveID}, "dns_zone_id"), OutputSchema: rawSchema(arrayOf(dnsRecord)), RequiredScopes: []string{"dns_records:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: false, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
@@ -81,6 +95,9 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		admin             bool
 	}{
 		{"dns_lists.create", "创建加密或引导 DNS 解析列表", schemaObject(map[string]any{"dns_list": dnsListFields}, "dns_list"), schemaObject(map[string]any{"dns_list": dnsList}, "dns_list"), 2, false, true},
+		{"snell_profiles.create", "创建 Snell 参数预设（多入站可共享）", schemaObject(map[string]any{"snell_profile": snellProfileFields}, "snell_profile"), schemaObject(map[string]any{"snell_profile": snellProfile}, "snell_profile"), 2, false, true},
+		{"snell_profiles.update", "修改 Snell 参数预设", schemaObject(map[string]any{"snell_profile_id": positiveID, "changes": snellProfileFields}, "snell_profile_id", "changes"), schemaObject(map[string]any{"snell_profile": snellProfile, "changed_fields": stringArray(1, 32)}, "snell_profile"), 2, false, true},
+		{"snell_profiles.delete", "删除未被引用的 Snell 参数预设（内置预设不可删除）", schemaObject(map[string]any{"snell_profile_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "snell_profile_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "snell_profile_id": positiveID}, "deleted"), 3, true, true},
 		{"dns_lists.update", "修改 DNS 解析列表并触发关联基准检查", schemaObject(map[string]any{"dns_list_id": positiveID, "changes": dnsListFields}, "dns_list_id", "changes"), schemaObject(map[string]any{"dns_list": dnsList, "changed_fields": stringArray(1, 32)}, "dns_list"), 2, false, true},
 		{"dns_lists.delete", "删除未被引用且非默认的 DNS 解析列表", schemaObject(map[string]any{"dns_list_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "dns_list_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "dns_list_id": positiveID}, "deleted"), 3, true, true},
 		{"dns_lists.set_default", "将指定 DNS 解析列表设为全局默认", schemaObject(map[string]any{"dns_list_id": positiveID}, "dns_list_id"), schemaObject(map[string]any{"dns_list": dnsList}, "dns_list"), 2, false, true},
@@ -111,6 +128,8 @@ func networkScopeFor(name string) string {
 	switch {
 	case name == "dns_records.create" || name == "dns_records.update" || name == "dns_records.delete":
 		return "dns_records:write"
+	case name == "snell_profiles.create" || name == "snell_profiles.update" || name == "snell_profiles.delete":
+		return "snell_profiles:write"
 	case name == "servers.dns_test":
 		return "dns:write"
 	default:

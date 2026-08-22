@@ -469,7 +469,7 @@ func externalOutboundSubscriptionRaw(external model.ExternalOutbound) (map[strin
 			}
 		}
 		return raw, nil
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell:
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(external.ConfigJSON), &raw); err != nil {
 			raw = map[string]any{}

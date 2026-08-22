@@ -26,6 +26,12 @@ const (
 	ProtocolSS     Protocol = "shadowsocks"
 	ProtocolMieru  Protocol = "mieru"
 	ProtocolSocks  Protocol = "socks"
+	// ProtocolSnell is the Surge-owned Snell protocol. sing-box upstream
+	// implements Snell v4/v6 outbounds and v5/v6 inbounds (the v5 inbound
+	// accepts v4 clients, so a panel-level v4 server entry maps to the v5
+	// inbound and advertises v4 to clients). UDP relay rides on the
+	// established TCP stream rather than a native UDP listener.
+	ProtocolSnell Protocol = "snell"
 	// ProtocolSSH is a managed, password-authenticated SSH proxy entry. It is run by
 	// the Agent rather than sing-box, so it is intentionally kept out of the
 	// generic proxy protocol adapters.
@@ -1497,6 +1503,27 @@ type WARPProfile struct {
 	Enabled         bool       `json:"enabled"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// SnellProfile is a reusable Snell parameter set. Multiple inbounds on
+// different servers can reference one profile so they share the same
+// version/psk/obfs/mode parameters; modifications take effect on the next
+// deployment. Builtin profiles are seeded and protected from deletion.
+type SnellProfile struct {
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	Version    int       `json:"version"`
+	PSK        string    `json:"psk"`
+	ObfsMode   string    `json:"obfs_mode"`
+	ObfsHost   string    `json:"obfs_host"`
+	Mode       string    `json:"mode"`
+	Reuse      bool      `json:"reuse"`
+	Remark     string    `json:"remark"`
+	Builtin    bool      `json:"builtin"`
+	Enabled    bool      `json:"enabled"`
+	UsageCount int64     `json:"usage_count"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type DNSCandidate struct {

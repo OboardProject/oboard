@@ -354,6 +354,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/access-changes/", s.auth(s.accessChanges, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/snell-profiles", s.auth(s.snellProfiles, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/snell-profiles/", s.auth(s.snellProfiles, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
 	mux.HandleFunc("/api/v1/mtu-detections", s.auth(s.mtuDetections, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards", s.auth(s.portForwards, model.RoleOperator))
@@ -1665,6 +1667,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		warps         []model.WARPProfile
 		dnsLists      []model.DNSList
 		dnsPolicies   []model.ServerDNSPolicy
+		snellProfiles []model.SnellProfile
 		inboundProbes []model.InboundProbeResult
 		forwardProbes []model.PortForwardProbeResult
 	)
@@ -1762,6 +1765,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return err
 		}
+		if err := timing.run("snell", func() error {
+			var listErr error
+			snellProfiles, listErr = s.store.ListSnellProfiles(ctx)
+			return listErr
+		}); err != nil {
+			return err
+		}
 		if err := timing.run("probes", func() error {
 			var listErr error
 			inboundProbes, listErr = s.store.ListInboundProbeResults(ctx, 0, 0, 200)
@@ -1785,6 +1795,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["warp_profiles"] = publicWARPProfiles(warps)
 		out["dns_lists"] = dnsLists
 		out["server_dns_policies"] = dnsPolicies
+		out["snell_profiles"] = snellProfiles
 		out["inbound_probes"] = inboundProbes
 		out["port_forward_probes"] = forwardProbes
 		if roleAllows(role, model.RoleAdmin) {
@@ -1840,6 +1851,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out["inbounds"] = items
+		profiles, err := s.store.ListSnellProfiles(ctx)
+		if err != nil {
+			return err
+		}
+		out["snell_profiles"] = profiles
 		probes, err := s.store.ListInboundProbeResults(ctx, 0, 0, 200)
 		if err != nil {
 			return err
@@ -2417,6 +2433,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			var inbounds []model.Inbound
 			inbounds, err = s.store.ListInbounds(ctx)
 			out["inbounds"] = inbounds
+		}
+		if err == nil {
+			out["snell_profiles"], err = s.store.ListSnellProfiles(ctx)
 		}
 		if err == nil {
 			out["dns_credentials"], err = s.store.ListDNSCredentials(ctx)
@@ -5274,6 +5293,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.resolveSnellProfileIntoInbound(r.Context(), &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := validateInbound(v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5341,6 +5364,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		v.ConfigJSON = normalized
 		v = normalizeInbound(v)
 		if err := normalizeMieruInboundPorts(&v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.resolveSnellProfileIntoInbound(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -6079,6 +6106,57 @@ func inboundConfigHasCertificatePaths(configJSON string) bool {
 	return strings.TrimSpace(certificatePath) != "" && strings.TrimSpace(keyPath) != ""
 }
 
+// resolveSnellProfileIntoInbound merges a referenced Snell profile's
+// parameters into the inbound config_json so core config generation sees the
+// final parameter set. Inbound-level explicit fields win over profile fields.
+// The `snell_profile_id` reference is retained for audit and usage counting.
+// An explicit empty `psk` in the request body keeps the profile PSK (or the
+// bound user password at generation time).
+func (s *Server) resolveSnellProfileIntoInbound(ctx context.Context, v *model.Inbound) error {
+	if v == nil || v.Protocol != model.ProtocolSnell {
+		return nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(v.ConfigJSON), &cfg); err != nil {
+		return err
+	}
+	profileID, _ := cfg["snell_profile_id"].(float64)
+	if profileID <= 0 {
+		return nil
+	}
+	profile, err := s.store.GetSnellProfile(ctx, int64(profileID))
+	if err != nil {
+		return fmt.Errorf("snell profile %d not found", int64(profileID))
+	}
+	if !profile.Enabled {
+		return fmt.Errorf("snell profile %d is disabled", profile.ID)
+	}
+	if _, exists := cfg["version"]; !exists || cfg["version"] == nil {
+		cfg["version"] = profile.Version
+	}
+	if psk, _ := cfg["psk"].(string); psk == "" {
+		cfg["psk"] = profile.PSK
+	}
+	if obfs, _ := cfg["obfs_mode"].(string); obfs == "" {
+		cfg["obfs_mode"] = profile.ObfsMode
+	}
+	if host, _ := cfg["obfs_host"].(string); host == "" {
+		cfg["obfs_host"] = profile.ObfsHost
+	}
+	if mode, _ := cfg["mode"].(string); mode == "" {
+		cfg["mode"] = profile.Mode
+	}
+	if _, exists := cfg["reuse"]; !exists || cfg["reuse"] == nil {
+		cfg["reuse"] = profile.Reuse
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	v.ConfigJSON = string(encoded)
+	return nil
+}
+
 func validateInbound(v model.Inbound) error {
 	if v.ServerID == 0 {
 		return errors.New("server_id required")
@@ -6223,6 +6301,11 @@ func applyInboundConfigDefaults(protocol model.Protocol, raw string) (string, er
 			cfg["multiplexing"] = "MULTIPLEXING_DEFAULT"
 		}
 	}
+	if protocol == model.ProtocolSnell {
+		if _, exists := cfg["version"]; !exists {
+			cfg["version"] = float64(core.SnellVersionV4)
+		}
+	}
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return "", err
@@ -6303,6 +6386,17 @@ func applyProtocolAuthDefaults(protocol model.Protocol, raw string) (string, err
 			cfg["password"] = secret
 		}
 		cfg["version"] = "5"
+	case model.ProtocolSnell:
+		if stringFromMap(cfg, "psk") == "" {
+			secret, err := security.RandomToken(18)
+			if err != nil {
+				return "", err
+			}
+			cfg["psk"] = secret
+		}
+		if stringFromMap(cfg, "obfs_mode") == "" {
+			cfg["obfs_mode"] = "none"
+		}
 	}
 	b, err := json.Marshal(cfg)
 	if err != nil {
@@ -7355,7 +7449,7 @@ func externalOutboundFromRawMap(raw map[string]any, fallbackName string) (model.
 		proto = string(model.ProtocolSS)
 	}
 	switch model.Protocol(proto) {
-	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSocks:
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolSS, model.ProtocolMieru, model.ProtocolSnell, model.ProtocolSocks:
 	default:
 		return model.ExternalOutbound{}, fmt.Errorf("unsupported outbound type %q", proto)
 	}
@@ -10028,6 +10122,135 @@ func (s *Server) dnsLists(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) snellProfiles(w http.ResponseWriter, r *http.Request) {
+	id := idFromPath(r.URL.Path, "/api/v1/snell-profiles/")
+	switch r.Method {
+	case http.MethodGet:
+		if id != 0 {
+			item, err := s.store.GetSnellProfile(r.Context(), id)
+			if err != nil {
+				fail(w, err, 404)
+				return
+			}
+			write(w, 200, map[string]any{"snell_profile": item})
+			return
+		}
+		items, err := s.store.ListSnellProfiles(r.Context())
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"snell_profiles": items})
+	case http.MethodPost:
+		var v model.SnellProfile
+		if !decode(w, r, &v) {
+			return
+		}
+		v.ID = 0
+		v.Builtin = false
+		if strings.TrimSpace(v.Name) == "" {
+			fail(w, errors.New("name required"), 400)
+			return
+		}
+		if err := validateSnellProfile(v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.store.CreateSnellProfile(r.Context(), &v); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		auditReq(s, r, "create", "snell_profile", fmt.Sprint(v.ID))
+		write(w, 201, map[string]any{"snell_profile": v})
+	case http.MethodPut:
+		if id == 0 {
+			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		current, err := s.store.GetSnellProfile(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		var v model.SnellProfile
+		if !decode(w, r, &v) {
+			return
+		}
+		v.ID = id
+		v.Builtin = current.Builtin
+		v.CreatedAt = current.CreatedAt
+		if strings.TrimSpace(v.Name) == "" {
+			v.Name = current.Name
+		}
+		if v.Enabled == current.Enabled && v.Enabled == false && v.Builtin {
+			v.Enabled = true
+		}
+		if err := validateSnellProfile(v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		changed, err := s.store.UpdateSnellProfile(r.Context(), &v)
+		if err != nil {
+			fail(w, err, 409)
+			return
+		}
+		v.UsageCount = current.UsageCount
+		v.UpdatedAt = current.UpdatedAt
+		if changed && v.UsageCount > 0 {
+			// 参数变更影响引用入站的生成配置；部署对账时 Controller 会携带
+			// 最新参数，因此无需在此额外触发，仅记录供运营知晓。
+			auditReq(s, r, "update_profile_affects_inbounds", "snell_profile", fmt.Sprintf("%d (%d inbounds)", v.ID, v.UsageCount))
+		}
+		auditReq(s, r, "update", "snell_profile", fmt.Sprint(v.ID))
+		write(w, 200, map[string]any{"snell_profile": v})
+	case http.MethodDelete:
+		if id == 0 {
+			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		if err := s.store.DeleteSnellProfile(r.Context(), id); err != nil {
+			fail(w, err, 409)
+			return
+		}
+		auditReq(s, r, "delete", "snell_profile", fmt.Sprint(id))
+		write(w, 200, map[string]any{"deleted": true})
+	default:
+		method(w)
+	}
+}
+
+func validateSnellProfile(v model.SnellProfile) error {
+	if v.Version != core.SnellVersionV4 && v.Version != core.SnellVersionV6 {
+		return fmt.Errorf("unsupported snell version %d", v.Version)
+	}
+	if psk := strings.TrimSpace(v.PSK); psk != "" && len(psk) < 8 {
+		return errors.New("snell psk must be at least 8 characters")
+	}
+	switch strings.ToLower(strings.TrimSpace(v.ObfsMode)) {
+	case "", "none":
+		v.ObfsMode = "none"
+	case "http", "tls":
+		v.ObfsMode = strings.ToLower(strings.TrimSpace(v.ObfsMode))
+	default:
+		return fmt.Errorf("unsupported snell obfs_mode %q", v.ObfsMode)
+	}
+	if v.Version == core.SnellVersionV6 && v.ObfsMode != "none" {
+		return errors.New("snell v6 does not support obfs_mode")
+	}
+	if v.ObfsMode == "http" && strings.TrimSpace(v.ObfsHost) == "" {
+		return errors.New("snell http obfs requires obfs_host")
+	}
+	switch strings.ToLower(strings.TrimSpace(v.Mode)) {
+	case "", "default":
+		v.Mode = "default"
+	case "unshaped", "unsafe-raw":
+		v.Mode = strings.ToLower(strings.TrimSpace(v.Mode))
+	default:
+		return fmt.Errorf("unsupported snell v6 mode %q", v.Mode)
+	}
+	return nil
 }
 
 func (s *Server) queuePeriodicDNSBenchmarksForList(ctx context.Context, list model.DNSList) {

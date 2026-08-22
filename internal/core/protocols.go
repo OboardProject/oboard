@@ -136,6 +136,8 @@ func AdapterFor(protocol model.Protocol) (Adapter, error) {
 		return ssAdapter{}, nil
 	case model.ProtocolMieru:
 		return mieruAdapter{}, nil
+	case model.ProtocolSnell:
+		return snellAdapter{}, nil
 	case model.ProtocolSocks:
 		return socksAdapter{}, nil
 	default:
@@ -2817,6 +2819,8 @@ func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
 		method := stringValue(parseExtra(inbound.ConfigJSON), "method", "2022-blake3-aes-128-gcm")
 		return shadowsocksMethodSupportsUsers(method)
 	default:
+		// Snell is a single-PSK protocol; the PSK resolves to the first bound
+		// user or the inbound's own psk.
 		return false
 	}
 }
@@ -3371,6 +3375,299 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	extra := parseExtra(inbound.ConfigJSON)
 	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "version": "5", "username": user.Username, "password": user.ProxyPassword}
 	applyAllowed(node, extra, "network", "udp_over_tcp")
+	return node, nil
+}
+
+// Snell panel version semantics:
+//
+//   - The panel exposes v4 and v6. sing-box upstream implements Snell v4
+//     outbounds and v5/v6 inbounds; the v5 inbound accepts v4 clients
+//     (Surge documents Snell v5 as backward compatible with v4 clients).
+//   - A panel v4 server entry therefore maps to the sing-box v5 inbound and
+//     advertises v4 to subscription clients. A panel v6 server entry maps to
+//     the sing-box v6 inbound and advertises v6.
+//   - Version 5 is never emitted to clients: sing-box upstream does not
+//     implement a v5 outbound, so v5 nodes would not be usable.
+//
+// Snell is a single-PSK protocol. The PSK comes from the inbound's
+// `config_json.psk` or, when absent, from the first bound user's proxy
+// password (consistent with SS non-2022 behaviour).
+//
+// UDP relay rides on the established TCP stream, not on a native UDP
+// listener, so Snell inbounds remain TCP-only listeners and stay valid
+// under every `udp_inbound_mode`.
+
+const (
+	SnellVersionV4 = 4
+	SnellVersionV6 = 6
+)
+
+// SnellServerVersion maps a panel-level Snell version to the sing-box inbound
+// version: v4 panel entries use the v5 inbound (compatible with v4 clients),
+// v6 panel entries use the v6 inbound.
+func SnellServerVersion(panelVersion int) (int, error) {
+	switch panelVersion {
+	case SnellVersionV4:
+		return 5, nil
+	case SnellVersionV6:
+		return 6, nil
+	default:
+		return 0, fmt.Errorf("unsupported snell version %d", panelVersion)
+	}
+}
+
+// SnellClientVersion maps a panel-level Snell version to the version
+// advertised to subscription clients. v5 is never emitted because sing-box
+// upstream has no v5 outbound.
+func SnellClientVersion(panelVersion int) (int, error) {
+	switch panelVersion {
+	case SnellVersionV4, SnellVersionV6:
+		return panelVersion, nil
+	default:
+		return 0, fmt.Errorf("unsupported snell version %d", panelVersion)
+	}
+}
+
+func normalizeSnellObfsMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "none":
+		return "none", nil
+	case "http":
+		return "http", nil
+	case "tls":
+		return "tls", nil
+	default:
+		return "", fmt.Errorf("unsupported snell obfs_mode %q", mode)
+	}
+}
+
+func normalizeSnellV6Mode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "default":
+		return "default", nil
+	case "unshaped":
+		return "unshaped", nil
+	case "unsafe-raw":
+		return "unsafe-raw", nil
+	default:
+		return "", fmt.Errorf("unsupported snell v6 mode %q", mode)
+	}
+}
+
+func snellPanelVersion(extra map[string]any) (int, error) {
+	raw, ok := extra["version"]
+	if !ok || raw == nil {
+		return SnellVersionV4, nil
+	}
+	switch typed := raw.(type) {
+	case float64:
+		return int(typed), nil
+	case json.Number:
+		n, err := typed.Int64()
+		if err != nil {
+			return 0, errors.New("snell version must be an integer")
+		}
+		return int(n), nil
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil {
+			return 0, errors.New("snell version must be an integer")
+		}
+		return n, nil
+	default:
+		return 0, errors.New("snell version must be an integer")
+	}
+}
+
+func snellPSK(extra map[string]any, users []model.User) (string, error) {
+	if psk := strings.TrimSpace(stringValue(extra, "psk", "")); psk != "" {
+		if len(psk) < 8 {
+			return "", errors.New("snell psk must be at least 8 characters")
+		}
+		return psk, nil
+	}
+	for _, user := range users {
+		if psk := strings.TrimSpace(user.ProxyPassword); psk != "" {
+			if len(psk) < 8 {
+				return "", fmt.Errorf("snell psk for user %d is too short", user.ID)
+			}
+			return psk, nil
+		}
+	}
+	return "", errors.New("snell psk required (config_json.psk or a bound user password)")
+}
+
+func snellReuse(extra map[string]any) bool {
+	return boolValueWithDefault(extra["reuse"], false)
+}
+
+func validateSnellOptions(extra map[string]any) error {
+	version, err := snellPanelVersion(extra)
+	if err != nil {
+		return err
+	}
+	if version != SnellVersionV4 && version != SnellVersionV6 {
+		return fmt.Errorf("unsupported snell version %d", version)
+	}
+	obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none"))
+	if err != nil {
+		return err
+	}
+	if version == SnellVersionV6 && obfs != "none" {
+		return errors.New("snell v6 does not support obfs_mode")
+	}
+	if obfs == "http" {
+		if host := strings.TrimSpace(stringValue(extra, "obfs_host", "")); host == "" {
+			return errors.New("snell http obfs requires obfs_host")
+		}
+	}
+	if _, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
+		return err
+	}
+	if raw, exists := extra["reuse"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return errors.New("snell reuse must be boolean")
+		}
+	}
+	return nil
+}
+
+type snellAdapter struct{}
+
+func (snellAdapter) Protocol() model.Protocol { return model.ProtocolSnell }
+func (snellAdapter) ValidateInbound(v model.Inbound) error {
+	if err := ValidateListenIP(v.ListenIP); err != nil {
+		return err
+	}
+	if err := ValidatePort(v.Port); err != nil {
+		return err
+	}
+	return validateSnellOptions(parseExtra(v.ConfigJSON))
+}
+func (snellAdapter) ValidateOutbound(v model.Outbound) error {
+	if strings.TrimSpace(v.TargetAddress) == "" {
+		return errors.New("target_address required")
+	}
+	if err := ValidatePort(v.TargetPort); err != nil {
+		return err
+	}
+	return validateSnellOptions(parseExtra(v.ConfigJSON))
+}
+func (a snellAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
+	if err := a.ValidateInbound(v); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(v.ConfigJSON)
+	panelVersion, err := snellPanelVersion(extra)
+	if err != nil {
+		return nil, err
+	}
+	serverVersion, err := SnellServerVersion(panelVersion)
+	if err != nil {
+		return nil, err
+	}
+	psk, err := snellPSK(extra, users)
+	if err != nil {
+		return nil, err
+	}
+	item := map[string]any{"type": "snell", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "version": serverVersion, "psk": psk}
+	if panelVersion == SnellVersionV4 {
+		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
+			return nil, err
+		} else if obfs != "none" {
+			item["obfs_mode"] = obfs
+		}
+	} else {
+		if mode, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
+			return nil, err
+		} else if mode != "default" {
+			item["mode"] = mode
+		}
+	}
+	return item, nil
+}
+func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
+	if err := a.ValidateOutbound(v); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(v.ConfigJSON)
+	panelVersion, err := snellPanelVersion(extra)
+	if err != nil {
+		return nil, err
+	}
+	clientVersion, err := SnellClientVersion(panelVersion)
+	if err != nil {
+		return nil, err
+	}
+	psk, err := snellPSK(extra, nil)
+	if err != nil || psk == "" {
+		if user != nil {
+			psk = strings.TrimSpace(user.ProxyPassword)
+		}
+	}
+	if psk == "" {
+		return nil, errors.New("snell psk required")
+	}
+	if len(psk) < 8 {
+		return nil, errors.New("snell psk must be at least 8 characters")
+	}
+	item := map[string]any{"type": "snell", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "version": clientVersion, "psk": psk}
+	if snellReuse(extra) {
+		item["reuse"] = true
+	}
+	if clientVersion == SnellVersionV4 {
+		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
+			return nil, err
+		} else if obfs != "none" {
+			item["obfs_mode"] = obfs
+			if host := strings.TrimSpace(stringValue(extra, "obfs_host", "")); host != "" {
+				item["obfs_host"] = host
+			}
+		}
+	} else {
+		if mode, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
+			return nil, err
+		} else if mode != "default" {
+			item["mode"] = mode
+		}
+	}
+	applyAllowed(item, extra, "network", "domain_resolver", "network_strategy", "fallback_delay")
+	return item, nil
+}
+func (a snellAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
+	if err := a.ValidateInbound(inbound); err != nil {
+		return nil, err
+	}
+	extra := parseExtra(inbound.ConfigJSON)
+	panelVersion, err := snellPanelVersion(extra)
+	if err != nil {
+		return nil, err
+	}
+	clientVersion, err := SnellClientVersion(panelVersion)
+	if err != nil {
+		return nil, err
+	}
+	psk, err := snellPSK(extra, []model.User{user})
+	if err != nil {
+		return nil, err
+	}
+	node := map[string]any{"type": "snell", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "version": clientVersion, "psk": psk}
+	if clientVersion == SnellVersionV4 {
+		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
+			return nil, err
+		} else if obfs != "none" {
+			node["obfs_mode"] = obfs
+			if host := strings.TrimSpace(stringValue(extra, "obfs_host", "")); host != "" {
+				node["obfs_host"] = host
+			}
+		}
+	} else {
+		if mode, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
+			return nil, err
+		} else if mode != "default" {
+			node["mode"] = mode
+		}
+	}
 	return node, nil
 }
 
