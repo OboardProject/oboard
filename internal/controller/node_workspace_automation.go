@@ -104,17 +104,17 @@ func (s *Server) registerNodeWorkspaceAutomationOperations() {
 }
 
 type nodeWorkspaceOperation struct {
-	UserID   int64               `json:"user_id"`
-	GroupID  int64               `json:"group_id"`
-	SourceID int64               `json:"source_id"`
-	OutputID int64               `json:"output_id"`
-	Name     string              `json:"name"`
-	Kind     model.NodeGroupKind `json:"kind"`
-	URL      string              `json:"url"`
-	Content  string              `json:"content"`
-	GroupIDs []int64             `json:"group_ids"`
+	UserID   int64                            `json:"user_id"`
+	GroupID  int64                            `json:"group_id"`
+	SourceID int64                            `json:"source_id"`
+	OutputID int64                            `json:"output_id"`
+	Name     string                           `json:"name"`
+	Kind     model.NodeGroupKind              `json:"kind"`
+	URL      string                           `json:"url"`
+	Content  string                           `json:"content"`
+	GroupIDs []int64                          `json:"group_ids"`
 	Filters  []model.SubscriptionOutputFilter `json:"filters"`
-	Enabled  *bool               `json:"enabled"`
+	Enabled  *bool                            `json:"enabled"`
 }
 
 func (s *Server) validateNodeWorkspaceOperation(ctx context.Context, principal application.Principal, name string, input json.RawMessage) (any, error) {

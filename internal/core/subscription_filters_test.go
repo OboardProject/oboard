@@ -18,13 +18,13 @@ func testFilterNode(key, name, protocol, exitRegion string) SubscriptionNode {
 func TestStripSubscriptionNodeRegionFlag(t *testing.T) {
 	flag := func(code string) string { return RegionFlagEmoji(code) }
 	cases := map[string]string{
-		"":                          "",
-		"香港 01":                     "香港 01",
-		flag("HK") + " 香港 01":       "香港 01",
-		flag("HK") + "香港 01":        "香港 01",
-		flag("AQ") + " 未解析":         "未解析",
-		flag("US"):                   "",
-		flag("US") + " 东京":          "东京",
+		"":                              "",
+		"香港 01":                         "香港 01",
+		flag("HK") + " 香港 01":           "香港 01",
+		flag("HK") + "香港 01":            "香港 01",
+		flag("AQ") + " 未解析":             "未解析",
+		flag("US"):                      "",
+		flag("US") + " 东京":              "东京",
 		flag("US") + flag("JP") + " 双旗": flag("JP") + " 双旗",
 	}
 	for input, want := range cases {
