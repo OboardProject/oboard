@@ -20,6 +20,12 @@ func TestParsePrivateSubscriptionContainersAndPartialFailure(t *testing.T) {
 		t.Fatalf("base64 result = %#v", result)
 	}
 
+	wrapped := encoded[:24] + "\n" + encoded[24:48] + "\r\n" + encoded[48:]
+	result, err = ParsePrivateSubscription(wrapped)
+	if err != nil || len(result.Nodes) != 2 || result.Nodes[0].Name != "Trojan" || result.Nodes[1].Name != "TUIC" {
+		t.Fatalf("line-wrapped base64 result=%#v err=%v", result, err)
+	}
+
 	yamlInput := `proxies:
   - name: Clash VMess
     type: vmess

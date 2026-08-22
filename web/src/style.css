@@ -21300,10 +21300,15 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .node-search input { width: 100%; border: 0; background: transparent; }
 .node-result-count { margin-left: auto; color: var(--muted); font-size: 13px; }
 .node-library-table-wrap { overflow-x: auto; }
+.node-edit-form { display: grid; grid-template-columns: minmax(180px, 220px) minmax(260px, 1fr) auto; align-items: end; gap: 10px; margin-bottom: 10px; padding: 12px; border: 1px solid var(--border); background: var(--surface-subtle, var(--surface)); }
+.node-edit-form > strong { align-self: center; }
+.node-edit-form label { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: var(--muted); }
+.node-edit-form textarea { min-height: 72px; resize: vertical; }
+.node-edit-form .node-import-actions { display: flex; gap: 8px; }
 .node-library-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .node-library-table th, .node-library-table td { height: 44px; padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
 .node-library-table th { color: var(--muted); font-weight: 600; }
-.node-library-table td:last-child { width: 44px; text-align: right; }
+.node-library-table td:last-child { min-width: 88px; text-align: right; white-space: nowrap; }
 .node-protocol-chip { display: inline-flex; padding: 2px 7px; border-radius: 4px; background: var(--surface-subtle, var(--surface)); font-family: ui-monospace, monospace; font-size: 11px; }
 .node-group-create { display: grid; grid-template-columns: auto minmax(150px, 220px) minmax(240px, 1fr) auto; align-items: end; gap: 10px; padding-bottom: 16px; }
 .node-group-create label, .output-editor > label { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: var(--muted); }
@@ -21369,6 +21374,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .node-workspace-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
   .node-workspace-tabs button { padding-inline: 6px; }
   .node-group-create { grid-template-columns: 1fr; align-items: stretch; }
+  .node-edit-form { grid-template-columns: 1fr; }
   .node-group-item { grid-template-columns: minmax(0, 1fr) auto; }
   .node-source-status { grid-column: 1 / -1; grid-row: 2; }
   .node-group-actions { grid-column: 2; grid-row: 1; }

@@ -130,6 +130,52 @@ describe('NodeWorkspacePage', () => {
     expect(container.querySelector('.filter-stat')?.textContent).toContain('名字正则排除')
   })
 
+  it('edits a manual node and previews a remote subscription URL', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [
+        { id: 1, kind: 'oboard', system_key: 'oboard', name: 'OBoard', node_count: 0 },
+        { id: 2, kind: 'manual', name: '机场 B', node_count: 1 },
+      ],
+      node_sources: [],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: [1, 2] }],
+    }
+    const requests: Array<{ path: string; body?: string; method?: string }> = []
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      requests.push({ path, body: String(init?.body || ''), method: init?.method })
+      if (path === '/node-workspace') return workspace
+      if (path === '/node-library') return { nodes: [{ id: 'private:1', group_id: 2, name: '香港 01', protocol: 'trojan', source: 'private', copyable: true, editable: true }] }
+      if (path === '/node-library/private:1' && init?.method === 'PATCH') return { node: { id: 'private:1', name: '香港 02', protocol: 'trojan', enabled: true } }
+      if (path === '/node-import-preview') return { nodes: [{ name: '预览节点', protocol: 'vless', fingerprint: 'fp' }], issues: [] }
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => {
+      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+
+    act(() => (container.querySelector('[aria-label="编辑 香港 01"]') as HTMLButtonElement).click())
+    const nameInput = container.querySelector('.node-edit-form input') as HTMLInputElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput, '香港 02')
+      nameInput.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(container.querySelectorAll('.node-edit-form button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    await flushEffects()
+    expect(requests).toContainEqual({ path: '/node-library/private:1', body: JSON.stringify({ name: '香港 02', content: '' }), method: 'PATCH' })
+
+    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+    const urlInput = container.querySelector('.node-group-create input[type="url"]') as HTMLInputElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(urlInput, 'https://example.com/sub')
+      urlInput.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(container.querySelectorAll('.node-import-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
+    await flushEffects()
+    expect(requests).toContainEqual({ path: '/node-import-preview', body: JSON.stringify({ url: 'https://example.com/sub' }), method: 'POST' })
+    expect(container.textContent).toContain('可导入 1 个节点')
+  })
+
   it('switches to the administrator global view when the session role arrives after mount', async () => {
     const workspace = {
       subject: { id: 1, username: 'admin' },

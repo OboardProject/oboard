@@ -79,7 +79,7 @@ func ParsePrivateSubscription(content string) (PrivateImportResult, error) {
 }
 
 func decodePrivateBase64List(value string) (string, bool) {
-	if strings.Contains(value, "://") || strings.ContainsAny(value, "{}[]\n:") {
+	if strings.Contains(value, "://") || strings.ContainsAny(value, "{}[]:") {
 		return "", false
 	}
 	compact := strings.Map(func(r rune) rune {

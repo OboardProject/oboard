@@ -1,12 +1,12 @@
 import * as React from 'react'
-import { ArrowDown, ArrowUp, Check, Clipboard, CloudDownload, Copy, Eye, Layers3, Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Clipboard, CloudDownload, Copy, Eye, Layers3, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { NodeAssignmentsPage } from './NodeAssignmentsPage'
 
 type Client = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 type Group = { id: number; kind: 'oboard' | 'remote' | 'manual'; system_key?: string; name: string; node_count: number }
 type Source = { id: number; group_id: number; url_display: string; status: string; last_error?: string; last_success_at?: string }
 type Output = { id: number; name: string; is_default: boolean; enabled: boolean; group_ids: number[]; filters?: Array<{ type: string; value: string }> }
-type Node = { id: string; group_id: number; name: string; protocol: string; source: string; copyable: boolean }
+type Node = { id: string; group_id: number; name: string; protocol: string; source: string; copyable: boolean; editable: boolean }
 type ImportPreview = { nodes: Array<{ name: string; protocol: string; fingerprint: string }>; issues: Array<{ index: number; name?: string; message: string }> }
 type Workspace = { subject: { id: number; username: string; nickname?: string }; node_groups: Group[]; node_sources: Source[]; subscription_outputs: Output[] }
 
@@ -95,6 +95,12 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
             await navigator.clipboard.writeText(result.url)
             message('节点链接已复制')
           } catch (requestError: any) { message(requestError?.message || String(requestError), 'error') }
+        }} onEdit={async (node, patch) => {
+          try {
+            await client.request(`/node-library/${node.id}${subjectQuery}`, { method: 'PATCH', body: JSON.stringify(patch) })
+            message('节点已更新')
+            await refresh()
+          } catch (requestError: any) { message(requestError?.message || String(requestError), 'error') }
         }} />}
         {tab === 'groups' && <NodeGroups workspace={workspace} busy={busy} mutate={mutate} subjectQuery={subjectQuery} client={client} refresh={refresh} message={message} />}
         {tab === 'outputs' && <SubscriptionOutputs workspace={workspace} data={data} client={client} subjectQuery={subjectQuery} busy={busy} refresh={refresh} message={message} legacySubscriptions={legacySubscriptions} />}
@@ -103,12 +109,27 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
   </div>
 }
 
-function NodeLibrary({ nodes, groups, busy, onCopy }: { nodes: Node[]; groups: Group[]; busy: boolean; onCopy: (node: Node) => Promise<void> }) {
+function NodeLibrary({ nodes, groups, busy, onCopy, onEdit }: { nodes: Node[]; groups: Group[]; busy: boolean; onCopy: (node: Node) => Promise<void>; onEdit: (node: Node, patch: { name?: string; content?: string }) => Promise<void> }) {
   const [query, setQuery] = React.useState('')
   const [groupID, setGroupID] = React.useState(0)
   const [protocol, setProtocol] = React.useState('')
+  const [editing, setEditing] = React.useState<Node | null>(null)
+  const [editName, setEditName] = React.useState('')
+  const [editContent, setEditContent] = React.useState('')
+  const [editBusy, setEditBusy] = React.useState(false)
   const visible = nodes.filter(node => (!query || node.name.toLowerCase().includes(query.toLowerCase())) && (!groupID || node.group_id === groupID) && (!protocol || node.protocol === protocol))
   const protocols = Array.from(new Set(nodes.map(node => node.protocol))).sort()
+  const openEdit = (node: Node) => { setEditing(node); setEditName(node.name); setEditContent('') }
+  const saveEdit = async () => {
+    if (!editing || (!editName.trim() && !editContent.trim())) return
+    setEditBusy(true)
+    try {
+      await onEdit(editing, { name: editName.trim(), content: editContent.trim() })
+      setEditing(null)
+    } finally {
+      setEditBusy(false)
+    }
+  }
   return <section className="node-workspace-panel" role="tabpanel">
     <div className="node-library-toolbar">
       <label className="node-search"><Search size={15} /><span className="sr-only">搜索节点</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索节点" /></label>
@@ -116,8 +137,14 @@ function NodeLibrary({ nodes, groups, busy, onCopy }: { nodes: Node[]; groups: G
       <select value={protocol} onChange={event => setProtocol(event.target.value)} aria-label="按协议筛选"><option value="">全部协议</option>{protocols.map(value => <option key={value}>{value}</option>)}</select>
       <span className="node-result-count">{visible.length} 个节点</span>
     </div>
+    {editing && <div className="node-edit-form" aria-label={`编辑 ${editing.name}`}>
+      <strong>编辑 {editing.name}</strong>
+      <label><span>节点名称</span><input value={editName} onChange={event => setEditName(event.target.value)} maxLength={80} placeholder="留空时使用新配置中的名称" /></label>
+      <label><span>节点链接或配置</span><textarea value={editContent} onChange={event => setEditContent(event.target.value)} rows={3} placeholder="粘贴新的节点链接或配置，可留空" /></label>
+      <div className="node-import-actions"><button type="button" className="ghost" disabled={editBusy} onClick={() => setEditing(null)}><X size={15} />取消</button><button type="button" disabled={editBusy || (!editName.trim() && !editContent.trim())} onClick={() => void saveEdit()}><Check size={15} />保存</button></div>
+    </div>}
     {visible.length === 0 ? <div className="node-workspace-state">没有符合条件的节点</div> : <div className="node-library-table-wrap"><table className="node-library-table"><thead><tr><th>节点</th><th>协议</th><th>节点组</th><th>来源</th><th aria-label="操作" /></tr></thead><tbody>
-      {visible.map(node => <tr key={node.id}><td><strong>{node.name}</strong></td><td><span className="node-protocol-chip">{node.protocol}</span></td><td>{groups.find(group => group.id === node.group_id)?.name || 'OBoard'}</td><td>{node.source === 'oboard' ? 'OBoard' : '第三方'}</td><td><button type="button" className="icon-button" title={node.copyable ? '复制节点链接' : '此节点无法无损复制'} aria-label={`复制 ${node.name} 的节点链接`} disabled={busy || !node.copyable} onClick={() => void onCopy(node)}><Copy size={15} /></button></td></tr>)}
+      {visible.map(node => <tr key={node.id}><td><strong>{node.name}</strong></td><td><span className="node-protocol-chip">{node.protocol}</span></td><td>{groups.find(group => group.id === node.group_id)?.name || 'OBoard'}</td><td>{node.source === 'oboard' ? 'OBoard' : '第三方'}</td><td>{node.editable && <button type="button" className="icon-button" title="编辑节点" aria-label={`编辑 ${node.name}`} disabled={busy} onClick={() => openEdit(node)}><Pencil size={15} /></button>}<button type="button" className="icon-button" title={node.copyable ? '复制节点链接' : '此节点无法无损复制'} aria-label={`复制 ${node.name} 的节点链接`} disabled={busy || !node.copyable} onClick={() => void onCopy(node)}><Copy size={15} /></button></td></tr>)}
     </tbody></table></div>}
   </section>
 }
@@ -134,7 +161,7 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
   }
   const previewImport = async () => {
     try {
-      const result = await client.request<ImportPreview>(`/node-import-preview${subjectQuery}`, { method: 'POST', body: JSON.stringify({ content: value }) })
+      const result = await client.request<ImportPreview>(`/node-import-preview${subjectQuery}`, { method: 'POST', body: JSON.stringify(kind === 'remote' ? { url: value } : { content: value }) })
       setImportPreview(result)
     } catch (error: any) {
       setImportPreview(null)
@@ -143,10 +170,10 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
   }
   return <section className="node-workspace-panel" role="tabpanel">
     <div className="node-group-create">
-      <div className="node-mode-switch" role="group" aria-label="来源类型"><button type="button" className={kind === 'remote' ? 'active' : ''} aria-pressed={kind === 'remote'} onClick={() => { setKind('remote'); setImportPreview(null) }}>远程订阅</button><button type="button" className={kind === 'manual' ? 'active' : ''} aria-pressed={kind === 'manual'} onClick={() => setKind('manual')}>手动节点</button></div>
+      <div className="node-mode-switch" role="group" aria-label="来源类型"><button type="button" className={kind === 'remote' ? 'active' : ''} aria-pressed={kind === 'remote'} onClick={() => { setKind('remote'); setImportPreview(null) }}>远程订阅</button><button type="button" className={kind === 'manual' ? 'active' : ''} aria-pressed={kind === 'manual'} onClick={() => { setKind('manual'); setImportPreview(null) }}>手动节点</button></div>
       <label><span>节点组名称</span><input value={name} onChange={event => setName(event.target.value)} maxLength={80} /></label>
       <label className="node-source-value"><span>{kind === 'remote' ? 'HTTPS 订阅 URL' : '节点链接或配置'}</span>{kind === 'remote' ? <input type="url" value={value} onChange={event => setValue(event.target.value)} placeholder="https://" /> : <textarea value={value} onChange={event => setValue(event.target.value)} rows={3} />}</label>
-      <div className="node-import-actions">{kind === 'manual' && <button type="button" className="ghost" onClick={() => void previewImport()} disabled={busy || !value.trim()}><Eye size={15} />预览</button>}<button type="button" onClick={() => void create()} disabled={busy || !name.trim() || !value.trim()}><Plus size={15} />添加</button></div>
+      <div className="node-import-actions"><button type="button" className="ghost" onClick={() => void previewImport()} disabled={busy || !value.trim()}><Eye size={15} />预览</button><button type="button" onClick={() => void create()} disabled={busy || !name.trim() || !value.trim()}><Plus size={15} />添加</button></div>
     </div>
     {importPreview && <div className="node-import-preview" aria-live="polite"><strong>可导入 {importPreview.nodes.length} 个节点</strong><div>{importPreview.nodes.slice(0, 8).map(node => <span key={node.fingerprint}>{node.name} · {node.protocol}</span>)}</div>{importPreview.nodes.length > 8 && <small>另有 {importPreview.nodes.length - 8} 个节点</small>}{importPreview.issues.length > 0 && <details><summary>{importPreview.issues.length} 项未导入</summary>{importPreview.issues.map(issue => <span key={`${issue.index}-${issue.message}`}>第 {issue.index} 项：{issue.message}</span>)}</details>}</div>}
     <div className="node-group-grid">{workspace.node_groups.map(group => {

@@ -91,7 +91,7 @@ func (s *Server) nodeWorkspacePrincipalUser(ctx context.Context, principal appli
 }
 
 func (s *Server) registerNodeWorkspaceAutomationOperations() {
-	names := []string{"node_groups.create", "node_groups.update", "node_groups.delete", "node_sources.refresh", "subscription_outputs.save", "subscription_outputs.delete"}
+	names := []string{"node_groups.create", "node_groups.update", "node_groups.delete", "node_sources.refresh", "node_library.update", "subscription_outputs.save", "subscription_outputs.delete"}
 	for _, capabilityName := range names {
 		name := capabilityName
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
@@ -108,6 +108,7 @@ type nodeWorkspaceOperation struct {
 	GroupID  int64                            `json:"group_id"`
 	SourceID int64                            `json:"source_id"`
 	OutputID int64                            `json:"output_id"`
+	NodeID   string                           `json:"node_id"`
 	Name     string                           `json:"name"`
 	Kind     model.NodeGroupKind              `json:"kind"`
 	URL      string                           `json:"url"`
@@ -144,6 +145,25 @@ func (s *Server) validateNodeWorkspaceOperation(ctx context.Context, principal a
 	case "node_sources.refresh":
 		if _, err := s.store.GetNodeSource(ctx, request.UserID, request.SourceID); err != nil {
 			return nil, err
+		}
+	case "node_library.update":
+		if request.NodeID == "" {
+			return nil, errors.New("node_id is required")
+		}
+		if _, err := s.importedNodeForEdit(ctx, request.UserID, request.NodeID); err != nil {
+			return nil, err
+		}
+		if request.Name != "" && len([]rune(strings.TrimSpace(request.Name))) > 80 {
+			return nil, errors.New("node name must be between 1 and 80 characters")
+		}
+		if strings.TrimSpace(request.Content) != "" {
+			result, err := core.ParsePrivateSubscription(request.Content)
+			if err != nil || len(result.Nodes) != 1 || len(result.Issues) != 0 {
+				return nil, errors.New("edit content must contain exactly one valid node")
+			}
+		}
+		if strings.TrimSpace(request.Name) == "" && strings.TrimSpace(request.Content) == "" && request.Enabled == nil {
+			return nil, errors.New("nothing to update")
 		}
 	case "subscription_outputs.save":
 		if strings.TrimSpace(request.Name) == "" || len(request.GroupIDs) == 0 {
@@ -215,6 +235,8 @@ func (s *Server) applyNodeWorkspaceOperation(ctx context.Context, principal appl
 			return nil, err
 		}
 		return map[string]any{"source_id": source.ID, "node_count": len(result.Nodes), "issues": result.Issues}, nil
+	case "node_library.update":
+		return s.updateImportedNode(ctx, request.UserID, request.NodeID, request.Name, request.Content, request.Enabled)
 	case "subscription_outputs.save":
 		output := &model.SubscriptionOutput{ID: request.OutputID, UserID: request.UserID, Name: request.Name, GroupIDs: request.GroupIDs, Filters: request.Filters, Enabled: true}
 		if request.OutputID > 0 {

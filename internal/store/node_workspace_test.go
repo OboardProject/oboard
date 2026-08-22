@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -229,6 +230,42 @@ func TestSubscriptionOutputFiltersMigrateFromPreviousSchema(t *testing.T) {
 	stable, err := db.GetSubscriptionOutput(ctx, user.ID, output.ID)
 	if err != nil || len(stable.Filters) != 1 {
 		t.Fatalf("migration rewrote filters: %#v err=%v", stable.Filters, err)
+	}
+}
+
+func TestReplaceSourceNodesDeduplicatesFingerprints(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	user := &model.User{Username: "remote-dedupe", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "uuid-remote", ProxyPassword: "password-remote"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	group := &model.NodeGroup{UserID: user.ID, Kind: model.NodeGroupRemote, Name: "远程重复"}
+	if err := db.CreateNodeGroup(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	source := &model.NodeSource{UserID: user.ID, GroupID: group.ID, URLFingerprint: "url-fingerprint", URLEncrypted: "url-encrypted"}
+	if err := db.CreateNodeSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	nodes := []model.ImportedNode{
+		{UserID: user.ID, GroupID: group.ID, Protocol: model.PrivateProtocolTrojan, Name: "Same-One", Fingerprint: "same", ConfigEncrypted: "encrypted-a"},
+		{UserID: user.ID, GroupID: group.ID, Protocol: model.PrivateProtocolTrojan, Name: "Same-Two", Fingerprint: "same", ConfigEncrypted: "encrypted-b"},
+		{UserID: user.ID, GroupID: group.ID, Protocol: model.PrivateProtocolTUIC, Name: "Unique", Fingerprint: "unique", ConfigEncrypted: "encrypted-c"},
+	}
+	if err := db.ReplaceSourceNodes(ctx, *source, nodes, "etag", "", time.Now()); err != nil {
+		t.Fatalf("replace source nodes: %v", err)
+	}
+	stored, err := db.ListImportedNodes(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 || stored[0].Name != "Same-One" || stored[1].Name != "Unique" {
+		t.Fatalf("deduplicated nodes = %#v", stored)
 	}
 }
 

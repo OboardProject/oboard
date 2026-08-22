@@ -35,6 +35,7 @@ type nodeLibraryView struct {
 	Protocol model.PrivateSubscriptionProtocol `json:"protocol"`
 	Source   string                            `json:"source"`
 	Copyable bool                              `json:"copyable"`
+	Editable bool                              `json:"editable"`
 }
 
 type privateImportNodeSummary struct {
@@ -300,11 +301,19 @@ func (s *Server) nodeImportPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	var request struct {
 		Content string `json:"content"`
+		URL     string `json:"url"`
 	}
 	if !decode(w, r, &request) {
 		return
 	}
-	result, err := core.ParsePrivateSubscription(request.Content)
+	var result *core.PrivateImportResult
+	var err error
+	if strings.TrimSpace(request.URL) != "" {
+		result, err = s.previewRemoteNodeSource(r.Context(), request.URL)
+	} else {
+		parsed, parseErr := core.ParsePrivateSubscription(request.Content)
+		result, err = &parsed, parseErr
+	}
 	if err != nil {
 		fail(w, err, 400)
 		return
@@ -330,20 +339,40 @@ func (s *Server) nodeLibrary(w http.ResponseWriter, r *http.Request) {
 	views := make([]nodeLibraryView, 0, len(nodes))
 	for _, node := range nodes {
 		protocol := model.PrivateSubscriptionProtocol(strings.ToLower(fmt.Sprint(node.Raw["type"])))
+		groupID := groupIDForNode(node, groups)
 		_, shareErr := core.CanonicalShareURIForNode(node)
-		views = append(views, nodeLibraryView{ID: node.Key, GroupID: groupIDForNode(node, groups), Name: node.Name, Protocol: protocol, Source: nodeSourceKind(node), Copyable: shareErr == nil})
+		views = append(views, nodeLibraryView{ID: node.Key, GroupID: groupID, Name: node.Name, Protocol: protocol, Source: nodeSourceKind(node), Copyable: shareErr == nil, Editable: nodeLibraryEditable(node, groupID, groups)})
 	}
 	write(w, 200, map[string]any{"nodes": views, "node_groups": groups})
 }
 
 func (s *Server) nodeLibraryItem(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/share") {
-		http.NotFound(w, r)
-		return
-	}
 	user, err := s.nodeWorkspaceSubject(r)
 	if err != nil {
 		nodeWorkspaceFail(w, err)
+		return
+	}
+	parts := pathParts(r.URL.Path, "/api/v1/node-library/")
+	if len(parts) == 1 && r.Method == http.MethodPatch {
+		var request struct {
+			Name    string `json:"name"`
+			Content string `json:"content"`
+			Enabled *bool  `json:"enabled"`
+		}
+		if !decode(w, r, &request) {
+			return
+		}
+		updated, updateErr := s.updateImportedNode(r.Context(), user.ID, parts[0], request.Name, request.Content, request.Enabled)
+		if updateErr != nil {
+			nodeWorkspaceFail(w, updateErr)
+			return
+		}
+		s.publishRealtime("nodes", "subscriptions")
+		write(w, 200, map[string]any{"node": updated})
+		return
+	}
+	if r.Method != http.MethodPost || !((len(parts) == 1 && parts[0] == "share") || (len(parts) == 2 && parts[1] == "share")) {
+		http.NotFound(w, r)
 		return
 	}
 	var request struct {
@@ -947,6 +976,106 @@ func nodeSourceKind(node core.SubscriptionNode) string {
 		return "private"
 	}
 	return "oboard"
+}
+
+func nodeLibraryEditable(node core.SubscriptionNode, groupID int64, groups []model.NodeGroup) bool {
+	if !strings.HasPrefix(node.Key, "private:") {
+		return false
+	}
+	for _, group := range groups {
+		if group.ID == groupID && group.Kind == model.NodeGroupManual {
+			return true
+		}
+	}
+	return false
+}
+
+func privateImportedNodeID(key string) (int64, bool) {
+	if !strings.HasPrefix(key, "private:") {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(key, "private:"), 10, 64)
+	return id, err == nil && id > 0
+}
+
+func (s *Server) importedNodeForEdit(ctx context.Context, userID int64, key string) (*model.ImportedNode, error) {
+	id, ok := privateImportedNodeID(key)
+	if !ok {
+		return nil, errors.New("manual node id is required")
+	}
+	item, err := s.store.GetImportedNode(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if item.SourceID != nil {
+		return nil, errors.New("remote source nodes are managed by refresh")
+	}
+	group, err := s.store.GetNodeGroup(ctx, userID, item.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	if group.Kind != model.NodeGroupManual {
+		return nil, errors.New("remote source nodes are managed by refresh")
+	}
+	return item, nil
+}
+
+func (s *Server) updateImportedNode(ctx context.Context, userID int64, key, name, content string, enabled *bool) (map[string]any, error) {
+	item, err := s.importedNodeForEdit(ctx, userID, key)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	if name != "" && len([]rune(name)) > 80 {
+		return nil, errors.New("node name must be between 1 and 80 characters")
+	}
+	if name == "" && strings.TrimSpace(content) == "" && enabled == nil {
+		return nil, errors.New("nothing to update")
+	}
+	if strings.TrimSpace(content) != "" {
+		result, parseErr := core.ParsePrivateSubscription(content)
+		if parseErr != nil || len(result.Nodes) != 1 || len(result.Issues) != 0 {
+			return nil, errors.New("edit content must contain exactly one valid node")
+		}
+		encrypted, encryptErr := s.encryptImportedNodes(userID, item.GroupID, nil, []core.ParsedPrivateNode{result.Nodes[0]})
+		if encryptErr != nil {
+			return nil, encryptErr
+		}
+		item.Protocol = result.Nodes[0].Protocol
+		item.Name = result.Nodes[0].Name
+		item.Fingerprint = result.Nodes[0].Fingerprint
+		item.ConfigEncrypted = encrypted[0].ConfigEncrypted
+	}
+	if name != "" {
+		item.Name = name
+	}
+	if enabled != nil {
+		item.Enabled = *enabled
+	}
+	updated, updateErr := s.store.UpdateImportedNode(ctx, userID, item.ID, item)
+	if updateErr != nil {
+		return nil, updateErr
+	}
+	return map[string]any{"id": fmt.Sprintf("private:%d", updated.ID), "group_id": updated.GroupID, "name": updated.Name, "protocol": updated.Protocol, "source": "private", "editable": true, "enabled": updated.Enabled}, nil
+}
+
+func (s *Server) previewRemoteNodeSource(ctx context.Context, rawURL string) (*core.PrivateImportResult, error) {
+	parsed, err := validateNodeSourceURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	body, _, _, notModified, err := fetchNodeSource(ctx, parsed.String(), "", "")
+	if err != nil {
+		return nil, err
+	}
+	if notModified {
+		return &core.PrivateImportResult{Nodes: []core.ParsedPrivateNode{}, Issues: []core.PrivateImportIssue{}}, nil
+	}
+	result, err := core.ParsePrivateSubscription(string(body))
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func groupIDForNode(node core.SubscriptionNode, groups []model.NodeGroup) int64 {

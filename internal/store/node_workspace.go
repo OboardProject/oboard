@@ -258,6 +258,19 @@ func (s *Store) ReplaceSourceNodes(ctx context.Context, source model.NodeSource,
 	if len(nodes) == 0 {
 		return errors.New("source refresh has no valid nodes")
 	}
+	unique := nodes[:0]
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		if node.Fingerprint == "" || seen[node.Fingerprint] {
+			continue
+		}
+		seen[node.Fingerprint] = true
+		unique = append(unique, node)
+	}
+	if len(unique) == 0 {
+		return errors.New("source refresh has no valid nodes")
+	}
+	nodes = unique
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -374,6 +387,21 @@ func (s *Store) AddManualImportedNodes(ctx context.Context, userID, groupID int6
 		n.ID, _ = res.LastInsertId()
 	}
 	return tx.Commit()
+}
+
+func (s *Store) UpdateImportedNode(ctx context.Context, userID, id int64, value *model.ImportedNode) (*model.ImportedNode, error) {
+	if value == nil || value.Protocol == "" || strings.TrimSpace(value.Name) == "" || value.Fingerprint == "" || value.ConfigEncrypted == "" {
+		return nil, errors.New("invalid imported node")
+	}
+	ts := now()
+	res, err := s.db.ExecContext(ctx, `update imported_nodes set protocol=?,name=?,fingerprint=?,config_encrypted=?,enabled=?,updated_at=? where id=? and user_id=? and source_id is null`, value.Protocol, strings.TrimSpace(value.Name), value.Fingerprint, value.ConfigEncrypted, boolInt(value.Enabled), ts, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, sql.ErrNoRows
+	}
+	return s.GetImportedNode(ctx, userID, id)
 }
 
 func (s *Store) ListSubscriptionOutputs(ctx context.Context, userID int64) ([]model.SubscriptionOutput, error) {

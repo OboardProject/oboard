@@ -65,10 +65,22 @@ func TestNodeWorkspaceOwnershipImportOutputAndShare(t *testing.T) {
 		t.Fatalf("private node library count = %d, want 2", len(library))
 	}
 	nodeID := library[0].(map[string]any)["id"].(string)
+	if !library[0].(map[string]any)["editable"].(bool) {
+		t.Fatal("manual node should be editable")
+	}
 	shared := request(t, handler, http.MethodPost, "/api/v1/ui/node-library/share", firstToken, map[string]any{"node_id": nodeID}, http.StatusOK)
 	if shared["url"] == "" {
 		t.Fatal("node share URL is empty")
 	}
+	renamed := request(t, handler, http.MethodPatch, "/api/v1/ui/node-library/"+nodeID, firstToken, map[string]any{"name": "Renamed-One"}, http.StatusOK)["node"].(map[string]any)
+	if renamed["name"] != "Renamed-One" || renamed["enabled"] != true {
+		t.Fatalf("renamed node = %#v", renamed)
+	}
+	replaced := request(t, handler, http.MethodPatch, "/api/v1/ui/node-library/"+nodeID, firstToken, map[string]any{"content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Replaced-One"}, http.StatusOK)["node"].(map[string]any)
+	if replaced["name"] != "Replaced-One" || replaced["protocol"] != "shadowsocks" {
+		t.Fatalf("replaced node = %#v", replaced)
+	}
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-library/"+nodeID, firstToken, map[string]any{"content": "trojan://bad@1.1.1.1:443#Bad\nss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Extra"}, http.StatusBadRequest)
 
 	output := request(t, handler, http.MethodPost, "/api/v1/ui/subscription-outputs", firstToken, map[string]any{"name": "私人组合", "group_ids": []int64{groupID}}, http.StatusCreated)["subscription_output"].(map[string]any)
 	outputID := int64(output["id"].(float64))
@@ -136,6 +148,32 @@ func TestNodeWorkspaceAutomationPreservesEnabledAndEnforcesPerspective(t *testin
 	encodedPreview, _ := json.Marshal(mcpPreview)
 	if strings.Contains(string(encodedPreview), "\"content\"") || strings.Contains(string(encodedPreview), "\"raw\"") {
 		t.Fatalf("MCP preview leaked subscription material: %s", encodedPreview)
+	}
+	manual := &model.NodeGroup{UserID: first.ID, Kind: model.NodeGroupManual, Name: "MCP 手动"}
+	if err := db.CreateNodeGroup(t.Context(), manual); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddManualImportedNodes(t.Context(), first.ID, manual.ID, []model.ImportedNode{{UserID: first.ID, GroupID: manual.ID, Protocol: model.PrivateProtocolTrojan, Name: "Original", Fingerprint: "mcp-fp", ConfigEncrypted: "enc"}}); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := db.ListImportedNodes(t.Context(), first.ID)
+	if err != nil || len(imported) != 1 {
+		t.Fatalf("imported=%#v err=%v", imported, err)
+	}
+	editInput, _ := json.Marshal(map[string]any{"user_id": first.ID, "node_id": "private:" + itoa(imported[0].ID), "name": "MCP Renamed", "enabled": false})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_library.update", editInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.applyNodeWorkspaceOperation(t.Context(), principal, "node_library.update", editInput); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := db.GetImportedNode(t.Context(), first.ID, imported[0].ID)
+	if err != nil || edited.Name != "MCP Renamed" || edited.Enabled {
+		t.Fatalf("edited node=%#v err=%v", edited, err)
+	}
+	badEdit, _ := json.Marshal(map[string]any{"user_id": first.ID, "node_id": "private:" + itoa(imported[0].ID), "content": "trojan://bad@1.1.1.1:443#Bad\nss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Extra"})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_library.update", badEdit); err == nil {
+		t.Fatal("automation accepted multi-node edit content")
 	}
 	operator := application.Principal{ID: "operator", UserID: &first.ID, Role: model.RoleOperator}
 	otherInput, _ := json.Marshal(map[string]any{"user_id": second.ID})
