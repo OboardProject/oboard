@@ -202,4 +202,70 @@ describe('NodeWorkspacePage', () => {
     expect(container.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
     expect(container.querySelector('[role="tablist"]')).toBeNull()
   })
+
+  it('edits node groups including remote subscription URLs and manual node links', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [
+        { id: 1, kind: 'oboard', system_key: 'oboard', name: 'OBoard', node_count: 1 },
+        { id: 2, kind: 'manual', name: '机场 B', node_count: 1 },
+        { id: 3, kind: 'remote', name: 'DDG', node_count: 0 },
+      ],
+      node_sources: [{ id: 9, group_id: 3, url_display: 'https://mweujowynb.rini.ma/...', status: 'ready', last_success_at: null }],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: [1] }],
+    }
+    const patched: Array<Record<string, unknown>> = []
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/node-workspace') return workspace
+      if (path === '/node-library') return { nodes: [] }
+      if (path.startsWith('/node-groups/') && init?.method === 'PATCH') {
+        const payload = JSON.parse(String(init.body)) as Record<string, unknown>
+        patched.push({ path, ...payload })
+        return { node_group: { id: Number(path.split('/')[2]) } }
+      }
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => {
+      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+
+    expect(container.textContent).toContain('DDG')
+    act(() => (container.querySelector('[aria-label="编辑 DDG"]') as HTMLButtonElement).click())
+    const remoteForm = container.querySelector('.node-group-edit') as HTMLFormElement
+    expect(remoteForm).not.toBeNull()
+    expect(remoteForm.textContent).toContain('HTTPS 订阅 URL')
+    expect(remoteForm.textContent).toContain('当前 https://mweujowynb.rini.ma/...')
+    const remoteURLInput = remoteForm.querySelector('input[type="url"]') as HTMLInputElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(remoteURLInput, 'https://new.example.com/sub')
+      remoteURLInput.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(remoteForm.querySelectorAll('button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    await flushEffects()
+    expect(patched).toContainEqual({ path: '/node-groups/3', name: 'DDG', url: 'https://new.example.com/sub' })
+    expect(container.querySelector('.node-group-edit')).toBeNull()
+
+    act(() => (container.querySelector('[aria-label="编辑 机场 B"]') as HTMLButtonElement).click())
+    const manualForm = container.querySelector('.node-group-edit') as HTMLFormElement
+    expect(manualForm.textContent).toContain('新增节点链接')
+    expect(manualForm.querySelector('input[type="url"]')).toBeNull()
+    const textarea = manualForm.querySelector('textarea') as HTMLTextAreaElement
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Extra-One')
+      textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    act(() => (Array.from(manualForm.querySelectorAll('button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    await flushEffects()
+    expect(patched).toContainEqual({ path: '/node-groups/2', name: '机场 B', content: 'ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Extra-One' })
+
+    act(() => (container.querySelector('[aria-label="编辑 OBoard"]') as HTMLButtonElement).click())
+    const systemForm = container.querySelector('.node-group-edit') as HTMLFormElement
+    expect(systemForm.querySelector('input[type="url"]')).toBeNull()
+    expect(systemForm.querySelector('textarea')).toBeNull()
+    act(() => (Array.from(systemForm.querySelectorAll('button')).find(button => button.textContent?.includes('取消')) as HTMLButtonElement).click())
+    expect(container.querySelector('.node-group-edit')).toBeNull()
+    expect(container.querySelectorAll('[aria-label^="编辑 "]').length).toBe(3)
+  })
 })

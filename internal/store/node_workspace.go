@@ -240,6 +240,26 @@ func (s *Store) GetNodeSource(ctx context.Context, userID, id int64) (*model.Nod
 	return scanNodeSource(s.db.QueryRowContext(ctx, `select id,user_id,group_id,url_fingerprint,url_encrypted,etag,last_modified,status,last_error,last_attempt_at,last_success_at,created_at,updated_at from node_sources where user_id=? and id=?`, userID, id))
 }
 
+func (s *Store) GetNodeSourceByGroup(ctx context.Context, userID, groupID int64) (*model.NodeSource, error) {
+	return scanNodeSource(s.db.QueryRowContext(ctx, `select id,user_id,group_id,url_fingerprint,url_encrypted,etag,last_modified,status,last_error,last_attempt_at,last_success_at,created_at,updated_at from node_sources where user_id=? and group_id=?`, userID, groupID))
+}
+
+// UpdateNodeSourceURL re-keys a source to a new subscription URL and resets
+// sync state so the next refresh performs a full fetch.
+func (s *Store) UpdateNodeSourceURL(ctx context.Context, userID, id int64, urlFingerprint, urlEncrypted string) (*model.NodeSource, error) {
+	if urlFingerprint == "" || urlEncrypted == "" {
+		return nil, errors.New("invalid node source")
+	}
+	res, err := s.db.ExecContext(ctx, `update node_sources set url_fingerprint=?,url_encrypted=?,etag='',last_modified='',status='pending',last_error='',last_attempt_at=null,last_success_at=null,updated_at=? where id=? and user_id=?`, urlFingerprint, urlEncrypted, now(), id, userID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, sql.ErrNoRows
+	}
+	return s.GetNodeSource(ctx, userID, id)
+}
+
 type nodeSourceScanner interface{ Scan(...any) error }
 
 func scanNodeSource(row nodeSourceScanner) (*model.NodeSource, error) {

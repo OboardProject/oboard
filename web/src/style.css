@@ -21599,6 +21599,15 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .node-group-item span, .node-source-status small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .node-group-actions { display: flex; align-items: center; gap: 6px; margin-top: auto; }
 
+.node-group-edit {
+  display: grid;
+  gap: 10px;
+}
+.node-group-edit label { display: grid; gap: 5px; min-width: 0; font-size: 12px; font-weight: 550; color: var(--muted); }
+.node-group-edit label small { font-weight: 500; }
+.node-group-edit textarea { min-height: 72px; resize: vertical; }
+.node-group-edit .node-import-actions { justify-content: flex-end; }
+
 .subscription-output-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);

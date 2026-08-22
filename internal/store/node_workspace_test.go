@@ -296,3 +296,55 @@ func TestNodeWorkspaceOwnershipAndSystemResourceProtection(t *testing.T) {
 		t.Fatal("default subscription output was deleted")
 	}
 }
+
+func TestUpdateNodeSourceURLResetsSyncState(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	user := &model.User{Username: "remote-edit", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "uuid-remote-edit", ProxyPassword: "password-remote-edit"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	group := &model.NodeGroup{UserID: user.ID, Kind: model.NodeGroupRemote, Name: "远程编辑"}
+	if err := db.CreateNodeGroup(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	source := &model.NodeSource{UserID: user.ID, GroupID: group.ID, URLFingerprint: "old-fingerprint", URLEncrypted: "old-encrypted"}
+	if err := db.CreateNodeSource(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	nodes := []model.ImportedNode{{UserID: user.ID, GroupID: group.ID, Protocol: model.PrivateProtocolTrojan, Name: "One", Fingerprint: "fp-one", ConfigEncrypted: "encrypted-one"}}
+	if err := db.ReplaceSourceNodes(ctx, *source, nodes, "etag-value", "last-modified-value", time.Now()); err != nil {
+		t.Fatalf("replace source nodes: %v", err)
+	}
+
+	updated, err := db.UpdateNodeSourceURL(ctx, user.ID, source.ID, "new-fingerprint", "new-encrypted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.URLFingerprint != "new-fingerprint" || updated.URLEncrypted != "new-encrypted" {
+		t.Fatalf("updated source = %#v", updated)
+	}
+	if updated.ETag != "" || updated.LastModified != "" || updated.Status != "pending" || updated.LastError != "" || updated.LastAttemptAt != nil || updated.LastSuccessAt != nil {
+		t.Fatalf("sync state was not reset: %#v", updated)
+	}
+	if err := db.MarkNodeSourceFailed(ctx, user.ID, source.ID, "boom", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := db.UpdateNodeSourceURL(ctx, user.ID, source.ID, "third-fingerprint", "third-encrypted")
+	if err != nil || failed.Status != "pending" || failed.LastError != "" {
+		t.Fatalf("failed-state reset = %#v err=%v", failed, err)
+	}
+	if _, err := db.GetNodeSourceByGroup(ctx, user.ID, group.ID); err != nil {
+		t.Fatalf("lookup by group: %v", err)
+	}
+	if _, err := db.GetNodeSourceByGroup(ctx, user.ID, 999999); err == nil {
+		t.Fatal("foreign group lookup succeeded")
+	}
+	if _, err := db.UpdateNodeSourceURL(ctx, user.ID, source.ID, "", "missing"); err == nil {
+		t.Fatal("empty fingerprint accepted")
+	}
+}

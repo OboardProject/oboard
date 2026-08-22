@@ -241,17 +241,19 @@ func (s *Server) nodeGroup(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPatch:
 		var request struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		group, renameErr := s.store.RenameNodeGroup(r.Context(), user.ID, id, request.Name)
-		if renameErr != nil {
-			nodeWorkspaceFail(w, renameErr)
+		response, updateErr := s.updateNodeGroup(r.Context(), user.ID, id, request.Name, request.URL, request.Content)
+		if updateErr != nil {
+			nodeWorkspaceFail(w, updateErr)
 			return
 		}
-		write(w, 200, map[string]any{"node_group": group})
+		write(w, 200, response)
 	case http.MethodDelete:
 		if err := s.store.DeleteNodeGroup(r.Context(), user.ID, id); err != nil {
 			fail(w, err, 400)
@@ -585,15 +587,23 @@ func (s *Server) encryptImportedNodes(userID, groupID int64, sourceID *int64, no
 	return items, nil
 }
 
-func (s *Server) createNodeSource(ctx context.Context, userID, groupID int64, rawURL string) (*model.NodeSource, error) {
-	parsed, err := validateNodeSourceURL(rawURL)
-	if err != nil {
-		return nil, err
+func (s *Server) sealNodeSourceURL(userID int64, rawURL string) (fingerprint, encrypted string, err error) {
+	parsed, parseErr := validateNodeSourceURL(rawURL)
+	if parseErr != nil {
+		return "", "", parseErr
 	}
 	canonical := parsed.String()
 	digest := sha256.Sum256([]byte(canonical))
-	fingerprint := hex.EncodeToString(digest[:])
-	encrypted, err := security.EncryptSecret(s.sessionSecret, nodeSourcePurpose(userID, fingerprint), canonical)
+	fingerprint = hex.EncodeToString(digest[:])
+	encrypted, err = security.EncryptSecret(s.sessionSecret, nodeSourcePurpose(userID, fingerprint), canonical)
+	if err != nil {
+		return "", "", err
+	}
+	return fingerprint, encrypted, nil
+}
+
+func (s *Server) createNodeSource(ctx context.Context, userID, groupID int64, rawURL string) (*model.NodeSource, error) {
+	fingerprint, encrypted, err := s.sealNodeSourceURL(userID, rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -602,6 +612,83 @@ func (s *Server) createNodeSource(ctx context.Context, userID, groupID int64, ra
 		return nil, err
 	}
 	return source, nil
+}
+
+// updateNodeGroup applies one node group edit: rename, re-point a remote
+// subscription URL with an immediate resync, or append manual node links.
+// All validation happens before any write so a rejected edit changes nothing.
+func (s *Server) updateNodeGroup(ctx context.Context, userID, groupID int64, name, rawURL, content string) (map[string]any, error) {
+	group, err := s.store.GetNodeGroup(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	rawURL = strings.TrimSpace(rawURL)
+	content = strings.TrimSpace(content)
+	if name == "" && rawURL == "" && content == "" {
+		return nil, errors.New("没有需要更新的内容")
+	}
+	var fingerprint, encrypted string
+	if rawURL != "" {
+		if group.Kind != model.NodeGroupRemote {
+			return nil, errors.New("仅远程节点组可以更新订阅 URL")
+		}
+		fingerprint, encrypted, err = s.sealNodeSourceURL(userID, rawURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if content != "" {
+		if group.Kind != model.NodeGroupManual {
+			return nil, errors.New("仅手动节点组可以导入节点链接")
+		}
+		if _, parseErr := core.ParsePrivateSubscription(content); parseErr != nil {
+			return nil, parseErr
+		}
+	}
+	if name != "" {
+		group, err = s.store.RenameNodeGroup(ctx, userID, groupID, name)
+		if err != nil {
+			return nil, err
+		}
+	}
+	response := map[string]any{"node_group": group}
+	switch {
+	case rawURL != "":
+		source, sourceErr := s.store.GetNodeSourceByGroup(ctx, userID, groupID)
+		if errors.Is(sourceErr, sql.ErrNoRows) {
+			source = &model.NodeSource{UserID: userID, GroupID: groupID, URLFingerprint: fingerprint, URLEncrypted: encrypted}
+			sourceErr = s.store.CreateNodeSource(ctx, source)
+		} else if sourceErr == nil && source.URLFingerprint != fingerprint {
+			_, sourceErr = s.store.UpdateNodeSourceURL(ctx, userID, source.ID, fingerprint, encrypted)
+			if sourceErr == nil {
+				source.URLFingerprint, source.URLEncrypted = fingerprint, encrypted
+			}
+		}
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+		response["node_source"] = sanitizeNodeSource(*source, s.nodeSourceDisplay(*source))
+		result, refreshErr := s.refreshNodeSource(ctx, *source)
+		if refreshErr != nil {
+			response["refresh_error"] = refreshErr.Error()
+		} else {
+			response["import"] = summarizePrivateImport(result)
+		}
+	case content != "":
+		result, importErr := s.importManualNodes(ctx, userID, groupID, content)
+		if importErr != nil {
+			return nil, importErr
+		}
+		response["import"] = summarizePrivateImport(result)
+	}
+	final, finalErr := s.store.GetNodeGroup(ctx, userID, groupID)
+	if finalErr != nil {
+		return nil, finalErr
+	}
+	response["node_group"] = final
+	s.publishRealtime("nodes", "subscriptions")
+	return response, nil
 }
 
 func (s *Server) refreshNodeSource(ctx context.Context, source model.NodeSource) (*core.PrivateImportResult, error) {

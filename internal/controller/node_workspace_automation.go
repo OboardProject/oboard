@@ -138,7 +138,37 @@ func (s *Server) validateNodeWorkspaceOperation(ctx context.Context, principal a
 		} else if _, err := core.ParsePrivateSubscription(request.Content); err != nil {
 			return nil, err
 		}
-	case "node_groups.update", "node_groups.delete":
+	case "node_groups.update":
+		group, err := s.store.GetNodeGroup(ctx, request.UserID, request.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		hasName := strings.TrimSpace(request.Name) != ""
+		hasURL := strings.TrimSpace(request.URL) != ""
+		hasContent := strings.TrimSpace(request.Content) != ""
+		if !hasName && !hasURL && !hasContent {
+			return nil, errors.New("nothing to update")
+		}
+		if hasName && len([]rune(strings.TrimSpace(request.Name))) > 80 {
+			return nil, errors.New("node group name must be between 1 and 80 characters")
+		}
+		if hasURL {
+			if group.Kind != model.NodeGroupRemote {
+				return nil, errors.New("only remote node groups accept a subscription URL")
+			}
+			if _, err := validateNodeSourceURL(request.URL); err != nil {
+				return nil, err
+			}
+		}
+		if hasContent {
+			if group.Kind != model.NodeGroupManual {
+				return nil, errors.New("only manual node groups accept node content")
+			}
+			if _, err := core.ParsePrivateSubscription(request.Content); err != nil {
+				return nil, err
+			}
+		}
+	case "node_groups.delete":
 		if _, err := s.store.GetNodeGroup(ctx, request.UserID, request.GroupID); err != nil {
 			return nil, err
 		}
@@ -222,7 +252,11 @@ func (s *Server) applyNodeWorkspaceOperation(ctx context.Context, principal appl
 		}
 		return map[string]any{"node_group": group, "node_count": len(result.Nodes), "issues": result.Issues}, nil
 	case "node_groups.update":
-		return s.store.RenameNodeGroup(ctx, request.UserID, request.GroupID, request.Name)
+		response, err := s.updateNodeGroup(ctx, request.UserID, request.GroupID, request.Name, request.URL, request.Content)
+		if err != nil {
+			return nil, err
+		}
+		return response["node_group"], nil
 	case "node_groups.delete":
 		return map[string]any{"deleted": true}, s.store.DeleteNodeGroup(ctx, request.UserID, request.GroupID)
 	case "node_sources.refresh":

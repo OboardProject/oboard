@@ -104,6 +104,61 @@ func TestNodeWorkspaceOwnershipImportOutputAndShare(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v1/ui/node-groups", firstToken, map[string]any{"name": "blocked", "kind": "remote", "url": "https://127.0.0.1/sub"}, http.StatusBadRequest)
 }
 
+func TestNodeWorkspaceGroupEditNameURLAndContent(t *testing.T) {
+	db := openNodeWorkspaceTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	bootstrap := request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+
+	created := request(t, handler, http.MethodPost, "/api/v1/ui/node-groups", token, map[string]any{
+		"name": "机场 A", "kind": "manual", "content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Manual-One",
+	}, http.StatusCreated)
+	groupID := int64(created["node_group"].(map[string]any)["id"].(float64))
+
+	renamed := request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(groupID), token, map[string]any{"name": "机场 A2"}, http.StatusOK)["node_group"].(map[string]any)
+	if renamed["name"] != "机场 A2" {
+		t.Fatalf("renamed group = %#v", renamed)
+	}
+
+	appended := request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(groupID), token, map[string]any{
+		"name": "机场 A2", "content": "trojan://secret@8.8.8.8:443?sni=example.com#Trojan-One",
+	}, http.StatusOK)
+	if appended["node_group"].(map[string]any)["node_count"] != float64(2) || appended["import"] == nil {
+		t.Fatalf("append edit = %#v", appended)
+	}
+	encodedAppend, err := json.Marshal(appended)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedAppend), "secret") {
+		t.Fatalf("group edit leaked node credentials: %s", encodedAppend)
+	}
+	library := request(t, handler, http.MethodGet, "/api/v1/ui/node-library", token, nil, http.StatusOK)["nodes"].([]any)
+	if len(library) != 2 {
+		t.Fatalf("library after append = %d nodes, want 2", len(library))
+	}
+
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(groupID), token, map[string]any{}, http.StatusBadRequest)
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(groupID), token, map[string]any{"name": "机场 A2", "url": "https://example.com/sub"}, http.StatusBadRequest)
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(groupID), token, map[string]any{"name": "机场 A2", "content": "not-a-node-link"}, http.StatusBadRequest)
+
+	adminID := int64(bootstrap["user"].(map[string]any)["id"].(float64))
+	remote := &model.NodeGroup{UserID: adminID, Kind: model.NodeGroupRemote, Name: "远程组"}
+	if err := db.CreateNodeGroup(t.Context(), remote); err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(remote.ID), token, map[string]any{"content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Manual-One"}, http.StatusBadRequest)
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/"+itoa(remote.ID), token, map[string]any{"name": "远程组", "url": "https://127.0.0.1/sub"}, http.StatusBadRequest)
+	request(t, handler, http.MethodPatch, "/api/v1/ui/node-groups/999999", token, map[string]any{"name": "missing"}, http.StatusNotFound)
+
+	workspace := request(t, handler, http.MethodGet, "/api/v1/ui/node-workspace", token, nil, http.StatusOK)
+	groups := workspace["node_groups"].([]any)
+	if groups[1].(map[string]any)["name"] != "机场 A2" || groups[1].(map[string]any)["node_count"] != float64(2) {
+		t.Fatalf("workspace after edits = %#v", groups)
+	}
+}
+
 func TestNodeWorkspaceAutomationPreservesEnabledAndEnforcesPerspective(t *testing.T) {
 	db := openNodeWorkspaceTestStore(t)
 	server := newTestServer(db, "test-secret", "")
@@ -396,5 +451,65 @@ func TestSubscriptionOutputFilterAutomationSave(t *testing.T) {
 	})
 	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "subscription_outputs.save", foreignGroupInput); err == nil {
 		t.Fatal("automation accepted a filter referencing a foreign node group")
+	}
+}
+
+func TestNodeWorkspaceGroupEditAutomationValidationAndApply(t *testing.T) {
+	db := openNodeWorkspaceTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	first := &model.User{Username: "group-editor", PasswordHash: "x", Status: "active", Role: model.RoleNone}
+	if err := db.CreateUser(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	manual := &model.NodeGroup{UserID: first.ID, Kind: model.NodeGroupManual, Name: "手动组"}
+	if err := db.CreateNodeGroup(t.Context(), manual); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureNodeWorkspaceDefaultsForUser(t.Context(), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.Principal{ID: "first", UserID: &first.ID, Role: model.RoleNone}
+
+	input, _ := json.Marshal(map[string]any{"user_id": first.ID, "group_id": manual.ID})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", input); err == nil {
+		t.Fatal("automation accepted an empty group update")
+	}
+	urlOnManual, _ := json.Marshal(map[string]any{"user_id": first.ID, "group_id": manual.ID, "url": "https://example.com/sub"})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", urlOnManual); err == nil {
+		t.Fatal("automation accepted a subscription URL on a manual group")
+	}
+
+	contentInput, _ := json.Marshal(map[string]any{"user_id": first.ID, "group_id": manual.ID, "name": "手动组2", "content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Edited-One\ntrojan://secret@8.8.8.8:443?sni=example.com#Edited-Two"})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", contentInput); err != nil {
+		t.Fatal(err)
+	}
+	result, err := server.applyNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", contentInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, ok := result.(*model.NodeGroup)
+	if !ok || group.Name != "手动组2" {
+		t.Fatalf("automation update result = %#v", result)
+	}
+	nodes, err := db.ListImportedNodes(t.Context(), first.ID)
+	if err != nil || len(nodes) != 2 {
+		t.Fatalf("nodes after automation update = %#v err=%v", nodes, err)
+	}
+
+	remote := &model.NodeGroup{UserID: first.ID, Kind: model.NodeGroupRemote, Name: "远程组"}
+	if err := db.CreateNodeGroup(t.Context(), remote); err != nil {
+		t.Fatal(err)
+	}
+	badURL, _ := json.Marshal(map[string]any{"user_id": first.ID, "group_id": remote.ID, "url": "https://127.0.0.1/sub"})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", badURL); err == nil {
+		t.Fatal("automation accepted a private subscription URL")
+	}
+	contentOnRemote, _ := json.Marshal(map[string]any{"user_id": first.ID, "group_id": remote.ID, "content": "ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Manual-One"})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", contentOnRemote); err == nil {
+		t.Fatal("automation accepted node content on a remote group")
+	}
+	foreign, _ := json.Marshal(map[string]any{"user_id": first.ID, "group_id": 999999, "name": "缺失"})
+	if _, err := server.validateNodeWorkspaceOperation(t.Context(), principal, "node_groups.update", foreign); err == nil {
+		t.Fatal("automation accepted an unknown group id")
 	}
 }

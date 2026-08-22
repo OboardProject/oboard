@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { ArrowDown, ArrowUp, Check, Clipboard, CloudDownload, Copy, Eye, Layers3, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, CloudDownload, Copy, Eye, Layers3, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { NodeAssignmentsPage } from './NodeAssignmentsPage'
 
 type Client = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -54,15 +54,17 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
   React.useEffect(() => { void refresh() }, [refresh])
 
   const message = (value: string, tone: 'success' | 'error' | 'warning' = 'success') => notify?.(value, tone)
-  const mutate = async (path: string, init: RequestInit, success: string) => {
+  const mutate = async (path: string, init: RequestInit, success: string): Promise<boolean> => {
     setBusy(true)
     try {
       await client.request(path + subjectQuery, init)
       message(success)
       await refresh()
+      return true
     } catch (requestError: any) {
       setError(requestError?.message || String(requestError))
       message(requestError?.message || String(requestError), 'error')
+      return false
     } finally {
       setBusy(false)
     }
@@ -149,15 +151,20 @@ function NodeLibrary({ nodes, groups, busy, onCopy, onEdit }: { nodes: Node[]; g
   </section>
 }
 
-function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, message }: { workspace: Workspace; busy: boolean; mutate: (path: string, init: RequestInit, success: string) => Promise<void>; subjectQuery: string; client: Client; refresh: () => Promise<void>; message: (value: string, tone?: 'success' | 'error' | 'warning') => void }) {
+function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, message }: { workspace: Workspace; busy: boolean; mutate: (path: string, init: RequestInit, success: string) => Promise<boolean>; subjectQuery: string; client: Client; refresh: () => Promise<void>; message: (value: string, tone?: 'success' | 'error' | 'warning') => void }) {
   const [kind, setKind] = React.useState<'manual' | 'remote'>('remote')
   const [name, setName] = React.useState('')
   const [value, setValue] = React.useState('')
   const [importPreview, setImportPreview] = React.useState<ImportPreview | null>(null)
+  const [editingID, setEditingID] = React.useState(0)
+  const [editName, setEditName] = React.useState('')
+  const [editURL, setEditURL] = React.useState('')
+  const [editContent, setEditContent] = React.useState('')
   const create = async () => {
     if (!name.trim() || !value.trim()) return
-    await mutate('/node-groups', { method: 'POST', body: JSON.stringify({ name, kind, ...(kind === 'remote' ? { url: value } : { content: value }) }) }, '节点组已创建')
-    setName(''); setValue(''); setImportPreview(null)
+    if (await mutate('/node-groups', { method: 'POST', body: JSON.stringify({ name, kind, ...(kind === 'remote' ? { url: value } : { content: value }) }) }, '节点组已创建')) {
+      setName(''); setValue(''); setImportPreview(null)
+    }
   }
   const previewImport = async () => {
     try {
@@ -167,6 +174,18 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
       setImportPreview(null)
       message(error?.message || String(error), 'error')
     }
+  }
+  const openEdit = (group: Group) => { setEditingID(group.id); setEditName(group.name); setEditURL(''); setEditContent('') }
+  const closeEdit = () => { setEditingID(0); setEditName(''); setEditURL(''); setEditContent('') }
+  const saveEdit = async (group: Group) => {
+    const nextName = editName.trim()
+    const url = editURL.trim()
+    const content = editContent.trim()
+    if (!nextName) return
+    const body: Record<string, unknown> = { name: nextName }
+    if (group.kind === 'remote' && url) body.url = url
+    if (group.kind === 'manual' && content) body.content = content
+    if (await mutate(`/node-groups/${group.id}`, { method: 'PATCH', body: JSON.stringify(body) }, '节点组已更新')) closeEdit()
   }
   return <section className="node-workspace-panel" role="tabpanel">
     <div className="node-group-create">
@@ -178,12 +197,22 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
     {importPreview && <div className="node-import-preview" aria-live="polite"><strong>可导入 {importPreview.nodes.length} 个节点</strong><div>{importPreview.nodes.slice(0, 8).map(node => <span key={node.fingerprint}>{node.name} · {node.protocol}</span>)}</div>{importPreview.nodes.length > 8 && <small>另有 {importPreview.nodes.length - 8} 个节点</small>}{importPreview.issues.length > 0 && <details><summary>{importPreview.issues.length} 项未导入</summary>{importPreview.issues.map(issue => <span key={`${issue.index}-${issue.message}`}>第 {issue.index} 项：{issue.message}</span>)}</details>}</div>}
     <div className="node-group-grid">{workspace.node_groups.map(group => {
       const source = workspace.node_sources.find(item => item.group_id === group.id)
-      return <article className="node-group-item" key={group.id}><div><strong>{group.name}</strong><span>{group.kind === 'oboard' ? '系统组' : group.kind === 'remote' ? '远程来源' : '手动组'} · {group.node_count} 个节点</span></div>{source && <div className="node-source-status"><span>{source.url_display}</span><span className={`status-${source.status}`}>{source.status === 'ready' ? '已同步' : source.status === 'error' ? '同步失败' : '等待同步'}{source.last_success_at ? ` · ${new Date(source.last_success_at).toLocaleString()}` : ''}</span>{source.last_error && <small>{source.last_error}</small>}</div>}<div className="node-group-actions">
-        {group.kind === 'manual' && <button type="button" className="icon-button" title="导入更多节点" aria-label={`向 ${group.name} 导入节点`} disabled={busy} onClick={async () => { const content = window.prompt('粘贴节点链接或配置'); if (!content?.trim()) return; try { await client.request(`/node-groups/${group.id}/import${subjectQuery}`, { method: 'POST', body: JSON.stringify({ content }) }); message('节点已导入'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><Plus size={15} /></button>}
-        {source && <button type="button" className="icon-button" title="刷新来源" aria-label={`刷新 ${group.name}`} disabled={busy} onClick={async () => { try { await client.request(`/node-sources/${source.id}/refresh${subjectQuery}`, { method: 'POST', body: '{}' }); message('来源已刷新'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><RefreshCw size={15} /></button>}
-        <button type="button" className="icon-button" title="重命名" aria-label={`重命名 ${group.name}`} disabled={busy} onClick={() => { const next = window.prompt('节点组名称', group.name); if (next?.trim()) void mutate(`/node-groups/${group.id}`, { method: 'PATCH', body: JSON.stringify({ name: next }) }, '节点组已重命名') }}><Clipboard size={15} /></button>
-        {group.kind !== 'oboard' && <button type="button" className="icon-button danger" title="删除" aria-label={`删除 ${group.name}`} disabled={busy} onClick={() => { if (window.confirm(`删除节点组“${group.name}”及其中节点？`)) void mutate(`/node-groups/${group.id}`, { method: 'DELETE' }, '节点组已删除') }}><Trash2 size={15} /></button>}
-      </div></article>
+      const editing = editingID === group.id
+      const editUnchanged = !editURL.trim() && !editContent.trim() && editName.trim() === group.name
+      return <article className="node-group-item" key={group.id}>{editing ? <form className="node-group-edit" aria-label={`编辑 ${group.name}`} onSubmit={event => { event.preventDefault(); void saveEdit(group) }}>
+        <label><span>节点组名称</span><input value={editName} onChange={event => setEditName(event.target.value)} maxLength={80} /></label>
+        {group.kind === 'remote' && <label><span>HTTPS 订阅 URL{source && <small>当前 {source.url_display}</small>}</span><input type="url" value={editURL} placeholder={source?.url_display || 'https://'} onChange={event => setEditURL(event.target.value)} /></label>}
+        {group.kind === 'manual' && <label><span>新增节点链接</span><textarea value={editContent} rows={3} placeholder="粘贴新的节点链接或配置，留空则保持现有节点不变" onChange={event => setEditContent(event.target.value)} /></label>}
+        <div className="node-import-actions"><button type="button" className="ghost" disabled={busy} onClick={closeEdit}><X size={15} />取消</button><button type="submit" disabled={busy || !editName.trim() || editUnchanged}><Check size={15} />保存</button></div>
+      </form> : <>
+        <div><strong>{group.name}</strong><span>{group.kind === 'oboard' ? '系统组' : group.kind === 'remote' ? '远程来源' : '手动组'} · {group.node_count} 个节点</span></div>
+        {source && <div className="node-source-status"><span>{source.url_display}</span><span className={`status-${source.status}`}>{source.status === 'ready' ? '已同步' : source.status === 'error' ? '同步失败' : '等待同步'}{source.last_success_at ? ` · ${new Date(source.last_success_at).toLocaleString()}` : ''}</span>{source.last_error && <small>{source.last_error}</small>}</div>}
+        <div className="node-group-actions">
+          {source && <button type="button" className="icon-button" title="刷新来源" aria-label={`刷新 ${group.name}`} disabled={busy} onClick={async () => { try { await client.request(`/node-sources/${source.id}/refresh${subjectQuery}`, { method: 'POST', body: '{}' }); message('来源已刷新'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><RefreshCw size={15} /></button>}
+          <button type="button" className="icon-button" title="编辑节点组" aria-label={`编辑 ${group.name}`} disabled={busy} onClick={() => openEdit(group)}><Pencil size={15} /></button>
+          {group.kind !== 'oboard' && <button type="button" className="icon-button danger" title="删除" aria-label={`删除 ${group.name}`} disabled={busy} onClick={() => { if (window.confirm(`删除节点组“${group.name}”及其中节点？`)) void mutate(`/node-groups/${group.id}`, { method: 'DELETE' }, '节点组已删除') }}><Trash2 size={15} /></button>}
+        </div>
+      </>}</article>
     })}</div>
   </section>
 }
