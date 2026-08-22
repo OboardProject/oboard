@@ -48,6 +48,16 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			return nil, err
 		}
 		return s.mcpAuditLogs(ctx, principal, request.Limit, request.Offset, strings.TrimSpace(request.Action))
+	case "user_devices.list_all":
+		var request struct{}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		items, err := s.store.ListAllUserDevices(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"devices": items, "count": len(items)}, nil
 	case "node_library.list", "node_groups.list", "node_sources.list", "subscription_outputs.list", "subscription_outputs.preview":
 		return s.queryNodeWorkspaceCapability(ctx, principal, capabilityName, input)
 	case "node_incidents.list":

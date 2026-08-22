@@ -439,6 +439,7 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		adminRead("user_groups.list", "列出全部用户分组", rawSchema(arrayOf(userGroup)), schemaObject(nil)),
 		adminRead("user_group_members.list", "列出全部用户分组与用户的成员关系", rawSchema(arrayOf(userGroupMember)), schemaObject(nil)),
 		adminRead("user_devices.list", "列出指定用户的已登记设备", schemaObject(map[string]any{"devices": arrayOf(userDevice)}, "devices"), schemaObject(map[string]any{"user_id": positiveID}, "user_id")),
+		adminRead("user_devices.list_all", "列出全部用户的已登记设备", schemaObject(map[string]any{"devices": arrayOf(userDevice), "count": map[string]any{"type": "integer"}}, "devices"), schemaObject(nil)),
 		adminWrite("users.create", "创建面板用户并分配角色与额度", schemaObject(map[string]any{"user": userCreate}, "user"), schemaObject(map[string]any{"user": userFull}, "user"), 2, false),
 		adminWrite("users.update", "修改用户角色、状态、额度与订阅设置", schemaObject(map[string]any{"user_id": positiveID, "changes": userUpdateChanges}, "user_id", "changes"), schemaObject(map[string]any{"user": userFull, "changed_fields": stringArray(1, 32)}, "user"), 2, false),
 		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID}, "deleted"), 3, true),

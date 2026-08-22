@@ -198,6 +198,33 @@ func TestMCPMetricsCapabilitiesReturnExistingData(t *testing.T) {
 		}
 		t.Fatalf("oboard_task metrics query returned an error result: %s", text)
 	}
+	var queryText string
+	for _, content := range query.Content {
+		if item, ok := content.(*mcp.TextContent); ok {
+			queryText += item.Text
+		}
+	}
+	if !strings.Contains(queryText, `"status":"succeeded"`) || !strings.Contains(queryText, `"server_id"`) {
+		t.Fatalf("oboard_task metrics query did not return direct data: %s", queryText)
+	}
+}
+
+func TestMCPUserDevicesListAll(t *testing.T) {
+	_, _, session, _, closeServer := newMCPTestEnvironment(t, "", []string{"oboard:read", "oboard:operate", "offline_access"})
+	defer closeServer()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: mcpCapabilityToolName("user_devices.list_all"), Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		var text string
+		for _, content := range result.Content {
+			if item, ok := content.(*mcp.TextContent); ok {
+				text += item.Text
+			}
+		}
+		t.Fatalf("user_devices.list_all returned an error result: %s", text)
+	}
 }
 
 func TestMCPCapabilityToolAndResourceCoverage(t *testing.T) {
