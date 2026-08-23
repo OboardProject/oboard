@@ -7410,6 +7410,16 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         <input type="search" value={serverQuery} onChange={event => setServerQuery(event.target.value)} placeholder="搜索名称、IP、编号或国家" aria-label="搜索服务器" />
         {serverQuery && <button type="button" className="ghost icon-button" onClick={() => setServerQuery('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button>}
       </div>
+      {serverRegions.length > 0 && (
+        <div className="server-region-inline" role="group" aria-label="按地区筛选">
+          <ServerRegionFilterDropdown value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />
+          {serverRegionFilter !== 'all' && (
+            <button type="button" className="ghost icon-button server-region-clear" onClick={() => setServerRegionFilter('all')} aria-label="清除地区筛选" title="清除地区筛选">
+              <Eraser size={14} />
+            </button>
+          )}
+        </div>
+      )}
       <button
         type="button"
         className={`ghost icon-button server-filter-toggle-btn ${filterExpanded || (serverStatusFilter !== 'all' || listPreferences.sortMode !== 'created') ? 'is-active' : ''}`}
@@ -7445,16 +7455,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         </div>
       )}
     </div>}
-    {servers.length > 0 && serverRegions.length > 0 && (
-      <div className="server-region-filter-row" role="group" aria-label="按地区筛选">
-        <ServerRegionFilterDropdown value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />
-        {serverRegionFilter !== 'all' && (
-          <button type="button" className="ghost icon-button server-region-clear" onClick={() => setServerRegionFilter('all')} aria-label="清除地区筛选" title="清除地区筛选">
-            <Eraser size={14} />
-          </button>
-        )}
-      </div>
-    )}
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
       <AlertTriangle size={18} />
       <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存。</span></div>

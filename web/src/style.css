@@ -1293,9 +1293,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-list-search {
-  min-width: min(280px, 100%);
+  min-width: min(220px, 100%);
   min-height: var(--control-height);
-  flex: 1 1 320px;
+  flex: 1 1 240px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1304,6 +1304,14 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   border-radius: var(--radius-md);
   background: var(--bg-input);
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.server-region-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .server-list-search:focus-within {
@@ -1547,7 +1555,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  min-height: 36px;
+  min-height: var(--control-height);
   padding: 6px 10px 6px 11px;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-full);
