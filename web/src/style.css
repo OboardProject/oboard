@@ -7557,6 +7557,29 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 @media (max-width: 720px) {
+  .notifications-panel .section-toolbar {
+    gap: 12px;
+  }
+  .notifications-panel .section-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+  .notifications-panel .section-actions button {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 10px;
+    border-radius: var(--radius-md);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .notifications-panel .section-actions button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .notification-announcement-history > div { align-items: stretch; flex-direction: column; }
   .notification-announcement-history small { text-align: left; }
   .notification-channel-card {
@@ -7566,7 +7589,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   .notification-channel-actions {
     justify-content: stretch;
   }
-  .notification-channel-actions button { flex: 1 1 auto; }
+  .notification-channel-actions button { flex: 1 1 auto; white-space: nowrap; }
   .notification-template-editor summary { grid-template-columns: 1fr; gap: 3px; }
 }
 

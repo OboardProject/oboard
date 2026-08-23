@@ -18050,7 +18050,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       <div className="notification-empty">
         <Bell size={22} />
         <strong>还没有通知通道</strong>
-        <span>点击右上角「新建通道」，配置 Telegram、Bark 或测试渠道后即可接收已选择的提醒。</span>
+        <span>点击上方「新建通道」，配置 Telegram、Bark 或测试渠道后即可接收已选择的提醒。</span>
       </div>
     ) : (
       <MotionList className="notification-channel-list">
