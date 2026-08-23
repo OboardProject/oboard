@@ -568,6 +568,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
@@ -589,6 +590,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 			"expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.extend_expiry":

@@ -3333,6 +3333,8 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			AutoRenewEnabled       *bool                     `json:"auto_renew_enabled"`
 			RenewalCycle           *model.ServerRenewalCycle `json:"renewal_cycle"`
 			ExpiryNotifyEnabled    *bool                     `json:"expiry_notify_enabled"`
+			TrafficResetMode       *string                   `json:"traffic_reset_mode"`
+			TrafficResetDay        *int                      `json:"traffic_reset_day"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3403,6 +3405,16 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.RenewalCycle = model.ServerRenewalCycleMonthly
 		} else {
 			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
+		}
+		if input.TrafficResetMode == nil {
+			v.TrafficResetMode = "monthly"
+		} else {
+			v.TrafficResetMode = normalizeControllerTrafficResetMode(*input.TrafficResetMode)
+		}
+		if input.TrafficResetDay == nil {
+			v.TrafficResetDay = 1
+		} else {
+			v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
 		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
@@ -3519,8 +3531,57 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 				"process_count":        server.ProcessCount,
 				"network_upload_bps":   server.NetworkUploadBPS,
 				"network_download_bps": server.NetworkDownloadBPS,
+				"traffic_upload_bytes": server.TrafficUploadBytes,
+				"traffic_download_bytes": server.TrafficDownloadBytes,
+				"traffic_period_start": server.TrafficPeriodStart,
+				"traffic_period_end":   server.TrafficPeriodEnd,
+				"traffic_reset_mode":   server.TrafficResetMode,
+				"traffic_reset_day":    server.TrafficResetDay,
 				"sampled_at":           server.TelemetryUpdatedAt,
 			},
+			"traffic": map[string]any{
+				"reset_mode":   server.TrafficResetMode,
+				"reset_day":    server.TrafficResetDay,
+				"period_start": server.TrafficPeriodStart,
+				"period_end":   server.TrafficPeriodEnd,
+				"upload_bytes": server.TrafficUploadBytes,
+				"download_bytes": server.TrafficDownloadBytes,
+				"total_bytes":  server.TrafficUploadBytes + server.TrafficDownloadBytes,
+			},
+		})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "traffic" {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		server, err := s.store.GetServer(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		settings, err := s.store.ListSettings(r.Context())
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		loc := trafficLocation(settings)
+		_, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, loc)
+		write(w, 200, map[string]any{
+			"server_id":          server.ID,
+			"traffic_reset_mode": server.TrafficResetMode,
+			"traffic_reset_day":  server.TrafficResetDay,
+			"period_key":         start.Format("2006-01-02"),
+			"period_start":       start,
+			"period_end":         end,
+			"traffic_period_start": server.TrafficPeriodStart,
+			"traffic_period_end":   server.TrafficPeriodEnd,
+			"traffic_upload_bytes": server.TrafficUploadBytes,
+			"traffic_download_bytes": server.TrafficDownloadBytes,
+			"total_bytes":        server.TrafficUploadBytes + server.TrafficDownloadBytes,
+			"expires_at":         server.ExpiresAt,
+			"renewal_cycle":      server.RenewalCycle,
 		})
 		return
 	}
@@ -3606,6 +3667,8 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			AutoRenewEnabled         *bool                       `json:"auto_renew_enabled"`
 			RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle"`
 			ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled"`
+			TrafficResetMode         *string                     `json:"traffic_reset_mode"`
+			TrafficResetDay          *int                        `json:"traffic_reset_day"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3669,6 +3732,22 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.RenewalCycle = current.RenewalCycle
 		} else {
 			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
+		}
+		if input.TrafficResetMode == nil {
+			v.TrafficResetMode = current.TrafficResetMode
+			if strings.TrimSpace(v.TrafficResetMode) == "" {
+				v.TrafficResetMode = "monthly"
+			}
+		} else {
+			v.TrafficResetMode = normalizeControllerTrafficResetMode(*input.TrafficResetMode)
+		}
+		if input.TrafficResetDay == nil {
+			v.TrafficResetDay = current.TrafficResetDay
+			if v.TrafficResetDay == 0 {
+				v.TrafficResetDay = 1
+			}
+		} else {
+			v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
 		}
 		v.LatencyProbeEnabled = current.LatencyProbeEnabled
 		v.LatencyProbeMode = current.LatencyProbeMode

@@ -1297,6 +1297,16 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	if _, ok := envelope.Server["connection_audit_enabled"]; !ok {
 		request.Server.ConnectionAuditEnabled = settingBool(settings, settingConnectionAuditEnabled, true)
 	}
+	if _, ok := envelope.Server["traffic_reset_mode"]; !ok {
+		request.Server.TrafficResetMode = "monthly"
+	} else {
+		request.Server.TrafficResetMode = normalizeControllerTrafficResetMode(request.Server.TrafficResetMode)
+	}
+	if _, ok := envelope.Server["traffic_reset_day"]; !ok {
+		request.Server.TrafficResetDay = 1
+	} else {
+		request.Server.TrafficResetDay = normalizeControllerTrafficResetDay(request.Server.TrafficResetDay)
+	}
 	return nil
 }
 

@@ -50,6 +50,8 @@ type serverUpdateChanges struct {
 	RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle,omitempty"`
 	AutoRenewEnabled         *bool                       `json:"auto_renew_enabled,omitempty"`
 	ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled,omitempty"`
+	TrafficResetMode         *string                     `json:"traffic_reset_mode,omitempty"`
+	TrafficResetDay          *int                        `json:"traffic_reset_day,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -162,6 +164,8 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("renewal_cycle", changes.RenewalCycle != nil, func() { next.RenewalCycle = normalizeServerRenewalCycle(*changes.RenewalCycle) })
 	set("auto_renew_enabled", changes.AutoRenewEnabled != nil, func() { next.AutoRenewEnabled = *changes.AutoRenewEnabled })
 	set("expiry_notify_enabled", changes.ExpiryNotifyEnabled != nil, func() { next.ExpiryNotifyEnabled = *changes.ExpiryNotifyEnabled })
+	set("traffic_reset_mode", changes.TrafficResetMode != nil, func() { next.TrafficResetMode = normalizeControllerTrafficResetMode(*changes.TrafficResetMode) })
+	set("traffic_reset_day", changes.TrafficResetDay != nil, func() { next.TrafficResetDay = normalizeControllerTrafficResetDay(*changes.TrafficResetDay) })
 	return changed
 }
 
