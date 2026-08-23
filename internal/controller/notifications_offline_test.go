@@ -346,16 +346,21 @@ func TestTelegramBotReplyCommands(t *testing.T) {
 		t.Fatalf("traffic reply missing info: %q", traffic)
 	}
 	users := srv.telegramBotReply(ctx, "/users")
-	if !strings.Contains(users, "用户使用情况") || !strings.Contains(users, "爱丽丝") {
+	if !strings.Contains(users, "用户流量") || !strings.Contains(users, "爱丽丝") {
 		t.Fatalf("users reply missing info: %q", users)
 	}
 	audit := srv.telegramBotReply(ctx, "/audit")
-	if !strings.Contains(audit, "审计台概览") {
+	if !strings.Contains(audit, "审计概览") {
 		t.Fatalf("audit reply missing info: %q", audit)
 	}
 	help := srv.telegramBotReply(ctx, "/help")
-	if !strings.Contains(help, "/status") {
+	if !strings.HasPrefix(help, "OBoard 运维指令\n") || !strings.Contains(help, "/status") {
 		t.Fatalf("help reply missing commands: %q", help)
+	}
+	for _, symbol := range []string{"🤖", "📡", "🖥", "📊", "👥", "🛡", "🟢", "🔴", "🟡", "⚪"} {
+		if strings.Contains(status+detail+traffic+users+audit+help, symbol) {
+			t.Fatalf("Telegram Bot copy contains decorative symbol %q", symbol)
+		}
 	}
 	unknown := srv.telegramBotReply(ctx, "/whatever")
 	if !strings.Contains(unknown, "/help") {

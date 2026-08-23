@@ -177,18 +177,18 @@ func nodeIncidentTelegramText(item model.NodeIncident) string {
 	var builder strings.Builder
 	switch item.Status {
 	case model.NodeIncidentResolved:
-		fmt.Fprintf(&builder, "服务器已恢复：%s\n事件：#%d\n", item.ServerName, item.ID)
+		fmt.Fprintf(&builder, "服务器恢复\n服务器：%s\n事件：#%d\n", item.ServerName, item.ID)
 		fmt.Fprintf(&builder, "中断开始：%s\n恢复连接：%s\n稳定确认：%s\n中断时长：%s\n", item.FirstOfflineAt.Local().Format("2006-01-02 15:04:05"), formatIncidentTime(item.RecoveredAt), formatIncidentTime(item.ResolvedAt), formatIncidentDuration(item.OutageDurationSeconds))
 		if item.FlapCount > 0 {
-			fmt.Fprintf(&builder, "期间抖动：%d 次\n", item.FlapCount)
+			fmt.Fprintf(&builder, "抖动次数：%d\n", item.FlapCount)
 		}
-		builder.WriteString("事件已关闭，故障期操作不可再执行。")
+		builder.WriteString("事件已关闭，相关处置不可执行。")
 	case model.NodeIncidentRecovering:
-		fmt.Fprintf(&builder, "服务器恢复观察中：%s\n事件：#%d\n", item.ServerName, item.ID)
+		fmt.Fprintf(&builder, "服务器恢复确认中\n服务器：%s\n事件：#%d\n", item.ServerName, item.ID)
 		fmt.Fprintf(&builder, "恢复连接：%s\n稳定窗口截止：%s\n", formatIncidentTime(item.RecoveryCandidateAt), formatIncidentTime(item.RecoveryDeadlineAt))
-		builder.WriteString("稳定窗口结束前再次失联将继续沿用本事件。")
+		builder.WriteString("窗口内再次失联将归入当前事件。")
 	default:
-		fmt.Fprintf(&builder, "服务器失联：%s\n事件：#%d\n", item.ServerName, item.ID)
+		fmt.Fprintf(&builder, "服务器失联\n服务器：%s\n事件：#%d\n", item.ServerName, item.ID)
 		fmt.Fprintf(&builder, "首次失联：%s\n告警判定：%s\n", item.FirstOfflineAt.Local().Format("2006-01-02 15:04:05"), item.DetectedAt.Local().Format("2006-01-02 15:04:05"))
 		published := 0
 		for _, inbound := range snapshot.Inbounds {
@@ -196,7 +196,7 @@ func nodeIncidentTelegramText(item model.NodeIncident) string {
 				published++
 			}
 		}
-		fmt.Fprintf(&builder, "可处置已发布入口：%d 个", published)
+		fmt.Fprintf(&builder, "已发布入口：%d", published)
 		if published > 0 {
 			builder.WriteString("\n入口：")
 			parts := []string{}
@@ -206,10 +206,10 @@ func nodeIncidentTelegramText(item model.NodeIncident) string {
 				}
 			}
 			builder.WriteString(strings.Join(parts, "、"))
-			builder.WriteString("\n发送 /incident <事件ID> isolate <manual|auto> <入口ID列表> 查看处置影响。")
+			builder.WriteString("\n处置预览：/incident <事件ID> isolate <manual|auto> <入口ID列表>")
 		}
 		if item.FlapCount > 0 {
-			fmt.Fprintf(&builder, "\n期间抖动：%d 次", item.FlapCount)
+			fmt.Fprintf(&builder, "\n抖动次数：%d", item.FlapCount)
 		}
 	}
 	return builder.String()
@@ -264,7 +264,7 @@ func (s *Server) syncNodeIncidentTelegram(ctx context.Context, item model.NodeIn
 			_ = s.store.UpdateNodeIncidentTelegramMessage(ctx, message.ID, 0, 0, message.LastEventVersion, editErr)
 			continue
 		}
-		fallback := fmt.Sprintf("关联原失联消息 #%d\n%s", message.MessageID, text)
+		fallback := fmt.Sprintf("原告警消息：#%d\n%s", message.MessageID, text)
 		fallbackID, fallbackErr := s.telegramIncidentSend(ctx, target.Token, target.ChatID, fallback)
 		if fallbackErr != nil {
 			_ = s.store.UpdateNodeIncidentTelegramMessage(ctx, message.ID, 0, 0, message.LastEventVersion, fallbackErr)

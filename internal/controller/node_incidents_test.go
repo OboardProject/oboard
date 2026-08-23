@@ -146,6 +146,44 @@ func TestNodeIncidentTelegramRecoveryFallsBackWhenEditFails(t *testing.T) {
 	}
 }
 
+func TestNodeIncidentTelegramCopyIsFormalAndConcise(t *testing.T) {
+	now := time.Date(2026, time.August, 24, 3, 0, 0, 0, time.UTC)
+	later := now.Add(5 * time.Minute)
+	tests := []struct {
+		name   string
+		item   model.NodeIncident
+		prefix string
+		status string
+	}{
+		{
+			name:   "active",
+			item:   model.NodeIncident{ID: 7, ServerName: "edge", Status: model.NodeIncidentActive, FirstOfflineAt: now, DetectedAt: now, SnapshotJSON: `{}`},
+			prefix: "服务器失联\n服务器：edge\n事件：#7\n",
+			status: "已发布入口：0",
+		},
+		{
+			name:   "recovering",
+			item:   model.NodeIncident{ID: 7, ServerName: "edge", Status: model.NodeIncidentRecovering, RecoveryCandidateAt: &now, RecoveryDeadlineAt: &later},
+			prefix: "服务器恢复确认中\n服务器：edge\n事件：#7\n",
+			status: "窗口内再次失联将归入当前事件。",
+		},
+		{
+			name:   "resolved",
+			item:   model.NodeIncident{ID: 7, ServerName: "edge", Status: model.NodeIncidentResolved, FirstOfflineAt: now, RecoveredAt: &later, ResolvedAt: &later},
+			prefix: "服务器恢复\n服务器：edge\n事件：#7\n",
+			status: "事件已关闭，相关处置不可执行。",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			text := nodeIncidentTelegramText(test.item)
+			if !strings.HasPrefix(text, test.prefix) || !strings.Contains(text, test.status) {
+				t.Fatalf("unexpected Telegram incident copy: %q", text)
+			}
+		})
+	}
+}
+
 func TestTelegramGlobalBotAcceptsAccountBindingFromAnyChat(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "global-telegram.sqlite"))
 	if err != nil {
