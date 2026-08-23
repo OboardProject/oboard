@@ -15935,6 +15935,8 @@ function userDraftPayload(draft: UserDraft, includePassword: boolean) {
   }
 }
 
+type UserScopeKey = 'all' | 'ungrouped' | number
+
 function defaultUserGroupDraft(): UserGroupDraft {
   return { name: 'group-1', description: '', role: 'viewer', enabled: true }
 }
@@ -16147,6 +16149,7 @@ function UserManagement({ data, client, load }: any) {
   const [createOpen, setCreateOpen] = useState(false)
   const [groupCreateOpen, setGroupCreateOpen] = useState(false)
   const [managingGroupID, setManagingGroupID] = useState<number | null>(null)
+  const [selectedScope, setSelectedScope] = useState<UserScopeKey>('all')
   const [passwordUser, setPasswordUser] = useState<User | null>(null)
   const [planUser, setPlanUser] = useState<User | null>(null)
   const createUser = async () => {
@@ -16205,38 +16208,84 @@ function UserManagement({ data, client, load }: any) {
     const ok = await dialogs.confirm({ title: '删除用户组', message: `确认删除用户组 ${group.name}？相关入口授权会一起移除。`, tone: 'danger', confirmText: '删除' })
     if (!ok) return
     await client.request(`/user-groups/${group.id}`, { method: 'DELETE' })
+    if (selectedScope === group.id) setSelectedScope('all')
   }
   const deleteMember = async (member: UserGroupMember) => {
     await client.request(`/user-group-members/${member.id}`, { method: 'DELETE' })
   }
-  return <Panel title="用户" className="user-management-panel">
-    <div className="section-toolbar"><div><h3>用户列表</h3><p className="muted">新增用户、修改密码、订阅轮换、吊销和删除都从表格操作执行。</p></div><button onClick={() => setCreateOpen(true)}>添加用户</button></div>
+  const users: User[] = data.users || []
+  const groups: UserGroup[] = data.user_groups || []
+  const members: UserGroupMember[] = data.user_group_members || []
+  const selectedGroup = typeof selectedScope === 'number' ? groups.find(group => group.id === selectedScope) || null : null
+  const scope: UserScopeKey = typeof selectedScope === 'number' && !selectedGroup ? 'all' : selectedScope
+  const showGroupsColumn = scope === 'all'
+  const visibleUsers = users.filter(usr => {
+    if (scope === 'all') return true
+    const groupIDs = members.filter(member => member.user_id === usr.id && member.enabled !== false).map(member => member.group_id)
+    if (scope === 'ungrouped') return groupIDs.length === 0
+    return groupIDs.includes(scope)
+  })
+  const scopeTitle = selectedGroup ? selectedGroup.name : scope === 'ungrouped' ? '未分组' : '全部用户'
+  const scopeDescription = selectedGroup
+    ? (selectedGroup.description || `${sessionRoleLabel(selectedGroup.role)}权限，由组内成员共用。`)
+    : scope === 'ungrouped'
+      ? '这些账号还没有加入任何分组，也就没有面板权限。'
+      : '改密、轮换订阅、套餐和删除都从表格操作。'
+  const emptyCopy = selectedGroup
+    ? '该分组还没有成员。'
+    : scope === 'ungrouped'
+      ? '所有用户都已加入分组。'
+      : '还没有用户。'
+  return <Panel title="用户与分组" className="user-management-panel">
+    <div className="user-management-layout">
+    <UserScopeNav users={users} groups={groups} members={members} scope={scope} onSelect={setSelectedScope} onCreateGroup={openCreateGroup} />
+    <div className="user-management-main">
+    <div className="section-toolbar">
+      <div>
+        <div className="user-scope-heading">
+          <h3>{scopeTitle}</h3>
+          {selectedGroup?.system_key && <span className="badge neutral">系统组</span>}
+          {selectedGroup && <span className={`badge ${selectedGroup.enabled === false ? 'neutral' : 'success'}`}>{selectedGroup.enabled === false ? '已停用' : '启用中'}</span>}
+          {selectedGroup && <span className="badge neutral">{sessionRoleLabel(selectedGroup.role)}</span>}
+          <span className="user-scope-count">{visibleUsers.length}</span>
+        </div>
+        <p className="muted">{scopeDescription}</p>
+      </div>
+      <div className="section-actions">
+        {selectedGroup && <>
+          <button className="ghost" onClick={() => setManagingGroupID(selectedGroup.id)}><UsersIcon size={15} />管理成员</button>
+          <button className="ghost icon-button" onClick={() => openEditGroup(selectedGroup)} title="编辑分组" aria-label={`编辑 ${selectedGroup.name}`}><Edit3 /></button>
+          {!selectedGroup.system_key && <button className="ghost icon-button danger-text" onClick={() => void deleteGroup(selectedGroup)} title="删除分组" aria-label={`删除 ${selectedGroup.name}`}><Trash2 /></button>}
+        </>}
+        <button onClick={() => setCreateOpen(true)}>添加用户</button>
+      </div>
+    </div>
     
-    <div className="card-custom user-table-card">
+    {visibleUsers.length ? <div className="card-custom user-table-card">
       <div className="user-table-scroll">
-        <table className="user-data-table">
+        <table className={`user-data-table${showGroupsColumn ? '' : ' is-scoped'}`}>
           <colgroup>
-            <col style={{ width: '15%' }} />
-            <col style={{ width: '9%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '30%' }} />
-            <col style={{ width: '14%' }} />
+            <col style={{ width: showGroupsColumn ? '15%' : '18%' }} />
+            <col style={{ width: showGroupsColumn ? '9%' : '12%' }} />
+            <col style={{ width: showGroupsColumn ? '8%' : '10%' }} />
+            {showGroupsColumn && <col style={{ width: '10%' }} />}
+            <col style={{ width: showGroupsColumn ? '14%' : '16%' }} />
+            <col style={{ width: showGroupsColumn ? '30%' : '30%' }} />
+            <col style={{ width: showGroupsColumn ? '14%' : '14%' }} />
           </colgroup>
           <thead>
             <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>
               <th className="user-col-user" style={{ fontWeight: 600 }}>用户</th>
               <th className="user-col-plan" style={{ fontWeight: 600 }}>套餐</th>
               <th className="user-col-limit" style={{ fontWeight: 600 }}>限速</th>
-              <th className="user-col-groups" style={{ fontWeight: 600 }}>所属组</th>
+              {showGroupsColumn && <th className="user-col-groups" style={{ fontWeight: 600 }}>所属组</th>}
               <th className="user-col-traffic" style={{ fontWeight: 600 }}>流量配额</th>
               <th className="user-col-subscription" style={{ fontWeight: 600 }}>订阅凭证</th>
               <th className="user-col-actions" style={{ fontWeight: 600, textAlign: 'right' }}>操作</th>
             </tr>
           </thead>
           <tbody>
-            {(data.users || []).map((usr: User) => {
+            {visibleUsers.map((usr: User) => {
               const limits = effectiveUserLimits(data, usr);
               const isSuspended = usr.status === 'suspended';
               const isQuotaExceeded = usr.traffic_quota_state === 'quota_exceeded';
@@ -16284,11 +16333,11 @@ function UserManagement({ data, client, load }: any) {
                   <td className="user-col-limit" data-label="限速" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                     {speedLimitText}
                   </td>
-                  <td className="user-col-groups" data-label="所属组">
+                  {showGroupsColumn && <td className="user-col-groups" data-label="所属组">
                     <span className="badge-custom badge-muted user-table-group" style={{ fontWeight: 500 }} title={groupsText}>
                       {groupsText}
                     </span>
-                  </td>
+                  </td>}
                   <td className="user-col-traffic" data-label="流量配额">
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', maxWidth: '150px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
@@ -16348,9 +16397,12 @@ function UserManagement({ data, client, load }: any) {
           </tbody>
         </table>
       </div>
+    </div> : <div className="empty small user-scope-empty-main">
+      <p>{emptyCopy}</p>
+      {selectedGroup ? <button onClick={() => setManagingGroupID(selectedGroup.id)}><UserPlus size={15} />管理成员</button> : scope === 'all' ? <button onClick={() => setCreateOpen(true)}>添加用户</button> : null}
+    </div>}
     </div>
-
-    <UserGroupsPanel data={data} onCreateGroup={openCreateGroup} onEditGroup={openEditGroup} onManageMembers={(group: UserGroup) => setManagingGroupID(group.id)} onDeleteGroup={deleteGroup} />
+    </div>
     <AnimatePresence>{createOpen && <UserCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createUser} />}</AnimatePresence>
     <AnimatePresence>{editUser && <UserEditDialog user={editUser} draft={editDraft} setDraft={setEditDraft} onCancel={() => setEditUser(null)} onSubmit={updateUser} />}</AnimatePresence>
     <AnimatePresence>{groupCreateOpen && <UserGroupCreateDialog draft={groupDraft} setDraft={setGroupDraft} onCancel={() => setGroupCreateOpen(false)} onSubmit={createGroup} />}</AnimatePresence>
@@ -16361,42 +16413,42 @@ function UserManagement({ data, client, load }: any) {
   </Panel>
 }
 
-function UserGroupsPanel({ data, onCreateGroup, onEditGroup, onManageMembers, onDeleteGroup }: any) {
-  const groups: UserGroup[] = data.user_groups || []
-  const members: UserGroupMember[] = data.user_group_members || []
-  return <section className="user-groups-panel">
-    <div className="section-toolbar user-groups-heading">
-      <div>
-        <div className="user-groups-title"><h3>用户分组</h3><span>{groups.length}</span></div>
-        <p className="muted">统一设置成员的后台权限；限速和流量由套餐或用户个人设置决定。</p>
-      </div>
-      <button onClick={onCreateGroup}><Plus size={16} />新建分组</button>
+function UserScopeNav({ users, groups, members, scope, onSelect, onCreateGroup }: { users: User[]; groups: UserGroup[]; members: UserGroupMember[]; scope: UserScopeKey; onSelect: (scope: UserScopeKey) => void; onCreateGroup: () => void }) {
+  const enabledMembers = members.filter(member => member.enabled !== false)
+  const groupedUserIDs = new Set(enabledMembers.map(member => member.user_id))
+  const ungroupedCount = users.filter(user => !groupedUserIDs.has(user.id)).length
+  const countByGroup = new Map<number, number>()
+  for (const member of enabledMembers) {
+    countByGroup.set(member.group_id, (countByGroup.get(member.group_id) || 0) + 1)
+  }
+  return <nav className="user-scope-nav" aria-label="用户与分组">
+    <div className="user-scope-section">
+      <button type="button" className={scope === 'all' ? 'is-active' : ''} onClick={() => onSelect('all')}>
+        <span>全部用户</span><span>{users.length}</span>
+      </button>
+      <button type="button" className={scope === 'ungrouped' ? 'is-active' : ''} onClick={() => onSelect('ungrouped')}>
+        <span>未分组</span><span>{ungroupedCount}</span>
+      </button>
     </div>
-    <div className="user-group-list">
-      {groups.length ? groups.map(group => {
-        const groupMembers = members.filter(m => m.group_id === group.id && m.enabled !== false)
-        return <article className={`user-group-card${group.enabled === false ? ' is-disabled' : ''}`} key={group.id}>
-          <div className="user-group-summary">
-            <div className="user-group-mark"><UsersIcon size={18} /></div>
-            <div className="user-group-identity">
-              <div><strong>{group.name}</strong>{group.system_key && <span className="badge neutral">系统组</span>}<span className={`badge ${group.enabled === false ? 'neutral' : 'success'}`}>{group.enabled === false ? '已停用' : '启用中'}</span></div>
-              <p>{group.description || '暂无备注'}</p>
-            </div>
-            <div className="user-group-policies">
-              <div><span><Shield size={14} />权限</span><strong>{sessionRoleLabel(group.role)}</strong></div>
-            </div>
-            <div className="user-group-actions">
-              <button className="ghost user-group-member-toggle" onClick={() => onManageMembers(group)}>
-                <UsersIcon size={15} /><span>{groupMembers.length} 位成员</span><ChevronRight size={15} />
-              </button>
-              <button className="ghost icon-button" onClick={() => onEditGroup(group)} title="编辑分组" aria-label={`编辑 ${group.name}`}><Edit3 /></button>
-              {!group.system_key && <button className="ghost icon-button danger-text" onClick={() => onDeleteGroup(group)} title="删除分组" aria-label={`删除 ${group.name}`}><Trash2 /></button>}
-            </div>
-          </div>
-        </article>
-      }) : <div className="empty small">暂无用户组。</div>}
+    <div className="user-scope-section">
+      <div className="user-scope-label">分组</div>
+      {groups.length ? groups.map(group => (
+        <button
+          type="button"
+          key={group.id}
+          className={`${scope === group.id ? 'is-active' : ''}${group.enabled === false ? ' is-disabled' : ''}`}
+          onClick={() => onSelect(group.id)}
+        >
+          <span className="user-scope-item-name">
+            <span>{group.name}</span>
+            {group.system_key && <span className="badge neutral">系统</span>}
+          </span>
+          <span>{countByGroup.get(group.id) || 0}</span>
+        </button>
+      )) : <div className="user-scope-empty">暂无分组</div>}
+      <button type="button" className="user-scope-create" onClick={onCreateGroup}><Plus size={15} />新建分组</button>
     </div>
-  </section>
+  </nav>
 }
 
 function UserGroupMembersDialog({ groupID, data, selectedUserID, onSelectUser, onAddMember, onDeleteMember, onCancel }: { groupID: number; data: any; selectedUserID: number; onSelectUser: (userID: number) => void; onAddMember: () => Promise<void>; onDeleteMember: (member: UserGroupMember) => Promise<void>; onCancel: () => void }) {
