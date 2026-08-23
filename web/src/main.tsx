@@ -664,6 +664,169 @@ function RegionPicker({ value, onChange, servers = [] }: { value: string; onChan
   </div>
 }
 
+function ServerRegionFilterDropdown({
+  value,
+  onChange,
+  regions,
+  total,
+}: {
+  value: string
+  onChange: (code: string) => void
+  regions: { code: string; label: string; count: number }[]
+  total: number
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [position, setPosition] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN')
+  const isAll = value === 'all'
+  const selectedRegion = !isAll ? regions.find(region => (region.code || '') === value) : null
+  const selectedLabel = isAll ? '全部地区' : selectedRegion ? selectedRegion.label : (value ? regionLabel(value) : '待检测')
+  const selectedCode = isAll ? '' : (selectedRegion?.code || value || '')
+  const selectedCount = isAll ? total : (selectedRegion?.count ?? 0)
+
+  const filtered = useMemo(() => {
+    if (!normalizedQuery) return regions
+    return regions.filter(region => {
+      const label = region.label.toLocaleLowerCase('zh-CN')
+      const code = region.code.toLowerCase()
+      return label.includes(normalizedQuery) || code.includes(normalizedQuery)
+    })
+  }, [regions, normalizedQuery])
+
+  const showAll = !normalizedQuery || '全部'.includes(normalizedQuery) || '全部地区'.includes(normalizedQuery) || 'all'.includes(normalizedQuery)
+
+  const updatePosition = () => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const viewportPadding = 10
+    const gutter = 8
+    const width = Math.min(360, window.innerWidth - viewportPadding * 2)
+    const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding - width)
+    const below = window.innerHeight - rect.bottom - viewportPadding - gutter
+    const above = rect.top - viewportPadding - gutter
+    const maxHeight = Math.min(380, Math.max(240, Math.max(below, above)))
+    const top = below >= 240 || below >= above ? rect.bottom + gutter : Math.max(viewportPadding, rect.top - gutter - maxHeight)
+    setPosition({ top, left, width, maxHeight })
+  }
+
+  useEffect(() => {
+    if (!open) return
+    updatePosition()
+    const reposition = () => updatePosition()
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (!triggerRef.current?.contains(target) && !panelRef.current?.contains(target)) setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    window.requestAnimationFrame(() => searchRef.current?.focus())
+    return () => {
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  const choose = (code: string) => {
+    onChange(code)
+    setOpen(false)
+    setQuery('')
+    triggerRef.current?.focus()
+  }
+
+  return (
+    <div className="server-region-filter-dropdown">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`server-region-filter-trigger ${!isAll ? 'is-active' : ''} ${open ? 'open' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => { setQuery(''); setOpen(current => !current) }}
+        title={isAll ? `全部地区 · 共 ${total} 台` : `${selectedLabel} · ${selectedCount} 台`}
+      >
+        <span className="server-region-filter-trigger-flag">
+          {isAll ? <Globe size={16} aria-hidden="true" /> : <RegionFlag code={selectedCode} size={18} />}
+        </span>
+        <span className="server-region-filter-trigger-label">{selectedLabel}</span>
+        <small className="server-region-filter-trigger-count">{isAll ? `${total} 台` : `${selectedCode || '—'} · ${selectedCount} 台`}</small>
+        <ChevronDown size={14} aria-hidden="true" className={`server-region-filter-chevron ${open ? 'rotated' : ''}`} />
+      </button>
+      {open && position && createPortal(
+        <div
+          ref={panelRef}
+          className="server-region-dropdown-panel"
+          style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
+        >
+          <div className="server-region-dropdown-search">
+            <Search size={16} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder="搜索地区或代码"
+              aria-label="搜索地区"
+            />
+            {query ? <button type="button" className="ghost icon-button" onClick={() => setQuery('')} aria-label="清空搜索" title="清空搜索"><X size={14} /></button> : null}
+          </div>
+          <div className="server-region-dropdown-list" role="listbox" aria-label="按地区筛选">
+            {showAll ? (
+              <button
+                type="button"
+                role="option"
+                aria-selected={isAll}
+                className={`server-region-dropdown-option ${isAll ? 'selected' : ''}`}
+                onClick={() => choose('all')}
+              >
+                <Globe size={16} aria-hidden="true" />
+                <span>全部地区</span>
+                <small>共 {total} 台</small>
+                {isAll ? <Check size={14} aria-hidden="true" /> : null}
+              </button>
+            ) : null}
+            {filtered.map(region => {
+              const code = region.code || ''
+              const isSelected = !isAll && value === code
+              const label = region.code ? region.label : '待检测'
+              return (
+                <button
+                  key={code || 'pending'}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`server-region-dropdown-option ${isSelected ? 'selected' : ''}`}
+                  onClick={() => choose(code)}
+                >
+                  <RegionFlag code={region.code} size={20} />
+                  <span>{label}</span>
+                  <small>{region.code || '—'} · {region.count} 台</small>
+                  {isSelected ? <Check size={14} aria-hidden="true" /> : null}
+                </button>
+              )
+            })}
+            {!showAll && filtered.length === 0 ? <div className="server-region-dropdown-empty">没有匹配的地区</div> : null}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 function ServerRegionField({ draft, update, servers }: { draft: any; update: (patch: any) => void; servers?: Server[] }) {
   const mode: RegionMode = draft.region_mode === 'manual' ? 'manual' : 'auto'
   const detectedCode = normalizeRegionCode(draft.detected_region_code)
@@ -7283,39 +7446,10 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       )}
     </div>}
     {servers.length > 0 && serverRegions.length > 0 && (
-      <div className="server-region-filter-bar" role="group" aria-label="按地区筛选">
-        <button
-          type="button"
-          className={`server-region-pill ${serverRegionFilter === 'all' ? 'selected' : ''}`}
-          onClick={() => setServerRegionFilter('all')}
-          aria-pressed={serverRegionFilter === 'all'}
-          title={`全部地区 · ${servers.length} 台`}
-        >
-          <Globe size={14} aria-hidden="true" />
-          <span>全部</span>
-          <span className="count">{servers.length}</span>
-        </button>
-        {serverRegions.map(region => {
-          const value = region.code || ''
-          const isSelected = serverRegionFilter === value
-          const label = region.code ? region.label : '待检测'
-          return (
-            <button
-              key={region.code || 'pending'}
-              type="button"
-              className={`server-region-pill ${isSelected ? 'selected' : ''}`}
-              onClick={() => setServerRegionFilter(current => current === value ? 'all' : value)}
-              aria-pressed={isSelected}
-              title={`${label} · ${region.count} 台`}
-            >
-              <RegionFlag code={region.code} size={16} />
-              <span>{label}</span>
-              <span className="count">{region.count}</span>
-            </button>
-          )
-        })}
-        {hasServerFilters && (
-          <button type="button" className="ghost icon-button server-region-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选">
+      <div className="server-region-filter-row" role="group" aria-label="按地区筛选">
+        <ServerRegionFilterDropdown value={serverRegionFilter} onChange={setServerRegionFilter} regions={serverRegions} total={servers.length} />
+        {serverRegionFilter !== 'all' && (
+          <button type="button" className="ghost icon-button server-region-clear" onClick={() => setServerRegionFilter('all')} aria-label="清除地区筛选" title="清除地区筛选">
             <Eraser size={14} />
           </button>
         )}
