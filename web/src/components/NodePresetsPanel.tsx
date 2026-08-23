@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Layers, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { Select } from './ui/select'
-import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
+import { SettingsRow } from './settings/SettingsLayout'
 import { SnellProfileCards, SnellProfileEditor, emptySnellDraft, snellDraftFromProfile, type SnellDraft, type SnellProfile } from './SnellProfilesPanel'
 
 export interface NodePresetsPanelProps {
@@ -402,8 +402,9 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   }
 
   return <section id="settings-panel-presets" role="tabpanel" className="settings-card">
-    <SettingsGroup title="节点预设" description="给需要模板的协议准备默认配置。创建入口时会套用对应类型的预设；密钥、密码和 Reality 密钥仍由每个入口单独生成。Snell 继续使用可共享的参数预设。">
-      <div className="node-presets-toolbar">
+    <div className="settings-group">
+      <div className="settings-group-body" style={{ paddingTop: 18 }}>
+        <div className="node-presets-toolbar">
         <div className="node-preset-filters" role="tablist" aria-label="按协议筛选">
           {protocolFilters.map(item => (
             <button key={item.id} type="button" className={filter === item.id ? 'active' : ''} role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}>{item.label}</button>
@@ -433,6 +434,7 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
         </div>
         {snellProfiles.length ? <SnellProfileCards profiles={snellProfiles} editingID={editingSnell?.id} onEdit={profile => { setEditingNode(null); setEditingSnell({ id: profile.id, draft: snellDraftFromProfile(profile) }) }} onDelete={deleteSnell} /> : <div className="snell-profiles-empty"><Layers size={18} /><span>还没有 Snell 参数预设</span></div>}
       </div>}
-    </SettingsGroup>
+      </div>
+    </div>
   </section>
 }

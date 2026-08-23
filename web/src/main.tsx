@@ -3887,7 +3887,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
     { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
     { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
-    { key: 'presets', label: '节点预设', icon: Layers, description: '协议配置模板与 Snell 参数预设。' },
+    { key: 'presets', label: '节点预设', icon: Layers, description: '给需要模板的协议准备默认配置。创建入口时会套用对应类型的预设；密钥、密码和 Reality 密钥仍由每个入口单独生成。Snell 继续使用可共享的参数预设。' },
     { key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' },
   ]
   const activeNavigationItem = settingsNavigation.find(item => item.key === activeSection) || settingsNavigation[0]
