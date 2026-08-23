@@ -30,34 +30,45 @@ type Draft = {
 
 const emptyDraft = (version = 4): Draft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, remark: '', enabled: true })
 
-function ProfileCards({ profiles, onEdit, onDelete }: { profiles: SnellProfile[]; onEdit: (profile: SnellProfile) => void; onDelete: (profile: SnellProfile) => void }) {
+function profileMeta(profile: SnellProfile) {
+  const parts = [`v${profile.version}`]
+  if (profile.obfs_mode && profile.obfs_mode !== 'none') {
+    parts.push(profile.obfs_host ? `HTTP · ${profile.obfs_host}` : 'HTTP')
+  }
+  if (profile.version === 6 && profile.mode && profile.mode !== 'default') {
+    parts.push(profile.mode === 'unshaped' ? '无整形' : profile.mode)
+  }
+  if (profile.reuse) parts.push('复用')
+  parts.push(profile.usage_count > 0 ? `${profile.usage_count} 个入口` : '未使用')
+  return parts
+}
+
+function ProfileCards({ profiles, editingID, onEdit, onDelete }: { profiles: SnellProfile[]; editingID?: number; onEdit: (profile: SnellProfile) => void; onDelete: (profile: SnellProfile) => void }) {
   return <div className="snell-profile-grid">
-    {profiles.map(profile => {
-      const obfs = profile.obfs_mode && profile.obfs_mode !== 'none' ? ` · 混淆 ${profile.obfs_mode}${profile.obfs_host ? ` → ${profile.obfs_host}` : ''}` : ''
-      const mode = profile.version === 6 && profile.mode && profile.mode !== 'default' ? ` · 模式 ${profile.mode}` : ''
-      const reuse = profile.reuse ? ' · 复用开启' : ''
-      return <div className={`snell-profile-card${profile.builtin ? ' builtin' : ''}${!profile.enabled ? ' disabled' : ''}`} key={profile.id}>
-        <div className="snell-profile-card-head">
-          <div>
-            <strong>{profile.name}{profile.builtin && <span className="badge-soft badge-soft-info">内置</span>}</strong>
-            <span>Snell v{profile.version}{obfs}{mode}{reuse}</span>
+    {profiles.map(profile => (
+      <article className={`snell-profile-card${profile.builtin ? ' is-builtin' : ''}${profile.enabled === false ? ' is-disabled' : ''}${editingID === profile.id ? ' is-editing' : ''}`} key={profile.id}>
+        <div className="snell-profile-main">
+          <div className="snell-profile-identity">
+            <strong className="snell-profile-name">{profile.name}</strong>
+            {profile.builtin && <span className="badge neutral">内置</span>}
+            {profile.enabled === false && <span className="badge neutral">已停用</span>}
           </div>
-          <span className="snell-profile-usage">{profile.usage_count > 0 ? `${profile.usage_count} 个入口使用` : '未使用'}</span>
+          <p className="snell-profile-meta">{profileMeta(profile).join(' · ')}</p>
+          {profile.remark && <p className="snell-profile-remark">{profile.remark}</p>}
         </div>
-        {profile.remark && <p className="snell-profile-remark">{profile.remark}</p>}
-        {!profile.enabled && <p className="snell-profile-disabled-note">已停用：新建入口不可再引用。</p>}
         <div className="snell-profile-card-actions">
-          <button type="button" className="ghost" onClick={() => onEdit(profile)}><Pencil size={13} />编辑</button>
-          {!profile.builtin && <button type="button" className="ghost danger" onClick={() => onDelete(profile)} disabled={profile.usage_count > 0} title={profile.usage_count > 0 ? '仍有入口引用，请先解绑' : undefined}><Trash2 size={13} />删除</button>}
+          <button type="button" className="ghost icon-button" onClick={() => onEdit(profile)} title={`编辑 ${profile.name}`} aria-label={`编辑 ${profile.name}`}><Pencil size={14} /></button>
+          {!profile.builtin && <button type="button" className="ghost icon-button danger-text" onClick={() => onDelete(profile)} disabled={profile.usage_count > 0} title={profile.usage_count > 0 ? '仍有入口引用，请先解绑' : `删除 ${profile.name}`} aria-label={`删除 ${profile.name}`}><Trash2 size={14} /></button>}
         </div>
-      </div>
-    })}
+      </article>
+    ))}
   </div>
 }
 
-function ProfileEditor({ draft, setDraft, onSave, onCancel, saving }: { draft: Draft; setDraft: (draft: Draft) => void; onSave: () => void; onCancel: () => void; saving: boolean }) {
+function ProfileEditor({ title, draft, setDraft, onSave, onCancel, saving }: { title: string; draft: Draft; setDraft: (draft: Draft) => void; onSave: () => void; onCancel: () => void; saving: boolean }) {
   const isV6 = Number(draft.version) === 6
   return <div className="snell-profile-editor">
+    <h4>{title}</h4>
     <div className="form settings-form">
       <SettingsRow label="预设名称" description="用于在入口表单中识别该套参数。">
         <input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 A 通用 v4" />
@@ -139,11 +150,11 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   return <section id="settings-panel-snell" role="tabpanel" className="settings-card">
     <SettingsGroup title="Snell 参数预设" description="预设让多个服务器入口快速使用同一套 Snell 参数；修改预设后，引用它的入口会在下次部署时应用新参数。内置预设不可删除。">
       <div className="snell-profiles-head">
-        <span className="muted">共 {profiles.length} 套（其中内置 {profiles.filter(p => p.builtin).length} 套）</span>
-        <button type="button" className="ghost" onClick={() => setEditing({ draft: emptyDraft(4) })}><Plus size={14} />新建预设</button>
+        <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
+        <button type="button" onClick={() => setEditing({ draft: emptyDraft(4) })}><Plus size={14} />新建预设</button>
       </div>
-      {editing && !editing.id && <ProfileEditor draft={editing.draft} setDraft={draft => setEditing({ draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} />}
-      <ProfileCards profiles={profiles} onEdit={profile => setEditing({ id: profile.id, draft: { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, remark: profile.remark, enabled: profile.enabled } })} onDelete={deleteProfile} />
+      {editing && <ProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} />}
+      <ProfileCards profiles={profiles} editingID={editing?.id} onEdit={profile => setEditing({ id: profile.id, draft: { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, remark: profile.remark, enabled: profile.enabled } })} onDelete={deleteProfile} />
     </SettingsGroup>
   </section>
 }

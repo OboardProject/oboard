@@ -21128,6 +21128,124 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   padding: 0 20px 16px;
 }
 
+.snell-profiles-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.snell-profiles-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.snell-profile-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.snell-profile-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+}
+
+.snell-profile-card.is-disabled {
+  opacity: 0.72;
+}
+
+.snell-profile-card.is-editing {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface-solid));
+}
+
+.snell-profile-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.snell-profile-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.snell-profile-name {
+  min-width: 3ch;
+  max-width: 100%;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.snell-profile-meta,
+.snell-profile-remark {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.snell-profile-remark {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snell-profile-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.snell-profile-card-actions .icon-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.snell-profile-editor {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.snell-profile-editor h4 {
+  margin: 0 0 10px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.snell-profiles-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .settings-row {
   min-width: 0;
   display: grid;
@@ -21276,6 +21394,19 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   }
   .settings-group-head { padding: 16px 16px 10px; }
   .settings-group-body { padding: 0 16px 12px; }
+  .snell-profiles-head {
+    flex-wrap: wrap;
+  }
+  .snell-profile-name {
+    flex: 1 1 auto;
+    min-width: 4ch;
+  }
+  .snell-profile-card-actions .icon-button {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
   .settings-row { grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
   .settings-row-control { justify-content: flex-start; }
   .settings-row-control > input,
