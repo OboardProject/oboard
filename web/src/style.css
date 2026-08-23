@@ -888,6 +888,24 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   padding: 0;
   border-radius: 999px;
   line-height: 0;
+  transition:
+    transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.5),
+    background 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.25s ease,
+    opacity 0.2s ease;
+  will-change: transform;
+}
+
+.icon-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+}
+
+.icon-button:active:not(:disabled) {
+  transform: scale(0.97) translateY(1px);
+  transition-duration: 0.12s;
+  box-shadow: none;
 }
 
 .icon-button svg {
@@ -902,6 +920,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   stroke-linejoin: round;
   /* Moon glyph is optically left-weighted in the viewBox; nudge for circular buttons. */
   overflow: visible;
+  transform-origin: center center;
+  transition: transform 0.55s cubic-bezier(0.175, 0.885, 0.32, 1.5);
+  will-change: transform;
 }
 
 /* Lucide Moon sits left of geometric center; optically re-center in the circular hit area. */
@@ -909,15 +930,53 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   transform: translateX(1px);
 }
 
+.icon-button:hover:not(:disabled):not(.refreshing) svg.lucide-moon {
+  transform: translateX(1px);
+}
+
+/* Refresh button: elegant hover rotation */
+.topbar-refresh:not(.refreshing):not(:disabled):hover svg,
+.icon-button:has(.lucide-refresh-cw):not(.refreshing):not(:disabled):hover svg {
+  transform: rotate(180deg);
+}
+
+.topbar-refresh:not(.refreshing):not(:disabled):active svg {
+  transform: rotate(360deg);
+  transition-duration: 0.6s;
+  transition-timing-function: cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
+.icon-button.refreshing {
+  pointer-events: none;
+}
+
 .icon-button.refreshing svg {
-  animation: refresh-spin 0.9s linear infinite;
+  animation: refresh-spin 0.85s linear infinite;
   transform-origin: center center;
   will-change: transform;
+  transition: none;
 }
 
 @keyframes refresh-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.topbar-refresh {
+  position: relative;
+  isolation: isolate;
+}
+
+.topbar-refresh:hover:not(:disabled):not(.refreshing) {
+  border-color: color-mix(in srgb, var(--primary) 20%, var(--border-strong)) !important;
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface-solid)) !important;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.topbar-refresh.refreshing {
+  border-color: color-mix(in srgb, var(--primary) 14%, var(--border-strong)) !important;
+  background: color-mix(in srgb, var(--primary) 5%, var(--surface-2)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 10%, transparent);
 }
 
 .dialog-close svg,
@@ -9166,7 +9225,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   font-size: 12px;
 }
 .dns-zone-server-field { grid-column: 1 / -1; }
-.spin { animation: refresh-spin .8s linear infinite; }
+.spin { animation: refresh-spin 0.85s linear infinite; transform-origin: center center; }
 
 @media (max-width: 640px) {
   .dns-record-filter-toolbar > .searchable-multi-select { min-width: calc(50% - 4px); max-width: none; }
@@ -10086,6 +10145,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .topbar-refresh {
     grid-area: refresh;
     justify-self: end;
+  }
+  .topbar-refresh {
+    position: relative;
+    isolation: isolate;
   }
   .proxy-path-topbar > .proxy-path-topbar-slot {
     width: 100%;
@@ -15402,10 +15465,11 @@ button[aria-busy="true"] {
   100% { transform: rotate(360deg); }
 }
 .icon-button.refreshing svg {
-  animation: refresh-spin 0.9s linear infinite;
+  animation: refresh-spin 0.85s linear infinite;
   transform-origin: center center;
   will-change: transform;
   backface-visibility: hidden;
+  transition: none;
 }
 
 /* 8. prefers-reduced-motion Accessibility Support */
@@ -15428,6 +15492,15 @@ button[aria-busy="true"] {
   }
   .icon-button.refreshing svg {
     animation: none !important;
+  }
+  .icon-button:hover:not(:disabled),
+  .topbar-refresh:hover:not(:disabled) {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  .icon-button:hover svg,
+  .topbar-refresh:hover svg {
+    transform: none !important;
   }
   .animate-page-in,
   .animate-dialog-in,
