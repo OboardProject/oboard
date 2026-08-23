@@ -410,3 +410,40 @@ export function defaultEntryGraphPosition(
 	const centerX = serverPosition.x + serverWidth / 2 + (index - (total - 1) / 2) * (GRAPH_ENTRY_NODE_WIDTH + 40)
   return { x: Math.round(centerX - GRAPH_ENTRY_NODE_WIDTH / 2), y: serverPosition.y - 170 }
 }
+
+export type GraphEntryOrderItem = { id: number; port: number }
+
+function entryGraphPositionX(
+  entry: GraphEntryOrderItem,
+  positions: Record<string, GraphPosition>,
+  portIndex: Map<number, number>,
+  serverPosition: GraphPosition,
+  entryCount: number,
+  serverWidth: number,
+) {
+  const saved = positions[`entry-${entry.id}`]
+  if (saved && Number.isFinite(saved.x)) return saved.x
+  return defaultEntryGraphPosition(serverPosition, portIndex.get(entry.id) ?? 0, entryCount, serverWidth).x
+}
+
+// Server inbound handles must follow the cards above them. Port order and
+// creation order often disagree, and that is what draws the belongs-to X.
+export function sortServerEntriesForGraph<T extends GraphEntryOrderItem>(
+  entries: T[],
+  positions: Record<string, GraphPosition>,
+  serverPosition: GraphPosition,
+  serverWidth = graphServerNodeWidth(entries.length),
+): T[] {
+  const count = Math.max(1, entries.length)
+  const portIndex = new Map(
+    entries
+      .slice()
+      .sort((left, right) => left.port - right.port || left.id - right.id)
+      .map((entry, index) => [entry.id, index]),
+  )
+  return entries.slice().sort((left, right) => {
+    const leftX = entryGraphPositionX(left, positions, portIndex, serverPosition, count, serverWidth)
+    const rightX = entryGraphPositionX(right, positions, portIndex, serverPosition, count, serverWidth)
+    return leftX - rightX || left.port - right.port || left.id - right.id
+  })
+}

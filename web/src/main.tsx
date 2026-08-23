@@ -47,6 +47,7 @@ import {
   saveGraphDirectExitInstances,
   saveGraphToolboxPosition,
   snapGraphPosition,
+  sortServerEntriesForGraph,
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
@@ -14939,12 +14940,13 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const id = `server-${s.id}`
     const position = positions[id] || defaultServerGraphPosition(i)
     serverPositions.set(s.id, position)
-    const serverEntries = entries.filter(x => x.server_id === s.id && x.enabled !== false).sort((a, b) => (a.port - b.port) || (a.id - b.id))
-    serverEntryCounts.set(s.id, Math.max(1, serverEntries.length))
-    serverEntries.forEach((entry, index) => serverEntryIndexes.set(entry.id, index))
+    const serverEntries = entries.filter(x => x.server_id === s.id && x.enabled !== false)
+    const portOrderedEntries = serverEntries.slice().sort((a, b) => (a.port - b.port) || (a.id - b.id))
+    serverEntryCounts.set(s.id, Math.max(1, portOrderedEntries.length))
+    portOrderedEntries.forEach((entry, index) => serverEntryIndexes.set(entry.id, index))
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     serverWidths.set(s.id, serverWidth)
-	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
+	    const entrySources = sortServerEntriesForGraph(serverEntries, positions, position, serverWidth).map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
 	    const pathSources = continuationByNode.get(id) || []
 	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], entryHandles: entrySources, pathHandles: pathSources, sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
@@ -14952,10 +14954,10 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
     if (!server) return
     const id = canvasServerNodeID(instance)
-    const serverEntries = entries.filter(x => x.server_id === server.id && x.enabled !== false).sort((a, b) => (a.port - b.port) || (a.id - b.id))
+    const serverEntries = entries.filter(x => x.server_id === server.id && x.enabled !== false)
     const serverWidth = graphServerNodeWidth(serverEntries.length)
     const position = positions[id] || defaultServerGraphPosition(visibleServers.length + index)
-	    const entrySources = serverEntries.map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
+	    const entrySources = sortServerEntriesForGraph(serverEntries, positions, position, serverWidth).map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
 	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, entryHandles: entrySources, pathHandles: [], sourceOptions: graphServerSourceOptions(entrySources, []), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
   })
   const entryIndexesByServer = new Map<number, number>()

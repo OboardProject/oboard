@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, sortServerEntriesForGraph } from './layout'
 
 describe('proxy graph server layout', () => {
   it('keeps server cards fixed width regardless of inbound count', () => {
@@ -24,6 +24,19 @@ describe('proxy graph server layout', () => {
   it('spaces independent entry handles evenly across the card width', () => {
     expect(graphEntryHandleLeft(0, 2)).toBe('20%')
     expect(graphEntryHandleLeft(1, 2)).toBe('80%')
+  })
+
+  it('orders server handles by entry card position instead of port', () => {
+    const server = { x: 500, y: 300 }
+    const vless = { id: 10, port: 10777 }
+    const mieru = { id: 11, port: 4101 }
+    const saved = {
+      'entry-10': { x: 200, y: 130 },
+      'entry-11': { x: 500, y: 130 },
+    }
+
+    expect(sortServerEntriesForGraph([vless, mieru], saved, server).map(entry => entry.id)).toEqual([10, 11])
+    expect(sortServerEntriesForGraph([vless, mieru], {}, server).map(entry => entry.id)).toEqual([11, 10])
   })
 
   it('orders child branches to match their parent order', () => {

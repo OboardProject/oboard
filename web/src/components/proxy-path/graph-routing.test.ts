@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { expandRect, routeIntersectsRect, routeOverlapLength } from './graph-geometry'
+import { expandRect, routeCrossingCount, routeIntersectsRect, routeOverlapLength } from './graph-geometry'
 import { layoutProxyGraphTopology, type ProxyLayoutEdge, type ProxyLayoutNode } from './layout'
 import {
   NODE_CLEARANCE,
@@ -146,5 +146,6 @@ describe('global proxy graph routing', () => {
     expect(result.routes['belongs-2'].quality).toBe('preferred')
     expect(result.routes['belongs-1'].points.every(p => p.y <= 300)).toBe(true)
     expect(result.routes['belongs-2'].points.every(p => p.y <= 300)).toBe(true)
+    expect(routeCrossingCount(result.routes['belongs-1'].points, result.routes['belongs-2'].points)).toBe(0)
   })
 })
