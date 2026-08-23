@@ -31,6 +31,7 @@ type SubscriptionOptions struct {
 	NodeOrderPositions map[string]int
 	GlobalNodeNames    map[string]*string
 	PlanNodeNames      map[string]*string
+	Render             SubscriptionRenderOptions
 }
 
 type SubscriptionNode struct {
@@ -83,7 +84,7 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 	if err != nil {
 		return "", err
 	}
-	return renderSubscriptionTarget(nodes, format)
+	return renderSubscriptionTargetWithOptions(nodes, format, opts.Render)
 }
 
 func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {

@@ -12112,7 +12112,13 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	sub, err := core.RenderSubscriptionNodes(selectedNodes, format)
+	renderOpts, renderOptErr := core.ParseSubscriptionRenderOptions(format, r.URL.Query(), fmt.Sprintf("%d:%d", user.ID, subscriptionOutput.ID))
+	if renderOptErr != nil {
+		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, renderOptErr.Error())
+		fail(w, renderOptErr, http.StatusBadRequest)
+		return
+	}
+	sub, err := core.RenderSubscriptionNodesWithOptions(selectedNodes, format, renderOpts)
 	if err != nil {
 		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
 		fail(w, err, 500)

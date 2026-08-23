@@ -1538,6 +1538,12 @@ func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 	if got := fetch(persistentToken + "?format=shadowrocket"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/plain; charset=utf-8" || got.Body.String() != "" {
 		t.Fatalf("Shadowrocket subscription status=%d headers=%#v body=%s", got.Code, got.Header(), got.Body.String())
 	}
+	if got := fetch(persistentToken + "?format=surge-mac"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("Surge Mac subscription status=%d headers=%#v body=%s", got.Code, got.Header(), got.Body.String())
+	}
+	if got := fetch(persistentToken + "?format=surge-mac&mihomo=maybe"); got.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Surge Mac mihomo mode status=%d body=%s", got.Code, got.Body.String())
+	}
 	if got := fetch(persistentToken + "?format=plain-json"); got.Code != http.StatusBadRequest {
 		t.Fatalf("removed plain-json subscription status=%d body=%s", got.Code, got.Body.String())
 	}

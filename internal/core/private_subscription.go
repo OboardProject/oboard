@@ -467,7 +467,11 @@ func SubscriptionNodeFromPrivate(node model.ImportedNode, raw map[string]any, gr
 }
 
 func RenderSubscriptionNodes(nodes []SubscriptionNode, format model.SubscriptionFormat) (string, error) {
-	return renderSubscriptionTarget(nodes, format)
+	return RenderSubscriptionNodesWithOptions(nodes, format, SubscriptionRenderOptions{})
+}
+
+func RenderSubscriptionNodesWithOptions(nodes []SubscriptionNode, format model.SubscriptionFormat, opts SubscriptionRenderOptions) (string, error) {
+	return renderSubscriptionTargetWithOptions(nodes, format, opts)
 }
 
 type SubscriptionPreview struct {
@@ -478,6 +482,10 @@ type SubscriptionPreview struct {
 }
 
 func PreviewSubscriptionNodes(nodes []SubscriptionNode, format model.SubscriptionFormat) (SubscriptionPreview, error) {
+	return PreviewSubscriptionNodesWithOptions(nodes, format, SubscriptionRenderOptions{})
+}
+
+func PreviewSubscriptionNodesWithOptions(nodes []SubscriptionNode, format model.SubscriptionFormat, opts SubscriptionRenderOptions) (SubscriptionPreview, error) {
 	format = normalizeSubscriptionFormat(format)
 	preview := SubscriptionPreview{Nodes: []SubscriptionNode{}, InvalidReasons: []string{}}
 	for _, node := range nodes {
@@ -486,13 +494,13 @@ func PreviewSubscriptionNodes(nodes []SubscriptionNode, format model.Subscriptio
 			preview.InvalidReasons = append(preview.InvalidReasons, err.Error())
 			continue
 		}
-		if subscriptionTargetSupports(format, proxy) {
+		if subscriptionTargetSupportsWithOptions(format, proxy, opts) {
 			preview.Nodes = append(preview.Nodes, node)
 		} else {
 			preview.FilteredCount++
 		}
 	}
-	content, err := renderSubscriptionTarget(preview.Nodes, format)
+	content, err := renderSubscriptionTargetWithOptions(preview.Nodes, format, opts)
 	if err != nil {
 		return SubscriptionPreview{}, err
 	}

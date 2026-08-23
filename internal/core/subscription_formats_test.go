@@ -106,7 +106,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru", "snell"}},
 		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"udp-over-tcp=sp.v1", "hysteria2=", "mieru", "snell"}},
 		{format: model.SubscriptionFormatSurge, proxyCount: 6, contains: []string{"=hysteria2,", "=anytls,", "download-bandwidth=200", "udp-relay=true", "=snell,", "psk=\"snell-v4-psk\"", "version=4", "obfs=http", "obfs-host=\"bing.com\"", "version=6", "mode=unshaped"}, excludes: []string{"=vless,", "mieru"}},
-		{format: model.SubscriptionFormatSurgeMac, proxyCount: 6, contains: []string{"=hysteria2,", "=snell,", "snell-v6"}, excludes: []string{"=vless,", "mieru"}},
+		{format: model.SubscriptionFormatSurgeMac, proxyCount: 9, contains: []string{"=hysteria2,", "=snell,", "snell-v6", "=socks5,127.0.0.1,", "=external,", `exec="/usr/local/bin/mihomo"`}, excludes: []string{"=vless,"}},
 		{format: model.SubscriptionFormatSurfboard, proxyCount: 5, contains: []string{"=hysteria2,", "download-bandwidth=200", `SOCKS=socks5,socks.example.com,1080,"alice","socks-pass"`, "=snell,", "snell-v4"}, excludes: []string{"=vless,", "mieru", "snell-v6", "mode=unshaped"}},
 		{format: model.SubscriptionFormatClash, proxyCount: 2, contains: []string{"type: ss", "type: socks5"}, excludes: []string{"type: vless", "type: hysteria2", "type: anytls", "type: mieru", "type: snell"}},
 		{format: model.SubscriptionFormatV2RayURI, proxyCount: 5, contains: []string{"vless://", "hysteria2://", "anytls://", "ss://", "socks://"}, excludes: []string{"mierus://", "snell"}},

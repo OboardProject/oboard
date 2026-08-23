@@ -73,43 +73,7 @@ type subscriptionTLS struct {
 }
 
 func renderSubscriptionTarget(nodes []SubscriptionNode, format model.SubscriptionFormat) (string, error) {
-	proxies, err := normalizeSubscriptionNodes(nodes)
-	if err != nil {
-		return "", err
-	}
-	format = normalizeSubscriptionFormat(format)
-	compatible := make([]subscriptionProxy, 0, len(proxies))
-	for _, proxy := range proxies {
-		if subscriptionTargetSupports(format, proxy) {
-			compatible = append(compatible, proxy)
-		}
-	}
-	switch format {
-	case model.SubscriptionFormatSingBox:
-		return renderSingBoxTarget(compatible)
-	case model.SubscriptionFormatSingBoxMieru:
-		return renderSingBoxTarget(compatible)
-	case model.SubscriptionFormatMieru:
-		return renderMieruTarget(compatible)
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
-		return renderClashTarget(compatible, format)
-	case model.SubscriptionFormatShadowrocket:
-		return renderCanonicalURIList(compatible)
-	case model.SubscriptionFormatEgern:
-		return renderProxyListYAML(compatible, format)
-	case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatSurfboard:
-		return renderClientLines(compatible, format)
-	case model.SubscriptionFormatV2RayURI:
-		return renderCanonicalURIList(compatible)
-	case model.SubscriptionFormatV2Ray:
-		list, err := renderCanonicalURIList(compatible)
-		if err != nil {
-			return "", err
-		}
-		return base64.StdEncoding.EncodeToString([]byte(strings.TrimSuffix(list, "\n"))), nil
-	default:
-		return "", fmt.Errorf("unsupported subscription format %q", format)
-	}
+	return renderSubscriptionTargetWithOptions(nodes, format, SubscriptionRenderOptions{})
 }
 
 func normalizeSubscriptionNodes(nodes []SubscriptionNode) ([]subscriptionProxy, error) {
@@ -393,6 +357,9 @@ func cloneSubscriptionValue(value any) any {
 }
 
 func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
+	if format == model.SubscriptionFormatSurgeMac {
+		return surgeMacSupports(proxy, defaultSurgeMacOptions())
+	}
 	if proxy.Type == "vmess" || proxy.Type == "trojan" || proxy.Type == "tuic" {
 		switch format {
 		case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru,
