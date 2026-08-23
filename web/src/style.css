@@ -22204,7 +22204,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   padding: 0 32px 0 12px;
   font-size: 13px;
   font-weight: 550;
+  line-height: 31px;
   background: var(--surface-2);
+  box-sizing: border-box;
+  vertical-align: middle;
 }
 
 .node-perspective-bar select:focus,
@@ -22254,6 +22257,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   color: var(--muted);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1;
   padding: 4px 14px;
   box-shadow: none;
   white-space: nowrap;
@@ -22328,6 +22332,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   padding: 0 34px 0 14px;
   font-size: 13px;
   font-weight: 550;
+  line-height: calc(var(--control-height) - 3px);
+  box-sizing: border-box;
+  vertical-align: middle;
 }
 
 .node-search {
