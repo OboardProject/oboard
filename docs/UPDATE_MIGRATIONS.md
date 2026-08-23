@@ -56,15 +56,15 @@
 | `controller-db-20260819-configuration-revision-watermark` | Controller | SQLite schema / runtime recovery | `dev-25ab8ae0b776` | 待发布 | 生效中 | - |
 | `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-b5b1829cb668` | 待发布 | 生效中 | - |
 | `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
-| `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-pending` | 待发布 | 生效中 | - |
+| `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
 ### controller-db-20260823-node-presets
 
 - **引入日期：** 2026-08-23
-- **引入提交：** 待提交后回填
-- **引入版本：** `dev-pending`
+- **引入提交：** `OboardProject/oboard@936aac8ad0f2`
+- **引入版本：** `dev-936aac8ad0f2`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web
 - **类别：** SQLite schema / seed
