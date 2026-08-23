@@ -1567,6 +1567,24 @@ type SnellProfile struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// NodePreset is a reusable inbound configuration template for protocols
+// that need more than a port. Multiple inbounds can reference one preset
+// via config_json.node_preset_id; Snell continues to use snell_profiles.
+type NodePreset struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Protocol    string    `json:"protocol"`
+	Kind        string    `json:"kind"`
+	ConfigJSON  string    `json:"config_json"`
+	DefaultPort int       `json:"default_port"`
+	Remark      string    `json:"remark"`
+	Builtin     bool      `json:"builtin"`
+	Enabled     bool      `json:"enabled"`
+	UsageCount  int64     `json:"usage_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type DNSCandidate struct {
 	Tag       string       `json:"tag"`
 	Transport DNSTransport `json:"transport"`

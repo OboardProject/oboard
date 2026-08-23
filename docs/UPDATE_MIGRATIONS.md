@@ -56,8 +56,29 @@
 | `controller-db-20260819-configuration-revision-watermark` | Controller | SQLite schema / runtime recovery | `dev-25ab8ae0b776` | 待发布 | 生效中 | - |
 | `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-b5b1829cb668` | 待发布 | 生效中 | - |
 | `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
+| `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-pending` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260823-node-presets
+
+- **引入日期：** 2026-08-23
+- **引入提交：** 待提交后回填
+- **引入版本：** `dev-pending`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、Web
+- **类别：** SQLite schema / seed
+- **原因：** 设置页从仅 Snell 参数预设扩展为节点预设；VLESS / HY2 / AnyTLS / SS / Mieru / SOCKS5 需要可编辑的默认配置模板，且不得把密钥放进模板。
+- **源状态：** 数据库没有 `node_presets` 表；入口创建只使用 Web 硬编码默认值。
+- **目标状态：** `node_presets` 表存在，并幂等种子 12 套内置模板；入口可通过 `config_json.node_preset_id` 引用。`snell_profiles` 保持不变。
+- **实现位置：** `oboard/internal/store/store.go`、`oboard/internal/store/node_presets.go`；`oboard/internal/model/types.go`；`oboard/internal/controller/server.go`、`mcp_node_presets.go`、`inbound_automation.go`；`oboard/internal/capability/catalog_network.go`；`oboard/web/src/components/NodePresetsPanel.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时 `create table if not exists` 并 `insert or ignore` 种子。
+- **数据影响：** 仅新增表与内置行；不改写既有入口或 Snell 预设；不改变 Agent 配置。
+- **重复执行：** 表与种子均幂等；重复打开不会覆盖已改名或已编辑的内置行（按 `name` 忽略插入）。
+- **失败行为：** 建表或种子失败阻止 Controller 打开数据库。
+- **回归测试：** `TestNodePresetsMigrateFromPreviousSchema` 从缺少该表的旧库打开并验证种子；`TestNodePresetsSeededAndProtected`、`TestNodePresetsCRUDAndReferenceGuard`、`TestNodePresetUsageCountsInboundReference` 覆盖种子、CRUD 与引用保护。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `node_presets`。
+- **移除状态：** 生效中。
 
 ### controller-db-20260822-server-expiry
 

@@ -75,7 +75,7 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateInboundAutomationCandidate(ctx, principal, inbound); err != nil {
+		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
 		return map[string]any{"inbound": automationInboundView(inbound), "requires_deployment": true}, nil
@@ -85,7 +85,7 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateInboundAutomationCandidate(ctx, principal, inbound); err != nil {
+		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
 		return s.inboundAutomationRevisions(ctx, principal, 0, inbound.ServerID)
@@ -95,7 +95,7 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateInboundAutomationCandidate(ctx, principal, inbound); err != nil {
+		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
 		if err := s.store.CreateInbound(ctx, &inbound); err != nil {
@@ -113,7 +113,7 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateInboundAutomationCandidate(ctx, principal, inbound); err != nil {
+		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
 		return map[string]any{"inbound": automationInboundView(inbound), "requires_deployment": true}, nil
@@ -123,7 +123,7 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateInboundAutomationCandidate(ctx, principal, inbound); err != nil {
+		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
 		return s.inboundAutomationRevisions(ctx, principal, current.ID, inbound.ServerID)
@@ -133,7 +133,7 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.validateInboundAutomationCandidate(ctx, principal, inbound); err != nil {
+		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
 		oldDomain := normalizeDomainName(current.DNSDomain)
@@ -282,20 +282,26 @@ func normalizeInboundAutomationCandidate(inbound model.Inbound) (model.Inbound, 
 	return inbound, nil
 }
 
-func (s *Server) validateInboundAutomationCandidate(ctx context.Context, principal application.Principal, inbound model.Inbound) error {
+func (s *Server) validateInboundAutomationCandidate(ctx context.Context, principal application.Principal, inbound *model.Inbound) error {
+	if inbound == nil {
+		return errors.New("inbound required")
+	}
 	if !principal.AllowsInt64("server_ids", inbound.ServerID) {
 		return errors.New("inbound server is outside the authorized resource boundary")
 	}
-	if err := validateInbound(inbound); err != nil {
+	if err := s.resolveInboundTemplates(ctx, inbound); err != nil {
+		return err
+	}
+	if err := validateInbound(*inbound); err != nil {
 		return err
 	}
 	if err := s.store.ValidateServerExists(ctx, inbound.ServerID); err != nil {
 		return err
 	}
-	if err := s.validateInboundManagedReferences(ctx, inbound); err != nil {
+	if err := s.validateInboundManagedReferences(ctx, *inbound); err != nil {
 		return err
 	}
-	return s.ensureInboundListenAvailable(ctx, inbound)
+	return s.ensureInboundListenAvailable(ctx, *inbound)
 }
 
 func (s *Server) inboundAutomationRevisions(ctx context.Context, principal application.Principal, inboundID, serverID int64) (map[string]string, error) {

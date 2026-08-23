@@ -10,13 +10,13 @@ export interface SnellProfilesPanelProps {
   notify: (message: string, tone?: 'success' | 'warning' | 'danger' | 'error' | 'info') => void
 }
 
-type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
+export type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
 
 const versions = [4, 6]
 const obfsModes = ['none', 'http']
 const v6Modes = ['default', 'unshaped', 'unsafe-raw']
 
-type Draft = {
+export type SnellDraft = {
   name: string
   version: number
   psk: string
@@ -28,7 +28,11 @@ type Draft = {
   enabled: boolean
 }
 
-const emptyDraft = (version = 4): Draft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, remark: '', enabled: true })
+export const emptySnellDraft = (version = 4): SnellDraft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, remark: '', enabled: true })
+
+export function snellDraftFromProfile(profile: SnellProfile): SnellDraft {
+  return { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, remark: profile.remark, enabled: profile.enabled }
+}
 
 function profileMeta(profile: SnellProfile) {
   const parts = [`v${profile.version}`]
@@ -43,7 +47,7 @@ function profileMeta(profile: SnellProfile) {
   return parts
 }
 
-function ProfileCards({ profiles, editingID, onEdit, onDelete }: { profiles: SnellProfile[]; editingID?: number; onEdit: (profile: SnellProfile) => void; onDelete: (profile: SnellProfile) => void }) {
+export function SnellProfileCards({ profiles, editingID, onEdit, onDelete }: { profiles: SnellProfile[]; editingID?: number; onEdit: (profile: SnellProfile) => void; onDelete: (profile: SnellProfile) => void }) {
   return <div className="snell-profile-grid">
     {profiles.map(profile => (
       <article className={`snell-profile-card${profile.builtin ? ' is-builtin' : ''}${profile.enabled === false ? ' is-disabled' : ''}${editingID === profile.id ? ' is-editing' : ''}`} key={profile.id}>
@@ -65,7 +69,7 @@ function ProfileCards({ profiles, editingID, onEdit, onDelete }: { profiles: Sne
   </div>
 }
 
-function ProfileEditor({ title, draft, setDraft, onSave, onCancel, saving }: { title: string; draft: Draft; setDraft: (draft: Draft) => void; onSave: () => void; onCancel: () => void; saving: boolean }) {
+export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean }) {
   const isV6 = Number(draft.version) === 6
   return <div className="snell-profile-editor">
     <h4>{title}</h4>
@@ -112,7 +116,7 @@ function ProfileEditor({ title, draft, setDraft, onSave, onCancel, saving }: { t
 
 export function SnellProfilesPanel({ data, client, load, notify }: SnellProfilesPanelProps) {
   const profiles: SnellProfile[] = data.snell_profiles || []
-  const [editing, setEditing] = useState<null | { id?: number; draft: Draft }>(null)
+  const [editing, setEditing] = useState<null | { id?: number; draft: SnellDraft }>(null)
   const [saving, setSaving] = useState(false)
 
   const saveProfile = async () => {
@@ -151,10 +155,10 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
     <SettingsGroup title="Snell 参数预设" description="预设让多个服务器入口快速使用同一套 Snell 参数；修改预设后，引用它的入口会在下次部署时应用新参数。内置预设不可删除。">
       <div className="snell-profiles-head">
         <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
-        <button type="button" onClick={() => setEditing({ draft: emptyDraft(4) })}><Plus size={14} />新建预设</button>
+        <button type="button" onClick={() => setEditing({ draft: emptySnellDraft(4) })}><Plus size={14} />新建预设</button>
       </div>
-      {editing && <ProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} />}
-      <ProfileCards profiles={profiles} editingID={editing?.id} onEdit={profile => setEditing({ id: profile.id, draft: { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, remark: profile.remark, enabled: profile.enabled } })} onDelete={deleteProfile} />
+      {editing && <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} />}
+      <SnellProfileCards profiles={profiles} editingID={editing?.id} onEdit={profile => setEditing({ id: profile.id, draft: snellDraftFromProfile(profile) })} onDelete={deleteProfile} />
     </SettingsGroup>
   </section>
 }

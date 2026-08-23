@@ -42,6 +42,8 @@ const mutationCollections: Record<string, { collection: string; singular: string
   'user-group-members': { collection: 'user_group_members', singular: 'user_group_member' },
   users: { collection: 'users', singular: 'user' },
   'dns-lists': { collection: 'dns_lists', singular: 'dns_list' },
+  'node-presets': { collection: 'node_presets', singular: 'node_preset' },
+  'snell-profiles': { collection: 'snell_profiles', singular: 'snell_profile' },
   'warp-profiles': { collection: 'warp_profiles', singular: 'warp_profile' },
 }
 

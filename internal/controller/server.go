@@ -356,6 +356,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/dns-lists/", s.auth(s.dnsLists, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/snell-profiles", s.auth(s.snellProfiles, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/snell-profiles/", s.auth(s.snellProfiles, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/node-presets", s.auth(s.nodePresets, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/node-presets/", s.auth(s.nodePresets, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
 	mux.HandleFunc("/api/v1/mtu-detections", s.auth(s.mtuDetections, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards", s.auth(s.portForwards, model.RoleOperator))
@@ -1668,6 +1670,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		dnsLists      []model.DNSList
 		dnsPolicies   []model.ServerDNSPolicy
 		snellProfiles []model.SnellProfile
+		nodePresets   []model.NodePreset
 		inboundProbes []model.InboundProbeResult
 		forwardProbes []model.PortForwardProbeResult
 	)
@@ -1772,6 +1775,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return err
 		}
+		if err := timing.run("node_presets", func() error {
+			var listErr error
+			nodePresets, listErr = s.store.ListNodePresets(ctx)
+			return listErr
+		}); err != nil {
+			return err
+		}
 		if err := timing.run("probes", func() error {
 			var listErr error
 			inboundProbes, listErr = s.store.ListInboundProbeResults(ctx, 0, 0, 200)
@@ -1796,6 +1806,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["dns_lists"] = dnsLists
 		out["server_dns_policies"] = dnsPolicies
 		out["snell_profiles"] = snellProfiles
+		out["node_presets"] = nodePresets
 		out["inbound_probes"] = inboundProbes
 		out["port_forward_probes"] = forwardProbes
 		if roleAllows(role, model.RoleAdmin) {
@@ -1856,6 +1867,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out["snell_profiles"] = profiles
+		nodePresets, err := s.store.ListNodePresets(ctx)
+		if err != nil {
+			return err
+		}
+		out["node_presets"] = nodePresets
 		probes, err := s.store.ListInboundProbeResults(ctx, 0, 0, 200)
 		if err != nil {
 			return err
@@ -2436,6 +2452,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			out["snell_profiles"], err = s.store.ListSnellProfiles(ctx)
+		}
+		if err == nil {
+			out["node_presets"], err = s.store.ListNodePresets(ctx)
 		}
 		if err == nil {
 			out["dns_credentials"], err = s.store.ListDNSCredentials(ctx)
@@ -5293,7 +5312,7 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.resolveSnellProfileIntoInbound(r.Context(), &v); err != nil {
+		if err := s.resolveInboundTemplates(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -5367,7 +5386,7 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.resolveSnellProfileIntoInbound(r.Context(), &v); err != nil {
+		if err := s.resolveInboundTemplates(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -6104,6 +6123,134 @@ func inboundConfigHasCertificatePaths(configJSON string) bool {
 	certificatePath, _ := tls["certificate_path"].(string)
 	keyPath, _ := tls["key_path"].(string)
 	return strings.TrimSpace(certificatePath) != "" && strings.TrimSpace(keyPath) != ""
+}
+
+func (s *Server) resolveInboundTemplates(ctx context.Context, v *model.Inbound) error {
+	if err := s.resolveSnellProfileIntoInbound(ctx, v); err != nil {
+		return err
+	}
+	return s.resolveNodePresetIntoInbound(ctx, v)
+}
+
+// resolveNodePresetIntoInbound merges a referenced node preset's template
+// into inbound config_json. Inbound values win over preset values. Secret
+// fields are never copied from the preset. The node_preset_id reference is
+// retained for usage counting.
+func (s *Server) resolveNodePresetIntoInbound(ctx context.Context, v *model.Inbound) error {
+	if v == nil || v.Protocol == model.ProtocolSnell || v.Protocol == model.ProtocolSSH {
+		return nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(v.ConfigJSON), &cfg); err != nil {
+		return err
+	}
+	presetID := configInt64(cfg, "node_preset_id")
+	if presetID <= 0 {
+		return nil
+	}
+	preset, err := s.store.GetNodePreset(ctx, presetID)
+	if err != nil {
+		return fmt.Errorf("node preset %d not found", presetID)
+	}
+	if !preset.Enabled {
+		return fmt.Errorf("node preset %d is disabled", preset.ID)
+	}
+	if string(v.Protocol) != preset.Protocol {
+		return fmt.Errorf("node preset %d belongs to protocol %s", preset.ID, preset.Protocol)
+	}
+	var template map[string]any
+	if err := json.Unmarshal([]byte(preset.ConfigJSON), &template); err != nil || template == nil {
+		return errors.New("node preset config_json must be a JSON object")
+	}
+	merged := mergeInboundPresetConfig(template, cfg)
+	merged["node_preset_id"] = preset.ID
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return err
+	}
+	v.ConfigJSON = string(encoded)
+	return nil
+}
+
+var inboundPresetSecretKeys = map[string]bool{
+	"password": true, "psk": true, "uuid": true,
+	"private_key": true, "public_key": true, "short_id": true,
+}
+
+func mergeInboundPresetConfig(preset, inbound map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range preset {
+		if inboundPresetSecretKeys[key] {
+			continue
+		}
+		out[key] = cloneJSONAny(value)
+	}
+	for key, value := range inbound {
+		if inboundPresetSecretKeys[key] {
+			if !isEmptyJSONValue(value) {
+				out[key] = cloneJSONAny(value)
+			}
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			if current, ok := out[key].(map[string]any); ok {
+				out[key] = mergeInboundPresetConfig(current, nested)
+				continue
+			}
+		}
+		if !isEmptyJSONValue(value) {
+			out[key] = cloneJSONAny(value)
+		}
+	}
+	return out
+}
+
+func cloneJSONAny(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for key, item := range typed {
+			out[key] = cloneJSONAny(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = cloneJSONAny(item)
+		}
+		return out
+	default:
+		return typed
+	}
+}
+
+func isEmptyJSONValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text) == ""
+	}
+	return false
+}
+
+func configInt64(cfg map[string]any, key string) int64 {
+	switch value := cfg[key].(type) {
+	case float64:
+		return int64(value)
+	case json.Number:
+		n, _ := value.Int64()
+		return n
+	case int:
+		return int64(value)
+	case int64:
+		return value
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return n
+	default:
+		return 0
+	}
 }
 
 // resolveSnellProfileIntoInbound merges a referenced Snell profile's
@@ -10215,6 +10362,98 @@ func (s *Server) snellProfiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		auditReq(s, r, "delete", "snell_profile", fmt.Sprint(id))
+		write(w, 200, map[string]any{"deleted": true})
+	default:
+		method(w)
+	}
+}
+
+func (s *Server) nodePresets(w http.ResponseWriter, r *http.Request) {
+	id := idFromPath(r.URL.Path, "/api/v1/node-presets/")
+	switch r.Method {
+	case http.MethodGet:
+		if id != 0 {
+			item, err := s.store.GetNodePreset(r.Context(), id)
+			if err != nil {
+				fail(w, err, 404)
+				return
+			}
+			write(w, 200, map[string]any{"node_preset": item})
+			return
+		}
+		items, err := s.store.ListNodePresets(r.Context())
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"node_presets": items})
+	case http.MethodPost:
+		var v model.NodePreset
+		if !decode(w, r, &v) {
+			return
+		}
+		v.ID = 0
+		v.Builtin = false
+		v.Enabled = true
+		if err := store.NormalizeNodePreset(&v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.store.CreateNodePreset(r.Context(), &v); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		auditReq(s, r, "create", "node_preset", fmt.Sprint(v.ID))
+		write(w, 201, map[string]any{"node_preset": v})
+	case http.MethodPut:
+		if id == 0 {
+			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		current, err := s.store.GetNodePreset(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		var v model.NodePreset
+		if !decode(w, r, &v) {
+			return
+		}
+		v.ID = id
+		v.Builtin = current.Builtin
+		v.CreatedAt = current.CreatedAt
+		if strings.TrimSpace(v.Name) == "" {
+			v.Name = current.Name
+		}
+		if strings.TrimSpace(v.Kind) == "" {
+			v.Kind = current.Kind
+		}
+		if strings.TrimSpace(v.Protocol) == "" {
+			v.Protocol = current.Protocol
+		}
+		if v.ConfigJSON == "" {
+			v.ConfigJSON = current.ConfigJSON
+		}
+		if v.DefaultPort == 0 {
+			v.DefaultPort = current.DefaultPort
+		}
+		if err := s.store.UpdateNodePreset(r.Context(), &v); err != nil {
+			fail(w, err, 409)
+			return
+		}
+		v.UsageCount = current.UsageCount
+		auditReq(s, r, "update", "node_preset", fmt.Sprint(v.ID))
+		write(w, 200, map[string]any{"node_preset": v})
+	case http.MethodDelete:
+		if id == 0 {
+			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		if err := s.store.DeleteNodePreset(r.Context(), id); err != nil {
+			fail(w, err, 409)
+			return
+		}
+		auditReq(s, r, "delete", "node_preset", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true})
 	default:
 		method(w)

@@ -107,7 +107,7 @@ import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
-import { SnellProfilesPanel } from './components/SnellProfilesPanel'
+import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
@@ -3554,7 +3554,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'snell' | 'about'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3722,7 +3722,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
     { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
     { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
-    { key: 'snell', label: 'Snell 预设', icon: Layers, description: 'Snell 参数预设：多入口共享一套参数。' },
+    { key: 'presets', label: '节点预设', icon: Layers, description: '协议配置模板与 Snell 参数预设。' },
     { key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' },
   ]
   const activeNavigationItem = settingsNavigation.find(item => item.key === activeSection) || settingsNavigation[0]
@@ -3912,7 +3912,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         onSave={saveControllerLogs}
       />}
       {activeSection === 'about' && <AboutSettingsPanel version={data.version} />}
-      {activeSection === 'snell' && <SnellProfilesPanel data={data} client={client} load={load} notify={notify} />}
+      {activeSection === 'presets' && <NodePresetsPanel data={data} client={client} load={load} notify={notify} />}
       </div>
     </div>
   </section>
@@ -11147,8 +11147,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const server = selected || servers[0]
     if (!server) return dialogs.alert({ title: '无法添加入口', message: '请先添加服务器。' })
     const preset = inboundPreset(defaultInboundPreset('vless'))
-    const port = nextAvailableInboundPort(data, server, preset.protocol, preset.defaultPort)
-    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id), enabled: true })
+    const stored = matchingNodePreset(preset.id, data.node_presets || [])
+    const port = nextAvailableInboundPort(data, server, preset.protocol, stored?.default_port || preset.defaultPort)
+    setEntryDraft({ __graphPosition: position || null, __port_manual: false, __custom_sni: false, server_id: server.id, name: autoInboundName(server, preset.protocol, port), protocol: preset.protocol, listen_ip: server.listen_ip || '0.0.0.0', port, entry_ip_mode: 'auto' as EntryIPMode, external_ip: '', dns_sync_enabled: false, dns_credential_id: undefined, dns_domain: '', dns_proxy_enabled: false, dns_record_types: 'a' as DNSRecordTypes, ddns_enabled: false, ddns_interval_seconds: 300, tls: presetRequiresCertificate(preset.id), certificate_mode: presetRequiresCertificate(preset.id) ? 'auto' : 'external', certificate_domain: '', certificate_id: undefined, config_json: buildInboundPresetConfig(preset.id, data.node_presets), enabled: true })
   }
   const submitEntryDraft = async () => {
     if (!entryDraft) return
@@ -13834,9 +13835,10 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     setPresetID(preset.id)
     setDraft((old: any) => {
       if (!old) return old
-      const currentPort = Number(old.port) || preset.defaultPort
+      const stored = matchingNodePreset(preset.id, data.node_presets || [])
+      const currentPort = Number(old.port) || stored?.default_port || preset.defaultPort
       const keepManualPort = mode === 'edit' || old.__port_manual === true
-      const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, server, preset.protocol, preset.defaultPort, old.id)
+      const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, server, preset.protocol, stored?.default_port || preset.defaultPort, old.id)
       const oldAutoName = autoInboundName(server, old.protocol || protocol, currentPort)
       const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(old.name))
       return {
@@ -13844,7 +13846,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
         protocol: preset.protocol,
         port: nextPort,
         name: shouldRename ? autoInboundName(server, preset.protocol, nextPort) : old.name,
-        config_json: buildInboundPresetConfig(preset.id),
+        config_json: buildInboundPresetConfig(preset.id, data.node_presets),
         tls: presetRequiresCertificate(preset.id),
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
         certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip)) : '',
@@ -13974,7 +13976,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} />}
+          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
         </div>
         <details className="advanced-config">
           <summary>高级：查看生成配置</summary>
@@ -13992,7 +13994,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   </MotionDialogPanel>
 }
 
-function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true, snellProfiles = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[] }) {
+function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
   const headers = objectConfig(transport.headers)
@@ -14007,8 +14009,20 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     const serverName = value || defaultVLESSRealityServerName
     setTLS({ server_name: serverName, reality: { ...reality, handshake: { ...handshake, server: serverName } } })
   }
+  const matchingPresets = nodePresets.filter(item => item.enabled !== false && item.kind === presetID)
+  const applyNodePreset = (presetIDValue: number) => {
+    if (!presetIDValue) {
+      updateConfig({ node_preset_id: undefined })
+      return
+    }
+    const preset = nodePresets.find(item => item.id === presetIDValue)
+    if (!preset) return
+    updateConfig({ ...mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config), node_preset_id: preset.id })
+  }
+  const nodePresetPicker = matchingPresets.length > 0 ? <FormField label="套用节点预设" hint="默认配置来自设置中的节点预设；密钥仍由当前入口单独生成。"><Select value={Number(config.node_preset_id || 0) || ''} onChange={event => applyNodePreset(Number(event.target.value))}><option value="">不使用预设</option>{matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}{item.usage_count > 0 ? `（${item.usage_count} 个入口）` : ''}</option>)}</Select></FormField> : null
   if (presetID === 'vless-reality') return <div className="preset-fields">
     <div className="form-section-title">TCP / Reality / Vision 设置</div>
+    {nodePresetPicker}
     <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
     <FormField label="SNI / 握手域名" hint="同时用于客户端 SNI 和 Reality 伪装站点；留空使用 cdn.icloud-content.com。"><input value={realityServerName === defaultVLESSRealityServerName ? '' : realityServerName} onChange={e => setRealityServerName(e.target.value)} placeholder={defaultVLESSRealityServerName} /></FormField>
     <FormField label="握手端口"><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
@@ -14020,12 +14034,14 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   </div>
   if (presetID === 'vless-ws') return <div className="preset-fields">
     <div className="form-section-title">WebSocket / TLS 设置</div>
+    {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     <FormField label="WebSocket 路径"><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
     <FormField label="Host 头"><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
   if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic') return <div className="preset-fields">
     <div className="form-section-title">TLS 设置</div>
+    {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     {presetID === 'hy2-tls' && <>
       <FormField label="上传带宽 Mbps"><input value={Number(config.up_mbps || 100)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
@@ -14034,10 +14050,15 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   </div>
   if (presetID.startsWith('ss-')) return <div className="preset-fields">
     <div className="form-section-title">SS 设置</div>
+    {nodePresetPicker}
     <FormField label="加密方法"><Select value={String(config.method || '2022-blake3-aes-128-gcm')} onChange={e => updateConfig({ method: e.target.value })}>{shadowsocksMethods.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}</Select></FormField>
     {!String(config.method || '').startsWith('2022-') && <div className="access-note compact"><strong>单用户入口</strong><span>多人使用请选择 SS 2022 或其他多用户协议。</span></div>}
   </div>
-  if (presetID === 'mieru-basic') return <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint />
+  if (presetID === 'mieru-basic') return <div className="preset-fields">
+    {nodePresetPicker}
+    <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint />
+  </div>
+  if (presetID === 'vless-tcp' || presetID === 'socks5-auth') return nodePresetPicker ? <div className="preset-fields">{nodePresetPicker}</div> : null
   if (presetID === 'snell-v4') return <SnellPresetFields config={config} updateConfig={updateConfig} version={4} snellProfiles={snellProfiles} />
   if (presetID === 'snell-v6') return <SnellPresetFields config={config} updateConfig={updateConfig} version={6} snellProfiles={snellProfiles} />
   return null
@@ -18972,7 +18993,44 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
   return defaultInboundPreset(protocol)
 }
 
-function buildInboundPresetConfig(id: string) {
+const inboundTemplateSecretKeys = new Set(['password', 'psk', 'uuid', 'private_key', 'public_key', 'short_id'])
+
+function parseNodePresetConfig(raw: NodePreset['config_json'] | string | Record<string, any> | undefined): Record<string, any> {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw
+  try {
+    const parsed = JSON.parse(typeof raw === 'string' ? raw || '{}' : '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function matchingNodePreset(kind: string, presets: NodePreset[] = []) {
+  const enabled = presets.filter(item => item.enabled !== false && item.kind === kind)
+  return enabled.find(item => item.builtin) || enabled[0]
+}
+
+function mergeInboundTemplate(template: Record<string, any>, inbound: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {}
+  Object.entries(template || {}).forEach(([key, value]) => {
+    if (inboundTemplateSecretKeys.has(key)) return
+    out[key] = value && typeof value === 'object' && !Array.isArray(value) ? mergeInboundTemplate(value, {}) : value
+  })
+  Object.entries(inbound || {}).forEach(([key, value]) => {
+    if (inboundTemplateSecretKeys.has(key)) {
+      if (value !== undefined && value !== null && value !== '') out[key] = value
+      return
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value) && out[key] && typeof out[key] === 'object' && !Array.isArray(out[key])) {
+      out[key] = mergeInboundTemplate(out[key], value)
+      return
+    }
+    if (value !== undefined && value !== null && value !== '') out[key] = value
+  })
+  return out
+}
+
+function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
   const preset = inboundPreset(id)
   const cfg: Record<string, any> = {}
 	if (preset.id === 'ssh-restricted') {
@@ -19032,6 +19090,12 @@ function buildInboundPresetConfig(id: string) {
   if (preset.id === 'snell-v6') {
     cfg.version = 6
     cfg.mode = 'default'
+  }
+  const stored = matchingNodePreset(preset.id, presets)
+  if (stored) {
+    const merged = mergeInboundTemplate(parseNodePresetConfig(stored.config_json), cfg)
+    merged.node_preset_id = stored.id
+    return JSON.stringify(merged, null, 2)
   }
   return JSON.stringify(cfg, null, 2)
 }

@@ -61,10 +61,10 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"needs_benchmark": boolValue, "updated_at": stringValue,
 	})
 	dnsPolicyFields := closedObject(map[string]any{
-		"encrypted_list_id": positiveID,
-		"bootstrap_list_id": positiveID,
-		"strategy":          map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"}},
-		"auto_test":         map[string]any{"type": "string", "enum": []string{"never", "first_apply", "periodic"}},
+		"encrypted_list_id":     positiveID,
+		"bootstrap_list_id":     positiveID,
+		"strategy":              map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"}},
+		"auto_test":             map[string]any{"type": "string", "enum": []string{"never", "first_apply", "periodic"}},
 		"test_interval_seconds": map[string]any{"type": "integer", "minimum": 60},
 	}, "encrypted_list_id", "bootstrap_list_id")
 	snellProfile := closedObject(map[string]any{
@@ -80,7 +80,23 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
 		"reuse": boolValue, "remark": stringValue, "enabled": boolValue,
 	}, "name", "version", "psk")
+	nodePresetKinds := []string{"vless-reality", "vless-tls-vision", "vless-ws", "vless-tcp", "hy2-tls", "anytls-basic", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "socks5-auth"}
+	nodePreset := closedObject(map[string]any{
+		"id": positiveID, "name": stringValue, "protocol": stringValue,
+		"kind":        map[string]any{"type": "string", "enum": nodePresetKinds},
+		"config_json": map[string]any{"type": "object"}, "default_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+		"remark": stringValue, "builtin": boolValue, "enabled": boolValue,
+		"usage_count": map[string]any{"type": "integer"},
+		"created_at":  stringValue, "updated_at": stringValue,
+	})
+	nodePresetFields := closedObject(map[string]any{
+		"name": stringValue, "protocol": stringValue,
+		"kind":        map[string]any{"type": "string", "enum": nodePresetKinds},
+		"config_json": map[string]any{"type": "object"}, "default_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+		"remark": stringValue, "enabled": boolValue,
+	}, "name", "kind")
 	reads := []Descriptor{
+		{Name: "node_presets.list", Description: "列出全部节点配置预设（含内置模板与引用计数，不含密钥）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(nodePreset)), RequiredScopes: []string{"node_presets:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "snell_profiles.list", Description: "列出全部 Snell 参数预设（含内置预设与引用计数）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(snellProfile)), RequiredScopes: []string{"snell_profiles:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"snell_profile"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "dns_lists.list", Description: "列出全部加密与引导 DNS 解析列表", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(dnsList)), RequiredScopes: []string{"dns_lists:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "dns_credentials.list", Description: "列出 DNS 服务商账号元数据与绑定区域，不含任何凭据", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(dnsCredential)), RequiredScopes: []string{"dns_credentials:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"dns_credential"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
@@ -95,6 +111,9 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		admin             bool
 	}{
 		{"dns_lists.create", "创建加密或引导 DNS 解析列表", schemaObject(map[string]any{"dns_list": dnsListFields}, "dns_list"), schemaObject(map[string]any{"dns_list": dnsList}, "dns_list"), 2, false, true},
+		{"node_presets.create", "创建节点配置预设（VLESS / HY2 / AnyTLS / SS / Mieru / SOCKS5）", schemaObject(map[string]any{"node_preset": nodePresetFields}, "node_preset"), schemaObject(map[string]any{"node_preset": nodePreset}, "node_preset"), 2, false, true},
+		{"node_presets.update", "修改节点配置预设", schemaObject(map[string]any{"node_preset_id": positiveID, "changes": nodePresetFields}, "node_preset_id", "changes"), schemaObject(map[string]any{"node_preset": nodePreset, "changed_fields": stringArray(1, 32)}, "node_preset"), 2, false, true},
+		{"node_presets.delete", "删除未被引用的节点配置预设（内置预设不可删除）", schemaObject(map[string]any{"node_preset_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "node_preset_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "node_preset_id": positiveID}, "deleted"), 3, true, true},
 		{"snell_profiles.create", "创建 Snell 参数预设（多入站可共享）", schemaObject(map[string]any{"snell_profile": snellProfileFields}, "snell_profile"), schemaObject(map[string]any{"snell_profile": snellProfile}, "snell_profile"), 2, false, true},
 		{"snell_profiles.update", "修改 Snell 参数预设", schemaObject(map[string]any{"snell_profile_id": positiveID, "changes": snellProfileFields}, "snell_profile_id", "changes"), schemaObject(map[string]any{"snell_profile": snellProfile, "changed_fields": stringArray(1, 32)}, "snell_profile"), 2, false, true},
 		{"snell_profiles.delete", "删除未被引用的 Snell 参数预设（内置预设不可删除）", schemaObject(map[string]any{"snell_profile_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "snell_profile_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "snell_profile_id": positiveID}, "deleted"), 3, true, true},
@@ -128,6 +147,8 @@ func networkScopeFor(name string) string {
 	switch {
 	case name == "dns_records.create" || name == "dns_records.update" || name == "dns_records.delete":
 		return "dns_records:write"
+	case name == "node_presets.create" || name == "node_presets.update" || name == "node_presets.delete":
+		return "node_presets:write"
 	case name == "snell_profiles.create" || name == "snell_profiles.update" || name == "snell_profiles.delete":
 		return "snell_profiles:write"
 	case name == "servers.dns_test":

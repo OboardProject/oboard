@@ -304,6 +304,31 @@ func (s *Service) ListWARPProfiles(ctx context.Context, principal Principal) ([]
 	return out, nil
 }
 
+func (s *Service) ListNodePresets(ctx context.Context, principal Principal) ([]map[string]any, error) {
+	items, err := s.store.ListNodePresets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		var config any = map[string]any{}
+		if err := json.Unmarshal([]byte(item.ConfigJSON), &config); err != nil {
+			config = map[string]any{}
+		}
+		out = append(out, map[string]any{
+			"id": item.ID, "name": item.Name, "protocol": item.Protocol, "kind": item.Kind,
+			"config_json": config, "default_port": item.DefaultPort, "remark": item.Remark,
+			"builtin": item.Builtin, "enabled": item.Enabled, "usage_count": item.UsageCount,
+			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) ListSnellProfiles(ctx context.Context, principal Principal) ([]model.SnellProfile, error) {
+	return s.store.ListSnellProfiles(ctx)
+}
+
 // ListDNSLists returns DNS lists (encrypted and bootstrap) with candidates.
 func (s *Service) ListDNSLists(ctx context.Context, principal Principal) ([]model.DNSList, error) {
 	items, err := s.store.ListDNSLists(ctx, false)
@@ -468,6 +493,10 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.ListExternalOutbounds(ctx, principal)
 	case "warp_profiles.list":
 		return s.ListWARPProfiles(ctx, principal)
+	case "node_presets.list":
+		return s.ListNodePresets(ctx, principal)
+	case "snell_profiles.list":
+		return s.ListSnellProfiles(ctx, principal)
 	case "dns_lists.list":
 		return s.ListDNSLists(ctx, principal)
 	case "dns_credentials.list":
