@@ -12698,13 +12698,31 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
 
   .user-data-table .user-col-user {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 0 calc(100% - 140px);
+    min-width: 8rem;
+    max-width: calc(100% - 140px);
   }
 
   .user-data-table .user-col-actions {
     flex: 0 0 auto;
     margin-left: auto;
+  }
+
+  .user-data-table .user-table-identity,
+  .user-data-table .user-table-identity > div {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .user-data-table .user-table-name {
+    display: block;
+    min-width: 3ch;
+    max-width: 100%;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    text-overflow: clip;
   }
 
   .user-data-table .user-table-period,
