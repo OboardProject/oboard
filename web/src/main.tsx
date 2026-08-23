@@ -28,6 +28,7 @@ import type {
   TimeCorrectionMode,
 } from './components/proxy-path/types'
 import { TransportDialog } from './components/proxy-path/TransportDialog'
+import { TrafficForwardingDialog, type TrafficForwardDraft } from './components/proxy-path/TrafficForwardingDialog'
 import {
   GRAPH_ENTRY_NODE_WIDTH,
   GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT,
@@ -10238,8 +10239,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
 type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
-type TransportMode = 'port-forward' | 'tunnel'
-type TransportDraft = { mode: TransportMode; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; type: TunnelType; priority: number; config_json: string; enabled: boolean }
+type TunnelDraft = { name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
 type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' }
@@ -10337,7 +10337,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [editEntry, setEditEntry] = useState<any | null>(null)
 	const [routingDraft, setRoutingDraft] = useState<RoutingDraft | null>(null)
 	const [routingCanvasTargetID, setRoutingCanvasTargetID] = useState('')
-	const [transportDraft, setTransportDraft] = useState<TransportDraft | null>(null)
+	const [trafficForwardingOpen, setTrafficForwardingOpen] = useState(false)
+	const [tunnelDraft, setTunnelDraft] = useState<TunnelDraft | null>(null)
 	const [importDraft, setImportDraft] = useState<ImportedNodeDraft | null>(null)
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
@@ -11581,9 +11582,14 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       await dialogs.alert({ title: '创建分流失败', message: localizeErrorMessage(e.message || e) })
     }
   }
-	const openTransport = () => {
-	  if (servers.length < 2) return dialogs.alert({ title: '无法添加转发隧道', message: '至少需要两台服务器。' })
-	  setTransportDraft(defaultTransportDraft(servers, selected))
+	const openTrafficForwarding = () => setTrafficForwardingOpen(true)
+	const openServerTunnel = (sourceServerID: number) => {
+	  if (servers.length < 2) {
+	    void dialogs.alert({ title: '无法创建服务器隧道', message: '至少需要两台服务器。' })
+	    return
+	  }
+	  setTrafficForwardingOpen(false)
+	  setTunnelDraft(defaultTunnelDraft(servers, servers.find(server => server.id === sourceServerID) || selected))
 	}
 	const openImportNode = (position?: GraphPosition) => {
 	  setImportDraft({ content: 'socks5://user:password@example.com:1080#SOCKS-A', scope: 'global', server_id: selected?.id || 0, expose_to_users: false, position: position || null })
@@ -11601,50 +11607,62 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    await dialogs.alert({ title: '导入节点失败', message: localizeErrorMessage(e.message || e) })
 	  }
 	}
-	const submitTransportDraft = async () => {
-    if (!transportDraft) return
-    try {
-	      let result: Record<string, any>
-	      if (transportDraft.mode === 'port-forward') {
-	        result = await client.request('/port-forwards', { method: 'POST', body: JSON.stringify({
-          name: transportDraft.name,
-          source_server_id: transportDraft.source_server_id,
-          target_server_id: transportDraft.target_server_id,
-          listen_ip: transportDraft.listen_ip,
-          listen_port: transportDraft.listen_port,
-          target_port: transportDraft.target_port,
-          protocol: transportDraft.protocol,
-          backend: transportDraft.backend,
-		  probe_mode: 'periodic',
-          probe_interval_seconds: 300,
-          sample_rate: 0,
-          priority: transportDraft.priority,
-          config_json: '{}',
-          enabled: transportDraft.enabled,
-	        }) }) as Record<string, any>
-	      } else {
-	        result = await client.request('/tunnels', { method: 'POST', body: JSON.stringify({
-          name: transportDraft.name,
-          source_server_id: transportDraft.source_server_id,
-          target_server_id: transportDraft.target_server_id,
-          type: transportDraft.type,
-          local_address: '',
-          peer_address: '',
-          listen_port: transportDraft.listen_port,
-          target_endpoint: '',
-          target_port: transportDraft.target_port,
-          priority: transportDraft.priority,
-          config_json: transportDraft.config_json,
-          enabled: transportDraft.enabled,
-	        }) }) as Record<string, any>
-	      }
-	      applyMutationResult(result)
-	      setTransportDraft(null)
-	      reconcileTopology()
-    } catch (e: any) {
-      await dialogs.alert({ title: '创建转发隧道失败', message: localizeErrorMessage(e.message || e) })
-    }
-  }
+	const saveTrafficForward = async (draft: TrafficForwardDraft, id?: number) => {
+	  try {
+	    const result = await client.request(id ? `/port-forwards/${id}` : '/port-forwards', {
+	      method: id ? 'PATCH' : 'POST',
+	      body: JSON.stringify(draft),
+	    }) as Record<string, any>
+	    applyMutationResult(result)
+	    if (id) {
+	      const staleProbeIDs = ((data.port_forward_probes || []) as PortForwardProbeResult[])
+	        .filter(probe => probe.port_forward_id === id)
+	        .map(probe => probe.id)
+	      removeMutationRows({ port_forward_probes: staleProbeIDs })
+	    }
+	    reconcileTopology()
+	  } catch (error: any) {
+	    throw new Error(localizeErrorMessage(error?.message || error))
+	  }
+	}
+	const deleteTrafficForward = async (forward: PortForward) => {
+	  const confirmed = await dialogs.confirm({
+	    title: '删除流量转发',
+	    message: `确认删除「${forward.name}」？相关监听会从入口服务器移除，历史检查结果也会一并删除。`,
+	    tone: 'danger',
+	    confirmText: '删除转发',
+	  })
+	  if (!confirmed) return false
+	  try {
+	    await client.request(`/port-forwards/${forward.id}`, { method: 'DELETE' })
+	    const probeIDs = ((data.port_forward_probes || []) as PortForwardProbeResult[])
+	      .filter(probe => probe.port_forward_id === forward.id)
+	      .map(probe => probe.id)
+	    removeMutationRows({ port_forwards: [forward.id], port_forward_probes: probeIDs })
+	    reconcileTopology()
+	    return true
+	  } catch (error: any) {
+	    throw new Error(localizeErrorMessage(error?.message || error))
+	  }
+	}
+	const probeTrafficForward = async (forward: PortForward) => {
+	  try {
+	    await client.request(`/port-forwards/${forward.id}/probe`, { method: 'POST', body: '{}' })
+	  } catch (error: any) {
+	    throw new Error(localizeErrorMessage(error?.message || error))
+	  }
+	}
+	const submitTunnelDraft = async () => {
+	  if (!tunnelDraft) return
+	  try {
+	    const result = await client.request('/tunnels', { method: 'POST', body: JSON.stringify(tunnelDraft) }) as Record<string, any>
+	    applyMutationResult(result)
+	    setTunnelDraft(null)
+	    reconcileTopology()
+	  } catch (error: any) {
+	    await dialogs.alert({ title: '创建服务器隧道失败', message: localizeErrorMessage(error?.message || error) })
+	  }
+	}
 	  const deleteGraphEntity = async (entity: GraphEntity) => {
 		  if (entity.type === 'detached-step' && entity.node_id) {
 		    const detached = detachedChainStepFromNodeID(entity.node_id)
@@ -11958,7 +11976,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       placeGraphNode(canvasRoutingNodeID(instance), targetPos)
       return
     }
-    if (action === 'transport') return void openTransport()
+    if (action === 'transport') return void openTrafficForwarding()
   }
   const onToolDragOver = (e: React.DragEvent) => {
     if (!Array.from(e.dataTransfer.types).includes(proxyToolDragType)) return
@@ -12376,7 +12394,18 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} />}</AnimatePresence>
-    <AnimatePresence>{transportDraft && <TransportDraftDialog draft={transportDraft} setDraft={setTransportDraft} servers={servers} onCancel={() => setTransportDraft(null)} onSubmit={submitTransportDraft} />}</AnimatePresence>
+    <AnimatePresence>{trafficForwardingOpen && <TrafficForwardingDialog
+      servers={servers}
+      forwards={(data.port_forwards || []) as PortForward[]}
+      probes={(data.port_forward_probes || []) as PortForwardProbeResult[]}
+      initialServerID={selected?.id}
+      onCancel={() => setTrafficForwardingOpen(false)}
+      onSave={saveTrafficForward}
+      onDelete={deleteTrafficForward}
+      onProbe={probeTrafficForward}
+      onOpenTunnel={openServerTunnel}
+    />}</AnimatePresence>
+    <AnimatePresence>{tunnelDraft && <TunnelDraftDialog draft={tunnelDraft} setDraft={setTunnelDraft} servers={servers} onCancel={() => setTunnelDraft(null)} onSubmit={submitTunnelDraft} />}</AnimatePresence>
     <AnimatePresence>{importDraft && <ImportNodeDialog draft={importDraft} setDraft={setImportDraft} servers={servers} onCancel={() => setImportDraft(null)} onSubmit={submitImportNode} />}</AnimatePresence>
     <AnimatePresence>{configNode && <ImportedNodeConfigDialog node={configNode} data={data} client={client} load={load} onClose={() => setConfigNode(null)} />}</AnimatePresence>
 	<AnimatePresence>{namingPath && <ProxyPathNameDialog path={namingPath} data={data} client={client} load={load} onClose={() => setNamingPath(null)} />}</AnimatePresence>
@@ -12657,7 +12686,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
   { id: 'routing', label: '分流出口', desc: '先连接路径，再配置规则' },
-  { id: 'transport', label: '独立转发', desc: '端口转发或隧道' },
+  { id: 'transport', label: '流量转发', desc: '按入口管理转发规则' },
 ]
 
 function isProxyToolAction(value: string): value is ProxyToolAction {
@@ -12955,6 +12984,25 @@ function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
   return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
 }
 
+function defaultTunnelDraft(servers: Server[], selected?: Server): TunnelDraft {
+  const source = selected || servers[0]
+  const target = servers.find(server => server.id !== source?.id)
+  return {
+    name: `${source?.name || 'source'}-to-${target?.name || 'target'}-wireguard`,
+    source_server_id: source?.id || 0,
+    target_server_id: target?.id || 0,
+    type: 'wireguard',
+    local_address: '',
+    peer_address: '',
+    listen_port: 0,
+    target_endpoint: '',
+    target_port: 0,
+    priority: 100,
+    config_json: JSON.stringify({ private_key: '', peer_public_key: '', allowed_ips: [], persistent_keepalive: 25 }, null, 2),
+    enabled: true,
+  }
+}
+
 function routingDraftMatch(rule: RoutingRule): { match_kind: RoutingMatchKind; match_value: string } {
   const match = parseConfig(rule.match_json) || {}
   const key = Object.keys(match)[0] as RoutingMatchKind | undefined
@@ -13017,28 +13065,6 @@ function routingMatchHint(kind: RoutingMatchKind) {
   if (kind === 'port_range') return '填写目标端口范围，例如 10000:20000；多个范围用逗号或换行分隔。'
   if (kind === 'geosite') return '例如 cn、geolocation-!cn；需要底层规则集支持。'
   return '例如 cn、private；需要底层规则集支持。'
-}
-
-function defaultTransportDraft(servers: Server[], selected?: Server): TransportDraft {
-  const source = selected || servers[0]
-  const target = servers.find(s => s.id !== source?.id) || servers[1] || servers[0]
-  const sourceName = source?.name || 'source'
-  const targetName = target?.name || 'target'
-  return {
-    mode: 'port-forward',
-    name: `${sourceName}-to-${targetName}`,
-    source_server_id: source?.id || 0,
-    target_server_id: target?.id || 0,
-    listen_ip: source?.listen_ip || '0.0.0.0',
-    listen_port: 10000,
-    target_port: 443,
-    protocol: 'tcp',
-    backend: 'auto',
-    type: 'wireguard',
-    priority: 100,
-    config_json: JSON.stringify({ private_key: '', peer_public_key: '', allowed_ips: [] }, null, 2),
-    enabled: true,
-  }
 }
 
 type RoutingStage = { key: string; stepID: number; serverID: number; label: string; serverName: string; available: boolean; unavailableReason?: string }
@@ -13875,50 +13901,61 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   </MotionDialogPanel>
 }
 
-function TransportDraftDialog({ draft, setDraft, servers, onCancel, onSubmit }: { draft: TransportDraft; setDraft: React.Dispatch<React.SetStateAction<TransportDraft | null>>; servers: Server[]; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  const update = (patch: Partial<TransportDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
+function TunnelDraftDialog({ draft, setDraft, servers, onCancel, onSubmit }: { draft: TunnelDraft; setDraft: React.Dispatch<React.SetStateAction<TunnelDraft | null>>; servers: Server[]; onCancel: () => void; onSubmit: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false)
+  const update = (patch: Partial<TunnelDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
   const cfg = parseConfig(draft.config_json) || {}
   const updateTunnelConfig = (patch: Record<string, any>) => update({ config_json: JSON.stringify({ ...cfg, ...patch }, null, 2) })
-  const setMode = (mode: TransportMode) => update({
-    mode,
-    name: `${serverName(servers, draft.source_server_id)}-to-${serverName(servers, draft.target_server_id)}`,
-    listen_port: mode === 'port-forward' ? (draft.listen_port || 10000) : 0,
-    target_port: mode === 'port-forward' ? (draft.target_port || 443) : 0,
+  const setSource = (sourceServerID: number) => update({
+    source_server_id: sourceServerID,
+    target_server_id: draft.target_server_id === sourceServerID ? (servers.find(server => server.id !== sourceServerID)?.id || 0) : draft.target_server_id,
   })
-  const setTunnelType = (type: TunnelType) => update({ type, config_json: JSON.stringify({ private_key: '', peer_public_key: '', allowed_ips: [] }, null, 2) })
-  return <MotionDialogPanel onCancel={onCancel} className="graph-form-dialog">
+  const keepalive = Number(cfg.persistent_keepalive || 0)
+  const privateKey = String(cfg.private_key || '')
+  const peerPublicKey = String(cfg.peer_public_key || '')
+  const portValid = (value: number) => value === 0 || (Number.isInteger(value) && value >= 1 && value <= 65535)
+  const valid = Boolean(
+    draft.name.trim()
+    && draft.source_server_id
+    && draft.target_server_id
+    && draft.source_server_id !== draft.target_server_id
+    && privateKey.trim()
+    && peerPublicKey.trim()
+    && portValid(draft.listen_port)
+    && portValid(draft.target_port)
+    && Number.isInteger(keepalive)
+    && keepalive >= 0
+    && keepalive <= 65535
+  )
+  const submit = async () => {
+    if (!valid || saving) return
+    setSaving(true)
+    try { await onSubmit() } finally { setSaving(false) }
+  }
+  return <MotionDialogPanel onCancel={() => { if (!saving) onCancel() }} className="graph-form-dialog" aria-labelledby="tunnel-dialog-title">
       <header className="dialog-head">
-        <div><h2 id="transport-dialog-title">添加转发隧道</h2><p className="muted">连接源服务器和目标服务器。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <div><h2 id="tunnel-dialog-title">创建服务器隧道</h2><p className="muted">建立独立 WireGuard 链路；创建后可在隧道页面继续管理。</p></div>
+        <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} disabled={saving} aria-label="关闭服务器隧道" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="form graph-dialog-form">
-          <FormField label="类型"><Select variant="segmented" value={draft.mode} onChange={e => setMode(e.target.value as TransportMode)}><option value="port-forward">端口转发</option><option value="tunnel">服务器隧道</option></Select></FormField>
-          <FormField label="名称" required><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
-          <FormField label="源服务器" required><Select value={draft.source_server_id} onChange={e => update({ source_server_id: Number(e.target.value) })}><option value={0}>选择源服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
-          <FormField label="目标服务器" required><Select value={draft.target_server_id} onChange={e => update({ target_server_id: Number(e.target.value) })}><option value={0}>选择目标服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
-          {draft.mode === 'port-forward' && <>
-            <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
-            <FormField label="监听端口" required><input value={draft.listen_port} onChange={e => update({ listen_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
-            <FormField label="目标端口" required><input value={draft.target_port} onChange={e => update({ target_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
-          <FormField label="协议"><Select variant="segmented" value={draft.protocol} onChange={e => update({ protocol: e.target.value as ForwardProtocol })}>{forwardProtocols.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-            <FormField label="后端"><Select value={draft.backend} onChange={e => update({ backend: e.target.value as ForwardBackend })}>{forwardBackends.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          </>}
-          {draft.mode === 'tunnel' && <>
-            <FormField label="隧道类型"><Select variant="segmented" value={draft.type} onChange={e => setTunnelType(e.target.value as TunnelType)}><option value="wireguard">WireGuard</option></Select></FormField>
-            {draft.type === 'wireguard' && <>
-              <FormField label="本机私钥" required><input value={(cfg.private_key as string) || ''} onChange={e => updateTunnelConfig({ private_key: e.target.value })} /></FormField>
-              <FormField label="对端公钥" required><input value={(cfg.peer_public_key as string) || ''} onChange={e => updateTunnelConfig({ peer_public_key: e.target.value })} /></FormField>
-              <FormField label="允许 IP" hint="多个地址用逗号分隔。"><input value={Array.isArray(cfg.allowed_ips) ? cfg.allowed_ips.join(', ') : ''} onChange={e => updateTunnelConfig({ allowed_ips: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} /></FormField>
-            </>}
-            <FormField label="监听端口"><input value={draft.listen_port} onChange={e => update({ listen_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
-            <FormField label="目标端口"><input value={draft.target_port} onChange={e => update({ target_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
-          </>}
-          <FormField label="优先级"><input value={draft.priority} onChange={e => update({ priority: Number(e.target.value) })} inputMode="numeric" /></FormField>
-          <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
+          <FormField label="名称" required><input required value={draft.name} onChange={event => update({ name: event.target.value })} aria-label="隧道名称" /></FormField>
+          <FormField label="源服务器" required><Select required value={draft.source_server_id} onChange={event => setSource(Number(event.target.value))} aria-label="隧道源服务器">{servers.map(server => <option value={server.id} key={server.id}>{server.name}</option>)}</Select></FormField>
+          <FormField label="目标服务器" required><Select required value={draft.target_server_id} onChange={event => update({ target_server_id: Number(event.target.value) })} aria-label="隧道目标服务器">{servers.filter(server => server.id !== draft.source_server_id).map(server => <option value={server.id} key={server.id}>{server.name}</option>)}</Select></FormField>
+          <FormField label="隧道类型"><Select variant="segmented" value={draft.type} onChange={() => undefined} aria-label="隧道类型"><option value="wireguard">WireGuard</option></Select></FormField>
+          <FormField label="本机私钥" required hint="仅在创建请求中提交，页面不会回显已保存的私钥。"><input required type="password" autoComplete="off" value={privateKey} onChange={event => updateTunnelConfig({ private_key: event.target.value })} aria-label="WireGuard 本机私钥" /></FormField>
+          <FormField label="对端公钥" required><input required type="password" autoComplete="off" value={peerPublicKey} onChange={event => updateTunnelConfig({ peer_public_key: event.target.value })} aria-label="WireGuard 对端公钥" /></FormField>
+          <FormField label="允许 IP" hint="多个 CIDR 用逗号或换行分隔。"><input value={Array.isArray(cfg.allowed_ips) ? cfg.allowed_ips.join(', ') : ''} onChange={event => updateTunnelConfig({ allowed_ips: event.target.value.split(/[\n,]/).map(value => value.trim()).filter(Boolean) })} aria-label="WireGuard 允许 IP" /></FormField>
+          <FormField label="保活间隔（秒）" hint="0 表示关闭保活。"><input type="number" min={0} max={65535} step={1} value={keepalive} onChange={event => updateTunnelConfig({ persistent_keepalive: Number(event.target.value) })} aria-label="WireGuard 保活间隔" /></FormField>
+          <FormField label="本地地址" hint="可选 CIDR，例如 10.10.0.1/30。"><input value={draft.local_address} onChange={event => update({ local_address: event.target.value })} aria-label="隧道本地地址" /></FormField>
+          <FormField label="对端地址" hint="可选 CIDR，例如 10.10.0.2/30。"><input value={draft.peer_address} onChange={event => update({ peer_address: event.target.value })} aria-label="隧道对端地址" /></FormField>
+          <FormField label="监听端口" hint="0 表示由系统决定。"><input type="number" min={0} max={65535} value={draft.listen_port || ''} placeholder="自动" onChange={event => update({ listen_port: Number(event.target.value) })} aria-label="隧道监听端口" /></FormField>
+          <FormField label="目标端点" hint="可选主机或 IP。"><input value={draft.target_endpoint} onChange={event => update({ target_endpoint: event.target.value })} aria-label="隧道目标端点" /></FormField>
+          <FormField label="目标端口" hint="0 表示由系统决定。"><input type="number" min={0} max={65535} value={draft.target_port || ''} placeholder="自动" onChange={event => update({ target_port: Number(event.target.value) })} aria-label="隧道目标端口" /></FormField>
+          <FormField label="优先级"><input type="number" min={1} step={1} value={draft.priority} onChange={event => update({ priority: Number(event.target.value) })} aria-label="隧道优先级" /></FormField>
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit}>创建</button></footer>
+      <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel} disabled={saving}>取消</button><button type="button" onClick={() => void submit()} disabled={!valid || saving}>{saving ? '创建中…' : '创建并启用'}</button></footer>
   </MotionDialogPanel>
 }
 
