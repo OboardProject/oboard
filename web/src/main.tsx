@@ -7249,13 +7249,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       </div>
       <button
         type="button"
-        className={`ghost icon-button server-filter-toggle-btn ${filterExpanded || (serverStatusFilter !== 'all' || serverRegionFilter !== 'all' || listPreferences.sortMode !== 'created') ? 'is-active' : ''}`}
+        className={`ghost icon-button server-filter-toggle-btn ${filterExpanded || (serverStatusFilter !== 'all' || listPreferences.sortMode !== 'created') ? 'is-active' : ''}`}
         onClick={() => setFilterExpanded(v => !v)}
         aria-label={filterExpanded ? '收起筛选' : '展开筛选'}
         title={filterExpanded ? '收起筛选' : '展开筛选'}
       >
         <SlidersHorizontal size={15} />
-        {(serverStatusFilter !== 'all' || serverRegionFilter !== 'all' || listPreferences.sortMode !== 'created') && (
+        {(serverStatusFilter !== 'all' || listPreferences.sortMode !== 'created') && (
           <span className="server-filter-badge" />
         )}
       </button>
@@ -7268,22 +7268,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
               <option value="online">在线</option>
               <option value="offline">离线</option>
               <option value="unenrolled">未接入</option>
-            </Select>
-            <Select value={serverRegionFilter} onChange={event => setServerRegionFilter(event.target.value)} aria-label="按国家筛选">
-              <option value="all">
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                  <Globe size={16} aria-hidden="true" />
-                  <span>全部国家</span>
-                </span>
-              </option>
-              {serverRegions.map(region => (
-                <option key={region.code || 'pending'} value={region.code}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                    <RegionFlag code={region.code} size={18} />
-                    <span>{region.label} ({region.count})</span>
-                  </span>
-                </option>
-              ))}
             </Select>
           </div>
           <div className="server-list-sort">
@@ -7298,6 +7282,45 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         </div>
       )}
     </div>}
+    {servers.length > 0 && serverRegions.length > 0 && (
+      <div className="server-region-filter-bar" role="group" aria-label="按地区筛选">
+        <button
+          type="button"
+          className={`server-region-pill ${serverRegionFilter === 'all' ? 'selected' : ''}`}
+          onClick={() => setServerRegionFilter('all')}
+          aria-pressed={serverRegionFilter === 'all'}
+          title={`全部地区 · ${servers.length} 台`}
+        >
+          <Globe size={14} aria-hidden="true" />
+          <span>全部</span>
+          <span className="count">{servers.length}</span>
+        </button>
+        {serverRegions.map(region => {
+          const value = region.code || ''
+          const isSelected = serverRegionFilter === value
+          const label = region.code ? region.label : '待检测'
+          return (
+            <button
+              key={region.code || 'pending'}
+              type="button"
+              className={`server-region-pill ${isSelected ? 'selected' : ''}`}
+              onClick={() => setServerRegionFilter(current => current === value ? 'all' : value)}
+              aria-pressed={isSelected}
+              title={`${label} · ${region.count} 台`}
+            >
+              <RegionFlag code={region.code} size={16} />
+              <span>{label}</span>
+              <span className="count">{region.count}</span>
+            </button>
+          )
+        })}
+        {hasServerFilters && (
+          <button type="button" className="ghost icon-button server-region-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选">
+            <Eraser size={14} />
+          </button>
+        )}
+      </div>
+    )}
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
       <AlertTriangle size={18} />
       <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存。</span></div>
@@ -8870,6 +8893,13 @@ function serverTrafficPeriodLabel(server: Server) {
   return '自然月重置'
 }
 
+function serverTrafficPeriodRange(server: Server) {
+  const start = server.traffic_period_start ? formatTableTime(server.traffic_period_start) : '—'
+  const end = server.traffic_period_end ? formatTableTime(server.traffic_period_end) : '—'
+  if (start === '—' && end === '—') return '自然月（每月 1 日 00:00）'
+  return `${start} 至 ${end}`
+}
+
 function timeCorrectionModeLabel(mode?: TimeCorrectionMode) {
   if (mode === 'auto') return '自动校时'
   if (mode === 'ntp') return '逻辑校时'
@@ -9823,6 +9853,19 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
         </section>
 
         <section className="server-detail-section">
+          <div className="server-detail-section-head"><Activity size={15} /><h3>流量统计</h3></div>
+          <dl className="server-detail-grid">
+            <ServerDetailItem label="统计周期" value={serverTrafficPeriodLabel(server)} />
+            <ServerDetailItem label="周期范围" value={serverTrafficPeriodRange(server)} />
+            <ServerDetailItem label="上传流量" value={formatBytes(server.traffic_upload_bytes || 0)} />
+            <ServerDetailItem label="下载流量" value={formatBytes(server.traffic_download_bytes || 0)} />
+            <ServerDetailItem label="周期总流量" value={formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))} />
+            <ServerDetailItem label="统计说明" value="未配置周期与日期时默认自然月" />
+          </dl>
+          <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>未配置统计周期与日期时，默认按自然月统计，周期为每月 1 日 00:00 至下月 1 日 00:00。</p>
+        </section>
+
+        <section className="server-detail-section">
           <div className="server-detail-section-head"><Activity size={15} /><h3>运行状态</h3></div>
           <dl className="server-detail-grid">
             <ServerDetailItem label="CPU 使用率" value={Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'} />
@@ -9831,8 +9874,6 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="监控模式" value={server.monitoring_mode === 'standard' ? '标准' : '轻量'} />
             <ServerDetailItem label="下载速率" value={formatByteRate(server.network_download_bps || 0)} />
             <ServerDetailItem label="上传速率" value={formatByteRate(server.network_upload_bps || 0)} />
-            <ServerDetailItem label="周期流量" value={formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))} />
-            <ServerDetailItem label="流量重置" value={serverTrafficPeriodLabel(server)} />
             <ServerDetailItem label="时间校准" value={timeCorrectionModeLabel(server.time_correction_mode)} />
             <ServerDetailItem label="时间状态" value={timeCheckStatusLabel(server)} />
             <ServerDetailItem label="检测偏差" value={server.time_checked_at ? formatTimeOffset(server.time_offset_ms) : '—'} />
@@ -16596,14 +16637,15 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
 }
 
 function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number | string; onChange: (patch: any) => void }) {
+  const effectiveMode = mode || 'monthly'
   return <>
-    <FormField label="流量重置">
-      <Select variant="segmented" value={mode || 'monthly'} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
+    <FormField label="流量重置" hint="统计周期与日期未填写时，默认按自然月统计。">
+      <Select variant="segmented" value={effectiveMode} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
         <option value="monthly">自然月</option>
         <option value="month_day">每月指定日</option>
       </Select>
     </FormField>
-    {(mode || 'monthly') === 'month_day' && <FormField label="重置日" hint="短月使用最后一天。">
+    {effectiveMode === 'month_day' && <FormField label="重置日" hint="1–31；短月使用当月最后一天，未填写默认为 1 日。">
       <input
         type="number"
         min={1}
