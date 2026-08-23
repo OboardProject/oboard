@@ -19,7 +19,7 @@ var nodePresetAutomationFields = map[string]bool{
 }
 
 func (s *Server) registerNodePresetOperations() {
-	for _, name := range []string{"node_presets.create", "node_presets.update", "node_presets.delete"} {
+	for _, name := range []string{"node_presets.create", "node_presets.update", "node_presets.delete", "node_presets.restore_system"} {
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 			return s.nodePresetAutomationValidate(ctx, principal, input, name)
 		})
@@ -107,6 +107,11 @@ func (s *Server) nodePresetAutomationValidate(ctx context.Context, principal app
 			return nil, errors.New("内置节点预设不可删除")
 		}
 		return map[string]any{"node_preset_id": request.NodePresetID}, nil
+	case "node_presets.restore_system":
+		if !request.Confirm {
+			return nil, errors.New("confirm=true is required to restore system node presets")
+		}
+		return map[string]any{"builtin_template_count": store.BuiltinNodePresetCount()}, nil
 	default:
 		return nil, errors.New("unsupported node preset operation")
 	}
@@ -149,7 +154,7 @@ func (s *Server) nodePresetAutomationRevisions(ctx context.Context, principal ap
 	if err := strictAutomationInput(input, &request); err != nil {
 		return nil, err
 	}
-	if name == "node_presets.create" {
+	if name == "node_presets.create" || name == "node_presets.restore_system" {
 		return map[string]string{}, nil
 	}
 	if request.NodePresetID <= 0 {
@@ -219,6 +224,16 @@ func (s *Server) applyNodePresetOperation(ctx context.Context, principal applica
 			return nil, err
 		}
 		return map[string]any{"deleted": true, "node_preset_id": request.NodePresetID}, nil
+	case "node_presets.restore_system":
+		restored, err := s.store.RestoreBuiltinNodePresets(ctx)
+		if err != nil {
+			return nil, err
+		}
+		items, err := s.store.ListNodePresets(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"restored": restored, "node_presets": items}, nil
 	default:
 		return nil, fmt.Errorf("unsupported node preset operation %q", name)
 	}

@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const defaultVLESSRealityServerName = "cdn.icloud-content.com"
+const defaultVLESSRealityServerName = "gateway.icloud.com"
 
 type realityKeyPair struct {
 	PrivateKey string `json:"private_key"`

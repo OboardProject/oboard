@@ -114,6 +114,7 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		{"node_presets.create", "创建节点配置预设（VLESS / HY2 / AnyTLS / SS / Mieru / SOCKS5）", schemaObject(map[string]any{"node_preset": nodePresetFields}, "node_preset"), schemaObject(map[string]any{"node_preset": nodePreset}, "node_preset"), 2, false, true},
 		{"node_presets.update", "修改节点配置预设", schemaObject(map[string]any{"node_preset_id": positiveID, "changes": nodePresetFields}, "node_preset_id", "changes"), schemaObject(map[string]any{"node_preset": nodePreset, "changed_fields": stringArray(1, 32)}, "node_preset"), 2, false, true},
 		{"node_presets.delete", "删除未被引用的节点配置预设（内置预设不可删除）", schemaObject(map[string]any{"node_preset_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "node_preset_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "node_preset_id": positiveID}, "deleted"), 3, true, true},
+		{"node_presets.restore_system", "将全部内置节点预设恢复为系统模板（覆盖内置模板上的自定义修改，保留引用）", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), schemaObject(map[string]any{"restored": map[string]any{"type": "integer", "minimum": 0}, "node_presets": arrayOf(nodePreset)}, "restored"), 3, true, true},
 		{"snell_profiles.create", "创建 Snell 参数预设（多入站可共享）", schemaObject(map[string]any{"snell_profile": snellProfileFields}, "snell_profile"), schemaObject(map[string]any{"snell_profile": snellProfile}, "snell_profile"), 2, false, true},
 		{"snell_profiles.update", "修改 Snell 参数预设", schemaObject(map[string]any{"snell_profile_id": positiveID, "changes": snellProfileFields}, "snell_profile_id", "changes"), schemaObject(map[string]any{"snell_profile": snellProfile, "changed_fields": stringArray(1, 32)}, "snell_profile"), 2, false, true},
 		{"snell_profiles.delete", "删除未被引用的 Snell 参数预设（内置预设不可删除）", schemaObject(map[string]any{"snell_profile_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "snell_profile_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "snell_profile_id": positiveID}, "deleted"), 3, true, true},
@@ -147,7 +148,7 @@ func networkScopeFor(name string) string {
 	switch {
 	case name == "dns_records.create" || name == "dns_records.update" || name == "dns_records.delete":
 		return "dns_records:write"
-	case name == "node_presets.create" || name == "node_presets.update" || name == "node_presets.delete":
+	case name == "node_presets.create" || name == "node_presets.update" || name == "node_presets.delete" || name == "node_presets.restore_system":
 		return "node_presets:write"
 	case name == "snell_profiles.create" || name == "snell_profiles.update" || name == "snell_profiles.delete":
 		return "snell_profiles:write"

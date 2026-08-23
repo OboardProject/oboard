@@ -509,7 +509,7 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 func defaultInboundPresetConfig(protocol string) string {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case "vless":
-		return `{"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"cdn.icloud-content.com","reality":{"enabled":true,"handshake":{"server":"cdn.icloud-content.com","server_port":443}}}}`
+		return `{"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443}}}}`
 	case "hysteria2", "hy2":
 		return `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`
 	case "anytls":

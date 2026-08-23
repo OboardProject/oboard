@@ -6177,17 +6177,23 @@ var inboundPresetSecretKeys = map[string]bool{
 	"private_key": true, "public_key": true, "short_id": true,
 }
 
+// inboundPresetMetadataKeys are preset-only template fields (such as the
+// Reality domain template) that never merge into an inbound config_json.
+var inboundPresetMetadataKeys = map[string]bool{
+	"reality_domains": true,
+}
+
 func mergeInboundPresetConfig(preset, inbound map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range preset {
-		if inboundPresetSecretKeys[key] {
+		if inboundPresetSecretKeys[key] || inboundPresetMetadataKeys[key] {
 			continue
 		}
 		out[key] = cloneJSONAny(value)
 	}
 	for key, value := range inbound {
-		if inboundPresetSecretKeys[key] {
-			if !isEmptyJSONValue(value) {
+		if inboundPresetSecretKeys[key] || inboundPresetMetadataKeys[key] {
+			if !isEmptyJSONValue(value) && !inboundPresetMetadataKeys[key] {
 				out[key] = cloneJSONAny(value)
 			}
 			continue
@@ -10369,6 +10375,10 @@ func (s *Server) snellProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nodePresets(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, "/restore-system") {
+		s.nodePresetsRestoreSystem(w, r)
+		return
+	}
 	id := idFromPath(r.URL.Path, "/api/v1/node-presets/")
 	switch r.Method {
 	case http.MethodGet:
@@ -10458,6 +10468,27 @@ func (s *Server) nodePresets(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+// nodePresetsRestoreSystem resets every builtin node preset to the canonical
+// system template. Row IDs are preserved so inbound references stay valid.
+func (s *Server) nodePresetsRestoreSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	restored, err := s.store.RestoreBuiltinNodePresets(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusConflict)
+		return
+	}
+	items, err := s.store.ListNodePresets(r.Context())
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "restore", "node_preset", "system")
+	write(w, 200, map[string]any{"restored": restored, "node_presets": items})
 }
 
 func validateSnellProfile(v model.SnellProfile) error {

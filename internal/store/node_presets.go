@@ -20,8 +20,12 @@ type nodePresetSeed struct {
 	Remark      string
 }
 
+// BuiltinRealityHandshakeDomains is the system Reality handshake domain
+// template carried by the vless-reality preset; the first entry is the default.
+var BuiltinRealityHandshakeDomains = []string{"gateway.icloud.com", "cdn.icloud-content.com", "www.tesla.com", "www.nvidia.com", "www.sony.com", "www.mozilla.org"}
+
 var builtinNodePresets = []nodePresetSeed{
-	{Name: "VLESS Reality Vision", Protocol: "vless", Kind: "vless-reality", DefaultPort: 443, Remark: "TCP + Reality + Vision，默认握手 cdn.icloud-content.com", ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"cdn.icloud-content.com","reality":{"enabled":true,"handshake":{"server":"cdn.icloud-content.com","server_port":443}}}}`},
+	{Name: "VLESS Reality Vision", Protocol: "vless", Kind: "vless-reality", DefaultPort: 443, Remark: "TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com", ConfigJSON: `{"flow":"xtls-rprx-vision","reality_domains":["gateway.icloud.com","cdn.icloud-content.com","www.tesla.com","www.nvidia.com","www.sony.com","www.mozilla.org"],"tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443}}}}`},
 	{Name: "VLESS TLS Vision", Protocol: "vless", Kind: "vless-tls-vision", DefaultPort: 443, Remark: "TCP + TLS + Vision，需要证书", ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`},
 	{Name: "VLESS WebSocket", Protocol: "vless", Kind: "vless-ws", DefaultPort: 443, Remark: "WebSocket + TLS，需要证书", ConfigJSON: `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}}}`},
 	{Name: "VLESS TCP", Protocol: "vless", Kind: "vless-tcp", DefaultPort: 443, Remark: "无 TLS，适合内网或测试", ConfigJSON: `{}`},
@@ -33,6 +37,11 @@ var builtinNodePresets = []nodePresetSeed{
 	{Name: "SS 2022-256", Protocol: "shadowsocks", Kind: "ss-2022-256", DefaultPort: 8388, Remark: "AES-256-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-256-gcm"}`},
 	{Name: "Mieru", Protocol: "mieru", Kind: "mieru-basic", DefaultPort: 25250, Remark: "Mieru 多用户入口", ConfigJSON: `{"transport":"TCP","multiplexing":"MULTIPLEXING_DEFAULT","user_hint_is_mandatory":true}`},
 	{Name: "SOCKS5", Protocol: "socks", Kind: "socks5-auth", DefaultPort: 1080, Remark: "用户名密码认证，支持 TCP 与 UDP", ConfigJSON: `{"version":"5"}`},
+}
+
+// BuiltinNodePresetCount reports how many system templates ship with the Controller.
+func BuiltinNodePresetCount() int {
+	return len(builtinNodePresets)
 }
 
 func (s *Store) seedNodePresets(ctx context.Context) error {
@@ -140,6 +149,37 @@ func (s *Store) DeleteNodePreset(ctx context.Context, id int64) error {
 	}
 	_, err := s.db.ExecContext(ctx, `delete from node_presets where id=?`, id)
 	return err
+}
+
+// RestoreBuiltinNodePresets resets every builtin node preset row back to the
+// canonical system template of its kind. Builtin rows keep their kind locked,
+// so kind is a stable identity even after an operator rename; missing builtin
+// templates are re-seeded. Custom presets are never touched and row IDs (and
+// therefore inbound references) are preserved.
+func (s *Store) RestoreBuiltinNodePresets(ctx context.Context) (int64, error) {
+	ts := now()
+	var restored int64
+	for _, seed := range builtinNodePresets {
+		result, err := s.db.ExecContext(ctx, `update node_presets set name=?,config_json=?,default_port=?,remark=?,enabled=1,builtin=1,updated_at=? where kind=? and builtin=1`,
+			seed.Name, seed.ConfigJSON, seed.DefaultPort, seed.Remark, ts, seed.Kind)
+		if err != nil {
+			return restored, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return restored, err
+		}
+		if affected > 0 {
+			restored += affected
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,1,1,?,?)`,
+			seed.Name, seed.Protocol, seed.Kind, seed.ConfigJSON, seed.DefaultPort, seed.Remark, ts, ts); err != nil {
+			return restored, fmt.Errorf("恢复系统模板 %s 失败：%w", seed.Name, err)
+		}
+		restored++
+	}
+	return restored, nil
 }
 
 var nodePresetKinds = map[string]string{

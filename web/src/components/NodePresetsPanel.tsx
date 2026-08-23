@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { Layers, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Layers, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
 import { SnellProfileCards, SnellProfileEditor, emptySnellDraft, snellDraftFromProfile, type SnellDraft, type SnellProfile } from './SnellProfilesPanel'
@@ -58,8 +58,10 @@ const protocolLabels: Record<string, string> = {
   snell: 'Snell',
 }
 
+const builtinRealityDomains = ['gateway.icloud.com', 'cdn.icloud-content.com', 'www.tesla.com', 'www.nvidia.com', 'www.sony.com', 'www.mozilla.org'] as const
+
 export const nodePresetKinds = [
-  { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，默认握手站点', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true, server_name: 'cdn.icloud-content.com', reality: { enabled: true, handshake: { server: 'cdn.icloud-content.com', server_port: 443 } } } } },
+  { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com', defaultPort: 443, config: { flow: 'xtls-rprx-vision', reality_domains: [...builtinRealityDomains], tls: { enabled: true, server_name: 'gateway.icloud.com', reality: { enabled: true, handshake: { server: 'gateway.icloud.com', server_port: 443 } } } } },
   { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision，需要证书', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true } } },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，需要证书', defaultPort: 443, config: { tls: { enabled: true }, transport: { type: 'ws', path: '/vless', headers: {} } } },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443, config: {} },
@@ -158,6 +160,20 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
   const updateConfig = (patch: Record<string, any>) => setDraft({ ...draft, config: { ...draft.config, ...patch } })
   const setTLS = (patch: Record<string, any>) => updateConfig({ tls: { ...tls, ...patch } })
   const setTransport = (patch: Record<string, any>) => updateConfig({ transport: { ...transport, ...patch } })
+  const realityDomains: string[] = Array.isArray(draft.config.reality_domains) ? (draft.config.reality_domains as string[]).filter(item => typeof item === 'string' && item.trim()) : [...builtinRealityDomains]
+  const selectedRealityDomain = String(tls.server_name || handshake.server || realityDomains[0] || builtinRealityDomains[0])
+  const isCustomRealityDomain = selectedRealityDomain.trim() !== '' && !realityDomains.includes(selectedRealityDomain)
+  const setRealityDomain = (value: string) => {
+    const serverName = value || builtinRealityDomains[0]
+    setTLS({ server_name: serverName, reality: { ...reality, enabled: true, handshake: { ...handshake, server: serverName, server_port: Number(handshake.server_port || 443) } } })
+  }
+  const setRealityDomains = (value: string) => {
+    const domains = value.split(/[\n,]+/).map(item => item.trim()).filter(Boolean)
+    const normalized = domains.length ? Array.from(new Set(domains)) : [...builtinRealityDomains]
+    const current = String(tls.server_name || handshake.server || normalized[0] || builtinRealityDomains[0])
+    const nextSelected = normalized.includes(current) ? current : normalized[0]
+    updateConfig({ reality_domains: normalized, tls: { ...tls, server_name: nextSelected, reality: { ...reality, enabled: true, handshake: { ...handshake, server: nextSelected, server_port: Number(handshake.server_port || 443) } } } })
+  }
   return <div className="snell-profile-editor">
     <h4>{title}</h4>
     <div className="form settings-form">
@@ -173,14 +189,24 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
         <input value={draft.default_port} onChange={event => setDraft({ ...draft, default_port: Number(event.target.value) || 0 })} inputMode="numeric" />
       </SettingsRow>
       {draft.kind === 'vless-reality' && <>
-        <SettingsRow label="SNI / 握手域名" description="同时用于客户端 SNI 和 Reality 伪装站点。">
-          <input value={String(tls.server_name || handshake.server || '')} onChange={event => {
-            const serverName = event.target.value
-            setTLS({ server_name: serverName, reality: { ...reality, enabled: true, handshake: { ...handshake, server: serverName, server_port: Number(handshake.server_port || 443) } } })
-          }} placeholder="cdn.icloud-content.com" />
+        <SettingsRow label="握手域名模板" description="预设内置 6 个候选域名，第一个为默认；创建入口时可直接选择。">
+          <Select value={isCustomRealityDomain ? '__custom__' : selectedRealityDomain} onChange={event => {
+            const value = event.target.value
+            if (value === '__custom__') return
+            setRealityDomain(value)
+          }} aria-label="握手域名模板">
+            {realityDomains.map(domain => <option key={domain} value={domain}>{domain}{domain === realityDomains[0] ? '（默认）' : ''}</option>)}
+            {isCustomRealityDomain && <option value="__custom__">{selectedRealityDomain}（自定义）</option>}
+          </Select>
+        </SettingsRow>
+        {isCustomRealityDomain && <SettingsRow label="自定义 SNI / 握手域名" description="自定义域名不在模板列表中，会作为当前选中值保存。">
+          <input value={selectedRealityDomain} onChange={event => setRealityDomain(event.target.value)} placeholder="gateway.icloud.com" />
+        </SettingsRow>}
+        <SettingsRow label="模板域名列表" description="逗号或换行分隔，第一个为默认。留空恢复系统默认模板。">
+          <input value={realityDomains.join(', ')} onChange={event => setRealityDomains(event.target.value)} placeholder={builtinRealityDomains.join(', ')} />
         </SettingsRow>
         <SettingsRow label="握手端口" description="Reality 回源握手端口，通常为 443。">
-          <input value={Number(handshake.server_port || 443)} onChange={event => setTLS({ reality: { ...reality, enabled: true, handshake: { ...handshake, server: handshake.server || tls.server_name, server_port: Number(event.target.value) } } })} inputMode="numeric" />
+          <input value={Number(handshake.server_port || 443)} onChange={event => setTLS({ reality: { ...reality, enabled: true, handshake: { ...handshake, server: handshake.server || tls.server_name || selectedRealityDomain, server_port: Number(event.target.value) } } })} inputMode="numeric" />
         </SettingsRow>
       </>}
       {draft.kind === 'vless-ws' && <>
@@ -341,6 +367,20 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
     setEditingNode({ draft: emptyNodeDraft(firstKind.id) })
   }
 
+  const restoreSystem = async () => {
+    if (!window.confirm('确认将全部内置节点预设恢复为系统模板？此操作会覆盖内置模板的自定义修改，但不会影响自定义预设与入口引用。')) return
+    setSaving(true)
+    try {
+      await client.request('/node-presets/restore-system', { method: 'POST', body: '{}' })
+      notify('已恢复系统模板', 'success')
+      await load()
+    } catch (error: any) {
+      notify(String(error?.message || error || '恢复失败'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return <section id="settings-panel-presets" role="tabpanel" className="settings-card">
     <SettingsGroup title="节点预设" description="给需要模板的协议准备默认配置。创建入口时会套用对应类型的预设；密钥、密码和 Reality 密钥仍由每个入口单独生成。Snell 继续使用可共享的参数预设。">
       <div className="node-presets-toolbar">
@@ -351,6 +391,7 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
         </div>
         <div className="node-presets-toolbar-actions">
           <span className="muted">共 {totalCount} 套，内置 {builtinCount} 套</span>
+          <button type="button" className="ghost" onClick={restoreSystem} disabled={saving} title="将全部内置节点预设恢复为系统模板"><RotateCcw size={14} />恢复系统模板</button>
           <button type="button" onClick={startCreate}><Plus size={14} />新建预设</button>
         </div>
       </div>

@@ -410,7 +410,8 @@ const entryIPModes: EntryIPMode[] = ['auto', 'ipv4', 'ipv6', 'custom']
 const dnsRecordTypes: DNSRecordTypes[] = ['a', 'aaaa', 'both']
 const udpModes = ['allow', 'block', 'uot']
 const mtuModes = ['disabled', 'detect', 'apply']
-const defaultVLESSRealityServerName = 'cdn.icloud-content.com'
+const defaultVLESSRealityServerName = 'gateway.icloud.com'
+const builtinRealityDomains = ['gateway.icloud.com', 'cdn.icloud-content.com', 'www.tesla.com', 'www.nvidia.com', 'www.sony.com', 'www.mozilla.org'] as const
 const timeCorrectionModes: TimeCorrectionMode[] = ['off', 'auto', 'ntp']
 const defaultTimeCheckNTPServers = ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com']
 const trafficTimezones = [
@@ -14021,18 +14022,45 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     updateConfig({ ...mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config), node_preset_id: preset.id })
   }
   const nodePresetPicker = matchingPresets.length > 0 ? <FormField label="套用节点预设" hint="默认配置来自设置中的节点预设；密钥仍由当前入口单独生成。"><Select value={Number(config.node_preset_id || 0) || ''} onChange={event => applyNodePreset(Number(event.target.value))}><option value="">不使用预设</option>{matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}{item.usage_count > 0 ? `（${item.usage_count} 个入口）` : ''}</option>)}</Select></FormField> : null
-  if (presetID === 'vless-reality') return <div className="preset-fields">
-    <div className="form-section-title">TCP / Reality / Vision 设置</div>
-    {nodePresetPicker}
-    <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
-    <FormField label="SNI / 握手域名" hint="同时用于客户端 SNI 和 Reality 伪装站点；留空使用 cdn.icloud-content.com。"><input value={realityServerName === defaultVLESSRealityServerName ? '' : realityServerName} onChange={e => setRealityServerName(e.target.value)} placeholder={defaultVLESSRealityServerName} /></FormField>
-    <FormField label="握手端口"><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
-    <div className="reality-key-summary">
-      <div><strong>Reality 密钥</strong><span>{realityKeyLoading ? '正在生成…' : String(reality.public_key || '').trim() ? `已生成 · 公钥 ${compactSecret(String(reality.public_key))}` : '保存时服务端会自动生成'}</span></div>
-      <button type="button" className="ghost" onClick={onGenerateRealityKeypair} disabled={realityKeyLoading}>{realityKeyLoading ? '生成中' : '重新生成密钥对'}</button>
+  if (presetID === 'vless-reality') {
+    const presetRealityDomains = (() => {
+      const selected = config.node_preset_id ? nodePresets.find(item => item.id === Number(config.node_preset_id)) : null
+      const raw = selected ? parseNodePresetConfig(selected.config_json).reality_domains : null
+      if (Array.isArray(raw) && raw.length) {
+        const filtered = (raw as unknown[]).filter(item => typeof item === 'string' && String(item).trim()).map(item => String(item).trim())
+        if (filtered.length) return filtered
+      }
+      const fallbackRaw = matchingPresets[0] ? parseNodePresetConfig(matchingPresets[0].config_json).reality_domains : null
+      if (Array.isArray(fallbackRaw) && fallbackRaw.length) {
+        const filtered = (fallbackRaw as unknown[]).filter(item => typeof item === 'string' && String(item).trim()).map(item => String(item).trim())
+        if (filtered.length) return filtered
+      }
+      return [...builtinRealityDomains] as string[]
+    })()
+    const isCustomRealityDomain = Boolean(realityServerName && !presetRealityDomains.includes(realityServerName))
+    return <div className="preset-fields">
+      <div className="form-section-title">TCP / Reality / Vision 设置</div>
+      {nodePresetPicker}
+      <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
+      <FormField label="SNI / 握手域名" hint="同时用于客户端 SNI 和 Reality 伪装站点；模板首项 gateway.icloud.com 为默认。">
+        <Select value={isCustomRealityDomain ? '__custom__' : realityServerName} onChange={event => {
+          const value = event.target.value
+          if (value === '__custom__') return
+          setRealityServerName(value)
+        }} aria-label="SNI / 握手域名">
+          {presetRealityDomains.map(domain => <option key={domain} value={domain}>{domain}{domain === presetRealityDomains[0] ? '（默认）' : ''}</option>)}
+          {isCustomRealityDomain && <option value="__custom__">{realityServerName}（自定义）</option>}
+        </Select>
+      </FormField>
+      {isCustomRealityDomain && <FormField label="自定义 SNI / 握手域名" hint="自定义域名不在模板中，将按输入值保存。"><input value={realityServerName} onChange={event => setRealityServerName(event.target.value)} placeholder={defaultVLESSRealityServerName} /></FormField>}
+      <FormField label="握手端口"><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
+      <div className="reality-key-summary">
+        <div><strong>Reality 密钥</strong><span>{realityKeyLoading ? '正在生成…' : String(reality.public_key || '').trim() ? `已生成 · 公钥 ${compactSecret(String(reality.public_key))}` : '保存时服务端会自动生成'}</span></div>
+        <button type="button" className="ghost" onClick={onGenerateRealityKeypair} disabled={realityKeyLoading}>{realityKeyLoading ? '生成中' : '重新生成密钥对'}</button>
+      </div>
+      <FormField label="Short ID"><input value={String(reality.short_id || '')} onChange={e => setReality({ short_id: e.target.value })} placeholder="8-16 位十六进制" /></FormField>
     </div>
-    <FormField label="Short ID"><input value={String(reality.short_id || '')} onChange={e => setReality({ short_id: e.target.value })} placeholder="8-16 位十六进制" /></FormField>
-  </div>
+  }
   if (presetID === 'vless-ws') return <div className="preset-fields">
     <div className="form-section-title">WebSocket / TLS 设置</div>
     {nodePresetPicker}
@@ -14134,11 +14162,11 @@ function mergeRealityKeypair(configJson: string, pair: RealityKeyPair) {
   cfg.tls = {
     ...tls,
     enabled: tls.enabled ?? true,
-    server_name: tls.server_name || 'cdn.icloud-content.com',
+    server_name: tls.server_name || defaultVLESSRealityServerName,
     reality: {
       ...reality,
       enabled: true,
-      handshake: Object.keys(handshake).length ? handshake : { server: 'cdn.icloud-content.com', server_port: 443 },
+      handshake: Object.keys(handshake).length ? handshake : { server: defaultVLESSRealityServerName, server_port: 443 },
       private_key: pair.private_key,
       public_key: pair.public_key,
       short_id: pair.short_id || reality.short_id || randomHex(8),
@@ -18996,6 +19024,7 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
 }
 
 const inboundTemplateSecretKeys = new Set(['password', 'psk', 'uuid', 'private_key', 'public_key', 'short_id'])
+const inboundTemplateMetadataKeys = new Set(['reality_domains'])
 
 function parseNodePresetConfig(raw: NodePreset['config_json'] | string | Record<string, any> | undefined): Record<string, any> {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw
@@ -19015,11 +19044,12 @@ function matchingNodePreset(kind: string, presets: NodePreset[] = []) {
 function mergeInboundTemplate(template: Record<string, any>, inbound: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {}
   Object.entries(template || {}).forEach(([key, value]) => {
-    if (inboundTemplateSecretKeys.has(key)) return
+    if (inboundTemplateSecretKeys.has(key) || inboundTemplateMetadataKeys.has(key)) return
     out[key] = value && typeof value === 'object' && !Array.isArray(value) ? mergeInboundTemplate(value, {}) : value
   })
   Object.entries(inbound || {}).forEach(([key, value]) => {
-    if (inboundTemplateSecretKeys.has(key)) {
+    if (inboundTemplateSecretKeys.has(key) || inboundTemplateMetadataKeys.has(key)) {
+      if (inboundTemplateMetadataKeys.has(key)) return
       if (value !== undefined && value !== null && value !== '') out[key] = value
       return
     }
@@ -19060,10 +19090,10 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
     cfg.flow = 'xtls-rprx-vision'
     cfg.tls = {
       enabled: true,
-      server_name: 'cdn.icloud-content.com',
+      server_name: defaultVLESSRealityServerName,
       reality: {
         enabled: true,
-        handshake: { server: 'cdn.icloud-content.com', server_port: 443 },
+        handshake: { server: defaultVLESSRealityServerName, server_port: 443 },
         private_key: '',
         public_key: '',
         short_id: randomHex(8),
