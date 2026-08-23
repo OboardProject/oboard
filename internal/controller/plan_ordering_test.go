@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -440,13 +441,18 @@ func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 	if flipped["updated"].(float64) != 2 || flipped["created"].(float64) != 0 {
 		t.Fatalf("opposite-effect apply = %#v", flipped)
 	}
-	// Invalid input is rejected before any write.
+	// Invalid input is rejected before any write. Empty reason is now allowed (permanent auth), so reason-too-long is used as invalid case.
 	bad := body()
-	bad["reason"] = ""
+	bad["reason"] = strings.Repeat("x", 301)
 	request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, bad, http.StatusBadRequest)
 	bad = body()
 	bad["expires_at"] = time.Now().Add(-time.Hour).Format(time.RFC3339)
 	request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/apply", token, bad, http.StatusBadRequest)
+	// Permanent authorization (no expires_at) and empty reason should succeed.
+	permanent := body()
+	delete(permanent, "expires_at")
+	permanent["reason"] = ""
+	request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions/batch/preview", token, permanent, http.StatusOK)
 	_ = keyP1
 }
 

@@ -244,21 +244,22 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const runExceptionPreview = async () => {
     if (!preview) return
     if (userIDs.size === 0) { setExMessage('请先选择用户'); return }
-    if (!reason.trim()) { setExMessage('请填写授权原因'); return }
-    if (!expiresAt) { setExMessage('过期时间必填'); return }
     setExBusy(true)
     setExMessage('')
     try {
+      const payload: any = {
+        user_ids: [...userIDs],
+        nodes: preview.node_refs,
+        effect,
+        reason: reason.trim(),
+      }
+      const starts = fromLocalInputValue(startsAt)
+      const expires = fromLocalInputValue(expiresAt)
+      if (starts) payload.starts_at = starts
+      if (expires) payload.expires_at = expires
       const res = await client.request<{ created: number; updated: number; skipped: number; affected_users: number }>('/user-node-exceptions/batch/preview', {
         method: 'POST',
-        body: JSON.stringify({
-          user_ids: [...userIDs],
-          nodes: preview.node_refs,
-          effect,
-          reason: reason.trim(),
-          starts_at: fromLocalInputValue(startsAt),
-          expires_at: fromLocalInputValue(expiresAt),
-        }),
+        body: JSON.stringify(payload),
       })
       setExPreview(res)
     } catch (e: any) {
@@ -274,16 +275,19 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     setExApplyBusy(true)
     setExMessage('')
     try {
+      const payload: any = {
+        user_ids: [...userIDs],
+        nodes: preview.node_refs,
+        effect,
+        reason: reason.trim(),
+      }
+      const starts = fromLocalInputValue(startsAt)
+      const expires = fromLocalInputValue(expiresAt)
+      if (starts) payload.starts_at = starts
+      if (expires) payload.expires_at = expires
       const res = await client.request<{ created: number; updated: number; skipped: number; affected_users: number; access_change_id: number | null; access_change_status: string; queued_tasks: number }>('/user-node-exceptions/batch/apply', {
         method: 'POST',
-        body: JSON.stringify({
-          user_ids: [...userIDs],
-          nodes: preview.node_refs,
-          effect,
-          reason: reason.trim(),
-          starts_at: fromLocalInputValue(startsAt),
-          expires_at: fromLocalInputValue(expiresAt),
-        }),
+        body: JSON.stringify(payload),
       })
       if (res.access_change_id) {
         notify?.(`已创建授权变更 #${res.access_change_id}（${res.access_change_status}），排队 ${res.queued_tasks} 个任务`, 'success')
@@ -458,7 +462,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
             <Sparkles size={15} style={{ flexShrink: 0, marginTop: 1, color: 'var(--color-primary, #3b82f6)' }} />
-            <span>为选定用户独立配置此节点的访问权限（临时允许或临时禁止），权限独立生效并与套餐取并集。</span>
+            <span>为选定用户独立配置此节点的访问权限（允许或禁止），权限独立生效并与套餐取并集。留空时间则永久有效。</span>
           </div>
 
           <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
@@ -467,21 +471,21 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
             <div>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权效果</label>
               <Select value={effect} onChange={e => setEffect(e.target.value as 'allow' | 'deny')} style={{ width: '100%' }} aria-label="授权效果">
-                <option value="allow">临时允许</option>
-                <option value="deny">临时禁止</option>
+                <option value="allow">允许</option>
+                <option value="deny">禁止</option>
               </Select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权原因（必填）</label>
-              <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="例如：测试授权、VIP体验" />
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权原因（可选）</label>
+              <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="例如：测试授权、VIP体验（可选）" />
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>开始时间（可选）</label>
               <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="立即生效" aria-label="开始时间" />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>过期时间（必填）</label>
-              <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="选择过期时间" aria-label="过期时间" />
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>过期时间（可选）</label>
+              <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="永久有效" aria-label="过期时间" />
             </div>
           </div>
 

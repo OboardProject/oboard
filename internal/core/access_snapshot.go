@@ -123,7 +123,7 @@ func BuildEffectiveAccessSnapshot(input EffectiveAccessInput) *EffectiveAccessSn
 		if ex.StartsAt != nil && ex.StartsAt.After(now) {
 			continue
 		}
-		if !ex.ExpiresAt.After(now) {
+		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(now) {
 			continue
 		}
 		exceptionsByUser[ex.UserID] = append(exceptionsByUser[ex.UserID], ex)

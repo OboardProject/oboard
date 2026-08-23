@@ -7,6 +7,8 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func timePtrAssignTest(t time.Time) *time.Time { return &t }
+
 func TestBuildAssignableNodeCatalog(t *testing.T) {
 	now := time.Now()
 	input := AssignableNodeCatalogInput{
@@ -102,13 +104,13 @@ func TestUserEffectiveNodeSetPriority(t *testing.T) {
 		{PlanID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Enabled: true},
 	}
 	exceptions := []model.UserNodeException{
-		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 1, Effect: model.UserNodeExceptionDeny, Reason: "abuse", ExpiresAt: now.Add(time.Hour)},
-		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 3, Effect: model.UserNodeExceptionAllow, Reason: "trial", ExpiresAt: now.Add(time.Hour)},
-		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 4, Effect: model.UserNodeExceptionAllow, Reason: "expired trial", ExpiresAt: now.Add(-time.Hour)},
-		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Effect: model.UserNodeExceptionDeny, Reason: "deny then allow", ExpiresAt: now.Add(time.Hour)},
+		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 1, Effect: model.UserNodeExceptionDeny, Reason: "abuse", ExpiresAt: timePtrAssignTest(now.Add(time.Hour))},
+		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 3, Effect: model.UserNodeExceptionAllow, Reason: "trial", ExpiresAt: timePtrAssignTest(now.Add(time.Hour))},
+		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 4, Effect: model.UserNodeExceptionAllow, Reason: "expired trial", ExpiresAt: timePtrAssignTest(now.Add(-time.Hour))},
+		{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Effect: model.UserNodeExceptionDeny, Reason: "deny then allow", ExpiresAt: timePtrAssignTest(now.Add(time.Hour))},
 	}
 	// deny wins over allow for node 2.
-	exceptions = append(exceptions, model.UserNodeException{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Effect: model.UserNodeExceptionAllow, Reason: "conflict", ExpiresAt: now.Add(time.Hour)})
+	exceptions = append(exceptions, model.UserNodeException{UserID: 9, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Effect: model.UserNodeExceptionAllow, Reason: "conflict", ExpiresAt: timePtrAssignTest(now.Add(time.Hour))})
 
 	got := UserEffectiveNodeSet(plan, planNodes, exceptions, now)
 	if got["proxy_path:1"] {
@@ -266,7 +268,7 @@ func TestUserEffectiveNodeSources(t *testing.T) {
 		{PlanID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 1, Enabled: true},
 	}
 	exceptions := []model.UserNodeException{
-		{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Effect: model.UserNodeExceptionAllow, Reason: "trial", ExpiresAt: now.Add(time.Hour)},
+		{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 2, Effect: model.UserNodeExceptionAllow, Reason: "trial", ExpiresAt: timePtrAssignTest(now.Add(time.Hour))},
 	}
 	sources := UserEffectiveNodeSources(binding, plan, planNodes, exceptions, now)
 	if len(sources) != 2 {

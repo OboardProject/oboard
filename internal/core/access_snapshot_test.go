@@ -12,6 +12,8 @@ func snapshotTestPlan(id int64, name string, nodes ...model.SubscriptionPlanNode
 	return plan
 }
 
+func timePtrSnapshot(t time.Time) *time.Time { return &t }
+
 func snapshotTestNode(nodeType model.AssignableNodeType, nodeID int64) model.SubscriptionPlanNode {
 	return model.SubscriptionPlanNode{PlanID: 1, NodeType: nodeType, NodeID: nodeID, Enabled: true}
 }
@@ -38,7 +40,7 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 		Bindings:   []model.UserPlanBinding{{UserID: 1, PlanID: 1, Enabled: true}},
 		Plans:      []model.SubscriptionPlan{plan},
 		PlanNodes:  []model.SubscriptionPlanNode{snapshotTestNode(model.AssignableNodeProxyPath, 10), snapshotTestNode(model.AssignableNodeProxyPath, 11)},
-		Exceptions: []model.UserNodeException{{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 10, Effect: model.UserNodeExceptionDeny, ExpiresAt: now.Add(time.Hour)}},
+		Exceptions: []model.UserNodeException{{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 10, Effect: model.UserNodeExceptionDeny, ExpiresAt: timePtrSnapshot(now.Add(time.Hour))}},
 		Now:        now,
 	})
 	keys = snap.EffectiveNodeKeys(1)
@@ -57,8 +59,8 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 			snapshotTestNode(model.AssignableNodeProxyPath, 11),
 		},
 		Exceptions: []model.UserNodeException{
-			{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 12, Effect: model.UserNodeExceptionAllow, ExpiresAt: now.Add(time.Hour)},
-			{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 11, Effect: model.UserNodeExceptionDeny, ExpiresAt: now.Add(time.Hour)},
+			{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 12, Effect: model.UserNodeExceptionAllow, ExpiresAt: timePtrSnapshot(now.Add(time.Hour))},
+			{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 11, Effect: model.UserNodeExceptionDeny, ExpiresAt: timePtrSnapshot(now.Add(time.Hour))},
 		},
 		Now: now,
 	})
@@ -79,7 +81,7 @@ func TestBuildEffectiveAccessSnapshotPriority(t *testing.T) {
 			snapshotTestNode(model.AssignableNodeProxyPath, 10),
 		},
 		Exceptions: []model.UserNodeException{
-			{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 10, Effect: model.UserNodeExceptionDeny, ExpiresAt: now.Add(-time.Hour)},
+			{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 10, Effect: model.UserNodeExceptionDeny, ExpiresAt: timePtrSnapshot(now.Add(-time.Hour))},
 		},
 		Now: now,
 	})

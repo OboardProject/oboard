@@ -118,7 +118,7 @@ func (d *planAssignmentData) effectiveUsersByNode() (map[string][]int64, map[str
 	allowCount := map[string]int{}
 	denyCount := map[string]int{}
 	for _, ex := range d.exceptions {
-		if !ex.ExpiresAt.After(d.now()) {
+		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(d.now()) {
 			continue
 		}
 		key := core.NodeKeyOf(ex.NodeType, ex.NodeID)
@@ -422,8 +422,7 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 				view.Source = "exception_allow"
 				view.Effect = string(model.UserNodeExceptionAllow)
 				view.Reason = grant.Exception.Reason
-				expiry := grant.Exception.ExpiresAt
-				view.ExpiresAt = &expiry
+				view.ExpiresAt = grant.Exception.ExpiresAt
 			} else {
 				view.PlanID = grant.PlanID
 				view.PlanName = grant.PlanName
@@ -432,7 +431,7 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 		users = append(users, view)
 	}
 	for _, ex := range data.exceptions {
-		if ex.NodeType != nodeType || ex.NodeID != nodeID || !ex.ExpiresAt.After(now) {
+		if ex.NodeType != nodeType || ex.NodeID != nodeID || (ex.ExpiresAt != nil && !ex.ExpiresAt.After(now)) {
 			continue
 		}
 		user, ok := userByID[ex.UserID]
@@ -443,15 +442,14 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		view := assignableNodeUserView{UserID: ex.UserID, Username: user.Username, Nickname: user.Nickname, Effective: false, Source: "exception_deny", Effect: string(ex.Effect), Reason: ex.Reason}
-		expiry := ex.ExpiresAt
-		view.ExpiresAt = &expiry
+		view.ExpiresAt = ex.ExpiresAt
 		users = append(users, view)
 	}
 	sort.SliceStable(users, func(i, j int) bool { return users[i].UserID < users[j].UserID })
 
 	activeExceptions := []model.UserNodeException{}
 	for _, ex := range data.exceptions {
-		if ex.NodeType == nodeType && ex.NodeID == nodeID && ex.ExpiresAt.After(now) {
+		if ex.NodeType == nodeType && ex.NodeID == nodeID && (ex.ExpiresAt == nil || ex.ExpiresAt.After(now)) {
 			activeExceptions = append(activeExceptions, ex)
 		}
 	}
@@ -1998,18 +1996,15 @@ func (s *Server) validateUserNodeException(ctx context.Context, v *model.UserNod
 	if v.Effect != model.UserNodeExceptionAllow && v.Effect != model.UserNodeExceptionDeny {
 		return errors.New("effect must be allow or deny")
 	}
-	if strings.TrimSpace(v.Reason) == "" {
-		return errors.New("reason required")
-	}
+	v.Reason = strings.TrimSpace(v.Reason)
 	if len(v.Reason) > 300 {
 		return errors.New("reason too long")
 	}
-	v.Reason = strings.TrimSpace(v.Reason)
-	if v.ExpiresAt.IsZero() {
-		return errors.New("expires_at required")
-	}
-	if !v.ExpiresAt.After(time.Now()) {
+	if v.ExpiresAt != nil && !v.ExpiresAt.After(time.Now()) {
 		return errors.New("expires_at must be in the future")
+	}
+	if v.StartsAt != nil && v.ExpiresAt != nil && !v.StartsAt.Before(*v.ExpiresAt) {
+		return errors.New("starts_at must be before expires_at")
 	}
 	// Validate the node exists in the catalog.
 	data, err := s.loadPlanAssignmentData(ctx)
@@ -2101,8 +2096,7 @@ func (s *Server) userEffectiveNodes(w http.ResponseWriter, r *http.Request, user
 		} else if grant.Exception != nil {
 			view.Effect = grant.Exception.Effect
 			view.Reason = grant.Exception.Reason
-			expiry := grant.Exception.ExpiresAt
-			view.ExpiresAt = &expiry
+			view.ExpiresAt = grant.Exception.ExpiresAt
 		}
 		views = append(views, view)
 	}

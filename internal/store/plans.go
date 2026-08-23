@@ -1933,11 +1933,11 @@ func (s *Store) AccessLifecycleNextDue(ctx context.Context, at time.Time) (*time
 	err := s.db.QueryRowContext(ctx, `select min(due) from (
 		select min(coalesce(starts_at,?)) as due from user_plan_bindings where enabled=1 and deployed_at is null
 		union all
-		select min(expires_at) from user_plan_bindings where enabled=1 and expires_at is not null and deployed_at is not null and expiry_synced_at is null
+		select min(expires_at) from user_plan_bindings where enabled=1 and expires_at is not null and expires_at != '' and deployed_at is not null and expiry_synced_at is null
 		union all
-		select min(coalesce(starts_at,?)) from user_node_exceptions where status='pending' and change_id is null and expires_at>?
+		select min(coalesce(starts_at,?)) from user_node_exceptions where status='pending' and change_id is null and (expires_at is null or expires_at = '' or expires_at>?)
 		union all
-		select min(expires_at) from user_node_exceptions where status='active' and expiry_synced_at is null
+		select min(expires_at) from user_node_exceptions where status='active' and expires_at is not null and expires_at != '' and expiry_synced_at is null
 	)`, nowText, nowText, nowText).Scan(&raw)
 	if err != nil {
 		return nil, err
@@ -2054,7 +2054,7 @@ func (s *Store) CreateUserNodeException(ctx context.Context, v *model.UserNodeEx
 	if strings.TrimSpace(string(v.Status)) == "" {
 		v.Status = model.UserNodeExceptionActive
 	}
-	res, err := s.db.ExecContext(ctx, `insert into user_node_exceptions(user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, string(v.Status), nilTime(v.StartsAt), v.ExpiresAt.UTC().Format(time.RFC3339Nano), v.CreatedBy, ts)
+	res, err := s.db.ExecContext(ctx, `insert into user_node_exceptions(user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, string(v.Status), nilTime(v.StartsAt), expiresAtDB(v.ExpiresAt), v.CreatedBy, ts)
 	if err != nil {
 		if isUniqueConstraintError(err) {
 			return errors.New("该用户在此节点上已存在例外，请更新现有例外而不是重复创建")
@@ -2066,7 +2066,8 @@ func (s *Store) CreateUserNodeException(ctx context.Context, v *model.UserNodeEx
 }
 
 // UserNodeExceptionWrite is one row of a batch exception write. ID 0 inserts
-// a new row, ID > 0 updates the existing row in place.
+// a new row, ID > 0 updates the existing row in place. Nil ExpiresAt means
+// permanent authorization.
 type UserNodeExceptionWrite struct {
 	ID        int64
 	UserID    int64
@@ -2076,7 +2077,7 @@ type UserNodeExceptionWrite struct {
 	Reason    string
 	Status    model.UserNodeExceptionStatus
 	StartsAt  *time.Time
-	ExpiresAt time.Time
+	ExpiresAt *time.Time
 	CreatedBy *int64
 }
 
@@ -2100,7 +2101,7 @@ func (s *Store) ApplyUserNodeExceptionBatch(ctx context.Context, writes []UserNo
 			status = string(model.UserNodeExceptionActive)
 		}
 		if w.ID == 0 {
-			res, err := tx.ExecContext(ctx, `insert into user_node_exceptions(user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)`, w.UserID, w.NodeType, w.NodeID, w.Effect, w.Reason, status, nilTime(w.StartsAt), w.ExpiresAt.UTC().Format(time.RFC3339Nano), w.CreatedBy, ts)
+			res, err := tx.ExecContext(ctx, `insert into user_node_exceptions(user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at) values(?,?,?,?,?,?,?,?,?,?)`, w.UserID, w.NodeType, w.NodeID, w.Effect, w.Reason, status, nilTime(w.StartsAt), expiresAtDB(w.ExpiresAt), w.CreatedBy, ts)
 			if err != nil {
 				if isUniqueConstraintError(err) {
 					return nil, errors.New("该用户在此节点上已存在例外，请更新现有例外而不是重复创建")
@@ -2109,7 +2110,7 @@ func (s *Store) ApplyUserNodeExceptionBatch(ctx context.Context, writes []UserNo
 			}
 			w.ID, _ = res.LastInsertId()
 		} else {
-			if _, err := tx.ExecContext(ctx, `update user_node_exceptions set user_id=?,node_type=?,node_id=?,effect=?,reason=?,status=?,starts_at=?,expires_at=? where id=?`, w.UserID, w.NodeType, w.NodeID, w.Effect, w.Reason, status, nilTime(w.StartsAt), w.ExpiresAt.UTC().Format(time.RFC3339Nano), w.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `update user_node_exceptions set user_id=?,node_type=?,node_id=?,effect=?,reason=?,status=?,starts_at=?,expires_at=? where id=?`, w.UserID, w.NodeType, w.NodeID, w.Effect, w.Reason, status, nilTime(w.StartsAt), expiresAtDB(w.ExpiresAt), w.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -2137,7 +2138,7 @@ func (s *Store) UpdateUserNodeException(ctx context.Context, v *model.UserNodeEx
 	if strings.TrimSpace(string(v.Status)) == "" {
 		v.Status = model.UserNodeExceptionActive
 	}
-	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set user_id=?,node_type=?,node_id=?,effect=?,reason=?,status=?,starts_at=?,expires_at=? where id=?`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, string(v.Status), nilTime(v.StartsAt), v.ExpiresAt.UTC().Format(time.RFC3339Nano), v.ID)
+	_, err := s.db.ExecContext(ctx, `update user_node_exceptions set user_id=?,node_type=?,node_id=?,effect=?,reason=?,status=?,starts_at=?,expires_at=? where id=?`, v.UserID, v.NodeType, v.NodeID, v.Effect, v.Reason, string(v.Status), nilTime(v.StartsAt), expiresAtDB(v.ExpiresAt), v.ID)
 	if err != nil && isUniqueConstraintError(err) {
 		return errors.New("该用户在此节点上已存在例外，请更新现有例外而不是重复创建")
 	}
@@ -2177,9 +2178,10 @@ func (s *Store) ListUserNodeExceptionsForNode(ctx context.Context, nodeType stri
 }
 
 // DeleteExpiredUserNodeExceptions removes exceptions whose expiry has passed.
-// It returns the number of removed rows.
+// Permanent rows with NULL or empty expires_at are never deleted. It returns the number
+// of removed rows.
 func (s *Store) DeleteExpiredUserNodeExceptions(ctx context.Context, at time.Time) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `delete from user_node_exceptions where expires_at <= ?`, at.UTC().Format(time.RFC3339Nano))
+	res, err := s.db.ExecContext(ctx, `delete from user_node_exceptions where expires_at is not null and expires_at != '' and expires_at <= ?`, at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
@@ -2212,6 +2214,7 @@ func (s *Store) SetUserNodeExceptionStatus(ctx context.Context, id int64, status
 
 // ListUserNodeExceptionsByStatus returns pending or active exceptions whose
 // time window contains at, used by the lifecycle worker and change activation.
+// Nil or empty ExpiresAt means permanent authorization and is always in window.
 func (s *Store) ListUserNodeExceptionsByStatus(ctx context.Context, at time.Time, statuses ...model.UserNodeExceptionStatus) ([]model.UserNodeException, error) {
 	if len(statuses) == 0 {
 		return nil, nil
@@ -2223,7 +2226,7 @@ func (s *Store) ListUserNodeExceptionsByStatus(ctx context.Context, at time.Time
 		args = append(args, string(status))
 	}
 	args = append(args, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status in (`+strings.Join(placeholders, ",")+`) and (starts_at is null or starts_at <= ?) and expires_at > ? order by id`, args...) // #nosec G202 -- placeholders contains only generated question marks.
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status in (`+strings.Join(placeholders, ",")+`) and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at = '' or expires_at > ?) order by id`, args...) // #nosec G202 -- placeholders contains only generated question marks.
 	if err != nil {
 		return nil, err
 	}
@@ -2232,9 +2235,10 @@ func (s *Store) ListUserNodeExceptionsByStatus(ctx context.Context, at time.Time
 }
 
 // ListActiveExceptionsExpired returns active exceptions whose expiry passed
-// and that still need a removal change (expiry_synced_at is NULL).
+// and that still need a removal change (expiry_synced_at is NULL). Permanent
+// rows with NULL or empty expires_at are never considered expired.
 func (s *Store) ListActiveExceptionsExpired(ctx context.Context, at time.Time) ([]model.UserNodeException, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status='active' and expires_at <= ? and expiry_synced_at is null order by id`, at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status='active' and expires_at is not null and expires_at != '' and expires_at <= ? and expiry_synced_at is null order by id`, at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -2268,8 +2272,9 @@ func (s *Store) SetUserNodeExceptionChange(ctx context.Context, id, changeID int
 
 // ListPendingExceptionsWithoutChange returns pending exceptions whose time
 // window is open and that no access change owns yet (crash recovery fallback).
+// Nil or empty ExpiresAt means permanent and passes the expiry check.
 func (s *Store) ListPendingExceptionsWithoutChange(ctx context.Context, at time.Time) ([]model.UserNodeException, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status='pending' and change_id is null and (starts_at is null or starts_at <= ?) and expires_at > ? order by id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,node_type,node_id,effect,reason,status,starts_at,expires_at,created_by,created_at from user_node_exceptions where status='pending' and change_id is null and (starts_at is null or starts_at <= ?) and (expires_at is null or expires_at = '' or expires_at > ?) order by id`, at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -2282,8 +2287,8 @@ func scanUserNodeExceptions(rows *sql.Rows) ([]model.UserNodeException, error) {
 	for rows.Next() {
 		var v model.UserNodeException
 		var createdBy sql.NullInt64
-		var startsAt sql.NullString
-		var expiresAt, ca string
+		var startsAt, expiresAt sql.NullString
+		var ca string
 		if err := rows.Scan(&v.ID, &v.UserID, &v.NodeType, &v.NodeID, &v.Effect, &v.Reason, &v.Status, &startsAt, &expiresAt, &createdBy, &ca); err != nil {
 			return nil, err
 		}
@@ -2291,7 +2296,12 @@ func scanUserNodeExceptions(rows *sql.Rows) ([]model.UserNodeException, error) {
 			t := parseTime(startsAt.String)
 			v.StartsAt = &t
 		}
-		v.ExpiresAt = parseTime(expiresAt)
+		if expiresAt.Valid && strings.TrimSpace(expiresAt.String) != "" {
+			t := parseTime(expiresAt.String)
+			if !t.IsZero() {
+				v.ExpiresAt = &t
+			}
+		}
 		if createdBy.Valid {
 			v.CreatedBy = &createdBy.Int64
 		}

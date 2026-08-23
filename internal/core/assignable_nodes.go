@@ -347,7 +347,7 @@ func UserEffectiveNodeSet(plan *model.SubscriptionPlan, planNodes []model.Subscr
 	}
 	denied := map[string]bool{}
 	for _, ex := range exceptions {
-		if !ex.ExpiresAt.After(now) {
+		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(now) {
 			continue
 		}
 		if ex.Effect == model.UserNodeExceptionDeny {
@@ -361,7 +361,7 @@ func UserEffectiveNodeSet(plan *model.SubscriptionPlan, planNodes []model.Subscr
 		}
 	}
 	for _, ex := range exceptions {
-		if !ex.ExpiresAt.After(now) || ex.Effect != model.UserNodeExceptionAllow {
+		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(now) || ex.Effect != model.UserNodeExceptionAllow {
 			continue
 		}
 		key := NodeKeyOf(ex.NodeType, ex.NodeID)
@@ -393,7 +393,7 @@ func UserEffectiveNodeSources(binding *model.UserPlanBinding, plan *model.Subscr
 	denied := map[string]bool{}
 	allow := map[string]model.UserNodeException{}
 	for _, ex := range exceptions {
-		if !ex.ExpiresAt.After(now) {
+		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(now) {
 			continue
 		}
 		key := NodeKeyOf(ex.NodeType, ex.NodeID)
@@ -419,7 +419,7 @@ func UserEffectiveNodeSources(binding *model.UserPlanBinding, plan *model.Subscr
 		if !effective[key] {
 			continue
 		}
-		out = append(out, UserEffectiveNodeSource{Key: key, NodeType: ex.NodeType, NodeID: ex.NodeID, Source: "exception", Effect: ex.Effect, Reason: ex.Reason, ExpiresAt: &ex.ExpiresAt})
+		out = append(out, UserEffectiveNodeSource{Key: key, NodeType: ex.NodeType, NodeID: ex.NodeID, Source: "exception", Effect: ex.Effect, Reason: ex.Reason, ExpiresAt: ex.ExpiresAt})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out

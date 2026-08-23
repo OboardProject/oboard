@@ -876,7 +876,8 @@ func TestUserNodeExceptionLifecycle(t *testing.T) {
 	createPlanTestUser(t, s, 1, "alice")
 
 	now := time.Now()
-	ex := &model.UserNodeException{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 5, Effect: model.UserNodeExceptionAllow, Reason: "临时试用", ExpiresAt: now.Add(24 * time.Hour)}
+	expires := now.Add(24 * time.Hour)
+	ex := &model.UserNodeException{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 5, Effect: model.UserNodeExceptionAllow, Reason: "授权试用", ExpiresAt: &expires}
 	if err := s.CreateUserNodeException(ctx, ex); err != nil {
 		t.Fatal(err)
 	}
@@ -907,7 +908,8 @@ func TestUserNodeExceptionLifecycle(t *testing.T) {
 		t.Fatalf("updated exception = %#v", items[0])
 	}
 
-	expired := &model.UserNodeException{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 6, Effect: model.UserNodeExceptionAllow, Reason: "过期", ExpiresAt: now.Add(-time.Hour)}
+	expiredTime := now.Add(-time.Hour)
+	expired := &model.UserNodeException{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 6, Effect: model.UserNodeExceptionAllow, Reason: "过期", ExpiresAt: &expiredTime}
 	if err := s.CreateUserNodeException(ctx, expired); err != nil {
 		t.Fatal(err)
 	}
@@ -918,7 +920,41 @@ func TestUserNodeExceptionLifecycle(t *testing.T) {
 	if deleted != 1 {
 		t.Fatalf("expired deleted = %d, want 1", deleted)
 	}
+	// Permanent authorization (nil ExpiresAt) should not be deleted and should be listable.
+	permanent := &model.UserNodeException{UserID: 1, NodeType: model.AssignableNodeProxyPath, NodeID: 7, Effect: model.UserNodeExceptionAllow, Reason: "", ExpiresAt: nil}
+	if err := s.CreateUserNodeException(ctx, permanent); err != nil {
+		t.Fatal(err)
+	}
+	permanentItems, err := s.ListUserNodeExceptionsForUser(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(permanentItems) != 2 {
+		t.Fatalf("permanent exceptions = %d, want 2", len(permanentItems))
+	}
+	foundPermanent := false
+	for _, item := range permanentItems {
+		if item.ID == permanent.ID {
+			if item.ExpiresAt != nil {
+				t.Fatalf("permanent ExpiresAt = %v, want nil", item.ExpiresAt)
+			}
+			foundPermanent = true
+		}
+	}
+	if !foundPermanent {
+		t.Fatalf("permanent exception not found in list")
+	}
+	deleted, err = s.DeleteExpiredUserNodeExceptions(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("permanent should not be deleted, got %d", deleted)
+	}
 	if err := s.DeleteUserNodeException(ctx, ex.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteUserNodeException(ctx, permanent.ID); err != nil {
 		t.Fatal(err)
 	}
 	items, _ = s.ListUserNodeExceptionsForUser(ctx, 1)

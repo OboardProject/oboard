@@ -1259,7 +1259,7 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 // from/to; targetStatus is applied to the changed exception at activation.
 func (s *Server) createExceptionChange(ctx context.Context, r *http.Request, data store.FullRoutingConfig, before, after []model.UserNodeException, changed model.UserNodeException, targetStatus model.UserNodeExceptionStatus) (*model.AccessChange, error) {
 	now := time.Now()
-	at := effectiveWindow(now, changed.StartsAt, &changed.ExpiresAt)
+	at := effectiveWindow(now, changed.StartsAt, changed.ExpiresAt)
 	change, err := s.createExceptionChanges(ctx, r, data, before, after, []int64{changed.ID}, targetStatus, 1, at)
 	if err != nil {
 		return nil, err

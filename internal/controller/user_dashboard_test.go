@@ -37,8 +37,8 @@ func TestUserDashboardOverviewUsesEffectivePlanNodesAndTraffic(t *testing.T) {
 	}
 	expiresAt := time.Now().Add(time.Hour)
 	for _, exception := range []*model.UserNodeException{
-		{UserID: user.ID, NodeType: model.AssignableNodeExternalOutbound, NodeID: 11, Effect: model.UserNodeExceptionDeny, Reason: "deny", ExpiresAt: expiresAt},
-		{UserID: user.ID, NodeType: model.AssignableNodeExternalOutbound, NodeID: 12, Effect: model.UserNodeExceptionAllow, Reason: "allow", ExpiresAt: expiresAt},
+		{UserID: user.ID, NodeType: model.AssignableNodeExternalOutbound, NodeID: 11, Effect: model.UserNodeExceptionDeny, Reason: "deny", ExpiresAt: &expiresAt},
+		{UserID: user.ID, NodeType: model.AssignableNodeExternalOutbound, NodeID: 12, Effect: model.UserNodeExceptionAllow, Reason: "allow", ExpiresAt: &expiresAt},
 	} {
 		if err := db.CreateUserNodeException(ctx, exception); err != nil {
 			t.Fatal(err)

@@ -12,7 +12,7 @@ type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T
 type Plan = { id: number; name: string; enabled: boolean }
 type Binding = { user_id: number; plan_id: number; status?: string; starts_at?: string; expires_at?: string; deployed_at?: string }
 type EffectiveNode = { key: string; node_type: string; node_id: number; name?: string; source: string; plan_id?: number; plan_name?: string; effect?: string; reason?: string; expires_at?: string }
-type Exception = { id: number; user_id: number; node_type: string; node_id: number; effect: 'allow' | 'deny'; reason: string; status?: string; starts_at?: string; expires_at: string }
+type Exception = { id: number; user_id: number; node_type: string; node_id: number; effect: 'allow' | 'deny'; reason: string; status?: string; starts_at?: string; expires_at?: string }
 type CatalogNode = { type: string; id: number; key: string; name: string; entry_protocol?: string; exit_region?: string }
 
 function toLocalInputValue(iso?: string) {
@@ -122,17 +122,18 @@ export function UserPlanDialog({ user, binding, plans, client, onClose }: {
   const createException = async () => {
     const node = searchResults.find(n => n.key === exForm.node_key)
     if (!node) { setMessage('请先搜索并选择节点'); return }
-    if (!exForm.reason.trim()) { setMessage('请填写原因'); return }
-    if (!exForm.expires_at) { setMessage('请填写到期时间'); return }
     setExBusy(true)
     setMessage('')
     try {
+      const payload: any = {
+        user_id: user.id, node_type: node.type, node_id: node.id,
+        effect: exForm.effect, reason: exForm.reason.trim(),
+      }
+      const expires = fromLocalInputValue(exForm.expires_at)
+      if (expires) payload.expires_at = expires
       const res = await client.request<any>('/user-node-exceptions', {
         method: 'POST',
-        body: JSON.stringify({
-          user_id: user.id, node_type: node.type, node_id: node.id,
-          effect: exForm.effect, reason: exForm.reason.trim(), expires_at: fromLocalInputValue(exForm.expires_at),
-        }),
+        body: JSON.stringify(payload),
       })
       setExForm({ node_key: '', effect: 'allow', reason: '', expires_at: '' })
       setSearchResults([])
@@ -216,7 +217,7 @@ export function UserPlanDialog({ user, binding, plans, client, onClose }: {
 
         <div className="card-custom" style={{ padding: 14 }}>
           <div className="section-toolbar">
-            <div><h3 style={{ margin: 0 }}>临时例外</h3><p className="muted">allow 先部署凭据再对订阅可见；deny 立即隐藏并撤销。</p></div>
+            <div><h3 style={{ margin: 0 }}>用户授权</h3><p className="muted">allow 先部署凭据再对订阅可见；deny 立即隐藏并撤销。时间留空则永久有效。</p></div>
             <Button variant="ghost" size="sm" onClick={() => void reload()}><RefreshCw size={14} /></Button>
           </div>
           <table className="user-data-table" style={{ width: '100%' }}>
@@ -240,9 +241,9 @@ export function UserPlanDialog({ user, binding, plans, client, onClose }: {
             <Select value={exForm.effect} onChange={e => setExForm(f => ({ ...f, effect: e.target.value as 'allow' | 'deny' }))}>
               <option value="allow">允许</option><option value="deny">拒绝</option>
             </Select>
-            <DateTimePicker value={exForm.expires_at} onChange={val => setExForm(f => ({ ...f, expires_at: val }))} placeholder="到期时间（必填）" aria-label="到期时间" title="到期时间" style={{ maxWidth: 200 }} />
-            <Input value={exForm.reason} onChange={e => setExForm(f => ({ ...f, reason: e.target.value }))} placeholder="原因（必填）" style={{ maxWidth: 200 }} />
-            <Button size="sm" disabled={exBusy} onClick={() => void createException()}><Plus size={14} /> 创建例外</Button>
+            <DateTimePicker value={exForm.expires_at} onChange={val => setExForm(f => ({ ...f, expires_at: val }))} placeholder="到期时间（可选，永久）" aria-label="到期时间" title="到期时间" style={{ maxWidth: 200 }} />
+            <Input value={exForm.reason} onChange={e => setExForm(f => ({ ...f, reason: e.target.value }))} placeholder="原因（可选）" style={{ maxWidth: 200 }} />
+            <Button size="sm" disabled={exBusy} onClick={() => void createException()}><Plus size={14} /> 创建授权</Button>
           </div>
           {searchResults.length > 0 && (
             <div className="card-custom" style={{ marginTop: 8, maxHeight: 180, overflow: 'auto' }}>

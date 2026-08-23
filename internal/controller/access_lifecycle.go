@@ -212,7 +212,7 @@ func (s *Server) createExceptionActivationChange(ctx context.Context, ex model.U
 	active := ex
 	active.Status = model.UserNodeExceptionActive
 	withActive := exceptionsWith(exceptions, active)
-	at := effectiveWindow(now, ex.StartsAt, &ex.ExpiresAt)
+	at := effectiveWindow(now, ex.StartsAt, ex.ExpiresAt)
 	snap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, withActive, at)
 	projection := snap.Projection()
 	servers := s.authServersForNode(data, ex.NodeType, ex.NodeID)
@@ -252,7 +252,7 @@ func (s *Server) createExceptionExpiryChange(ctx context.Context, ex model.UserN
 	if err != nil {
 		return err
 	}
-	oldAt := effectiveWindow(now, nil, &ex.ExpiresAt)
+	oldAt := effectiveWindow(now, nil, ex.ExpiresAt)
 	oldSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, exceptions, oldAt)
 	finalizeSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, exceptionsWithout(exceptions, ex.ID), now)
 	prepare := core.MergeProjections(oldSnap.Projection(), finalizeSnap.Projection())

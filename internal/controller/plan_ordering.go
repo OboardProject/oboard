@@ -906,7 +906,7 @@ type batchUserExceptionRequest struct {
 	Effect    model.UserNodeExceptionEffect `json:"effect"`
 	Reason    string                        `json:"reason"`
 	StartsAt  *time.Time                    `json:"starts_at"`
-	ExpiresAt time.Time                     `json:"expires_at"`
+	ExpiresAt *time.Time                    `json:"expires_at"`
 }
 
 type batchExceptionOutcome struct {
@@ -982,20 +982,14 @@ func (s *Server) validateBatchUserExceptionRequest(ctx context.Context, req *bat
 	if req.Effect != model.UserNodeExceptionAllow && req.Effect != model.UserNodeExceptionDeny {
 		return errors.New("effect must be allow or deny")
 	}
-	if strings.TrimSpace(req.Reason) == "" {
-		return errors.New("reason required")
-	}
+	req.Reason = strings.TrimSpace(req.Reason)
 	if len(req.Reason) > 300 {
 		return errors.New("reason too long")
 	}
-	req.Reason = strings.TrimSpace(req.Reason)
-	if req.ExpiresAt.IsZero() {
-		return errors.New("expires_at required")
-	}
-	if !req.ExpiresAt.After(time.Now()) {
+	if req.ExpiresAt != nil && !req.ExpiresAt.After(time.Now()) {
 		return errors.New("expires_at must be in the future")
 	}
-	if req.StartsAt != nil && !req.StartsAt.Before(req.ExpiresAt) {
+	if req.StartsAt != nil && req.ExpiresAt != nil && !req.StartsAt.Before(*req.ExpiresAt) {
 		return errors.New("starts_at must be before expires_at")
 	}
 	seenUsers := map[int64]bool{}
@@ -1113,7 +1107,7 @@ func (s *Server) userNodeExceptionsBatch(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		now := time.Now()
-		at := effectiveWindow(now, req.StartsAt, &req.ExpiresAt)
+		at := effectiveWindow(now, req.StartsAt, req.ExpiresAt)
 		targetStatus := model.UserNodeExceptionStatus("")
 		if req.Effect == model.UserNodeExceptionAllow {
 			targetStatus = model.UserNodeExceptionActive

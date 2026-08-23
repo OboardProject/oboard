@@ -596,7 +596,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               {selectedCount > 0 ? `已在上方开启 ${selectedCount} 个节点的批量设置` : '勾选节点可在顶部开启批量设置'}
             </span>
           ) : (
-            <span className="muted node-assignments-hint">套餐修改、临时例外与套餐分配需要管理员权限。</span>
+            <span className="muted node-assignments-hint">套餐修改、用户授权与套餐分配需要管理员权限。</span>
           )}
         </div>
       </>

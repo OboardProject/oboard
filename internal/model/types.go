@@ -741,9 +741,9 @@ const (
 	UserNodeExceptionDeny  UserNodeExceptionEffect = "deny"
 )
 
-// UserNodeException is a temporary, audited per-user node override. It always
-// requires a reason and an expiry and never carries speed, traffic, or display
-// grouping settings.
+// UserNodeException is an audited per-user node override. It never carries
+// speed, traffic, or display grouping settings. Empty reason means no remark;
+// nil ExpiresAt means permanent authorization.
 type UserNodeException struct {
 	ID        int64                   `json:"id"`
 	UserID    int64                   `json:"user_id"`
@@ -753,7 +753,7 @@ type UserNodeException struct {
 	Reason    string                  `json:"reason"`
 	Status    UserNodeExceptionStatus `json:"status"`
 	StartsAt  *time.Time              `json:"starts_at,omitempty"`
-	ExpiresAt time.Time               `json:"expires_at"`
+	ExpiresAt *time.Time              `json:"expires_at,omitempty"`
 	CreatedBy *int64                  `json:"created_by,omitempty"`
 	CreatedAt time.Time               `json:"created_at"`
 }
