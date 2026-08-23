@@ -16391,6 +16391,262 @@ function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscrip
   </button>
 }
 
+function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionFormat, ageRequired, customPathBusy }: { user: User; client: ReturnType<typeof api>; load: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void; subscriptionFormat: SubscriptionFormat; ageRequired: boolean; customPathBusy: string }) {
+  const dialogs = useDialogs()
+  const [isOpen, setIsOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null)
+
+  const isAgeFormat = isAgeSubscriptionFormat(subscriptionFormat)
+  const hasToken = Boolean(user.subscription_token)
+  const isActive = user.status === 'active' && !user.subscription_suspended
+  const ageKey = String(user.subscription_age_public_key || '').trim()
+  const ageEnabled = Boolean(user.subscription_age_enabled)
+  const canCopyPlain = hasToken && !user.subscription_suspended
+  const canCopyAge = isAgeFormat && canCopyPlain && Boolean(ageKey) && (ageRequired || ageEnabled)
+  const hasCustomPath = Boolean(user.subscription_custom_path)
+  const customEnabled = Boolean(user.subscription_custom_path_enabled)
+  const policyValue = String(user.subscription_custom_path_policy || 'inherit') as SubscriptionCustomPathPolicy
+  const busyPath = customPathBusy === `users:${user.id}`
+  const busyAlias = customPathBusy === `alias:${user.id}`
+
+  const ageStatusLabel = !ageKey ? '配置 Age 公钥' : ageRequired ? 'Age · 强制' : ageEnabled ? 'Age · 已开启' : 'Age · 已保存'
+
+  const configureUserAge = async () => {
+    const publicKey = await dialogs.prompt({
+      title: `配置 ${user.username} 的 Age 公钥`,
+      message: '只粘贴公钥（age1... 或 age1pq1...），不要粘贴 AGE-SECRET-KEY 私钥。清空可关闭。',
+      defaultValue: user.subscription_age_public_key || '',
+      placeholder: 'age1...',
+    })
+    if (publicKey === null) return
+    const value = publicKey.trim()
+    if (ageRequired && !value) {
+      notify?.('强制加密模式下不能清空 Age 公钥', 'warning')
+      return
+    }
+    try {
+      await client.request(`/users/${user.id}/subscription-age`, { method: 'PATCH', body: JSON.stringify({ enabled: Boolean(value), public_key: value }) })
+      await load()
+      notify?.(value ? `${user.username} 的 Age 公钥已保存` : `${user.username} 的 Age 加密已关闭`, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
+  }
+
+  const copySub = async (encrypted: boolean) => {
+    if (user.subscription_suspended) {
+      notify?.(`${user.username} 的订阅拉取已暂停`, 'warning')
+      return
+    }
+    const useAge = isAgeFormat && (encrypted || ageRequired)
+    if (useAge && !ageKey) {
+      notify?.(`${user.username} 尚未配置 Age 公钥`, 'warning')
+      return
+    }
+    if (useAge && !ageRequired && !ageEnabled) {
+      notify?.(`${user.username} 尚未开启 Age 加密`, 'warning')
+      return
+    }
+    const url = subscriptionURLForUser(user, subscriptionFormat, useAge)
+    if (!url) {
+      notify?.(`${user.username} 尚无有效订阅令牌`, 'warning')
+      return
+    }
+    const ok = await copyText(url)
+    const copiedMessage = `${useAge ? 'Age 加密' : '普通'}订阅链接已复制${user.subscription_burn_after_read ? '，首次读取后失效' : ''}`
+    notify?.(ok ? copiedMessage : '复制失败，请手动复制', ok ? 'success' : 'error')
+  }
+
+  const configureCustomPath = async () => {
+    if (!customEnabled) return
+    const value = await dialogs.prompt({ title: `设置 ${user.username} 的自定义路径`, message: '填写 3-64 位小写字母、数字、- 或 _。该路径是可猜测的公开访问凭证。', defaultValue: user.subscription_custom_path || '', placeholder: 'my-subscription' })
+    if (value === null) return
+    const alias = value.trim().toLowerCase()
+    if (!alias) return
+    const confirmed = await dialogs.confirm({ title: '确认保存公开路径', message: `将启用 /s/${alias}，请确认其中不包含账号或其他隐私信息。`, confirmText: '保存路径', tone: 'danger' })
+    if (!confirmed) return
+    try {
+      await client.request(`/users/${user.id}/subscription-custom-path`, { method: 'PUT', body: JSON.stringify({ alias }) })
+      await load()
+      notify?.(`${user.username} 的自定义路径已保存`, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
+  }
+
+  const copyCustomPath = async () => {
+    if (!hasCustomPath || !customEnabled || user.subscription_suspended) return
+    const encrypted = isAgeFormat && ageRequired
+    if (encrypted && !ageKey) {
+      notify?.(`${user.username} 尚未配置 Age 公钥`, 'warning')
+      return
+    }
+    const ok = await copyText(subscriptionURLForCustomPath(String(user.subscription_custom_path || ''), subscriptionFormat, encrypted))
+    notify?.(ok ? `${user.username} 的自定义订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
+  }
+
+  const deleteCustomPath = async () => {
+    if (!hasCustomPath) return
+    const confirmed = await dialogs.confirm({ title: '删除自定义路径', message: `/s/${user.subscription_custom_path} 将立即失效。`, confirmText: '删除路径', tone: 'danger' })
+    if (!confirmed) return
+    try {
+      await client.request(`/users/${user.id}/subscription-custom-path`, { method: 'DELETE' })
+      await load()
+      notify?.(`${user.username} 的自定义路径已删除`, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
+  }
+
+  const setPolicy = async (mode: SubscriptionCustomPathPolicy) => {
+    if (busyPath) return
+    try {
+      await client.request(`/users/${user.id}/subscription-custom-path-policy`, { method: 'PATCH', body: JSON.stringify({ mode }) })
+      await load()
+      notify?.('自定义路径权限已更新', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
+  }
+
+  type MenuItem = { key: string; label: string; icon: React.ComponentType<{ size?: number; 'aria-hidden'?: boolean | 'true' | 'false' }>; disabled?: boolean; danger?: boolean; active?: boolean; onClick: () => void | Promise<void> }
+  type MenuGroup = { title?: string; items: MenuItem[] }
+
+  const securityGroup: MenuGroup = {
+    title: '安全策略',
+    items: [
+      {
+        key: 'burn',
+        label: user.subscription_burn_after_read ? '关闭阅后即焚' : '开启阅后即焚',
+        icon: Zap,
+        onClick: async () => { await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs, notify) },
+      },
+      { key: 'age', label: ageStatusLabel, icon: Shield, onClick: () => void configureUserAge() },
+      { key: 'path-inherit', label: '路径 · 跟随用户组', icon: LinkIcon, active: policyValue === 'inherit', disabled: busyPath, onClick: () => void setPolicy('inherit') },
+      { key: 'path-allow', label: '路径 · 允许', icon: LinkIcon, active: policyValue === 'allow', disabled: busyPath, onClick: () => void setPolicy('allow') },
+      { key: 'path-deny', label: '路径 · 禁止', icon: LinkIcon, active: policyValue === 'deny', disabled: busyPath, onClick: () => void setPolicy('deny') },
+    ],
+  }
+
+  const operationItems: MenuItem[] = []
+  if (isAgeFormat) {
+    operationItems.push({ key: 'age-link', label: '复制 Age 链接', icon: ShieldCheck, disabled: !canCopyAge || !isActive, onClick: () => void copySub(true) })
+  }
+  if (customEnabled) {
+    if (hasCustomPath) {
+      operationItems.push({ key: 'edit-path', label: '修改路径', icon: Edit3, disabled: busyAlias, onClick: () => void configureCustomPath() })
+      operationItems.push({ key: 'copy-custom', label: '复制自定义链接', icon: Copy, disabled: !isActive, onClick: () => void copyCustomPath() })
+      operationItems.push({ key: 'delete-path', label: '删除路径', icon: Trash2, danger: true, disabled: busyAlias, onClick: () => void deleteCustomPath() })
+    } else {
+      operationItems.push({ key: 'set-path', label: '设置路径', icon: Edit3, disabled: busyAlias, onClick: () => void configureCustomPath() })
+    }
+  } else {
+    operationItems.push({ key: 'path-disabled', label: '自定义路径未开放', icon: LinkIcon, disabled: true, onClick: () => undefined })
+  }
+  operationItems.push({ key: 'rotate', label: hasToken ? '轮换订阅' : '重新签发', icon: RotateCcw, onClick: () => void rotateSub(client, user, load, dialogs, notify) })
+  operationItems.push({ key: 'revoke', label: '吊销订阅', icon: Trash2, danger: true, disabled: !hasToken && !hasCustomPath, onClick: () => void revokeSub(client, user, load, dialogs, notify) })
+
+  const groups: MenuGroup[] = [securityGroup, { title: '订阅操作', items: operationItems }]
+
+  const totalItems = groups.reduce((acc, g) => acc + g.items.length, 0)
+
+  const placeMenu = () => {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const width = 196
+    const estimatedHeight = Math.min(totalItems * 30 + groups.length * 24 + 10, window.innerHeight - 16)
+    const height = menuRef.current?.offsetHeight || estimatedHeight
+    const gap = 6
+    const viewportPadding = 8
+    const roomBelow = window.innerHeight - rect.bottom - viewportPadding - gap
+    const roomAbove = rect.top - viewportPadding - gap
+    const openBelow = roomBelow >= height || roomBelow >= roomAbove
+    const left = Math.max(viewportPadding, Math.min(window.innerWidth - width - viewportPadding, rect.right - width))
+    const top = openBelow ? Math.min(rect.bottom + gap, window.innerHeight - height - viewportPadding) : Math.max(viewportPadding, rect.top - height - gap)
+    setMenuStyle({ position: 'fixed', top, left, width, maxHeight: window.innerHeight - viewportPadding * 2 })
+  }
+
+  useEffect(() => {
+    if (!isOpen) return
+    placeMenu()
+    const frame = window.requestAnimationFrame(placeMenu)
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as unknown as globalThis.Node
+      if (ref.current?.contains(target) || menuRef.current?.contains(target)) return
+      setIsOpen(false)
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setIsOpen(false)
+      buttonRef.current?.focus()
+    }
+    window.addEventListener('resize', placeMenu)
+    window.addEventListener('scroll', placeMenu, true)
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', placeMenu)
+      window.removeEventListener('scroll', placeMenu, true)
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isOpen, totalItems])
+
+  return (
+    <div ref={ref} className={isOpen ? 'server-actions-dropdown is-open' : 'server-actions-dropdown'}>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={event => { event.stopPropagation(); if (!isOpen) placeMenu(); setIsOpen(!isOpen) }}
+        className="ghost icon-button"
+        style={{ width: '30px', height: '30px', borderRadius: '999px', border: '1px solid var(--border)', display: 'grid', placeContent: 'center', backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)', color: 'var(--text-secondary)' }}
+        title="更多操作"
+        aria-label="更多操作"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+      >
+        <MoreHorizontal size={15} aria-hidden="true" />
+      </button>
+      {isOpen && menuStyle && createPortal(
+        <div ref={menuRef} className="server-actions-menu action-menu-portal" role="menu" style={menuStyle}>
+          {groups.map((group, groupIdx) => (
+            <React.Fragment key={group.title || groupIdx}>
+              {groupIdx > 0 && <div className="server-actions-divider" role="separator" />}
+              <div className="server-actions-section">
+                {group.title && <div className="server-actions-section-title">{group.title}</div>}
+                {group.items.map(item => {
+                  const Icon = item.icon
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      role="menuitem"
+                      disabled={item.disabled}
+                      onClick={event => { event.stopPropagation(); if (item.disabled) return; setIsOpen(false); void item.onClick() }}
+                      className={item.danger ? 'danger' : ''}
+                      style={item.active ? { background: 'var(--primary-soft)', color: 'var(--primary)' } : undefined}
+                    >
+                      <span className="server-action-icon" style={item.active ? { color: 'var(--primary)' } : undefined}><Icon size={14} aria-hidden="true" /></span>
+                      <span className="server-action-label">{item.label}</span>
+                      {item.active && <Check size={12} aria-hidden="true" style={{ color: 'var(--primary)', flexShrink: 0 }} />}
+                    </button>
+                  )
+                })}
+              </div>
+            </React.Fragment>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+
 function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPassword, onDelete }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -17981,7 +18237,7 @@ function Subscriptions({ data, client, load, notify }: any) {
       notify?.(`${user.username} 尚未配置 Age 公钥`, 'warning')
       return
     }
-    const ok = await copyText(subscriptionURLForCustomPath(user.subscription_custom_path, subscriptionFormat, encrypted))
+    const ok = await copyText(subscriptionURLForCustomPath(String(user.subscription_custom_path || ''), subscriptionFormat, encrypted))
     notify?.(ok ? `${user.username} 的自定义订阅链接已复制` : '复制失败，请重试', ok ? 'success' : 'error')
   }
 
@@ -18064,7 +18320,6 @@ function Subscriptions({ data, client, load, notify }: any) {
                 <span>用户</span>
                 <span>状态</span>
                 <span>订阅</span>
-                <span>安全策略</span>
                 <span>操作</span>
               </div>
               {filteredUsers.length ? filteredUsers.map(user => (
@@ -18091,29 +18346,10 @@ function Subscriptions({ data, client, load, notify }: any) {
                       ? <span className={`sub-pill ${user.subscription_custom_path_enabled ? 'ok' : 'warn'}`}>/s/{user.subscription_custom_path}</span>
                       : <span className="sub-pill warn">无自定义路径</span>}
                   </div>
-                  <div className="sub-security-stack">
-                    <label className="subscription-burn-toggle" title="开启后，链接首次成功获取订阅内容便立即失效">
-                      <Switch size="sm" checked={Boolean(user.subscription_burn_after_read)} onChange={checked => void setSubscriptionBurnPolicy(client, user, checked, load, dialogs, notify)} ariaLabel="阅后即焚" />
-                      <span>阅后即焚</span>
-                    </label>
-                    <button type="button" className="age-key-status" onClick={() => void configureUserAge(user)}>
-                      <Shield size={13} />{user.subscription_age_public_key ? ageRequired ? 'Age · 强制' : user.subscription_age_enabled ? 'Age · 已开启' : 'Age · 已保存' : '配置 Age 公钥'}
-                    </button>
-                    <Select value={user.subscription_custom_path_policy || 'inherit'} onChange={event => void setCustomPathPolicy('users', user.id, event.target.value as SubscriptionCustomPathPolicy)} disabled={customPathBusy === `users:${user.id}`} aria-label={`${user.username} 自定义路径策略`}>
-                      <option value="inherit">路径 · 跟随用户组</option>
-                      <option value="allow">路径 · 允许</option>
-                      <option value="deny">路径 · 禁止</option>
-                    </Select>
-                  </div>
                   <div className="sub-user-actions">
-                    {(!isAgeSubscriptionFormat(subscriptionFormat) || !ageRequired) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, false)} disabled={!user.subscription_token || user.subscription_suspended}>普通链接</button>}
-                    {isAgeSubscriptionFormat(subscriptionFormat) && <button type="button" className="ghost" onClick={() => void copyUserSub(user, true)} disabled={!user.subscription_token || user.subscription_suspended || !user.subscription_age_public_key || (!ageRequired && !user.subscription_age_enabled)}>Age 链接</button>}
+                    <button type="button" className="ghost" onClick={() => void copyUserSub(user, isAgeSubscriptionFormat(subscriptionFormat) && ageRequired)} disabled={!user.subscription_token || user.subscription_suspended || (isAgeSubscriptionFormat(subscriptionFormat) && ageRequired && !user.subscription_age_public_key)}><Copy size={13} />订阅地址</button>
                     <QuickOneTimeSubscriptionButton user={user} client={client} format={subscriptionFormat} encrypted={isAgeSubscriptionFormat(subscriptionFormat) && ageRequired} notify={notify} />
-                    <button type="button" className="ghost" onClick={() => void configureUserCustomPath(user)} disabled={!user.subscription_custom_path_enabled || customPathBusy === `alias:${user.id}`}><Edit3 size={14} />{user.subscription_custom_path ? '修改路径' : '设置路径'}</button>
-                    {user.subscription_custom_path && <button type="button" className="ghost icon-button" onClick={() => void copyUserCustomPath(user)} disabled={!user.subscription_custom_path_enabled || user.subscription_suspended} aria-label={`复制 ${user.username} 自定义订阅`} title="复制自定义订阅"><Copy size={14} /></button>}
-                    {user.subscription_custom_path && <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteUserCustomPath(user)} disabled={customPathBusy === `alias:${user.id}`} aria-label={`删除 ${user.username} 自定义路径`} title="删除自定义路径"><Trash2 size={14} /></button>}
-                    <button type="button" className="ghost" onClick={() => void rotateSub(client, user, load, dialogs, notify)}>{user.subscription_token ? '轮换' : '重新签发'}</button>
-                    <button type="button" className="ghost danger-text" onClick={() => void revokeSub(client, user, load, dialogs, notify)} disabled={!user.subscription_token && !user.subscription_custom_path}>吊销</button>
+                    <SubscriptionUserRowMenu user={user} client={client} load={load} notify={notify} subscriptionFormat={subscriptionFormat} ageRequired={ageRequired} customPathBusy={customPathBusy} />
                   </div>
                 </div>
               )) : <div className="sub-empty">{userSearchQuery ? '没有找到匹配的用户' : '暂无用户'}</div>}
@@ -18131,7 +18367,7 @@ function Subscriptions({ data, client, load, notify }: any) {
               {sshInbounds.map(inbound => {
                 const granted = Array.from(planGrantedUserIDsForEntry(data, inbound)).map(id => users.find(user => user.id === id)).filter(Boolean) as User[]
                 const endpoint = formatHostPort(inboundEntryAddress(data, inbound), inbound.port)
-                return <div className="sub-user-row" key={inbound.id}>
+                return <div className="sub-user-row ssh-row" key={inbound.id}>
                   <div className="sub-user-main"><span className="sub-user-avatar"><Lock size={14} /></span><div><strong>{inbound.name}</strong><small>{endpoint}</small></div></div>
                   <div className="sub-security-stack">
                     {granted.length ? granted.map(user => <span key={user.id} className="sub-pill ok">{user.username}</span>) : <span className="sub-pill warn">暂无授权用户</span>}
