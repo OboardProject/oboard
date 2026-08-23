@@ -2297,7 +2297,7 @@ export function App() {
     }
     const seq = ++loadSeq.current
     const requestToken = token
-    const background = Boolean(opts?.background || pageCacheRef.current[page])
+    const background = opts?.background === true ? true : opts?.background === false ? false : Boolean(pageCacheRef.current[page] && !opts?.forceFresh)
     const updateInProgressSnapshot = controllerUpdateInProgressRef.current
     dirtyPagesRef.current.delete(page)
     // Only show the global loading flag when this tab has no cached payload yet.
@@ -2849,7 +2849,7 @@ export function App() {
                   onRetry={() => void retryFailedSync()}
                 />
 
-                <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab)} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
+                <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab, { forceFresh: true })} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
               </div>
               <div ref={setProxyPathTopbarTarget} className="proxy-path-topbar-slot" aria-hidden={tab === 'proxy-paths' ? undefined : true} />
             </header>
