@@ -7,7 +7,7 @@ import { Input } from '../components/ui/input'
 import { Switch } from '../components/ui/switch'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
-import { X, Filter, RefreshCw, MoreHorizontal, Pencil, Info, Settings, Search, SlidersHorizontal, RotateCcw } from 'lucide-react'
+import { X, MoreHorizontal, Pencil, Info, Settings, Search, SlidersHorizontal, RotateCcw } from 'lucide-react'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -303,45 +303,45 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
               </button>
             )}
           </div>
-          <button
-            type="button"
-            className={`ghost icon-button node-filter-toggle-btn ${filtersOpen || Boolean(entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') ? 'is-active' : ''}`}
-            onClick={() => setFiltersOpen(v => !v)}
-            aria-label={filtersOpen ? '收起筛选' : '展开筛选'}
-            title={filtersOpen ? '收起筛选' : '展开筛选'}
-          >
-            <SlidersHorizontal size={14} />
-            {Boolean(entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') && (
-              <span className="node-filter-badge" />
-            )}
-          </button>
-          {Boolean(query || entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') && (
+          <div className="node-list-toolbar-tools">
             <button
               type="button"
-              className="ghost icon-button"
-              onClick={() => { setQuery(''); setEntryServerID(0); setEntryRegion(''); setExitRegion(''); setProtocol(''); setStatus(''); setPlanID(0); setUnassigned(false); setGroupBy(''); setSort('name'); setPage(1) }}
-              aria-label="重置筛选"
-              title="重置筛选"
+              className={`ghost icon-button node-filter-toggle-btn ${filtersOpen || Boolean(entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') ? 'is-active' : ''}`}
+              onClick={() => setFiltersOpen(v => !v)}
+              aria-label={filtersOpen ? '收起筛选' : '展开筛选'}
+              title={filtersOpen ? '收起筛选' : '展开筛选'}
             >
-              <RotateCcw size={14} />
+              <SlidersHorizontal size={14} />
+              {Boolean(entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') && (
+                <span className="node-filter-badge" />
+              )}
             </button>
-          )}
-          <label className="node-toolbar-switch-label">
-            <Switch size="sm" checked={showType} onChange={setShowType} ariaLabel="显示类型" />
-            <span>显示类型</span>
-          </label>
+            {Boolean(query || entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') && (
+              <button
+                type="button"
+                className="ghost icon-button"
+                onClick={() => { setQuery(''); setEntryServerID(0); setEntryRegion(''); setExitRegion(''); setProtocol(''); setStatus(''); setPlanID(0); setUnassigned(false); setGroupBy(''); setSort('name'); setPage(1) }}
+                aria-label="重置筛选"
+                title="重置筛选"
+              >
+                <RotateCcw size={14} />
+              </button>
+            )}
+            <label className="node-toolbar-switch-label">
+              <Switch size="sm" checked={showType} onChange={setShowType} ariaLabel="显示类型" />
+              <span>显示类型</span>
+            </label>
+            <span className="node-list-result-count">共 {total} 个节点</span>
+          </div>
           {isAdmin && selectedCount > 0 && (
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Button variant="default" size="sm" onClick={() => { setSyncMessage(''); setBatchDialogOpen(true) }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <div className="node-list-batch">
+              <Button variant="default" size="sm" onClick={() => { setSyncMessage(''); setBatchDialogOpen(true) }}>
                 <Settings size={14} />
                 批量设置（{selectedCount}）
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setSelected({})} style={{ fontSize: 12 }}>
-                取消
-              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelected({})}>取消</Button>
             </div>
           )}
-          <span className="node-list-result-count">共 {total} 个节点</span>
         </div>
 
         {filtersOpen && (
@@ -509,69 +509,72 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
                     onChange={e => setSelected(s => ({ ...s, [n.key]: e.target.checked }))}
                     aria-label={`选择 ${n.name}`}
                   />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <div className="node-mobile-card-copy">
+                    <div className="node-mobile-card-title-line">
                       <span className="node-mobile-card-name">{n.name}</span>
                       <Badge variant={n.status === 'ok' ? 'success' : n.status === 'disabled' ? 'secondary' : 'warning'}>
                         {statusLabels[n.status] || n.status}
                       </Badge>
                       {showType && <Badge variant="secondary">{nodeTypeLabel(n.type)}</Badge>}
                     </div>
-                    {n.has_global_name_override && <span className="muted" style={{ display: 'block', fontSize: 11 }}>来源：{n.source_name} · 全局别名</span>}
-                    {n.group && <span className="muted" style={{ display: 'block', fontSize: 11 }}>{n.group}</span>}
+                    {n.has_global_name_override && <span className="muted node-mobile-card-sub">来源：{n.source_name} · 全局别名</span>}
+                    {n.group && <span className="muted node-mobile-card-sub">{n.group}</span>}
                   </div>
-                </div>
-                <div className="node-mobile-card-actions">
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      className="node-row-icon-button"
-                      onClick={() => setRenameNode(n)}
-                      aria-label={`重命名 ${n.name}`}
-                      title="修改全局名称"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="node-row-icon-button"
-                    onClick={() => void openDetail(n)}
-                    aria-label={`查看详情 ${n.name}`}
-                    title="查看详情"
-                  >
-                    <Info size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="node-row-icon-button"
-                    onClick={e => {
-                      const rect = e.currentTarget.getBoundingClientRect()
-                      openScopeMenu(n, rect.right, rect.bottom + 4)
-                    }}
-                    aria-label={`节点操作 ${n.name}`}
-                    title="选择节点范围"
-                  >
-                    <MoreHorizontal size={14} />
-                  </button>
                 </div>
               </div>
               <div className="node-mobile-card-meta">
                 <div className="node-mobile-meta-item">
-                  <span className="label">服务器：</span>
+                  <span className="label">服务器</span>
                   <span className="value">{n.entry_server_name || '—'} ({n.entry_protocol || '—'})</span>
                 </div>
                 <div className="node-mobile-meta-item">
-                  <span className="label">用户数：</span>
+                  <span className="label">用户</span>
                   <span className="value">{n.effective_users} 人</span>
-                  {n.allow_exceptions > 0 && <Badge variant="success" style={{ marginLeft: 4 }}>+{n.allow_exceptions}</Badge>}
-                  {n.deny_exceptions > 0 && <Badge variant="destructive" style={{ marginLeft: 4 }}>-{n.deny_exceptions}</Badge>}
+                  {n.allow_exceptions > 0 && <Badge variant="success">+{n.allow_exceptions}</Badge>}
+                  {n.deny_exceptions > 0 && <Badge variant="destructive">-{n.deny_exceptions}</Badge>}
                 </div>
                 {n.plans && n.plans.length > 0 && (
                   <div className="node-mobile-meta-plans">
                     <PlanBadgesCell plans={n.plans} />
                   </div>
                 )}
+              </div>
+              <div className="node-mobile-card-actions">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="node-row-icon-button"
+                    onClick={() => setRenameNode(n)}
+                    aria-label={`重命名 ${n.name}`}
+                    title="修改全局名称"
+                  >
+                    <Pencil size={14} />
+                    <span>重命名</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="node-row-icon-button"
+                  onClick={() => void openDetail(n)}
+                  aria-label={`查看详情 ${n.name}`}
+                  title="查看详情"
+                >
+                  <Info size={14} />
+                  <span>详情</span>
+                </button>
+                <button
+                  type="button"
+                  className="node-row-icon-button"
+                  onClick={e => {
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    openScopeMenu(n, rect.right, rect.bottom + 4)
+                  }}
+                  aria-label={`节点操作 ${n.name}`}
+                  title="选择节点范围"
+                >
+                  <MoreHorizontal size={14} />
+                  <span>操作</span>
+                </button>
               </div>
             </div>
           ))}
@@ -582,18 +585,18 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
           )}
         </div>
 
-        <div className="section-toolbar" style={{ marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="node-assignments-pager">
+          <div className="node-pager-buttons">
             <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>上一页</Button>
-            <span className="muted">第 {page} / {totalPages} 页</span>
+            <span className="muted node-pager-status">第 {page} / {totalPages} 页</span>
             <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>下一页</Button>
           </div>
           {isAdmin ? (
-            <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>
-              {selectedCount > 0 ? `已在上方开启 ${selectedCount} 个节点的批量设置` : '勾选表格节点可在顶部开启批量设置'}
+            <span className="muted node-assignments-hint">
+              {selectedCount > 0 ? `已在上方开启 ${selectedCount} 个节点的批量设置` : '勾选节点可在顶部开启批量设置'}
             </span>
           ) : (
-            <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>套餐修改、临时例外与套餐分配需要管理员权限。</span>
+            <span className="muted node-assignments-hint">套餐修改、临时例外与套餐分配需要管理员权限。</span>
           )}
         </div>
       </>
