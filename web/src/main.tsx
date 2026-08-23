@@ -14183,17 +14183,28 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   const setHandshake = (patch: Record<string, any>) => setReality({ handshake: { ...handshake, ...patch } })
   const realityServerName = String(tls.server_name || handshake.server || defaultVLESSRealityServerName)
   const setRealityServerName = (value: string) => {
-    const serverName = value || defaultVLESSRealityServerName
+    const trimmed = String(value || '').trim()
+    const serverName = trimmed || defaultVLESSRealityServerName
     setTLS({ server_name: serverName, reality: { ...reality, handshake: { ...handshake, server: serverName } } })
   }
   const matchingPresets = nodePresets.filter(item => item.enabled !== false && item.kind === presetID)
+  const presetActive = Boolean(config.node_preset_id && matchingPresets.some(item => item.id === Number(config.node_preset_id)))
+  const activePreset = presetActive ? nodePresets.find(item => item.id === Number(config.node_preset_id)) : null
+  const presetHintSuffix = presetActive && activePreset ? `（已由预设「${activePreset.name}」提供，可覆盖）` : ''
+  const presetFieldClass = presetActive ? ' is-preset-applied' : ''
+  const [realityCustomForced, setRealityCustomForced] = useState(false)
+  useEffect(() => {
+    if (!presetActive) setRealityCustomForced(false)
+  }, [presetActive])
   const applyNodePreset = (presetIDValue: number) => {
     if (!presetIDValue) {
+      setRealityCustomForced(false)
       updateConfig({ node_preset_id: undefined })
       return
     }
     const preset = nodePresets.find(item => item.id === presetIDValue)
     if (!preset) return
+    setRealityCustomForced(false)
     updateConfig({ ...mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config), node_preset_id: preset.id })
   }
   const nodePresetPicker = matchingPresets.length > 0 ? <FormField label="套用节点预设" hint="默认配置来自设置中的节点预设；密钥仍由当前入口单独生成。"><Select value={Number(config.node_preset_id || 0) || ''} onChange={event => applyNodePreset(Number(event.target.value))}><option value="">不使用预设</option>{matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}{item.usage_count > 0 ? `（${item.usage_count} 个入口）` : ''}</option>)}</Select></FormField> : null
@@ -14213,22 +14224,38 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
       return [...builtinRealityDomains] as string[]
     })()
     const isCustomRealityDomain = Boolean(realityServerName && !presetRealityDomains.includes(realityServerName))
-    return <div className="preset-fields">
+    const showCustomSNI = isCustomRealityDomain || realityCustomForced
+    return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
       <div className="form-section-title">TCP / Reality / Vision 设置</div>
       {nodePresetPicker}
       <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
-      <FormField label="SNI / 握手域名" hint="同时用于客户端 SNI 和 Reality 伪装站点；模板首项 gateway.icloud.com 为默认。">
-        <Select value={isCustomRealityDomain ? '__custom__' : realityServerName} onChange={event => {
+      <FormField label="SNI / 握手域名" hint={`同时用于客户端 SNI 和 Reality 伪装站点；可从预设选择或输入自定义域名。模板首项 ${presetRealityDomains[0] || defaultVLESSRealityServerName} 为默认。${presetHintSuffix}`} className={presetActive ? 'is-preset-applied' : ''}>
+        <Select value={showCustomSNI ? '__custom__' : realityServerName} onChange={event => {
           const value = event.target.value
-          if (value === '__custom__') return
+          if (value === '__custom__') {
+            setRealityCustomForced(true)
+            return
+          }
+          setRealityCustomForced(false)
           setRealityServerName(value)
         }} aria-label="SNI / 握手域名">
           {presetRealityDomains.map(domain => <option key={domain} value={domain}>{domain}{domain === presetRealityDomains[0] ? '（默认）' : ''}</option>)}
-          {isCustomRealityDomain && <option value="__custom__">{realityServerName}（自定义）</option>}
+          <option value="__custom__">{isCustomRealityDomain ? `${realityServerName}（自定义）` : '自定义…'}</option>
         </Select>
       </FormField>
-      {isCustomRealityDomain && <FormField label="自定义 SNI / 握手域名" hint="自定义域名不在模板中，将按输入值保存。"><input value={realityServerName} onChange={event => setRealityServerName(event.target.value)} placeholder={defaultVLESSRealityServerName} /></FormField>}
-      <FormField label="握手端口"><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
+      {showCustomSNI && <FormField label="自定义 SNI / 握手域名" hint="输入任意域名（例如 www.example.com），不在模板列表中也将按输入值保存；支持自定义 Reality 握手目标。"><input value={realityServerName} onChange={event => {
+        const next = event.target.value
+        if (!next.trim()) {
+          setRealityCustomForced(false)
+          setRealityServerName(next)
+          return
+        }
+        const trimmed = next.trim()
+        if (presetRealityDomains.includes(trimmed)) setRealityCustomForced(false)
+        else setRealityCustomForced(true)
+        setRealityServerName(next)
+      }} placeholder={defaultVLESSRealityServerName} autoCapitalize="none" spellCheck={false} /></FormField>}
+      <FormField label="握手端口" className={presetActive ? 'is-preset-applied' : ''} hint={presetHintSuffix || undefined}><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
       <div className="reality-key-summary">
         <div><strong>Reality 密钥</strong><span>{realityKeyLoading ? '正在生成…' : String(reality.public_key || '').trim() ? `已生成 · 公钥 ${compactSecret(String(reality.public_key))}` : '保存时服务端会自动生成'}</span></div>
         <button type="button" className="ghost" onClick={onGenerateRealityKeypair} disabled={realityKeyLoading}>{realityKeyLoading ? '生成中' : '重新生成密钥对'}</button>
@@ -14236,31 +14263,31 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
       <FormField label="Short ID"><input value={String(reality.short_id || '')} onChange={e => setReality({ short_id: e.target.value })} placeholder="8-16 位十六进制" /></FormField>
     </div>
   }
-  if (presetID === 'vless-ws') return <div className="preset-fields">
+  if (presetID === 'vless-ws') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">WebSocket / TLS 设置</div>
     {nodePresetPicker}
-    {showTLSServerName && <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
-    <FormField label="WebSocket 路径"><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
-    <FormField label="Host 头"><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
+    {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
+    <FormField label="WebSocket 路径" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
+    <FormField label="Host 头" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
-  if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic') return <div className="preset-fields">
+  if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">TLS 设置</div>
     {nodePresetPicker}
-    {showTLSServerName && <FormField label="SNI 域名"><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
+    {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     {presetID === 'hy2-tls' && <>
-      <FormField label="上传带宽 Mbps"><input value={Number(config.up_mbps || 100)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
-      <FormField label="下载带宽 Mbps"><input value={Number(config.down_mbps || 100)} onChange={e => updateConfig({ down_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
+      <FormField label="上传带宽 Mbps" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={Number(config.up_mbps || 100)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
+      <FormField label="下载带宽 Mbps" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={Number(config.down_mbps || 100)} onChange={e => updateConfig({ down_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
     </>}
   </div>
-  if (presetID.startsWith('ss-')) return <div className="preset-fields">
+  if (presetID.startsWith('ss-')) return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">SS 设置</div>
     {nodePresetPicker}
-    <FormField label="加密方法"><Select value={String(config.method || '2022-blake3-aes-128-gcm')} onChange={e => updateConfig({ method: e.target.value })}>{shadowsocksMethods.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}</Select></FormField>
+    <FormField label="加密方法" className={presetFieldClass} hint={presetHintSuffix || undefined}><Select value={String(config.method || '2022-blake3-aes-128-gcm')} onChange={e => updateConfig({ method: e.target.value })}>{shadowsocksMethods.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}</Select></FormField>
     {!String(config.method || '').startsWith('2022-') && <div className="access-note compact"><strong>单用户入口</strong><span>多人使用请选择 SS 2022 或其他多用户协议。</span></div>}
   </div>
-  if (presetID === 'mieru-basic') return <div className="preset-fields">
+  if (presetID === 'mieru-basic') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     {nodePresetPicker}
-    <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint />
+    <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint presetApplied={presetActive} presetHint={presetHintSuffix || undefined} />
   </div>
   if (presetID === 'vless-tcp' || presetID === 'socks5-auth') return nodePresetPicker ? <div className="preset-fields">{nodePresetPicker}</div> : null
   if (presetID === 'snell-v4') return <SnellPresetFields config={config} updateConfig={updateConfig} version={4} snellProfiles={snellProfiles} />
@@ -14275,6 +14302,10 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
 function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; version: number; snellProfiles: SnellProfile[] }) {
   const profiles = snellProfiles.filter(p => p.enabled && Number(p.version) === version)
   const currentID = Number(config.snell_profile_id || 0)
+  const snellPresetActive = Boolean(currentID && profiles.some(p => p.id === currentID))
+  const snellPreset = snellPresetActive ? snellProfiles.find(p => p.id === currentID) : null
+  const snellHint = snellPresetActive && snellPreset ? `（已由预设「${snellPreset.name}」提供，可覆盖）` : ''
+  const snellFieldClass = snellPresetActive ? ' is-preset-applied' : ''
   const applyProfile = (profileID: number) => {
     if (!profileID) {
       updateConfig({ snell_profile_id: undefined })
@@ -14292,36 +14323,37 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
       reuse: profile.reuse || undefined,
     })
   }
-  if (version === 4) return <div className="preset-fields">
+  if (version === 4) return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">Snell v4 设置</div>
     <div className="access-note compact"><strong>协议形态</strong><span>v4 单 PSK；UDP relay 随 TCP 流承载，无需单独 UDP 端口。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
-    <FormField label="混淆模式"><Select value={String(config.obfs_mode || 'none')} onChange={event => updateConfig({ obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? undefined : config.obfs_host })}><option value="none">无</option><option value="http">HTTP</option></Select></FormField>
-    {String(config.obfs_mode || 'none') !== 'none' && <FormField label="混淆 Host"><input value={String(config.obfs_host || '')} onChange={event => updateConfig({ obfs_host: event.target.value })} placeholder="例如 bing.com" /></FormField>}
+    <FormField label="混淆模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.obfs_mode || 'none')} onChange={event => updateConfig({ obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? undefined : config.obfs_host })}><option value="none">无</option><option value="http">HTTP</option></Select></FormField>
+    {String(config.obfs_mode || 'none') !== 'none' && <FormField label="混淆 Host" className={snellFieldClass} hint={snellHint || undefined}><input value={String(config.obfs_host || '')} onChange={event => updateConfig({ obfs_host: event.target.value })} placeholder="例如 bing.com" /></FormField>}
   </div>
-  return <div className="preset-fields">
+  return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">Snell v6 设置</div>
     <div className="access-note compact"><strong>测试版协议</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
-    <FormField label="传输模式"><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value })}><option value="default">默认</option><option value="unshaped">无整形</option><option value="unsafe-raw">unsafe-raw</option></Select></FormField>
-    <div className="switch-form-row"><span className="switch-form-label">连接复用（reuse）</span><Switch checked={Boolean(config.reuse)} onChange={checked => updateConfig({ reuse: checked || undefined })} ariaLabel="Snell 连接复用" /></div>
+    <FormField label="传输模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value })}><option value="default">默认</option><option value="unshaped">无整形</option><option value="unsafe-raw">unsafe-raw</option></Select></FormField>
+    <div className={`switch-form-row${snellFieldClass}`} style={snellPresetActive ? { opacity: 0.56 } : undefined}><span className="switch-form-label">连接复用（reuse）</span><Switch checked={Boolean(config.reuse)} onChange={checked => updateConfig({ reuse: checked || undefined })} ariaLabel="Snell 连接复用" /></div>
   </div>
 }
 
-function MieruConfigFields({ config, updateConfig, rangeKey, udpAllowed = true, showUserHint = false }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; rangeKey: 'listen_ports' | 'server_ports'; udpAllowed?: boolean; showUserHint?: boolean }) {
+function MieruConfigFields({ config, updateConfig, rangeKey, udpAllowed = true, showUserHint = false, presetApplied = false, presetHint }: { config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; rangeKey: 'listen_ports' | 'server_ports'; udpAllowed?: boolean; showUserHint?: boolean; presetApplied?: boolean; presetHint?: string }) {
   const rawRanges = config[rangeKey]
   const rangeText = Array.isArray(rawRanges) ? rawRanges.join(', ') : typeof rawRanges === 'string' ? rawRanges : ''
   const updateRanges = (value: string) => {
     const ranges = value.split(',').map(item => item.trim()).filter(Boolean)
     updateConfig({ [rangeKey]: ranges.length ? ranges : undefined })
   }
-  return <div className="preset-fields">
+  const presetClass = presetApplied ? ' is-preset-applied' : ''
+  return <div className={`preset-fields${presetApplied ? ' is-preset' : ''}`}>
     <div className="form-section-title">Mieru 设置</div>
-    <FormField label="传输协议"><Select variant="segmented" value={String(config.transport || 'TCP').toUpperCase()} onChange={event => updateConfig({ transport: event.target.value })}><option value="TCP">TCP</option><option value="UDP" disabled={!udpAllowed}>UDP</option></Select></FormField>
-    <FormField label="额外端口范围"><input value={rangeText} onChange={event => updateRanges(event.target.value)} placeholder="8965-8970, 9000-9002" /></FormField>
-    <FormField label="复用级别"><Select value={String(config.multiplexing || 'MULTIPLEXING_DEFAULT')} onChange={event => updateConfig({ multiplexing: event.target.value })}>{mieruMultiplexingLevels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</Select></FormField>
-    <FormField label="流量模式"><input value={String(config.traffic_pattern || '')} onChange={event => updateConfig({ traffic_pattern: event.target.value || undefined })} /></FormField>
-    {showUserHint && <div className="switch-form-row"><span className="switch-form-label">强制用户提示</span><Switch checked={config.user_hint_is_mandatory !== false} onChange={checked => updateConfig({ user_hint_is_mandatory: checked })} ariaLabel="强制用户提示" /></div>}
+    <FormField label="传输协议" className={presetClass} hint={presetHint}><Select variant="segmented" value={String(config.transport || 'TCP').toUpperCase()} onChange={event => updateConfig({ transport: event.target.value })}><option value="TCP">TCP</option><option value="UDP" disabled={!udpAllowed}>UDP</option></Select></FormField>
+    <FormField label="额外端口范围" className={presetClass} hint={presetHint}><input value={rangeText} onChange={event => updateRanges(event.target.value)} placeholder="8965-8970, 9000-9002" /></FormField>
+    <FormField label="复用级别" className={presetClass} hint={presetHint}><Select value={String(config.multiplexing || 'MULTIPLEXING_DEFAULT')} onChange={event => updateConfig({ multiplexing: event.target.value })}>{mieruMultiplexingLevels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</Select></FormField>
+    <FormField label="流量模式" className={presetClass} hint={presetHint}><input value={String(config.traffic_pattern || '')} onChange={event => updateConfig({ traffic_pattern: event.target.value || undefined })} /></FormField>
+    {showUserHint && <div className={`switch-form-row${presetClass}`} style={presetApplied ? { opacity: 0.56 } : undefined}><span className="switch-form-label">强制用户提示</span><Switch checked={config.user_hint_is_mandatory !== false} onChange={checked => updateConfig({ user_hint_is_mandatory: checked })} ariaLabel="强制用户提示" /></div>}
   </div>
 }
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Layers, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
@@ -163,8 +163,15 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
   const realityDomains: string[] = Array.isArray(draft.config.reality_domains) ? (draft.config.reality_domains as string[]).filter(item => typeof item === 'string' && item.trim()) : [...builtinRealityDomains]
   const selectedRealityDomain = String(tls.server_name || handshake.server || realityDomains[0] || builtinRealityDomains[0])
   const isCustomRealityDomain = selectedRealityDomain.trim() !== '' && !realityDomains.includes(selectedRealityDomain)
+  const [realityCustomForced, setRealityCustomForced] = useState(false)
+  useEffect(() => {
+    if (isCustomRealityDomain) setRealityCustomForced(false)
+  }, [selectedRealityDomain, isCustomRealityDomain])
+  const showCustomReality = isCustomRealityDomain || realityCustomForced
   const setRealityDomain = (value: string) => {
-    const serverName = value || builtinRealityDomains[0]
+    const trimmed = String(value || '').trim()
+    const serverName = trimmed || builtinRealityDomains[0]
+    if (realityDomains.includes(trimmed)) setRealityCustomForced(false)
     setTLS({ server_name: serverName, reality: { ...reality, enabled: true, handshake: { ...handshake, server: serverName, server_port: Number(handshake.server_port || 443) } } })
   }
   const setRealityDomains = (value: string) => {
@@ -172,6 +179,8 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
     const normalized = domains.length ? Array.from(new Set(domains)) : [...builtinRealityDomains]
     const current = String(tls.server_name || handshake.server || normalized[0] || builtinRealityDomains[0])
     const nextSelected = normalized.includes(current) ? current : normalized[0]
+    if (!normalized.includes(nextSelected) && nextSelected.trim()) setRealityCustomForced(true)
+    else if (normalized.includes(String(tls.server_name || handshake.server || ''))) setRealityCustomForced(false)
     updateConfig({ reality_domains: normalized, tls: { ...tls, server_name: nextSelected, reality: { ...reality, enabled: true, handshake: { ...handshake, server: nextSelected, server_port: Number(handshake.server_port || 443) } } } })
   }
   return <div className="snell-profile-editor">
@@ -189,18 +198,29 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
         <input value={draft.default_port} onChange={event => setDraft({ ...draft, default_port: Number(event.target.value) || 0 })} inputMode="numeric" />
       </SettingsRow>
       {draft.kind === 'vless-reality' && <>
-        <SettingsRow label="握手域名模板" description="预设内置 6 个候选域名，第一个为默认；创建入口时可直接选择。">
-          <Select value={isCustomRealityDomain ? '__custom__' : selectedRealityDomain} onChange={event => {
+        <SettingsRow label="握手域名模板" description="预设内置 6 个候选域名，第一个为默认；创建入口时可直接选择或输入自定义域名。">
+          <Select value={showCustomReality ? '__custom__' : selectedRealityDomain} onChange={event => {
             const value = event.target.value
-            if (value === '__custom__') return
+            if (value === '__custom__') {
+              setRealityCustomForced(true)
+              return
+            }
+            setRealityCustomForced(false)
             setRealityDomain(value)
           }} aria-label="握手域名模板">
             {realityDomains.map(domain => <option key={domain} value={domain}>{domain}{domain === realityDomains[0] ? '（默认）' : ''}</option>)}
-            {isCustomRealityDomain && <option value="__custom__">{selectedRealityDomain}（自定义）</option>}
+            <option value="__custom__">{isCustomRealityDomain ? `${selectedRealityDomain}（自定义）` : '自定义…'}</option>
           </Select>
         </SettingsRow>
-        {isCustomRealityDomain && <SettingsRow label="自定义 SNI / 握手域名" description="自定义域名不在模板列表中，会作为当前选中值保存。">
-          <input value={selectedRealityDomain} onChange={event => setRealityDomain(event.target.value)} placeholder="gateway.icloud.com" />
+        {showCustomReality && <SettingsRow label="自定义 SNI / 握手域名" description="输入任意域名（例如 www.example.com），不在模板列表中也将作为当前选中值保存。">
+          <input value={selectedRealityDomain} onChange={event => {
+            const next = event.target.value
+            const trimmed = next.trim()
+            if (!trimmed) setRealityCustomForced(false)
+            else if (realityDomains.includes(trimmed)) setRealityCustomForced(false)
+            else setRealityCustomForced(true)
+            setRealityDomain(next)
+          }} placeholder="gateway.icloud.com" autoCapitalize="none" spellCheck={false} />
         </SettingsRow>}
         <SettingsRow label="模板域名列表" description="逗号或换行分隔，第一个为默认。留空恢复系统默认模板。">
           <input value={realityDomains.join(', ')} onChange={event => setRealityDomains(event.target.value)} placeholder={builtinRealityDomains.join(', ')} />
