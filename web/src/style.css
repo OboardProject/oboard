@@ -3537,10 +3537,13 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .sub-user-table-head,
 .sub-user-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1.1fr) 90px 105px 145px minmax(220px, 1.35fr);
+  grid-template-columns: minmax(160px, 1.15fr) 88px 132px minmax(220px, 1.05fr);
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
+}
+.sub-user-row.ssh-row {
+  grid-template-columns: minmax(180px, 1.05fr) minmax(140px, 1fr) minmax(200px, auto);
 }
 .sub-user-table-head {
   background: var(--surface-2);
@@ -3806,7 +3809,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
     min-width: 0;
   }
   .sub-user-table-head { display: none; }
-  .sub-user-row {
+  .sub-user-row,
+  .sub-user-row.ssh-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -8501,6 +8505,27 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   width: min(760px, calc(100vw - 40px));
   max-height: min(92dvh, 880px);
 }
+.backup-password-dialog,
+.backup-upload-dialog { width: min(520px, calc(100vw - 40px)); }
+.backup-password-dialog > form,
+.backup-upload-dialog > form { min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column; }
+.backup-password-dialog-body,
+.backup-upload-dialog-body { display: grid; gap: 16px; }
+.backup-password-fields { display: grid; gap: 14px; }
+.backup-password-change-note { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
+.backup-password-change-note > svg { flex: 0 0 auto; margin-top: 1px; }
+.backup-field-help { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.backup-form-error { min-height: 18px; margin: -4px 0 0 !important; color: var(--danger); font-size: 12px; line-height: 1.5; }
+.backup-upload-file-input { display: none; }
+.backup-upload-dropzone { width: 100%; min-height: 154px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 20px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-2); color: var(--text-secondary); box-shadow: none; text-align: center; }
+.backup-upload-dropzone:hover,
+.backup-upload-dropzone:focus-visible,
+.backup-upload-dropzone.is-dragging { border-color: var(--text-strong); background: var(--surface-solid); color: var(--text-strong); }
+.backup-upload-dropzone.is-dragging { outline: 2px solid color-mix(in srgb, var(--text-strong) 18%, transparent); }
+.backup-upload-dropzone.has-file { border-style: solid; border-color: color-mix(in srgb, var(--success) 38%, var(--border)); background: color-mix(in srgb, var(--success) 6%, var(--surface-solid)); }
+.backup-upload-dropzone strong { max-width: 100%; overflow-wrap: anywhere; color: var(--text-strong); font-size: 14px; }
+.backup-upload-dropzone span { color: var(--muted); font-size: 12px; font-weight: 500; }
+.backup-upload-password-field { gap: 0; }
 .backup-settings-dialog-body { padding: 0; }
 .backup-settings-form { display: grid; }
 .backup-form-section {
@@ -8569,32 +8594,28 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .backup-actions strong { margin: 0 0 4px; color: var(--text-strong); font-size: 14px; }
 .backup-actions > div { display: grid; gap: 3px; }
 .backup-actions span { color: var(--muted); font-size: 12px; }
-.backup-password-warning {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
-  border-radius: var(--radius-md);
-  background: var(--warning-soft);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.55;
-}
 .backup-actions button,
-.backup-import-actions button,
+.backup-import > button,
+.backup-password-setting-actions button,
 .backup-record-actions button { display: inline-flex; align-items: center; gap: 6px; }
-.backup-import-actions button { white-space: nowrap; }
+.backup-import > button,
+.backup-password-setting-actions button { white-space: nowrap; }
+.backup-password-setting,
 .backup-import {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 14px;
   padding: 18px 0 0;
   border-top: 1px solid var(--border);
 }
+.backup-password-setting > div:first-child,
 .backup-import > div:first-child { min-width: 0; }
-.backup-import-actions { display: flex; flex: 1 1 auto; justify-content: flex-end; align-items: center; gap: 8px; }
-.backup-import-actions input[type="file"] { display: none; }
-.backup-import-actions input[type="password"] { min-width: 190px; }
+.backup-password-setting h3,
+.backup-import h3 { margin: 0 0 4px; color: var(--text-strong); font-size: 14px; }
+.backup-password-setting p,
+.backup-import p { margin: 0; font-size: 12px; line-height: 1.55; }
+.backup-password-setting-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .backup-records .settings-card-head { padding-bottom: 10px; }
 .backup-record-list { display: grid; gap: 8px; }
 .backup-record {
@@ -8619,7 +8640,9 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   .backup-policy-grid { grid-template-columns: 1fr; }
   .backup-card-head-actions { width: 100%; justify-content: space-between; }
   .backup-settings-summary { align-items: flex-start; }
-  .backup-settings-dialog { width: 100%; }
+  .backup-settings-dialog,
+  .backup-password-dialog,
+  .backup-upload-dialog { width: 100%; }
   .backup-dialog-grid { grid-template-columns: minmax(0, 1fr); }
   .backup-form-section { padding: 14px 12px; }
   .backup-form-section-head { display: grid; gap: 10px; }
@@ -8630,11 +8653,12 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   .backup-settings-dialog-actions > button:first-child { grid-column: 1 / -1; }
   .backup-destination-head,
   .backup-actions,
+  .backup-password-setting,
   .backup-import,
   .backup-record { align-items: stretch; flex-direction: column; }
-  .backup-import-actions { width: 100%; justify-content: stretch; flex-wrap: wrap; }
-  .backup-import-actions input[type="password"] { min-width: 0; flex: 1 1 180px; }
-  .backup-import-actions button { flex: 1 1 auto; justify-content: center; }
+  .backup-password-setting-actions { width: 100%; justify-content: space-between; }
+  .backup-import > button { justify-content: center; }
+  .backup-upload-dropzone { min-height: 132px; }
   .backup-record-actions { justify-content: flex-end; }
 }
 
