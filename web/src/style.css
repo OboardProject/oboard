@@ -12397,6 +12397,48 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   white-space: nowrap;
 }
 
+.user-table-traffic {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 150px;
+}
+
+.user-table-traffic-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.user-table-traffic-copy span:first-child {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.user-table-traffic-copy span:last-child {
+  color: var(--text-muted);
+}
+
+.user-table-traffic-bar {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--border-color);
+}
+
+.user-table-traffic-bar > div {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-primary);
+}
+
+.user-table-traffic-bar > div.is-warning { background: var(--color-warning); }
+.user-table-traffic-bar > div.is-danger { background: var(--color-danger); }
+
 .user-subscription-actions {
   width: 100%;
   min-width: 0;
@@ -12576,7 +12618,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .user-data-table.is-scoped .user-col-plan { grid-column: 1 / 5; }
   .user-data-table.is-scoped .user-col-limit { grid-column: 5 / -1; }
 
-  .user-data-table .user-col-traffic > div { max-width: none !important; }
+  .user-data-table .user-table-traffic { max-width: none; }
   .user-data-table .user-col-subscription .user-subscription-actions { max-width: none; }
 
   .user-management-layout {
@@ -12639,31 +12681,105 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 @container user-management (max-width: 600px) {
+  .user-data-table tbody {
+    gap: 8px;
+  }
+
   .user-data-table tbody tr {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 9px 12px;
-    padding: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    padding: 10px 12px;
   }
-  .user-data-table .user-col-user { grid-column: 1; grid-row: 1; }
-  .user-data-table .user-col-actions { grid-column: 2; grid-row: 1; }
-  .user-data-table .user-col-plan { grid-column: 1 / -1; grid-row: 2; }
-  .user-data-table .user-col-limit { grid-column: 1 / -1; grid-row: 3; }
-  .user-data-table .user-col-groups { grid-column: 1 / -1; grid-row: 4; justify-content: flex-start; }
-  .user-data-table .user-col-traffic { grid-column: 1 / -1; grid-row: 5; }
+
+  .user-data-table tbody td[data-label]::before {
+    display: none;
+  }
+
+  .user-data-table .user-col-user {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .user-data-table .user-col-actions {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  .user-data-table .user-table-period,
+  .user-data-table .user-table-identity .badge-success {
+    display: none;
+  }
+
+  .user-data-table .user-col-plan,
+  .user-data-table .user-col-limit,
+  .user-data-table .user-col-groups,
+  .user-data-table .user-col-traffic {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 46%;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
+  .user-data-table .user-table-group {
+    display: inline;
+    max-width: 9em;
+    font-size: 12px;
+  }
+
+  .user-data-table .user-table-traffic {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    max-width: none;
+  }
+
+  .user-data-table .user-table-traffic-copy {
+    gap: 4px;
+    justify-content: flex-start;
+  }
+
+  .user-data-table .user-table-traffic-bar {
+    width: 42px;
+    height: 4px;
+  }
+
   .user-data-table td.user-col-subscription {
-    grid-column: 1 / -1;
-    grid-row: 6;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
+    flex: 1 1 100%;
+    display: block;
+    padding-top: 2px;
   }
-  .user-data-table .user-col-subscription::before { margin-bottom: 2px; }
-  .user-data-table .user-col-subscription .user-subscription-actions { max-width: none; }
-  .user-data-table.is-scoped .user-col-traffic { grid-row: 4; }
-  .user-data-table.is-scoped td.user-col-subscription { grid-row: 5; }
+
+  .user-data-table .user-col-subscription .user-subscription-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    max-width: none;
+  }
+
+  .user-data-table .user-subscription-button,
+  .user-data-table .user-col-subscription .user-subscription-button {
+    min-height: 34px;
+    height: 34px;
+  }
+
+  .user-data-table .user-row-icon-button {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
 }
 
 @container user-management (max-width: 360px) {
-  .user-subscription-actions { grid-template-columns: minmax(0, 1fr); }
+  .user-data-table .user-col-plan,
+  .user-data-table .user-col-limit,
+  .user-data-table .user-col-groups,
+  .user-data-table .user-col-traffic {
+    max-width: 100%;
+  }
 }
 
 .user-form-dialog {

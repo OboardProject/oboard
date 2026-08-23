@@ -16339,19 +16339,14 @@ function UserManagement({ data, client, load }: any) {
                     </span>
                   </td>}
                   <td className="user-col-traffic" data-label="流量配额">
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', maxWidth: '150px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px' }}>
-                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{formatBytes(usr.traffic_used_bytes || 0)}</span>
-                        <span style={{ color: 'var(--text-muted)' }}>共 {limits.traffic > 0 ? formatBytes(limits.traffic) : '不限量'}</span>
+                    <div className="user-table-traffic">
+                      <div className="user-table-traffic-copy">
+                        <span>{formatBytes(usr.traffic_used_bytes || 0)}</span>
+                        <span>共 {limits.traffic > 0 ? formatBytes(limits.traffic) : '不限量'}</span>
                       </div>
                       {limits.traffic > 0 && (
-                        <div style={{ width: '100%', height: '5px', backgroundColor: 'var(--border-color)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ 
-                            width: `${Math.min(100, usagePercent)}%`, 
-                            height: '100%', 
-                            backgroundColor: usagePercent > 90 ? 'var(--color-danger)' : usagePercent > 70 ? 'var(--color-warning)' : 'var(--color-primary)', 
-                            borderRadius: '3px' 
-                          }} />
+                        <div className="user-table-traffic-bar" aria-hidden="true">
+                          <div className={usagePercent > 90 ? 'is-danger' : usagePercent > 70 ? 'is-warning' : ''} style={{ width: `${Math.min(100, usagePercent)}%` }} />
                         </div>
                       )}
                     </div>
