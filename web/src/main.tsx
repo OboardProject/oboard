@@ -8818,7 +8818,9 @@ function ServerMonitorMetricCard({
         </div>
         <div className="server-monitor-card-stat-block">
           <div className="server-monitor-card-stat-main"><strong>{displayMain}</strong></div>
-          {displaySub ? <div className="server-monitor-card-stat-sub"><small>{displaySub}</small></div> : null}
+          <div className="server-monitor-card-stat-sub" style={displaySub ? undefined : { visibility: 'hidden' }} aria-hidden={!displaySub ? true : undefined}>
+            <small>{displaySub || '\u00A0'}</small>
+          </div>
         </div>
       </header>
 
