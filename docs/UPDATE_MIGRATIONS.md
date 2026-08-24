@@ -54,31 +54,52 @@
 | `controller-db-20260818-node-workspace` | Controller | SQLite schema / data backfill | `dev-7ab2640d5900` | 待发布 | 生效中 | - |
 | `controller-db-20260818-telegram-operations` | Controller | SQLite schema / data lifecycle | `dev-61ea3fa84687` | 待发布 | 生效中 | - |
 | `controller-db-20260819-configuration-revision-watermark` | Controller | SQLite schema / runtime recovery | `dev-25ab8ae0b776` | 待发布 | 生效中 | - |
-| `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-b5b1829cb668` | 待发布 | 生效中 | - |
 | `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
+| `controller-db-20260822-subscription-output-filters` | Controller | SQLite schema | `dev-e8a8239c3cd79` | 待发布 | 生效中 | - |
+| `controller-db-20260824-anytls-padding-presets` | Controller | SQLite seed / data backfill | `dev-8e5b40cc790e` | 待发布 | 生效中 | - |
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
-| `controller-db-20260824-family-split-routing` | Controller / Agent / kernel | SQLite schema / runtime capability | `dev-c3dc8525029d` | 待发布 | 生效中 | - |
+| `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
-### controller-db-20260824-family-split-routing
+### controller-db-20260825-server-traffic-quota
+
+- **引入日期：** 2026-08-25
+- **引入提交：** `OboardProject/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
+- **引入版本：** `dev-05b18611eabf`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite schema
+- **原因：** 服务器统计需要按重置周期配置并展示周期流量限额，用于运维侧的容量规划与阈值提醒；限额仅用于展示与计算使用率，不阻断现有连接或改变部署。
+- **源状态：** `server_telemetry` 没有 `traffic_limit_bytes` 列，服务器卡片仅展示实时速率和本周期已用总量，无法配置限额或显示使用率。
+- **目标状态：** `server_telemetry` 存在 `traffic_limit_bytes integer not null default 0`（0 表示不限量）；Controller 在创建/更新时校验 `>=0` 并持久化，MCP `servers.get/list` 输出包含该字段；Web 在服务器创建/编辑弹窗中提供“周期流量限额”输入，并在卡片、列表与详情中展示 `已用 / 限额 · 百分比` 及细进度条，限额为 0 时保持原有总量展示。
+- **实现位置：** `oboard/internal/model/types.go`、`oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`oboard/internal/controller/server.go`、`oboard/internal/capability/catalog.go`、`oboard/internal/application/dto.go`；`oboard/web/src/components/proxy-path/types.ts`、`oboard/web/src/main.tsx`、`oboard/web/src/style.css`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `ensureColumn` 幂等添加列，默认 0 保持旧行为。
+- **数据影响：** 仅新增带默认值的限额列；不重写已有流量统计或重置周期数据，不改变 Agent 上报或部署。
+- **重复执行：** `ensureColumn` 仅当列缺失时执行 `ALTER TABLE`，重复打开不改写已保存限额。
+- **失败行为：** 列扩展失败会阻止 Controller 打开数据库；限额校验失败返回 400，不写入持久化状态。
+- **回归测试：** 现有 `server` 相关 Store/Controller 套件覆盖读写；新增限额为 0 时保持不限量展示，限额 >0 时卡片展示 `已用/限额` 与进度条语义正确，MCP 输出通过 `servers.get` schema 校验。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `traffic_limit_bytes`，且恢复入口不得导入缺少该列的 `server_telemetry`。
+- **移除状态：** 生效中。
+
+### controller-db-20260824-anytls-padding-presets
 
 - **引入日期：** 2026-08-24
-- **引入提交：** `OboardProject/oboard@c3dc8525029dec95bde3571933e76fd55cf0fdf4`；运行时能力：`OboardProject/oboard-agent@9c05660552f3518ef21bf5adb67afd0e98bf40b6`
-- **引入版本：** `dev-c3dc8525029d`
+- **引入提交：** `OboardProject/oboard@8e5b40cc790e3b8e097d584936dab6c6e5b2e2a9`
+- **引入版本：** `dev-8e5b40cc790e`
 - **首次稳定版：** 待发布
-- **所有者：** Controller `internal/store`、`internal/controller`、`internal/core`；Agent `internal/agent`；kernel `internal/protocol/familyselector`
-- **类别：** SQLite schema / runtime capability metadata
-- **原因：** 一个逻辑入站需要把 IPv4 与 IPv6 目标绑定到两条既有代理路径，并在下发 OBoard `family-selector` 之前确认决策服务器内核具备对应能力；旧 schema 无法持久化两条家族目标、域名优先策略或内核能力集合。
-- **源状态：** `routing_rules` 没有 `ipv4_target_proxy_path_id`、`ipv6_target_proxy_path_id`、`family_dns_strategy`；`servers` 没有 `kernel_capabilities_json`，旧 Agent 健康报告也不携带 `kernel_capabilities`。
-- **目标状态：** 三个规则列存在，旧规则保持两个目标为空且策略为 `auto`；服务器以有界 JSON 数组保存 Agent 从 `oboard-sb version` 解析的能力。只有启用的 `family_split` 规则要求在线且报告 `family_selector_v1`，停用规则可保存并在再次启用时重验。
-- **实现位置：** `oboard/internal/store/store.go` 的启动 schema 与 `migrateRoutingRuleScopes`；`oboard/internal/store/health_report.go`；`oboard-agent/internal/agent/agent.go`；`oboard-agent/kernel/oboard-sb/internal/protocol/familyselector`。
-- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时检查并补列/索引；Agent/内核通过正常签名更新获得新 capability，后续健康报告刷新服务器运行时元数据。
-- **数据影响：** 只新增列和索引，不改写既有规则动作或流量。旧服务器能力默认为空；未启用家族分流时行为不变，启用前必须先更新 Agent/内核并成功上报能力。
-- **重复执行：** 补列前检查真实表结构，索引使用 `IF NOT EXISTS`；重复启动不改写现有目标或策略。能力报告按当前有界集合覆盖，重复报告相同集合结果不变。
-- **失败行为：** 任一 DDL/索引失败会阻止 Controller 打开数据库，不以部分 schema 运行。能力缺失、分支离线或家族入口不可达会在保存启用规则或编译期失败，且不会下发部分部署；停用规则不受可用性门阻塞。
-- **回归测试：** `TestRoutingRuleFamilySplitColumnsMigrateFromPreviousSchema` 从移除三个规则列/索引的真实上一状态打开并验证默认值与重复迁移；`TestServerListenModeInterfaceIPv6AndKernelCapabilitiesPersistAndMigrate` 从缺少 `kernel_capabilities_json` 的服务器表恢复并验证健康报告覆盖与幂等迁移。
-- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已经包含四个新列及两个目标索引；所有受支持 Agent/内核必须稳定报告 `family_selector_v1`，且恢复、回滚、滚动升级路径不能重新产生缺列 schema。未实施最老直接升级版本门时 DDL 迁移不得删除。
+- **所有者：** Controller `internal/store`、`internal/core`、Web
+- **类别：** SQLite seed / data backfill
+- **原因：** 原 `anytls-basic` 内置预设只启用 TLS，因而使用 sing-anytls 的上游默认填充；当前模型要求提供两套明确、可编辑且都不同于上游默认值的 OBoard 填充预设，并在入口保存前校验规则。
+- **源状态：** `node_presets` 只有 `kind='anytls-basic'` 的 TLS-only 内置行（`config_json={"tls":{"enabled":true}}`），没有 `anytls-large-padding`；未编辑的种子行保留初始 `updated_at=2026-01-01T00:00:00Z`。
+- **目标状态：** 未编辑的旧 `anytls-basic` 行原位改为“AnyTLS 均衡填充”并写入均衡规则；幂等新增“AnyTLS 大包填充”行。两个预设都使用服务端 inbound `padding_scheme`，Controller 不把该字段写入客户端订阅或 AnyTLS outbound。
+- **实现位置：** `oboard/internal/store/node_presets.go`、`store.go`；`oboard/internal/core/anytls_padding.go`、`protocols.go`、`subscription_formats.go`；`oboard/web/src/main.tsx`、`components/NodePresetsPanel.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时先按内置 `kind` 补种缺失行，再运行填充预设回填。
+- **数据影响：** 只改写仍保持原始种子时间和 TLS-only 配置的 `anytls-basic` 内置行；已编辑的内置行和自定义预设不改写。既有入口已保存的 `config_json` 不回填，后续新建或重新套用预设的入口使用新方案。
+- **重复执行：** 按 `kind+builtin` 判断缺失种子；旧行只有在原始时间与旧 JSON 同时匹配时回填，首次成功后不再匹配。重复打开不会新增同 kind 的内置行或覆盖编辑后的预设。
+- **失败行为：** 查询、补种、名称冲突检查或更新失败会阻止 Controller 打开数据库；不会留下只更新一部分入口配置的状态，因为迁移不改写入口。
+- **回归测试：** `TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin` 从真实旧 `node_presets` 表和 TLS-only 内置行打开数据库，验证原位回填、第二套预设补种、无重复 kind 和重复打开幂等；`TestNodePresetsSeededAndProtected`、`TestNormalizeNodePresetRejectsInvalidAnyTLSPadding` 覆盖当前种子与校验。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份都必须已包含两套 AnyTLS 预设，且不再可能导入初始时间戳的 TLS-only `anytls-basic` 行；当前种子与校验测试继续保留。
 - **移除状态：** 生效中。
 
 ### controller-db-20260823-node-presets
@@ -101,6 +122,26 @@
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `node_presets`。
 - **移除状态：** 生效中。
 
+### controller-db-20260822-subscription-output-filters
+
+- **引入日期：** 2026-08-22
+- **引入提交：** `OboardProject/oboard@e8a8239c3cd79`
+- **引入版本：** `dev-e8a8239c3cd79`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、Web
+- **类别：** SQLite schema
+- **原因：** 组合订阅（组合订阅输出）需要保存 Sub-Store 式有序过滤规则管线，在渲染时对合并节点列表执行按名字正则/协议/地区/分组的保留与排除。
+- **源状态：** `subscription_outputs` 没有 `filters_json` 列，所有输出直接输出全部选中节点。
+- **目标状态：** `filters_json` 列存在（默认 `''` = 不过滤），旧输出行为不变；保存时 Controller 校验规则语义（正则可编译、协议/地区白名单、分组归属），store 仅做 8192 字节上限保护。
+- **实现位置：** `oboard/internal/store/store.go`、`oboard/internal/store/node_workspace.go`；`oboard/internal/model/types.go`、`oboard/internal/core/subscription_filters.go`；`oboard/internal/controller/node_workspace.go`、`node_workspace_automation.go`、`oboard/internal/capability/node_workspace.go`；`oboard/web/src/pages/NodeWorkspacePage.tsx`、`style.css`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时执行幂等 `ensureColumn` 迁移。
+- **数据影响：** 仅新增可空过滤 JSON 列；不重写既有业务数据，不改变 Agent 配置；空过滤等于旧行为。
+- **重复执行：** `ensureColumn` 仅当列缺失时执行；重复打开和 `Migrate` 不会改写已保存的过滤规则。
+- **失败行为：** 列扩展失败阻止 Controller 打开数据库；损坏的 `filters_json` 按空规则表读取，不阻断订阅渲染。
+- **回归测试：** `TestSubscriptionOutputFiltersMigrateFromPreviousSchema` 从缺少该列的真实旧 schema 打开并验证默认不过滤、读写往返与重复迁移幂等；`TestSubscriptionOutputFiltersRoundTripLimitsAndCorruption` 覆盖存取、上限与损坏容错；Controller 测试覆盖 REST 保存/校验、预览统计与订阅下发过滤。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `filters_json`；恢复入口不得导入缺少过滤列的组合订阅 schema。
+- **移除状态：** 生效中。
+
 ### controller-db-20260822-server-expiry
 
 - **引入日期：** 2026-08-22
@@ -119,26 +160,6 @@
 - **失败行为：** 任一列扩展失败会阻止 Controller 打开数据库；到期/续期调度失败只记录日志，由下一分钟任务重试。
 - **回归测试：** `TestServerExpiryColumnsMigrateFromPreviousSchema` 从缺少新列的真实旧 schema 打开并验证默认值；`TestServerExpiryRoundTripAndRenewalState` 验证读写；Controller 测试覆盖自动续期、提醒去重、REST/MCP 延长。
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含上述列；恢复入口不得导入缺少到期字段的 schema。
-- **移除状态：** 生效中。
-
-### controller-db-20260821-routing-rule-dns-resolver
-
-- **引入日期：** 2026-08-21
-- **引入提交：** `OboardProject/oboard@b5b1829cb6680120783f0050739ea4ab7d328846`
-- **引入版本：** `dev-b5b1829cb668`
-- **首次稳定版：** 待发布
-- **所有者：** Controller `internal/store`、`internal/controller`、`internal/core`
-- **类别：** SQLite schema
-- **原因：** 分流规则需要按手动域名或远程规则集选择 DNS 解析器；路由规则本身需要持久保存用户选择的解析服务。
-- **源状态：** `routing_rules` 没有 DNS 解析器字段，Controller 无法为单条规则生成独立 DNS 规则。
-- **目标状态：** `routing_rules` 新增非空默认空字符串的 `dns_resolver`；Controller 使用规则匹配与 `rule_set` 生成 `dns.rules`，把命中规则交给所选 DNS 服务器，旧规则保持默认 DNS 行为。
-- **实现位置：** `oboard/internal/store/store.go`、`oboard/internal/model/types.go`、`oboard/internal/core/protocols.go`、`oboard/internal/controller/server.go`；Web 编排器与 MCP schema 同步增加字段。
-- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `migrateRoutingRuleScopes` 幂等补列。
-- **数据影响：** 新增列，已有规则默认空值，不改变任何现有配置或匹配语义。
-- **重复执行：** `pragma_table_info` 检查已存在列后跳过；重复执行不修改业务数据。
-- **失败行为：** DDL 失败阻止 Controller 打开数据库，不留下部分配置。
-- **回归测试：** `TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema` 从缺少 `dns_resolver` 的旧表启动，验证补列与重复迁移幂等。
-- **移除条件：** 在通用删除门槛之外，所有支持数据库和备份恢复路径必须已包含该列，且不存在未保存 DNS 选择的规则。
 - **移除状态：** 生效中。
 
 ### controller-db-20260819-configuration-revision-watermark
