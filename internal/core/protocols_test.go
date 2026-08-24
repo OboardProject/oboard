@@ -1746,6 +1746,69 @@ func TestGenerateServerConfigAcceptsVLESSRealityVisionAndStripsPublicKey(t *test
 	}
 }
 
+func TestValidateInboundConfigJSONReportsRealityFieldPath(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "legacy dest",
+			raw:  `{"tls":{"reality":{"enabled":true,"dest":"gateway.icloud.com:443"}}}`,
+			want: "config_json.tls.reality.dest: unsupported field",
+		},
+		{
+			name: "unknown handshake field",
+			raw:  `{"tls":{"reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443,"address":"legacy"}}}}`,
+			want: "config_json.tls.reality.handshake.address: unsupported field",
+		},
+		{
+			name: "invalid handshake port",
+			raw:  `{"tls":{"reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443.5}}}}`,
+			want: "config_json.tls.reality.handshake.server_port: must be an integer between 1 and 65535",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateInboundConfigJSON(model.ProtocolVLESS, tt.raw)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+			var fieldErr *ConfigFieldError
+			if !errors.As(err, &fieldErr) || fieldErr.ValidationPath() == "" {
+				t.Fatalf("error = %v, want located ConfigFieldError", err)
+			}
+		})
+	}
+}
+
+func TestGenerateServerConfigRejectsUnknownRealityField(t *testing.T) {
+	privateKey := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	_, err := GenerateServerConfig(
+		model.Server{ID: 1, Name: "edge"},
+		[]model.Inbound{{ID: 1, ServerID: 1, Name: "reality", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{
+  "flow": "xtls-rprx-vision",
+  "tls": {
+    "enabled": true,
+    "server_name": "gateway.icloud.com",
+    "reality": {
+      "enabled": true,
+      "dest": "gateway.icloud.com:443",
+      "handshake": {"server": "gateway.icloud.com", "server_port": 443},
+      "private_key": "` + privateKey + `",
+      "short_id": "abcd"
+    }
+  }
+}`, Enabled: true}},
+		nil,
+		nil,
+		[]model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "inbounds[0].tls.reality.dest unsupported field") {
+		t.Fatalf("error = %v, want precise generated Reality field path", err)
+	}
+}
+
 func TestGenerateServerConfigRejectsVLESSRealityWebSocketMix(t *testing.T) {
 	privateKey := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	_, err := GenerateServerConfig(

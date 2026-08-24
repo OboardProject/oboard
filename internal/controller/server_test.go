@@ -3065,6 +3065,50 @@ func configJSONFrom(t *testing.T, payload map[string]any) map[string]any {
 	return cfg
 }
 
+func TestPanelInboundWritesRejectUnknownRealityFieldWithPath(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "entry_ip_mode": "custom", "entry_address": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
+	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
+
+	invalidConfig := `{"tls":{"reality":{"enabled":true,"dest":"gateway.icloud.com:443"}}}`
+	badCreate := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": serverID, "name": "invalid", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443,
+		"config_json": invalidConfig, "enabled": true,
+	}, http.StatusBadRequest)
+	if badCreate["error_path"] != "config_json.tls.reality.dest" || !strings.Contains(fmt.Sprint(badCreate["error"]), "unsupported field") {
+		t.Fatalf("create error = %#v, want precise Reality path", badCreate)
+	}
+	items, err := db.ListInbounds(context.Background())
+	if err != nil || len(items) != 0 {
+		t.Fatalf("invalid create persisted inbounds=%#v err=%v", items, err)
+	}
+
+	created := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": serverID, "name": "valid", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443,
+		"config_json": `{}`, "enabled": true,
+	}, http.StatusCreated)
+	inboundID := int64(created["inbound"].(map[string]any)["id"].(float64))
+	badPatch := request(t, h, http.MethodPatch, "/api/v1/ui/inbounds/"+strconv.FormatInt(inboundID, 10), token, map[string]any{"config_json": invalidConfig}, http.StatusBadRequest)
+	if badPatch["error_path"] != "config_json.tls.reality.dest" || !strings.Contains(fmt.Sprint(badPatch["error"]), "unsupported field") {
+		t.Fatalf("patch error = %#v, want precise Reality path", badPatch)
+	}
+	stored, err := db.GetInbound(context.Background(), inboundID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ConfigJSON != "{}" {
+		t.Fatalf("invalid patch changed stored config: %s", stored.ConfigJSON)
+	}
+}
+
 func deriveRealityPublicForTest(t *testing.T, privateKey string) string {
 	t.Helper()
 	decoded, err := base64.RawURLEncoding.DecodeString(privateKey)

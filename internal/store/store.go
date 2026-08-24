@@ -20,6 +20,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -3054,6 +3055,11 @@ func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.T
 }
 
 func (s *Store) CreateInbound(ctx context.Context, v *model.Inbound) error {
+	if v.Protocol != model.ProtocolSSH && strings.TrimSpace(v.ConfigJSON) != "" {
+		if err := core.ValidateInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
+			return err
+		}
+	}
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
@@ -3074,6 +3080,11 @@ func (s *Store) CreateInbound(ctx context.Context, v *model.Inbound) error {
 	return nil
 }
 func (s *Store) UpdateInbound(ctx context.Context, v *model.Inbound) error {
+	if v.Protocol != model.ProtocolSSH && strings.TrimSpace(v.ConfigJSON) != "" {
+		if err := core.ValidateInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
+			return err
+		}
+	}
 	if v.EntryIPMode == "" {
 		v.EntryIPMode = model.EntryIPModeAuto
 	}

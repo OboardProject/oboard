@@ -154,7 +154,7 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatal(err)
 	}
 	description, _ := schema["description"].(string)
-	if !strings.Contains(description, "certificate_mode=external") || !strings.Contains(description, "tls.reality") || !strings.Contains(description, "authenticated SOCKS5") {
+	if !strings.Contains(description, "certificate_mode=external") || !strings.Contains(description, "tls.reality.handshake.server") || !strings.Contains(description, "tls.reality.dest is unsupported") || !strings.Contains(description, "exact JSON path") || !strings.Contains(description, "authenticated SOCKS5") {
 		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
 	}
 	raw := string(descriptor.InputSchema)

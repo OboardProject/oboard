@@ -6495,6 +6495,9 @@ func validateInbound(v model.Inbound) error {
 	if v.Protocol == model.ProtocolSSH {
 		return validateSSHInbound(v)
 	}
+	if err := core.ValidateInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
+		return err
+	}
 	a, err := core.AdapterFor(v.Protocol)
 	if err != nil {
 		return err
@@ -15997,7 +16000,12 @@ func fail(w http.ResponseWriter, err error, status int) {
 		write(w, status, map[string]any{"error": "internal server error"})
 		return
 	}
-	write(w, status, map[string]any{"error": err.Error()})
+	payload := map[string]any{"error": err.Error()}
+	var located interface{ ValidationPath() string }
+	if errors.As(err, &located) && strings.TrimSpace(located.ValidationPath()) != "" {
+		payload["error_path"] = located.ValidationPath()
+	}
+	write(w, status, payload)
 }
 func method(w http.ResponseWriter) { fail(w, errors.New("method not allowed"), 405) }
 func writeNotFoundJSON(w http.ResponseWriter) {

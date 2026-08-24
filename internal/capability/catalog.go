@@ -682,7 +682,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//   snell: single-PSK protocol; version 4/6 with optional
 		//     obfs_mode/obfs_host (v4) or mode (v6), reusable via
 		//     config_json.snell_profile_id.
-		inboundGuidance := "vless reality requires config_json.tls.reality + certificate_mode=external + tls=false; hysteria2/anytls require config_json.tls.enabled=true with a bound certificate; socks creates an authenticated SOCKS5 TCP/UDP inbound using each authorized user's proxy credentials; snell accepts config_json.version 4/6 + psk (v4 may add obfs_mode/obfs_host, v6 may add mode), or reference a shared parameter set via snell_profile_id; omitted config_json applies the protocol default preset"
+		inboundGuidance := "vless reality requires config_json.tls.reality.handshake.server + server_port with certificate_mode=external + tls=false; config_json.tls.reality.dest is unsupported, and invalid config fields are rejected with their exact JSON path before save; hysteria2/anytls require config_json.tls.enabled=true with a bound certificate; socks creates an authenticated SOCKS5 TCP/UDP inbound using each authorized user's proxy credentials; snell accepts config_json.version 4/6 + psk (v4 may add obfs_mode/obfs_host, v6 may add mode), or reference a shared parameter set via snell_profile_id; omitted config_json applies the protocol default preset"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"},

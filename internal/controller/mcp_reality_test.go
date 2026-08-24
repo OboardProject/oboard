@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/automation"
@@ -147,3 +148,34 @@ func TestMCPPartialRealityConfigIsCompleted(t *testing.T) {
 	}
 }
 
+func TestMCPRealityUnknownFieldFailsBeforeChangesetSave(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	node := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(map[string]any{"inbound": map[string]any{
+		"server_id": node.ID, "name": "Invalid Reality", "protocol": "vless",
+		"listen_ip": "0.0.0.0", "port": 10445,
+		"config_json": `{"tls":{"reality":{"enabled":true,"dest":"gateway.icloud.com:443"}}}`,
+		"enabled":     true,
+	}})
+	_, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "inbounds.create", Input: input}}})
+	if err == nil || !strings.Contains(err.Error(), "config_json.tls.reality.dest: unsupported field") {
+		t.Fatalf("error = %v, want precise Reality field path", err)
+	}
+	inbounds, listErr := db.ListInbounds(ctx)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(inbounds) != 0 {
+		t.Fatalf("invalid MCP inbound was persisted: %#v", inbounds)
+	}
+}

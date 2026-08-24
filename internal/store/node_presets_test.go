@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/core"
@@ -101,6 +102,33 @@ func TestNodePresetsCRUDAndReferenceGuard(t *testing.T) {
 	builtin := firstBuiltinNodePreset(t, s)
 	if err := s.DeleteNodePreset(ctx, builtin.ID); err == nil {
 		t.Fatal("expected builtin delete to fail")
+	}
+}
+
+func TestNodePresetRejectsUnknownRealityFieldBeforeSave(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	preset := model.NodePreset{
+		Name: "Invalid Reality", Protocol: "vless", Kind: "vless-reality",
+		ConfigJSON:  `{"tls":{"reality":{"enabled":true,"dest":"gateway.icloud.com:443"}}}`,
+		DefaultPort: 443, Enabled: true,
+	}
+	err = s.CreateNodePreset(context.Background(), &preset)
+	if err == nil || !strings.Contains(err.Error(), "config_json.tls.reality.dest: unsupported field") {
+		t.Fatalf("error = %v, want precise Reality field path", err)
+	}
+	items, listErr := s.ListNodePresets(context.Background())
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	for _, item := range items {
+		if item.Name == preset.Name {
+			t.Fatalf("invalid node preset was persisted: %#v", item)
+		}
 	}
 }
 

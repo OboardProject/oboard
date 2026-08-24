@@ -3,10 +3,15 @@ package core
 import (
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
+	"sort"
 	"strings"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 // ErrInvalidDesiredState marks a failure the operator can fix by changing the
@@ -30,6 +35,134 @@ func markInvalidDesiredState(err error) error {
 		return err
 	}
 	return invalidDesiredStateError{cause: err}
+}
+
+// ConfigFieldError identifies the exact JSON path rejected by the Controller.
+// It is shared by REST, MCP, automation and reusable-template writes so every
+// management surface reports the same actionable location before persistence.
+type ConfigFieldError struct {
+	Path    string
+	Problem string
+}
+
+func (e *ConfigFieldError) Error() string {
+	return e.Path + ": " + e.Problem
+}
+
+func (e *ConfigFieldError) ValidationPath() string { return e.Path }
+
+func (e *ConfigFieldError) Is(target error) bool { return target == ErrInvalidDesiredState }
+
+var inboundRealityFields = map[string]bool{
+	"enabled":             true,
+	"handshake":           true,
+	"private_key":         true,
+	"public_key":          true, // Controller-only derived client projection; stripped from the server config.
+	"short_id":            true,
+	"max_time_difference": true,
+}
+
+var inboundRealityHandshakeFields = map[string]bool{
+	"server":      true,
+	"server_port": true,
+}
+
+// ValidateInboundConfigJSON validates the protocol configuration document
+// before it is stored. It deliberately owns an OBoard allowlist instead of
+// importing sing-box: Controller and Agent remain separate projects, while a
+// field that the pinned kernel would reject can never be persisted through a
+// panel, REST, MCP or automation write.
+func ValidateInboundConfigJSON(protocol model.Protocol, raw string) error {
+	var config map[string]any
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&config); err != nil || config == nil {
+		if err == nil {
+			err = errors.New("must be a JSON object")
+		}
+		return &ConfigFieldError{Path: "config_json", Problem: err.Error()}
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return &ConfigFieldError{Path: "config_json", Problem: "must contain exactly one JSON object"}
+	}
+	return ValidateInboundConfigObject(protocol, config)
+}
+
+// ValidateInboundConfigObject is the object form used by node-preset
+// normalization after its defaults and operator overrides have been merged.
+func ValidateInboundConfigObject(protocol model.Protocol, config map[string]any) error {
+	tlsValue, exists := config["tls"]
+	if !exists || tlsValue == nil {
+		return nil
+	}
+	tls, ok := tlsValue.(map[string]any)
+	if !ok {
+		return &ConfigFieldError{Path: "config_json.tls", Problem: "must be an object"}
+	}
+	realityValue, exists := tls["reality"]
+	if !exists || realityValue == nil {
+		return nil
+	}
+	if protocol != model.ProtocolVLESS {
+		return &ConfigFieldError{Path: "config_json.tls.reality", Problem: fmt.Sprintf("is not supported for %s in OBoard", protocol)}
+	}
+	reality, ok := realityValue.(map[string]any)
+	if !ok {
+		return &ConfigFieldError{Path: "config_json.tls.reality", Problem: "must be an object"}
+	}
+	if field := firstUnsupportedField(reality, inboundRealityFields); field != "" {
+		return &ConfigFieldError{Path: "config_json.tls.reality." + field, Problem: "unsupported field; use handshake.server and handshake.server_port for the Reality fallback target"}
+	}
+	if value, exists := reality["enabled"]; exists && value != nil {
+		if _, ok := value.(bool); !ok {
+			return &ConfigFieldError{Path: "config_json.tls.reality.enabled", Problem: "must be boolean"}
+		}
+	}
+	for _, field := range []string{"private_key", "public_key", "short_id", "max_time_difference"} {
+		if value, exists := reality[field]; exists && value != nil {
+			if _, ok := value.(string); !ok {
+				return &ConfigFieldError{Path: "config_json.tls.reality." + field, Problem: "must be a string"}
+			}
+		}
+	}
+	handshakeValue, exists := reality["handshake"]
+	if !exists || handshakeValue == nil {
+		return nil
+	}
+	handshake, ok := handshakeValue.(map[string]any)
+	if !ok {
+		return &ConfigFieldError{Path: "config_json.tls.reality.handshake", Problem: "must be an object"}
+	}
+	if field := firstUnsupportedField(handshake, inboundRealityHandshakeFields); field != "" {
+		return &ConfigFieldError{Path: "config_json.tls.reality.handshake." + field, Problem: "unsupported field"}
+	}
+	if value, exists := handshake["server"]; exists && value != nil {
+		if _, ok := value.(string); !ok {
+			return &ConfigFieldError{Path: "config_json.tls.reality.handshake.server", Problem: "must be a string"}
+		}
+	}
+	if value, exists := handshake["server_port"]; exists && value != nil {
+		port, ok := exactJSONInt(value)
+		if !ok || !validPort(port) {
+			return &ConfigFieldError{Path: "config_json.tls.reality.handshake.server_port", Problem: "must be an integer between 1 and 65535"}
+		}
+	}
+	return nil
+}
+
+func firstUnsupportedField(object map[string]any, allowed map[string]bool) string {
+	fields := make([]string, 0)
+	for field := range object {
+		if !allowed[field] {
+			fields = append(fields, field)
+		}
+	}
+	sort.Strings(fields)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func ValidateGeneratedSingBoxConfig(config SingBoxConfig) error {
@@ -577,6 +710,13 @@ func (v *configValidator) validateAdapterTLS(path, typ string, item map[string]a
 		return false, false
 	}
 	reality := mapValue(tls["reality"])
+	if rawReality, exists := tls["reality"]; exists && rawReality != nil {
+		if reality == nil {
+			v.addf("%s.tls.reality must be an object", path)
+		} else {
+			v.validateRealityFieldShape(path+".tls.reality", reality)
+		}
+	}
 	realityEnabled := reality != nil && (boolValue(reality["enabled"]) || stringFromAny(reality["private_key"]) != "" || mapValue(reality["handshake"]) != nil)
 	if !inbound {
 		realityEnabled = reality != nil && (boolValue(reality["enabled"]) || stringFromAny(reality["public_key"]) != "")
@@ -631,6 +771,38 @@ func (v *configValidator) validateAdapterTLS(path, typ string, item map[string]a
 		v.addf("%s TLS enabled but certificate/key or ACME is missing", path)
 	}
 	return true, false
+}
+
+func (v *configValidator) validateRealityFieldShape(path string, reality map[string]any) {
+	fields := make([]string, 0, len(reality))
+	for field := range reality {
+		if !inboundRealityFields[field] {
+			fields = append(fields, field)
+		}
+	}
+	sort.Strings(fields)
+	for _, field := range fields {
+		v.addf("%s.%s unsupported field; use %s.handshake.server and %s.handshake.server_port for the Reality fallback target", path, field, path, path)
+	}
+	rawHandshake, exists := reality["handshake"]
+	if !exists || rawHandshake == nil {
+		return
+	}
+	handshake := mapValue(rawHandshake)
+	if handshake == nil {
+		v.addf("%s.handshake must be an object", path)
+		return
+	}
+	fields = fields[:0]
+	for field := range handshake {
+		if !inboundRealityHandshakeFields[field] {
+			fields = append(fields, field)
+		}
+	}
+	sort.Strings(fields)
+	for _, field := range fields {
+		v.addf("%s.handshake.%s unsupported field", path, field)
+	}
 }
 
 func hasServerTLSKeyMaterial(tls map[string]any) bool {

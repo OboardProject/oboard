@@ -41,6 +41,35 @@ func dropConfigurationRevisionTriggersForPreviousSchema(t *testing.T, db *sql.DB
 	}
 }
 
+func TestInboundStoreRejectsUnknownRealityField(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "edge"}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{
+		ServerID: server.ID, Name: "invalid", Protocol: model.ProtocolVLESS, Port: 443,
+		ConfigJSON: `{"tls":{"reality":{"enabled":true,"dest":"gateway.icloud.com:443"}}}`,
+		Enabled:    true,
+	}
+	err = s.CreateInbound(ctx, inbound)
+	if err == nil || !strings.Contains(err.Error(), "config_json.tls.reality.dest: unsupported field") {
+		t.Fatalf("error = %v, want precise Reality field path", err)
+	}
+	items, listErr := s.ListInbounds(ctx)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(items) != 0 {
+		t.Fatalf("invalid inbound was persisted: %#v", items)
+	}
+}
+
 func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
 	// Pre-create a world-readable placeholder so Open must tighten the mode.
