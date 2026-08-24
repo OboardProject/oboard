@@ -85,7 +85,7 @@ Region: %s
 IP stack: %s
 Notes: %s
 
-Call `+"`oboard_task`"+` first with intent `+"`server.onboard`"+` and these properties in params. Follow needs_input or choose_candidate with the continuation_id. If ready, explain the returned summary and commit only the prepared_id through `+"`oboard_commit_task`"+` after confirmation. Follow the Workflow and redeem its external action only when requested.
+Call `+"`oboard_task`"+` first with intent `+"`server.onboard`"+` and these properties in params. Names must be unique. If the name already exists, follow needs_input or choose_candidate to reissue enrollment for that server instead of creating a duplicate. Follow needs_input or choose_candidate with the continuation_id. If ready, explain the returned summary and commit only the prepared_id through `+"`oboard_commit_task`"+` after confirmation. Follow the Workflow and redeem its external action only when requested.
 
 Present the generated install command to the user for execution in their own terminal. Do not use SSH, remote shell, raw Agent tasks, or raw REST calls. Treat enrollment material as sensitive and non-persistent.`, args["name"], args["region_code"], args["ip_stack"], args["notes"])
 			},

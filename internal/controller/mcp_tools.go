@@ -457,7 +457,7 @@ func (s *Server) submitPreparedOperations(ctx context.Context, principal applica
 			return nil, marshalErr
 		}
 		operations = append(operations, automation.OperationRequest{Capability: operation.Capability, Input: rawInput})
-		if operation.Capability == "servers.onboard" {
+		if operation.Capability == "servers.onboard" || operation.Capability == "servers.enrollment.issue" {
 			kind = "server_onboarding"
 		} else if operation.Capability == "deployments.apply" {
 			kind = "deployment"
@@ -583,9 +583,9 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 		if token == "" || server == nil {
 			continue
 		}
-		installBBR := "0"
+		installBBR := agentInstallBBRValue(false)
 		if enabled, _ := server["bbr_enabled"].(bool); enabled {
-			installBBR = "1"
+			installBBR = agentInstallBBRValue(true)
 		}
 		base, err := s.publicBaseURL(ctx)
 		if err != nil {
@@ -593,7 +593,7 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 		}
 		action := map[string]any{
 			"type": "execute_on_target", "title": "安装 OBoard Agent",
-			"command":     "curl -fsSL " + shellSingleQuote(strings.TrimRight(base, "/")+"/install/agent.sh") + ` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR="${OBOARD_INSTALL_BBR:-0}" sh`,
+			"command":     agentInstallCommand(base, installBBR),
 			"environment": map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": installBBR},
 			"expires_at":  operation["enrollment_expires_at"],
 			"sensitive":   true, "must_not_log": true,

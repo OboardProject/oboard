@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -26,6 +28,11 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 		Name                        string                     `json:"name"`
 		RegionCode                  string                     `json:"region_code"`
 		IPStack                     string                     `json:"ip_stack"`
+		PortRangeStart              int                        `json:"port_range_start"`
+		PortRangeEnd                int                        `json:"port_range_end"`
+		InternalPortRangeStart      int                        `json:"internal_port_range_start"`
+		InternalPortRangeEnd        int                        `json:"internal_port_range_end"`
+		ExpiresAt                   string                     `json:"expires_at"`
 		LatencyProbeEnabled         *bool                      `json:"latency_probe_enabled"`
 		LatencyProbeMode            model.LatencyProbeMode     `json:"latency_probe_mode"`
 		LatencyProbePublicTarget    model.ConnectivityTarget   `json:"latency_probe_public_target"`
@@ -39,17 +46,48 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.Name == "" {
-		return PlanResult{}, errors.New("server name is required")
+		return PlanResult{
+			Kind:     "server_onboarding",
+			Valid:    false,
+			Warnings: []string{`必须提供 name，例如 {"name":"SJC"}。同名已存在时会规划 servers.enrollment.issue 重签发，而不是再创建一条服务器`},
+		}, nil
 	}
 	servers, err := s.ListServers(ctx, principal)
 	if err != nil {
 		return PlanResult{}, err
 	}
-	warnings := []string{}
+	existing := make([]ServerDTO, 0)
 	for _, server := range servers {
-		if strings.EqualFold(server.Name, input.Name) {
-			warnings = append(warnings, "服务器名称已存在")
+		if strings.EqualFold(strings.TrimSpace(server.Name), input.Name) {
+			existing = append(existing, server)
 		}
+	}
+	if len(existing) > 0 {
+		labels := make([]string, 0, len(existing))
+		candidates := make([]map[string]any, 0, len(existing))
+		var suggested map[string]any
+		for _, server := range existing {
+			label := fmt.Sprintf("%s#%d", server.Name, server.ID)
+			labels = append(labels, label)
+			changeset := map[string]any{
+				"base_revisions": map[string]string{},
+				"operation":      map[string]any{"capability": "servers.enrollment.issue", "input": map[string]any{"server_id": server.ID}},
+			}
+			if suggested == nil {
+				suggested = changeset
+			}
+			candidates = append(candidates, map[string]any{
+				"action": "reissue_enrollment", "server_id": server.ID, "name": server.Name,
+				"label": label, "agent_connected": server.AgentConnected,
+				"requires_external_install": true, "suggested_changeset": changeset,
+			})
+		}
+		return PlanResult{
+			Kind: "server_onboarding", Valid: true,
+			Warnings:           []string{fmt.Sprintf("服务器名称已存在（%s）。请重签发接入令牌或先删除重复记录，不要再次创建", strings.Join(labels, ", "))},
+			Candidates:         candidates,
+			SuggestedChangeset: suggested,
+		}, nil
 	}
 	if input.IPStack == "" {
 		input.IPStack = string(model.IPStackAuto)
@@ -73,18 +111,36 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	if input.LatencyProbeMaxTargets == 0 {
 		input.LatencyProbeMaxTargets = 64
 	}
+	publicStart, publicEnd := core.DefaultPublicPortRangeStart, core.DefaultPublicPortRangeEnd
+	if input.PortRangeStart > 0 {
+		publicStart = input.PortRangeStart
+	}
+	if input.PortRangeEnd > 0 {
+		publicEnd = input.PortRangeEnd
+	}
+	internalStart, internalEnd := core.DefaultInternalPortRangeStart, core.DefaultInternalPortRangeEnd
+	if input.InternalPortRangeStart > 0 {
+		internalStart = input.InternalPortRangeStart
+	}
+	if input.InternalPortRangeEnd > 0 {
+		internalEnd = input.InternalPortRangeEnd
+	}
 	server := map[string]any{
 		"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack,
 		"latency_probe_enabled": latencyEnabled, "latency_probe_mode": input.LatencyProbeMode, "latency_probe_public_target": input.LatencyProbePublicTarget,
 		"latency_probe_interval_seconds": input.LatencyProbeIntervalSeconds, "latency_probe_sample_count": input.LatencyProbeSampleCount,
 		"latency_probe_regions": input.LatencyProbeRegions, "latency_probe_max_targets": input.LatencyProbeMaxTargets,
-		"listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 60000,
+		"listen_ip": "0.0.0.0", "port_range_start": publicStart, "port_range_end": publicEnd,
+		"internal_port_range_start": internalStart, "internal_port_range_end": internalEnd,
+	}
+	if expires := strings.TrimSpace(input.ExpiresAt); expires != "" {
+		server["expires_at"] = expires
 	}
 	suggested := map[string]any{
 		"base_revisions": map[string]string{},
 		"operation":      map[string]any{"capability": "servers.onboard", "input": map[string]any{"server": server, "issue_enrollment_token": true}},
 	}
-	return PlanResult{Kind: "server_onboarding", Valid: len(warnings) == 0, Warnings: warnings, Candidates: []map[string]any{{"server": server, "requires_external_install": true, "suggested_changeset": suggested}}, SuggestedChangeset: suggested}, nil
+	return PlanResult{Kind: "server_onboarding", Valid: true, Warnings: []string{}, Candidates: []map[string]any{{"action": "create", "server": server, "requires_external_install": true, "suggested_changeset": suggested}}, SuggestedChangeset: suggested}, nil
 }
 
 func (s *Service) PlanProxyPath(ctx context.Context, principal Principal, raw json.RawMessage) (PlanResult, error) {

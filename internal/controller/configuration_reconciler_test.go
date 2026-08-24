@@ -54,6 +54,8 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		want bool
 	}{
 		{name: "servers.update", want: true},
+		{name: "servers.delete", want: true},
+		{name: "servers.enrollment.issue", want: false},
 		{name: "servers.update_agent", want: false},
 		{name: "servers.uninstall_agent", want: false},
 		{name: "servers.dns_policy.set", want: true},

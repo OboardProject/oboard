@@ -197,6 +197,10 @@ func defaultDescriptors() []Descriptor {
 	positiveID := map[string]any{"type": "integer", "minimum": 1}
 	stringValue := map[string]any{"type": "string"}
 	boolValue := map[string]any{"type": "boolean"}
+	publicPortStart := map[string]any{"type": "integer", "description": "公网自动托管端口池起点（默认 10000）"}
+	publicPortEnd := map[string]any{"type": "integer", "description": "公网自动托管端口池终点（默认 20000）"}
+	internalPortStart := map[string]any{"type": "integer", "description": "回环内部端口池起点（默认 30000）"}
+	internalPortEnd := map[string]any{"type": "integer", "description": "回环内部端口池终点（默认 59999）"}
 	server := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "name": stringValue, "status": stringValue,
 		"entry_address": stringValue, "entry_ip_mode": stringValue, "region_mode": stringValue,
@@ -206,8 +210,8 @@ func defaultDescriptors() []Descriptor {
 		"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 		"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},
 		"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
-		"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
-		"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
+		"port_range_start": publicPortStart, "port_range_end": publicPortEnd,
+		"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
 		"port_policy_revision": map[string]any{"type": "integer"},
 		"agent_connected":      boolValue, "agent_version": stringValue, "agent_build": stringValue,
 		"kernel_version": stringValue, "kernel_capabilities": map[string]any{"type": "array", "maxItems": 64, "items": stringValue}, "connection_audit_enabled": boolValue,
@@ -267,11 +271,15 @@ func defaultDescriptors() []Descriptor {
 		"warnings": stringArray(0, 100),
 		"candidates": map[string]any{"type": "array", "maxItems": 100, "items": closedObject(map[string]any{
 			"server": closedObject(map[string]any{
-				"name": stringValue, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue, "port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
+				"name": stringValue, "region_code": stringValue, "ip_stack": stringValue, "listen_ip": stringValue,
+				"port_range_start": publicPortStart, "port_range_end": publicPortEnd,
+				"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
 				"latency_probe_enabled": boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
 				"latency_probe_interval_seconds": map[string]any{"type": "integer"}, "latency_probe_sample_count": map[string]any{"type": "integer"},
 				"latency_probe_regions": map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")}, "latency_probe_max_targets": map[string]any{"type": "integer"},
+				"expires_at": stringValue,
 			}),
+			"action": stringValue, "name": stringValue, "label": stringValue, "agent_connected": boolValue,
 			"requires_external_install": boolValue, "entry_server_id": positiveID, "entry_inbound_id": positiveID,
 			"exit_server_id": positiveID, "exit_region": stringValue, "hops": map[string]any{"type": "integer"},
 			"objective": stringValue, "requires_topology_changeset": boolValue, "server_id": positiveID,
@@ -285,19 +293,22 @@ func defaultDescriptors() []Descriptor {
 	probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
 	probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
 	serverOnboardingInput := schemaObject(map[string]any{
-		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
-		"ip_stack":                 map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
+		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64, "description": "必填。同名已存在时规划结果改为重签发 enrollment，不会建议再创建一条服务器"}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
+		"ip_stack":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
+		"port_range_start": publicPortStart, "port_range_end": publicPortEnd,
+		"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
+		"expires_at":               nullableString(),
 		"resource_history_enabled": boolValue, "latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 		"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 		"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
-	}, "name")
+	})
 	proxyPlanInput := schemaObject(map[string]any{"entry_server_id": positiveID, "exit_region": map[string]any{"type": "string", "maxLength": 2}, "preferred_relay_regions": stringArray(0, 32), "max_hops": map[string]any{"type": "integer", "minimum": 1, "maximum": 5}, "avoid_server_ids": idArray(0, 100), "objective": map[string]any{"type": "string", "maxLength": 500}}, "entry_server_id")
 	deploymentInput := schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids")
 	incidentPlanInput := schemaObject(map[string]any{"incident_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "user_id": positiveID, "rule_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "anomaly_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "evidence_refs": stringArray(0, 128)}, "incident_id", "user_id")
 	descriptors := []Descriptor{
 		{Name: "inventory.read", Description: "读取受授权范围内的库存摘要", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "users": arrayOf(user), "server_count": map[string]any{"type": "integer"}, "online_count": map[string]any{"type": "integer"}, "user_count": map[string]any{"type": "integer"}}, "servers", "users", "server_count", "online_count", "user_count"), RequiredScopes: []string{"inventory:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
-		{Name: "servers.list", Description: "列出受授权服务器", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
-		{Name: "servers.get", Description: "读取服务器状态与能力", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromID},
+		{Name: "servers.list", Description: "列出受授权服务器。port_range_* 是公网托管池，internal_port_range_* 是回环内部池，与 servers.get 字段相同", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "servers.get", Description: "读取服务器状态与能力。port_range_* 是公网托管池，internal_port_range_* 是回环内部池，与 servers.list 字段相同", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromID},
 		{Name: "servers.metrics.read", Description: "读取服务器当前资源、连接数、系统负载与最近窗口内的流量指标", InputSchema: schemaObject(map[string]any{"server_id": positiveID, "window_hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 72}}, "server_id"), OutputSchema: rawSchema(map[string]any{"type": "object"}), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID},
 		{Name: "servers.latency_probes.read", Description: "读取服务器已采集的延迟探测结果，不触发新的探测任务", InputSchema: schemaObject(map[string]any{"server_id": positiveID, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 512}}, "server_id"), OutputSchema: rawSchema(map[string]any{"type": "object"}), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID},
 		{Name: "users.list", Description: "列出不包含凭据的用户摘要", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(user)), RequiredScopes: []string{"users:read"}, ResourceTypes: []string{"user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, SensitiveOutput: []string{"username", "nickname"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
@@ -306,7 +317,7 @@ func defaultDescriptors() []Descriptor {
 		{Name: "topology.read", Description: "读取脱敏后的当前代理拓扑", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "inbounds": arrayOf(inbound), "proxy_paths": arrayOf(path), "proxy_path_steps": arrayOf(step)}, "servers", "inbounds", "proxy_paths", "proxy_path_steps"), RequiredScopes: []string{"topology:read"}, ResourceTypes: []string{"server", "inbound", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "audit.incidents.list", Description: "列出结构化审计事件，不返回秘密或连接载荷", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(incident)), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "audit.incidents.get", Description: "读取一个结构化审计事件", InputSchema: schemaObject(map[string]any{"id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}}, "id"), OutputSchema: rawSchema(incident), RequiredScopes: []string{"audit:read"}, ResourceTypes: []string{"audit_incident", "user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: auditIncidentRefFromID},
-		{Name: "servers.onboarding.plan", Description: "根据当前库存规划节点接入", InputSchema: serverOnboardingInput, OutputSchema: planOutput, RequiredScopes: []string{"servers:plan"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "servers.onboarding.plan", Description: "根据当前库存规划节点接入。必须提供 name；同名已存在时 candidates 为 reissue_enrollment 而不是新建", InputSchema: withSchemaDescription(serverOnboardingInput, "name is required, for example {\"name\":\"SJC\"}. Existing names return reissue_enrollment candidates instead of a new server."), OutputSchema: planOutput, RequiredScopes: []string{"servers:plan"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "proxy_paths.plan", Description: "根据在线节点、地域和约束规划代理拓扑候选", InputSchema: proxyPlanInput, OutputSchema: planOutput, RequiredScopes: []string{"proxy_paths:plan"}, ResourceTypes: []string{"server", "proxy_path"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: proxyPathPlanRefs},
 		{Name: "deployments.plan", Description: "计算部署影响范围和前置检查", InputSchema: deploymentInput, OutputSchema: planOutput, RequiredScopes: []string{"deployments:validate"}, ResourceTypes: []string{"server", "deployment"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefsFromIDs},
 		{Name: "audit.incident_response.plan", Description: "根据结构化风险证据生成可逆处置建议", InputSchema: incidentPlanInput, OutputSchema: planOutput, RequiredScopes: []string{"audit:analyze"}, ResourceTypes: []string{"user", "audit_incident"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"source_ip", "destination", "user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: incidentResponseRefs},
@@ -336,8 +347,31 @@ func defaultDescriptors() []Descriptor {
 	}
 	for _, domain := range writeDomains {
 		input, output, evaluator := executableSchemas(domain.name)
-		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: "创建受验证和审批保护的管理变更", InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
+		description := "创建受验证和审批保护的管理变更"
+		if domain.name == "servers.onboard" {
+			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue"
+		}
+		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: description, InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
+		if domain.name == "servers.onboard" {
+			descriptors[len(descriptors)-1].SensitiveOutput = []string{"enrollment_token"}
+		}
 	}
+	enrollmentInput, enrollmentOutput, _ := executableSchemas("servers.enrollment.issue")
+	descriptors = append(descriptors, Descriptor{
+		Name: "servers.enrollment.issue", Description: "为已存在服务器重新签发一次性 Agent 接入令牌，不创建新服务器记录",
+		InputSchema: enrollmentInput, OutputSchema: enrollmentOutput, RequiredScopes: []string{"servers:onboard"},
+		ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required",
+		Idempotent: true, DataClassification: DataSensitive, SensitiveOutput: []string{"enrollment_token"},
+		MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: serverRefFromServerID,
+	})
+	deleteInput, deleteOutput, _ := executableSchemas("servers.delete")
+	descriptors = append(descriptors, Descriptor{
+		Name: "servers.delete", Description: "删除服务器记录及其关联入口、路径与遥测；未接入 Agent 的重复或僵尸记录可直接清理",
+		InputSchema: deleteInput, OutputSchema: deleteOutput, RequiredScopes: []string{"servers:write"},
+		ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 3, ApprovalPolicy: "required",
+		Idempotent: true, DataClassification: DataInternal, Destructive: true, MCPEnabled: true, Executable: true,
+		MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: serverRefFromServerID,
+	})
 	input, output, evaluator := executableSchemas("subscription_plans.nodes.update")
 	descriptors = append(descriptors, Descriptor{
 		Name: "subscription_plans.nodes.update", Description: "新增、移除或替换订阅套餐节点，并通过访问变更流程应用",
@@ -514,7 +548,7 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return serverRefsFromIDs
 	case "servers.onboard":
 		return serverOnboardRefs
-	case "servers.update", "servers.extend_expiry":
+	case "servers.update", "servers.extend_expiry", "servers.enrollment.issue", "servers.delete":
 		return serverUpdateRefs
 	case "subscription_plans.nodes.update":
 		return subscriptionPlanNodesUpdateRefs
@@ -558,8 +592,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		serverInput := closedObject(map[string]any{
 			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "region_mode": stringValue, "ip_stack": stringValue,
 			"listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue, "entry_ip_mode": stringValue,
-			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
-			"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
+			"port_range_start": map[string]any{"type": "integer", "description": "公网自动托管端口池起点（默认 10000）"}, "port_range_end": map[string]any{"type": "integer", "description": "公网自动托管端口池终点（默认 20000）"},
+			"internal_port_range_start": map[string]any{"type": "integer", "description": "回环内部端口池起点（默认 30000）"}, "internal_port_range_end": map[string]any{"type": "integer", "description": "回环内部端口池终点（默认 59999）"},
 			"udp_inbound_mode": stringValue, "mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"}, "mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
 			"connection_audit_enabled": boolValue, "time_correction_mode": stringValue,
@@ -581,8 +615,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"mtu_mode": stringValue, "mtu_value": map[string]any{"type": "integer"},
 			"mtu_probe_host": stringValue, "mtu_probe_port": map[string]any{"type": "integer"},
 			"mtu_overhead_bytes": map[string]any{"type": "integer"}, "bbr_enabled": boolValue,
-			"port_range_start": map[string]any{"type": "integer"}, "port_range_end": map[string]any{"type": "integer"},
-			"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
+			"port_range_start": map[string]any{"type": "integer", "description": "公网自动托管端口池起点"}, "port_range_end": map[string]any{"type": "integer", "description": "公网自动托管端口池终点"},
+			"internal_port_range_start": map[string]any{"type": "integer", "description": "回环内部端口池起点"}, "internal_port_range_end": map[string]any{"type": "integer", "description": "回环内部端口池终点"},
 			"connection_audit_enabled": boolValue, "resource_history_enabled": boolValue, "time_correction_mode": stringValue,
 			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}},
 			"latency_probe_public_target": probeTarget, "latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
@@ -593,6 +627,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
+	case "servers.enrollment.issue":
+		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
+			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
+			"enrollment_expires_at": stringValue, "enrollment_token": stringValue,
+		}), "server_ids"
+	case "servers.delete":
+		return schemaObject(map[string]any{"server_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "server_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "server_id": positiveID}), "server_ids"
 	case "servers.extend_expiry":
 		return schemaObject(map[string]any{"server_id": positiveID, "days": map[string]any{"type": "integer", "minimum": 1, "maximum": 3650}}, "server_id", "days"), simpleOutput(map[string]any{"server_id": positiveID, "expires_at": stringValue, "days": map[string]any{"type": "integer"}}), "server_ids"
 	case "deployments.apply":

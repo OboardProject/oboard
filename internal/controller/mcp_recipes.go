@@ -41,11 +41,11 @@ type mcpPreparedRecipe struct {
 
 func (s *Server) mcpRecipes() []mcpRecipe {
 	return []mcpRecipe{
-		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器"}, Verbs: []string{"add", "create", "onboard", "enroll", "新增", "添加", "接入"}, Nouns: []string{"server", "agent", "服务器", "节点服务器"}, Prepare: s.prepareServerOnboardRecipe},
+		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "reissue enrollment", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器", "重签发", "重新签发", "重签发接入令牌"}, Verbs: []string{"add", "create", "onboard", "enroll", "reissue", "新增", "添加", "接入", "重签发", "重新签发"}, Nouns: []string{"server", "agent", "服务器", "节点服务器", "接入令牌"}, Prepare: s.prepareServerOnboardRecipe},
 		{ID: "user.manage", Version: mcpRecipeVersion, Aliases: []string{"user.manage", "manage user", "create user", "update user", "delete user", "用户管理", "新建用户", "创建用户", "修改用户", "删除用户"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "disable", "enable", "吊销", "创建", "新建", "添加", "修改", "删除", "停用", "启用"}, Nouns: []string{"user", "account", "用户", "账号", "账户"}, Prepare: s.prepareUserManageRecipe},
 		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
 		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
-		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "修改服务器", "服务器设置"}, Verbs: []string{"update", "change", "set", "modify", "修改", "设置", "调整", "开启", "关闭"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
+		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "delete server", "修改服务器", "服务器设置", "删除服务器"}, Verbs: []string{"update", "change", "set", "modify", "delete", "remove", "修改", "设置", "调整", "开启", "关闭", "删除"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
 		{ID: "server.metrics.query", Version: mcpRecipeVersion, Aliases: []string{"server.metrics.query", "server query", "server metrics", "服务器指标", "看流量", "查看流量", "查询流量", "连接数", "延迟", "负载"}, Verbs: []string{"view", "read", "query", "show", "check", "查看", "看", "查询", "读取", "检查"}, Nouns: []string{"server metrics", "server traffic", "traffic", "latency", "connection count", "resource metrics", "指标", "流量", "延迟", "连接数", "负载", "资源"}, Prepare: s.prepareServerMetricsQueryRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
@@ -246,6 +246,7 @@ func hasServerManageParams(params map[string]any) bool {
 		"offline_notify_enabled", "server.offline_notify_enabled", "offline_after_seconds", "server.offline_after_seconds", "expires_at", "server.expires_at", "clear_expires_at", "server.clear_expires_at",
 		"auto_renew_enabled", "server.auto_renew_enabled", "renewal_cycle", "server.renewal_cycle", "expiry_notify_enabled", "server.expiry_notify_enabled",
 		"latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_regions", "latency_probe_max_targets",
+		"delete", "confirm",
 	} {
 		if _, ok := params[key]; ok {
 			return true
@@ -263,13 +264,20 @@ func hasSubscriptionPlanParams(params map[string]any) bool {
 	return false
 }
 
-func (s *Server) prepareServerOnboardRecipe(_ context.Context, _ application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
 	name := taskStringParam(input.Params, "server.name", "name")
 	if name == "" {
 		name = inferredServerName(input.Goal)
 	}
 	if name == "" {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "server.name", "type": "string", "reason": "服务器名称尚未指定"}}}, nil
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "server.name", "type": "string", "reason": "服务器名称尚未指定。请提供唯一名称，例如 SJC；同名已存在时将询问是否重签发接入令牌"}}}, nil
+	}
+	existing, err := s.authorizedServersNamed(ctx, principal, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) > 0 {
+		return s.prepareExistingServerEnrollmentRecipe(ctx, principal, input, existing)
 	}
 	ipStack := taskStringParam(input.Params, "server.ip_stack", "ip_stack")
 	if ipStack == "" {
@@ -372,7 +380,47 @@ func (s *Server) prepareServerOnboardRecipe(_ context.Context, _ application.Pri
 	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "bbr_enabled": bbr, "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
 }
 
+func (s *Server) prepareExistingServerEnrollmentRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput, existing []model.Server) (*mcpPreparedRecipe, error) {
+	candidates := make([]MCPResourceRef, 0, len(existing))
+	labels := make([]string, 0, len(existing))
+	for _, item := range existing {
+		ref := serverMCPResourceRef(item)
+		ref.Label = serverDisplayLabel(item)
+		candidates = append(candidates, ref)
+		labels = append(labels, ref.Label)
+	}
+	target := firstTaskRef(input, "server", "target_server", "server")
+	if target != "" {
+		resolved, err := s.resolveServerRef(ctx, principal, target)
+		if err != nil {
+			return nil, fmt.Errorf("target server: %w", err)
+		}
+		if len(resolved.Candidates) > 0 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "server.onboard", Field: "target_server", Candidates: resolved.Candidates}, nil
+		}
+		return s.enrollmentIssueRecipe(resolved.Value.ID, resolved.Value.Name), nil
+	}
+	if taskBoolParam(input.Params, false, "confirm_reissue") && len(existing) == 1 {
+		return s.enrollmentIssueRecipe(existing[0].ID, existing[0].Name), nil
+	}
+	if len(existing) > 1 {
+		return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "server.onboard", Field: "target_server", Candidates: candidates}, nil
+	}
+	return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.onboard", Questions: []map[string]any{{"field": "confirm_reissue", "type": "boolean", "reason": fmt.Sprintf("已存在 %s，是否为该记录重签发接入令牌？确认后不会创建新服务器", strings.Join(labels, ", "))}}}, nil
+}
+
+func (s *Server) enrollmentIssueRecipe(id int64, name string) *mcpPreparedRecipe {
+	label := fmt.Sprintf("%s#%d", name, id)
+	operation := mcpOperationRef{Capability: "servers.enrollment.issue", Input: map[string]any{"server_id": id}}
+	return &mcpPreparedRecipe{
+		Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation},
+		Summary:      map[string]any{"action": "reissue_enrollment", "server_id": id, "server_name": name, "server": label, "requires_external_install": true},
+		Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}},
+	}
+}
+
 func (s *Server) prepareServerManageRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	deleting := containsAnyFold(input.Goal, "删除服务器", "delete server", "remove server", "archive server", "删除这台服务器", "删除节点服务器") || taskBoolParam(input.Params, false, "delete")
 	target := firstTaskRef(input, "server", "target_server", "server")
 	if target == "" {
 		matches := s.inferServerCandidatesFromGoal(ctx, principal, input.Goal, 0)
@@ -384,7 +432,11 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 		}
 	}
 	if target == "" {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "target_server", "type": "resource_ref", "reason": "需要指定要修改的服务器"}}}, nil
+		reason := "需要指定要修改的服务器"
+		if deleting {
+			reason = "需要指定要删除的服务器"
+		}
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "target_server", "type": "resource_ref", "reason": reason}}}, nil
 	}
 	resolved, err := s.resolveServerRef(ctx, principal, target)
 	if err != nil {
@@ -392,6 +444,13 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 	}
 	if len(resolved.Candidates) > 0 {
 		return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "server.manage", Field: "target_server", Candidates: resolved.Candidates}, nil
+	}
+	if deleting {
+		if !taskBoolParam(input.Params, false, "confirm") {
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "confirm", "type": "boolean", "reason": fmt.Sprintf("将删除 %s 及其关联入口、路径与遥测。确认后不可恢复", serverDisplayLabel(model.Server{ID: resolved.Value.ID, Name: resolved.Value.Name}))}}}, nil
+		}
+		operation := mcpOperationRef{Capability: "servers.delete", Input: map[string]any{"server_id": resolved.Value.ID, "confirm": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "delete_server", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "server_absent"}}}, nil
 	}
 	changes := map[string]any{}
 	if nested, ok := input.Params["changes"].(map[string]any); ok {

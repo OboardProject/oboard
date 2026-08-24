@@ -715,6 +715,7 @@ func (s *Server) newServicePrincipal(owner model.User, name string, scopes []str
 }
 
 func (s *Server) registerAutomationHandlers() {
+	s.registerServerLifecycleOperations()
 	s.registerServerUpdateOperation()
 	s.registerServerExpiryOperation()
 	s.registerInboundAutomationOperations()
@@ -936,6 +937,9 @@ func (s *Server) registerAutomationHandlers() {
 		if err := validateServer(&request.Server); err != nil {
 			return nil, err
 		}
+		if err := s.rejectDuplicateServerName(ctx, request.Server.Name, 0); err != nil {
+			return nil, err
+		}
 		return map[string]any{"server_name": request.Server.Name, "issue_enrollment_token": request.IssueEnrollmentToken}, nil
 	})
 	s.automation.Register("servers.onboard", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
@@ -955,20 +959,20 @@ func (s *Server) registerAutomationHandlers() {
 		if err := validateServer(&server); err != nil {
 			return nil, err
 		}
+		if err := s.rejectDuplicateServerName(ctx, server.Name, 0); err != nil {
+			return nil, err
+		}
 		server.Status = model.ServerUnknown
 		if err := s.store.CreateServer(ctx, &server); err != nil {
 			return nil, err
 		}
 		result := map[string]any{"server": server}
 		if request.IssueEnrollmentToken {
-			token, err := security.RandomToken(32)
+			token, expires, updated, err := s.issueServerEnrollmentToken(ctx, server.ID)
 			if err != nil {
 				return nil, err
 			}
-			expires := time.Now().UTC().Add(enrollmentTokenTTL)
-			if err := s.store.SetServerEnrollmentHash(ctx, server.ID, security.HashSecret(token), expires); err != nil {
-				return nil, err
-			}
+			result["server"] = *updated
 			result["enrollment_expires_at"] = expires
 			oneTime := maps.Clone(result)
 			oneTime["enrollment_token"] = token

@@ -2,6 +2,7 @@ package capability
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -114,6 +115,28 @@ func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
 				t.Fatalf("%s is missing destructive metadata", name)
 			}
 		}
+	}
+}
+
+func TestDefaultCatalogExposesServerLifecycle(t *testing.T) {
+	catalog := NewCatalog()
+	onboard, ok := catalog.Get("servers.onboard")
+	if !ok || !onboard.Executable || !strings.Contains(onboard.Description, "servers.enrollment.issue") {
+		t.Fatalf("servers.onboard=%#v ok=%v", onboard, ok)
+	}
+	issue, ok := catalog.Get("servers.enrollment.issue")
+	if !ok || !issue.Executable || issue.ReadOnly || issue.Destructive || !slices.Contains(issue.SensitiveOutput, "enrollment_token") {
+		t.Fatalf("servers.enrollment.issue=%#v ok=%v", issue, ok)
+	}
+	if issue.MinimumAccess != "operate" || issue.ApprovalPolicy != "required" {
+		t.Fatalf("servers.enrollment.issue authorization=%#v", issue)
+	}
+	deleteCap, ok := catalog.Get("servers.delete")
+	if !ok || !deleteCap.Executable || !deleteCap.Destructive || deleteCap.ReadOnly {
+		t.Fatalf("servers.delete=%#v ok=%v", deleteCap, ok)
+	}
+	if deleteCap.MinimumAccess != "operate" || deleteCap.ApprovalPolicy != "required" {
+		t.Fatalf("servers.delete authorization=%#v", deleteCap)
 	}
 }
 

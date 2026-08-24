@@ -103,6 +103,11 @@ func (s *Server) validateServerUpdateCandidate(ctx context.Context, current mode
 	if err := validateServer(next); err != nil {
 		return err
 	}
+	if !sameServerName(current.Name, next.Name) {
+		if err := s.rejectDuplicateServerName(ctx, next.Name, current.ID); err != nil {
+			return err
+		}
+	}
 	if portPolicyChanged(current, *next) {
 		allocations, err := s.store.ListProxyPathPortAllocations(ctx)
 		if err != nil {

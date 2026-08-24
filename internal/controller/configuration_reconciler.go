@@ -119,7 +119,7 @@ func (s *Server) configurationChangesetApplied(ctx context.Context, item *model.
 
 func configurationCapability(name string) bool {
 	switch name {
-	case "servers.onboard", "servers.update", "servers.dns_policy.set",
+	case "servers.onboard", "servers.update", "servers.delete", "servers.dns_policy.set",
 		"users.create", "users.update", "users.delete",
 		"user_devices.update", "user_devices.revoke",
 		"subscription_plans.create", "subscription_plans.update", "subscription_plans.delete",

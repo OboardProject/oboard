@@ -25,6 +25,8 @@ func TestMCPRecipeRouting(t *testing.T) {
 		{name: "explicit", intent: "proxy_path.manage", want: "proxy_path.manage"},
 		{name: "explicit inbound", intent: "inbound.create", want: "inbound.create"},
 		{name: "chinese", goal: "新增东京服务器并开启 BBR", want: "server.onboard"},
+		{name: "reissue enrollment", goal: "重签发接入令牌", want: "server.onboard"},
+		{name: "delete server", goal: "删除服务器", want: "server.manage"},
 		{name: "chinese inbound", goal: "在东京节点创建 VLESS 入站", want: "inbound.create"},
 		{name: "english", goal: "deploy all configuration changes", want: "deployment.apply"},
 		{name: "structured proxy ref", goal: "", want: "proxy_path.manage"},
@@ -330,6 +332,13 @@ func TestMCPServerOnboardRedeemedActionEnablesBBR(t *testing.T) {
 	environment, _ := action["environment"].(map[string]any)
 	if got := environment["OBOARD_INSTALL_BBR"]; got != "1" {
 		t.Fatalf("OBOARD_INSTALL_BBR=%#v action=%#v", got, action)
+	}
+	command, _ := action["command"].(string)
+	if strings.Contains(command, "${OBOARD_INSTALL_BBR") {
+		t.Fatalf("install command still interpolates BBR template: %s", command)
+	}
+	if !strings.Contains(command, "OBOARD_INSTALL_BBR='1'") {
+		t.Fatalf("install command missing inlined BBR value: %s", command)
 	}
 }
 

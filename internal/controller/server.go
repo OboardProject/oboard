@@ -3432,6 +3432,10 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.rejectDuplicateServerName(r.Context(), v.Name, 0); err != nil {
+			fail(w, err, http.StatusConflict)
+			return
+		}
 		if v.Status == "" {
 			v.Status = model.ServerUnknown
 		}
@@ -3801,6 +3805,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 					"message": migration.Error(),
 					"preview": migration.Preview,
 				})
+				return
+			}
+			var conflict *serverNameConflictError
+			if errors.As(err, &conflict) {
+				fail(w, err, http.StatusConflict)
 				return
 			}
 			fail(w, err, 400)
@@ -5341,18 +5350,12 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, errors.New("admin role required for Agent enrollment"), 403)
 		return
 	}
-	srv, err := s.store.GetServer(r.Context(), id)
-	if err != nil {
+	if _, err := s.store.GetServer(r.Context(), id); err != nil {
 		fail(w, err, 404)
 		return
 	}
-	token, err := security.RandomToken(32)
+	token, expiresAt, _, err := s.issueServerEnrollmentToken(r.Context(), id)
 	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	expiresAt := time.Now().UTC().Add(enrollmentTokenTTL)
-	if err := s.store.SetServerEnrollmentHash(r.Context(), srv.ID, security.HashSecret(token), expiresAt); err != nil {
 		fail(w, err, 500)
 		return
 	}
