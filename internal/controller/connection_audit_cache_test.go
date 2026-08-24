@@ -61,7 +61,7 @@ func TestDashboardConnectionAuditColdStartIsNonBlocking(t *testing.T) {
 		t.Fatalf("cold dashboard audit must report 0 with stale=true: %#v", first)
 	}
 
-	srv.refreshDashboardConnectionAudit()
+	waitDashboardConnectionAuditIdle(t, srv)
 	warm := dashboardConnectionAuditForTest(t, srv, ctx)
 	if _, exists := warm["ready"]; exists {
 		t.Fatalf("warm dashboard audit must not carry ready: %#v", warm)
@@ -94,6 +94,7 @@ func TestDashboardConnectionAuditStaleServesPreviousValue(t *testing.T) {
 	srv.connectionAuditCacheMu.Unlock()
 
 	stale := dashboardConnectionAuditForTest(t, srv, ctx)
+	defer waitDashboardConnectionAuditIdle(t, srv)
 	if stale["stale"] != true {
 		t.Fatalf("aged cache must return stale=true: %#v", stale)
 	}
@@ -170,6 +171,7 @@ func TestDashboardConnectionAuditPageData(t *testing.T) {
 	defer db.Close()
 	seedAuditReportingServer(t, db)
 	srv := newTestServer(db, "test-secret", "")
+	defer waitDashboardConnectionAuditIdle(t, srv)
 	h := srv.Handler()
 	_, token := loginTestAdmin(t, db)
 	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dashboard", token, nil, http.StatusOK)
@@ -179,6 +181,23 @@ func TestDashboardConnectionAuditPageData(t *testing.T) {
 	}
 	if audit["ready"] != false || audit["stale"] != true {
 		t.Fatalf("cold page-data audit shape = %#v", audit)
+	}
+}
+
+func waitDashboardConnectionAuditIdle(t *testing.T, srv *Server) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		srv.connectionAuditCacheMu.Lock()
+		computing := srv.connectionAuditComputing
+		srv.connectionAuditCacheMu.Unlock()
+		if !computing {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dashboard connection audit refresh did not stop")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
