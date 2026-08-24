@@ -89,6 +89,73 @@ func ValidateInboundConfigJSON(protocol model.Protocol, raw string) error {
 	return ValidateInboundConfigObject(protocol, config)
 }
 
+// ValidatePersistedInboundConfigJSON validates the final document after the
+// Controller has applied presets and generated credentials. Reusable presets
+// intentionally use ValidateInboundConfigObject instead because they never
+// contain per-inbound Reality keys.
+func ValidatePersistedInboundConfigJSON(protocol model.Protocol, raw string) error {
+	if err := ValidateInboundConfigJSON(protocol, raw); err != nil {
+		return err
+	}
+	var config map[string]any
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&config); err != nil {
+		return &ConfigFieldError{Path: "config_json", Problem: err.Error()}
+	}
+	tls, _ := config["tls"].(map[string]any)
+	reality, _ := tls["reality"].(map[string]any)
+	if !persistedRealityEnabled(reality) {
+		return nil
+	}
+	if protocol != model.ProtocolVLESS {
+		return &ConfigFieldError{Path: "config_json.tls.reality", Problem: fmt.Sprintf("is not supported for %s in OBoard", protocol)}
+	}
+	if enabled, _ := tls["enabled"].(bool); !enabled {
+		return &ConfigFieldError{Path: "config_json.tls.enabled", Problem: "must be true for Reality"}
+	}
+	if enabled, _ := reality["enabled"].(bool); !enabled {
+		return &ConfigFieldError{Path: "config_json.tls.reality.enabled", Problem: "must be true"}
+	}
+	if strings.TrimSpace(stringFromAny(tls["server_name"])) == "" {
+		return &ConfigFieldError{Path: "config_json.tls.server_name", Problem: "is required for Reality"}
+	}
+	handshake, _ := reality["handshake"].(map[string]any)
+	if handshake == nil {
+		return &ConfigFieldError{Path: "config_json.tls.reality.handshake", Problem: "is required"}
+	}
+	if strings.TrimSpace(stringFromAny(handshake["server"])) == "" {
+		return &ConfigFieldError{Path: "config_json.tls.reality.handshake.server", Problem: "is required"}
+	}
+	port, ok := exactJSONInt(handshake["server_port"])
+	if !ok || !validPort(port) {
+		return &ConfigFieldError{Path: "config_json.tls.reality.handshake.server_port", Problem: "must be an integer between 1 and 65535"}
+	}
+	if !validRealityPrivateKey(stringFromAny(reality["private_key"])) {
+		return &ConfigFieldError{Path: "config_json.tls.reality.private_key", Problem: "must be a 32-byte base64url key"}
+	}
+	if !validRealityPrivateKey(stringFromAny(reality["public_key"])) {
+		return &ConfigFieldError{Path: "config_json.tls.reality.public_key", Problem: "must be a 32-byte base64url key"}
+	}
+	shortID := strings.TrimSpace(stringFromAny(reality["short_id"]))
+	if shortID == "" || !validRealityShortID(shortID) {
+		return &ConfigFieldError{Path: "config_json.tls.reality.short_id", Problem: "must be an even-length hexadecimal string between 2 and 16 characters"}
+	}
+	return nil
+}
+
+func persistedRealityEnabled(reality map[string]any) bool {
+	if reality == nil {
+		return false
+	}
+	if enabled, _ := reality["enabled"].(bool); enabled {
+		return true
+	}
+	return strings.TrimSpace(stringFromAny(reality["private_key"])) != "" ||
+		strings.TrimSpace(stringFromAny(reality["public_key"])) != "" ||
+		reality["handshake"] != nil
+}
+
 // ValidateInboundConfigObject is the object form used by node-preset
 // normalization after its defaults and operator overrides have been merged.
 func ValidateInboundConfigObject(protocol model.Protocol, config map[string]any) error {

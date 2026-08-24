@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -1777,6 +1778,28 @@ func TestValidateInboundConfigJSONReportsRealityFieldPath(t *testing.T) {
 			var fieldErr *ConfigFieldError
 			if !errors.As(err, &fieldErr) || fieldErr.ValidationPath() == "" {
 				t.Fatalf("error = %v, want located ConfigFieldError", err)
+			}
+		})
+	}
+}
+
+func TestValidatePersistedInboundConfigJSONRequiresCompleteReality(t *testing.T) {
+	privateKey := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	publicKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "tls disabled", raw: `{"tls":{"enabled":false,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443},"private_key":"` + privateKey + `","public_key":"` + publicKey + `","short_id":"abcd"}}}`, want: "config_json.tls.enabled"},
+		{name: "missing handshake", raw: `{"tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"private_key":"` + privateKey + `","public_key":"` + publicKey + `","short_id":"abcd"}}}`, want: "config_json.tls.reality.handshake"},
+		{name: "bad short id", raw: `{"tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443},"private_key":"` + privateKey + `","public_key":"` + publicKey + `","short_id":"xyz"}}}`, want: "config_json.tls.reality.short_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePersistedInboundConfigJSON(model.ProtocolVLESS, tt.raw)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want path %s", err, tt.want)
 			}
 		})
 	}

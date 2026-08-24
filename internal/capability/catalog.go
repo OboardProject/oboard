@@ -215,8 +215,8 @@ func defaultDescriptors() []Descriptor {
 		"port_policy_revision": map[string]any{"type": "integer"},
 		"agent_connected":      boolValue, "agent_version": stringValue, "agent_build": stringValue,
 		"kernel_version": stringValue, "kernel_capabilities": map[string]any{"type": "array", "maxItems": 64, "items": stringValue}, "connection_audit_enabled": boolValue,
-		"tcp_fastopen_state": map[string]any{"type": "string", "enum": []string{"", "unavailable", "disabled", "client", "server", "client_server"}, "description": "Agent 上报的 net.ipv4.tcp_fastopen 状态；只有 server/client_server 才能让入站 tcp_fast_open 生效"},
-		"tcp_fastopen_value": map[string]any{"type": "integer", "description": "net.ipv4.tcp_fastopen 原始位掩码"},
+		"tcp_fastopen_state":       map[string]any{"type": "string", "enum": []string{"", "unavailable", "disabled", "client", "server", "client_server"}, "description": "Agent 上报的 net.ipv4.tcp_fastopen 状态；只有 server/client_server 才能让入站 tcp_fast_open 生效"},
+		"tcp_fastopen_value":       map[string]any{"type": "integer", "description": "net.ipv4.tcp_fastopen 原始位掩码"},
 		"resource_history_enabled": boolValue, "monitoring_mode": stringValue,
 		"traffic_reset_mode": stringValue, "traffic_reset_day": map[string]any{"type": "integer"}, "traffic_limit_bytes": map[string]any{"type": "integer"},
 		"offline_notify_enabled": boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
@@ -297,8 +297,8 @@ func defaultDescriptors() []Descriptor {
 	serverOnboardingInput := schemaObject(map[string]any{
 		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64, "description": "必填。同名已存在时规划结果改为重签发 enrollment，不会建议再创建一条服务器"}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
 		"ip_stack":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
-		"entry_address": map[string]any{"type": "string", "maxLength": 253, "description": "自定义入口地址，仅当 entry_ip_mode=custom 时生效"},
-		"entry_ip_mode": map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}, "description": "入口地址策略，默认 auto；填了 entry_address 必须为 custom，否则自动模式会忽略该地址"},
+		"entry_address":    map[string]any{"type": "string", "maxLength": 253, "description": "自定义入口地址，仅当 entry_ip_mode=custom 时生效"},
+		"entry_ip_mode":    map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}, "description": "入口地址策略，默认 auto；填了 entry_address 必须为 custom，否则自动模式会忽略该地址"},
 		"port_range_start": publicPortStart, "port_range_end": publicPortEnd,
 		"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
 		"expires_at":               nullableString(),
@@ -643,10 +643,17 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "deployments.apply":
 		return schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids"), simpleOutput(map[string]any{"deployment": closedObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "server_ids": idArray(0, 100), "status": stringValue})}), "server_ids"
 	case "inbounds.create", "inbounds.update":
+		inboundKinds := []string{"vless-reality", "vless-tls-vision", "vless-ws", "vless-tcp", "hy2-tls", "anytls-basic", "anytls-large-padding", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "snell-v4", "snell-v6", "socks5-auth", "ssh-restricted"}
+		realityInput := closedObject(map[string]any{
+			"handshake_server": map[string]any{"type": "string", "minLength": 1, "maxLength": 253},
+			"handshake_port":   map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+			"short_id":         map[string]any{"type": "string", "pattern": "^(?:[0-9a-fA-F]{2}){1,8}$"},
+		})
 		inboundProperties := map[string]any{
 			"server_id":             positiveID,
 			"name":                  map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hysteria2", "anytls", "shadowsocks", "mieru", "socks", "ssh"}},
+			"kind":                  map[string]any{"type": "string", "enum": inboundKinds},
+			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hy2", "anytls", "shadowsocks", "mieru", "snell", "socks", "ssh"}},
 			"listen_ip":             map[string]any{"type": "string", "maxLength": 255},
 			"port":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
 			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
@@ -663,17 +670,14 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"certificate_id":        nullableInteger(),
 			"certificate_domain":    map[string]any{"type": "string", "maxLength": 253},
 			"config_json":           map[string]any{"type": "string", "maxLength": 65536},
+			"reality":               realityInput,
+			"rotate_reality_key":    boolValue,
 			"enabled":               boolValue,
 		}
 		// Guidance for the most common protocol shapes so clients do not need
-		// to reverse-engineer the preset contracts:
-		//   vless Reality: config_json must carry
-		//     {"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"<sni>",
-		//      "reality":{"enabled":true,"handshake":{"server":"<sni>","server_port":443}}}}
-		//     with certificate_mode="external" and tls=false (Reality provides
-		//     its own TLS); the Controller generates the Reality keypair on
-		//     save. When config_json is omitted the Controller applies the
-		//     panel's default preset for the protocol.
+		// to reverse-engineer the stored config_json contracts:
+		//   vless Reality: kind plus the non-secret reality object is the public
+		//     input. Controller owns TLS/flow normalization and the keypair.
 		//   hysteria2/anytls: config_json must include "tls":{"enabled":true}
 		//     and the certificate is bound through certificate_id/mode.
 		//   shadowsocks 2022: method + password (generated when omitted).
@@ -682,18 +686,23 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//   snell: single-PSK protocol; version 4/6 with optional
 		//     obfs_mode/obfs_host (v4) or mode (v6), reusable via
 		//     config_json.snell_profile_id.
-		inboundGuidance := "vless reality requires config_json.tls.reality.handshake.server + server_port with certificate_mode=external + tls=false; config_json.tls.reality.dest is unsupported, and invalid config fields are rejected with their exact JSON path before save; hysteria2/anytls require config_json.tls.enabled=true with a bound certificate; socks creates an authenticated SOCKS5 TCP/UDP inbound using each authorized user's proxy credentials; snell accepts config_json.version 4/6 + psk (v4 may add obfs_mode/obfs_host, v6 may add mode), or reference a shared parameter set via snell_profile_id; omitted config_json applies the protocol default preset"
+		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS certificate kinds use certificate fields; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"},
 			"entry_ip_mode": stringValue, "external_ip": stringValue, "dns_sync_enabled": boolValue,
 			"dns_domain": stringValue, "tls": boolValue, "certificate_mode": stringValue,
-			"certificate_domain": stringValue, "enabled": boolValue, "advanced_configured": boolValue,
+			"certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue,
 		})
 		if name == "inbounds.create" {
-			inboundFields := closedObject(inboundProperties, "server_id", "name", "protocol", "port")
+			inboundFields := closedObject(inboundProperties, "server_id", "name", "kind", "port")
 			input := schemaObject(map[string]any{"inbound": inboundFields}, "inbound")
-			return withSchemaDescription(input, inboundGuidance), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
+			input = withSchemaDescription(input, inboundGuidance)
+			input = withSchemaExamples(input, []any{map[string]any{"inbound": map[string]any{
+				"server_id": 1, "name": "VLESS Reality", "kind": "vless-reality", "port": 443,
+				"reality": map[string]any{"handshake_server": "gateway.icloud.com", "handshake_port": 443}, "enabled": true,
+			}}})
+			return input, simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 		}
 		inboundFields := closedObject(inboundProperties)
 		input := schemaObject(map[string]any{"inbound_id": positiveID, "changes": inboundFields}, "inbound_id", "changes")
@@ -801,6 +810,19 @@ func withSchemaDescription(schema json.RawMessage, description string) json.RawM
 		return schema
 	}
 	root["description"] = description
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return schema
+	}
+	return encoded
+}
+
+func withSchemaExamples(schema json.RawMessage, examples []any) json.RawMessage {
+	var root map[string]any
+	if err := json.Unmarshal(schema, &root); err != nil {
+		return schema
+	}
+	root["examples"] = examples
 	encoded, err := json.Marshal(root)
 	if err != nil {
 		return schema

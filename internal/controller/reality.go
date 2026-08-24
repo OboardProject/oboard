@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
-	"net/http"
 	"strings"
 )
 
@@ -18,20 +17,6 @@ type realityKeyPair struct {
 	PrivateKey string `json:"private_key"`
 	PublicKey  string `json:"public_key"`
 	ShortID    string `json:"short_id"`
-}
-
-func (s *Server) realityKeypair(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		method(w)
-		return
-	}
-	pair, err := generateRealityKeyPair()
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	auditReq(s, r, "generate", "reality-keypair", "auto")
-	write(w, http.StatusOK, pair)
 }
 
 func generateRealityKeyPair() (realityKeyPair, error) {

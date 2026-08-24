@@ -135,6 +135,9 @@ export type Inbound = {
   certificate_id?: number
   certificate_domain?: string
   config_json: string
+  kind?: string
+  reality?: { handshake_server?: string; handshake_port?: number; short_id?: string }
+  rotate_reality_key?: boolean
   enabled: boolean
 }
 

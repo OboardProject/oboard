@@ -14,9 +14,8 @@ import (
 )
 
 // TestVLESSRecipeDefaultsMatchPanelPreset verifies that the MCP inbound recipe
-// fills the panel-equivalent defaults for VLESS Reality: certificate_mode
-// external, tls=false, and a config_json carrying the reality block so the
-// "托管证书需要有效的 SNI 域名" trap cannot occur.
+// fills the panel-equivalent controlled defaults for VLESS Reality without
+// asking the model to construct config_json or supply key material.
 func TestVLESSRecipeDefaultsMatchPanelPreset(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
@@ -49,9 +48,12 @@ func TestVLESSRecipeDefaultsMatchPanelPreset(t *testing.T) {
 	if tls, _ := inbound["tls"].(bool); tls {
 		t.Fatal("tls must default to false for VLESS Reality")
 	}
-	config := inbound["config_json"].(string)
-	if !strings.Contains(config, "xtls-rprx-vision") || !strings.Contains(config, "reality") {
-		t.Fatalf("config_json lacks the Reality preset: %s", config)
+	if inbound["kind"] != "vless-reality" || inbound["config_json"] != `{}` {
+		t.Fatalf("controlled Reality fields = %#v", inbound)
+	}
+	reality, _ := inbound["reality"].(map[string]any)
+	if reality["handshake_server"] != defaultVLESSRealityServerName || reality["handshake_port"] != 443 {
+		t.Fatalf("Reality defaults = %#v", reality)
 	}
 }
 

@@ -169,7 +169,7 @@ func TestInboundCreateCapabilityAppliesThroughChangeset(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
-	input := json.RawMessage(`{"inbound":{"server_id":1,"name":"MCP VLESS","protocol":"vless","listen_ip":"0.0.0.0","port":443,"config_json":"{}","enabled":true}}`)
+	input := json.RawMessage(`{"inbound":{"server_id":1,"name":"MCP VLESS","kind":"vless-tcp","listen_ip":"0.0.0.0","port":443,"config_json":"{}","enabled":true}}`)
 	draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "inbounds.create", Input: input}}})
 	if err != nil {
 		t.Fatalf("validate inbound draft: %v", err)

@@ -302,7 +302,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/dns-sync", s.auth(s.dnsSync, model.RoleOperator))
 	mux.HandleFunc("/api/v1/certificates", s.auth(s.certificates, model.RoleOperator))
 	mux.HandleFunc("/api/v1/certificates/", s.auth(s.certificateSubroutes, model.RoleOperator))
-	mux.HandleFunc("/api/v1/reality/keypair", s.auth(s.realityKeypair, model.RoleOperator))
 	mux.HandleFunc("/api/v1/servers", s.auth(s.servers, model.RoleOperator))
 	mux.HandleFunc("/api/v1/servers/", s.auth(s.serverSubroutes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agents/update-all", s.auth(s.agentsUpdateAll, model.RoleAdmin))
@@ -5403,6 +5402,7 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, 404)
 				return
 			}
+			item.Kind = inferredInboundKind(*item)
 			write(w, 200, map[string]any{"inbound": item})
 			return
 		}
@@ -5410,6 +5410,9 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			fail(w, err, 500)
 			return
+		}
+		for i := range items {
+			items[i].Kind = inferredInboundKind(items[i])
 		}
 		write(w, 200, map[string]any{"inbounds": items})
 	case http.MethodPost:
@@ -5419,6 +5422,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		if v.ConfigJSON == "" {
 			v.ConfigJSON = "{}"
+		}
+		if err := applyInboundKindDefaults(&v, nil); err != nil {
+			fail(w, err, 400)
+			return
 		}
 		normalized, err := applyInboundConfigDefaults(v.Protocol, v.ConfigJSON)
 		if err != nil {
@@ -5432,6 +5439,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.resolveInboundTemplates(r.Context(), &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if v.ConfigJSON, err = applyInboundConfigDefaults(v.Protocol, v.ConfigJSON); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -5494,6 +5505,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		if v.ConfigJSON == "" {
 			v.ConfigJSON = "{}"
 		}
+		if err := applyInboundKindDefaults(&v, current); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		normalized, err := applyInboundConfigDefaults(v.Protocol, v.ConfigJSON)
 		if err != nil {
 			fail(w, err, 400)
@@ -5506,6 +5521,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.resolveInboundTemplates(r.Context(), &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if v.ConfigJSON, err = applyInboundConfigDefaults(v.Protocol, v.ConfigJSON); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -6184,6 +6203,15 @@ func mergeInboundPatch(current model.Inbound, patch model.Inbound, fields map[st
 	if _, ok := fields["config_json"]; ok {
 		merged.ConfigJSON = patch.ConfigJSON
 	}
+	if _, ok := fields["kind"]; ok {
+		merged.Kind = patch.Kind
+	}
+	if _, ok := fields["reality"]; ok {
+		merged.Reality = patch.Reality
+	}
+	if _, ok := fields["rotate_reality_key"]; ok {
+		merged.RotateRealityKey = patch.RotateRealityKey
+	}
 	if _, ok := fields["enabled"]; ok {
 		merged.Enabled = patch.Enabled
 	}
@@ -6473,6 +6501,14 @@ func validateInbound(v model.Inbound) error {
 			return errors.New("自定义入口地址使用固定解析目标，不需要开启 DDNS")
 		}
 	}
+	if inferredInboundKind(v) == "vless-reality" {
+		if v.TLS {
+			return &core.ConfigFieldError{Path: "tls", Problem: "must be false for Reality because Reality provides its own TLS"}
+		}
+		if v.CertificateMode != model.CertificateModeExternal {
+			return &core.ConfigFieldError{Path: "certificate_mode", Problem: "must be external for Reality"}
+		}
+	}
 	switch v.CertificateMode {
 	case model.CertificateModeExternal:
 	case model.CertificateModeAuto, model.CertificateModeExact, model.CertificateModeWildcard:
@@ -6495,7 +6531,7 @@ func validateInbound(v model.Inbound) error {
 	if v.Protocol == model.ProtocolSSH {
 		return validateSSHInbound(v)
 	}
-	if err := core.ValidateInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
+	if err := core.ValidatePersistedInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
 		return err
 	}
 	a, err := core.AdapterFor(v.Protocol)

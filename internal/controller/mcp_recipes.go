@@ -505,16 +505,22 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 		}
 	}
 	copyTaskParams(values, input.Params, map[string]string{ // #nosec G101 -- this map contains parameter names only; credential values come from validated task input.
-		"name": "name", "inbound.name": "name", "protocol": "protocol", "inbound.protocol": "protocol",
+		"name": "name", "inbound.name": "name", "kind": "kind", "inbound.kind": "kind", "protocol": "protocol", "inbound.protocol": "protocol",
 		"port": "port", "inbound.port": "port", "listen_ip": "listen_ip", "inbound.listen_ip": "listen_ip",
 		"entry_ip_mode": "entry_ip_mode", "external_ip": "external_ip", "dns_sync_enabled": "dns_sync_enabled",
 		"dns_credential_id": "dns_credential_id", "dns_domain": "dns_domain", "dns_proxy_enabled": "dns_proxy_enabled",
 		"dns_record_types": "dns_record_types", "ddns_enabled": "ddns_enabled", "ddns_interval_seconds": "ddns_interval_seconds",
 		"tls": "tls", "certificate_mode": "certificate_mode", "certificate_id": "certificate_id",
 		"certificate_domain": "certificate_domain", "config_json": "config_json", "inbound.config_json": "config_json",
-		"enabled": "enabled",
+		"reality": "reality", "rotate_reality_key": "rotate_reality_key", "enabled": "enabled",
 	})
+	kind := strings.ToLower(strings.TrimSpace(fmt.Sprint(values["kind"])))
 	protocol := strings.ToLower(strings.TrimSpace(fmt.Sprint(values["protocol"])))
+	if (protocol == "" || protocol == "<nil>") && kind != "" && kind != "<nil>" {
+		if inferred, ok := inboundKindProtocols[kind]; ok {
+			protocol = string(inferred)
+		}
+	}
 	if protocol == "" || protocol == "<nil>" {
 		protocol = inferredInboundProtocol(input.Goal)
 	}
@@ -532,22 +538,38 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 	values["server_id"] = resolved.Value.ID
 	values["name"] = name
 	values["protocol"] = protocol
+	if kind == "" || kind == "<nil>" {
+		kind = defaultInboundKind(protocol)
+	}
+	values["kind"] = kind
 	values["port"] = port
 	if _, exists := values["listen_ip"]; !exists {
 		values["listen_ip"] = "0.0.0.0"
 	}
 	if _, exists := values["config_json"]; !exists {
-		values["config_json"] = defaultInboundPresetConfig(protocol)
+		if kind == "vless-reality" {
+			values["config_json"] = `{}`
+			if _, exists := values["reality"]; !exists {
+				values["reality"] = map[string]any{"handshake_server": defaultVLESSRealityServerName, "handshake_port": 443}
+			}
+		} else {
+			values["config_json"] = defaultInboundKindConfig(kind, protocol)
+		}
 	}
 	if _, exists := values["certificate_mode"]; !exists {
 		// VLESS Reality carries its own TLS and must use an external
 		// certificate mode; a managed certificate would require a valid SNI
 		// domain and blocks Reality creation. Match the panel's vless-reality
 		// preset (tls=false, certificate_mode=external).
-		if protocol == "vless" {
+		if kind == "vless-reality" {
 			values["certificate_mode"] = "external"
 			if _, exists := values["tls"]; !exists {
 				values["tls"] = false
+			}
+		} else if kind == "vless-tls-vision" || kind == "vless-ws" || kind == "hy2-tls" || strings.HasPrefix(kind, "anytls-") {
+			values["certificate_mode"] = "auto"
+			if _, exists := values["tls"]; !exists {
+				values["tls"] = true
 			}
 		}
 	}
@@ -583,6 +605,42 @@ func defaultInboundPresetConfig(protocol string) string {
 		return `{"access_mode":"restricted_proxy","exposure_confirmed":false,"exposure_confirmation_version":"ssh-inbound-v1"}`
 	default:
 		return `{}`
+	}
+}
+
+func defaultInboundKindConfig(kind, protocol string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "vless-tls-vision":
+		return `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`
+	case "vless-ws":
+		return `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}}}`
+	case "vless-tcp":
+		return `{}`
+	default:
+		return defaultInboundPresetConfig(protocol)
+	}
+}
+
+func defaultInboundKind(protocol string) string {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "vless":
+		return "vless-reality"
+	case "hysteria2", "hy2":
+		return "hy2-tls"
+	case "anytls":
+		return "anytls-basic"
+	case "shadowsocks":
+		return "ss-2022-128"
+	case "mieru":
+		return "mieru-basic"
+	case "snell":
+		return "snell-v4"
+	case "socks":
+		return "socks5-auth"
+	case "ssh":
+		return "ssh-restricted"
+	default:
+		return ""
 	}
 }
 

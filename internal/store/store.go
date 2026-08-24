@@ -3095,7 +3095,7 @@ func (s *Store) MarkStaleServersOfflineEffective(ctx context.Context, now time.T
 
 func (s *Store) CreateInbound(ctx context.Context, v *model.Inbound) error {
 	if v.Protocol != model.ProtocolSSH && strings.TrimSpace(v.ConfigJSON) != "" {
-		if err := core.ValidateInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
+		if err := core.ValidatePersistedInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
 			return err
 		}
 	}
@@ -3120,7 +3120,7 @@ func (s *Store) CreateInbound(ctx context.Context, v *model.Inbound) error {
 }
 func (s *Store) UpdateInbound(ctx context.Context, v *model.Inbound) error {
 	if v.Protocol != model.ProtocolSSH && strings.TrimSpace(v.ConfigJSON) != "" {
-		if err := core.ValidateInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
+		if err := core.ValidatePersistedInboundConfigJSON(v.Protocol, v.ConfigJSON); err != nil {
 			return err
 		}
 	}

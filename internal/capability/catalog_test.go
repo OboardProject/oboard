@@ -140,9 +140,8 @@ func TestDefaultCatalogExposesServerLifecycle(t *testing.T) {
 	}
 }
 
-// TestInboundSchemaCarriesProtocolGuidance verifies the inbounds.create schema
-// is self-describing (per-protocol config_json guidance) and never exposes a
-// fake input property.
+// TestInboundSchemaCarriesProtocolGuidance verifies that callers can select a
+// controlled inbound kind without constructing a Reality config document.
 func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 	catalog := NewCatalog()
 	descriptor, ok := catalog.Get("inbounds.create")
@@ -154,12 +153,14 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatal(err)
 	}
 	description, _ := schema["description"].(string)
-	if !strings.Contains(description, "certificate_mode=external") || !strings.Contains(description, "tls.reality.handshake.server") || !strings.Contains(description, "tls.reality.dest is unsupported") || !strings.Contains(description, "exact JSON path") || !strings.Contains(description, "authenticated SOCKS5") {
+	if !strings.Contains(description, "kind=vless-reality") || !strings.Contains(description, "reality.handshake_server") || !strings.Contains(description, "Controller generates") || !strings.Contains(description, "caller-supplied Reality private/public keys are rejected") {
 		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
 	}
 	raw := string(descriptor.InputSchema)
-	if !strings.Contains(raw, `"socks"`) {
-		t.Fatalf("inbounds.create schema lacks SOCKS5 protocol: %s", raw)
+	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"examples"`, `"gateway.icloud.com"`} {
+		if !strings.Contains(raw, fragment) {
+			t.Fatalf("inbounds.create schema lacks %s: %s", fragment, raw)
+		}
 	}
 	if strings.Contains(raw, "_guidance") {
 		t.Fatalf("inbounds.create schema leaked an internal guidance property: %s", raw)

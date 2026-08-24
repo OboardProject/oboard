@@ -12,10 +12,10 @@ import (
 )
 
 // TestMCPVLESSRealityInboundMatchesPanelPreset verifies that creating a VLESS
-// Reality inbound through the automation layer (with a partial or empty
-// config_json, as the MCP recipes produce) yields exactly the same shape as
-// the panel's vless-reality preset: Vision flow, tls.enabled, handshake
-// server_port, and a complete generated keypair.
+// Reality inbound through the automation layer with structured, non-secret
+// input yields exactly the same stored shape as the panel's vless-reality
+// preset: Vision flow, tls.enabled, handshake server_port, and a complete
+// Controller-generated keypair.
 func TestMCPVLESSRealityInboundMatchesPanelPreset(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
@@ -32,9 +32,9 @@ func TestMCPVLESSRealityInboundMatchesPanelPreset(t *testing.T) {
 	// The MCP recipe injects the panel preset without a keypair; the panel
 	// flow also saves an empty keypair and lets the Controller generate it.
 	createInput, _ := json.Marshal(map[string]any{"inbound": map[string]any{
-		"server_id": node.ID, "name": "VLESS-Reality", "protocol": "vless",
+		"server_id": node.ID, "name": "VLESS-Reality", "kind": "vless-reality",
 		"listen_ip": "0.0.0.0", "port": 10443,
-		"config_json": defaultInboundPresetConfig("vless"), "enabled": true,
+		"reality": map[string]any{"handshake_server": "gateway.icloud.com", "handshake_port": 443}, "enabled": true,
 	}})
 	applyAutomationChangeset(t, server, principal, "vless-reality-create", automation.OperationRequest{Capability: "inbounds.create", Input: createInput})
 
@@ -121,10 +121,9 @@ func TestMCPPartialRealityConfigIsCompleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	createInput, _ := json.Marshal(map[string]any{"inbound": map[string]any{
-		"server_id": node.ID, "name": "VLESS-Reality", "protocol": "vless",
+		"server_id": node.ID, "name": "VLESS-Reality", "kind": "vless-reality",
 		"listen_ip": "0.0.0.0", "port": 10444,
-		"config_json": `{"tls":{"reality":{"enabled":true,"handshake":{"server":"cdn.icloud-content.com"}}}}`,
-		"enabled":     true,
+		"reality": map[string]any{"handshake_server": "cdn.icloud-content.com"}, "enabled": true,
 	}})
 	applyAutomationChangeset(t, server, principal, "vless-reality-partial", automation.OperationRequest{Capability: "inbounds.create", Input: createInput})
 	inbounds, err := db.ListInbounds(ctx)
@@ -162,7 +161,7 @@ func TestMCPRealityUnknownFieldFailsBeforeChangesetSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	input, _ := json.Marshal(map[string]any{"inbound": map[string]any{
-		"server_id": node.ID, "name": "Invalid Reality", "protocol": "vless",
+		"server_id": node.ID, "name": "Invalid Reality", "kind": "vless-reality",
 		"listen_ip": "0.0.0.0", "port": 10445,
 		"config_json": `{"tls":{"reality":{"enabled":true,"dest":"gateway.icloud.com:443"}}}`,
 		"enabled":     true,

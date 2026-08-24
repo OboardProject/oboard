@@ -2691,7 +2691,7 @@ func TestPlanNodeSyncChangesOnlyTheDraftRevision(t *testing.T) {
 	}
 }
 
-func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
+func TestRealityInboundDefaults(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -2702,17 +2702,6 @@ func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
-
-	pair := request(t, h, http.MethodPost, "/api/v1/ui/reality/keypair", token, map[string]any{}, http.StatusOK)
-	privateKey := pair["private_key"].(string)
-	publicKey := pair["public_key"].(string)
-	shortID := pair["short_id"].(string)
-	if privateKey == "" || publicKey == "" || len(shortID) != 8 {
-		t.Fatalf("bad keypair response: %#v", pair)
-	}
-	if got := deriveRealityPublicForTest(t, privateKey); got != publicKey {
-		t.Fatalf("public key mismatch: got %q want %q", got, publicKey)
-	}
 
 	createdServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "entry_ip_mode": "custom", "entry_address": "203.0.113.10", "public_ipv4": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(createdServer["server"].(map[string]any)["id"].(float64))
@@ -2798,6 +2787,72 @@ func TestRealityKeyPairAPIAndInboundDefaults(t *testing.T) {
 	}
 	if strings.Contains(subscription, generatedPrivate) {
 		t.Fatalf("subscription leaked private key: %s", subscription)
+	}
+}
+
+func TestControlledRealityInboundCreateUpdateAndRotate(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "edge", "listen_ip": "0.0.0.0"}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(server["id"].(float64))
+
+	created := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": serverID, "name": "controlled-reality", "kind": "vless-reality", "listen_ip": "0.0.0.0", "port": 443,
+		"reality": map[string]any{"handshake_server": "www.nvidia.com", "handshake_port": 443}, "config_json": `{"packet_encoding":"xudp"}`, "enabled": true,
+	}, http.StatusCreated)["inbound"].(map[string]any)
+	if created["protocol"] != "vless" || created["tls"] != false || created["certificate_mode"] != "external" {
+		t.Fatalf("controlled fields = %#v", created)
+	}
+	inboundID := int64(created["id"].(float64))
+	first := configJSONFrom(t, created)
+	firstTLS := first["tls"].(map[string]any)
+	firstReality := firstTLS["reality"].(map[string]any)
+	firstPrivate := firstReality["private_key"].(string)
+	if firstTLS["server_name"] != "www.nvidia.com" || firstReality["public_key"] == "" || firstReality["short_id"] == "" {
+		t.Fatalf("controlled Reality not completed: %#v", first)
+	}
+
+	updated := request(t, h, http.MethodPatch, "/api/v1/ui/inbounds/"+strconv.FormatInt(inboundID, 10), token, map[string]any{
+		"kind": "vless-reality", "reality": map[string]any{"handshake_server": "www.sony.com", "handshake_port": 8443},
+	}, http.StatusOK)["inbound"].(map[string]any)
+	updatedReality := configJSONFrom(t, updated)["tls"].(map[string]any)["reality"].(map[string]any)
+	if updatedReality["private_key"] != firstPrivate {
+		t.Fatal("ordinary controlled update rotated the Reality key")
+	}
+	if updatedReality["handshake"].(map[string]any)["server"] != "www.sony.com" {
+		t.Fatalf("handshake was not updated: %#v", updatedReality)
+	}
+
+	rotated := request(t, h, http.MethodPatch, "/api/v1/ui/inbounds/"+strconv.FormatInt(inboundID, 10), token, map[string]any{
+		"kind": "vless-reality", "rotate_reality_key": true,
+	}, http.StatusOK)["inbound"].(map[string]any)
+	rotatedReality := configJSONFrom(t, rotated)["tls"].(map[string]any)["reality"].(map[string]any)
+	if rotatedReality["private_key"] == firstPrivate {
+		t.Fatal("explicit rotation kept the old Reality key")
+	}
+
+	bad := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": serverID, "name": "caller-key", "kind": "vless-reality", "port": 8443,
+		"config_json": `{"tls":{"reality":{"private_key":"caller-controlled"}}}`,
+	}, http.StatusBadRequest)
+	if bad["error_path"] != "config_json.tls.reality.private_key" {
+		t.Fatalf("unexpected managed-key error: %#v", bad)
+	}
+
+	tcp := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": serverID, "name": "plain-vless", "kind": "vless-tcp", "port": 9443, "enabled": true,
+	}, http.StatusCreated)["inbound"].(map[string]any)
+	if tcp["protocol"] != "vless" || tcp["tls"] != false || tcp["certificate_mode"] != "external" {
+		t.Fatalf("VLESS TCP was not derived from kind: %#v", tcp)
+	}
+	if strings.Contains(tcp["config_json"].(string), "reality") {
+		t.Fatalf("VLESS TCP unexpectedly contains Reality: %s", tcp["config_json"])
 	}
 }
 

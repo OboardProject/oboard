@@ -1646,6 +1646,11 @@ function localizeErrorMessage(message: unknown) {
   }
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
   if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
+  if (raw.startsWith('config_json.tls.reality.dest:')) return 'Reality 不支持旧字段 dest，请改用握手域名和握手端口。'
+  if (raw.startsWith('config_json.tls.reality.private_key:') || raw.startsWith('config_json.tls.reality.public_key:')) return 'Reality 密钥由 Controller 管理，不能通过高级配置提交。'
+  if (raw.startsWith('config_json.tls.reality.handshake.server:')) return '缺少 Reality 握手目标。'
+  if (raw.startsWith('config_json.tls.reality.handshake.server_port:') || raw.startsWith('reality.handshake_port:')) return 'Reality 握手端口必须在 1 到 65535 之间。'
+  if (raw.startsWith('config_json.tls.reality.short_id:') || raw.startsWith('reality.short_id:')) return 'Reality Short ID 必须是 2 到 16 位偶数长度的十六进制字符串。'
   if (raw.startsWith('subscription plan(s) are still applying a change:')) return '相关订阅套餐正在应用变更，完成后再删除'
   if (raw.startsWith('plan version is still applying; retry after it settles:')) return '相关订阅套餐正在应用变更，完成后再删除'
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
@@ -11558,7 +11563,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
-      const { __graphPosition, __port_manual, __custom_sni, ...body } = finalDraft
+	      const { __graphPosition, body } = controlledInboundPayload(finalDraft)
 	      const result = await client.request('/inbounds', { method: 'POST', body: JSON.stringify(body) }) as { inbound?: Inbound }
 	      applyMutationResult(result)
       if (result.inbound?.id) {
@@ -11579,7 +11584,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
-      const { __edit, __graphPosition, __port_manual, __custom_sni, ...body } = finalDraft
+	      const { body } = controlledInboundPayload(finalDraft)
 	      const result = await client.request(`/inbounds/${body.id}`, { method: 'PATCH', body: JSON.stringify(body) }) as Record<string, any>
 	      applyMutationResult(result)
 	      setEditEntry(null)
@@ -14330,20 +14335,15 @@ function certificateCoversSNI(certificate: Certificate, serverName: string) {
   })
 }
 
-type RealityKeyPair = { private_key: string; public_key: string; short_id: string }
-
-function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, client, onCancel, onSubmit }: { mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  const dialogs = useDialogs()
+function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onCancel, onSubmit }: { mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void> }) {
   const server = servers.find(s => s.id === Number(draft.server_id)) || servers[0]
   const protocol = draft.protocol as Protocol
   const [presetID, setPresetID] = useState(() => inferInboundPreset(protocol, draft.config_json))
-  const [realityKeyLoading, setRealityKeyLoading] = useState(false)
   const selectedPreset = inboundPreset(presetID)
   const presetProtocol = selectedPreset.protocol
   const presetOptions = inboundPresetsForProtocol(presetProtocol)
   const cfg = parseConfig(draft.config_json) || {}
   const tlsForReality = objectConfig(cfg.tls)
-  const realityForKeys = objectConfig(tlsForReality.reality)
   const dnsCredentials: DNSCredential[] = data.dns_credentials || []
   const certificates: Certificate[] = data.certificates || []
   const selectedDNSCredential = dnsCredentials.find(item => item.id === Number(draft.dns_credential_id || 0))
@@ -14371,18 +14371,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   }
   const followedSNI = suggestedSNI()
   const update = (patch: any) => setDraft((old: any) => old ? { ...old, ...patch } : old)
-  const generateRealityKeypair = async (silent = false) => {
-    if (realityKeyLoading) return
-    setRealityKeyLoading(true)
-    try {
-      const pair = await client.request<RealityKeyPair>('/reality/keypair', { method: 'POST', body: '{}' })
-      setDraft((old: any) => old ? { ...old, config_json: mergeRealityKeypair(old.config_json, pair) } : old)
-    } catch (e: any) {
-      if (!silent) await dialogs.alert({ title: '生成 Reality 密钥失败', message: localizeErrorMessage(e.message || e) })
-    } finally {
-      setRealityKeyLoading(false)
-    }
-  }
   const autoPortFor = (targetServer = server, targetProtocol = protocol, fallback = Number(draft.port) || inboundPreset(presetID).defaultPort) => nextAvailableInboundPort(data, targetServer, targetProtocol, fallback, draft.id)
   const applyPreset = (id: string) => {
     const preset = inboundPreset(id)
@@ -14456,13 +14444,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const copyConfig = async () => { await copyText(previewConfig) }
   const regenerate = () => {
     applyPreset(presetID)
-    if (presetID === 'vless-reality') void generateRealityKeypair(true)
   }
-  useEffect(() => {
-    if (presetID !== 'vless-reality' || realityKeyLoading) return
-    if (String(realityForKeys.private_key || '').trim() && String(realityForKeys.public_key || '').trim()) return
-    void generateRealityKeypair(true)
-  }, [presetID, draft.config_json, realityKeyLoading])
   return <MotionDialogPanel onCancel={onCancel} className="entry-dialog">
       <header className="dialog-head">
         <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">设置入口协议、地址和端口。</p></div>
@@ -14531,7 +14513,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
-          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
+          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
           {protocol !== 'ssh' && <InboundTransportFields protocol={protocol} config={cfg} updateConfig={updateConfig} server={server} />}
         </div>
         <details className="advanced-config">
@@ -14616,7 +14598,7 @@ function InboundTransportFields({ protocol, config, updateConfig, server }: { pr
   </div>
 }
 
-function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
+function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onRotateRealityKey, realityKeyRotationPending = false, createMode = false, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onRotateRealityKey?: () => void; realityKeyRotationPending?: boolean; createMode?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
   const headers = objectConfig(transport.headers)
@@ -14702,10 +14684,10 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
       }} placeholder={defaultVLESSRealityServerName} autoCapitalize="none" spellCheck={false} /></FormField>}
       <FormField label="握手端口" className={presetActive ? 'is-preset-applied' : ''} hint={presetHintSuffix || undefined}><input value={Number(handshake.server_port || 443)} onChange={e => setHandshake({ server_port: Number(e.target.value) })} inputMode="numeric" /></FormField>
       <div className="reality-key-summary">
-        <div><strong>Reality 密钥</strong><span>{realityKeyLoading ? '正在生成…' : String(reality.public_key || '').trim() ? `已生成 · 公钥 ${compactSecret(String(reality.public_key))}` : '保存时服务端会自动生成'}</span></div>
-        <button type="button" className="ghost" onClick={onGenerateRealityKeypair} disabled={realityKeyLoading}>{realityKeyLoading ? '生成中' : '重新生成密钥对'}</button>
+        <div><strong>Reality 密钥</strong><span>{realityKeyRotationPending ? '保存时将由 Controller 重新生成' : String(reality.public_key || '').trim() ? `由 Controller 管理 · 公钥 ${compactSecret(String(reality.public_key))}` : '保存时由 Controller 自动生成'}</span></div>
+        {!createMode && <button type="button" className="ghost" onClick={onRotateRealityKey} disabled={realityKeyRotationPending}>{realityKeyRotationPending ? '等待保存' : '保存时轮换密钥'}</button>}
       </div>
-      <FormField label="Short ID"><input value={String(reality.short_id || '')} onChange={e => setReality({ short_id: e.target.value })} placeholder="8-16 位十六进制" /></FormField>
+      <FormField label="Short ID"><input value={String(reality.short_id || '')} onChange={e => setReality({ short_id: e.target.value })} placeholder="2-16 位偶数长度十六进制" /></FormField>
     </div>
   }
   if (presetID === 'vless-ws') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
@@ -14808,25 +14790,45 @@ function objectConfig(value: any): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
 
-function mergeRealityKeypair(configJson: string, pair: RealityKeyPair) {
-  const cfg = parseConfig(configJson) || {}
+function controlledInboundPayload(draft: any) {
+  const __graphPosition = draft.__graphPosition
+  const rotateRealityKey = Boolean(draft.__rotate_reality_key)
+  const body: Record<string, any> = { ...draft }
+  for (const field of ['__edit', '__graphPosition', '__port_manual', '__custom_sni', '__rotate_reality_key', 'kind', 'reality', 'rotate_reality_key']) delete body[field]
+  const kind = inferInboundPreset(body.protocol as Protocol, body.config_json || '{}')
+  body.kind = kind
+  if (kind !== 'vless-reality') return { __graphPosition, body }
+
+  const cfg = parseConfig(body.config_json) || {}
   const tls = objectConfig(cfg.tls)
   const reality = objectConfig(tls.reality)
   const handshake = objectConfig(reality.handshake)
-  cfg.tls = {
-    ...tls,
-    enabled: tls.enabled ?? true,
-    server_name: tls.server_name || defaultVLESSRealityServerName,
-    reality: {
-      ...reality,
-      enabled: true,
-      handshake: Object.keys(handshake).length ? handshake : { server: defaultVLESSRealityServerName, server_port: 443 },
-      private_key: pair.private_key,
-      public_key: pair.public_key,
-      short_id: pair.short_id || reality.short_id || randomHex(8),
-    },
+  body.tls = false
+  body.certificate_mode = 'external'
+  body.certificate_id = undefined
+  body.certificate_domain = ''
+  body.reality = {
+    handshake_server: String(tls.server_name || handshake.server || defaultVLESSRealityServerName).trim(),
+    handshake_port: Number(handshake.server_port || 443),
+    ...(String(reality.short_id || '').trim() ? { short_id: String(reality.short_id).trim() } : {}),
   }
-  return JSON.stringify(cfg, null, 2)
+  body.rotate_reality_key = rotateRealityKey
+
+  const advancedReality = { ...reality }
+  delete advancedReality.enabled
+  delete advancedReality.handshake
+  delete advancedReality.private_key
+  delete advancedReality.public_key
+  delete advancedReality.short_id
+  const advancedTLS = { ...tls }
+  delete advancedTLS.enabled
+  delete advancedTLS.server_name
+  if (Object.keys(advancedReality).length) advancedTLS.reality = advancedReality
+  else delete advancedTLS.reality
+  if (Object.keys(advancedTLS).length) cfg.tls = advancedTLS
+  else delete cfg.tls
+  body.config_json = JSON.stringify(cfg)
+  return { __graphPosition, body }
 }
 
 function redactRealityPrivateKey(configJson: string) {
@@ -19896,13 +19898,6 @@ function randomBase64(byteLength: number) {
   return btoa(binary)
 }
 
-function randomHex(length = 8) {
-  const bytes = new Uint8Array(Math.ceil(length / 2))
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
-  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').slice(0, length)
-}
-
 function inboundPreset(id: string) {
   return inboundPresets.find(x => x.id === id) || inboundPresets[0]
 }
@@ -20033,7 +20028,7 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
         handshake: { server: defaultVLESSRealityServerName, server_port: 443 },
         private_key: '',
         public_key: '',
-        short_id: randomHex(8),
+        short_id: '',
       },
     }
   }

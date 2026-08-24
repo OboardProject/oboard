@@ -1001,32 +1001,44 @@ type Server struct {
 }
 
 type Inbound struct {
-	ID                int64       `json:"id"`
-	ServerID          int64       `json:"server_id"`
-	Name              string      `json:"name"`
-	Protocol          Protocol    `json:"protocol"`
-	ListenIP          string      `json:"listen_ip"`
-	Port              int         `json:"port"`
-	EntryIPMode       EntryIPMode `json:"entry_ip_mode"`
-	ExternalIP        string      `json:"external_ip"`
-	DNSSyncEnabled    bool        `json:"dns_sync_enabled"`
-	DNSCredentialID   *int64      `json:"dns_credential_id,omitempty"`
-	DNSDomain         string      `json:"dns_domain"`
-	DNSProxyEnabled   bool        `json:"dns_proxy_enabled"`
-	DNSRecordTypes    string      `json:"dns_record_types"`
-	DDNSEnabled       bool        `json:"ddns_enabled"`
-	DDNSInterval      int         `json:"ddns_interval_seconds"`
-	DNSSyncStatus     string      `json:"dns_sync_status"`
-	DNSSyncError      string      `json:"dns_sync_error"`
-	DNSLastSyncedAt   *time.Time  `json:"dns_last_synced_at,omitempty"`
-	TLS               bool        `json:"tls"`
-	CertificateMode   string      `json:"certificate_mode,omitempty"`
-	CertificateID     *int64      `json:"certificate_id,omitempty"`
-	CertificateDomain string      `json:"certificate_domain,omitempty"`
-	ConfigJSON        string      `json:"config_json"`
-	Enabled           bool        `json:"enabled"`
-	CreatedAt         time.Time   `json:"created_at"`
-	UpdatedAt         time.Time   `json:"updated_at"`
+	ID                int64                `json:"id"`
+	ServerID          int64                `json:"server_id"`
+	Name              string               `json:"name"`
+	Protocol          Protocol             `json:"protocol"`
+	ListenIP          string               `json:"listen_ip"`
+	Port              int                  `json:"port"`
+	EntryIPMode       EntryIPMode          `json:"entry_ip_mode"`
+	ExternalIP        string               `json:"external_ip"`
+	DNSSyncEnabled    bool                 `json:"dns_sync_enabled"`
+	DNSCredentialID   *int64               `json:"dns_credential_id,omitempty"`
+	DNSDomain         string               `json:"dns_domain"`
+	DNSProxyEnabled   bool                 `json:"dns_proxy_enabled"`
+	DNSRecordTypes    string               `json:"dns_record_types"`
+	DDNSEnabled       bool                 `json:"ddns_enabled"`
+	DDNSInterval      int                  `json:"ddns_interval_seconds"`
+	DNSSyncStatus     string               `json:"dns_sync_status"`
+	DNSSyncError      string               `json:"dns_sync_error"`
+	DNSLastSyncedAt   *time.Time           `json:"dns_last_synced_at,omitempty"`
+	TLS               bool                 `json:"tls"`
+	CertificateMode   string               `json:"certificate_mode,omitempty"`
+	CertificateID     *int64               `json:"certificate_id,omitempty"`
+	CertificateDomain string               `json:"certificate_domain,omitempty"`
+	ConfigJSON        string               `json:"config_json"`
+	Kind              string               `json:"kind,omitempty"`
+	Reality           *InboundRealityInput `json:"reality,omitempty"`
+	RotateRealityKey  bool                 `json:"rotate_reality_key,omitempty"`
+	Enabled           bool                 `json:"enabled"`
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+}
+
+// InboundRealityInput is the public, non-secret Reality configuration. The
+// Controller owns the X25519 private key and derived public key; callers may
+// choose only the fallback target and the client-visible short ID.
+type InboundRealityInput struct {
+	HandshakeServer string `json:"handshake_server,omitempty"`
+	HandshakePort   int    `json:"handshake_port,omitempty"`
+	ShortID         string `json:"short_id,omitempty"`
 }
 
 const (

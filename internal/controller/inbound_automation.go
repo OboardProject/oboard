@@ -27,7 +27,8 @@ var inboundAutomationFields = map[string]bool{
 	"entry_ip_mode": true, "external_ip": true, "dns_sync_enabled": true, "dns_credential_id": true,
 	"dns_domain": true, "dns_proxy_enabled": true, "dns_record_types": true, "ddns_enabled": true,
 	"ddns_interval_seconds": true, "tls": true, "certificate_mode": true, "certificate_id": true,
-	"certificate_domain": true, "config_json": true, "enabled": true,
+	"certificate_domain": true, "config_json": true, "kind": true, "reality": true,
+	"rotate_reality_key": true, "enabled": true,
 }
 
 func (s *Server) registerInboundAutomationOperations() {
@@ -213,7 +214,7 @@ func (s *Server) decodeInboundCreateOperation(input json.RawMessage) (model.Inbo
 	if _, exists := fields["enabled"]; !exists {
 		inbound.Enabled = true
 	}
-	return normalizeInboundAutomationCandidate(inbound)
+	return normalizeInboundAutomationCandidate(inbound, nil)
 }
 
 func (s *Server) decodeInboundUpdateOperation(ctx context.Context, principal application.Principal, input json.RawMessage) (*model.Inbound, model.Inbound, error) {
@@ -244,7 +245,7 @@ func (s *Server) decodeInboundUpdateOperation(ctx context.Context, principal app
 	}
 	inbound := mergeInboundPatch(*current, patch, fields)
 	inbound.ID = current.ID
-	inbound, err = normalizeInboundAutomationCandidate(inbound)
+	inbound, err = normalizeInboundAutomationCandidate(inbound, current)
 	return current, inbound, err
 }
 
@@ -264,11 +265,14 @@ func decodeInboundAutomationFields(raw json.RawMessage) (map[string]json.RawMess
 	return fields, nil
 }
 
-func normalizeInboundAutomationCandidate(inbound model.Inbound) (model.Inbound, error) {
+func normalizeInboundAutomationCandidate(inbound model.Inbound, current *model.Inbound) (model.Inbound, error) {
 	inbound.ID = max(inbound.ID, 0)
 	inbound.ConfigJSON = strings.TrimSpace(inbound.ConfigJSON)
 	if inbound.ConfigJSON == "" {
 		inbound.ConfigJSON = "{}"
+	}
+	if err := applyInboundKindDefaults(&inbound, current); err != nil {
+		return model.Inbound{}, err
 	}
 	config, err := applyInboundConfigDefaults(inbound.Protocol, inbound.ConfigJSON)
 	if err != nil {
@@ -290,6 +294,14 @@ func (s *Server) validateInboundAutomationCandidate(ctx context.Context, princip
 		return errors.New("inbound server is outside the authorized resource boundary")
 	}
 	if err := s.resolveInboundTemplates(ctx, inbound); err != nil {
+		return err
+	}
+	config, err := applyInboundConfigDefaults(inbound.Protocol, inbound.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	inbound.ConfigJSON = config
+	if err := normalizeMieruInboundPorts(inbound); err != nil {
 		return err
 	}
 	if err := validateInbound(*inbound); err != nil {
@@ -334,7 +346,7 @@ func automationInboundView(inbound model.Inbound) map[string]any {
 		"listen_ip": inbound.ListenIP, "port": inbound.Port, "entry_ip_mode": inbound.EntryIPMode,
 		"external_ip": inbound.ExternalIP, "dns_sync_enabled": inbound.DNSSyncEnabled,
 		"dns_domain": inbound.DNSDomain, "tls": inbound.TLS, "certificate_mode": inbound.CertificateMode,
-		"certificate_domain": inbound.CertificateDomain, "enabled": inbound.Enabled,
+		"certificate_domain": inbound.CertificateDomain, "kind": inferredInboundKind(inbound), "enabled": inbound.Enabled,
 		"advanced_configured": strings.TrimSpace(inbound.ConfigJSON) != "" && strings.TrimSpace(inbound.ConfigJSON) != "{}",
 	}
 }
