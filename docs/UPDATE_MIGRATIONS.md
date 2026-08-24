@@ -57,8 +57,29 @@
 | `controller-db-20260821-routing-rule-dns-resolver` | Controller | SQLite schema | `dev-b5b1829cb668` | 待发布 | 生效中 | - |
 | `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
+| `controller-db-20260824-family-split-routing` | Controller / Agent / kernel | SQLite schema / runtime capability | `dev-c3dc8525029d` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260824-family-split-routing
+
+- **引入日期：** 2026-08-24
+- **引入提交：** `OboardProject/oboard@c3dc8525029dec95bde3571933e76fd55cf0fdf4`；运行时能力：`OboardProject/oboard-agent@9c05660552f3518ef21bf5adb67afd0e98bf40b6`
+- **引入版本：** `dev-c3dc8525029d`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/core`；Agent `internal/agent`；kernel `internal/protocol/familyselector`
+- **类别：** SQLite schema / runtime capability metadata
+- **原因：** 一个逻辑入站需要把 IPv4 与 IPv6 目标绑定到两条既有代理路径，并在下发 OBoard `family-selector` 之前确认决策服务器内核具备对应能力；旧 schema 无法持久化两条家族目标、域名优先策略或内核能力集合。
+- **源状态：** `routing_rules` 没有 `ipv4_target_proxy_path_id`、`ipv6_target_proxy_path_id`、`family_dns_strategy`；`servers` 没有 `kernel_capabilities_json`，旧 Agent 健康报告也不携带 `kernel_capabilities`。
+- **目标状态：** 三个规则列存在，旧规则保持两个目标为空且策略为 `auto`；服务器以有界 JSON 数组保存 Agent 从 `oboard-sb version` 解析的能力。只有启用的 `family_split` 规则要求在线且报告 `family_selector_v1`，停用规则可保存并在再次启用时重验。
+- **实现位置：** `oboard/internal/store/store.go` 的启动 schema 与 `migrateRoutingRuleScopes`；`oboard/internal/store/health_report.go`；`oboard-agent/internal/agent/agent.go`；`oboard-agent/kernel/oboard-sb/internal/protocol/familyselector`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时检查并补列/索引；Agent/内核通过正常签名更新获得新 capability，后续健康报告刷新服务器运行时元数据。
+- **数据影响：** 只新增列和索引，不改写既有规则动作或流量。旧服务器能力默认为空；未启用家族分流时行为不变，启用前必须先更新 Agent/内核并成功上报能力。
+- **重复执行：** 补列前检查真实表结构，索引使用 `IF NOT EXISTS`；重复启动不改写现有目标或策略。能力报告按当前有界集合覆盖，重复报告相同集合结果不变。
+- **失败行为：** 任一 DDL/索引失败会阻止 Controller 打开数据库，不以部分 schema 运行。能力缺失、分支离线或家族入口不可达会在保存启用规则或编译期失败，且不会下发部分部署；停用规则不受可用性门阻塞。
+- **回归测试：** `TestRoutingRuleFamilySplitColumnsMigrateFromPreviousSchema` 从移除三个规则列/索引的真实上一状态打开并验证默认值与重复迁移；`TestServerListenModeInterfaceIPv6AndKernelCapabilitiesPersistAndMigrate` 从缺少 `kernel_capabilities_json` 的服务器表恢复并验证健康报告覆盖与幂等迁移。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已经包含四个新列及两个目标索引；所有受支持 Agent/内核必须稳定报告 `family_selector_v1`，且恢复、回滚、滚动升级路径不能重新产生缺列 schema。未实施最老直接升级版本门时 DDL 迁移不得删除。
+- **移除状态：** 生效中。
 
 ### controller-db-20260823-node-presets
 
