@@ -490,7 +490,7 @@ func dnsInboundTargets(server model.Server, inbound model.Inbound) ([]dnsRecordT
 			if !isDNSDomainName(target) {
 				return nil, errors.New("custom DNS target must be an IP address or domain")
 			}
-			return []dnsRecordTarget{{Type: "CNAME", Content: normalizeDomainName(target)}}, nil
+			return nil, errors.New("自定义入口域名无法验证监听家族对应的 A/AAAA；请改用自定义 IP，或关闭该入口的 DNS 同步")
 		}
 	}
 	ipv4, ipv6 := strings.TrimSpace(server.PublicIPv4), core.ServerEntryIPv6(server)

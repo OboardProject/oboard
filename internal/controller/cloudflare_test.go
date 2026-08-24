@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -9,17 +10,24 @@ import (
 func TestDNSInboundTargets(t *testing.T) {
 	server := model.Server{PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10"}
 	tests := []struct {
-		name    string
-		inbound model.Inbound
-		want    []dnsRecordTarget
+		name      string
+		inbound   model.Inbound
+		want      []dnsRecordTarget
+		wantError string
 	}{
-		{"server dual stack", model.Inbound{DNSDomain: "entry.example.com", DNSRecordTypes: "both"}, []dnsRecordTarget{{Type: "A", Content: "203.0.113.10"}, {Type: "AAAA", Content: "2001:db8::10"}}},
-		{"custom ipv4", model.Inbound{DNSDomain: "entry.example.com", ExternalIP: "198.51.100.8", DNSRecordTypes: "a"}, []dnsRecordTarget{{Type: "A", Content: "198.51.100.8"}}},
-		{"custom domain becomes cname", model.Inbound{DNSDomain: "entry.example.com", ExternalIP: "origin.example.net", DNSRecordTypes: "both"}, []dnsRecordTarget{{Type: "CNAME", Content: "origin.example.net"}}},
+		{name: "server dual stack", inbound: model.Inbound{DNSDomain: "entry.example.com", DNSRecordTypes: "both"}, want: []dnsRecordTarget{{Type: "A", Content: "203.0.113.10"}, {Type: "AAAA", Content: "2001:db8::10"}}},
+		{name: "custom ipv4", inbound: model.Inbound{DNSDomain: "entry.example.com", ExternalIP: "198.51.100.8", DNSRecordTypes: "a"}, want: []dnsRecordTarget{{Type: "A", Content: "198.51.100.8"}}},
+		{name: "custom domain is rejected because record families cannot be verified", inbound: model.Inbound{DNSDomain: "entry.example.com", ExternalIP: "origin.example.net", DNSRecordTypes: "both"}, wantError: "无法验证监听家族"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := dnsInboundTargets(server, tt.inbound)
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("error=%v, want substring %q", err, tt.wantError)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -45,6 +53,11 @@ func TestDNSInboundTargetsPublishOnlyListenedFamilies(t *testing.T) {
 	if len(got) != 1 || got[0] != (dnsRecordTarget{Type: "A", Content: server.PublicIPv4}) {
 		t.Fatalf("IPv4-only listener targets = %#v", got)
 	}
+	inbound.ExternalIP = "origin.example.net"
+	if targets, domainErr := dnsInboundTargets(server, inbound); domainErr == nil || len(targets) != 0 || !strings.Contains(domainErr.Error(), "无法验证监听家族") {
+		t.Fatalf("IPv4-only custom-domain target leaked through CNAME: targets=%#v err=%v", targets, domainErr)
+	}
+	inbound.ExternalIP = ""
 	server.PublicIPv6 = ""
 	server.ListenMode = model.ListenModeDual
 	got, err = dnsInboundTargets(server, inbound)

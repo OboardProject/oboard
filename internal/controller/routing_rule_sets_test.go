@@ -409,9 +409,9 @@ func TestFamilySplitRoutingRuleRESTLifecycle(t *testing.T) {
 	defer db.Close()
 	ctx := t.Context()
 	servers := []model.Server{
-		{Name: "entry", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", ListenIP: "::", Status: model.ServerOnline},
-		{Name: "v4", PublicIPv4: "203.0.113.4", PublicIPv6: "2001:db8::4", ListenIP: "::", Status: model.ServerOnline},
-		{Name: "v6", PublicIPv4: "203.0.113.6", PublicIPv6: "2001:db8::6", ListenIP: "::", Status: model.ServerOnline},
+		{Name: "entry", AgentID: "agent-entry", KernelCapabilities: []string{"family_selector_v1"}, PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", ListenIP: "::", Status: model.ServerOnline},
+		{Name: "v4", AgentID: "agent-v4", PublicIPv4: "203.0.113.4", PublicIPv6: "2001:db8::4", ListenIP: "::", Status: model.ServerOnline},
+		{Name: "v6", AgentID: "agent-v6", PublicIPv4: "203.0.113.6", PublicIPv6: "2001:db8::6", ListenIP: "::", Status: model.ServerOnline},
 	}
 	for index := range servers {
 		if err := db.CreateServer(ctx, &servers[index]); err != nil {
@@ -463,6 +463,48 @@ func TestFamilySplitRoutingRuleRESTLifecycle(t *testing.T) {
 	}
 	body["ipv6_target_proxy_path_id"] = ipv4Path.ID
 	request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules", token, body, http.StatusBadRequest)
+
+	deployment := request(t, handler, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
+	taskItems := deployment["tasks"].([]any)
+	if len(taskItems) != len(servers) {
+		t.Fatalf("family-split deployment tasks=%d, want %d: %#v", len(taskItems), len(servers), taskItems)
+	}
+	var deploymentVersion int64
+	for _, raw := range taskItems {
+		task := raw.(map[string]any)
+		if task["type"] != string(model.AgentTaskTypeApplyDeployment) {
+			t.Fatalf("family-split deployment emitted non-atomic task: %#v", task)
+		}
+		version := int64(task["config_version"].(float64))
+		if version <= 0 {
+			t.Fatalf("family-split deployment has invalid version: %#v", task)
+		}
+		if deploymentVersion == 0 {
+			deploymentVersion = version
+		} else if version != deploymentVersion {
+			t.Fatalf("family-split deployment versions differ: got %d and %d", deploymentVersion, version)
+		}
+	}
+
+	servers[2].Status = model.ServerOffline
+	if err := db.UpdateServer(ctx, &servers[2]); err != nil {
+		t.Fatal(err)
+	}
+	before, err := db.ListTasks(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyError := request(t, handler, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusBadRequest)
+	if message := fmt.Sprint(applyError["error"]); !strings.Contains(message, "offline") {
+		t.Fatalf("family-split unavailable branch error=%q", message)
+	}
+	after, err := db.ListTasks(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("rejected family-split deployment queued partial tasks: before=%d after=%d", len(before), len(after))
+	}
 }
 
 func TestNormalizeRoutingRuleProxyPathBinding(t *testing.T) {

@@ -2270,7 +2270,7 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		}
 		strategy, err := normalizedFamilyDNSStrategy(rule.FamilyDNSStrategy, server, inheritedDNSStrategy)
 		if err != nil {
-			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
+			return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s: %w", rule.Name, err))
 		}
 		selector := map[string]any{
 			"type":     "family-selector",
@@ -2288,19 +2288,19 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		} {
 			baseTag, err := routingRuleTargetProxyPathOutboundTag(rule, branch.target, server, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles)
 			if err != nil {
-				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
 			}
 			entryInbound, targetServer, err := routingRuleFamilyTargetEntry(rule, branch.target, branch.family, inboundByID, serverByID, opts.ProxyPathSteps)
 			if err != nil {
-				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
 			}
 			entryAddress, err := ResolveReachableEntryAddressForFamily(server, entryInbound, targetServer, branch.family)
 			if err != nil {
-				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
 			}
 			clones, branchTag, err := cloneRoutingRuleFamilyBranch(rule.ID, branch.family, baseTag, entryAddress, pathOutbounds, defaultResolver)
 			if err != nil {
-				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
 			}
 			result = append(result, clones...)
 			selector[branch.jsonKey] = branchTag
