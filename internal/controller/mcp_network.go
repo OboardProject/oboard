@@ -888,7 +888,7 @@ func (s *Server) portForwardAutomationCandidate(ctx context.Context, principal a
 		if err != nil {
 			return model.PortForward{}, nil, err
 		}
-		if !principal.AllowsInt64("server_ids", current.SourceServerID) || !principal.AllowsInt64("server_ids", current.TargetServerID) {
+		if !principalAllowsPortForward(principal, *current) {
 			return model.PortForward{}, nil, errors.New("port forward is outside the authorized server boundary")
 		}
 		var patch model.PortForward
@@ -910,7 +910,7 @@ func (s *Server) portForwardAutomationCandidate(ctx context.Context, principal a
 		if err != nil {
 			return model.PortForward{}, nil, err
 		}
-		if !principal.AllowsInt64("server_ids", current.SourceServerID) || !principal.AllowsInt64("server_ids", current.TargetServerID) {
+		if !principalAllowsPortForward(principal, *current) {
 			return model.PortForward{}, nil, errors.New("port forward is outside the authorized server boundary")
 		}
 		return *current, nil, nil
@@ -920,13 +920,22 @@ func (s *Server) portForwardAutomationCandidate(ctx context.Context, principal a
 }
 
 func (s *Server) validatePortForwardAutomationCandidate(ctx context.Context, principal application.Principal, forward model.PortForward) error {
-	if !principal.AllowsInt64("server_ids", forward.SourceServerID) || !principal.AllowsInt64("server_ids", forward.TargetServerID) {
+	if !principalAllowsPortForward(principal, forward) {
 		return errors.New("port forward server is outside the authorized server boundary")
 	}
 	if err := validatePortForward(forward); err != nil {
 		return err
 	}
-	return s.store.ValidateServerExists(ctx, forward.SourceServerID, forward.TargetServerID)
+	return s.store.ValidateServerExists(ctx, portForwardServerIDs(forward)...)
+}
+
+func principalAllowsPortForward(principal application.Principal, forward model.PortForward) bool {
+	for _, serverID := range portForwardServerIDs(forward) {
+		if !principal.AllowsInt64("server_ids", serverID) {
+			return false
+		}
+	}
+	return true
 }
 
 func mergePortForwardPatch(current model.PortForward, patch model.PortForward, fields map[string]json.RawMessage) model.PortForward {
@@ -985,7 +994,7 @@ func (s *Server) portForwardAutomationRevisions(ctx context.Context, principal a
 		return nil, err
 	}
 	revisions := map[string]string{}
-	for _, serverID := range []int64{forward.SourceServerID, forward.TargetServerID} {
+	for _, serverID := range portForwardServerIDs(forward) {
 		server, err := s.application.GetServer(ctx, principal, serverID)
 		if err != nil {
 			return nil, err
@@ -1039,7 +1048,7 @@ func (s *Server) applyPortForwardOperation(ctx context.Context, principal applic
 func automationPortForwardResult(forward model.PortForward, changed []string) (any, error) {
 	view := map[string]any{
 		"id": forward.ID, "revision": forward.UpdatedAt.UTC().Format(time.RFC3339Nano), "name": forward.Name,
-		"source_server_id": forward.SourceServerID, "target_server_id": forward.TargetServerID,
+		"source_server_id": forward.SourceServerID, "target_server_id": optionalPortForwardTargetServerID(forward.TargetServerID),
 		"listen_ip": forward.ListenIP, "listen_port": forward.ListenPort,
 		"target_address": forward.TargetAddress, "target_port": forward.TargetPort,
 		"protocol": forward.Protocol, "backend": forward.Backend, "probe_mode": forward.ProbeMode,
@@ -1051,6 +1060,13 @@ func automationPortForwardResult(forward model.PortForward, changed []string) (a
 		return map[string]any{"port_forward": view}, nil
 	}
 	return map[string]any{"port_forward": view, "changed_fields": changed}, nil
+}
+
+func optionalPortForwardTargetServerID(serverID int64) any {
+	if serverID > 0 {
+		return serverID
+	}
+	return nil
 }
 
 // ---- tunnels ----

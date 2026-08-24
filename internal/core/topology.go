@@ -19,7 +19,7 @@ func ValidateTopologyDAG(servers []model.Server, forwards []model.PortForward, t
 	}
 	edges := make([]topologyEdge, 0, len(forwards)+len(tunnels))
 	for _, forward := range forwards {
-		if forward.Enabled {
+		if forward.Enabled && forward.TargetServerID != 0 {
 			edges = append(edges, topologyEdge{source: forward.SourceServerID, target: forward.TargetServerID})
 		}
 	}

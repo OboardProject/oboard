@@ -35,7 +35,7 @@ export type TrafficForward = {
   id: number
   name: string
   source_server_id: number
-  target_server_id: number
+  target_server_id?: number
   listen_ip: string
   listen_port: number
   target_address: string
@@ -65,7 +65,7 @@ export type TrafficForwardProbe = {
   created_at: string
 }
 
-export type TrafficForwardDraft = Omit<TrafficForward, 'id' | 'created_at' | 'updated_at'>
+export type TrafficForwardDraft = Omit<TrafficForward, 'id' | 'target_server_id' | 'created_at' | 'updated_at'> & { target_server_id: number }
 
 type Notice = { tone: 'success' | 'danger'; message: string }
 
@@ -147,7 +147,7 @@ export function TrafficForwardingDialog({
   }
 
   const openCreate = () => {
-    if (servers.length < 2 || !sourceServerID) return
+    if (!sourceServerID) return
     setNotice(null)
     setEditor({ draft: emptyTrafficForwardDraft(servers, forwards, sourceServerID) })
   }
@@ -268,7 +268,7 @@ export function TrafficForwardingDialog({
           {!servers.length && <div className="traffic-forwarding-sidebar-empty">还没有可用服务器</div>}
           <div className="traffic-forwarding-sidebar-note">
             <CircleAlert size={14} aria-hidden="true" />
-            <p>入口服务器负责公开监听；目标服务器负责接收被转发的流量。</p>
+            <p>入口服务器负责公开监听；目标可以是受管服务器，也可以是任意 IP 或域名。</p>
           </div>
         </aside>
 
@@ -309,7 +309,7 @@ export function TrafficForwardingDialog({
                       <Search size={14} aria-hidden="true" />
                       <input value={query} onChange={event => setQuery(event.target.value)} aria-label="搜索转发" placeholder="搜索名称、目标或端口" />
                     </label>
-                    <button type="button" onClick={openCreate} disabled={servers.length < 2 || !sourceServerID}><Plus size={15} aria-hidden="true" />创建转发</button>
+                    <button type="button" onClick={openCreate} disabled={!sourceServerID}><Plus size={15} aria-hidden="true" />创建转发</button>
                   </div>
                 </div>
 
@@ -332,9 +332,9 @@ export function TrafficForwardingDialog({
                   {!visibleForwards.length && (
                     <div className="traffic-forwarding-empty">
                       <span aria-hidden="true"><Network size={22} /></span>
-                      <strong>{query ? '没有匹配的转发' : servers.length < 2 ? '需要至少两台服务器' : '还没有流量转发'}</strong>
-                      <p>{query ? '换一个名称、目标或端口试试。' : servers.length < 2 ? '添加第二台服务器后，即可配置入口与目标之间的流量转发。' : '创建规则后，客户端流量会从当前入口转发到目标服务器。'}</p>
-                      {!query && servers.length >= 2 && <button type="button" onClick={openCreate}><Plus size={15} aria-hidden="true" />创建第一条转发</button>}
+                      <strong>{query ? '没有匹配的转发' : servers.length === 0 ? '需要先添加入口服务器' : '还没有流量转发'}</strong>
+                      <p>{query ? '换一个名称、目标或端口试试。' : servers.length === 0 ? '添加服务器后，即可配置公开监听与目标端点。' : '创建规则后，客户端流量会从当前入口转发到指定服务器或地址。'}</p>
+                      {!query && servers.length > 0 && <button type="button" onClick={openCreate}><Plus size={15} aria-hidden="true" />创建第一条转发</button>}
                     </div>
                   )}
                 </div>
@@ -376,9 +376,7 @@ function TrafficForwardEditor({
   const validationIssue = validateTrafficForwardDraft(draft)
 
   const changeSource = (serverID: number) => {
-    const nextTargetID = serverID === draft.target_server_id
-      ? Number(servers.find(server => server.id !== serverID)?.id || 0)
-      : draft.target_server_id
+    const nextTargetID = serverID === draft.target_server_id ? 0 : draft.target_server_id
     update({ source_server_id: serverID, target_server_id: nextTargetID })
   }
 
@@ -388,7 +386,7 @@ function TrafficForwardEditor({
         <button type="button" className="ghost" onClick={onBack} disabled={saving}><ArrowLeft size={15} aria-hidden="true" />返回列表</button>
         <div>
           <h3>{editor.id ? '编辑流量转发' : '创建流量转发'}</h3>
-          <p>{editor.id ? '调整完整规则参数，保存后自动同步。' : '配置从第一层入口到目标服务器的监听与转发策略。'}</p>
+          <p>{editor.id ? '调整完整规则参数，保存后自动同步。' : '配置从第一层入口到目标服务器或任意地址的监听与转发策略。'}</p>
         </div>
       </div>
 
@@ -398,7 +396,7 @@ function TrafficForwardEditor({
           <span className="traffic-forwarding-route-arrow" aria-hidden="true"><ArrowRight size={17} /></span>
           <RoutePoint eyebrow="流量转发" title={protocolLabel(draft.protocol)} detail={backend?.label || draft.backend} active />
           <span className="traffic-forwarding-route-arrow" aria-hidden="true"><ArrowRight size={17} /></span>
-          <RoutePoint eyebrow="目标服务器" title={target?.name || '选择目标服务器'} detail={`${draft.target_address.trim() || '自动解析'}:${draft.target_port || '—'}`} />
+          <RoutePoint eyebrow="目标端点" title={target?.name || draft.target_address.trim() || '填写目标地址'} detail={`${draft.target_address.trim() || (target ? '自动解析服务器' : '等待填写')}:${draft.target_port || '—'}`} />
         </section>
 
         <section className="traffic-forwarding-form-section">
@@ -413,24 +411,25 @@ function TrafficForwardEditor({
         </section>
 
         <section className="traffic-forwarding-form-section">
-          <div className="traffic-forwarding-section-head"><Network size={16} aria-hidden="true" /><div><h4>转发端点</h4><p>入口服务器公开监听，目标服务器接收转发流量。</p></div></div>
+          <div className="traffic-forwarding-section-head"><Network size={16} aria-hidden="true" /><div><h4>转发端点</h4><p>入口服务器公开监听；目标服务器可选，也可以直接填写任意 IP 或域名。</p></div></div>
           <div className="traffic-forwarding-form-grid">
             <FormField label="入口服务器（第一层）" required>
               <><Select required value={draft.source_server_id} onChange={event => changeSource(Number(event.target.value))} aria-label="入口服务器" aria-describedby={fieldErrorDescription(fieldErrors, 'source_server_id')}>
                 {servers.map(server => <option value={server.id} key={server.id}>{server.name}{server.status === 'online' ? '' : '（离线）'}</option>)}
               </Select><ForwardFieldError errors={fieldErrors} field="source_server_id" /></>
             </FormField>
-            <FormField label="目标服务器" required>
-              <><Select required value={draft.target_server_id} onChange={event => update({ target_server_id: Number(event.target.value) })} aria-label="目标服务器" aria-describedby={fieldErrorDescription(fieldErrors, 'target_server_id')}>
+            <FormField label="目标服务器" hint="可选。选择后，目标地址留空即可自动解析该服务器。">
+              <><Select value={draft.target_server_id} onChange={event => update({ target_server_id: Number(event.target.value) })} aria-label="目标服务器" aria-invalid={Boolean(fieldErrors.target_server_id)} aria-describedby={fieldErrorDescription(fieldErrors, 'target_server_id')}>
+                <option value={0}>不选择（填写目标地址）</option>
                 {servers.filter(server => server.id !== draft.source_server_id).map(server => <option value={server.id} key={server.id}>{server.name}{server.status === 'online' ? '' : '（离线）'}</option>)}
               </Select><ForwardFieldError errors={fieldErrors} field="target_server_id" /></>
             </FormField>
             <FormField label="监听 IP" hint="留空或填 0.0.0.0 时，按入口服务器的监听模式自动选择 IPv4 或双栈地址。"><input aria-label="监听 IP" value={draft.listen_ip} onChange={event => update({ listen_ip: event.target.value })} placeholder="自动（推荐）" /></FormField>
             <FormField label="监听端口" required hint={source ? `该服务器推荐公网端口范围 ${source.port_range_start || 1}–${source.port_range_end || 65535}，手工转发也可使用范围外空闲端口。` : undefined}><><input type="number" min={1} max={65535} inputMode="numeric" required aria-label="监听端口" aria-invalid={Boolean(fieldErrors.listen_port)} aria-describedby={fieldErrorDescription(fieldErrors, 'listen_port')} value={draft.listen_port || ''} onChange={event => update({ listen_port: Number(event.target.value) })} /><ForwardFieldError errors={fieldErrors} field="listen_port" /></></FormField>
-            <FormField label="目标地址" hint="可选。留空时按目标服务器地址和入口服务器 IP 栈自动解析。"><><input aria-label="目标地址" aria-invalid={Boolean(fieldErrors.target_address)} aria-describedby={fieldErrorDescription(fieldErrors, 'target_address')} value={draft.target_address} onChange={event => update({ target_address: event.target.value })} placeholder="自动解析目标服务器" /><ForwardFieldError errors={fieldErrors} field="target_address" /></></FormField>
+            <FormField label="目标地址" required={!target} hint={target ? '可选。留空时按目标服务器地址和入口服务器 IP 栈自动解析。' : '必填。支持 IPv4、IPv6 或域名。'}><><input required={!target} aria-required={!target} aria-label="目标地址" aria-invalid={Boolean(fieldErrors.target_address)} aria-describedby={fieldErrorDescription(fieldErrors, 'target_address')} value={draft.target_address} onChange={event => update({ target_address: event.target.value })} placeholder={target ? '自动解析目标服务器' : '例如 203.0.113.10'} /><ForwardFieldError errors={fieldErrors} field="target_address" /></></FormField>
             <FormField label="目标端口" required><><input type="number" min={1} max={65535} inputMode="numeric" required aria-label="目标端口" aria-invalid={Boolean(fieldErrors.target_port)} aria-describedby={fieldErrorDescription(fieldErrors, 'target_port')} value={draft.target_port || ''} onChange={event => update({ target_port: Number(event.target.value) })} /><ForwardFieldError errors={fieldErrors} field="target_port" /></></FormField>
           </div>
-          {(source?.status !== 'online' || target?.status !== 'online') && <p className="traffic-forwarding-form-note"><CircleAlert size={14} aria-hidden="true" />离线服务器仍可保存配置；Agent 恢复连接后会自动同步最新状态。</p>}
+          {(source?.status !== 'online' || (target && target.status !== 'online')) && <p className="traffic-forwarding-form-note"><CircleAlert size={14} aria-hidden="true" />离线服务器仍可保存配置；Agent 恢复连接后会自动同步最新状态。</p>}
         </section>
 
         <section className="traffic-forwarding-form-section">
@@ -509,7 +508,7 @@ function TrafficForwardRow({
       <div className="traffic-forwarding-row-route">
         <span><small>{source?.name || `服务器 ${forward.source_server_id}`}</small><strong>{effectiveListenLabel(forward.listen_ip)}:{forward.listen_port}</strong></span>
         <ArrowRight size={15} aria-hidden="true" />
-        <span><small>{target?.name || `服务器 ${forward.target_server_id}`}</small><strong>{forward.target_address || '自动解析'}:{forward.target_port}</strong></span>
+        <span><small>{target?.name || '自定义目标'}</small><strong>{forward.target_address || '自动解析'}:{forward.target_port}</strong></span>
       </div>
       <div className="traffic-forwarding-row-health" data-tone={health.tone}>
         <span aria-hidden="true">{health.tone === 'success' ? <CheckCircle2 size={14} /> : health.tone === 'danger' ? <CircleAlert size={14} /> : <Gauge size={14} />}</span>
@@ -556,12 +555,11 @@ function ForwardFieldError({ errors, field }: { errors: Partial<Record<TrafficFo
 
 export function emptyTrafficForwardDraft(servers: Server[], forwards: TrafficForward[], sourceServerID?: number): TrafficForwardDraft {
   const source = servers.find(server => server.id === sourceServerID) || servers[0]
-  const target = servers.find(server => server.id !== source?.id)
   const listenPort = nextListenPort(source, forwards)
   return {
-    name: source && target ? `${source.name} → ${target.name}` : '新建流量转发',
+    name: '新建流量转发',
     source_server_id: Number(source?.id || 0),
-    target_server_id: Number(target?.id || 0),
+    target_server_id: 0,
     listen_ip: '',
     listen_port: listenPort,
     target_address: '',
@@ -579,7 +577,7 @@ export function emptyTrafficForwardDraft(servers: Server[], forwards: TrafficFor
 
 export function trafficForwardDraftFromForward(forward: TrafficForward): TrafficForwardDraft {
   const { id: _id, created_at: _createdAt, updated_at: _updatedAt, ...draft } = forward
-  return { ...draft }
+  return { ...draft, target_server_id: Number(draft.target_server_id || 0) }
 }
 
 export function trafficForwardPayload(draft: TrafficForwardDraft): TrafficForwardDraft {
@@ -603,8 +601,7 @@ export function trafficForwardFieldErrors(draft: TrafficForwardDraft): Partial<R
   if (!draft.name.trim()) errors.name = '请填写转发名称。'
   else if (draft.name.trim().length > 128) errors.name = '转发名称不能超过 128 个字符。'
   if (!draft.source_server_id) errors.source_server_id = '请选择入口服务器。'
-  if (!draft.target_server_id) errors.target_server_id = '请选择目标服务器。'
-  else if (draft.source_server_id === draft.target_server_id) errors.target_server_id = '入口服务器和目标服务器不能相同。'
+  if (draft.target_server_id && draft.source_server_id === draft.target_server_id) errors.target_server_id = '入口服务器和目标服务器不能相同。'
   if (!validPort(draft.listen_port)) errors.listen_port = '监听端口必须是 1 到 65535 的整数。'
   if (!validPort(draft.target_port)) errors.target_port = '目标端口必须是 1 到 65535 的整数。'
   if (!Number.isInteger(draft.priority) || draft.priority < 1) errors.priority = '优先级必须是大于 0 的整数。'
@@ -612,7 +609,8 @@ export function trafficForwardFieldErrors(draft: TrafficForwardDraft): Partial<R
   if (!Number.isInteger(draft.probe_interval_seconds) || draft.probe_interval_seconds < 300) errors.probe_interval_seconds = '检查间隔不能少于 300 秒。'
   if (!Number.isFinite(draft.sample_rate) || draft.sample_rate < 0 || draft.sample_rate > 1) errors.sample_rate = '真实连接采样率必须在 0 到 1 之间。'
   else if ((draft.probe_mode === 'sampled' || draft.probe_mode === 'periodic_sampled') && draft.sample_rate <= 0) errors.sample_rate = '连接采样模式需要填写大于 0 的采样率。'
-  if (/\s/.test(draft.target_address.trim())) errors.target_address = '目标地址不能包含空格。'
+  if (!draft.target_server_id && !draft.target_address.trim()) errors.target_address = '未选择目标服务器时，请填写目标地址。'
+  else if (/\s/.test(draft.target_address.trim())) errors.target_address = '目标地址不能包含空格。'
   try {
     const parsed = JSON.parse(draft.config_json.trim() || '{}')
     if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') errors.config_json = '高级配置必须是 JSON 对象。'

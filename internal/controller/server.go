@@ -10948,7 +10948,7 @@ func (s *Server) portForwards(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.store.ValidateServerExists(r.Context(), v.SourceServerID, v.TargetServerID); err != nil {
+		if err := s.store.ValidateServerExists(r.Context(), portForwardServerIDs(v)...); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -10978,7 +10978,7 @@ func (s *Server) portForwards(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.store.ValidateServerExists(r.Context(), v.SourceServerID, v.TargetServerID); err != nil {
+		if err := s.store.ValidateServerExists(r.Context(), portForwardServerIDs(v)...); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -11090,10 +11090,13 @@ func validatePortForward(v model.PortForward) error {
 	if v.Name == "" {
 		return errors.New("name required")
 	}
-	if v.SourceServerID == 0 || v.TargetServerID == 0 {
-		return errors.New("source_server_id and target_server_id required")
+	if v.SourceServerID == 0 {
+		return errors.New("source_server_id required")
 	}
-	if v.SourceServerID == v.TargetServerID {
+	if v.TargetServerID == 0 && strings.TrimSpace(v.TargetAddress) == "" {
+		return errors.New("target_address required when target_server_id is omitted")
+	}
+	if v.TargetServerID != 0 && v.SourceServerID == v.TargetServerID {
 		return errors.New("port forward source and target must be different")
 	}
 	if err := core.ValidateListenIP(v.ListenIP); err != nil {
@@ -11132,6 +11135,14 @@ func validatePortForward(v model.PortForward) error {
 		return errors.New("sampled probe modes require sample_rate > 0")
 	}
 	return validJSONObject(v.ConfigJSON)
+}
+
+func portForwardServerIDs(v model.PortForward) []int64 {
+	ids := []int64{v.SourceServerID}
+	if v.TargetServerID > 0 {
+		ids = append(ids, v.TargetServerID)
+	}
+	return ids
 }
 
 func (s *Server) validateAllForwards(ctx context.Context) error {

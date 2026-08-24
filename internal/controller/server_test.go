@@ -1340,6 +1340,14 @@ func TestControllerFormalAPI(t *testing.T) {
 	if forwardID == 0 {
 		t.Fatalf("port forward missing id: %#v", createdForward)
 	}
+	externalForward := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards", token, map[string]any{"name": "s1-to-external", "source_server_id": serverID, "listen_ip": "0.0.0.0", "listen_port": 444, "target_address": "198.51.100.80", "target_port": 9443, "protocol": "tcp", "backend": "auto", "priority": 20, "config_json": "{}"}, http.StatusCreated)
+	externalPayload := externalForward["port_forward"].(map[string]any)
+	if externalPayload["target_address"] != "198.51.100.80" {
+		t.Fatalf("external port forward target missing: %#v", externalPayload)
+	}
+	if _, exists := externalPayload["target_server_id"]; exists {
+		t.Fatalf("external port forward unexpectedly exposes a managed target: %#v", externalPayload)
+	}
 	probe := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards/"+itoa(forwardID)+"/probe", token, map[string]any{}, http.StatusAccepted)
 	if probe["task"].(map[string]any)["type"] != "probe_port_forwards" {
 		t.Fatalf("unexpected probe task: %#v", probe)
@@ -1377,7 +1385,7 @@ func TestControllerFormalAPI(t *testing.T) {
 		if err := json.Unmarshal([]byte(task["payload_json"].(string)), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if len(payload.PortForwards.Rules) != 1 || payload.PortForwardProbe == nil || len(payload.PortForwardProbe.Rules) != 1 {
+		if len(payload.PortForwards.Rules) != 2 || payload.PortForwardProbe == nil || len(payload.PortForwardProbe.Rules) != 2 {
 			t.Fatalf("deployment payload missing forward apply/probe plans: %#v", payload)
 		}
 		if len(payload.Tunnels.Tunnels) != 1 || payload.MTUDetection == nil {

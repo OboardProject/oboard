@@ -63,6 +63,9 @@ func BuildPortForwardPlan(version int64, server model.Server, servers []model.Se
 			return model.PortForwardPlan{}, fmt.Errorf("target_port: %w", err)
 		}
 		if strings.TrimSpace(f.TargetAddress) == "" {
+			if f.TargetServerID == 0 {
+				return model.PortForwardPlan{}, fmt.Errorf("port forward %q target_address is required when target_server_id is omitted", f.Name)
+			}
 			target, ok := byID[f.TargetServerID]
 			if !ok {
 				return model.PortForwardPlan{}, fmt.Errorf("target server %d does not exist", f.TargetServerID)
@@ -74,6 +77,9 @@ func BuildPortForwardPlan(version int64, server model.Server, servers []model.Se
 			f.TargetAddress = address
 		}
 		if err := ValidateAddressForIPStack(EffectiveIPStack(server), f.TargetAddress); err != nil {
+			if f.TargetServerID == 0 {
+				return model.PortForwardPlan{}, markInvalidDesiredState(fmt.Errorf("port forward %q: %w", f.Name, err))
+			}
 			target := byID[f.TargetServerID]
 			if _, reachableErr := validateReachableServerAddress(server, target, f.TargetAddress); reachableErr != nil {
 				return model.PortForwardPlan{}, fmt.Errorf("port forward %q: %w", f.Name, reachableErr)
@@ -102,16 +108,19 @@ func ValidatePortForwards(servers []model.Server, forwards []model.PortForward) 
 		if !f.Enabled {
 			continue
 		}
-		if f.SourceServerID == 0 || f.TargetServerID == 0 {
-			return errors.New("source_server_id and target_server_id required")
+		if f.SourceServerID == 0 {
+			return errors.New("source_server_id required")
 		}
-		if f.SourceServerID == f.TargetServerID {
+		if f.TargetServerID == 0 && strings.TrimSpace(f.TargetAddress) == "" {
+			return errors.New("target_address required when target_server_id is omitted")
+		}
+		if f.TargetServerID != 0 && f.SourceServerID == f.TargetServerID {
 			return errors.New("port forward source and target must be different")
 		}
 		if !known[f.SourceServerID] {
 			return fmt.Errorf("source server %d does not exist", f.SourceServerID)
 		}
-		if !known[f.TargetServerID] {
+		if f.TargetServerID != 0 && !known[f.TargetServerID] {
 			return fmt.Errorf("target server %d does not exist", f.TargetServerID)
 		}
 		if err := ValidateForwardProtocol(f.Protocol); err != nil {

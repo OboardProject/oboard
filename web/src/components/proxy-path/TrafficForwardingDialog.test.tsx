@@ -63,6 +63,15 @@ describe('TrafficForwardingDialog', () => {
     expect(container.textContent).toContain('转发端点')
     expect(container.textContent).toContain('转发策略')
     expect(container.textContent).toContain('高级 JSON 配置')
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="目标服务器"]')?.textContent).toContain('不选择')
+
+    const targetAddress = container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')
+    act(() => {
+      if (!targetAddress) return
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setter?.call(targetAddress, '203.0.113.80')
+      targetAddress.dispatchEvent(new Event('input', { bubbles: true }))
+    })
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click()
@@ -72,7 +81,8 @@ describe('TrafficForwardingDialog', () => {
     expect(props.onSave).toHaveBeenCalledTimes(1)
     expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({
       source_server_id: 1,
-      target_server_id: 2,
+      target_server_id: 0,
+      target_address: '203.0.113.80',
       protocol: 'tcp',
       backend: 'auto',
       probe_mode: 'periodic',
@@ -173,12 +183,13 @@ describe('TrafficForwardingDialog', () => {
 })
 
 describe('traffic forwarding draft helpers', () => {
-  it('chooses a different target and the next unused recommended port', () => {
+  it('starts without a managed target and uses the next unused recommended port', () => {
     const draft = emptyTrafficForwardDraft(servers, forwards, 1)
     expect(draft.source_server_id).toBe(1)
-    expect(draft.target_server_id).toBe(2)
+    expect(draft.target_server_id).toBe(0)
     expect(draft.listen_port).toBe(10000)
     expect(draft.enabled).toBe(true)
+    expect(validateTrafficForwardDraft(draft)).toContain('目标地址')
   })
 
   it('normalizes the full payload and rejects invalid backend/probe combinations', () => {
@@ -188,8 +199,10 @@ describe('traffic forwarding draft helpers', () => {
       target_address: 'edge.example.com',
       config_json: '{}',
     }))
-    expect(validateTrafficForwardDraft({ ...base, protocol: 'udp', backend: 'builtin' })).toContain('只支持 TCP')
-    expect(validateTrafficForwardDraft({ ...base, probe_mode: 'sampled', sample_rate: 0 })).toContain('大于 0')
+    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25', protocol: 'udp', backend: 'builtin' })).toContain('只支持 TCP')
+    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25', probe_mode: 'sampled', sample_rate: 0 })).toContain('大于 0')
+    expect(validateTrafficForwardDraft({ ...base, target_server_id: 2 })).toBe('')
+    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25' })).toBe('')
   })
 })
 

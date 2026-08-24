@@ -43,6 +43,25 @@ func TestBuildPortForwardPlanUsesDetectedAddressForSourceIPStack(t *testing.T) {
 	}
 }
 
+func TestBuildPortForwardPlanSupportsExplicitExternalTarget(t *testing.T) {
+	source := model.Server{ID: 1, Name: "source", PublicIPv4: "198.51.100.1", IPStack: model.IPStackIPv4Only}
+	forward := model.PortForward{ID: 1, Name: "external", SourceServerID: source.ID, ListenPort: 443, TargetAddress: "203.0.113.80", TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendBuiltin, Enabled: true}
+	plan, err := BuildPortForwardPlan(9, source, []model.Server{source}, []model.PortForward{forward})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Rules) != 1 || plan.Rules[0].TargetServerID != 0 || plan.Rules[0].TargetAddress != forward.TargetAddress {
+		t.Fatalf("external target plan = %#v", plan)
+	}
+	if err := ValidatePortForwards([]model.Server{source}, []model.PortForward{forward}); err != nil {
+		t.Fatalf("external target validation: %v", err)
+	}
+	forward.TargetAddress = ""
+	if err := ValidatePortForwards([]model.Server{source}, []model.PortForward{forward}); err == nil || !strings.Contains(err.Error(), "target_address") {
+		t.Fatalf("missing external target address error = %v", err)
+	}
+}
+
 func TestBuildPortForwardPlanDerivesDualStackListen(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

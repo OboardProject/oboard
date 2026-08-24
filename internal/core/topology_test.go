@@ -17,6 +17,14 @@ func TestValidateTopologyDAGRejectsTunnelCycle(t *testing.T) {
 	}
 }
 
+func TestValidateTopologyDAGIgnoresExternalPortForwardTargets(t *testing.T) {
+	servers := []model.Server{{ID: 1, Name: "source"}}
+	forwards := []model.PortForward{{ID: 1, Name: "external", SourceServerID: 1, TargetAddress: "203.0.113.80", ListenPort: 443, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, Enabled: true}}
+	if err := ValidateTopologyDAG(servers, forwards, nil); err != nil {
+		t.Fatalf("external target must not become a managed topology edge: %v", err)
+	}
+}
+
 func TestValidateTunnelConfigRejectsUnsafeSSHExtraArgs(t *testing.T) {
 	err := ValidateTunnelConfig(model.Tunnel{Type: model.TunnelTypeSSH, ConfigJSON: `{"user":"root","extra_args":["-o","ProxyCommand=sh -c id"]}`})
 	if err == nil || !strings.Contains(err.Error(), "extra_args") {

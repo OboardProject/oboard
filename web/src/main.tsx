@@ -293,7 +293,7 @@ type DNSBenchmarkResult = { id: number; report_id: string; request_id?: string; 
 type ForwardBackend = 'auto' | 'realm' | 'nft' | 'builtin'
 type ForwardProtocol = 'tcp' | 'udp' | 'tcp_udp'
 type ProbeMode = 'never' | 'apply' | 'periodic' | 'sampled' | 'periodic_sampled'
-type PortForward = { id: number; name: string; source_server_id: number; target_server_id: number; listen_ip: string; listen_port: number; target_address: string; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; probe_mode: ProbeMode; probe_interval_seconds: number; sample_rate: number; priority: number; config_json: string; enabled: boolean }
+type PortForward = { id: number; name: string; source_server_id: number; target_server_id?: number; listen_ip: string; listen_port: number; target_address: string; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; probe_mode: ProbeMode; probe_interval_seconds: number; sample_rate: number; priority: number; config_json: string; enabled: boolean }
 type InboundProbeResult = { id: number; inbound_id: number; server_id: number; config_version: number; mode: string; transport: string; endpoint: string; available: boolean; confirmed: boolean; latency_ms: number; min_latency_ms: number; p95_latency_ms: number; jitter_ms: number; sample_count: number; success_count: number; error: string; result_json: string; created_at: string }
 type PortForwardProbeResult = { id: number; port_forward_id: number; server_id: number; mode: string; available: boolean; latency_ms: number; sample_count: number; error: string; result_json: string; created_at: string }
 type TunnelType = 'wireguard' | 'ssh'
@@ -15098,7 +15098,7 @@ function ProxyPathRuntimeDetails({ plan, data }: { plan: ProxyPathPlan; data: an
     {(forwards.length > 0 || tunnels.length > 0) && <div className="runtime-resource-section">
       <h4>派生传输</h4>
       <ul>
-        {forwards.map(forward => <li key={`forward-${forward.id}`}><span className="runtime-resource-icon"><ArrowLeftRight size={14} aria-hidden="true" /></span><div><strong>端口转发</strong><span>{serverNameByID(data, forward.source_server_id)} → {serverNameByID(data, forward.target_server_id)}</span><small>{formatHostPort(forward.listen_ip, forward.listen_port)} → {formatHostPort(forward.target_address, forward.target_port)} · {labelValue(forward.protocol)}</small></div></li>)}
+        {forwards.map(forward => <li key={`forward-${forward.id}`}><span className="runtime-resource-icon"><ArrowLeftRight size={14} aria-hidden="true" /></span><div><strong>端口转发</strong><span>{serverNameByID(data, forward.source_server_id)} → {forward.target_server_id ? serverNameByID(data, forward.target_server_id) : '自定义目标'}</span><small>{formatHostPort(forward.listen_ip, forward.listen_port)} → {formatHostPort(forward.target_address, forward.target_port)} · {labelValue(forward.protocol)}</small></div></li>)}
         {tunnels.map(tunnel => <li key={`tunnel-${tunnel.id}`}><span className="runtime-resource-icon"><Cable size={14} aria-hidden="true" /></span><div><strong>{tunnel.type === 'wireguard' ? 'WireGuard 组网' : 'SSH 隧道'}</strong><span>{serverNameByID(data, tunnel.source_server_id)} → {serverNameByID(data, tunnel.target_server_id)}</span><small>{tunnel.listen_port ? `本地端口 ${tunnel.listen_port}` : '内部连接'}{tunnel.target_port ? ` · 目标端口 ${tunnel.target_port}` : ''}</small></div></li>)}
       </ul>
     </div>}
@@ -15957,7 +15957,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     }
   })
   ;(data.port_forwards || []).forEach((x: PortForward) => {
-    if (!visibleServerIds.has(x.source_server_id) || !visibleServerIds.has(x.target_server_id)) return
+    if (!x.target_server_id || !visibleServerIds.has(x.source_server_id) || !visibleServerIds.has(x.target_server_id)) return
     const probe = latestForwardProbe(data, x.id)
     const probeLabel = !probe ? '待探测' : probe.available ? `${probe.latency_ms}ms` : '异常'
     edges.push(graphTransportEdge(`pf-${x.id}`, `server-${x.source_server_id}`, `server-${x.target_server_id}`, {
@@ -16477,7 +16477,10 @@ function deploymentConflicts(data: any) {
 
 function detectTopologyCycles(edges: Array<PortForward | Tunnel>) {
   const out = new Map<number, number[]>()
-	edges.filter(x => x.enabled !== false).forEach(x => out.set(x.source_server_id, [...(out.get(x.source_server_id) || []), x.target_server_id]))
+	edges.filter(x => x.enabled !== false).forEach(x => {
+	  if (!x.target_server_id) return
+	  out.set(x.source_server_id, [...(out.get(x.source_server_id) || []), x.target_server_id])
+	})
   const conflicts: string[] = []
   const visiting = new Set<number>()
   const visited = new Set<number>()

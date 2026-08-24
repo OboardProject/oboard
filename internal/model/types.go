@@ -1797,7 +1797,7 @@ type PortForward struct {
 	ID                   int64                 `json:"id"`
 	Name                 string                `json:"name"`
 	SourceServerID       int64                 `json:"source_server_id"`
-	TargetServerID       int64                 `json:"target_server_id"`
+	TargetServerID       int64                 `json:"target_server_id,omitempty"`
 	ListenIP             string                `json:"listen_ip"`
 	ListenPort           int                   `json:"listen_port"`
 	TargetAddress        string                `json:"target_address"`

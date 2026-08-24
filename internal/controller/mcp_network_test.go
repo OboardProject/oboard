@@ -110,14 +110,14 @@ func TestPortForwardAndTunnelCapabilities(t *testing.T) {
 	if err := db.CreateServer(ctx, target); err != nil {
 		t.Fatal(err)
 	}
-	forwardInput := json.RawMessage(`{"port_forward":{"name":"测试转发","source_server_id":1,"target_server_id":2,"listen_ip":"0.0.0.0","listen_port":10001,"target_address":"203.0.113.99","target_port":8080,"protocol":"tcp","backend":"auto","probe_mode":"never"}}`)
+	forwardInput := json.RawMessage(`{"port_forward":{"name":"测试转发","source_server_id":1,"listen_ip":"0.0.0.0","listen_port":10001,"target_address":"203.0.113.99","target_port":8080,"protocol":"tcp","backend":"auto","probe_mode":"never"}}`)
 	applyAutomationChangeset(t, server, principal, "pf-create", automation.OperationRequest{Capability: "port_forwards.create", Input: forwardInput})
 	forwards, err := db.ListPortForwards(ctx)
 	if err != nil || len(forwards) != 1 {
 		t.Fatalf("forwards=%#v err=%v", forwards, err)
 	}
 	forward := forwards[0]
-	if forward.ListenPort != 10001 || !forward.Enabled {
+	if forward.ListenPort != 10001 || forward.TargetServerID != 0 || !forward.Enabled {
 		t.Fatalf("unexpected forward: %#v", forward)
 	}
 	updateInput, _ := json.Marshal(map[string]any{"port_forward_id": forward.ID, "changes": map[string]any{"listen_port": 10002}})
