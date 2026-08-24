@@ -21658,6 +21658,14 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   background: var(--surface-2);
 }
 
+.snell-profile-editor.is-dialog {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .snell-profile-editor h4 {
   margin: 0 0 10px;
   color: var(--text-strong);

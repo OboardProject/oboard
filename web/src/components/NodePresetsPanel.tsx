@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Layers, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { useDialogs } from './ui/dialog-context'
+import { Dialog } from './ui/dialog'
 import { Select } from './ui/select'
 import { SettingsRow } from './settings/SettingsLayout'
 import { SnellProfileCards, SnellProfileEditor, emptySnellDraft, snellDraftFromProfile, type SnellDraft, type SnellProfile } from './SnellProfilesPanel'
@@ -156,7 +157,7 @@ function NodePresetCards({ presets, editingID, onEdit, onDelete }: { presets: No
   </div>
 }
 
-function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, saving }: { title: string; draft: NodeDraft; setDraft: (draft: NodeDraft) => void; lockKind?: boolean; onSave: () => void; onCancel: () => void; saving: boolean }) {
+function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, saving, hideTitle }: { title: string; draft: NodeDraft; setDraft: (draft: NodeDraft) => void; lockKind?: boolean; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
   const meta = kindMeta(draft.kind) || nodePresetKinds[0]
   const tls = objectConfig(draft.config.tls)
   const transport = objectConfig(draft.config.transport)
@@ -193,11 +194,11 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
     else if (normalized.includes(String(tls.server_name || handshake.server || ''))) setRealityCustomForced(false)
     updateConfig({ reality_domains: normalized, tls: { ...tls, server_name: nextSelected, reality: { ...reality, enabled: true, handshake: { ...handshake, server: nextSelected, server_port: Number(handshake.server_port || 443) } } } })
   }
-  return <div className="snell-profile-editor">
-    <h4>{title}</h4>
+  return <div className={`snell-profile-editor${hideTitle ? ' is-dialog' : ''}`}>
+    {!hideTitle && <h4>{title}</h4>}
     <div className="form settings-form">
       <SettingsRow label="预设名称" description="用于在创建入口时识别这套默认配置。">
-        <input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 Reality" />
+        <input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 Reality" />
       </SettingsRow>
       <SettingsRow label="配置类型" description={meta.description}>
         <Select value={draft.kind} onChange={event => changeKind(event.target.value)} disabled={lockKind} aria-label="配置类型">
@@ -435,8 +436,16 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
           <button type="button" onClick={startCreate}><Plus size={14} />新建预设</button>
         </div>
       </div>
-      {editingNode && <NodePresetEditor title={editingNode.id ? '编辑节点预设' : '新建节点预设'} draft={editingNode.draft} setDraft={draft => setEditingNode({ id: editingNode.id, builtin: editingNode.builtin, draft })} lockKind={Boolean(editingNode.builtin)} onSave={saveNode} onCancel={() => setEditingNode(null)} saving={saving} />}
-      {editingSnell && <SnellProfileEditor title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} draft={editingSnell.draft} setDraft={draft => setEditingSnell({ id: editingSnell.id, draft })} onSave={saveSnell} onCancel={() => setEditingSnell(null)} saving={saving} />}
+      {editingNode && (
+        <Dialog isOpen={Boolean(editingNode)} onClose={() => setEditingNode(null)} title={editingNode.id ? '编辑节点预设' : '新建节点预设'} size="lg">
+          <NodePresetEditor title={editingNode.id ? '编辑节点预设' : '新建节点预设'} draft={editingNode.draft} setDraft={draft => setEditingNode({ id: editingNode.id, builtin: editingNode.builtin, draft })} lockKind={Boolean(editingNode.builtin)} onSave={saveNode} onCancel={() => setEditingNode(null)} saving={saving} hideTitle />
+        </Dialog>
+      )}
+      {editingSnell && (
+        <Dialog isOpen={Boolean(editingSnell)} onClose={() => setEditingSnell(null)} title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} size="lg">
+          <SnellProfileEditor title={editingSnell.id ? '编辑 Snell 预设' : '新建 Snell 预设'} draft={editingSnell.draft} setDraft={draft => setEditingSnell({ id: editingSnell.id, draft })} onSave={saveSnell} onCancel={() => setEditingSnell(null)} saving={saving} hideTitle />
+        </Dialog>
+      )}
       {groupedPresets.map(group => (
         <div className="node-preset-group" key={group.protocol}>
           <div className="node-preset-group-head">

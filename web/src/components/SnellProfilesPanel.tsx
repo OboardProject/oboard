@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Layers, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useDialogs } from './ui/dialog-context'
+import { Dialog } from './ui/dialog'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
 
@@ -70,13 +71,13 @@ export function SnellProfileCards({ profiles, editingID, onEdit, onDelete }: { p
   </div>
 }
 
-export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean }) {
+export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, saving, hideTitle }: { title: string; draft: SnellDraft; setDraft: (draft: SnellDraft) => void; onSave: () => void; onCancel: () => void; saving: boolean; hideTitle?: boolean }) {
   const isV6 = Number(draft.version) === 6
-  return <div className="snell-profile-editor">
-    <h4>{title}</h4>
+  return <div className={`snell-profile-editor${hideTitle ? ' is-dialog' : ''}`}>
+    {!hideTitle && <h4>{title}</h4>}
     <div className="form settings-form">
       <SettingsRow label="预设名称" description="用于在入口表单中识别该套参数。">
-        <input value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 A 通用 v4" />
+        <input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 A 通用 v4" />
       </SettingsRow>
       <SettingsRow label="Snell 版本" description="v4 参数简单；v6 为测试版协议，仅部分客户端支持。">
         <Select value={String(draft.version)} onChange={event => setDraft({ ...draft, version: Number(event.target.value), obfs_mode: Number(event.target.value) === 6 ? 'none' : draft.obfs_mode, mode: Number(event.target.value) === 4 ? 'default' : draft.mode })} aria-label="Snell 版本">
@@ -155,14 +156,18 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
 
   return <section id="settings-panel-snell" role="tabpanel" className="settings-card">
     <SettingsGroup title="Snell 参数预设" description="预设让多个服务器入口快速使用同一套 Snell 参数；修改预设后，引用它的入口会在下次部署时应用新参数。内置预设不可删除。">
-      <div className="snell-profiles-head">
-        <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
-        <button type="button" onClick={() => setEditing({ draft: emptySnellDraft(4) })}><Plus size={14} />新建预设</button>
-      </div>
-      {editing && <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} />}
-      <SnellProfileCards profiles={profiles} editingID={editing?.id} onEdit={profile => setEditing({ id: profile.id, draft: snellDraftFromProfile(profile) })} onDelete={deleteProfile} />
-    </SettingsGroup>
-  </section>
+       <div className="snell-profiles-head">
+         <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
+         <button type="button" onClick={() => setEditing({ draft: emptySnellDraft(4) })}><Plus size={14} />新建预设</button>
+       </div>
+       <SnellProfileCards profiles={profiles} editingID={editing?.id} onEdit={profile => setEditing({ id: profile.id, draft: snellDraftFromProfile(profile) })} onDelete={deleteProfile} />
+     </SettingsGroup>
+     {editing && (
+       <Dialog isOpen={Boolean(editing)} onClose={() => setEditing(null)} title={editing.id ? '编辑预设' : '新建预设'} size="lg">
+         <SnellProfileEditor title={editing.id ? '编辑预设' : '新建预设'} draft={editing.draft} setDraft={draft => setEditing({ id: editing.id, draft })} onSave={saveProfile} onCancel={() => setEditing(null)} saving={saving} hideTitle />
+       </Dialog>
+     )}
+   </section>
 }
 
 export function SnellProfilesEmptyState() {
