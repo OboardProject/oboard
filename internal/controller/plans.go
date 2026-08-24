@@ -1997,6 +1997,9 @@ func (s *Server) validateUserNodeException(ctx context.Context, v *model.UserNod
 		return errors.New("effect must be allow or deny")
 	}
 	v.Reason = strings.TrimSpace(v.Reason)
+	if v.Reason == "" {
+		return errors.New("reason required")
+	}
 	if len(v.Reason) > 300 {
 		return errors.New("reason too long")
 	}

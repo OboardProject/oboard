@@ -924,6 +924,17 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, http.StatusBadRequest)
 				return
 			}
+			if relayURL != "" {
+				matches, matchErr := s.subscriptionRelayURLMatchesEnrolled(r.Context(), relayURL)
+				if matchErr != nil {
+					fail(w, matchErr, http.StatusInternalServerError)
+					return
+				}
+				if !matches {
+					fail(w, errors.New("订阅中继地址必须与某个已接入中继的公开地址一致；如需关闭请传空字符串"), http.StatusBadRequest)
+					return
+				}
+			}
 			if err := s.store.SetSetting(r.Context(), settingSubscriptionRelayURL, relayURL); err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
