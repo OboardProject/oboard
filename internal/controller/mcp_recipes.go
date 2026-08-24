@@ -11,6 +11,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -503,8 +504,8 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 }
 
 // defaultInboundPresetConfig mirrors the panel's default inbound presets
-// (vless-reality, hy2-tls, anytls-basic, ss-2022-128, mieru-basic,
-// ssh-restricted). Credentials and Reality keypairs are left empty so the
+// (vless-reality, hy2-tls, anytls-basic balanced padding, ss-2022-128,
+// mieru-basic, ssh-restricted). Credentials and Reality keypairs are left empty so the
 // Controller generates them on save, exactly like the panel flow.
 func defaultInboundPresetConfig(protocol string) string {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
@@ -513,7 +514,8 @@ func defaultInboundPresetConfig(protocol string) string {
 	case "hysteria2", "hy2":
 		return `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`
 	case "anytls":
-		return `{"tls":{"enabled":true}}`
+		encoded, _ := json.Marshal(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme()})
+		return string(encoded)
 	case "shadowsocks":
 		return `{"method":"2022-blake3-aes-128-gcm"}`
 	case "mieru":

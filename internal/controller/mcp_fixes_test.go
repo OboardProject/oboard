@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -51,6 +52,26 @@ func TestVLESSRecipeDefaultsMatchPanelPreset(t *testing.T) {
 	config := inbound["config_json"].(string)
 	if !strings.Contains(config, "xtls-rprx-vision") || !strings.Contains(config, "reality") {
 		t.Fatalf("config_json lacks the Reality preset: %s", config)
+	}
+}
+
+func TestAnyTLSRecipeDefaultsMatchBalancedPaddingPreset(t *testing.T) {
+	var config map[string]any
+	if err := json.Unmarshal([]byte(defaultInboundPresetConfig("anytls")), &config); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.ValidateAnyTLSPaddingScheme(config["padding_scheme"]); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := config["padding_scheme"].([]any)
+	want := core.AnyTLSBalancedPaddingScheme()
+	if !ok || len(raw) != len(want) {
+		t.Fatalf("padding_scheme = %#v, want %#v", config["padding_scheme"], want)
+	}
+	for index, item := range raw {
+		if item != want[index] {
+			t.Fatalf("padding_scheme[%d] = %#v, want %q", index, item, want[index])
+		}
 	}
 }
 

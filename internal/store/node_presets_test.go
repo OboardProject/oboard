@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -26,7 +27,7 @@ func TestNodePresetsSeededAndProtected(t *testing.T) {
 	if len(presets) < 8 {
 		t.Fatalf("expected seeded node presets, got %d", len(presets))
 	}
-	kinds := map[string]bool{}
+	kinds := map[string]model.NodePreset{}
 	for _, preset := range presets {
 		if !preset.Builtin {
 			t.Fatalf("seed preset %q must be builtin", preset.Name)
@@ -34,13 +35,15 @@ func TestNodePresetsSeededAndProtected(t *testing.T) {
 		if err := NormalizeNodePreset(&preset); err != nil {
 			t.Fatalf("seed preset %q invalid: %v", preset.Name, err)
 		}
-		kinds[preset.Kind] = true
+		kinds[preset.Kind] = preset
 	}
-	for _, kind := range []string{"vless-reality", "hy2-tls", "anytls-basic", "ss-2022-128", "mieru-basic", "socks5-auth"} {
-		if !kinds[kind] {
+	for _, kind := range []string{"vless-reality", "hy2-tls", "anytls-basic", "anytls-large-padding", "ss-2022-128", "mieru-basic", "socks5-auth"} {
+		if _, exists := kinds[kind]; !exists {
 			t.Fatalf("missing builtin kind %s", kind)
 		}
 	}
+	assertNodePresetPadding(t, kinds["anytls-basic"], core.AnyTLSBalancedPaddingScheme())
+	assertNodePresetPadding(t, kinds["anytls-large-padding"], core.AnyTLSLargePaddingScheme())
 	reopened, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -189,6 +192,88 @@ func TestNormalizeNodePresetMergesKindDefaults(t *testing.T) {
 	}
 	if preset.DefaultPort != 443 {
 		t.Fatalf("default port=%d", preset.DefaultPort)
+	}
+}
+
+func TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table node_presets (id integer primary key autoincrement, name text not null unique, protocol text not null, kind text not null, config_json text not null default '{}', default_port integer not null default 443, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,1,1,?,?)`, legacyAnyTLSBasicPresetName, "anytls", "anytls-basic", legacyAnyTLSBasicPresetConfig, 443, legacyAnyTLSBasicPresetRemark, builtinNodePresetSeedTimestamp, builtinNodePresetSeedTimestamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.ListNodePresets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[string][]model.NodePreset{}
+	for _, item := range items {
+		byKind[item.Kind] = append(byKind[item.Kind], item)
+	}
+	if len(byKind["anytls-basic"]) != 1 {
+		t.Fatalf("legacy migration created duplicate anytls-basic presets: %#v", byKind["anytls-basic"])
+	}
+	if len(byKind["anytls-large-padding"]) != 1 {
+		t.Fatalf("large-padding preset count = %d", len(byKind["anytls-large-padding"]))
+	}
+	if byKind["anytls-basic"][0].Name != "AnyTLS 均衡填充" {
+		t.Fatalf("legacy preset name = %q", byKind["anytls-basic"][0].Name)
+	}
+	assertNodePresetPadding(t, byKind["anytls-basic"][0], core.AnyTLSBalancedPaddingScheme())
+	assertNodePresetPadding(t, byKind["anytls-large-padding"][0], core.AnyTLSLargePaddingScheme())
+	count := len(items)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	again, err := reopened.ListNodePresets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != count {
+		t.Fatalf("padding preset migration is not idempotent: %d -> %d", count, len(again))
+	}
+}
+
+func TestNormalizeNodePresetRejectsInvalidAnyTLSPadding(t *testing.T) {
+	preset := model.NodePreset{Name: "坏填充", Protocol: "anytls", Kind: "anytls-basic", ConfigJSON: `{"padding_scheme":["stop=2","2=64-128"]}`, DefaultPort: 443}
+	if err := NormalizeNodePreset(&preset); err == nil {
+		t.Fatal("expected invalid AnyTLS padding to fail")
+	}
+}
+
+func assertNodePresetPadding(t *testing.T, preset model.NodePreset, want []string) {
+	t.Helper()
+	var config map[string]any
+	if err := json.Unmarshal([]byte(preset.ConfigJSON), &config); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := config["padding_scheme"].([]any)
+	if !ok || len(raw) != len(want) {
+		t.Fatalf("preset %s padding_scheme = %#v, want %#v", preset.Kind, config["padding_scheme"], want)
+	}
+	for index, item := range raw {
+		if item != want[index] {
+			t.Fatalf("preset %s padding_scheme[%d] = %#v, want %q", preset.Kind, index, item, want[index])
+		}
 	}
 }
 

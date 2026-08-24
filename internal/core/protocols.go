@@ -3421,6 +3421,10 @@ func (anyTLSAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidatePort(v.Port); err != nil {
 		return err
 	}
+	extra := parseExtra(v.ConfigJSON)
+	if err := ValidateAnyTLSPaddingScheme(extra["padding_scheme"]); err != nil {
+		return err
+	}
 	return requireInboundTLS(v.ConfigJSON, "anytls")
 }
 func (anyTLSAdapter) ValidateOutbound(v model.Outbound) error {
@@ -3463,7 +3467,6 @@ func (a anyTLSAdapter) SubscriptionNode(user model.User, inbound model.Inbound, 
 	if tls, ok := extra["tls"]; ok {
 		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
-	applyAllowed(node, extra, "padding_scheme")
 	return node, nil
 }
 

@@ -61,13 +61,17 @@ const protocolLabels: Record<string, string> = {
 
 const builtinRealityDomains = ['gateway.icloud.com', 'cdn.icloud-content.com', 'www.tesla.com', 'www.nvidia.com', 'www.sony.com', 'www.mozilla.org'] as const
 
+const anyTLSBalancedPaddingScheme = ['stop=8', '0=64-128', '1=200-450', '2=450-650,c,700-1100,c,700-1100', '3=32-96,600-900', '4=450-850', '5=500-900', '6=550-950', '7=600-1000'] as const
+const anyTLSLargePaddingScheme = ['stop=3', '0=900-1400', '1=900-1400', '2=900-1400'] as const
+
 export const nodePresetKinds = [
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com', defaultPort: 443, config: { flow: 'xtls-rprx-vision', reality_domains: [...builtinRealityDomains], tls: { enabled: true, server_name: 'gateway.icloud.com', reality: { enabled: true, handshake: { server: 'gateway.icloud.com', server_port: 443 } } } } },
   { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision，需要证书', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true } } },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，需要证书', defaultPort: 443, config: { tls: { enabled: true }, transport: { type: 'ws', path: '/vless', headers: {} } } },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443, config: {} },
   { id: 'hy2-tls', protocol: 'hy2', label: 'Hysteria2', description: 'HY2 标准配置，需要证书', defaultPort: 443, config: { tls: { enabled: true }, up_mbps: 100, down_mbps: 100 } },
-  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: 'AnyTLS 标准配置，需要证书', defaultPort: 443, config: { tls: { enabled: true } } },
+  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSBalancedPaddingScheme] } },
+  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSLargePaddingScheme] } },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388, config: { method: 'aes-128-gcm' } },
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388, config: { method: 'aes-256-gcm' } },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388, config: { method: '2022-blake3-aes-128-gcm' } },
@@ -95,6 +99,11 @@ function parsePresetConfig(raw: NodePreset['config_json']): Record<string, any> 
 
 function kindMeta(kind: string) {
   return nodePresetKinds.find(item => item.id === kind)
+}
+
+function anyTLSPaddingText(value: unknown) {
+  if (Array.isArray(value)) return value.filter(item => typeof item === 'string').join('\n')
+  return typeof value === 'string' ? value : ''
 }
 
 function emptyNodeDraft(kind = 'vless-reality'): NodeDraft {
@@ -246,6 +255,9 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
           <input value={Number(draft.config.down_mbps || 100)} onChange={event => updateConfig({ down_mbps: Number(event.target.value) })} inputMode="numeric" />
         </SettingsRow>
       </>}
+      {draft.kind.startsWith('anytls-') && <SettingsRow label="Padding 填充方案" description="每行一条规则：stop=N、序号=min-max；c 用于在数据耗尽时停止后续填充。">
+        <textarea rows={6} value={anyTLSPaddingText(draft.config.padding_scheme)} onChange={event => updateConfig({ padding_scheme: event.target.value.replace(/\r\n/g, '\n').split('\n') })} spellCheck={false} />
+      </SettingsRow>}
       {draft.kind.startsWith('ss-') && <SettingsRow label="加密方法" description="创建入口时会套用此方法；密钥仍由入口单独生成。">
         <Select value={String(draft.config.method || (meta.config as Record<string, any>).method || '')} onChange={event => updateConfig({ method: event.target.value })} aria-label="加密方法">
           {shadowsocksMethods.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}

@@ -14589,7 +14589,7 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     <FormField label="WebSocket 路径" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
     <FormField label="Host 头" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
-  if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
+  if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic' || presetID === 'anytls-large-padding') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">TLS 设置</div>
     {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
@@ -14597,6 +14597,7 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
       <FormField label="上传带宽 Mbps" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={Number(config.up_mbps || 100)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
       <FormField label="下载带宽 Mbps" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={Number(config.down_mbps || 100)} onChange={e => updateConfig({ down_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
     </>}
+    {presetID.startsWith('anytls-') && <FormField label="Padding 填充方案" className={presetFieldClass} hint={`每行一条规则：stop=N、序号=min-max；c 用于在数据耗尽时停止后续填充。${presetHintSuffix}`}><textarea rows={6} value={anyTLSPaddingText(config.padding_scheme)} onChange={event => updateConfig({ padding_scheme: event.target.value === '' ? undefined : event.target.value.replace(/\r\n/g, '\n').split('\n') })} spellCheck={false} /></FormField>}
   </div>
   if (presetID.startsWith('ss-')) return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title">SS 设置</div>
@@ -19674,13 +19675,33 @@ type SnellProfile = { id: number; name: string; version: number; psk: string; ob
 
 type InboundPreset = { id: string; protocol: Protocol; label: string; description: string; defaultPort: number }
 
+const anyTLSBalancedPaddingScheme = [
+  'stop=8',
+  '0=64-128',
+  '1=200-450',
+  '2=450-650,c,700-1100,c,700-1100',
+  '3=32-96,600-900',
+  '4=450-850',
+  '5=500-900',
+  '6=550-950',
+  '7=600-1000',
+] as const
+
+const anyTLSLargePaddingScheme = [
+  'stop=3',
+  '0=900-1400',
+  '1=900-1400',
+  '2=900-1400',
+] as const
+
 const inboundPresets: InboundPreset[] = [
   { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision', defaultPort: 443 },
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision', defaultPort: 443 },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS', defaultPort: 443 },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443 },
   { id: 'hy2-tls', protocol: 'hy2', label: 'HY2', description: 'HY2 标准配置', defaultPort: 443 },
-  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: 'AnyTLS 标准配置', defaultPort: 443 },
+  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化', defaultPort: 443 },
+  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充', defaultPort: 443 },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
@@ -19706,6 +19727,16 @@ const mieruMultiplexingLevels = [
   { value: 'MULTIPLEXING_MIDDLE', label: '中' },
   { value: 'MULTIPLEXING_HIGH', label: '高' },
 ]
+
+function anyTLSPaddingLines(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter(item => typeof item === 'string').map(item => String(item))
+  if (typeof value === 'string') return value.replace(/\r\n/g, '\n').split('\n')
+  return []
+}
+
+function anyTLSPaddingText(value: unknown) {
+  return anyTLSPaddingLines(value).join('\n')
+}
 
 function parseConfig(raw: string): Record<string, any> | null {
   try {
@@ -19763,7 +19794,7 @@ function defaultInboundPreset(protocol: Protocol) {
 }
 
 function presetRequiresCertificate(presetID: string) {
-  return presetID === 'vless-tls-vision' || presetID === 'vless-ws' || presetID === 'hy2-tls' || presetID === 'anytls-basic'
+  return presetID === 'vless-tls-vision' || presetID === 'vless-ws' || presetID === 'hy2-tls' || presetID.startsWith('anytls-')
 }
 
 function inferInboundPreset(protocol: Protocol, configJson: string) {
@@ -19784,7 +19815,10 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
     return 'vless-tcp'
   }
   if (protocol === 'hy2') return 'hy2-tls'
-  if (protocol === 'anytls') return 'anytls-basic'
+  if (protocol === 'anytls') {
+    const padding = anyTLSPaddingLines(cfg.padding_scheme)
+    return padding.length === anyTLSLargePaddingScheme.length && padding.every((line, index) => line === anyTLSLargePaddingScheme[index]) ? 'anytls-large-padding' : 'anytls-basic'
+  }
   if (protocol === 'mieru') return 'mieru-basic'
   if (protocol === 'snell') {
     return Number(cfg.version || 4) >= 6 ? 'snell-v6' : 'snell-v4'
@@ -19880,7 +19914,10 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
     cfg.up_mbps = 100
     cfg.down_mbps = 100
   }
-  if (preset.id === 'anytls-basic') cfg.tls = { enabled: true }
+  if (preset.id === 'anytls-basic' || preset.id === 'anytls-large-padding') {
+    cfg.tls = { enabled: true }
+    cfg.padding_scheme = [...(preset.id === 'anytls-large-padding' ? anyTLSLargePaddingScheme : anyTLSBalancedPaddingScheme)]
+  }
   if (preset.id === 'mieru-basic') {
     cfg.transport = 'TCP'
     cfg.multiplexing = 'MULTIPLEXING_DEFAULT'

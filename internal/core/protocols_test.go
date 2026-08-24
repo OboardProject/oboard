@@ -2160,6 +2160,83 @@ func TestHY2AndAnyTLSInboundRequireTLS(t *testing.T) {
 	}
 }
 
+func TestAnyTLSPaddingSchemesValidateAndRender(t *testing.T) {
+	upstream := strings.Join(AnyTLSUpstreamDefaultPaddingScheme(), "\n")
+	adapter, err := AdapterFor(model.ProtocolAnyTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, scheme := range map[string][]string{
+		"balanced": AnyTLSBalancedPaddingScheme(),
+		"large":    AnyTLSLargePaddingScheme(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if strings.Join(scheme, "\n") == upstream {
+				t.Fatal("OBoard preset must differ from the sing-anytls default")
+			}
+			if err := ValidateAnyTLSPaddingScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			config, err := json.Marshal(map[string]any{
+				"tls":            map[string]any{"enabled": true, "certificate_path": "/tmp/cert.pem", "key_path": "/tmp/key.pem"},
+				"padding_scheme": scheme,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			inbound := model.Inbound{ID: 7, Name: "AnyTLS", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: string(config), Enabled: true}
+			block, err := adapter.Inbound(inbound, []model.User{{Username: "alice", ProxyPassword: "secret"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertAnyTLSPaddingScheme(t, block["padding_scheme"], scheme)
+			node, err := adapter.SubscriptionNode(model.User{Username: "alice", ProxyPassword: "secret"}, inbound, model.Server{EntryAddress: "edge.example.com"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := node["padding_scheme"]; exists {
+				t.Fatalf("server-only padding_scheme leaked into subscription node: %#v", node)
+			}
+		})
+	}
+}
+
+func TestAnyTLSPaddingSchemeRejectsInvalidRules(t *testing.T) {
+	invalid := map[string]any{
+		"wrong type":        map[string]any{"stop": 3},
+		"missing stop":      []any{"0=64-128"},
+		"duplicate stop":    []any{"stop=3", "stop=4", "0=64-128"},
+		"index after stop":  []any{"stop=2", "2=64-128"},
+		"packet zero split": []any{"stop=2", "0=64-128,128-256"},
+		"bad range":         []any{"stop=2", "0=256-128"},
+		"bad check marker":  []any{"stop=2", "1=c,64-128"},
+		"non-string item":   []any{"stop=2", 42},
+	}
+	for name, scheme := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateAnyTLSPaddingScheme(scheme); err == nil {
+				t.Fatal("expected invalid padding scheme to fail")
+			}
+		})
+	}
+	if err := ValidateAnyTLSPaddingScheme([]any{}); err != nil {
+		t.Fatalf("empty padding scheme should preserve the upstream default: %v", err)
+	}
+}
+
+func assertAnyTLSPaddingScheme(t *testing.T, value any, want []string) {
+	t.Helper()
+	raw, ok := value.([]any)
+	if !ok || len(raw) != len(want) {
+		t.Fatalf("padding_scheme = %#v, want %#v", value, want)
+	}
+	for index, item := range raw {
+		if item != want[index] {
+			t.Fatalf("padding_scheme[%d] = %#v, want %q", index, item, want[index])
+		}
+	}
+}
+
 func testInboundConfig(protocol model.Protocol) string {
 	switch protocol {
 	case model.ProtocolHY2, model.ProtocolAnyTLS:

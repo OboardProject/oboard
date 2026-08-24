@@ -95,8 +95,8 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		contains   []string
 		excludes   []string
 	}{
-		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, "oboard_group", "must-not-leak"}},
-		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 8, contains: []string{`"type": "mieru"`, `"server_port": 25250`, `"type": "snell"`}, excludes: []string{"oboard_group", "must-not-leak"}},
+		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, `"padding_scheme"`, "oboard_group", "must-not-leak"}},
+		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 8, contains: []string{`"type": "mieru"`, `"server_port": 25250`, `"type": "snell"`}, excludes: []string{"padding_scheme", "oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatMieru, proxyCount: 1, contains: []string{"mierus://", "25251-25252", "protocol=TCP"}, excludes: []string{"vless://", "snell"}},
 		{format: model.SubscriptionFormatClashMeta, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252", "type: snell", "psk: snell-v4-psk"}, excludes: []string{"snell-v6-psk"}},

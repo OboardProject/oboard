@@ -48,7 +48,6 @@ type subscriptionProxy struct {
 	ObfsHost       string
 	Mode           string
 	Reuse          bool
-	PaddingScheme  any
 	Multiplexing   string
 	TrafficPattern string
 	Native         map[string]any
@@ -112,7 +111,6 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 		UpMbps:         intFromAny(raw["up_mbps"]),
 		DownMbps:       intFromAny(raw["down_mbps"]),
 		UoT:            udpOverTCPEnabled(raw["udp_over_tcp"]),
-		PaddingScheme:  raw["padding_scheme"],
 		Multiplexing:   stringFromAny(raw["multiplexing"]),
 		TrafficPattern: stringFromAny(raw["traffic_pattern"]),
 	}
@@ -300,7 +298,7 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 		"trojan":    {"password", "tls", "transport", "network", "multiplex"},
 		"tuic":      {"uuid", "password", "congestion_control", "udp_relay_mode", "zero_rtt_handshake", "heartbeat", "tls"},
 		"hysteria2": {"password", "tls", "server_ports", "hop_interval", "hop_interval_max", "up_mbps", "down_mbps", "obfs", "network"},
-		"anytls":    {"password", "tls", "padding_scheme"},
+		"anytls":    {"password", "tls"},
 		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex"},
 		"socks5":    {"version", "username", "password", "network", "udp_over_tcp"},
 		"ssh":       {"password", "host_key"},
