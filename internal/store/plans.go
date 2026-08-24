@@ -806,9 +806,9 @@ func (s *Store) GetPlanRevisionOrdering(ctx context.Context, planID, revisionID 
 // Immutable plan versions
 // ---------------------------------------------------------------------------
 
-// ErrPlanVersionApplying is returned when a plan already has a version being
-// applied to agents. New versions are rejected until the pending version
-// settles so candidate deployments never cross.
+// ErrPlanVersionApplying is returned when a plan already has a live version
+// being applied to agents. A failed, unactivated version is superseded by the
+// next save so stale deployment failures do not block newer desired state.
 var ErrPlanVersionApplying = errors.New("plan version is still applying; retry after it settles")
 
 // PlanSettingsMutation carries limit changes for a new version. Nil fields
@@ -929,8 +929,25 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 		}
 		baseID = mutation.BaseRevisionID
 	}
+	supersededFailedChangeID := int64(0)
 	if pendingID != 0 {
-		return nil, ErrPlanVersionApplying
+		err := tx.QueryRowContext(ctx, `select id from access_changes where source_plan_id=? and candidate_revision_id=? and status='failed' and activated_at is null and change_type in ('plan_publish','plan_restore') order by id desc limit 1`, planID, pendingID).Scan(&supersededFailedChangeID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPlanVersionApplying
+		}
+		if err != nil {
+			return nil, err
+		}
+		res, err := tx.ExecContext(ctx, `update access_changes set status='cancelled',updated_at=? where id=? and status='failed' and activated_at is null`, ts, supersededFailedChangeID)
+		if err != nil {
+			return nil, err
+		}
+		if affected, err := res.RowsAffected(); err != nil {
+			return nil, err
+		} else if affected != 1 {
+			return nil, ErrPlanVersionApplying
+		}
+		pendingID = 0
 	}
 	metaChanged := false
 	if mutation.Meta != nil {
@@ -1022,6 +1039,37 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	}
 	contentChanged := planVersionDigest(candidate, candidateNodes, candidateRules, candidateExclusions) != planVersionDigest(base, baseNodes, baseRules, baseExclusions)
 	if !contentChanged {
+		if supersededFailedChangeID != 0 {
+			// Saving the same desired snapshot is an explicit retry after the
+			// operator fixed the underlying server or topology. Keep the
+			// immutable revision, replace the failed access change, and let the
+			// caller create fresh tasks for it.
+			newLock := lockVersion + 1
+			if _, err := tx.ExecContext(ctx, `update subscription_plans set name=?,description=?,enabled=?,pending_revision_id=?,lock_version=?,updated_at=? where id=?`, planName, planDescription, planEnabled, latestID, newLock, ts, planID); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			revision, err := s.GetPlanRevision(ctx, planID, latestID)
+			if err != nil {
+				return nil, err
+			}
+			nodes, err := s.ListPlanRevisionNodes(ctx, latestID)
+			if err != nil {
+				return nil, err
+			}
+			return &CreatePlanVersionResult{
+				Revision:           *revision,
+				Nodes:              nodes,
+				ChangeClass:        "authorization",
+				RequiresDeployment: true,
+				LockVersion:        newLock,
+				CurrentRevisionID:  currentID,
+				LatestRevisionID:   latestID,
+				PendingRevisionID:  latestID,
+			}, nil
+		}
 		if metaChanged {
 			// Identity-only save: no version is created but the plan row is
 			// updated and the lock advances so stale previews conflict.

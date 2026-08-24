@@ -298,6 +298,38 @@ func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
 	}
 }
 
+func TestFailedPlanPublishIsSupersededByNextNodeSave(t *testing.T) {
+	h, srv, token, ids := setupOrderingTestTopology(t)
+	planID := ids["plan"]
+
+	first := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
+	}, http.StatusOK)
+	firstChangeID := int64(first["access_change_id"].(float64))
+	firstRevisionID := int64(first["latest_revision_id"].(float64))
+	if err := srv.store.UpdateAccessChangeStatus(t.Context(), firstChangeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server 41 task 5028 failed"); err != nil {
+		t.Fatalf("mark first access change failed: %v", err)
+	}
+
+	second := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}},
+	}, http.StatusOK)
+	secondChangeID := int64(second["access_change_id"].(float64))
+	secondRevisionID := int64(second["latest_revision_id"].(float64))
+	if secondChangeID == firstChangeID || secondRevisionID == firstRevisionID {
+		t.Fatalf("new save did not replace failed desired state: first=%#v second=%#v", first, second)
+	}
+
+	failed, err := srv.store.GetAccessChange(t.Context(), firstChangeID)
+	if err != nil || failed.Status != model.AccessChangeCancelled || failed.Error != "server 41 task 5028 failed" {
+		t.Fatalf("superseded failure audit = %#v, err=%v", failed, err)
+	}
+	plan, err := srv.store.GetSubscriptionPlan(t.Context(), planID)
+	if err != nil || plan.PendingRevisionID != secondRevisionID || plan.LatestRevisionID != secondRevisionID {
+		t.Fatalf("plan did not advance to new pending version: plan=%#v err=%v", plan, err)
+	}
+}
+
 func TestPlanOrderingPreviewUsesBackendSorter(t *testing.T) {
 	h, _, token, ids := setupOrderingTestTopology(t)
 	planID := ids["plan"]

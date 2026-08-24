@@ -155,7 +155,7 @@ describe('SubscriptionPlansPage', () => {
     expect(applyBodies).toHaveLength(1)
   })
 
-  it('offers to abandon a failed unactivated node change that blocks saving', async () => {
+  it('shows a failed node change without blocking further edits', async () => {
     const blockedPlan = { ...plan, lock_version: 2, latest_revision_id: 2, pending_revision_id: 2, node_count: 1 }
     const request = vi.fn(async (path: string) => {
       if (path === '/subscription-plans') return { subscription_plans: [blockedPlan] }
@@ -194,6 +194,9 @@ describe('SubscriptionPlansPage', () => {
     await flushEffects()
 
     expect(document.body.textContent).toContain('server 41 task 5028 failed')
+    expect(document.body.textContent).toContain('新保存会自动取代这次失败')
+    const addButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('添加节点')) as HTMLButtonElement | undefined
+    expect(addButton?.disabled).toBe(false)
     const abandonButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('放弃失败变更'))
     expect(abandonButton).toBeTruthy()
     act(() => abandonButton?.click())

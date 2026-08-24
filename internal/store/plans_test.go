@@ -241,6 +241,123 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 	}
 }
 
+func TestFailedPendingPlanVersionIsSupersededByNextSave(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "replace-failed", Enabled: true, TrafficResetMode: "monthly"}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 1},
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID:      plan.LatestRevisionID,
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "remove", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1}}},
+		ChangeKind:          model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := &model.AccessChange{
+		ChangeType:               model.AccessChangePlanPublish,
+		SourcePlanID:             plan.ID,
+		CandidateRevisionID:      first.Revision.ID,
+		ExpectedActiveRevisionID: plan.CurrentRevisionID,
+		Status:                   model.AccessChangePreparing,
+		PayloadJSON:              `{}`,
+		PrepareProjectionJSON:    `{}`,
+		FinalizeProjectionJSON:   `{}`,
+	}
+	if _, err := s.CreateAccessChange(ctx, change, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccessChangeStatus(ctx, change.ID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	failedPlan, err := s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID:      failedPlan.LatestRevisionID,
+		ExpectedLockVersion: failedPlan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "remove", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 2}}},
+		ChangeKind:          model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatalf("new save after failed deployment: %v", err)
+	}
+	if second.NoChange || second.Revision.ID == first.Revision.ID {
+		t.Fatalf("new save did not create replacement version: first=%#v second=%#v", first, second)
+	}
+	oldChange, err := s.GetAccessChange(ctx, change.ID)
+	if err != nil || oldChange.Status != model.AccessChangeCancelled || oldChange.Error != "server unavailable" {
+		t.Fatalf("superseded access change = %#v, err=%v", oldChange, err)
+	}
+	updated, err := s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil || updated.PendingRevisionID != second.Revision.ID || updated.LatestRevisionID != second.Revision.ID {
+		t.Fatalf("replacement pending version = %#v, err=%v", updated, err)
+	}
+}
+
+func TestSavingSameFailedPlanVersionQueuesFreshDeployment(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "retry-failed", Enabled: true, TrafficResetMode: "monthly"}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID:      plan.LatestRevisionID,
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 2}}},
+		ChangeKind:          model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := &model.AccessChange{
+		ChangeType: model.AccessChangePlanPublish, SourcePlanID: plan.ID, CandidateRevisionID: first.Revision.ID,
+		ExpectedActiveRevisionID: plan.CurrentRevisionID, Status: model.AccessChangePreparing,
+		PayloadJSON: `{}`, PrepareProjectionJSON: `{}`, FinalizeProjectionJSON: `{}`,
+	}
+	if _, err := s.CreateAccessChange(ctx, change, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccessChangeStatus(ctx, change.ID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "link failed"); err != nil {
+		t.Fatal(err)
+	}
+	failedPlan, err := s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := s.ListPlanRevisionNodes(ctx, first.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	retry, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		BaseRevisionID:      failedPlan.LatestRevisionID,
+		ExpectedLockVersion: failedPlan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "replace", Nodes: nodes},
+		ChangeKind:          model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.NoChange || !retry.RequiresDeployment || retry.Revision.ID != first.Revision.ID || retry.PendingRevisionID != first.Revision.ID {
+		t.Fatalf("same desired state was not prepared for a fresh deployment: %#v", retry)
+	}
+	oldChange, err := s.GetAccessChange(ctx, change.ID)
+	if err != nil || oldChange.Status != model.AccessChangeCancelled {
+		t.Fatalf("old failure was not superseded: change=%#v err=%v", oldChange, err)
+	}
+}
+
 func TestRemoveAssignableNodeFromPlansCreatesImmutableCleanupVersion(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)

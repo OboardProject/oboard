@@ -699,8 +699,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const latestRevision = (detail?.revisions || []).find((revision: Revision) => revision.id === plan?.latest_revision_id) as Revision | undefined
   const latestVersionCreatedAt = latestRevision?.created_at
   const planChanges = changes.filter(c => c.source_plan_id === selectedID)
-  const applying = Boolean(plan?.pending_revision_id)
-  const failedPendingChange = applying ? planChanges.find(change => change.status === 'failed' && !change.activated_at && change.candidate_revision_id === plan?.pending_revision_id) : undefined
+  const hasPendingRevision = Boolean(plan?.pending_revision_id)
+  const failedPendingChange = hasPendingRevision ? planChanges.find(change => change.status === 'failed' && !change.activated_at && change.candidate_revision_id === plan?.pending_revision_id) : undefined
+  const applying = hasPendingRevision && !failedPendingChange
   const orderingPlan: OrderingPlan | null = plan ? {
     id: plan.id,
     name: plan.name,
@@ -708,6 +709,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     current_revision_id: plan.current_revision_id,
     latest_revision_id: plan.latest_revision_id,
     pending_revision_id: plan.pending_revision_id,
+    pending_change_failed: Boolean(failedPendingChange),
   } : null
   const [pickerPlanMode, setPickerPlanMode] = React.useState<'create' | 'nodes'>('create')
   const [pickerOpen, setPickerOpen] = React.useState(false)
@@ -718,6 +720,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     counts[region] = (counts[region] || 0) + 1
     return counts
   }, {})
+  const pendingFailureForPlan = (item: Plan) => item.pending_revision_id
+    ? changes.find(change => change.source_plan_id === item.id && change.candidate_revision_id === item.pending_revision_id && change.status === 'failed' && !change.activated_at)
+    : undefined
 
   return (
     <div className={embedded ? 'subscription-plans-embedded' : 'panel subscription-plans-panel'}>
@@ -757,7 +762,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                       <td style={{ fontWeight: 600, padding: '12px 16px' }}>{p.name}</td>
                       <td style={{ padding: '12px 12px' }}>
                         <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
-                        {p.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
+                        {pendingFailureForPlan(p)
+                          ? <Badge variant="destructive" style={{ marginLeft: 4 }}>应用失败</Badge>
+                          : p.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums', padding: '12px 12px' }}>
                         {formatPlanVersion(p.latest_version_created_at)}
@@ -800,7 +807,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-strong)' }}>{p.name}</span>
                       <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
-                      {p.pending_revision_id ? <Badge variant="warning">正在应用</Badge> : null}
+                      {pendingFailureForPlan(p)
+                        ? <Badge variant="destructive">应用失败</Badge>
+                        : p.pending_revision_id ? <Badge variant="warning">正在应用</Badge> : null}
                     </div>
                     <Button
                       variant="outline"
@@ -871,7 +880,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <h3 style={{ margin: 0 }}>{plan.name}</h3>
                     <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
-                    {applying ? <Badge variant="warning">正在应用</Badge> : null}
+                    {failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}
                   </div>
                   <div className="muted" style={{ margin: '4px 0 0', fontSize: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <span>{detail.member_count} 个绑定用户</span>
@@ -902,10 +911,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--color-danger)', borderRadius: 6 }}>
                     <div>
                       <strong style={{ color: 'var(--color-danger)' }}>上一次节点变更应用失败</strong>
-                      <p style={{ margin: '2px 0 0', fontSize: 12 }}>{failedPendingChange.error || `变更 #${failedPendingChange.id} 未能完成`}。可重试原变更，或放弃后保存当前编辑。</p>
+                      <p style={{ margin: '2px 0 0', fontSize: 12 }}>{failedPendingChange.error || `变更 #${failedPendingChange.id} 未能完成`}。你可以重试原变更，也可以直接修改并保存；新保存会自动取代这次失败，不会被它阻塞。</p>
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <Button variant="outline" size="sm" onClick={() => void retryChange(failedPendingChange.id)}>重试</Button>
+                      <Button variant="outline" size="sm" onClick={() => void retryChange(failedPendingChange.id)}>重试原变更</Button>
                       <Button variant="outline" size="sm" onClick={() => void cancelChange(failedPendingChange.id)}>放弃失败变更</Button>
                     </div>
                   </div>

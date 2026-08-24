@@ -1415,13 +1415,28 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 		Name: eventName,
 		Key:  fmt.Sprintf("task:%d:%s", task.ID, eventName),
 		Data: map[string]string{
-			"TaskType":   taskTypeNotificationLabel(task.Type),
+			"TaskType":   taskNotificationLabel(task),
 			"TaskID":     fmt.Sprint(task.ID),
 			"ServerName": serverName,
 			"Error":      errorText,
 			"Time":       s.notificationNow(ctx),
 		},
 	})
+}
+
+func taskNotificationLabel(task model.AgentTask) string {
+	if task.Type == model.AgentTaskTypeApplyCoreConfig {
+		var payload model.ApplyCoreConfigTaskPayload
+		if json.Unmarshal([]byte(task.PayloadJSON), &payload) == nil {
+			switch {
+			case strings.HasPrefix(payload.Reason, "access_change_plan_publish_"), strings.HasPrefix(payload.Reason, "access_change_plan_restore_"):
+				return "套餐变更应用"
+			case strings.HasPrefix(payload.Reason, "access_change_user_bindings_"), strings.HasPrefix(payload.Reason, "access_change_exceptions_"):
+				return "用户节点授权变更"
+			}
+		}
+	}
+	return taskTypeNotificationLabel(task.Type)
 }
 
 func (s *Server) notifyHTTPCertificateTaskFailure(ctx context.Context, task model.AgentTask, errorText string) {

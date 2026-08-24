@@ -563,7 +563,8 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 		if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
 			return 0, err
 		}
-		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: "access_change_" + phase, Assets: generated.Assets}})
+		reason := "access_change_" + string(change.ChangeType) + "_" + phase
+		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, Assets: generated.Assets}})
 	}
 	if len(prepared) == 0 {
 		return 0, nil

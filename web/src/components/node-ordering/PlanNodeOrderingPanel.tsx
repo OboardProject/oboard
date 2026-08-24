@@ -34,6 +34,7 @@ export type OrderingPlan = {
   current_revision_id: number
   latest_revision_id: number
   pending_revision_id?: number
+  pending_change_failed?: boolean
 }
 
 type OrderingPolicy = {
@@ -398,7 +399,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
   const placedKeys = new Set(manualOrder)
   const isManual = workingPolicy?.mode === 'manual'
   const unplacedNodes = isManual ? (state?.nodes || []).filter(n => !placedKeys.has(n.key)) : []
-  const applying = Boolean(state?.pending_revision_id)
+  const applying = Boolean(state?.pending_revision_id && !plan.pending_change_failed)
 
   return (
     <div className="plan-ordering-panel" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>

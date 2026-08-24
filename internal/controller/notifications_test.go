@@ -802,6 +802,17 @@ func TestTaskTypeNotificationLabelIncludesAgentUninstall(t *testing.T) {
 	}
 }
 
+func TestTaskNotificationLabelIdentifiesPlanChange(t *testing.T) {
+	payload, err := json.Marshal(model.ApplyCoreConfigTaskPayload{Config: `{}`, Reason: "access_change_plan_publish_prepare"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := model.AgentTask{Type: model.AgentTaskTypeApplyCoreConfig, PayloadJSON: string(payload)}
+	if got := taskNotificationLabel(task); got != "套餐变更应用" {
+		t.Fatalf("task notification label = %q", got)
+	}
+}
+
 func TestTaskTimeoutAndAdminAnnouncementQueue(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
