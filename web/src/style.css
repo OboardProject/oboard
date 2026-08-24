@@ -2194,6 +2194,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-list-traffic-badge {
   display: inline-flex;
   align-items: center;
+  gap: 2px;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -2204,6 +2205,43 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.server-list-traffic-badge.has-quota.warning {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--border));
+}
+.server-list-traffic-badge.has-quota.danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 26%, var(--border));
+}
+.server-list-quota-pct {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+}
+.server-list-traffic-badge.warning .server-list-quota-pct { background: color-mix(in srgb, var(--warning) 18%, var(--surface-3)); }
+.server-list-traffic-badge.danger .server-list-quota-pct { background: color-mix(in srgb, var(--danger) 18%, var(--surface-3)); }
+.server-list-metric-net {
+  gap: 5px !important;
+}
+.server-list-quota-track {
+  height: 3px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.server-list-quota-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.server-list-quota-fill.warning { background: var(--warning); }
+.server-list-quota-fill.danger { background: var(--danger); }
 
 /* Public Latency Pill Fixed Width Styling */
 .server-list-latency-btn {
@@ -3108,6 +3146,42 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-telemetry-heading > small.is-ok { color: var(--success); background: var(--success-soft); }
 .server-telemetry-heading > small.is-error { color: var(--danger); background: var(--danger-soft); }
+
+.server-quota-badge {
+  max-width: 152px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary) !important;
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.server-quota-badge.warning {
+  color: var(--warning) !important;
+  background: var(--warning-soft) !important;
+  border-color: color-mix(in srgb, var(--warning) 26%, var(--border));
+}
+.server-quota-badge.danger {
+  color: var(--danger) !important;
+  background: var(--danger-soft) !important;
+  border-color: color-mix(in srgb, var(--danger) 26%, var(--border));
+}
+.server-traffic-quota-track {
+  height: 3px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.server-traffic-quota-fill {
+  height: 100%;
+  width: 0;
+  background: var(--primary);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.server-traffic-quota-fill.warning { background: var(--warning); }
+.server-traffic-quota-fill.danger { background: var(--danger); }
 
 .server-rate-row {
   display: grid;

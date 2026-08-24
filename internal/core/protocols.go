@@ -848,6 +848,9 @@ func validateServerUDPForInbound(server model.Server, inbound model.Inbound) err
 	if server.UDPInboundMode == model.UDPInboundAllow || server.UDPInboundMode == "" {
 		return nil
 	}
+	if inbound.Protocol == model.ProtocolSS && server.UDPInboundMode == model.UDPInboundUoT && genericMuxEnabled(parseExtra(inbound.ConfigJSON)["multiplex"]) {
+		return fmt.Errorf("server %s udp_inbound_mode=uot conflicts with multiplex on Shadowsocks inbound %s: a client cannot use udp_over_tcp and multiplex together", server.Name, inbound.Name)
+	}
 	if inbound.Protocol == model.ProtocolHY2 {
 		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host HY2 inbound %s because HY2 requires native UDP inbound", server.Name, server.UDPInboundMode, inbound.Name)
 	}
@@ -903,7 +906,7 @@ func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Ser
 	if v.Protocol == model.ProtocolSocks {
 		item := map[string]any{"type": "socks", "tag": outboundTag, "server": v.TargetAddress, "server_port": v.TargetPort}
 		extra := parseExtra(v.ConfigJSON)
-		applyAllowed(item, extra, "version", "username", "password", "network", "udp_over_tcp", "domain_resolver", "network_strategy", "fallback_delay")
+		applyAllowed(item, extra, "version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 		applyServerNetworkPolicy(item, server, v.Protocol, false)
 		return item, nil
 	}
@@ -3301,13 +3304,19 @@ func (vlessAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidateListenIP(v.ListenIP); err != nil {
 		return err
 	}
-	return ValidatePort(v.Port)
+	if err := ValidatePort(v.Port); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolVLESS, parseExtra(v.ConfigJSON), transportSideInbound)
 }
 func (vlessAdapter) ValidateOutbound(v model.Outbound) error {
 	if v.TargetAddress == "" {
 		return errors.New("target_address required")
 	}
-	return ValidatePort(v.TargetPort)
+	if err := ValidatePort(v.TargetPort); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolVLESS, parseExtra(v.ConfigJSON), transportSideOutbound)
 }
 func (a vlessAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
@@ -3321,7 +3330,7 @@ func (a vlessAdapter) Inbound(v model.Inbound, users []model.User) (map[string]a
 		}
 		item["tls"] = sanitizeInboundTLSForServer(tls)
 	}
-	applyAllowed(item, extra, "multiplex", "transport", "network")
+	applyAllowed(item, extra, "multiplex", "transport", "network", "tcp_fast_open")
 	return item, nil
 }
 func (a vlessAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
@@ -3337,7 +3346,7 @@ func (a vlessAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 	if flow := stringValue(extra, "flow", ""); flow != "" {
 		item["flow"] = flow
 	}
-	applyAllowed(item, extra, "uuid", "tls", "network", "multiplex", "transport", "packet_encoding", "domain_resolver", "network_strategy", "fallback_delay")
+	applyAllowed(item, extra, "uuid", "tls", "network", "multiplex", "transport", "packet_encoding", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	return item, nil
 }
 func (a vlessAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
@@ -3349,7 +3358,7 @@ func (a vlessAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	if tls, ok := extra["tls"]; ok {
 		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
-	applyAllowed(node, extra, "transport", "network", "multiplex")
+	applyAllowed(node, extra, "transport", "network", "multiplex", "tcp_fast_open")
 	return node, nil
 }
 
@@ -3363,13 +3372,19 @@ func (hy2Adapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidatePort(v.Port); err != nil {
 		return err
 	}
+	if err := validateTransportOptions(model.ProtocolHY2, parseExtra(v.ConfigJSON), transportSideInbound); err != nil {
+		return err
+	}
 	return requireInboundTLS(v.ConfigJSON, "hysteria2")
 }
 func (hy2Adapter) ValidateOutbound(v model.Outbound) error {
 	if v.TargetAddress == "" {
 		return errors.New("target_address required")
 	}
-	return ValidatePort(v.TargetPort)
+	if err := ValidatePort(v.TargetPort); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolHY2, parseExtra(v.ConfigJSON), transportSideOutbound)
 }
 func (a hy2Adapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
@@ -3425,13 +3440,19 @@ func (anyTLSAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidateAnyTLSPaddingScheme(extra["padding_scheme"]); err != nil {
 		return err
 	}
+	if err := validateTransportOptions(model.ProtocolAnyTLS, extra, transportSideInbound); err != nil {
+		return err
+	}
 	return requireInboundTLS(v.ConfigJSON, "anytls")
 }
 func (anyTLSAdapter) ValidateOutbound(v model.Outbound) error {
 	if v.TargetAddress == "" {
 		return errors.New("target_address required")
 	}
-	return ValidatePort(v.TargetPort)
+	if err := ValidatePort(v.TargetPort); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolAnyTLS, parseExtra(v.ConfigJSON), transportSideOutbound)
 }
 func (a anyTLSAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
@@ -3442,7 +3463,7 @@ func (a anyTLSAdapter) Inbound(v model.Inbound, users []model.User) (map[string]
 	if err := validateTLSPathFields(extra["tls"], "inbound tls"); err != nil {
 		return nil, err
 	}
-	applyAllowed(item, extra, "tls", "padding_scheme")
+	applyAllowed(item, extra, "tls", "padding_scheme", "tcp_fast_open")
 	return item, nil
 }
 func (a anyTLSAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
@@ -3455,7 +3476,7 @@ func (a anyTLSAdapter) Outbound(v model.Outbound, user *model.User) (map[string]
 	}
 	extra := parseExtra(v.ConfigJSON)
 	item := map[string]any{"type": "anytls", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "password": pass, "tls": defaultOutboundTLS(v.TargetAddress)}
-	applyAllowed(item, extra, "password", "tls", "idle_session_check_interval", "idle_session_timeout", "min_idle_session", "domain_resolver", "network_strategy", "fallback_delay")
+	applyAllowed(item, extra, "password", "tls", "idle_session_check_interval", "idle_session_timeout", "min_idle_session", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	if err := rejectDisabledTLS(item, "anytls"); err != nil {
 		return nil, err
 	}
@@ -3467,6 +3488,7 @@ func (a anyTLSAdapter) SubscriptionNode(user model.User, inbound model.Inbound, 
 	if tls, ok := extra["tls"]; ok {
 		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
+	applyAllowed(node, extra, "tcp_fast_open")
 	return node, nil
 }
 
@@ -3536,7 +3558,7 @@ func (a mieruAdapter) Inbound(v model.Inbound, users []model.User) (map[string]a
 	if ranges := compressMieruPorts(ports[1:]); len(ranges) > 0 {
 		item["listen_ports"] = ranges
 	}
-	applyAllowed(item, extra, "traffic_pattern")
+	applyAllowed(item, extra, "traffic_pattern", "tcp_fast_open")
 	return item, nil
 }
 func (a mieruAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
@@ -3567,7 +3589,7 @@ func (a mieruAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 	if ranges := compressMieruPorts(ports[1:]); len(ranges) > 0 {
 		item["server_ports"] = ranges
 	}
-	applyAllowed(item, extra, "multiplexing", "traffic_pattern", "domain_resolver", "network_strategy", "fallback_delay")
+	applyAllowed(item, extra, "multiplexing", "traffic_pattern", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	return item, nil
 }
 func (a mieruAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
@@ -3591,7 +3613,7 @@ func (a mieruAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	if ranges := compressMieruPorts(ports[1:]); len(ranges) > 0 {
 		node["server_ports"] = ranges
 	}
-	applyAllowed(node, extra, "multiplexing", "traffic_pattern")
+	applyAllowed(node, extra, "multiplexing", "traffic_pattern", "tcp_fast_open")
 	return node, nil
 }
 
@@ -3634,7 +3656,11 @@ func validateMieruOptions(extra map[string]any, outbound bool) error {
 			}
 		}
 	}
-	return nil
+	side := transportSideInbound
+	if outbound {
+		side = transportSideOutbound
+	}
+	return validateTransportOptions(model.ProtocolMieru, extra, side)
 }
 
 func boolValueWithDefault(value any, fallback bool) bool {
@@ -3651,13 +3677,19 @@ func (socksAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidateListenIP(v.ListenIP); err != nil {
 		return err
 	}
-	return ValidatePort(v.Port)
+	if err := ValidatePort(v.Port); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolSocks, parseExtra(v.ConfigJSON), transportSideInbound)
 }
 func (socksAdapter) ValidateOutbound(v model.Outbound) error {
 	if strings.TrimSpace(v.TargetAddress) == "" {
 		return errors.New("target_address required")
 	}
-	return ValidatePort(v.TargetPort)
+	if err := ValidatePort(v.TargetPort); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolSocks, parseExtra(v.ConfigJSON), transportSideOutbound)
 }
 func (a socksAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
@@ -3665,7 +3697,7 @@ func (a socksAdapter) Inbound(v model.Inbound, users []model.User) (map[string]a
 	}
 	extra := parseExtra(v.ConfigJSON)
 	item := map[string]any{"type": "socks", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "users": socksPasswordUsers(users)}
-	applyAllowed(item, extra, "udp_timeout")
+	applyAllowed(item, extra, "udp_timeout", "tcp_fast_open")
 	return item, nil
 }
 func (a socksAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
@@ -3678,7 +3710,9 @@ func (a socksAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 		item["username"] = user.Username
 		item["password"] = user.ProxyPassword
 	}
-	applyAllowed(item, extra, "version", "username", "password", "network", "udp_over_tcp", "multiplex", "domain_resolver", "network_strategy", "fallback_delay")
+	// sing-box SOCKSOutboundOptions has no `multiplex` field: SOCKS has no
+	// connection reuse layer, so a multiplex object would be silently dropped.
+	applyAllowed(item, extra, "version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	return item, nil
 }
 func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
@@ -3687,7 +3721,7 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	}
 	extra := parseExtra(inbound.ConfigJSON)
 	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "version": "5", "username": user.Username, "password": user.ProxyPassword}
-	applyAllowed(node, extra, "network", "udp_over_tcp")
+	applyAllowed(node, extra, "network", "udp_over_tcp", "tcp_fast_open")
 	return node, nil
 }
 
@@ -3841,7 +3875,7 @@ func snellReuse(extra map[string]any) bool {
 	return boolValueWithDefault(extra["reuse"], false)
 }
 
-func validateSnellOptions(extra map[string]any) error {
+func validateSnellOptions(extra map[string]any, side transportSide) error {
 	version, err := snellPanelVersion(extra)
 	if err != nil {
 		return err
@@ -3870,7 +3904,7 @@ func validateSnellOptions(extra map[string]any) error {
 			return err
 		}
 	}
-	return nil
+	return validateTransportOptions(model.ProtocolSnell, extra, side)
 }
 
 type snellAdapter struct{}
@@ -3883,7 +3917,7 @@ func (snellAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidatePort(v.Port); err != nil {
 		return err
 	}
-	return validateSnellOptions(parseExtra(v.ConfigJSON))
+	return validateSnellOptions(parseExtra(v.ConfigJSON), transportSideInbound)
 }
 func (snellAdapter) ValidateOutbound(v model.Outbound) error {
 	if strings.TrimSpace(v.TargetAddress) == "" {
@@ -3892,7 +3926,7 @@ func (snellAdapter) ValidateOutbound(v model.Outbound) error {
 	if err := ValidatePort(v.TargetPort); err != nil {
 		return err
 	}
-	return validateSnellOptions(parseExtra(v.ConfigJSON))
+	return validateSnellOptions(parseExtra(v.ConfigJSON), transportSideOutbound)
 }
 func (a snellAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
@@ -3925,6 +3959,7 @@ func (a snellAdapter) Inbound(v model.Inbound, users []model.User) (map[string]a
 			item["mode"] = mode
 		}
 	}
+	applyAllowed(item, extra, "tcp_fast_open")
 	return item, nil
 }
 func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
@@ -3974,7 +4009,7 @@ func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 			item["mode"] = mode
 		}
 	}
-	applyAllowed(item, extra, "network", "domain_resolver", "network_strategy", "fallback_delay")
+	applyAllowed(item, extra, "network", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	return item, nil
 }
 func (a snellAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
@@ -4011,6 +4046,10 @@ func (a snellAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 			node["mode"] = mode
 		}
 	}
+	if snellReuse(extra) {
+		node["reuse"] = true
+	}
+	applyAllowed(node, extra, "tcp_fast_open")
 	return node, nil
 }
 
@@ -4035,13 +4074,33 @@ func (ssAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidateListenIP(v.ListenIP); err != nil {
 		return err
 	}
-	return ValidatePort(v.Port)
+	if err := ValidatePort(v.Port); err != nil {
+		return err
+	}
+	return validateTransportOptions(model.ProtocolSS, parseExtra(v.ConfigJSON), transportSideInbound)
 }
 func (ssAdapter) ValidateOutbound(v model.Outbound) error {
 	if v.TargetAddress == "" {
 		return errors.New("target_address required")
 	}
-	return ValidatePort(v.TargetPort)
+	if err := ValidatePort(v.TargetPort); err != nil {
+		return err
+	}
+	extra := parseExtra(v.ConfigJSON)
+	if err := validateTransportOptions(model.ProtocolSS, extra, transportSideOutbound); err != nil {
+		return err
+	}
+	return validateShadowsocksUoTMultiplex(extra)
+}
+
+// validateShadowsocksUoTMultiplex rejects the documented Shadowsocks conflict:
+// with udp_over_tcp enabled sing-box never builds the multiplex dialer, so a
+// configuration carrying both would silently lose multiplexing.
+func validateShadowsocksUoTMultiplex(extra map[string]any) error {
+	if udpOverTCPEnabled(extra["udp_over_tcp"]) && genericMuxEnabled(extra["multiplex"]) {
+		return errors.New("shadowsocks udp_over_tcp conflicts with multiplex: enable only one")
+	}
+	return nil
 }
 func (a ssAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
@@ -4061,7 +4120,7 @@ func (a ssAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any,
 		pass = users[0].ProxyPassword
 	}
 	item := map[string]any{"type": "shadowsocks", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "method": method, "password": pass, "users": ssPasswordUsers(users, method)}
-	applyAllowed(item, extra, "network", "multiplex", "managed", "destinations")
+	applyAllowed(item, extra, "network", "multiplex", "managed", "destinations", "tcp_fast_open")
 	if !supportsUsers {
 		delete(item, "users")
 	}
@@ -4084,7 +4143,7 @@ func (a ssAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any,
 		pass = normalizeSS2022Key(pass, method)
 	}
 	item := map[string]any{"type": "shadowsocks", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "method": method, "password": pass}
-	applyAllowed(item, extra, "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex", "domain_resolver", "network_strategy", "fallback_delay")
+	applyAllowed(item, extra, "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	forceShadowsocksUoTVersion(item)
 	return item, nil
 }
@@ -4096,9 +4155,14 @@ func (a ssAdapter) SubscriptionNode(user model.User, inbound model.Inbound, serv
 		password = normalizeSS2022Key(serverPassword, method) + ":" + normalizeSS2022Key(user.ProxyPassword, method)
 	}
 	node := map[string]any{"type": "shadowsocks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "method": method, "password": password}
+	applyAllowed(node, extra, "tcp_fast_open")
 	if server.UDPInboundMode == model.UDPInboundUoT {
+		// UoT wins over multiplexing on the client side, and the inbound is
+		// rejected earlier if it tries to combine both.
 		node["udp_over_tcp"] = map[string]any{"enabled": true, "version": shadowsocksUoTVersion}
+		return node, nil
 	}
+	applyAllowed(node, extra, "multiplex")
 	return node, nil
 }
 

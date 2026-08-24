@@ -14,8 +14,8 @@ import (
 // assigned by the caller (seeded profiles are protected from deletion).
 func (s *Store) CreateSnellProfile(ctx context.Context, v *model.SnellProfile) error {
 	ts := now()
-	res, err := s.db.ExecContext(ctx, `insert into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), v.Remark, boolInt(v.Builtin), boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,tcp_fast_open,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), boolInt(v.TCPFastOpen), v.Remark, boolInt(v.Builtin), boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -56,8 +56,8 @@ func (s *Store) UpdateSnellProfile(ctx context.Context, v *model.SnellProfile) (
 	var builtin, oldEnabled int
 	var oldPSK, oldObfsMode, oldObfsHost, oldMode string
 	var oldVersion int
-	var oldReuse int
-	if err := tx.QueryRowContext(ctx, `select builtin,enabled,version,psk,obfs_mode,obfs_host,mode,reuse from snell_profiles where id=?`, v.ID).Scan(&builtin, &oldEnabled, &oldVersion, &oldPSK, &oldObfsMode, &oldObfsHost, &oldMode, &oldReuse); err != nil {
+	var oldReuse, oldTCPFastOpen int
+	if err := tx.QueryRowContext(ctx, `select builtin,enabled,version,psk,obfs_mode,obfs_host,mode,reuse,tcp_fast_open from snell_profiles where id=?`, v.ID).Scan(&builtin, &oldEnabled, &oldVersion, &oldPSK, &oldObfsMode, &oldObfsHost, &oldMode, &oldReuse, &oldTCPFastOpen); err != nil {
 		return false, err
 	}
 	v.Builtin = builtin == 1
@@ -65,8 +65,8 @@ func (s *Store) UpdateSnellProfile(ctx context.Context, v *model.SnellProfile) (
 		v.Enabled = true
 	}
 	ts := now()
-	if _, err := tx.ExecContext(ctx, `update snell_profiles set name=?,version=?,psk=?,obfs_mode=?,obfs_host=?,mode=?,reuse=?,remark=?,enabled=?,updated_at=? where id=?`,
-		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), v.Remark, boolInt(v.Enabled), ts, v.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update snell_profiles set name=?,version=?,psk=?,obfs_mode=?,obfs_host=?,mode=?,reuse=?,tcp_fast_open=?,remark=?,enabled=?,updated_at=? where id=?`,
+		strings.TrimSpace(v.Name), v.Version, v.PSK, normalizeSnellObfsMode(v.ObfsMode), v.ObfsHost, normalizeSnellV6Mode(v.Mode), boolInt(v.Reuse), boolInt(v.TCPFastOpen), v.Remark, boolInt(v.Enabled), ts, v.ID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -75,14 +75,15 @@ func (s *Store) UpdateSnellProfile(ctx context.Context, v *model.SnellProfile) (
 	v.Builtin = builtin == 1
 	v.UpdatedAt = parseTime(ts)
 	changed := oldVersion != v.Version || oldPSK != v.PSK || oldObfsMode != normalizeSnellObfsMode(v.ObfsMode) ||
-		oldObfsHost != v.ObfsHost || oldMode != normalizeSnellV6Mode(v.Mode) || oldReuse != boolInt(v.Reuse)
+		oldObfsHost != v.ObfsHost || oldMode != normalizeSnellV6Mode(v.Mode) || oldReuse != boolInt(v.Reuse) ||
+		oldTCPFastOpen != boolInt(v.TCPFastOpen)
 	return changed, nil
 }
 
 // ListSnellProfiles returns all reusable Snell parameter sets with the number
 // of inbounds referencing each one.
 func (s *Store) ListSnellProfiles(ctx context.Context) ([]model.SnellProfile, error) {
-	query := `select p.id,p.name,p.version,p.psk,p.obfs_mode,p.obfs_host,p.mode,p.reuse,p.remark,p.builtin,p.enabled,p.created_at,p.updated_at,
+	query := `select p.id,p.name,p.version,p.psk,p.obfs_mode,p.obfs_host,p.mode,p.reuse,p.tcp_fast_open,p.remark,p.builtin,p.enabled,p.created_at,p.updated_at,
 		(select count(*) from inbounds i where i.protocol='snell' and i.config_json like '%"snell_profile_id":'||p.id||'%' or (i.protocol='snell' and i.config_json like '%"snell_profile_id": '||p.id||'%'))
 		from snell_profiles p order by p.builtin desc,p.enabled desc,p.name,p.id`
 	rows, err := s.db.QueryContext(ctx, query)
@@ -94,13 +95,14 @@ func (s *Store) ListSnellProfiles(ctx context.Context) ([]model.SnellProfile, er
 	for rows.Next() {
 		var item model.SnellProfile
 		var created, updated string
-		var enabled, builtin, reuse int
-		if err := rows.Scan(&item.ID, &item.Name, &item.Version, &item.PSK, &item.ObfsMode, &item.ObfsHost, &item.Mode, &reuse, &item.Remark, &builtin, &enabled, &created, &updated, &item.UsageCount); err != nil {
+		var enabled, builtin, reuse, tcpFastOpen int
+		if err := rows.Scan(&item.ID, &item.Name, &item.Version, &item.PSK, &item.ObfsMode, &item.ObfsHost, &item.Mode, &reuse, &tcpFastOpen, &item.Remark, &builtin, &enabled, &created, &updated, &item.UsageCount); err != nil {
 			return nil, err
 		}
 		item.Enabled = enabled == 1
 		item.Builtin = builtin == 1
 		item.Reuse = reuse == 1
+		item.TCPFastOpen = tcpFastOpen == 1
 		item.CreatedAt = parseTime(created)
 		item.UpdatedAt = parseTime(updated)
 		out = append(out, item)

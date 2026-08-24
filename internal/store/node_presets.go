@@ -333,6 +333,9 @@ func normalizeNodePresetConfig(kind, raw string) (string, error) {
 			return "", err
 		}
 	}
+	if err := core.ValidateListenTransportConfig(model.Protocol(nodePresetKinds[kind]), merged); err != nil {
+		return "", err
+	}
 	return compactJSON(merged)
 }
 

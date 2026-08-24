@@ -949,11 +949,14 @@ type Server struct {
 	AgentBuild                  string               `json:"agent_build"`
 	SingBoxVersion              string               `json:"sing_box_version"`
 	KernelCapabilities          []string             `json:"kernel_capabilities,omitempty"`
+	TCPFastOpenState            string               `json:"tcp_fastopen_state"`
+	TCPFastOpenValue            int                  `json:"tcp_fastopen_value"`
 	MonitoringMode              string               `json:"monitoring_mode"`
 	ResourceHistoryEnabled      bool                 `json:"resource_history_enabled"`
 	ResourceHistoryConfigured   bool                 `json:"-"`
 	TrafficResetMode            string               `json:"traffic_reset_mode"`
 	TrafficResetDay             int                  `json:"traffic_reset_day"`
+	TrafficLimitBytes           int64                `json:"traffic_limit_bytes"`
 	NetworkUploadBPS            uint64               `json:"network_upload_bps"`
 	NetworkDownloadBPS          uint64               `json:"network_download_bps"`
 	TrafficUploadBytes          uint64               `json:"traffic_upload_bytes"`
@@ -1564,20 +1567,24 @@ type WARPProfile struct {
 // version/psk/obfs/mode parameters; modifications take effect on the next
 // deployment. Builtin profiles are seeded and protected from deletion.
 type SnellProfile struct {
-	ID         int64     `json:"id"`
-	Name       string    `json:"name"`
-	Version    int       `json:"version"`
-	PSK        string    `json:"psk"`
-	ObfsMode   string    `json:"obfs_mode"`
-	ObfsHost   string    `json:"obfs_host"`
-	Mode       string    `json:"mode"`
-	Reuse      bool      `json:"reuse"`
-	Remark     string    `json:"remark"`
-	Builtin    bool      `json:"builtin"`
-	Enabled    bool      `json:"enabled"`
-	UsageCount int64     `json:"usage_count"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Version  int    `json:"version"`
+	PSK      string `json:"psk"`
+	ObfsMode string `json:"obfs_mode"`
+	ObfsHost string `json:"obfs_host"`
+	Mode     string `json:"mode"`
+	Reuse    bool   `json:"reuse"`
+	// TCPFastOpen enables the TCP Fast Open socket option on the Snell
+	// listener and on generated Snell client parameters. Snell always runs
+	// over TCP, including its UDP relay.
+	TCPFastOpen bool      `json:"tcp_fast_open"`
+	Remark      string    `json:"remark"`
+	Builtin     bool      `json:"builtin"`
+	Enabled     bool      `json:"enabled"`
+	UsageCount  int64     `json:"usage_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // NodePreset is a reusable inbound configuration template for protocols
@@ -2914,6 +2921,60 @@ type TrafficRuntimePolicy struct {
 	EnforcementMode   string `json:"enforcement_mode,omitempty"`
 }
 
+// Linux exposes TCP Fast Open through the net.ipv4.tcp_fastopen bitmask, where
+// the client and server halves are enabled independently. The Agent reports the
+// raw value plus the derived state so Controller never has to guess whether a
+// generated tcp_fast_open listen option can actually take effect; most hosts
+// ship with the client bit only.
+const (
+	TCPFastOpenClientBit = 0x1
+	TCPFastOpenServerBit = 0x2
+)
+
+// TCPFastOpen* are the reported host states. An empty state means the Agent did
+// not report one, which is different from a host that answered "disabled".
+const (
+	TCPFastOpenStateUnknown      = ""
+	TCPFastOpenStateUnavailable  = "unavailable"
+	TCPFastOpenStateDisabled     = "disabled"
+	TCPFastOpenStateClient       = "client"
+	TCPFastOpenStateServer       = "server"
+	TCPFastOpenStateClientServer = "client_server"
+)
+
+// TCPFastOpenStateFromMask maps a net.ipv4.tcp_fastopen value to a report state.
+func TCPFastOpenStateFromMask(mask int) string {
+	client := mask&TCPFastOpenClientBit != 0
+	server := mask&TCPFastOpenServerBit != 0
+	switch {
+	case client && server:
+		return TCPFastOpenStateClientServer
+	case server:
+		return TCPFastOpenStateServer
+	case client:
+		return TCPFastOpenStateClient
+	default:
+		return TCPFastOpenStateDisabled
+	}
+}
+
+// NormalizeTCPFastOpenState keeps an unknown or unsupported reported value out
+// of persisted server state.
+func NormalizeTCPFastOpenState(state string) string {
+	switch state {
+	case TCPFastOpenStateUnavailable, TCPFastOpenStateDisabled, TCPFastOpenStateClient, TCPFastOpenStateServer, TCPFastOpenStateClientServer:
+		return state
+	default:
+		return TCPFastOpenStateUnknown
+	}
+}
+
+// TCPFastOpenServerReady reports whether the host accepts TFO on listeners, the
+// only bit that matters for a generated inbound.
+func TCPFastOpenServerReady(state string) bool {
+	return state == TCPFastOpenStateServer || state == TCPFastOpenStateClientServer
+}
+
 type HealthReport struct {
 	AgentID                   string       `json:"agent_id"`
 	Status                    ServerStatus `json:"status"`
@@ -2945,6 +3006,8 @@ type HealthReport struct {
 	AgentBuild                string       `json:"agent_build"`
 	SingBoxVersion            string       `json:"sing_box_version"`
 	KernelCapabilities        []string     `json:"kernel_capabilities,omitempty"`
+	TCPFastOpenState          string       `json:"tcp_fastopen_state,omitempty"`
+	TCPFastOpenValue          int          `json:"tcp_fastopen_value,omitempty"`
 	NetworkUploadBPS          uint64       `json:"network_upload_bps"`
 	NetworkDownloadBPS        uint64       `json:"network_download_bps"`
 	NetworkTotalUploadBytes   uint64       `json:"network_total_upload_bytes"`

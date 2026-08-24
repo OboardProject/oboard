@@ -68,6 +68,7 @@ export type Server = {
   resource_history_enabled: boolean
   traffic_reset_mode: string
   traffic_reset_day: number
+  traffic_limit_bytes: number
   network_upload_bps: number
   network_download_bps: number
   traffic_upload_bytes: number

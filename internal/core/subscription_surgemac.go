@@ -250,7 +250,7 @@ func renderSurgeMacTarget(proxies []subscriptionProxy, opts SurgeMacOptions) (st
 		native, viaMihomo := surgeMacRoute(proxy, opts)
 		switch {
 		case native:
-			line, err := renderSurgeLine(proxy)
+			line, err := renderSurgeLine(proxy, model.SubscriptionFormatSurgeMac)
 			if err != nil {
 				return "", err
 			}

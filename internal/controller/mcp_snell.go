@@ -17,7 +17,8 @@ import (
 
 var snellProfileAutomationFields = map[string]bool{
 	"name": true, "version": true, "psk": true, "obfs_mode": true,
-	"obfs_host": true, "mode": true, "reuse": true, "remark": true, "enabled": true,
+	"obfs_host": true, "mode": true, "reuse": true, "tcp_fast_open": true,
+	"remark": true, "enabled": true,
 }
 
 func (s *Server) registerSnellProfileOperations() {
@@ -132,6 +133,9 @@ func mergeSnellProfilePatch(current model.SnellProfile, patch model.SnellProfile
 	if _, ok := fields["reuse"]; ok {
 		merged.Reuse = patch.Reuse
 	}
+	if _, ok := fields["tcp_fast_open"]; ok {
+		merged.TCPFastOpen = patch.TCPFastOpen
+	}
 	if _, ok := fields["remark"]; ok {
 		merged.Remark = patch.Remark
 	}
@@ -221,7 +225,7 @@ func automationSnellProfileView(profile model.SnellProfile) map[string]any {
 	return map[string]any{
 		"id": profile.ID, "name": profile.Name, "version": profile.Version,
 		"psk": profile.PSK, "obfs_mode": profile.ObfsMode, "obfs_host": profile.ObfsHost,
-		"mode": profile.Mode, "reuse": profile.Reuse, "remark": profile.Remark,
+		"mode": profile.Mode, "reuse": profile.Reuse, "tcp_fast_open": profile.TCPFastOpen, "remark": profile.Remark,
 		"builtin": profile.Builtin, "enabled": profile.Enabled, "usage_count": profile.UsageCount,
 		"created_at": profile.CreatedAt, "updated_at": profile.UpdatedAt,
 	}

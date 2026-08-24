@@ -3347,6 +3347,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			ExpiryNotifyEnabled    *bool                     `json:"expiry_notify_enabled"`
 			TrafficResetMode       *string                   `json:"traffic_reset_mode"`
 			TrafficResetDay        *int                      `json:"traffic_reset_day"`
+			TrafficLimitBytes      *int64                    `json:"traffic_limit_bytes"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3427,6 +3428,13 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.TrafficResetDay = 1
 		} else {
 			v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
+		}
+		if input.TrafficLimitBytes != nil {
+			if *input.TrafficLimitBytes < 0 {
+				fail(w, errors.New("traffic_limit_bytes must be >= 0"), 400)
+				return
+			}
+			v.TrafficLimitBytes = *input.TrafficLimitBytes
 		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
@@ -3685,6 +3693,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled"`
 			TrafficResetMode         *string                     `json:"traffic_reset_mode"`
 			TrafficResetDay          *int                        `json:"traffic_reset_day"`
+			TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3764,6 +3773,15 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
+		}
+		if input.TrafficLimitBytes == nil {
+			v.TrafficLimitBytes = current.TrafficLimitBytes
+		} else {
+			if *input.TrafficLimitBytes < 0 {
+				fail(w, errors.New("traffic_limit_bytes must be >= 0"), 400)
+				return
+			}
+			v.TrafficLimitBytes = *input.TrafficLimitBytes
 		}
 		v.LatencyProbeEnabled = current.LatencyProbeEnabled
 		v.LatencyProbeMode = current.LatencyProbeMode
@@ -4924,6 +4942,9 @@ func validateServer(v *model.Server) error {
 	default:
 		return errors.New("monitoring_mode must be lightweight or standard")
 	}
+	if v.TrafficLimitBytes < 0 {
+		return errors.New("traffic_limit_bytes must be >= 0")
+	}
 	v.TrafficResetMode = normalizeControllerTrafficResetMode(v.TrafficResetMode)
 	v.TrafficResetDay = normalizeControllerTrafficResetDay(v.TrafficResetDay)
 	normalizedTimeMode := normalizeControllerTimeCorrectionMode(v.TimeCorrectionMode)
@@ -5075,10 +5096,14 @@ func validateEntryIPPolicy(v *model.Server) error {
 		_ = ip
 		return errors.New("public_ipv6 must be a public IPv6 address")
 	}
-	if v.EntryIPMode == model.EntryIPModeCustom && strings.TrimSpace(v.EntryAddress) == "" {
+	trimmedEntryAddress := strings.TrimSpace(v.EntryAddress)
+	if trimmedEntryAddress != "" && v.EntryIPMode != model.EntryIPModeCustom {
+		return errors.New("自定义入口需将入口策略设为自定义")
+	}
+	if v.EntryIPMode == model.EntryIPModeCustom && trimmedEntryAddress == "" {
 		return errors.New("custom entry address required")
 	}
-	v.EntryAddress = strings.TrimSpace(v.EntryAddress)
+	v.EntryAddress = trimmedEntryAddress
 	if v.EntryAddress != "" {
 		if err := core.ValidateSafeHost(v.EntryAddress); err != nil {
 			return fmt.Errorf("entry_address: %w", err)
@@ -6395,6 +6420,9 @@ func (s *Server) resolveSnellProfileIntoInbound(ctx context.Context, v *model.In
 	}
 	if _, exists := cfg["reuse"]; !exists || cfg["reuse"] == nil {
 		cfg["reuse"] = profile.Reuse
+	}
+	if _, exists := cfg["tcp_fast_open"]; !exists || cfg["tcp_fast_open"] == nil {
+		cfg["tcp_fast_open"] = profile.TCPFastOpen
 	}
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
@@ -13294,6 +13322,25 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 	}
 	report.RegionCode = normalizeControllerRegionCode(report.RegionCode)
 	report.KernelCapabilities = normalizeKernelCapabilities(report.KernelCapabilities)
+	normalizeReportedTCPFastOpen(report)
+}
+
+// normalizeReportedTCPFastOpen keeps the raw net.ipv4.tcp_fastopen bitmask as
+// the only authority: a reported state is recomputed from it so an Agent cannot
+// claim server-side TFO that the kernel bitmask does not grant.
+func normalizeReportedTCPFastOpen(report *model.HealthReport) {
+	const maxTCPFastOpenMask = 0xFFFF
+	switch model.NormalizeTCPFastOpenState(report.TCPFastOpenState) {
+	case model.TCPFastOpenStateUnknown:
+		report.TCPFastOpenState, report.TCPFastOpenValue = model.TCPFastOpenStateUnknown, 0
+	case model.TCPFastOpenStateUnavailable:
+		report.TCPFastOpenState, report.TCPFastOpenValue = model.TCPFastOpenStateUnavailable, 0
+	default:
+		if report.TCPFastOpenValue < 0 || report.TCPFastOpenValue > maxTCPFastOpenMask {
+			report.TCPFastOpenValue = 0
+		}
+		report.TCPFastOpenState = model.TCPFastOpenStateFromMask(report.TCPFastOpenValue)
+	}
 }
 
 func normalizeKernelCapabilities(values []string) []string {
@@ -13353,6 +13400,8 @@ func applyHealthReportToServer(server *model.Server, result store.HealthApplyRes
 	server.AgentBuild = current.AgentBuild
 	server.SingBoxVersion = current.SingBoxVersion
 	server.KernelCapabilities = append([]string(nil), current.KernelCapabilities...)
+	server.TCPFastOpenState = current.TCPFastOpenState
+	server.TCPFastOpenValue = current.TCPFastOpenValue
 	server.ConnectivityStatus = current.ConnectivityStatus
 	server.ConnectivityLatencyMS = current.ConnectivityLatencyMS
 	server.ConnectivityCheckedAt = current.ConnectivityCheckedAt

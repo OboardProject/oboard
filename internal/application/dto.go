@@ -40,11 +40,14 @@ type ServerDTO struct {
 	AgentBuild                  string                     `json:"agent_build"`
 	KernelVersion               string                     `json:"kernel_version"`
 	KernelCapabilities          []string                   `json:"kernel_capabilities"`
+	TCPFastOpenState            string                     `json:"tcp_fastopen_state"`
+	TCPFastOpenValue            int                        `json:"tcp_fastopen_value"`
 	ConnectionAuditEnabled      bool                       `json:"connection_audit_enabled"`
 	ResourceHistoryEnabled      bool                       `json:"resource_history_enabled"`
 	MonitoringMode              string                     `json:"monitoring_mode"`
 	TrafficResetMode            string                     `json:"traffic_reset_mode"`
 	TrafficResetDay             int                        `json:"traffic_reset_day"`
+	TrafficLimitBytes           int64                      `json:"traffic_limit_bytes"`
 	OfflineNotifyEnabled        bool                       `json:"offline_notify_enabled"`
 	OfflineAfterSeconds         int                        `json:"offline_after_seconds"`
 	ExpiresAt                   *time.Time                 `json:"expires_at,omitempty"`
@@ -247,8 +250,9 @@ func serverDTO(item model.Server) ServerDTO {
 		PortPolicyRevision: item.PortPolicyRevision, AgentConnected: item.AgentID != "",
 		AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild, KernelVersion: item.SingBoxVersion,
 		KernelCapabilities:     append([]string{}, item.KernelCapabilities...),
+		TCPFastOpenState:       item.TCPFastOpenState, TCPFastOpenValue: item.TCPFastOpenValue,
 		ConnectionAuditEnabled: item.ConnectionAuditEnabled, ResourceHistoryEnabled: item.ResourceHistoryEnabled,
-		MonitoringMode: item.MonitoringMode, TrafficResetMode: item.TrafficResetMode, TrafficResetDay: item.TrafficResetDay,
+		MonitoringMode: item.MonitoringMode, TrafficResetMode: item.TrafficResetMode, TrafficResetDay: item.TrafficResetDay, TrafficLimitBytes: item.TrafficLimitBytes,
 		OfflineNotifyEnabled: item.OfflineNotifyEnabled, OfflineAfterSeconds: item.OfflineAfterSeconds,
 		ExpiresAt: item.ExpiresAt, RenewalCycle: item.RenewalCycle, AutoRenewEnabled: item.AutoRenewEnabled,
 		ExpiryNotifyEnabled: item.ExpiryNotifyEnabled, LastAutoRenewedAt: item.LastAutoRenewedAt,

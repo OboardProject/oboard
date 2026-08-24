@@ -215,8 +215,10 @@ func defaultDescriptors() []Descriptor {
 		"port_policy_revision": map[string]any{"type": "integer"},
 		"agent_connected":      boolValue, "agent_version": stringValue, "agent_build": stringValue,
 		"kernel_version": stringValue, "kernel_capabilities": map[string]any{"type": "array", "maxItems": 64, "items": stringValue}, "connection_audit_enabled": boolValue,
+		"tcp_fastopen_state": map[string]any{"type": "string", "enum": []string{"", "unavailable", "disabled", "client", "server", "client_server"}, "description": "Agent 上报的 net.ipv4.tcp_fastopen 状态；只有 server/client_server 才能让入站 tcp_fast_open 生效"},
+		"tcp_fastopen_value": map[string]any{"type": "integer", "description": "net.ipv4.tcp_fastopen 原始位掩码"},
 		"resource_history_enabled": boolValue, "monitoring_mode": stringValue,
-		"traffic_reset_mode": stringValue, "traffic_reset_day": map[string]any{"type": "integer"},
+		"traffic_reset_mode": stringValue, "traffic_reset_day": map[string]any{"type": "integer"}, "traffic_limit_bytes": map[string]any{"type": "integer"},
 		"offline_notify_enabled": boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 		"expires_at": nullableString(), "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}},
 		"auto_renew_enabled": boolValue, "expiry_notify_enabled": boolValue, "last_auto_renewed_at": nullableString(),
@@ -295,6 +297,8 @@ func defaultDescriptors() []Descriptor {
 	serverOnboardingInput := schemaObject(map[string]any{
 		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64, "description": "必填。同名已存在时规划结果改为重签发 enrollment，不会建议再创建一条服务器"}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
 		"ip_stack":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
+		"entry_address": map[string]any{"type": "string", "maxLength": 253, "description": "自定义入口地址，仅当 entry_ip_mode=custom 时生效"},
+		"entry_ip_mode": map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}, "description": "入口地址策略，默认 auto；填了 entry_address 必须为 custom，否则自动模式会忽略该地址"},
 		"port_range_start": publicPortStart, "port_range_end": publicPortEnd,
 		"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
 		"expires_at":               nullableString(),
@@ -602,7 +606,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
-			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0},
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
@@ -624,7 +628,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 			"expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
-			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31},
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":

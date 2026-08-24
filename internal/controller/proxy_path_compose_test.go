@@ -25,7 +25,7 @@ func TestProxyPathInitialStepCommitsAsOneTopologyUnit(t *testing.T) {
 	createdInbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "compose-entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10443, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	inboundID := int64(createdInbound["inbound"].(map[string]any)["id"].(float64))
 
-	createdTargetServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "compose-target", "listen_ip": "0.0.0.0", "public_ipv4": "198.51.100.2", "entry_address": "198.51.100.2", "port_range_start": 11001, "port_range_end": 12000}, http.StatusCreated)
+	createdTargetServer := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "compose-target", "listen_ip": "0.0.0.0", "public_ipv4": "198.51.100.2", "entry_ip_mode": "custom", "entry_address": "198.51.100.2", "port_range_start": 11001, "port_range_end": 12000}, http.StatusCreated)
 	targetServerID := int64(createdTargetServer["server"].(map[string]any)["id"].(float64))
 	createdTargetInbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": targetServerID, "name": "compose-target-entry", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 10444, "config_json": "{}", "enabled": true}, http.StatusCreated)
 	targetInboundID := int64(createdTargetInbound["inbound"].(map[string]any)["id"].(float64))

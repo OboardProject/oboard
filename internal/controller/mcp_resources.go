@@ -1092,10 +1092,12 @@ func mcpServerHealthPayload(payload any) map[string]any {
 		AgentBuild         string   `json:"agent_build"`
 		KernelVersion      string   `json:"kernel_version"`
 		KernelCapabilities []string `json:"kernel_capabilities"`
+		TCPFastOpenState   string   `json:"tcp_fastopen_state"`
+		TCPFastOpenValue   int      `json:"tcp_fastopen_value"`
 		LastSeenAt         any      `json:"last_seen_at"`
 	}
 	_ = json.Unmarshal(encoded, &item)
-	return map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "kernel_capabilities": item.KernelCapabilities, "last_seen_at": item.LastSeenAt}
+	return map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "kernel_capabilities": item.KernelCapabilities, "tcp_fastopen_state": item.TCPFastOpenState, "tcp_fastopen_value": item.TCPFastOpenValue, "last_seen_at": item.LastSeenAt}
 }
 
 func mcpTemplateID(uri, prefix string, suffixes ...string) (string, error) {

@@ -12,7 +12,7 @@ export interface SnellProfilesPanelProps {
   notify: (message: string, tone?: 'success' | 'warning' | 'danger' | 'error' | 'info') => void
 }
 
-export type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
+export type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; tcp_fast_open: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
 
 const versions = [4, 6]
 const obfsModes = ['none', 'http']
@@ -26,14 +26,15 @@ export type SnellDraft = {
   obfs_host: string
   mode: string
   reuse: boolean
+  tcp_fast_open: boolean
   remark: string
   enabled: boolean
 }
 
-export const emptySnellDraft = (version = 4): SnellDraft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, remark: '', enabled: true })
+export const emptySnellDraft = (version = 4): SnellDraft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, tcp_fast_open: false, remark: '', enabled: true })
 
 export function snellDraftFromProfile(profile: SnellProfile): SnellDraft {
-  return { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, remark: profile.remark, enabled: profile.enabled }
+  return { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, tcp_fast_open: Boolean(profile.tcp_fast_open), remark: profile.remark, enabled: profile.enabled }
 }
 
 function profileMeta(profile: SnellProfile) {
@@ -45,6 +46,7 @@ function profileMeta(profile: SnellProfile) {
     parts.push(profile.mode === 'unshaped' ? '无整形' : profile.mode)
   }
   if (profile.reuse) parts.push('复用')
+  if (profile.tcp_fast_open) parts.push('TFO')
   parts.push(profile.usage_count > 0 ? `${profile.usage_count} 个入口` : '未使用')
   return parts
 }
@@ -102,8 +104,11 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
           {v6Modes.map(mode => <option key={mode} value={mode}>{mode === 'default' ? '默认' : mode === 'unshaped' ? '无整形' : 'unsafe-raw'}</option>)}
         </Select>
       </SettingsRow>}
-      <SettingsRow label="连接复用（reuse）" description="客户端可复用已建立的连接。">
+      <SettingsRow label="连接复用（reuse）" description="Snell 自带的连接复用，不使用 sing-box 通用 MUX。">
         <input type="checkbox" checked={draft.reuse} onChange={event => setDraft({ ...draft, reuse: event.target.checked })} />
+      </SettingsRow>
+      <SettingsRow label="TCP Fast Open" description="Snell 始终跑在 TCP 上。仅当服务器内核开放了 server 位（net.ipv4.tcp_fastopen 含 2）时才会真正生效。">
+        <input type="checkbox" checked={draft.tcp_fast_open} onChange={event => setDraft({ ...draft, tcp_fast_open: event.target.checked })} />
       </SettingsRow>
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
         <input value={draft.remark} onChange={event => setDraft({ ...draft, remark: event.target.value })} placeholder="可选" />

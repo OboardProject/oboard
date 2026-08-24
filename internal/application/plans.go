@@ -28,6 +28,8 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 		Name                        string                     `json:"name"`
 		RegionCode                  string                     `json:"region_code"`
 		IPStack                     string                     `json:"ip_stack"`
+		EntryAddress                string                     `json:"entry_address"`
+		EntryIPMode                 string                     `json:"entry_ip_mode"`
 		PortRangeStart              int                        `json:"port_range_start"`
 		PortRangeEnd                int                        `json:"port_range_end"`
 		InternalPortRangeStart      int                        `json:"internal_port_range_start"`
@@ -92,6 +94,43 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 	if input.IPStack == "" {
 		input.IPStack = string(model.IPStackAuto)
 	}
+	trimmedEntryAddress := strings.TrimSpace(input.EntryAddress)
+	normalizedEntryMode := strings.ToLower(strings.TrimSpace(input.EntryIPMode))
+	if normalizedEntryMode == "" {
+		normalizedEntryMode = string(model.EntryIPModeAuto)
+	}
+	switch model.EntryIPMode(normalizedEntryMode) {
+	case model.EntryIPModeAuto, model.EntryIPModeIPv4, model.EntryIPModeIPv6, model.EntryIPModeCustom:
+	default:
+		return PlanResult{
+			Kind:     "server_onboarding",
+			Valid:    false,
+			Warnings: []string{fmt.Sprintf("entry_ip_mode %q 无效", input.EntryIPMode)},
+		}, nil
+	}
+	if trimmedEntryAddress != "" && model.EntryIPMode(normalizedEntryMode) != model.EntryIPModeCustom {
+		return PlanResult{
+			Kind:     "server_onboarding",
+			Valid:    false,
+			Warnings: []string{"自定义入口需将入口策略设为自定义：已填写 entry_address 但 entry_ip_mode 为 " + normalizedEntryMode + "，自动模式会忽略该地址，请将 entry_ip_mode 设为 custom"},
+		}, nil
+	}
+	if model.EntryIPMode(normalizedEntryMode) == model.EntryIPModeCustom && trimmedEntryAddress == "" {
+		return PlanResult{
+			Kind:     "server_onboarding",
+			Valid:    false,
+			Warnings: []string{"custom entry address required：entry_ip_mode 为 custom 时必须提供 entry_address"},
+		}, nil
+	}
+	if trimmedEntryAddress != "" {
+		if err := core.ValidateSafeHost(trimmedEntryAddress); err != nil {
+			return PlanResult{
+				Kind:     "server_onboarding",
+				Valid:    false,
+				Warnings: []string{fmt.Sprintf("entry_address: %v", err)},
+			}, nil
+		}
+	}
 	latencyEnabled := true
 	if input.LatencyProbeEnabled != nil {
 		latencyEnabled = *input.LatencyProbeEnabled
@@ -132,6 +171,12 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 		"latency_probe_regions": input.LatencyProbeRegions, "latency_probe_max_targets": input.LatencyProbeMaxTargets,
 		"listen_ip": "0.0.0.0", "port_range_start": publicStart, "port_range_end": publicEnd,
 		"internal_port_range_start": internalStart, "internal_port_range_end": internalEnd,
+	}
+	if strings.TrimSpace(input.EntryIPMode) != "" {
+		server["entry_ip_mode"] = normalizedEntryMode
+	}
+	if trimmedEntryAddress != "" {
+		server["entry_address"] = trimmedEntryAddress
 	}
 	if expires := strings.TrimSpace(input.ExpiresAt); expires != "" {
 		server["expires_at"] = expires

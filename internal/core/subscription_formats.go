@@ -50,6 +50,7 @@ type subscriptionProxy struct {
 	Reuse          bool
 	Multiplexing   string
 	TrafficPattern string
+	TCPFastOpen    bool
 	Native         map[string]any
 }
 
@@ -113,6 +114,7 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 		UoT:            udpOverTCPEnabled(raw["udp_over_tcp"]),
 		Multiplexing:   stringFromAny(raw["multiplexing"]),
 		TrafficPattern: stringFromAny(raw["traffic_pattern"]),
+		TCPFastOpen:    boolValue(raw["tcp_fast_open"]),
 	}
 	if proxy.Name == "" {
 		proxy.Name = stringFromAny(raw["tag"])
@@ -292,18 +294,20 @@ func normalizeSubscriptionObfs(raw map[string]any) (string, string) {
 }
 
 func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionProxy) map[string]any {
+	// tcp_fast_open is a sing-box dial field, so it is allowed only for the
+	// types whose data path is TCP; QUIC-based hysteria2/tuic never carry it.
 	allowed := map[string][]string{
-		"vless":     {"uuid", "flow", "packet_encoding", "tls", "transport", "network", "multiplex"},
-		"vmess":     {"uuid", "security", "alter_id", "tls", "transport", "network", "multiplex"},
-		"trojan":    {"password", "tls", "transport", "network", "multiplex"},
+		"vless":     {"uuid", "flow", "packet_encoding", "tls", "transport", "network", "multiplex", "tcp_fast_open"},
+		"vmess":     {"uuid", "security", "alter_id", "tls", "transport", "network", "multiplex", "tcp_fast_open"},
+		"trojan":    {"password", "tls", "transport", "network", "multiplex", "tcp_fast_open"},
 		"tuic":      {"uuid", "password", "congestion_control", "udp_relay_mode", "zero_rtt_handshake", "heartbeat", "tls"},
 		"hysteria2": {"password", "tls", "server_ports", "hop_interval", "hop_interval_max", "up_mbps", "down_mbps", "obfs", "network"},
-		"anytls":    {"password", "tls"},
-		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex"},
-		"socks5":    {"version", "username", "password", "network", "udp_over_tcp"},
+		"anytls":    {"password", "tls", "tcp_fast_open"},
+		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex", "tcp_fast_open"},
+		"socks5":    {"version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open"},
 		"ssh":       {"password", "host_key"},
-		"mieru":     {"server_ports", "transport", "username", "password", "multiplexing", "traffic_pattern"},
-		"snell":     {"version", "psk", "obfs_mode", "obfs_host", "mode", "reuse", "network"},
+		"mieru":     {"server_ports", "transport", "username", "password", "multiplexing", "traffic_pattern", "tcp_fast_open"},
+		"snell":     {"version", "psk", "obfs_mode", "obfs_host", "mode", "reuse", "network", "tcp_fast_open"},
 	}
 	typeName := map[string]string{"ss": "shadowsocks", "socks5": "socks"}[proxy.Type]
 	if typeName == "" {
@@ -806,7 +810,25 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 			out["obfs-opts"] = opts
 		}
 	}
+	if proxy.TCPFastOpen && clashFormatSupportsTFO(format) && clashTypeSupportsTFO(proxy.Type) {
+		out["tfo"] = true
+	}
 	return out, nil
+}
+
+// clashFormatSupportsTFO limits the `tfo` key to the mihomo engine, which
+// documents it as a shared proxy option.
+func clashFormatSupportsTFO(format model.SubscriptionFormat) bool {
+	return format == model.SubscriptionFormatMihomo || format == model.SubscriptionFormatClashMeta
+}
+
+func clashTypeSupportsTFO(proxyType string) bool {
+	switch proxyType {
+	case "vless", "vmess", "trojan", "ss", "socks5", "snell", "anytls":
+		return true
+	default:
+		return false
+	}
 }
 
 func contiguousMieruPortRange(ports []int) (string, bool) {
@@ -1085,7 +1107,7 @@ func renderClientLines(proxies []subscriptionProxy, format model.SubscriptionFor
 		var err error
 		switch format {
 		case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac:
-			line, err = renderSurgeLine(proxy)
+			line, err = renderSurgeLine(proxy, format)
 		case model.SubscriptionFormatSurfboard:
 			line, err = renderSurfboardLine(proxy)
 		case model.SubscriptionFormatLoon:
@@ -1108,7 +1130,7 @@ func renderClientLines(proxies []subscriptionProxy, format model.SubscriptionFor
 	return strings.Join(lines, "\n") + "\n", nil
 }
 
-func renderSurgeLine(proxy subscriptionProxy) (string, error) {
+func renderSurgeLine(proxy subscriptionProxy, format model.SubscriptionFormat) (string, error) {
 	name := sanitizeConfName(proxy.Name)
 	host := subscriptionEndpoint(proxy.Server, 0)
 	parts := []string{}
@@ -1165,6 +1187,11 @@ func renderSurgeLine(proxy subscriptionProxy) (string, error) {
 	default:
 		return "", fmt.Errorf("Surge does not support subscription proxy type %q", proxy.Type)
 	}
+	// `tfo` is a documented Surge proxy parameter; Surfboard has no equivalent,
+	// so it stays out of the Surfboard line.
+	if proxy.TCPFastOpen && proxy.Type != "ssh" && (format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac) {
+		parts = append(parts, "tfo=true")
+	}
 	return strings.Join(parts, ","), nil
 }
 
@@ -1180,7 +1207,7 @@ func renderSurfboardLine(proxy subscriptionProxy) (string, error) {
 		parts = append(parts, "udp-relay=true")
 		return strings.Join(parts, ","), nil
 	}
-	line, err := renderSurgeLine(proxy)
+	line, err := renderSurgeLine(proxy, model.SubscriptionFormatSurfboard)
 	if err != nil {
 		return "", err
 	}

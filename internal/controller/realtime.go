@@ -442,6 +442,8 @@ func healthRealtimePatch(result store.HealthApplyResult) realtimeServerPatch {
 	set("agent_version", previous.AgentVersion != current.AgentVersion, current.AgentVersion)
 	set("agent_build", previous.AgentBuild != current.AgentBuild, current.AgentBuild)
 	set("sing_box_version", previous.SingBoxVersion != current.SingBoxVersion, current.SingBoxVersion)
+	set("tcp_fastopen_state", previous.TCPFastOpenState != current.TCPFastOpenState, current.TCPFastOpenState)
+	set("tcp_fastopen_value", previous.TCPFastOpenValue != current.TCPFastOpenValue, current.TCPFastOpenValue)
 	set("network_upload_bps", previous.NetworkUploadBPS != current.NetworkUploadBPS, current.NetworkUploadBPS)
 	set("network_download_bps", previous.NetworkDownloadBPS != current.NetworkDownloadBPS, current.NetworkDownloadBPS)
 	set("traffic_upload_bytes", previous.TrafficUploadBytes != current.TrafficUploadBytes, current.TrafficUploadBytes)

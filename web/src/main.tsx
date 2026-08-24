@@ -6948,7 +6948,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
 }
 
 function GridViewIcon() {
@@ -7916,8 +7916,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
+  const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
   const submit = async () => {
-    if (saving || !portRangeValid || !internalPortRangeValid) return
+    if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
     setSaving(true)
     try {
       await onSubmit()
@@ -7938,15 +7939,17 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" />
           </FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。" placement="bottom">
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
             <Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
-          {draft.entry_ip_mode === 'custom' && (
+          {draft.entry_ip_mode === 'custom' ? (
             <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
               <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
               <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
             </FormField>
-          )}
+          ) : draft.entry_address ? (
+            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义。</span></div>
+          ) : null}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
             <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
           </FormField>
@@ -8004,6 +8007,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
+          <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
+            <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
+          </FormField>
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
@@ -8050,7 +8056,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
       </div>
       <footer className="dialog-actions">
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
-        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid}>{saving ? '创建中...' : '创建'}</button>
+        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '创建中...' : '创建'}</button>
       </footer>
       {latencyDialogOpen && (
         <LatencyProbeSettingsDialog
@@ -8075,6 +8081,7 @@ function serverToDraft(server: Server) {
     internal_port_range_start: server.internal_port_range_start || 30000,
     internal_port_range_end: server.internal_port_range_end || 59999,
     entry_ip_mode: (server.entry_ip_mode || 'auto') as EntryIPMode,
+    traffic_limit_bytes: Number(server.traffic_limit_bytes || 0),
     expires_at: serverExpiryInputValue(server.expires_at),
     renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly',
     auto_renew_enabled: Boolean(server.auto_renew_enabled),
@@ -8090,8 +8097,9 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
   const update = (patch: any) => setDraft((old: any) => ({ ...old, ...patch }))
+  const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
   const submit = async () => {
-    if (saving || !portRangeValid || !internalPortRangeValid) return
+    if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
     setSaving(true)
     try {
       await onSubmit(draft)
@@ -8110,13 +8118,15 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          {draft.entry_ip_mode === 'custom' && (
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          {draft.entry_ip_mode === 'custom' ? (
             <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
               <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
               <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
             </FormField>
-          )}
+          ) : draft.entry_address ? (
+            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义。</span></div>
+          ) : null}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <div className="form-section-title">到期与续期</div>
@@ -8160,6 +8170,9 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
+          <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
+            <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
+          </FormField>
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
@@ -8200,7 +8213,7 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid}>{saving ? '保存中...' : '保存'}</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
       {latencyDialogOpen && (
         <LatencyProbeSettingsDialog
           draft={draft}
@@ -9179,12 +9192,18 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
   const timeIssue = getServerTimeIssue(server)
+  const trafficTotalBytes = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
+  const trafficLimitBytes = Number(server.traffic_limit_bytes || 0)
+  const trafficPercent = trafficLimitBytes > 0 ? Math.min(100, (trafficTotalBytes / trafficLimitBytes) * 100) : 0
+  const trafficPercentLabel = trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : ''
+  const trafficQuotaTone = trafficPercent >= 90 ? 'danger' : trafficPercent >= 75 ? 'warning' : ''
 
   if (layout === 'list') {
     const memPercent = server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0
     const downRate = formatByteRate(server.network_download_bps || 0)
     const upRate = formatByteRate(server.network_upload_bps || 0)
-    const totalTraffic = formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))
+    const totalTraffic = formatBytes(trafficTotalBytes)
+    const limitTraffic = trafficLimitBytes > 0 ? formatBytes(trafficLimitBytes) : ''
 
     return (
       <MotionCard tag="article" className="server-card server-list-row server-card-monitorable" hoverEffect={false}>
@@ -9227,8 +9246,22 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               <span className="rate-sub down" title="下载速率"><ArrowDown size={12} /><strong>{downRate}</strong></span>
               <span className="rate-sub up" title="上传速率"><ArrowUp size={12} /><strong>{upRate}</strong></span>
             </div>
-            <span className="server-list-traffic-badge" title="本计费周期累计流量">{totalTraffic}</span>
+            {trafficLimitBytes > 0 ? (
+              <span className={`server-list-traffic-badge has-quota ${trafficQuotaTone}`} title={`本周期 ${totalTraffic} / ${limitTraffic} · ${trafficPercentLabel}${server.traffic_period_end ? ` · 至 ${formatDate(server.traffic_period_end)}` : ''}`}>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{totalTraffic}</span>
+                <span style={{ opacity: 0.55, margin: '0 2px' }}>/</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limitTraffic}</span>
+                <span className="server-list-quota-pct">{trafficPercentLabel}</span>
+              </span>
+            ) : (
+              <span className="server-list-traffic-badge" title="本计费周期累计流量">{totalTraffic}</span>
+            )}
           </div>
+          {trafficLimitBytes > 0 && (
+            <div className="server-list-quota-track" role="progressbar" aria-valuenow={Math.round(trafficPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="周期流量使用率">
+              <div className={`server-list-quota-fill ${trafficQuotaTone}`} style={{ width: `${Math.min(100, trafficPercent)}%` }} />
+            </div>
+          )}
         </div>
 
         {/* Latency */}
@@ -9262,7 +9295,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <span className="server-list-mobile-stat rate-down">↓ {downRate}</span>
           <span className="server-list-mobile-stat rate-up">↑ {upRate}</span>
           <span className="server-list-mobile-sep">·</span>
-          <span className="server-list-mobile-traffic">{totalTraffic}</span>
+          <span className="server-list-mobile-traffic" title={trafficLimitBytes > 0 ? `${totalTraffic} / ${limitTraffic} · ${trafficPercentLabel}` : totalTraffic}>{trafficLimitBytes > 0 ? `${totalTraffic}/${limitTraffic}` : totalTraffic}{trafficLimitBytes > 0 ? ` ${trafficPercentLabel}` : ''}</span>
         </div>
       </MotionCard>
     )
@@ -9365,15 +9398,25 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         <div className="server-telemetry" style={{ gridColumn: 'span 2' }}>
           <div className="server-telemetry-heading">
             <span>网络流量</span>
-            <small>{server.monitoring_mode === 'standard' ? '标准' : '轻量'}</small>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {trafficLimitBytes > 0 && (
+                <small className={`server-quota-badge ${trafficQuotaTone}`} title={`已用 ${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)} · ${serverTrafficPeriodLabel(server)}`}>{trafficPercentLabel} · {formatBytes(trafficTotalBytes)}/{formatBytes(trafficLimitBytes)}</small>
+              )}
+              <small>{server.monitoring_mode === 'standard' ? '标准' : '轻量'}</small>
+            </div>
           </div>
           <div className="server-rate-row">
             <div><ArrowDown size={13} aria-hidden="true" /><span>下载</span><strong>{formatByteRate(server.network_download_bps || 0)}</strong></div>
             <div><ArrowUp size={13} aria-hidden="true" /><span>上传</span><strong>{formatByteRate(server.network_upload_bps || 0)}</strong></div>
-            <div><span>本周期</span><strong>{formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))}</strong></div>
+            <div><span>本周期</span><strong style={{ fontVariantNumeric: 'tabular-nums' }}>{trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)}</strong></div>
           </div>
+          {trafficLimitBytes > 0 && (
+            <div className="server-traffic-quota-track" role="progressbar" aria-valuenow={Math.round(trafficPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="周期流量使用率">
+              <div className={`server-traffic-quota-fill ${trafficQuotaTone}`} style={{ width: `${trafficPercent}%` }} />
+            </div>
+          )}
           <ServerTelemetryChart samples={samples} type="network" />
-          <div className="server-chart-caption"><span><i className="download" />下载</span><span><i className="upload" />上传</span><small>{serverTrafficPeriodLabel(server)}</small></div>
+          <div className="server-chart-caption"><span><i className="download" />下载</span><span><i className="upload" />上传</span><small>{trafficLimitBytes > 0 ? `${trafficPercentLabel} · ${serverTrafficPeriodLabel(server)}` : serverTrafficPeriodLabel(server)}</small></div>
         </div>
 
         <div className="server-connectivity" style={{ gridColumn: 'span 2' }}>
@@ -10155,9 +10198,25 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             <ServerDetailItem label="周期范围" value={serverTrafficPeriodRange(server)} />
             <ServerDetailItem label="上传流量" value={formatBytes(server.traffic_upload_bytes || 0)} />
             <ServerDetailItem label="下载流量" value={formatBytes(server.traffic_download_bytes || 0)} />
-            <ServerDetailItem label="周期总流量" value={formatBytes((server.traffic_upload_bytes || 0) + (server.traffic_download_bytes || 0))} />
+            <ServerDetailItem label="周期总流量" value={(() => {
+              const total = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
+              const limit = Number(server.traffic_limit_bytes || 0)
+              if (limit > 0) {
+                const pct = Math.min(100, (total / limit) * 100)
+                return `${formatBytes(total)} / ${formatBytes(limit)} · ${pct.toFixed(pct >= 10 ? 0 : 1)}%`
+              }
+              return formatBytes(total)
+            })()} />
+            <ServerDetailItem label="周期限额" value={server.traffic_limit_bytes ? formatBytes(Number(server.traffic_limit_bytes)) : '不限量'} />
             <ServerDetailItem label="统计说明" value="未配置周期与日期时默认自然月" />
           </dl>
+          {Number(server.traffic_limit_bytes || 0) > 0 && (() => {
+            const total = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
+            const limit = Number(server.traffic_limit_bytes || 0)
+            const pct = Math.min(100, (total / limit) * 100)
+            const tone = pct >= 90 ? 'danger' : pct >= 75 ? 'warning' : ''
+            return <div className="server-traffic-quota-track" style={{ marginTop: 10, height: 6 }} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}><div className={`server-traffic-quota-fill ${tone}`} style={{ width: `${pct}%` }} /></div>
+          })()}
           <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>未配置统计周期与日期时，默认按自然月统计，周期为每月 1 日 00:00 至下月 1 日 00:00。</p>
         </section>
 
@@ -14473,6 +14532,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
           {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onGenerateRealityKeypair={() => generateRealityKeypair(false)} realityKeyLoading={realityKeyLoading} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
+          {protocol !== 'ssh' && <InboundTransportFields protocol={protocol} config={cfg} updateConfig={updateConfig} server={server} />}
         </div>
         <details className="advanced-config">
           <summary>高级：查看生成配置</summary>
@@ -14641,6 +14701,7 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
       obfs_host: profile.obfs_host || undefined,
       mode: profile.mode && profile.mode !== 'default' ? profile.mode : undefined,
       reuse: profile.reuse || undefined,
+      tcp_fast_open: profile.tcp_fast_open || undefined,
     })
   }
   if (version === 4) return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
@@ -17389,19 +17450,21 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
 function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number | string; onChange: (patch: any) => void }) {
   const effectiveMode = mode || 'monthly'
   return <>
-    <FormField label="流量重置" hint="统计周期与日期未填写时，默认按自然月统计。">
+    <FormField label="流量重置" hint="统计周期与日期未填写时，默认按自然月统计。自然月模式下重置日不生效。">
       <Select variant="segmented" value={effectiveMode} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
         <option value="monthly">自然月</option>
         <option value="month_day">每月指定日</option>
       </Select>
     </FormField>
-    {effectiveMode === 'month_day' && <FormField label="重置日" hint="1–31；短月使用当月最后一天，未填写默认为 1 日。">
+    <FormField label="重置日" hint={effectiveMode === 'monthly' ? '自然月模式下按自然月统计，重置日不生效。' : '1–31；短月使用当月最后一天，未填写默认为 1 日。'}>
       <input
         type="number"
         min={1}
         max={31}
         placeholder="1"
         value={day === '' || day === undefined || day === null ? '' : day}
+        disabled={effectiveMode === 'monthly'}
+        style={effectiveMode === 'monthly' ? { opacity: 0.5 } : undefined}
         onChange={e => onChange({ traffic_reset_day: e.target.value === '' ? '' : Number(e.target.value) })}
         onBlur={e => {
           const val = Number(e.target.value)
@@ -17409,7 +17472,7 @@ function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number
           else if (val > 31) onChange({ traffic_reset_day: 31 })
         }}
       />
-    </FormField>}
+    </FormField>
   </>
 }
 
