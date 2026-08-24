@@ -588,14 +588,24 @@ function RegionPicker({ value, onChange, servers = [] }: { value: string; onChan
         triggerRef.current?.focus()
       }
     }
+    const scrollParents: HTMLElement[] = []
+    let parent: HTMLElement | null = triggerRef.current?.parentElement ?? null
+    while (parent) {
+      scrollParents.push(parent)
+      parent = parent.parentElement
+    }
     window.addEventListener('resize', reposition)
     window.addEventListener('scroll', reposition, true)
+    document.addEventListener('scroll', reposition, true)
+    scrollParents.forEach(element => element.addEventListener('scroll', reposition))
     document.addEventListener('mousedown', closeOnOutsideClick)
     document.addEventListener('keydown', closeOnEscape)
     window.requestAnimationFrame(() => searchRef.current?.focus())
     return () => {
       window.removeEventListener('resize', reposition)
       window.removeEventListener('scroll', reposition, true)
+      document.removeEventListener('scroll', reposition, true)
+      scrollParents.forEach(element => element.removeEventListener('scroll', reposition))
       document.removeEventListener('mousedown', closeOnOutsideClick)
       document.removeEventListener('keydown', closeOnEscape)
     }
@@ -641,6 +651,7 @@ function RegionPicker({ value, onChange, servers = [] }: { value: string; onChan
     {open && position && createPortal(
       <div
         ref={panelRef}
+        data-popover="true"
         className="region-picker-panel"
         style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
       >
@@ -731,14 +742,24 @@ function ServerRegionFilterDropdown({
         triggerRef.current?.focus()
       }
     }
+    const scrollParents: HTMLElement[] = []
+    let parent: HTMLElement | null = triggerRef.current?.parentElement ?? null
+    while (parent) {
+      scrollParents.push(parent)
+      parent = parent.parentElement
+    }
     window.addEventListener('resize', reposition)
     window.addEventListener('scroll', reposition, true)
+    document.addEventListener('scroll', reposition, true)
+    scrollParents.forEach(element => element.addEventListener('scroll', reposition))
     document.addEventListener('mousedown', closeOnOutsideClick)
     document.addEventListener('keydown', closeOnEscape)
     window.requestAnimationFrame(() => searchRef.current?.focus())
     return () => {
       window.removeEventListener('resize', reposition)
       window.removeEventListener('scroll', reposition, true)
+      document.removeEventListener('scroll', reposition, true)
+      scrollParents.forEach(element => element.removeEventListener('scroll', reposition))
       document.removeEventListener('mousedown', closeOnOutsideClick)
       document.removeEventListener('keydown', closeOnEscape)
     }
@@ -772,6 +793,7 @@ function ServerRegionFilterDropdown({
       {open && position && createPortal(
         <div
           ref={panelRef}
+          data-popover="true"
           className="server-region-dropdown-panel"
           style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
         >

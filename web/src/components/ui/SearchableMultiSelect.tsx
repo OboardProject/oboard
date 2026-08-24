@@ -78,7 +78,7 @@ export function SearchableMultiSelect({
       <span className={selectedLabels.length ? '' : 'placeholder'}>{displayValue}</span>
       <ChevronDown size={15} aria-hidden="true" />
     </button>
-    {open && <div id={listID} className="searchable-multi-select-menu" role="listbox" aria-multiselectable="true">
+    {open && <div id={listID} data-popover="true" className="searchable-multi-select-menu" role="listbox" aria-multiselectable="true">
       <label className="searchable-multi-select-search">
         <Search size={14} aria-hidden="true" />
         <input ref={searchRef} value={query} onChange={event => setQuery(event.target.value)} placeholder={searchPlaceholder} />

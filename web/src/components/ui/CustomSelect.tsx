@@ -127,11 +127,21 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     if (!isOpen) return
     updateMenuPosition()
     const reposition = () => updateMenuPosition()
+    const scrollParents: HTMLElement[] = []
+    let parent: HTMLElement | null = rootRef.current?.parentElement ?? null
+    while (parent) {
+      scrollParents.push(parent)
+      parent = parent.parentElement
+    }
     window.addEventListener('resize', reposition)
     window.addEventListener('scroll', reposition, true)
+    document.addEventListener('scroll', reposition, true)
+    scrollParents.forEach(element => element.addEventListener('scroll', reposition))
     return () => {
       window.removeEventListener('resize', reposition)
       window.removeEventListener('scroll', reposition, true)
+      document.removeEventListener('scroll', reposition, true)
+      scrollParents.forEach(element => element.removeEventListener('scroll', reposition))
     }
   }, [isOpen, updateMenuPosition])
 
@@ -206,6 +216,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       {isOpen && menuPosition && createPortal(
         <div
           ref={menuRef}
+          data-popover="true"
           className={`custom-select-menu custom-select-menu-portal placement-${menuPosition.placement}`}
           style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width, maxHeight: menuPosition.maxHeight }}
         >

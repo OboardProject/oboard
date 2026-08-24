@@ -4,6 +4,20 @@ import { m, usePresence, useReducedMotion } from "motion/react"
 
 const APPICA_SPRING = [0.175, 0.885, 0.32, 1.5] as const
 const BACKDROP_EASE = [0.16, 1, 0.3, 1] as const
+const POPOVER_SELECTOR = [
+  '.custom-select-menu',
+  '.searchable-multi-select-menu',
+  '.searchable-combobox-menu',
+  '.region-picker-panel',
+  '.server-region-dropdown-panel',
+  '.server-actions-menu',
+  '.action-menu-portal',
+  '.node-scope-menu',
+  '.node-scope-menu-overlay',
+  '[data-popover]',
+  '[role="menu"]',
+  '[role="listbox"]',
+].join(', ')
 const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
   'input:not([disabled]):not([type="hidden"])',
@@ -12,6 +26,10 @@ const FOCUSABLE_SELECTOR = [
   'a[href]',
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ')
+
+function isInsidePopover(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest(POPOVER_SELECTOR))
+}
 
 type LayerID = symbol
 type BodyStyleSnapshot = { overflow: string; paddingRight: string }
@@ -166,9 +184,10 @@ export function ModalSurface({
       capturedFocusRef.current = true
     }
     panel.inert = !isInteractive
-    if (!isInteractive || panel.contains(document.activeElement)) return
+    if (!isInteractive || panel.contains(document.activeElement) || isInsidePopover(document.activeElement)) return
     const frame = window.requestAnimationFrame(() => {
-      if (isTopmostRef.current && !panel.contains(document.activeElement)) focusFirst(panel)
+      const active = document.activeElement
+      if (isTopmostRef.current && active && !panel.contains(active) && !isInsidePopover(active)) focusFirst(panel)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [isInteractive])
@@ -176,7 +195,9 @@ export function ModalSurface({
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const panel = panelRef.current
+      const target = event.target as HTMLElement | null
       if (!panel || !isTopmostRef.current) return
+      if (isInsidePopover(target) || isInsidePopover(document.activeElement)) return
       if (event.key === "Escape") {
         event.preventDefault()
         event.stopPropagation()
@@ -202,7 +223,8 @@ export function ModalSurface({
     }
     const handleFocusIn = (event: FocusEvent) => {
       const panel = panelRef.current
-      if (!panel || !isTopmostRef.current || panel.contains(event.target as Node)) return
+      const target = event.target as HTMLElement | null
+      if (!panel || !isTopmostRef.current || panel.contains(event.target as Node) || isInsidePopover(target)) return
       focusFirst(panel)
     }
     document.addEventListener("keydown", handleKeyDown)

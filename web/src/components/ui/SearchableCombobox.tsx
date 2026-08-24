@@ -98,7 +98,7 @@ export function SearchableCombobox({ value, onChange, options, placeholder, aria
     >
       <ChevronDown size={15} aria-hidden="true" />
     </button>
-    {showOptions && <div id={listID} className="searchable-combobox-menu" role="listbox">
+    {showOptions && <div id={listID} data-popover="true" className="searchable-combobox-menu" role="listbox">
       {visibleOptions.length ? visibleOptions.map((option, index) => <button
         key={option}
         id={`${listID}-option-${index}`}
