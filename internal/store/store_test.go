@@ -180,14 +180,14 @@ func TestServerTelemetryTimeColumnsMigrateFromPreviousSchema(t *testing.T) {
 	}
 }
 
-func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
+func TestServerListenModeInterfaceIPv6AndKernelCapabilitiesPersistAndMigrate(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &model.Server{Name: "listen-mode", AgentID: "agent-listen", ListenMode: model.ListenModeDual, InterfaceIPv6: "2400:3200::1", Status: model.ServerOnline}
+	server := &model.Server{Name: "listen-mode", AgentID: "agent-listen", ListenMode: model.ListenModeDual, InterfaceIPv6: "2400:3200::1", KernelCapabilities: []string{"family_selector_v1"}, Status: model.ServerOnline}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
@@ -195,12 +195,12 @@ func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ListenMode != model.ListenModeDual || stored.InterfaceIPv6 != "2400:3200::1" {
-		t.Fatalf("roundtrip = listen_mode=%q interface_ipv6=%q", stored.ListenMode, stored.InterfaceIPv6)
+	if stored.ListenMode != model.ListenModeDual || stored.InterfaceIPv6 != "2400:3200::1" || len(stored.KernelCapabilities) != 1 || stored.KernelCapabilities[0] != "family_selector_v1" {
+		t.Fatalf("roundtrip = listen_mode=%q interface_ipv6=%q capabilities=%v", stored.ListenMode, stored.InterfaceIPv6, stored.KernelCapabilities)
 	}
 
 	window := model.ServerTrafficWindow{Key: "2026-08-03", Start: time.Now().UTC(), End: time.Now().UTC().Add(time.Hour)}
-	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, InterfaceIPv6: "2400:3200::2", Timestamp: time.Now().UTC()}
+	report := model.HealthReport{AgentID: server.AgentID, Status: model.ServerOnline, InterfaceIPv6: "2400:3200::2", KernelCapabilities: []string{"connection_presence_v1", "family_selector_v1"}, Timestamp: time.Now().UTC()}
 	if _, _, err := s.UpsertHealthTransition(ctx, report, window); err != nil {
 		t.Fatal(err)
 	}
@@ -208,8 +208,8 @@ func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.InterfaceIPv6 != "2400:3200::2" {
-		t.Fatalf("health report did not overwrite interface_ipv6: %q", stored.InterfaceIPv6)
+	if stored.InterfaceIPv6 != "2400:3200::2" || len(stored.KernelCapabilities) != 2 {
+		t.Fatalf("health report runtime fields: interface_ipv6=%q capabilities=%v", stored.InterfaceIPv6, stored.KernelCapabilities)
 	}
 	report.InterfaceIPv6 = ""
 	if _, _, err := s.UpsertHealthTransition(ctx, report, window); err != nil {
@@ -231,7 +231,7 @@ func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	dropConfigurationRevisionTriggersForPreviousSchema(t, raw)
-	for _, column := range []string{"listen_mode", "interface_ipv6"} {
+	for _, column := range []string{"listen_mode", "interface_ipv6", "kernel_capabilities_json"} {
 		if _, err := raw.Exec(`alter table servers drop column ` + column); err != nil {
 			t.Fatalf("drop %s: %v", column, err)
 		}
@@ -265,7 +265,7 @@ func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
 	if err := rows.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"listen_mode", "interface_ipv6"} {
+	for _, column := range []string{"listen_mode", "interface_ipv6", "kernel_capabilities_json"} {
 		if !columns[column] {
 			t.Errorf("missing migrated column %q", column)
 		}
@@ -274,8 +274,8 @@ func TestServerListenModeAndInterfaceIPv6PersistAndMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ListenMode != model.ListenModeAuto || stored.InterfaceIPv6 != "" {
-		t.Fatalf("migrated defaults = listen_mode=%q interface_ipv6=%q", stored.ListenMode, stored.InterfaceIPv6)
+	if stored.ListenMode != model.ListenModeAuto || stored.InterfaceIPv6 != "" || len(stored.KernelCapabilities) != 0 {
+		t.Fatalf("migrated defaults = listen_mode=%q interface_ipv6=%q capabilities=%v", stored.ListenMode, stored.InterfaceIPv6, stored.KernelCapabilities)
 	}
 }
 

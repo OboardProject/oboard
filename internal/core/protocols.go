@@ -662,6 +662,12 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.Outbounds = append(config.Outbounds, pathOutbounds...)
+	inheritedFamilyDNSStrategy, _ := dns["strategy"].(string)
+	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, plannedPathInbounds, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy)
+	if err != nil {
+		return "", err
+	}
+	config.Outbounds = append(config.Outbounds, familySplitOutbounds...)
 	for _, profile := range opts.WARPProfiles {
 		if !warpReferenced || profile.ServerID != server.ID || !profile.Enabled {
 			continue
@@ -2029,6 +2035,9 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 				outboundTag = routingRuleBoundOutboundTag(rule.ID, outboundTag)
 			}
 			ok = err == nil && outboundTag != ""
+		} else if rule.Action == model.RouteActionFamilySplit {
+			outboundTag = routingRuleFamilySelectorTag(rule.ID)
+			ok = true
 		} else {
 			outboundTag, ok, err = routeRuleOutboundTag(rule, server, outbounds, external)
 		}
@@ -2049,16 +2058,23 @@ func routingRuleProxyPathOutboundTag(rule model.RoutingRule, server model.Server
 	if rule.ProxyPathID == nil || rule.TargetProxyPathID == nil {
 		return "", errors.New("source and target proxy paths are required")
 	}
+	return routingRuleTargetProxyPathOutboundTag(rule, *rule.TargetProxyPathID, server, paths, steps, warpProfiles)
+}
+
+func routingRuleTargetProxyPathOutboundTag(rule model.RoutingRule, targetPathID int64, server model.Server, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) (string, error) {
+	if rule.ProxyPathID == nil {
+		return "", errors.New("source proxy path is required")
+	}
 	var target model.ProxyPath
 	found := false
 	for _, path := range paths {
-		if path.ID == *rule.TargetProxyPathID && path.Enabled {
+		if path.ID == targetPathID && path.Enabled {
 			target, found = path, true
 			break
 		}
 	}
 	if !found {
-		return "", fmt.Errorf("target proxy path %d is unavailable", *rule.TargetProxyPathID)
+		return "", fmt.Errorf("target proxy path %d is unavailable", targetPathID)
 	}
 	stagePosition := 0
 	if rule.StageStepID != nil {
@@ -2123,6 +2139,14 @@ func routingRuleBoundOutboundTag(ruleID int64, outboundTag string) string {
 
 func routingRuleInterfaceOutboundTag(ruleID int64) string {
 	return fmt.Sprintf("routing-rule-%d-interface", ruleID)
+}
+
+func routingRuleFamilySelectorTag(ruleID int64) string {
+	return fmt.Sprintf("routing-rule-%d-family", ruleID)
+}
+
+func routingRuleFamilyBranchTag(ruleID int64, family, outboundTag string) string {
+	return fmt.Sprintf("routing-rule-%d-%s-%s", ruleID, family, outboundTag)
 }
 
 func buildRoutingRuleInterfaceOutbounds(server model.Server, rules []model.RoutingRule) ([]map[string]any, error) {
@@ -2215,6 +2239,224 @@ func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.Routin
 			}
 			*outbounds = append(*outbounds, bound)
 			byTag[boundTag] = bound
+		}
+	}
+	return nil
+}
+
+func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOptions, pathOutbounds []map[string]any, plannedInbounds map[int64]model.Inbound, defaultResolver any, inheritedDNSStrategy string) ([]map[string]any, error) {
+	inboundByID := make(map[int64]model.Inbound, len(opts.Inbounds)+len(plannedInbounds))
+	for _, inbound := range opts.Inbounds {
+		inboundByID[inbound.ID] = inbound
+	}
+	for id, inbound := range plannedInbounds {
+		inboundByID[id] = inbound
+	}
+	serverByID := make(map[int64]model.Server, len(opts.Servers)+1)
+	for _, item := range opts.Servers {
+		serverByID[item.ID] = item
+	}
+	serverByID[server.ID] = server
+	result := make([]map[string]any, 0)
+	for _, rule := range opts.RoutingRules {
+		if !rule.Enabled || rule.Action != model.RouteActionFamilySplit || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID {
+			continue
+		}
+		if strings.TrimSpace(server.AgentID) != "" && !stringSliceContains(server.KernelCapabilities, "family_selector_v1") {
+			return nil, markInvalidDesiredState(fmt.Errorf("服务器 %s 的内核缺少 family_selector_v1 能力；请先更新 Agent/内核", server.Name))
+		}
+		if rule.IPv4TargetProxyPathID == nil || rule.IPv6TargetProxyPathID == nil {
+			return nil, fmt.Errorf("routing rule %s: both family target paths are required", rule.Name)
+		}
+		strategy, err := normalizedFamilyDNSStrategy(rule.FamilyDNSStrategy, server, inheritedDNSStrategy)
+		if err != nil {
+			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		}
+		selector := map[string]any{
+			"type":     "family-selector",
+			"tag":      routingRuleFamilySelectorTag(rule.ID),
+			"strategy": strategy,
+			"fallback": true,
+		}
+		for _, branch := range []struct {
+			family  string
+			target  int64
+			jsonKey string
+		}{
+			{family: "ipv4", target: *rule.IPv4TargetProxyPathID, jsonKey: "ipv4_outbound"},
+			{family: "ipv6", target: *rule.IPv6TargetProxyPathID, jsonKey: "ipv6_outbound"},
+		} {
+			baseTag, err := routingRuleTargetProxyPathOutboundTag(rule, branch.target, server, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles)
+			if err != nil {
+				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+			}
+			entryInbound, targetServer, err := routingRuleFamilyTargetEntry(rule, branch.target, branch.family, inboundByID, serverByID, opts.ProxyPathSteps)
+			if err != nil {
+				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+			}
+			entryAddress, err := ResolveReachableEntryAddressForFamily(server, entryInbound, targetServer, branch.family)
+			if err != nil {
+				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+			}
+			clones, branchTag, err := cloneRoutingRuleFamilyBranch(rule.ID, branch.family, baseTag, entryAddress, pathOutbounds, defaultResolver)
+			if err != nil {
+				return nil, fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err)
+			}
+			result = append(result, clones...)
+			selector[branch.jsonKey] = branchTag
+		}
+		resolver := domainResolverMap(defaultResolver)
+		if strings.TrimSpace(rule.DNSResolver) != "" {
+			resolver["server"] = strings.TrimSpace(rule.DNSResolver)
+		}
+		resolver["strategy"] = strategy
+		selector["domain_resolver"] = resolver
+		result = append(result, selector)
+	}
+	return result, nil
+}
+
+func normalizedFamilyDNSStrategy(strategy model.FamilyDNSStrategy, server model.Server, inherited string) (string, error) {
+	switch strategy {
+	case "", model.FamilyDNSStrategyAuto:
+		if strings.TrimSpace(inherited) != "" {
+			return normalizeDNSStrategy(inherited, EffectiveIPStack(server)), nil
+		}
+		return normalizeDNSStrategy("auto", EffectiveIPStack(server)), nil
+	case model.FamilyDNSStrategyPreferIPv4, model.FamilyDNSStrategyPreferIPv6:
+		return string(strategy), nil
+	default:
+		return "", fmt.Errorf("unsupported family_dns_strategy %q", strategy)
+	}
+}
+
+func routingRuleFamilyTargetEntry(rule model.RoutingRule, targetPathID int64, family string, inboundByID map[int64]model.Inbound, serverByID map[int64]model.Server, steps []model.ProxyPathStep) (model.Inbound, model.Server, error) {
+	stagePosition := 0
+	if rule.StageStepID != nil {
+		for _, step := range steps {
+			if rule.ProxyPathID != nil && step.PathID == *rule.ProxyPathID && step.ID == *rule.StageStepID {
+				stagePosition = step.Position
+				break
+			}
+		}
+		if stagePosition == 0 {
+			return model.Inbound{}, model.Server{}, errors.New("routing stage is unavailable")
+		}
+	}
+	var candidates []model.ProxyPathStep
+	for _, step := range steps {
+		if step.PathID == targetPathID && step.Position > stagePosition {
+			candidates = append(candidates, step)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].Position < candidates[j].Position })
+	if len(candidates) == 0 {
+		return model.Inbound{}, model.Server{}, errors.New("target path does not continue after the family split stage")
+	}
+	next := candidates[0]
+	mode := next.TransportMode
+	if mode == "" {
+		mode = model.ProxyPathTransportSingBox
+	}
+	if mode != model.ProxyPathTransportSingBox || next.NodeType != model.ProxyPathStepServerInbound {
+		return model.Inbound{}, model.Server{}, errors.New("family branch must enter a controlled server through a sing-box hop")
+	}
+	var inbound model.Inbound
+	if next.InboundID != nil && *next.InboundID > 0 {
+		var ok bool
+		inbound, ok = inboundByID[*next.InboundID]
+		if !ok || !inbound.Enabled {
+			return model.Inbound{}, model.Server{}, fmt.Errorf("target inbound %d is unavailable", *next.InboundID)
+		}
+	} else {
+		if next.ServerID == nil || *next.ServerID <= 0 {
+			return model.Inbound{}, model.Server{}, errors.New("generated target server is unavailable")
+		}
+		inbound = model.Inbound{ServerID: *next.ServerID, EntryIPMode: model.EntryIPModeAuto, Enabled: true}
+	}
+	targetServer, ok := serverByID[inbound.ServerID]
+	if !ok {
+		return model.Inbound{}, model.Server{}, fmt.Errorf("target server %d is unavailable", inbound.ServerID)
+	}
+	if targetServer.Status != model.ServerOnline {
+		return model.Inbound{}, model.Server{}, fmt.Errorf("target server %s is offline", targetServer.Name)
+	}
+	return inbound, targetServer, nil
+}
+
+func cloneRoutingRuleFamilyBranch(ruleID int64, family, baseTag, entryAddress string, outbounds []map[string]any, defaultResolver any) ([]map[string]any, string, error) {
+	byTag := make(map[string]map[string]any, len(outbounds))
+	for _, outbound := range outbounds {
+		if outboundTag, _ := outbound["tag"].(string); outboundTag != "" {
+			byTag[outboundTag] = outbound
+		}
+	}
+	base, ok := byTag[baseTag]
+	if !ok {
+		return nil, "", fmt.Errorf("target outbound %q is unavailable", baseTag)
+	}
+	chain := []map[string]any{base}
+	seen := map[string]bool{baseTag: true}
+	for {
+		detour, _ := chain[len(chain)-1]["detour"].(string)
+		if detour == "" {
+			break
+		}
+		if seen[detour] {
+			return nil, "", fmt.Errorf("target outbound detour cycle at %q", detour)
+		}
+		next, ok := byTag[detour]
+		if !ok {
+			return nil, "", fmt.Errorf("target outbound detour %q is unavailable", detour)
+		}
+		seen[detour] = true
+		chain = append(chain, next)
+	}
+	clones := make([]map[string]any, 0, len(chain))
+	for index, original := range chain {
+		clone := cloneNestedMap(original)
+		originalTag, _ := original["tag"].(string)
+		clone["tag"] = routingRuleFamilyBranchTag(ruleID, family, originalTag)
+		if detour, _ := original["detour"].(string); detour != "" {
+			clone["detour"] = routingRuleFamilyBranchTag(ruleID, family, detour)
+		}
+		if index == 0 {
+			clone["server"] = entryAddress
+			if AddressFamily(entryAddress) == "domain" {
+				resolver := domainResolverMap(firstNonNil(clone["domain_resolver"], defaultResolver))
+				resolver["strategy"] = family + "_only"
+				clone["domain_resolver"] = resolver
+			}
+		}
+		clones = append(clones, clone)
+	}
+	return clones, routingRuleFamilyBranchTag(ruleID, family, baseTag), nil
+}
+
+func domainResolverMap(value any) map[string]any {
+	switch resolver := value.(type) {
+	case map[string]any:
+		return cloneNestedMap(resolver)
+	case string:
+		return map[string]any{"server": strings.TrimSpace(resolver)}
+	default:
+		return map[string]any{"server": primaryBootstrapDNSTag}
+	}
+}
+
+func stringSliceContains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil {
+			return value
 		}
 	}
 	return nil
@@ -2485,6 +2727,74 @@ func ResolveReachableEntryAddress(source model.Server, inbound model.Inbound, ta
 	}
 	address := entryAddressForMode(mode, inbound.ExternalIP, target)
 	return validateReachableServerAddress(source, target, address)
+}
+
+func ResolveReachableEntryAddressForFamily(source model.Server, inbound model.Inbound, target model.Server, family string) (string, error) {
+	family = strings.ToLower(strings.TrimSpace(family))
+	if family != "ipv4" && family != "ipv6" {
+		return "", markInvalidDesiredState(fmt.Errorf("unsupported entry address family %q", family))
+	}
+	if err := validateSourceFamilyReachability(source, family); err != nil {
+		return "", err
+	}
+	if !ListenIPSupportsFamily(EffectiveListenIP(target, inbound.ListenIP), family) {
+		return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的监听地址 %q 不接受 %s 入口连接", target.Name, EffectiveListenIP(target, inbound.ListenIP), strings.ToUpper(family)))
+	}
+	mode := inbound.EntryIPMode
+	if mode == "" || mode == model.EntryIPModeAuto {
+		mode = target.EntryIPMode
+	}
+	if mode == model.EntryIPModeIPv4 && family != "ipv4" {
+		return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的入口策略固定为 IPv4，不能用于 IPv6 家族分支", target.Name))
+	}
+	if mode == model.EntryIPModeIPv6 && family != "ipv6" {
+		return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的入口策略固定为 IPv6，不能用于 IPv4 家族分支", target.Name))
+	}
+	familyAddress := strings.TrimSpace(target.PublicIPv4)
+	if family == "ipv6" {
+		familyAddress = ServerEntryIPv6(target)
+	}
+	if familyAddress == "" {
+		return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 缺少 %s 入口地址", target.Name, strings.ToUpper(family)))
+	}
+	if inbound.DNSSyncEnabled && strings.TrimSpace(inbound.DNSDomain) != "" {
+		return strings.TrimSpace(inbound.DNSDomain), nil
+	}
+	if mode == model.EntryIPModeCustom {
+		address := firstNonEmpty(strings.TrimSpace(inbound.ExternalIP), strings.TrimSpace(target.EntryAddress))
+		if address == "" {
+			return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的自定义入口地址不存在", target.Name))
+		}
+		addressFamily := AddressFamily(address)
+		if addressFamily != "domain" && addressFamily != family {
+			return "", markInvalidDesiredState(fmt.Errorf("目标服务器 %s 的自定义入口地址 %q 不属于 %s", target.Name, address, strings.ToUpper(family)))
+		}
+		return address, nil
+	}
+	return familyAddress, nil
+}
+
+func validateSourceFamilyReachability(source model.Server, family string) error {
+	stack := EffectiveIPStack(source)
+	if stack == model.IPStackAuto || family == "ipv4" && stack == model.IPStackIPv6Only || family == "ipv6" && stack == model.IPStackIPv4Only {
+		return markInvalidDesiredState(fmt.Errorf("源服务器 %s（%s）无法连接 %s 入口", source.Name, stack, strings.ToUpper(family)))
+	}
+	return nil
+}
+
+func ListenIPSupportsFamily(listenIP, family string) bool {
+	listenIP = strings.TrimSpace(strings.Trim(listenIP, "[]"))
+	if listenIP == "::" {
+		return true
+	}
+	address, err := netip.ParseAddr(listenIP)
+	if err != nil {
+		return false
+	}
+	if family == "ipv4" {
+		return address.Is4()
+	}
+	return address.Is6()
 }
 
 func ResolveReachableServerEntryAddress(source, target model.Server) (string, error) {

@@ -37,7 +37,9 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"sort_position": map[string]any{"type": "integer"}, "match_source": stringValue, "rule_set_id": nullableInteger(), "dns_resolver": stringValue,
 		"priority": map[string]any{"type": "integer"}, "action": stringValue,
 		"outbound_id": nullableInteger(), "external_outbound_id": nullableInteger(),
-		"target_proxy_path_id": nullableInteger(), "outbound_tag": stringValue, "interface_name": stringValue,
+		"target_proxy_path_id": nullableInteger(), "ipv4_target_proxy_path_id": nullableInteger(),
+		"ipv6_target_proxy_path_id": nullableInteger(), "family_dns_strategy": stringValue,
+		"outbound_tag": stringValue, "interface_name": stringValue,
 		"source_prefix":    stringValue,
 		"sync_group_id":    stringValue,
 		"match_configured": boolValue, "enabled": boolValue,
@@ -47,24 +49,27 @@ func trafficDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		return map[string]any{"type": []string{"integer", "null"}, "minimum": 1, "description": description}
 	}
 	routingRuleFieldProperties := map[string]any{
-		"server_id":            map[string]any{"type": "integer", "minimum": 1, "description": "server scope 的目标服务器；path_stage scope 会根据分支节点自动推导"},
-		"scope":                map[string]any{"type": "string", "enum": []string{"server", "path_stage"}, "default": "server", "description": "server 表示服务器级规则；path_stage 表示代理分支根节点或受控节点规则"},
-		"proxy_path_id":        nullablePositiveID("path_stage 规则所属代理分支；scope=path_stage 时必填"),
-		"stage_step_id":        nullablePositiveID("分支内受控 server_inbound 步骤；null 表示分支根入口"),
-		"sort_position":        map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 0, "description": "path_stage 节点内的稳定排序位置"},
-		"match_source":         map[string]any{"type": "string", "enum": []string{"inline", "rule_set"}, "default": "inline", "description": "inline 使用 match_json；rule_set 使用已成功抓取的远程规则集"},
-		"rule_set_id":          nullablePositiveID("match_source=rule_set 时必填；远程规则集仅适用于 path_stage"),
-		"dns_resolver":         map[string]any{"type": "string", "enum": []string{"", "remote-primary", "remote-secondary", "bootstrap-primary", "bootstrap-secondary", "local"}, "default": "", "description": "可选：仅命中规则时使用指定 DNS 服务器；留空使用服务器默认 DNS"},
-		"name":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "规则名称；从 sync_source_rule_id 复用匹配条件时可省略"},
-		"priority":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 100, "description": "server scope 的匹配优先级；path_stage 优先使用 sort_position"},
-		"match_json":           map[string]any{"type": "string", "maxLength": 8192, "default": "{}", "description": "inline 匹配对象的 JSON 字符串；rule_set 模式会规范化为 {}"},
-		"action":               map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "proxy_path", "interface", "source_prefix"}, "description": "direct/block 无目标；其他动作分别使用 outbound_id、external_outbound_id、target_proxy_path_id、interface_name 或 source_prefix"},
-		"outbound_id":          nullablePositiveID("action=outbound 时必填，且出口必须属于规则所在服务器"),
-		"external_outbound_id": nullablePositiveID("action=external 时必填，且服务器级导入节点必须属于规则所在服务器"),
-		"target_proxy_path_id": nullablePositiveID("action=proxy_path 时必填；该动作仅适用于 path_stage"),
-		"interface_name":       map[string]any{"type": "string", "minLength": 1, "maxLength": 15, "pattern": "^[A-Za-z0-9._:-]+$", "description": "action=interface 时必填；proxy_path 可选绑定接口，与 source_prefix 互斥"},
-		"source_prefix":        map[string]any{"type": "string", "minLength": 3, "maxLength": 64, "description": "action=source_prefix 时必填的 IPv4/IPv6 CIDR；proxy_path 可选绑定源前缀，与 interface_name 互斥"},
-		"enabled":              map[string]any{"type": "boolean", "description": "是否启用该规则"},
+		"server_id":                 map[string]any{"type": "integer", "minimum": 1, "description": "server scope 的目标服务器；path_stage scope 会根据分支节点自动推导"},
+		"scope":                     map[string]any{"type": "string", "enum": []string{"server", "path_stage"}, "default": "server", "description": "server 表示服务器级规则；path_stage 表示代理分支根节点或受控节点规则"},
+		"proxy_path_id":             nullablePositiveID("path_stage 规则所属代理分支；scope=path_stage 时必填"),
+		"stage_step_id":             nullablePositiveID("分支内受控 server_inbound 步骤；null 表示分支根入口"),
+		"sort_position":             map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 0, "description": "path_stage 节点内的稳定排序位置"},
+		"match_source":              map[string]any{"type": "string", "enum": []string{"inline", "rule_set"}, "default": "inline", "description": "inline 使用 match_json；rule_set 使用已成功抓取的远程规则集"},
+		"rule_set_id":               nullablePositiveID("match_source=rule_set 时必填；远程规则集仅适用于 path_stage"),
+		"dns_resolver":              map[string]any{"type": "string", "enum": []string{"", "remote-primary", "remote-secondary", "bootstrap-primary", "bootstrap-secondary", "local"}, "default": "", "description": "可选：仅命中规则时使用指定 DNS 服务器；留空使用服务器默认 DNS"},
+		"name":                      map[string]any{"type": "string", "minLength": 1, "maxLength": 128, "description": "规则名称；从 sync_source_rule_id 复用匹配条件时可省略"},
+		"priority":                  map[string]any{"type": "integer", "minimum": 0, "maximum": 100000, "default": 100, "description": "server scope 的匹配优先级；path_stage 优先使用 sort_position"},
+		"match_json":                map[string]any{"type": "string", "maxLength": 8192, "default": "{}", "description": "inline 匹配对象的 JSON 字符串；rule_set 模式会规范化为 {}"},
+		"action":                    map[string]any{"type": "string", "enum": []string{"direct", "block", "outbound", "external", "proxy_path", "family_split", "interface", "source_prefix"}, "description": "direct/block 无目标；family_split 为一个逻辑分支配置 IPv4/IPv6 两条路径"},
+		"outbound_id":               nullablePositiveID("action=outbound 时必填，且出口必须属于规则所在服务器"),
+		"external_outbound_id":      nullablePositiveID("action=external 时必填，且服务器级导入节点必须属于规则所在服务器"),
+		"target_proxy_path_id":      nullablePositiveID("action=proxy_path 时必填；该动作仅适用于 path_stage"),
+		"ipv4_target_proxy_path_id": nullablePositiveID("action=family_split 时必填；IPv4 字面量与域名 A 记录使用的路径"),
+		"ipv6_target_proxy_path_id": nullablePositiveID("action=family_split 时必填；IPv6 字面量与域名 AAAA 记录使用的路径"),
+		"family_dns_strategy":       map[string]any{"type": "string", "enum": []string{"auto", "prefer_ipv4", "prefer_ipv6"}, "default": "auto", "description": "域名双栈记录的首选家族；首选失败只允许一次跨家族降级"},
+		"interface_name":            map[string]any{"type": "string", "minLength": 1, "maxLength": 15, "pattern": "^[A-Za-z0-9._:-]+$", "description": "action=interface 时必填；proxy_path 可选绑定接口，与 source_prefix 互斥"},
+		"source_prefix":             map[string]any{"type": "string", "minLength": 3, "maxLength": 64, "description": "action=source_prefix 时必填的 IPv4/IPv6 CIDR；proxy_path 可选绑定源前缀，与 interface_name 互斥"},
+		"enabled":                   map[string]any{"type": "boolean", "description": "是否启用该规则"},
 	}
 	routingRuleFields := closedObject(routingRuleFieldProperties)
 	routingRuleFields["minProperties"] = 1
@@ -152,6 +157,13 @@ func routingRuleCreateConstraints() []any {
 				"properties": map[string]any{"scope": map[string]any{"const": "path_stage"}},
 				"required":   []string{"scope", "proxy_path_id", "target_proxy_path_id"},
 				"not":        map[string]any{"required": []string{"interface_name", "source_prefix"}},
+			},
+		},
+		map[string]any{
+			"if": map[string]any{"properties": map[string]any{"action": map[string]any{"const": "family_split"}}, "required": []string{"action"}},
+			"then": map[string]any{
+				"properties": map[string]any{"scope": map[string]any{"const": "path_stage"}},
+				"required":   []string{"scope", "proxy_path_id", "ipv4_target_proxy_path_id", "ipv6_target_proxy_path_id"},
 			},
 		},
 		map[string]any{
@@ -247,7 +259,7 @@ func trafficWriteResolver(name string) func(context.Context, any) ([]mcpauth.Res
 			}
 		case "routing_rules.create":
 			nested, _ := object["routing_rule"].(map[string]any)
-			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "target_proxy_path_id": "proxy_path", "sync_source_rule_id": "routing_rule", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
+			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "target_proxy_path_id": "proxy_path", "ipv4_target_proxy_path_id": "proxy_path", "ipv6_target_proxy_path_id": "proxy_path", "sync_source_rule_id": "routing_rule", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
 				if id, ok := int64Value(nested[field]); ok && id > 0 {
 					refs = append(refs, mcpauth.ResourceRef{Type: resourceType, ID: strconv.FormatInt(id, 10)})
 				}
@@ -257,7 +269,7 @@ func trafficWriteResolver(name string) func(context.Context, any) ([]mcpauth.Res
 				return nil, err
 			}
 			changes, _ := object["changes"].(map[string]any)
-			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "target_proxy_path_id": "proxy_path", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
+			for field, resourceType := range map[string]string{"server_id": "server", "proxy_path_id": "proxy_path", "target_proxy_path_id": "proxy_path", "ipv4_target_proxy_path_id": "proxy_path", "ipv6_target_proxy_path_id": "proxy_path", "rule_set_id": "routing_rule_set", "outbound_id": "outbound", "external_outbound_id": "external_outbound"} {
 				if id, ok := int64Value(changes[field]); ok && id > 0 {
 					refs = append(refs, mcpauth.ResourceRef{Type: resourceType, ID: strconv.FormatInt(id, 10)})
 				}

@@ -283,7 +283,8 @@ func automationOutboundResult(outbound model.Outbound, changed []string) (any, e
 var routingRuleAutomationFields = map[string]bool{
 	"server_id": true, "name": true, "priority": true, "match_json": true, "action": true,
 	"outbound_id": true, "external_outbound_id": true,
-	"target_proxy_path_id": true, "sync_source_rule_id": true, "sync_enabled": true,
+	"target_proxy_path_id": true, "ipv4_target_proxy_path_id": true, "ipv6_target_proxy_path_id": true,
+	"family_dns_strategy": true, "sync_source_rule_id": true, "sync_enabled": true,
 	"interface_name": true, "source_prefix": true, "enabled": true, "scope": true, "proxy_path_id": true,
 	"stage_step_id": true, "sort_position": true, "match_source": true, "rule_set_id": true, "dns_resolver": true,
 }
@@ -586,6 +587,12 @@ func (s *Server) validateRoutingRuleAutomationCandidate(ctx context.Context, pri
 	if rule.TargetProxyPathID != nil && !principal.AllowsInt64("proxy_path_ids", *rule.TargetProxyPathID) {
 		return errors.New("routing rule target proxy path is outside the authorized boundary")
 	}
+	if rule.IPv4TargetProxyPathID != nil && !principal.AllowsInt64("proxy_path_ids", *rule.IPv4TargetProxyPathID) {
+		return errors.New("routing rule IPv4 target proxy path is outside the authorized boundary")
+	}
+	if rule.IPv6TargetProxyPathID != nil && !principal.AllowsInt64("proxy_path_ids", *rule.IPv6TargetProxyPathID) {
+		return errors.New("routing rule IPv6 target proxy path is outside the authorized boundary")
+	}
 	if rule.OutboundID != nil {
 		outbound, err := s.store.GetOutbound(ctx, *rule.OutboundID)
 		if err != nil {
@@ -630,6 +637,9 @@ func mergeRoutingRulePatch(current model.RoutingRule, patch model.RoutingRule, f
 	if _, ok := fields["rule_set_id"]; ok {
 		merged.RuleSetID = patch.RuleSetID
 	}
+	if _, ok := fields["dns_resolver"]; ok {
+		merged.DNSResolver = patch.DNSResolver
+	}
 	if _, ok := fields["name"]; ok {
 		merged.Name = patch.Name
 	}
@@ -650,6 +660,15 @@ func mergeRoutingRulePatch(current model.RoutingRule, patch model.RoutingRule, f
 	}
 	if _, ok := fields["target_proxy_path_id"]; ok {
 		merged.TargetProxyPathID = patch.TargetProxyPathID
+	}
+	if _, ok := fields["ipv4_target_proxy_path_id"]; ok {
+		merged.IPv4TargetProxyPathID = patch.IPv4TargetProxyPathID
+	}
+	if _, ok := fields["ipv6_target_proxy_path_id"]; ok {
+		merged.IPv6TargetProxyPathID = patch.IPv6TargetProxyPathID
+	}
+	if _, ok := fields["family_dns_strategy"]; ok {
+		merged.FamilyDNSStrategy = patch.FamilyDNSStrategy
 	}
 	if _, ok := fields["interface_name"]; ok {
 		merged.InterfaceName = patch.InterfaceName
@@ -717,9 +736,11 @@ func automationRoutingRuleResult(rule model.RoutingRule, changed []string) (any,
 	view := map[string]any{
 		"id": rule.ID, "revision": rule.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		"server_id": rule.ServerID, "scope": rule.Scope, "proxy_path_id": rule.ProxyPathID, "stage_step_id": rule.StageStepID,
-		"sort_position": rule.SortPosition, "match_source": rule.MatchSource, "rule_set_id": rule.RuleSetID, "name": rule.Name, "priority": rule.Priority,
-		"action": rule.Action, "outbound_id": rule.OutboundID, "external_outbound_id": rule.ExternalOutboundID,
-		"target_proxy_path_id": rule.TargetProxyPathID, "outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName, "source_prefix": rule.SourcePrefix,
+		"sort_position": rule.SortPosition, "match_source": rule.MatchSource, "rule_set_id": rule.RuleSetID, "dns_resolver": rule.DNSResolver,
+		"name": rule.Name, "priority": rule.Priority, "action": rule.Action, "outbound_id": rule.OutboundID, "external_outbound_id": rule.ExternalOutboundID,
+		"target_proxy_path_id": rule.TargetProxyPathID, "ipv4_target_proxy_path_id": rule.IPv4TargetProxyPathID,
+		"ipv6_target_proxy_path_id": rule.IPv6TargetProxyPathID, "family_dns_strategy": rule.FamilyDNSStrategy,
+		"outbound_tag": rule.OutboundTag, "interface_name": rule.InterfaceName, "source_prefix": rule.SourcePrefix,
 		"sync_group_id":    rule.SyncGroupID,
 		"match_configured": strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}",
 		"enabled":          rule.Enabled, "created_at": rule.CreatedAt, "updated_at": rule.UpdatedAt,

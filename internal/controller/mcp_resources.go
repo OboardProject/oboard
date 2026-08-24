@@ -1085,16 +1085,17 @@ func mcpDocsPayload(uri string) map[string]any {
 func mcpServerHealthPayload(payload any) map[string]any {
 	encoded, _ := json.Marshal(payload)
 	var item struct {
-		ID             int64  `json:"id"`
-		Status         string `json:"status"`
-		AgentConnected bool   `json:"agent_connected"`
-		AgentVersion   string `json:"agent_version"`
-		AgentBuild     string `json:"agent_build"`
-		KernelVersion  string `json:"kernel_version"`
-		LastSeenAt     any    `json:"last_seen_at"`
+		ID                 int64    `json:"id"`
+		Status             string   `json:"status"`
+		AgentConnected     bool     `json:"agent_connected"`
+		AgentVersion       string   `json:"agent_version"`
+		AgentBuild         string   `json:"agent_build"`
+		KernelVersion      string   `json:"kernel_version"`
+		KernelCapabilities []string `json:"kernel_capabilities"`
+		LastSeenAt         any      `json:"last_seen_at"`
 	}
 	_ = json.Unmarshal(encoded, &item)
-	return map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "last_seen_at": item.LastSeenAt}
+	return map[string]any{"server_id": item.ID, "status": item.Status, "agent_connected": item.AgentConnected, "agent_version": item.AgentVersion, "agent_build": item.AgentBuild, "kernel_version": item.KernelVersion, "kernel_capabilities": item.KernelCapabilities, "last_seen_at": item.LastSeenAt}
 }
 
 func mcpTemplateID(uri, prefix string, suffixes ...string) (string, error) {

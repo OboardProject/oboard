@@ -70,6 +70,65 @@ func TestRoutingRuleScopeMigrationFromPreviousTable(t *testing.T) {
 	}
 }
 
+func TestRoutingRuleFamilySplitColumnsMigrateFromPreviousSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "routing-family-split-migration.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "legacy-family", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	rule := &model.RoutingRule{ServerID: server.ID, Scope: model.RoutingRuleScopeServer, MatchSource: model.RoutingMatchSourceInline, Name: "legacy-family-rule", Priority: 100, MatchJSON: `{}`, Action: model.RouteActionDirect, Enabled: true}
+	if err := db.CreateRoutingRule(ctx, rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`drop index idx_routing_rules_ipv4_target_path`,
+		`drop index idx_routing_rules_ipv6_target_path`,
+		`alter table routing_rules drop column ipv4_target_proxy_path_id`,
+		`alter table routing_rules drop column ipv6_target_proxy_path_id`,
+		`alter table routing_rules drop column family_dns_strategy`,
+	} {
+		if _, err := raw.Exec(statement); err != nil {
+			t.Fatalf("prepare previous family-split schema with %q: %v", statement, err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, column := range []string{"ipv4_target_proxy_path_id", "ipv6_target_proxy_path_id", "family_dns_strategy"} {
+		var count int
+		if err := db.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('routing_rules') where name=?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("routing_rules.%s migration count=%d err=%v", column, count, err)
+		}
+	}
+	migrated, err := db.GetRoutingRule(ctx, rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.IPv4TargetProxyPathID != nil || migrated.IPv6TargetProxyPathID != nil || migrated.FamilyDNSStrategy != model.FamilyDNSStrategyAuto {
+		t.Fatalf("legacy routing rule family defaults = %#v", migrated)
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("repeated family-split migration is not idempotent: %v", err)
+	}
+}
+
 func TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "routing-chain-sync-migration.sqlite")

@@ -15,6 +15,7 @@ type SubscriptionOptions struct {
 	Format                 model.SubscriptionFormat
 	ProxyPaths             []model.ProxyPath
 	ProxyPathSteps         []model.ProxyPathStep
+	RoutingRules           []model.RoutingRule
 	ProxyPathEgressResults []model.ProxyPathEgressResult
 	ExternalOutbounds      []model.ExternalOutbound
 	SSHServerHostKeys      map[int64]string
@@ -106,6 +107,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		serverByID[server.ID] = server
 	}
 	defaultGroup := "default"
+	hiddenFamilyTargets := subscriptionHiddenFamilyTargets(opts)
 	nodes := []SubscriptionNode{}
 	nameRefs := []subscriptionNodeNameRef{}
 	for _, inbound := range inbounds {
@@ -115,7 +117,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		configuredBranches := subscriptionBranchesForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)
 		authorizedBranches := configuredBranches[:0]
 		for _, path := range configuredBranches {
-			if opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] {
+			if opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, path.ID)] && !hiddenFamilyTargets[path.ID] {
 				authorizedBranches = append(authorizedBranches, path)
 			}
 		}
@@ -238,6 +240,30 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		policy = model.DefaultSubscriptionNodeOrderPolicy()
 	}
 	return OrderSubscriptionNodes(nodes, policy), nil
+}
+
+func subscriptionHiddenFamilyTargets(opts SubscriptionOptions) map[int64]bool {
+	familySources := map[int64]bool{}
+	for _, rule := range opts.RoutingRules {
+		if !rule.Enabled || rule.Action != model.RouteActionFamilySplit || rule.ProxyPathID == nil {
+			continue
+		}
+		if opts.EffectiveNodes[NodeKeyOf(model.AssignableNodeProxyPath, *rule.ProxyPathID)] {
+			familySources[*rule.ProxyPathID] = true
+		}
+	}
+	hidden := map[int64]bool{}
+	for _, rule := range opts.RoutingRules {
+		if !rule.Enabled || rule.Action != model.RouteActionFamilySplit || rule.ProxyPathID == nil || !familySources[*rule.ProxyPathID] {
+			continue
+		}
+		for _, target := range []*int64{rule.IPv4TargetProxyPathID, rule.IPv6TargetProxyPathID} {
+			if target != nil && *target > 0 && !familySources[*target] {
+				hidden[*target] = true
+			}
+		}
+	}
+	return hidden
 }
 
 func disambiguateEffectiveSubscriptionNodeNames(nodes []SubscriptionNode) {

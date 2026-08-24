@@ -210,7 +210,7 @@ func defaultDescriptors() []Descriptor {
 		"internal_port_range_start": map[string]any{"type": "integer"}, "internal_port_range_end": map[string]any{"type": "integer"},
 		"port_policy_revision": map[string]any{"type": "integer"},
 		"agent_connected":      boolValue, "agent_version": stringValue, "agent_build": stringValue,
-		"kernel_version": stringValue, "connection_audit_enabled": boolValue,
+		"kernel_version": stringValue, "kernel_capabilities": map[string]any{"type": "array", "maxItems": 64, "items": stringValue}, "connection_audit_enabled": boolValue,
 		"resource_history_enabled": boolValue, "monitoring_mode": stringValue,
 		"traffic_reset_mode": stringValue, "traffic_reset_day": map[string]any{"type": "integer"},
 		"offline_notify_enabled": boolValue, "offline_after_seconds": map[string]any{"type": "integer"},

@@ -147,6 +147,19 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 			if err != nil || !prefix.IsValid() {
 				v.addf("%s missing prefix", path)
 			}
+		case "family-selector":
+			ipv4Tag := strings.TrimSpace(stringFromAny(outbound["ipv4_outbound"]))
+			ipv6Tag := strings.TrimSpace(stringFromAny(outbound["ipv6_outbound"]))
+			if ipv4Tag == "" || ipv6Tag == "" || ipv4Tag == ipv6Tag {
+				v.addf("%s requires distinct ipv4_outbound and ipv6_outbound", path)
+			}
+			strategy := strings.TrimSpace(stringFromAny(outbound["strategy"]))
+			if strategy != "prefer_ipv4" && strategy != "prefer_ipv6" {
+				v.addf("%s has unsupported strategy %q", path, strategy)
+			}
+			if fallback, ok := outbound["fallback"].(bool); !ok || !fallback {
+				v.addf("%s must enable bounded family fallback", path)
+			}
 		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "snell", "socks":
 			v.validateRemoteAdapter(path, typ, outbound)
 		default:
@@ -157,6 +170,14 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 	for i, outbound := range outbounds {
 		if detour := stringFromAny(outbound["detour"]); detour != "" && !v.outboundTag[detour] {
 			v.addf("outbounds[%d].detour references unknown outbound %q", i, detour)
+		}
+		if stringFromAny(outbound["type"]) == "family-selector" {
+			for _, field := range []string{"ipv4_outbound", "ipv6_outbound"} {
+				target := strings.TrimSpace(stringFromAny(outbound[field]))
+				if target != "" && !v.outboundTag[target] {
+					v.addf("outbounds[%d].%s references unknown outbound %q", i, field, target)
+				}
+			}
 		}
 	}
 }

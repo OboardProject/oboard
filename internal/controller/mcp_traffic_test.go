@@ -93,6 +93,83 @@ func TestOutboundAndRoutingRuleCapabilities(t *testing.T) {
 	}
 }
 
+func TestFamilySplitRoutingRuleCapabilityAndResourceFilter(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := t.Context()
+	operator := &model.User{Username: "family-operator", PasswordHash: "unused", Role: model.RoleOperator, Status: "active", ProxyUUID: "33333333-3333-4333-8333-333333333333", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, operator); err != nil {
+		t.Fatal(err)
+	}
+	servers := []model.Server{
+		{Name: "entry", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", ListenIP: "::", Status: model.ServerOnline},
+		{Name: "v4", PublicIPv4: "203.0.113.4", PublicIPv6: "2001:db8::4", ListenIP: "::", Status: model.ServerOnline},
+		{Name: "v6", PublicIPv4: "203.0.113.6", PublicIPv6: "2001:db8::6", ListenIP: "::", Status: model.ServerOnline},
+	}
+	for index := range servers {
+		if err := db.CreateServer(ctx, &servers[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inbound := &model.Inbound{ServerID: servers[0].ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "::", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	createPath := func(secret string, targetServerID int64) model.ProxyPath {
+		t.Helper()
+		path := model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: secret, Enabled: true}
+		if err := db.CreateProxyPath(ctx, &path); err != nil {
+			t.Fatal(err)
+		}
+		step := model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &targetServerID, ConfigJSON: `{}`}
+		if err := db.CreateProxyPathStep(ctx, &step); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	ipv4Path := createPath("family-v4", servers[1].ID)
+	ipv6Path := createPath("family-v6", servers[2].ID)
+	principal := trafficAutomationPrincipal(t, server, operator.Username)
+	createInput, _ := json.Marshal(map[string]any{"routing_rule": map[string]any{
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": ipv4Path.ID, "sort_position": 0,
+		"name": "family split", "match_json": `{}`, "action": model.RouteActionFamilySplit,
+		"ipv4_target_proxy_path_id": ipv4Path.ID, "ipv6_target_proxy_path_id": ipv6Path.ID,
+		"family_dns_strategy": model.FamilyDNSStrategyPreferIPv6, "enabled": true,
+	}})
+	applyAutomationChangeset(t, server, principal, "routing-family-create", automation.OperationRequest{Capability: "routing_rules.create", Input: createInput})
+	rules, err := db.ListRoutingRules(ctx)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("family rules=%#v err=%v", rules, err)
+	}
+	rule := rules[0]
+	if rule.Action != model.RouteActionFamilySplit || rule.FamilyDNSStrategy != model.FamilyDNSStrategyPreferIPv6 {
+		t.Fatalf("created family rule=%#v", rule)
+	}
+	listed, err := server.application.Query(ctx, principal, "routing_rules.list", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCapabilityOutputSchema(t, server, "routing_rules.list", listed)
+	encoded, _ := json.Marshal(listed)
+	if !contains(encoded, `"ipv4_target_proxy_path_id"`) || !contains(encoded, `"ipv6_target_proxy_path_id"`) || !contains(encoded, `"family_dns_strategy":"prefer_ipv6"`) {
+		t.Fatalf("family fields missing from public MCP view: %s", encoded)
+	}
+	restricted := principal
+	restricted.ResourceFilter, _ = json.Marshal(application.ResourceFilter{
+		Servers:    &application.ResourceSelection{Mode: "all"},
+		ProxyPaths: &application.ResourceSelection{Mode: "selected", IDs: []int64{ipv4Path.ID}},
+	})
+	if _, _, err := server.routingRuleAutomationCandidate(ctx, restricted, createInput, "routing_rules.create"); err == nil || !strings.Contains(err.Error(), "IPv6 target") {
+		t.Fatalf("unauthorized IPv6 target path was not rejected: %v", err)
+	}
+	updateInput, _ := json.Marshal(map[string]any{"routing_rule_id": rule.ID, "changes": map[string]any{"family_dns_strategy": model.FamilyDNSStrategyPreferIPv4}})
+	applyAutomationChangeset(t, server, principal, "routing-family-update", automation.OperationRequest{Capability: "routing_rules.update", Input: updateInput})
+	updated, err := db.GetRoutingRule(ctx, rule.ID)
+	if err != nil || updated.FamilyDNSStrategy != model.FamilyDNSStrategyPreferIPv4 {
+		t.Fatalf("family rule update=%#v err=%v", updated, err)
+	}
+}
+
 func TestRoutingRuleSetCapabilities(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

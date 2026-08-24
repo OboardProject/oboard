@@ -293,6 +293,37 @@ func TestSubscriptionFiltersUnauthorizedProxyPaths(t *testing.T) {
 	}
 }
 
+func TestSubscriptionFamilySplitEmitsSingleLogicalNode(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass"}
+	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1"}
+	inbound := model.Inbound{ID: 1, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
+	paths := []model.ProxyPath{
+		{ID: 10, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "dual logical node", Enabled: true},
+		{ID: 11, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "IPv6 implementation branch", Enabled: true},
+	}
+	sourceID, targetID := paths[0].ID, paths[1].ID
+	rule := model.RoutingRule{ID: 5, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &sourceID, Action: model.RouteActionFamilySplit, IPv4TargetProxyPathID: &sourceID, IPv6TargetProxyPathID: &targetID, Enabled: true}
+	effective := map[string]bool{
+		NodeKeyOf(model.AssignableNodeProxyPath, sourceID): true,
+		NodeKeyOf(model.AssignableNodeProxyPath, targetID): true,
+	}
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{ProxyPaths: paths, RoutingRules: []model.RoutingRule{rule}, EffectiveNodes: effective})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].NodeID != sourceID {
+		t.Fatalf("family split nodes = %#v, want only source path %d", nodes, sourceID)
+	}
+	delete(effective, NodeKeyOf(model.AssignableNodeProxyPath, sourceID))
+	nodes, err = BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{ProxyPaths: paths, RoutingRules: []model.RoutingRule{rule}, EffectiveNodes: effective})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].NodeID != targetID {
+		t.Fatalf("independently granted target branch was hidden without its logical source: %#v", nodes)
+	}
+}
+
 func TestSubscriptionEntryAddressOverride(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	nodes, err := BuildSubscriptionNodes(user,

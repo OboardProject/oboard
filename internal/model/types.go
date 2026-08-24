@@ -153,6 +153,7 @@ const (
 	RouteActionOutbound     RouteAction = "outbound"
 	RouteActionExternal     RouteAction = "external"
 	RouteActionProxyPath    RouteAction = "proxy_path"
+	RouteActionFamilySplit  RouteAction = "family_split"
 	RouteActionInterface    RouteAction = "interface"
 	RouteActionSourcePrefix RouteAction = "source_prefix"
 )
@@ -947,6 +948,7 @@ type Server struct {
 	AgentVersion                string               `json:"agent_version"`
 	AgentBuild                  string               `json:"agent_build"`
 	SingBoxVersion              string               `json:"sing_box_version"`
+	KernelCapabilities          []string             `json:"kernel_capabilities,omitempty"`
 	MonitoringMode              string               `json:"monitoring_mode"`
 	ResourceHistoryEnabled      bool                 `json:"resource_history_enabled"`
 	ResourceHistoryConfigured   bool                 `json:"-"`
@@ -1243,33 +1245,44 @@ type Outbound struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type FamilyDNSStrategy string
+
+const (
+	FamilyDNSStrategyAuto       FamilyDNSStrategy = "auto"
+	FamilyDNSStrategyPreferIPv4 FamilyDNSStrategy = "prefer_ipv4"
+	FamilyDNSStrategyPreferIPv6 FamilyDNSStrategy = "prefer_ipv6"
+)
+
 type RoutingRule struct {
-	ID                 int64       `json:"id"`
-	ServerID           int64       `json:"server_id"`
-	Scope              string      `json:"scope"`
-	ProxyPathID        *int64      `json:"proxy_path_id,omitempty"`
-	StageStepID        *int64      `json:"stage_step_id,omitempty"`
-	SortPosition       int         `json:"sort_position"`
-	MatchSource        string      `json:"match_source"`
-	RuleSetID          *int64      `json:"rule_set_id,omitempty"`
-	DNSResolver        string      `json:"dns_resolver,omitempty"`
-	Name               string      `json:"name"`
-	Priority           int         `json:"priority"`
-	MatchJSON          string      `json:"match_json"`
-	Action             RouteAction `json:"action"`
-	OutboundID         *int64      `json:"outbound_id,omitempty"`
-	ExternalOutboundID *int64      `json:"external_outbound_id,omitempty"`
-	TargetProxyPathID  *int64      `json:"target_proxy_path_id,omitempty"`
-	TargetServerID     *int64      `json:"target_server_id,omitempty"`
-	OutboundTag        string      `json:"outbound_tag"`
-	InterfaceName      string      `json:"interface_name,omitempty"`
-	SourcePrefix       string      `json:"source_prefix,omitempty"`
-	SyncGroupID        string      `json:"sync_group_id,omitempty"`
-	SyncSourceRuleID   *int64      `json:"sync_source_rule_id,omitempty"`
-	SyncEnabled        bool        `json:"sync_enabled,omitempty"`
-	Enabled            bool        `json:"enabled"`
-	CreatedAt          time.Time   `json:"created_at"`
-	UpdatedAt          time.Time   `json:"updated_at"`
+	ID                    int64             `json:"id"`
+	ServerID              int64             `json:"server_id"`
+	Scope                 string            `json:"scope"`
+	ProxyPathID           *int64            `json:"proxy_path_id,omitempty"`
+	StageStepID           *int64            `json:"stage_step_id,omitempty"`
+	SortPosition          int               `json:"sort_position"`
+	MatchSource           string            `json:"match_source"`
+	RuleSetID             *int64            `json:"rule_set_id,omitempty"`
+	DNSResolver           string            `json:"dns_resolver,omitempty"`
+	Name                  string            `json:"name"`
+	Priority              int               `json:"priority"`
+	MatchJSON             string            `json:"match_json"`
+	Action                RouteAction       `json:"action"`
+	OutboundID            *int64            `json:"outbound_id,omitempty"`
+	ExternalOutboundID    *int64            `json:"external_outbound_id,omitempty"`
+	TargetProxyPathID     *int64            `json:"target_proxy_path_id,omitempty"`
+	IPv4TargetProxyPathID *int64            `json:"ipv4_target_proxy_path_id,omitempty"`
+	IPv6TargetProxyPathID *int64            `json:"ipv6_target_proxy_path_id,omitempty"`
+	FamilyDNSStrategy     FamilyDNSStrategy `json:"family_dns_strategy,omitempty"`
+	TargetServerID        *int64            `json:"target_server_id,omitempty"`
+	OutboundTag           string            `json:"outbound_tag"`
+	InterfaceName         string            `json:"interface_name,omitempty"`
+	SourcePrefix          string            `json:"source_prefix,omitempty"`
+	SyncGroupID           string            `json:"sync_group_id,omitempty"`
+	SyncSourceRuleID      *int64            `json:"sync_source_rule_id,omitempty"`
+	SyncEnabled           bool              `json:"sync_enabled,omitempty"`
+	Enabled               bool              `json:"enabled"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 const (
@@ -2931,6 +2944,7 @@ type HealthReport struct {
 	AgentVersion              string       `json:"agent_version"`
 	AgentBuild                string       `json:"agent_build"`
 	SingBoxVersion            string       `json:"sing_box_version"`
+	KernelCapabilities        []string     `json:"kernel_capabilities,omitempty"`
 	NetworkUploadBPS          uint64       `json:"network_upload_bps"`
 	NetworkDownloadBPS        uint64       `json:"network_download_bps"`
 	NetworkTotalUploadBytes   uint64       `json:"network_total_upload_bytes"`

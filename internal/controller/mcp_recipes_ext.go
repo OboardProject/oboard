@@ -134,6 +134,7 @@ var routingRuleRecipeFields = []string{
 	"server_id", "scope", "proxy_path_id", "stage_step_id", "sort_position",
 	"match_source", "rule_set_id", "dns_resolver", "name", "priority", "match_json", "action",
 	"outbound_id", "external_outbound_id", "target_proxy_path_id",
+	"ipv4_target_proxy_path_id", "ipv6_target_proxy_path_id", "family_dns_strategy",
 	"interface_name", "source_prefix", "enabled",
 }
 

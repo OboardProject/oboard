@@ -61,6 +61,9 @@ export type Server = {
   agent_version: string
   agent_build: string
   sing_box_version: string
+  kernel_version?: string
+  kernel_capabilities?: string[]
+  agent_connected?: boolean
   monitoring_mode: 'lightweight' | 'standard'
   resource_history_enabled: boolean
   traffic_reset_mode: string

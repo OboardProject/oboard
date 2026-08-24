@@ -39,6 +39,7 @@ type ServerDTO struct {
 	AgentVersion                string                     `json:"agent_version"`
 	AgentBuild                  string                     `json:"agent_build"`
 	KernelVersion               string                     `json:"kernel_version"`
+	KernelCapabilities          []string                   `json:"kernel_capabilities"`
 	ConnectionAuditEnabled      bool                       `json:"connection_audit_enabled"`
 	ResourceHistoryEnabled      bool                       `json:"resource_history_enabled"`
 	MonitoringMode              string                     `json:"monitoring_mode"`
@@ -126,30 +127,33 @@ type ProxyPathStepDTO struct {
 }
 
 type RoutingRuleDTO struct {
-	ID                 int64             `json:"id"`
-	Revision           string            `json:"revision"`
-	ServerID           int64             `json:"server_id"`
-	Name               string            `json:"name"`
-	Scope              string            `json:"scope"`
-	ProxyPathID        *int64            `json:"proxy_path_id"`
-	StageStepID        *int64            `json:"stage_step_id"`
-	SortPosition       int               `json:"sort_position"`
-	MatchSource        string            `json:"match_source"`
-	RuleSetID          *int64            `json:"rule_set_id"`
-	DNSResolver        string            `json:"dns_resolver"`
-	Priority           int               `json:"priority"`
-	Action             model.RouteAction `json:"action"`
-	OutboundID         *int64            `json:"outbound_id"`
-	ExternalOutboundID *int64            `json:"external_outbound_id"`
-	TargetProxyPathID  *int64            `json:"target_proxy_path_id"`
-	OutboundTag        string            `json:"outbound_tag"`
-	InterfaceName      string            `json:"interface_name"`
-	SourcePrefix       string            `json:"source_prefix"`
-	SyncGroupID        string            `json:"sync_group_id"`
-	MatchConfigured    bool              `json:"match_configured"`
-	Enabled            bool              `json:"enabled"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	ID                    int64                   `json:"id"`
+	Revision              string                  `json:"revision"`
+	ServerID              int64                   `json:"server_id"`
+	Name                  string                  `json:"name"`
+	Scope                 string                  `json:"scope"`
+	ProxyPathID           *int64                  `json:"proxy_path_id"`
+	StageStepID           *int64                  `json:"stage_step_id"`
+	SortPosition          int                     `json:"sort_position"`
+	MatchSource           string                  `json:"match_source"`
+	RuleSetID             *int64                  `json:"rule_set_id"`
+	DNSResolver           string                  `json:"dns_resolver"`
+	Priority              int                     `json:"priority"`
+	Action                model.RouteAction       `json:"action"`
+	OutboundID            *int64                  `json:"outbound_id"`
+	ExternalOutboundID    *int64                  `json:"external_outbound_id"`
+	TargetProxyPathID     *int64                  `json:"target_proxy_path_id"`
+	IPv4TargetProxyPathID *int64                  `json:"ipv4_target_proxy_path_id"`
+	IPv6TargetProxyPathID *int64                  `json:"ipv6_target_proxy_path_id"`
+	FamilyDNSStrategy     model.FamilyDNSStrategy `json:"family_dns_strategy"`
+	OutboundTag           string                  `json:"outbound_tag"`
+	InterfaceName         string                  `json:"interface_name"`
+	SourcePrefix          string                  `json:"source_prefix"`
+	SyncGroupID           string                  `json:"sync_group_id"`
+	MatchConfigured       bool                    `json:"match_configured"`
+	Enabled               bool                    `json:"enabled"`
+	CreatedAt             time.Time               `json:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at"`
 }
 
 type RoutingRuleSetDTO struct {
@@ -242,6 +246,7 @@ func serverDTO(item model.Server) ServerDTO {
 		InternalPortRangeStart: item.InternalPortRangeStart, InternalPortRangeEnd: item.InternalPortRangeEnd,
 		PortPolicyRevision: item.PortPolicyRevision, AgentConnected: item.AgentID != "",
 		AgentVersion: item.AgentVersion, AgentBuild: item.AgentBuild, KernelVersion: item.SingBoxVersion,
+		KernelCapabilities:     append([]string{}, item.KernelCapabilities...),
 		ConnectionAuditEnabled: item.ConnectionAuditEnabled, ResourceHistoryEnabled: item.ResourceHistoryEnabled,
 		MonitoringMode: item.MonitoringMode, TrafficResetMode: item.TrafficResetMode, TrafficResetDay: item.TrafficResetDay,
 		OfflineNotifyEnabled: item.OfflineNotifyEnabled, OfflineAfterSeconds: item.OfflineAfterSeconds,
@@ -275,7 +280,8 @@ func routingRuleDTO(item model.RoutingRule) RoutingRuleDTO {
 		SortPosition: item.SortPosition, MatchSource: item.MatchSource, RuleSetID: item.RuleSetID,
 		DNSResolver: item.DNSResolver, Priority: item.Priority, Action: item.Action, OutboundID: item.OutboundID,
 		ExternalOutboundID: item.ExternalOutboundID, TargetProxyPathID: item.TargetProxyPathID,
-		OutboundTag:   item.OutboundTag,
+		IPv4TargetProxyPathID: item.IPv4TargetProxyPathID, IPv6TargetProxyPathID: item.IPv6TargetProxyPathID,
+		FamilyDNSStrategy: item.FamilyDNSStrategy, OutboundTag: item.OutboundTag,
 		InterfaceName: item.InterfaceName, SourcePrefix: item.SourcePrefix, SyncGroupID: item.SyncGroupID,
 		MatchConfigured: strings.TrimSpace(item.MatchJSON) != "" && strings.TrimSpace(item.MatchJSON) != "{}",
 		Enabled:         item.Enabled, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,

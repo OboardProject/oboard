@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 )
@@ -492,7 +493,7 @@ func dnsInboundTargets(server model.Server, inbound model.Inbound) ([]dnsRecordT
 			return []dnsRecordTarget{{Type: "CNAME", Content: normalizeDomainName(target)}}, nil
 		}
 	}
-	ipv4, ipv6 := strings.TrimSpace(server.PublicIPv4), strings.TrimSpace(server.PublicIPv6)
+	ipv4, ipv6 := strings.TrimSpace(server.PublicIPv4), core.ServerEntryIPv6(server)
 	if target != "" {
 		ip := net.ParseIP(strings.Trim(target, "[]"))
 		if ip.To4() != nil {
@@ -516,11 +517,12 @@ func dnsInboundTargets(server model.Server, inbound model.Inbound) ([]dnsRecordT
 			}
 		}
 	}
+	listenIP := core.EffectiveListenIP(server, inbound.ListenIP)
 	var out []dnsRecordTarget
-	if (mode == "a" || mode == "both") && net.ParseIP(ipv4) != nil && net.ParseIP(ipv4).To4() != nil {
+	if (mode == "a" || mode == "both") && core.ListenIPSupportsFamily(listenIP, "ipv4") && net.ParseIP(ipv4) != nil && net.ParseIP(ipv4).To4() != nil {
 		out = append(out, dnsRecordTarget{Type: "A", Content: ipv4})
 	}
-	if (mode == "aaaa" || mode == "both") && net.ParseIP(strings.Trim(ipv6, "[]")) != nil && net.ParseIP(strings.Trim(ipv6, "[]")).To4() == nil {
+	if (mode == "aaaa" || mode == "both") && core.ListenIPSupportsFamily(listenIP, "ipv6") && net.ParseIP(strings.Trim(ipv6, "[]")) != nil && net.ParseIP(strings.Trim(ipv6, "[]")).To4() == nil {
 		out = append(out, dnsRecordTarget{Type: "AAAA", Content: strings.Trim(ipv6, "[]")})
 	}
 	if len(out) == 0 {
@@ -530,6 +532,10 @@ func dnsInboundTargets(server model.Server, inbound model.Inbound) ([]dnsRecordT
 }
 
 func (s *Server) syncDNSInbounds(ctx context.Context, servers []model.Server, inbounds []model.Inbound) ([]dnsSyncResult, error) {
+	familySplitInbounds, err := s.familySplitInboundIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	serverByID := make(map[int64]model.Server, len(servers))
 	for _, server := range servers {
 		serverByID[server.ID] = server
@@ -546,6 +552,12 @@ func (s *Server) syncDNSInbounds(ctx context.Context, servers []model.Server, in
 	for _, inbound := range inbounds {
 		if !inbound.Enabled || !inbound.DNSSyncEnabled {
 			continue
+		}
+		if familySplitInbounds[inbound.ID] {
+			mode := strings.ToLower(strings.TrimSpace(inbound.DNSRecordTypes))
+			if mode == "" || mode == "auto" {
+				inbound.DNSRecordTypes = "both"
+			}
 		}
 		status, syncErr := s.syncDNSInbound(ctx, serverByID, credentialByID, inbound)
 		now := time.Now().UTC()
@@ -564,6 +576,30 @@ func (s *Server) syncDNSInbounds(ctx context.Context, servers []model.Server, in
 		results = append(results, dnsSyncResult{InboundID: inbound.ID, Domain: normalizeDomainName(inbound.DNSDomain), Status: status})
 	}
 	return results, nil
+}
+
+func (s *Server) familySplitInboundIDs(ctx context.Context) (map[int64]bool, error) {
+	paths, err := s.store.ListProxyPaths(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pathInbound := make(map[int64]int64, len(paths))
+	for _, path := range paths {
+		pathInbound[path.ID] = path.InboundID
+	}
+	rules, err := s.store.ListRoutingRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := map[int64]bool{}
+	for _, rule := range rules {
+		if rule.Enabled && rule.Action == model.RouteActionFamilySplit && rule.ProxyPathID != nil {
+			if inboundID := pathInbound[*rule.ProxyPathID]; inboundID > 0 {
+				result[inboundID] = true
+			}
+		}
+	}
+	return result, nil
 }
 
 func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Server, credentials map[int64]model.DNSCredential, inbound model.Inbound) (string, error) {

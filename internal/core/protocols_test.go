@@ -449,6 +449,139 @@ func TestProxyPathStageRulesRunBeforeEachStageContinuation(t *testing.T) {
 	}
 }
 
+func TestFamilySplitOutboundsForceTargetEntryFamilies(t *testing.T) {
+	tests := []struct {
+		name       string
+		ipv4Server model.Server
+		ipv6Server model.Server
+	}{
+		{
+			name:       "single stack targets",
+			ipv4Server: model.Server{ID: 2, Name: "v4", PublicIPv4: "203.0.113.4", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, Status: model.ServerOnline, PortRangeStart: 31000, PortRangeEnd: 31100},
+			ipv6Server: model.Server{ID: 3, Name: "v6", PublicIPv6: "2001:db8::6", ListenIP: "::", IPStack: model.IPStackIPv6Only, Status: model.ServerOnline, PortRangeStart: 32000, PortRangeEnd: 32100},
+		},
+		{
+			name:       "dual stack targets",
+			ipv4Server: model.Server{ID: 2, Name: "dual-v4", PublicIPv4: "203.0.113.14", PublicIPv6: "2001:db8::14", ListenIP: "::", IPStack: model.IPStackDualStack, Status: model.ServerOnline, PortRangeStart: 31000, PortRangeEnd: 31100},
+			ipv6Server: model.Server{ID: 3, Name: "dual-v6", PublicIPv4: "203.0.113.16", PublicIPv6: "2001:db8::16", ListenIP: "::", IPStack: model.IPStackDualStack, Status: model.ServerOnline, PortRangeStart: 32000, PortRangeEnd: 32100},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			entry := model.Server{ID: 1, Name: "entry", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", ListenIP: "::", IPStack: model.IPStackDualStack, Status: model.ServerOnline, PortRangeStart: 30000, PortRangeEnd: 30100}
+			root := model.Inbound{ID: 10, ServerID: entry.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "::", Port: 443, ConfigJSON: `{}`, Enabled: true}
+			ipv4Path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindChain, Name: "v4-path", InboundID: root.ID, Secret: "v4-path", Enabled: true}
+			ipv6Path := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindChain, Name: "v6-path", InboundID: root.ID, Secret: "v6-path", Enabled: true}
+			ipv4ServerID, ipv6ServerID := test.ipv4Server.ID, test.ipv6Server.ID
+			ipv4Step := model.ProxyPathStep{ID: 101, PathID: ipv4Path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv4ServerID}
+			ipv6Step := model.ProxyPathStep{ID: 201, PathID: ipv6Path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv6ServerID}
+			ipv4PathID, ipv6PathID := ipv4Path.ID, ipv6Path.ID
+			rule := model.RoutingRule{
+				ID: 7, ServerID: entry.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &ipv4PathID,
+				SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "family", MatchJSON: `{}`,
+				Action: model.RouteActionFamilySplit, IPv4TargetProxyPathID: &ipv4PathID, IPv6TargetProxyPathID: &ipv6PathID,
+				FamilyDNSStrategy: model.FamilyDNSStrategyAuto, Enabled: true,
+			}
+			user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+			config := mustServerConfig(t, entry, []model.Inbound{root}, []model.User{user}, ConfigOptions{
+				Servers: []model.Server{entry, test.ipv4Server, test.ipv6Server}, Inbounds: []model.Inbound{root},
+				ProxyPaths: []model.ProxyPath{ipv4Path, ipv6Path}, ProxyPathSteps: []model.ProxyPathStep{ipv4Step, ipv6Step},
+				InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}}, RoutingRules: []model.RoutingRule{rule},
+			})
+			selectorTag := routingRuleFamilySelectorTag(rule.ID)
+			selector := findOutbound(config, selectorTag)
+			if selector["type"] != "family-selector" || selector["strategy"] != "prefer_ipv4" || selector["fallback"] != true {
+				t.Fatalf("family selector = %#v; config=%s", selector, config)
+			}
+			ipv4BranchTag := routingRuleFamilyBranchTag(rule.ID, "ipv4", proxyPathStepTag(ipv4Path.ID, ipv4Step.Position))
+			ipv6BranchTag := routingRuleFamilyBranchTag(rule.ID, "ipv6", proxyPathStepTag(ipv6Path.ID, ipv6Step.Position))
+			if selector["ipv4_outbound"] != ipv4BranchTag || selector["ipv6_outbound"] != ipv6BranchTag {
+				t.Fatalf("family selector children = %#v", selector)
+			}
+			if branch := findOutbound(config, ipv4BranchTag); branch["server"] != test.ipv4Server.PublicIPv4 {
+				t.Fatalf("IPv4 branch entry = %#v, want %s", branch, test.ipv4Server.PublicIPv4)
+			}
+			if branch := findOutbound(config, ipv6BranchTag); branch["server"] != test.ipv6Server.PublicIPv6 {
+				t.Fatalf("IPv6 branch entry = %#v, want %s", branch, test.ipv6Server.PublicIPv6)
+			}
+			baseIPv4 := findOutbound(config, proxyPathStepTag(ipv4Path.ID, ipv4Step.Position))
+			baseIPv6 := findOutbound(config, proxyPathStepTag(ipv6Path.ID, ipv6Step.Position))
+			if baseIPv4["server"] == nil || baseIPv6["server"] == nil {
+				t.Fatalf("shared path outbounds were lost: v4=%#v v6=%#v", baseIPv4, baseIPv6)
+			}
+			matched := false
+			for _, route := range mapList(parseSingBoxConfig(t, config).Route["rules"]) {
+				if route["outbound"] == selectorTag && len(stringList(route["auth_user"])) == 1 {
+					matched = true
+				}
+			}
+			if !matched {
+				t.Fatalf("family selector route missing: %s", config)
+			}
+		})
+	}
+}
+
+func TestNormalizedFamilyDNSStrategy(t *testing.T) {
+	ipv4Server := model.Server{PublicIPv4: "203.0.113.1", IPStack: model.IPStackAuto}
+	ipv6Server := model.Server{PublicIPv6: "2001:db8::1", IPStack: model.IPStackAuto}
+	dualServer := model.Server{PublicIPv4: "203.0.113.2", PublicIPv6: "2001:db8::2", IPStack: model.IPStackAuto}
+	for _, test := range []struct {
+		name      string
+		strategy  model.FamilyDNSStrategy
+		server    model.Server
+		inherited string
+		want      string
+	}{
+		{name: "auto IPv4", strategy: model.FamilyDNSStrategyAuto, server: ipv4Server, want: "prefer_ipv4"},
+		{name: "auto IPv6", strategy: model.FamilyDNSStrategyAuto, server: ipv6Server, want: "prefer_ipv6"},
+		{name: "auto dual default", strategy: model.FamilyDNSStrategyAuto, server: dualServer, want: "prefer_ipv4"},
+		{name: "auto inherits server DNS policy", strategy: model.FamilyDNSStrategyAuto, server: dualServer, inherited: "prefer_ipv6", want: "prefer_ipv6"},
+		{name: "explicit IPv4", strategy: model.FamilyDNSStrategyPreferIPv4, server: ipv6Server, want: "prefer_ipv4"},
+		{name: "explicit IPv6", strategy: model.FamilyDNSStrategyPreferIPv6, server: ipv4Server, want: "prefer_ipv6"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := normalizedFamilyDNSStrategy(test.strategy, test.server, test.inherited)
+			if err != nil || got != test.want {
+				t.Fatalf("strategy=%q err=%v, want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveReachableEntryAddressForFamilyMatrix(t *testing.T) {
+	sourceDual := model.Server{Name: "source-dual", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", IPStack: model.IPStackDualStack}
+	targetDual := model.Server{Name: "target-dual", PublicIPv4: "203.0.113.2", PublicIPv6: "2001:db8::2", ListenIP: "::", IPStack: model.IPStackDualStack}
+	inbound := model.Inbound{ListenIP: "::", EntryIPMode: model.EntryIPModeAuto, Enabled: true}
+	if got, err := ResolveReachableEntryAddressForFamily(sourceDual, inbound, targetDual, "ipv4"); err != nil || got != targetDual.PublicIPv4 {
+		t.Fatalf("IPv4 family address=%q err=%v", got, err)
+	}
+	if got, err := ResolveReachableEntryAddressForFamily(sourceDual, inbound, targetDual, "ipv6"); err != nil || got != targetDual.PublicIPv6 {
+		t.Fatalf("IPv6 family address=%q err=%v", got, err)
+	}
+	managed := inbound
+	managed.DNSSyncEnabled = true
+	managed.DNSDomain = "edge.example.com"
+	if got, err := ResolveReachableEntryAddressForFamily(sourceDual, managed, targetDual, "ipv6"); err != nil || got != managed.DNSDomain {
+		t.Fatalf("managed IPv6 family address=%q err=%v", got, err)
+	}
+	sourceV4 := model.Server{Name: "source-v4", PublicIPv4: "203.0.113.3", IPStack: model.IPStackIPv4Only}
+	if _, err := ResolveReachableEntryAddressForFamily(sourceV4, inbound, targetDual, "ipv6"); err == nil || !errors.Is(err, ErrInvalidDesiredState) {
+		t.Fatalf("IPv4-only source reached IPv6 branch: %v", err)
+	}
+	missingV6 := targetDual
+	missingV6.PublicIPv6 = ""
+	if _, err := ResolveReachableEntryAddressForFamily(sourceDual, inbound, missingV6, "ipv6"); err == nil || !strings.Contains(err.Error(), "缺少 IPV6") {
+		t.Fatalf("missing IPv6 entry was accepted: %v", err)
+	}
+	ipv4Listener := targetDual
+	ipv4Listener.ListenMode = model.ListenModeIPv4Only
+	inbound.ListenIP = "0.0.0.0"
+	if _, err := ResolveReachableEntryAddressForFamily(sourceDual, inbound, ipv4Listener, "ipv6"); err == nil || !strings.Contains(err.Error(), "监听地址") {
+		t.Fatalf("IPv4-only listener accepted IPv6 branch: %v", err)
+	}
+}
+
 func TestPathStageInterfaceRuleRoutesThroughBoundDirectOutbound(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}

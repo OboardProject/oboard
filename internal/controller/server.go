@@ -3522,32 +3522,32 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			"bucket_seconds":  int(bucket.Seconds()),
 			"points":          points,
 			"current": map[string]any{
-				"cpu_usage_percent":    server.CPUUsagePercent,
-				"memory_used_bytes":    server.MemoryUsedBytes,
-				"memory_total_bytes":   server.MemoryTotalBytes,
-				"disk_used_bytes":      server.DiskBytes,
-				"disk_total_bytes":     server.DiskTotalBytes,
-				"tcp_connection_count": server.TCPConnectionCount,
-				"udp_connection_count": server.UDPConnectionCount,
-				"process_count":        server.ProcessCount,
-				"network_upload_bps":   server.NetworkUploadBPS,
-				"network_download_bps": server.NetworkDownloadBPS,
-				"traffic_upload_bytes": server.TrafficUploadBytes,
+				"cpu_usage_percent":      server.CPUUsagePercent,
+				"memory_used_bytes":      server.MemoryUsedBytes,
+				"memory_total_bytes":     server.MemoryTotalBytes,
+				"disk_used_bytes":        server.DiskBytes,
+				"disk_total_bytes":       server.DiskTotalBytes,
+				"tcp_connection_count":   server.TCPConnectionCount,
+				"udp_connection_count":   server.UDPConnectionCount,
+				"process_count":          server.ProcessCount,
+				"network_upload_bps":     server.NetworkUploadBPS,
+				"network_download_bps":   server.NetworkDownloadBPS,
+				"traffic_upload_bytes":   server.TrafficUploadBytes,
 				"traffic_download_bytes": server.TrafficDownloadBytes,
-				"traffic_period_start": server.TrafficPeriodStart,
-				"traffic_period_end":   server.TrafficPeriodEnd,
-				"traffic_reset_mode":   server.TrafficResetMode,
-				"traffic_reset_day":    server.TrafficResetDay,
-				"sampled_at":           server.TelemetryUpdatedAt,
+				"traffic_period_start":   server.TrafficPeriodStart,
+				"traffic_period_end":     server.TrafficPeriodEnd,
+				"traffic_reset_mode":     server.TrafficResetMode,
+				"traffic_reset_day":      server.TrafficResetDay,
+				"sampled_at":             server.TelemetryUpdatedAt,
 			},
 			"traffic": map[string]any{
-				"reset_mode":   server.TrafficResetMode,
-				"reset_day":    server.TrafficResetDay,
-				"period_start": server.TrafficPeriodStart,
-				"period_end":   server.TrafficPeriodEnd,
-				"upload_bytes": server.TrafficUploadBytes,
+				"reset_mode":     server.TrafficResetMode,
+				"reset_day":      server.TrafficResetDay,
+				"period_start":   server.TrafficPeriodStart,
+				"period_end":     server.TrafficPeriodEnd,
+				"upload_bytes":   server.TrafficUploadBytes,
 				"download_bytes": server.TrafficDownloadBytes,
-				"total_bytes":  server.TrafficUploadBytes + server.TrafficDownloadBytes,
+				"total_bytes":    server.TrafficUploadBytes + server.TrafficDownloadBytes,
 			},
 		})
 		return
@@ -3570,19 +3570,19 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		loc := trafficLocation(settings)
 		_, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, loc)
 		write(w, 200, map[string]any{
-			"server_id":          server.ID,
-			"traffic_reset_mode": server.TrafficResetMode,
-			"traffic_reset_day":  server.TrafficResetDay,
-			"period_key":         start.Format("2006-01-02"),
-			"period_start":       start,
-			"period_end":         end,
-			"traffic_period_start": server.TrafficPeriodStart,
-			"traffic_period_end":   server.TrafficPeriodEnd,
-			"traffic_upload_bytes": server.TrafficUploadBytes,
+			"server_id":              server.ID,
+			"traffic_reset_mode":     server.TrafficResetMode,
+			"traffic_reset_day":      server.TrafficResetDay,
+			"period_key":             start.Format("2006-01-02"),
+			"period_start":           start,
+			"period_end":             end,
+			"traffic_period_start":   server.TrafficPeriodStart,
+			"traffic_period_end":     server.TrafficPeriodEnd,
+			"traffic_upload_bytes":   server.TrafficUploadBytes,
 			"traffic_download_bytes": server.TrafficDownloadBytes,
-			"total_bytes":        server.TrafficUploadBytes + server.TrafficDownloadBytes,
-			"expires_at":         server.ExpiresAt,
-			"renewal_cycle":      server.RenewalCycle,
+			"total_bytes":            server.TrafficUploadBytes + server.TrafficDownloadBytes,
+			"expires_at":             server.ExpiresAt,
+			"renewal_cycle":          server.RenewalCycle,
 		})
 		return
 	}
@@ -7034,6 +7034,9 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 		v.ProxyPathID = nil
 		v.StageStepID = nil
 		v.TargetProxyPathID = nil
+		v.IPv4TargetProxyPathID = nil
+		v.IPv6TargetProxyPathID = nil
+		v.FamilyDNSStrategy = ""
 		v.RuleSetID = nil
 		v.MatchSource = model.RoutingMatchSourceInline
 		if v.ServerID == 0 {
@@ -7083,6 +7086,11 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 	if err != nil {
 		return fmt.Errorf("server %d: %w", v.ServerID, err)
 	}
+	if v.Action != model.RouteActionFamilySplit {
+		v.IPv4TargetProxyPathID = nil
+		v.IPv6TargetProxyPathID = nil
+		v.FamilyDNSStrategy = ""
+	}
 	switch v.Action {
 	case model.RouteActionDirect, model.RouteActionBlock:
 		return nil
@@ -7125,6 +7133,38 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 			return err
 		}
 		return s.validateRoutingRuleTargetPath(ctx, *v.ProxyPathID, v.StageStepID, *v.TargetProxyPathID, v.ID)
+	case model.RouteActionFamilySplit:
+		if candidatePath != nil {
+			return errors.New("atomic root routing rule cannot create a family split")
+		}
+		if v.Scope != model.RoutingRuleScopePathStage || v.ProxyPathID == nil {
+			return errors.New("family_split action requires a path_stage routing rule")
+		}
+		if v.IPv4TargetProxyPathID == nil || *v.IPv4TargetProxyPathID <= 0 {
+			return errors.New("ipv4_target_proxy_path_id required")
+		}
+		if v.IPv6TargetProxyPathID == nil || *v.IPv6TargetProxyPathID <= 0 {
+			return errors.New("ipv6_target_proxy_path_id required")
+		}
+		if *v.IPv4TargetProxyPathID == *v.IPv6TargetProxyPathID {
+			return errors.New("IPv4 and IPv6 family branches must use different proxy paths")
+		}
+		if v.FamilyDNSStrategy == "" {
+			v.FamilyDNSStrategy = model.FamilyDNSStrategyAuto
+		}
+		switch v.FamilyDNSStrategy {
+		case model.FamilyDNSStrategyAuto, model.FamilyDNSStrategyPreferIPv4, model.FamilyDNSStrategyPreferIPv6:
+		default:
+			return fmt.Errorf("unsupported family_dns_strategy %q", v.FamilyDNSStrategy)
+		}
+		v.TargetProxyPathID = nil
+		v.InterfaceName = ""
+		v.SourcePrefix = ""
+		v.OutboundTag = ""
+		if !v.Enabled {
+			return nil
+		}
+		return s.validateRoutingRuleFamilySplit(ctx, *v.ProxyPathID, v.StageStepID, *v.IPv4TargetProxyPathID, *v.IPv6TargetProxyPathID, v.ID)
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -7188,6 +7228,168 @@ func normalizeRoutingRuleProxyPathBinding(v *model.RoutingRule, server model.Ser
 	return true, nil
 }
 
+func (s *Server) validateRoutingRuleFamilySplit(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, ipv4TargetPathID, ipv6TargetPathID, ruleID int64) error {
+	sourceServer, err := s.routingRuleStageServer(ctx, sourcePathID, sourceStageStepID)
+	if err != nil {
+		return err
+	}
+	if sourceServer.Status != model.ServerOnline {
+		return fmt.Errorf("family split decision server %s is offline", sourceServer.Name)
+	}
+	if strings.TrimSpace(sourceServer.AgentID) != "" && !serverHasKernelCapability(*sourceServer, "family_selector_v1") {
+		return fmt.Errorf("family split decision server %s 的内核缺少 family_selector_v1 能力；请先更新 Agent/内核", sourceServer.Name)
+	}
+	for _, target := range []struct {
+		family string
+		pathID int64
+	}{
+		{family: "IPv4", pathID: ipv4TargetPathID},
+		{family: "IPv6", pathID: ipv6TargetPathID},
+	} {
+		if target.pathID == sourcePathID {
+			if err := s.validateRoutingRuleSourceContinuation(ctx, sourcePathID, sourceStageStepID); err != nil {
+				return fmt.Errorf("%s family branch: %w", target.family, err)
+			}
+		} else if err := s.validateRoutingRuleTargetPath(ctx, sourcePathID, sourceStageStepID, target.pathID, ruleID); err != nil {
+			return fmt.Errorf("%s family branch: %w", target.family, err)
+		}
+		if err := s.validateRoutingRuleFamilyBranchAvailability(ctx, sourcePathID, sourceStageStepID, target.pathID, strings.ToLower(target.family), *sourceServer); err != nil {
+			return fmt.Errorf("%s family branch: %w", target.family, err)
+		}
+	}
+	return nil
+}
+
+func serverHasKernelCapability(server model.Server, capability string) bool {
+	for _, current := range server.KernelCapabilities {
+		if current == capability {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) routingRuleStageServer(ctx context.Context, sourcePathID int64, sourceStageStepID *int64) (*model.Server, error) {
+	path, err := s.store.GetProxyPath(ctx, sourcePathID)
+	if err != nil {
+		return nil, err
+	}
+	if sourceStageStepID == nil {
+		inbound, err := s.store.GetInbound(ctx, path.InboundID)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.GetServer(ctx, inbound.ServerID)
+	}
+	step, err := s.store.GetProxyPathStep(ctx, *sourceStageStepID)
+	if err != nil {
+		return nil, err
+	}
+	if step.PathID != sourcePathID || step.NodeType != model.ProxyPathStepServerInbound || step.ServerID == nil {
+		return nil, errors.New("family split stage must identify a controlled server")
+	}
+	return s.store.GetServer(ctx, *step.ServerID)
+}
+
+func (s *Server) validateRoutingRuleFamilyBranchAvailability(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID int64, family string, sourceServer model.Server) error {
+	sourceSteps, err := s.store.ListProxyPathStepsForPath(ctx, sourcePathID)
+	if err != nil {
+		return err
+	}
+	stagePosition := 0
+	if sourceStageStepID != nil {
+		for _, step := range sourceSteps {
+			if step.ID == *sourceStageStepID {
+				stagePosition = step.Position
+				break
+			}
+		}
+	}
+	targetSteps, err := s.store.ListProxyPathStepsForPath(ctx, targetPathID)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(targetSteps, func(i, j int) bool { return targetSteps[i].Position < targetSteps[j].Position })
+	if len(targetSteps) <= stagePosition {
+		return errors.New("target proxy path does not continue after the family split stage")
+	}
+	next := targetSteps[stagePosition]
+	mode := next.TransportMode
+	if mode == "" {
+		mode = model.ProxyPathTransportSingBox
+	}
+	if mode != model.ProxyPathTransportSingBox || next.NodeType != model.ProxyPathStepServerInbound {
+		return errors.New("family branch must enter a controlled server through a sing-box hop immediately after the split stage")
+	}
+	var inbound model.Inbound
+	var targetServerID int64
+	if next.InboundID != nil && *next.InboundID > 0 {
+		item, err := s.store.GetInbound(ctx, *next.InboundID)
+		if err != nil {
+			return fmt.Errorf("target inbound %d: %w", *next.InboundID, err)
+		}
+		if !item.Enabled {
+			return errors.New("target inbound is disabled")
+		}
+		inbound = *item
+		targetServerID = item.ServerID
+	} else if next.ServerID != nil && *next.ServerID > 0 {
+		targetServerID = *next.ServerID
+	} else {
+		return errors.New("target controlled server is missing")
+	}
+	targetServer, err := s.store.GetServer(ctx, targetServerID)
+	if err != nil {
+		return err
+	}
+	if targetServer.Status != model.ServerOnline {
+		return fmt.Errorf("target server %s is offline", targetServer.Name)
+	}
+	if inbound.ID == 0 {
+		inbound = model.Inbound{ServerID: targetServer.ID, ListenIP: targetServer.ListenIP, EntryIPMode: model.EntryIPModeAuto, Enabled: true}
+	}
+	_, err = core.ResolveReachableEntryAddressForFamily(sourceServer, inbound, *targetServer, family)
+	return err
+}
+
+func (s *Server) validateRoutingRuleSourceContinuation(ctx context.Context, sourcePathID int64, sourceStageStepID *int64) error {
+	sourcePath, err := s.store.GetProxyPath(ctx, sourcePathID)
+	if err != nil {
+		return err
+	}
+	if !sourcePath.Enabled || sourcePath.Kind != model.ProxyPathKindChain {
+		return errors.New("source proxy path must be an enabled chain")
+	}
+	steps, err := s.store.ListProxyPathStepsForPath(ctx, sourcePathID)
+	if err != nil {
+		return err
+	}
+	sort.SliceStable(steps, func(i, j int) bool { return steps[i].Position < steps[j].Position })
+	stagePosition := 0
+	if sourceStageStepID != nil {
+		for _, step := range steps {
+			if step.ID == *sourceStageStepID {
+				stagePosition = step.Position
+				break
+			}
+		}
+		if stagePosition == 0 {
+			return errors.New("routing rule stage no longer belongs to its source path")
+		}
+	}
+	if len(steps) <= stagePosition {
+		return errors.New("source proxy path does not continue after the routing stage")
+	}
+	mode := steps[stagePosition].TransportMode
+	if mode == "" {
+		mode = model.ProxyPathTransportSingBox
+	}
+	if mode == model.ProxyPathTransportPortForward {
+		return errors.New("family branches cannot start with transparent port forwarding after the routing stage")
+	}
+	return nil
+}
+
 func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID int64, sourceStageStepID *int64, targetPathID, ruleID int64) error {
 	if sourcePathID == targetPathID {
 		return errors.New("routing rule target path must differ from its fallback path")
@@ -7247,10 +7449,10 @@ func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID
 	}
 	edges := map[int64][]int64{}
 	for _, item := range items {
-		if item.ID == ruleID || !item.Enabled || item.Action != model.RouteActionProxyPath || item.ProxyPathID == nil || item.TargetProxyPathID == nil {
+		if item.ID == ruleID {
 			continue
 		}
-		edges[*item.ProxyPathID] = append(edges[*item.ProxyPathID], *item.TargetProxyPathID)
+		appendRoutingRulePathEdges(edges, item)
 	}
 	edges[sourcePathID] = append(edges[sourcePathID], targetPathID)
 	if routingPathReachable(edges, targetPathID, sourcePathID, map[int64]bool{}) {
@@ -7309,16 +7511,35 @@ func (s *Server) validateRoutingRuleTargetCandidate(ctx context.Context, rule mo
 	}
 	edges := map[int64][]int64{}
 	for _, item := range items {
-		if item.ID == rule.ID || !item.Enabled || item.Action != model.RouteActionProxyPath || item.ProxyPathID == nil || item.TargetProxyPathID == nil {
+		if item.ID == rule.ID {
 			continue
 		}
-		edges[*item.ProxyPathID] = append(edges[*item.ProxyPathID], *item.TargetProxyPathID)
+		appendRoutingRulePathEdges(edges, item)
 	}
 	edges[sourcePath.ID] = append(edges[sourcePath.ID], targetPath.ID)
 	if routingPathReachable(edges, targetPath.ID, sourcePath.ID, map[int64]bool{}) {
 		return errors.New("routing rule proxy paths must not form a cycle")
 	}
 	return nil
+}
+
+func appendRoutingRulePathEdges(edges map[int64][]int64, rule model.RoutingRule) {
+	if !rule.Enabled || rule.ProxyPathID == nil {
+		return
+	}
+	sourcePathID := *rule.ProxyPathID
+	appendTarget := func(target *int64) {
+		if target != nil && *target > 0 && *target != sourcePathID {
+			edges[sourcePathID] = append(edges[sourcePathID], *target)
+		}
+	}
+	switch rule.Action {
+	case model.RouteActionProxyPath:
+		appendTarget(rule.TargetProxyPathID)
+	case model.RouteActionFamilySplit:
+		appendTarget(rule.IPv4TargetProxyPathID)
+		appendTarget(rule.IPv6TargetProxyPathID)
+	}
 }
 
 func equivalentRoutingPrefixStep(left, right model.ProxyPathStep) bool {
@@ -12437,6 +12658,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		Format:                 format,
 		ProxyPaths:             data.ProxyPaths,
 		ProxyPathSteps:         data.ProxyPathSteps,
+		RoutingRules:           data.RoutingRules,
 		ProxyPathEgressResults: data.ProxyPathEgressResults,
 		ExternalOutbounds:      data.ExternalOutbounds,
 		SSHServerHostKeys:      sshServerHostKeys,
@@ -12634,6 +12856,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 			server.DetectedRegionCode = code
 		}
 		server.SingBoxVersion = req.Health.SingBoxVersion
+		server.KernelCapabilities = normalizeKernelCapabilities(req.Health.KernelCapabilities)
 		server.CPU = req.Health.CPU
 		server.MemoryBytes = req.Health.MemoryBytes
 		server.CPUUsagePercent = req.Health.CPUUsagePercent
@@ -13056,6 +13279,22 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 		report.NetworkDownloadBPS = 0
 	}
 	report.RegionCode = normalizeControllerRegionCode(report.RegionCode)
+	report.KernelCapabilities = normalizeKernelCapabilities(report.KernelCapabilities)
+}
+
+func normalizeKernelCapabilities(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 64 || seen[value] || len(result) >= 64 {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // applyHealthReportToServer mirrors the persisted health report state onto the
@@ -13099,6 +13338,7 @@ func applyHealthReportToServer(server *model.Server, result store.HealthApplyRes
 	server.AgentVersion = current.AgentVersion
 	server.AgentBuild = current.AgentBuild
 	server.SingBoxVersion = current.SingBoxVersion
+	server.KernelCapabilities = append([]string(nil), current.KernelCapabilities...)
 	server.ConnectivityStatus = current.ConnectivityStatus
 	server.ConnectivityLatencyMS = current.ConnectivityLatencyMS
 	server.ConnectivityCheckedAt = current.ConnectivityCheckedAt

@@ -35,6 +35,27 @@ func TestDNSInboundTargets(t *testing.T) {
 	}
 }
 
+func TestDNSInboundTargetsPublishOnlyListenedFamilies(t *testing.T) {
+	server := model.Server{ID: 1, PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10", InterfaceIPv6: "2001:db8::11", ListenMode: model.ListenModeIPv4Only}
+	inbound := model.Inbound{ListenIP: "0.0.0.0", DNSDomain: "entry.example.com", DNSRecordTypes: "both"}
+	got, err := dnsInboundTargets(server, inbound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != (dnsRecordTarget{Type: "A", Content: server.PublicIPv4}) {
+		t.Fatalf("IPv4-only listener targets = %#v", got)
+	}
+	server.PublicIPv6 = ""
+	server.ListenMode = model.ListenModeDual
+	got, err = dnsInboundTargets(server, inbound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1] != (dnsRecordTarget{Type: "AAAA", Content: server.InterfaceIPv6}) {
+		t.Fatalf("dual listener with interface IPv6 targets = %#v", got)
+	}
+}
+
 func TestNormalizeDNSZones(t *testing.T) {
 	got, err := normalizeDNSZones("Example.COM, example.net\nexample.com")
 	if err != nil {

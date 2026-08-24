@@ -802,7 +802,7 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	for key, item := range metadata {
 		globalNames[key] = item.DisplayNameOverride
 	}
-	opts := core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, ProxyPathEgressResults: data.ProxyPathEgressResults, ExternalOutbounds: data.ExternalOutbounds, EffectiveNodes: snapshot.EffectiveNodeKeys(user.ID), EffectiveNodeGroups: snapshot.EffectiveNodeGroups(user.ID), NodeOrderPositions: orderPositions, GlobalNodeNames: globalNames, PlanNodeNames: planNodeNames}
+	opts := core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, RoutingRules: data.RoutingRules, ProxyPathEgressResults: data.ProxyPathEgressResults, ExternalOutbounds: data.ExternalOutbounds, EffectiveNodes: snapshot.EffectiveNodeKeys(user.ID), EffectiveNodeGroups: snapshot.EffectiveNodeGroups(user.ID), NodeOrderPositions: orderPositions, GlobalNodeNames: globalNames, PlanNodeNames: planNodeNames}
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy
 	}
