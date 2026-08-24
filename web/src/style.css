@@ -59,8 +59,6 @@
   /* Global overlay order. Keep transient feedback above every blocking layer. */
   --z-navigation: 100;
   --z-dialog: 2000;
-  --z-dialog-nested: 2100;
-  --z-dialog-system: 2200;
   --z-popover: 3000;
   --z-loading: 100000;
   --z-theme-transition: 1000000;
@@ -6590,28 +6588,38 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   }
 }
 
-.dialog-backdrop {
+.dialog-layer {
   position: fixed;
   inset: 0;
-  z-index: var(--z-dialog);
+  z-index: calc(var(--z-dialog) + var(--dialog-layer-index, 0));
   display: grid;
   place-items: center;
   padding: 20px;
+  isolation: isolate;
+}
+
+.dialog-layer[data-modal-top="false"],
+.dialog-layer[data-modal-closing="true"] {
+  pointer-events: none;
+}
+
+.dialog-backdrop {
+  position: absolute;
+  inset: 0;
   background: rgba(15, 23, 42, 0.42);
   backdrop-filter: blur(8px);
+  transition: background-color var(--duration-appica) var(--ease-appica-out),
+              backdrop-filter var(--duration-appica) var(--ease-appica-out);
 }
 
-.dialog-backdrop-nested {
-  z-index: var(--z-dialog-nested);
-  background: rgba(15, 23, 42, 0.34);
+.dialog-layer[data-modal-top="false"] .dialog-backdrop {
+  background: transparent;
+  backdrop-filter: none;
 }
 
-.dialog-backdrop-system {
-  z-index: var(--z-dialog-system);
-}
-
-.dialog-root {
-  z-index: var(--z-dialog-system);
+.dialog-panel {
+  position: relative;
+  z-index: 1;
 }
 
 .dialog {
@@ -10516,7 +10524,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .form > button:last-child,
   .form button { justify-self: stretch; }
-  .dialog-backdrop { padding: 12px; align-items: end; }
+  .dialog-layer { padding: 12px; align-items: end; }
   .dialog { width: 100%; max-height: 90vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
   .dialog-actions { display: grid; grid-template-columns: 1fr; }
   .copy-block,
@@ -19026,7 +19034,7 @@ button.ui-btn-ghost:hover {
     transform: translateY(0);
   }
 
-  .dialog-backdrop {
+  .dialog-layer {
     padding: 8px 8px 0;
   }
 

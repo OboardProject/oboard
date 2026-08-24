@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { ArrowDown, ArrowUp, Check, CloudDownload, Copy, Eye, Layers3, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { useDialogs } from '../components/ui/dialog-context'
 import { NodeAssignmentsPage } from './NodeAssignmentsPage'
 
 type Client = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -152,6 +153,7 @@ function NodeLibrary({ nodes, groups, busy, onCopy, onEdit }: { nodes: Node[]; g
 }
 
 function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, message }: { workspace: Workspace; busy: boolean; mutate: (path: string, init: RequestInit, success: string) => Promise<boolean>; subjectQuery: string; client: Client; refresh: () => Promise<void>; message: (value: string, tone?: 'success' | 'error' | 'warning') => void }) {
+  const dialogs = useDialogs()
   const [kind, setKind] = React.useState<'manual' | 'remote'>('remote')
   const [name, setName] = React.useState('')
   const [value, setValue] = React.useState('')
@@ -187,6 +189,15 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
     if (group.kind === 'manual' && content) body.content = content
     if (await mutate(`/node-groups/${group.id}`, { method: 'PATCH', body: JSON.stringify(body) }, '节点组已更新')) closeEdit()
   }
+  const deleteGroup = async (group: Group) => {
+    if (!await dialogs.confirm({
+      title: `删除节点组“${group.name}”？`,
+      message: '该节点组及其中节点都会被删除。',
+      confirmText: '删除',
+      tone: 'danger',
+    })) return
+    await mutate(`/node-groups/${group.id}`, { method: 'DELETE' }, '节点组已删除')
+  }
   return <section className="node-workspace-panel" role="tabpanel">
     <div className="node-group-create">
       <div className="node-mode-switch" role="group" aria-label="来源类型"><button type="button" className={kind === 'remote' ? 'active' : ''} aria-pressed={kind === 'remote'} onClick={() => { setKind('remote'); setImportPreview(null) }}>远程订阅</button><button type="button" className={kind === 'manual' ? 'active' : ''} aria-pressed={kind === 'manual'} onClick={() => { setKind('manual'); setImportPreview(null) }}>手动节点</button></div>
@@ -210,7 +221,7 @@ function NodeGroups({ workspace, busy, mutate, subjectQuery, client, refresh, me
         <div className="node-group-actions">
           {source && <button type="button" className="icon-button" title="刷新来源" aria-label={`刷新 ${group.name}`} disabled={busy} onClick={async () => { try { await client.request(`/node-sources/${source.id}/refresh${subjectQuery}`, { method: 'POST', body: '{}' }); message('来源已刷新'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><RefreshCw size={15} /></button>}
           <button type="button" className="icon-button" title="编辑节点组" aria-label={`编辑 ${group.name}`} disabled={busy} onClick={() => openEdit(group)}><Pencil size={15} /></button>
-          {group.kind !== 'oboard' && <button type="button" className="icon-button danger" title="删除" aria-label={`删除 ${group.name}`} disabled={busy} onClick={() => { if (window.confirm(`删除节点组“${group.name}”及其中节点？`)) void mutate(`/node-groups/${group.id}`, { method: 'DELETE' }, '节点组已删除') }}><Trash2 size={15} /></button>}
+          {group.kind !== 'oboard' && <button type="button" className="icon-button danger" title="删除" aria-label={`删除 ${group.name}`} disabled={busy} onClick={() => void deleteGroup(group)}><Trash2 size={15} /></button>}
         </div>
       </>}</article>
     })}</div>
@@ -227,6 +238,7 @@ const filterTypeLabels: Record<string, string> = {
 const filterProtocols = ['vless', 'vmess', 'trojan', 'tuic', 'hysteria2', 'anytls', 'shadowsocks', 'socks5', 'socks', 'snell', 'mieru', 'ssh']
 
 function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refresh, message, legacySubscriptions }: { workspace: Workspace; data: any; client: Client; subjectQuery: string; busy: boolean; refresh: () => Promise<void>; message: (value: string, tone?: 'success' | 'error' | 'warning') => void; legacySubscriptions?: React.ReactNode }) {
+  const dialogs = useDialogs()
   const [selectedID, setSelectedID] = React.useState(workspace.subscription_outputs[0]?.id || 0)
   const selected = workspace.subscription_outputs.find(item => item.id === selectedID) || workspace.subscription_outputs[0]
   const [name, setName] = React.useState(selected?.name || '')
@@ -266,6 +278,27 @@ function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refr
   }
   const save = async () => { try { await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'PATCH', body: JSON.stringify({ name, group_ids: groupIDs, filters, enabled: true }) }); message('组合订阅已保存'); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }
   const runPreview = async () => { try { const result = await client.request<any>(`/subscription-outputs/${selected.id}/preview${subjectQuery}`, { method: 'POST', body: JSON.stringify({ format }) }); setPreview(result) } catch (error: any) { message(error?.message || String(error), 'error') } }
+  const createOutput = async () => {
+    const next = await dialogs.prompt({ title: '新建组合订阅', message: '请输入组合订阅名称。', placeholder: '组合订阅名称', confirmText: '创建' })
+    if (!next) return
+    try {
+      await client.request(`/subscription-outputs${subjectQuery}`, { method: 'POST', body: JSON.stringify({ name: next, group_ids: [workspace.node_groups.find(group => group.kind === 'oboard')?.id].filter(Boolean) }) })
+      await refresh()
+    } catch (error: any) {
+      message(error?.message || String(error), 'error')
+    }
+  }
+  const deleteOutput = async () => {
+    if (!await dialogs.confirm({ title: `删除组合订阅“${selected.name}”？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
+    try {
+      await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'DELETE' })
+      message('组合订阅已删除')
+      setSelectedID(0)
+      await refresh()
+    } catch (error: any) {
+      message(error?.message || String(error), 'error')
+    }
+  }
   const copyURL = async () => {
     const users = data.users || []
     const user = users.find((item: any) => item.id === workspace.subject.id) || data.account_user || data.current_user
@@ -276,7 +309,7 @@ function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refr
     await navigator.clipboard.writeText(`${base}/api/v1/subscriptions/${user.subscription_token}?${query}`)
     message('组合订阅链接已复制')
   }
-  return <section className="node-workspace-panel" role="tabpanel"><div className="subscription-output-layout"><aside aria-label="组合订阅列表"><div className="output-list-head"><strong>组合</strong><button type="button" className="icon-button" title="新建组合" aria-label="新建组合" disabled={busy} onClick={async () => { const next = window.prompt('组合订阅名称'); if (!next) return; try { await client.request(`/subscription-outputs${subjectQuery}`, { method: 'POST', body: JSON.stringify({ name: next, group_ids: [workspace.node_groups.find(group => group.kind === 'oboard')?.id].filter(Boolean) }) }); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><Plus size={15} /></button></div>{workspace.subscription_outputs.map(output => <button key={output.id} type="button" className={selected.id === output.id ? 'active' : ''} onClick={() => setSelectedID(output.id)}><span>{output.name}</span>{output.is_default && <small>默认</small>}</button>)}</aside><div className="output-editor">
+  return <section className="node-workspace-panel" role="tabpanel"><div className="subscription-output-layout"><aside aria-label="组合订阅列表"><div className="output-list-head"><strong>组合</strong><button type="button" className="icon-button" title="新建组合" aria-label="新建组合" disabled={busy} onClick={() => void createOutput()}><Plus size={15} /></button></div>{workspace.subscription_outputs.map(output => <button key={output.id} type="button" className={selected.id === output.id ? 'active' : ''} onClick={() => setSelectedID(output.id)}><span>{output.name}</span>{output.is_default && <small>默认</small>}</button>)}</aside><div className="output-editor">
     <label><span>组合名称</span><input value={name} onChange={event => setName(event.target.value)} maxLength={80} /></label>
     <fieldset><legend>按顺序选择节点组</legend>{orderedGroups.map(group => {
       const position = groupIDs.indexOf(group.id)
@@ -300,7 +333,7 @@ function SubscriptionOutputs({ workspace, data, client, subjectQuery, busy, refr
       </div>)}
       <div className="output-add-rule"><button type="button" className="ghost" disabled={filters.length >= 32} onClick={() => setFilters(current => [...current, { type: 'keep_name', value: '' }])}><Plus size={14} />添加规则</button></div>
     </fieldset>
-    <div className="output-actions"><select value={format} onChange={event => setFormat(event.target.value)} aria-label="客户端格式">{formats.map(item => <option key={item}>{item}</option>)}</select><div className="output-action-buttons"><button type="button" onClick={() => void save()} disabled={busy || !name.trim() || groupIDs.length === 0 || !filteredHasValue}><Check size={15} />保存</button><button type="button" className="ghost" onClick={() => void runPreview()} disabled={busy}><Eye size={15} />预览</button><button type="button" className="ghost" onClick={() => void copyURL()}><Copy size={15} />复制订阅</button>{!selected.is_default && <button type="button" className="ghost danger" disabled={busy} onClick={async () => { if (!window.confirm(`删除组合订阅“${selected.name}”？`)) return; try { await client.request(`/subscription-outputs/${selected.id}${subjectQuery}`, { method: 'DELETE' }); message('组合订阅已删除'); setSelectedID(0); await refresh() } catch (error: any) { message(error?.message || String(error), 'error') } }}><Trash2 size={15} />删除组合</button>}</div></div>
+    <div className="output-actions"><select value={format} onChange={event => setFormat(event.target.value)} aria-label="客户端格式">{formats.map(item => <option key={item}>{item}</option>)}</select><div className="output-action-buttons"><button type="button" onClick={() => void save()} disabled={busy || !name.trim() || groupIDs.length === 0 || !filteredHasValue}><Check size={15} />保存</button><button type="button" className="ghost" onClick={() => void runPreview()} disabled={busy}><Eye size={15} />预览</button><button type="button" className="ghost" onClick={() => void copyURL()}><Copy size={15} />复制订阅</button>{!selected.is_default && <button type="button" className="ghost danger" disabled={busy} onClick={() => void deleteOutput()}><Trash2 size={15} />删除组合</button>}</div></div>
     {preview && <div className="output-preview"><div><span>输出 {preview.preview?.nodes?.length || 0} 个</span><span>格式过滤 {preview.preview?.filtered_count || 0} 个</span><span>规则过滤 {preview.preview?.filter_dropped || 0} 个</span><span>去重 {preview.deduplicated_count || 0} 个</span><span>错误 {preview.preview?.invalid_reasons?.length || 0} 个</span></div>{Array.isArray(preview.preview?.filter_stats) && preview.preview.filter_stats.length > 0 && <div className="filter-stats">{preview.preview.filter_stats.map((stat: any, index: number) => <span key={index} className={`filter-stat ${stat.dropped > 0 ? 'filter-stat-dropped' : ''}`}>{filterTypeLabels[stat.type] || stat.type} · {stat.value}{stat.skip_reason ? ` · ${stat.skip_reason}` : ` · 命中 ${stat.matched} / 丢弃 ${stat.dropped} / 剩余 ${stat.remaining}`}</span>)}</div>}<pre>{preview.preview?.content || '此格式没有兼容节点'}</pre></div>}
   </div></div>{legacySubscriptions && <div className="legacy-subscriptions-embedded">{legacySubscriptions}</div>}</section>
 }

@@ -98,6 +98,7 @@ import { Input } from './components/ui/input'
 import { Select } from './components/ui/select'
 import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
+import { DialogContext, useDialogs, type DialogApi, type DialogState } from './components/ui/dialog-context'
 import { FormField, TrafficLimitInput } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
 import { MCPAccessPage } from './features/mcp/MCPAccessPage'
@@ -900,7 +901,6 @@ function LatencyProbeSettingsDialog({
   regions,
   loading,
   error,
-  nested = true,
 }: {
   draft: any
   onCancel: () => void
@@ -908,7 +908,6 @@ function LatencyProbeSettingsDialog({
   regions: LatencyProbeRegion[]
   loading?: boolean
   error?: string
-  nested?: boolean
 }) {
   const [values, setValues] = useState({
     latency_probe_mode: (draft.latency_probe_mode || 'tcp') as LatencyProbeMode,
@@ -1039,7 +1038,7 @@ function LatencyProbeSettingsDialog({
   const isOverLimit = selectedCount + 1 > maxTargets
 
   return (
-    <MotionDialogPanel onCancel={cancel} className="latency-dialog" nested={nested}>
+    <MotionDialogPanel onCancel={cancel} className="latency-dialog">
       <header className="dialog-head">
         <div>
           <h2 id="latency-dialog-title">延迟测试与地区目标设置</h2>
@@ -1568,21 +1567,6 @@ type ToastKind = 'error' | 'success' | 'warning' | 'info'
 type ToastState = { id: number; kind: ToastKind; message: string } | null
 type ControllerUpdateInProgressChange = (value: boolean) => void
 const CONTROLLER_UPDATE_IN_PROGRESS_KEY = 'oboard.controller-update.in-progress'
-type DialogTone = 'default' | 'danger'
-type DialogChoice = { value: string; label: string }
-type DialogBase = { title: string; message?: React.ReactNode; confirmText?: string; cancelText?: string; tone?: DialogTone }
-type PromptDialogOptions = DialogBase & { defaultValue?: string; placeholder?: string; inputType?: string; choices?: DialogChoice[] }
-type DialogState =
-  | ({ id: number; kind: 'alert'; resolve: () => void } & DialogBase)
-  | ({ id: number; kind: 'confirm'; resolve: (value: boolean) => void } & DialogBase)
-  | ({ id: number; kind: 'prompt'; resolve: (value: string | null) => void } & PromptDialogOptions)
-type DialogApi = {
-  alert: (options: DialogBase) => Promise<void>
-  confirm: (options: DialogBase) => Promise<boolean>
-  prompt: (options: PromptDialogOptions) => Promise<string | null>
-}
-
-const DialogContext = React.createContext<DialogApi | null>(null)
 const LoadingContext = React.createContext<boolean>(false)
 
 const errorMessages: Record<string, string> = {
@@ -1685,12 +1669,6 @@ function RefreshIcon() {
   return <RefreshCw size={17} strokeWidth={2} aria-hidden="true" />
 }
 
-function useDialogs() {
-  const dialogs = React.useContext(DialogContext)
-  if (!dialogs) throw new Error('DialogContext is not mounted')
-  return dialogs
-}
-
 function useDialogController() {
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const dialogs = useMemo<DialogApi>(() => ({
@@ -1709,47 +1687,51 @@ function useDialogController() {
 
 function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: () => void }) {
   const [value, setValue] = useState('')
+  const lastDialogRef = useRef<DialogState | null>(null)
+  if (dialog) lastDialogRef.current = dialog
+  const renderedDialog = dialog || lastDialogRef.current
   useEffect(() => {
     if (dialog?.kind === 'prompt') setValue(dialog.defaultValue || '')
   }, [dialog?.id])
-  if (!dialog) return null
+  if (!renderedDialog) return null
   const close = (result?: string | boolean | null) => {
+    if (!dialog) return
     if (dialog.kind === 'alert') dialog.resolve()
     if (dialog.kind === 'confirm') dialog.resolve(Boolean(result))
     if (dialog.kind === 'prompt') dialog.resolve(typeof result === 'string' ? result : null)
     onClose()
   }
-  const confirmText = dialog.confirmText || (dialog.kind === 'alert' ? '知道了' : '确认')
-  const isPrompt = dialog.kind === 'prompt'
-  const hasMessage = Boolean(dialog.message)
+  const confirmText = renderedDialog.confirmText || (renderedDialog.kind === 'alert' ? '知道了' : '确认')
+  const isPrompt = renderedDialog.kind === 'prompt'
+  const hasMessage = Boolean(renderedDialog.message)
 
   return (
     <Dialog
-      isOpen={!!dialog}
-      onClose={() => close(dialog.kind === 'confirm' ? false : null)}
-      title={dialog.title}
+      isOpen={Boolean(dialog)}
+      onClose={() => close(renderedDialog.kind === 'confirm' ? false : null)}
+      title={renderedDialog.title}
       size="sm"
       className={[
         'dialog-host',
         isPrompt ? 'dialog-host-prompt' : 'dialog-host-compact',
-        dialog.tone === 'danger' ? 'dialog-host-danger' : '',
+        renderedDialog.tone === 'danger' ? 'dialog-host-danger' : '',
       ].filter(Boolean).join(' ')}
     >
       {(hasMessage || isPrompt) && (
         <div className="dialog-host-body">
-          {hasMessage && <div className="dialog-host-message">{dialog.message}</div>}
+          {hasMessage && <div className="dialog-host-message">{renderedDialog.message}</div>}
           {isPrompt && (
             <div className="dialog-host-field">
-              {dialog.choices?.length ? (
+              {renderedDialog.kind === 'prompt' && renderedDialog.choices?.length ? (
                 <Select value={value} onChange={e => setValue(e.target.value)} autoFocus>
-                  {dialog.choices.map(x => <option value={x.value} key={x.value}>{x.label}</option>)}
+                  {renderedDialog.choices.map(x => <option value={x.value} key={x.value}>{x.label}</option>)}
                 </Select>
               ) : (
                 <Input
                   value={value}
                   onChange={e => setValue(e.target.value)}
-                  placeholder={dialog.placeholder}
-                  type={dialog.inputType || 'text'}
+                  placeholder={renderedDialog.kind === 'prompt' ? renderedDialog.placeholder : undefined}
+                  type={renderedDialog.kind === 'prompt' ? renderedDialog.inputType || 'text' : 'text'}
                   autoFocus
                   onKeyDown={e => { if (e.key === 'Enter') close(value) }}
                 />
@@ -1759,15 +1741,15 @@ function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: 
         </div>
       )}
       <div className="dialog-actions dialog-host-actions">
-        {dialog.kind !== 'alert' && (
-          <button type="button" className="ghost" onClick={() => close(dialog.kind === 'confirm' ? false : null)}>
-            {dialog.cancelText || '取消'}
+        {renderedDialog.kind !== 'alert' && (
+          <button type="button" className="ghost" onClick={() => close(renderedDialog.kind === 'confirm' ? false : null)}>
+            {renderedDialog.cancelText || '取消'}
           </button>
         )}
         <button
           type="button"
-          className={dialog.tone === 'danger' ? 'danger-button' : ''}
-          onClick={() => close(dialog.kind === 'prompt' ? value : true)}
+          className={renderedDialog.tone === 'danger' ? 'danger-button' : ''}
+          onClick={() => close(renderedDialog.kind === 'prompt' ? value : true)}
         >
           {confirmText}
         </button>
@@ -4553,8 +4535,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
       <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '备份并安装'}</button>
     </div>
-    <AnimatePresence>{autoUpdateDialogOpen && (
-      <Dialog isOpen={autoUpdateDialogOpen} onClose={() => setAutoUpdateDialogOpen(false)} title="自动更新配置" size="default">
+    <Dialog isOpen={autoUpdateDialogOpen} onClose={() => setAutoUpdateDialogOpen(false)} title="自动更新配置" size="default">
         <div className="auto-update-dialog-content">
           <div className="auto-update-dialog-section">
             <div className="auto-update-section-head">
@@ -4626,8 +4607,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
             )}
           </div>
         </div>
-      </Dialog>
-    )}</AnimatePresence>
+    </Dialog>
     <AnimatePresence>{installDialogOpen && <ControllerUpdateInstallDialog
       phase={installPhase}
       targetVersion={snapshot.available?.version || ''}
@@ -4652,7 +4632,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const activeTitle = phase === 'starting' ? '正在备份数据' : phase === 'downloading' ? '正在下载并检查更新文件' : phase === 'ready' ? '更新文件已经检查完成' : phase === 'cancelling' ? '正在停止更新' : connectionInterrupted ? '正在重新启动主控' : '正在安装新版本'
   const activeDescription = phase === 'starting' ? '备份完成后会自动开始下载。' : phase === 'downloading' ? '此阶段可以安全中断，不会改动当前程序。' : phase === 'ready' ? '安装即将开始，此时仍可安全中断。' : phase === 'cancelling' ? '当前程序不会被替换，请稍候。' : connectionInterrupted ? '面板会自动尝试重新连接。' : '安装完成后主控会自动重新启动。'
   const downloadDone = phase === 'ready' || phase === 'installing'
-  return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog" system>
+  return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog">
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
       {phase === 'confirm' && <>
@@ -5493,8 +5473,8 @@ function CertificateLogDialog({ certificate, onClose }: { certificate: Certifica
   </MotionDialogPanel>
 }
 
-function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = false, configured, secretRequired, credentials, saving, deletingID, nested = false, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; retainLocked?: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; nested?: boolean; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
-  return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog" nested={nested}>
+function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = false, configured, secretRequired, credentials, saving, deletingID, onChange, onSelectCredential, onDeleteCredential, onCancel, onSubmit }: { keyID: string; hmacKey: string; remark: string; retain: boolean; retainLocked?: boolean; configured: boolean; secretRequired: boolean; credentials: GoogleEABCredential[]; saving: boolean; deletingID: number; onChange: (patch: { keyID?: string; hmacKey?: string; remark?: string; retain?: boolean }) => void; onSelectCredential: (credential: GoogleEABCredential) => void; onDeleteCredential: (credential: GoogleEABCredential) => void; onCancel: () => void; onSubmit: () => void }) {
+  return <MotionDialogPanel onCancel={onCancel} className="certificate-eab-dialog">
     <header className="dialog-head"><div><h2>填写 Google EAB</h2><p className="muted">连接您的 Google Cloud 公共 CA 账号</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body">
       <div className="certificate-eab-guide"><KeyRound size={20} /><div><strong>需要从 Google 获取两项信息</strong><p>Google Trust Services 要求先完成外部账号绑定。请打开 Google 官方页面，按页面指引获取 Key ID 和 HMAC Key。</p><a href="https://cloud.google.com/certificate-manager/docs/public-ca-tutorial?hl=zh-cn#request-key-hmac" target="_blank" rel="noreferrer">打开 Google 官方获取页面<ExternalLink size={14} /></a></div></div>
@@ -5767,7 +5747,7 @@ function CertificateSettings({ data, client, load, notify }: any) {
       <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setCreateDialogOpen(false)}>取消</button><button type="submit" form="certificate-create-form" disabled={working === 'create' || createBlocked}>{working === 'create' ? '申请中...' : '开始申请'}</button></footer>
     </MotionDialogPanel>}</AnimatePresence>
     <AnimatePresence>{logCertificate && <CertificateLogDialog certificate={logCertificate} onClose={() => setLogCertificate(null)} />}</AnimatePresence>
-    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} retainLocked={eabTarget === 'auto'} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} nested={eabTarget === 'draft'} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
+    <AnimatePresence>{eabTarget && <CertificateEABDialog keyID={eabDraft.keyID} hmacKey={eabDraft.hmacKey} remark={eabDraft.remark} retain={eabDraft.retain} retainLocked={eabTarget === 'auto'} configured={existingDirectEAB} secretRequired={eabSecretRequired} credentials={eabCredentials} saving={working.startsWith('eab-') && !working.startsWith('eab-delete-')} deletingID={working.startsWith('eab-delete-') ? Number(working.slice('eab-delete-'.length)) : 0} onChange={patch => setEABDraft(current => ({ ...current, ...patch }))} onSelectCredential={credential => void selectSavedEAB(credential)} onDeleteCredential={credential => void deleteSavedEAB(credential)} onCancel={closeEAB} onSubmit={() => void saveEAB()} />}</AnimatePresence>
   </div>
 }
 
@@ -7598,7 +7578,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
-    <AnimatePresence>{mtuServer && <MTUSettingsDialog draft={serverToDraft(mtuServer)} nested={false} onCancel={() => setMtuServer(null)} onSave={async (patch) => {
+    <AnimatePresence>{mtuServer && <MTUSettingsDialog draft={serverToDraft(mtuServer)} onCancel={() => setMtuServer(null)} onSave={async (patch) => {
       try {
         const result = await client.request(`/servers/${mtuServer.id}`, { method: 'PATCH', body: JSON.stringify({ ...mtuServer, ...patch }) }) as { server?: Server }
         if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
@@ -8362,7 +8342,7 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
   </MotionDialogPanel>
 }
 
-function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>; nested?: boolean }) {
+function MTUSettingsDialog({ draft, onCancel, onSave }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void> }) {
   const [value, setValue] = useState<{
     mtu_mode: string
     mtu_value: number | string
@@ -8394,7 +8374,7 @@ function MTUSettingsDialog({ draft, onCancel, onSave, nested = true }: { draft: 
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="mtu-dialog" nested={nested}>
+  return <MotionDialogPanel onCancel={cancel} className="mtu-dialog">
       <header className="dialog-head">
         <div><h2 id="mtu-dialog-title">MTU 检测设置</h2><p className="muted">首次部署或设置变化时执行，不会随每次下发重复检测。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
@@ -16815,6 +16795,9 @@ function UserManagement({ data, client, load }: any) {
   const [selectedScope, setSelectedScope] = useState<UserScopeKey>('all')
   const [passwordUser, setPasswordUser] = useState<User | null>(null)
   const [planUser, setPlanUser] = useState<User | null>(null)
+  const planDialogUserRef = useRef<User | null>(null)
+  if (planUser) planDialogUserRef.current = planUser
+  const planDialogUser = planDialogUserRef.current
   const createUser = async () => {
     await client.request('/users', { method: 'POST', body: JSON.stringify(userDraftPayload(draft, true)) })
     setCreateOpen(false)
@@ -17067,7 +17050,7 @@ function UserManagement({ data, client, load }: any) {
     <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
     <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
-    <AnimatePresence>{planUser && <UserPlanDialog user={planUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}</AnimatePresence>
+    {planDialogUser && <UserPlanDialog key={planDialogUser.id} isOpen={Boolean(planUser)} user={planDialogUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planDialogUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}
   </Panel>
 }
 

@@ -1,6 +1,6 @@
 import * as React from "react"
-import { createPortal } from "react-dom"
 import { m, useReducedMotion } from "motion/react"
+import { ModalSurface } from "./modal-layer"
 
 const easeOut = [0.22, 1, 0.36, 1] as const
 const easeIn = [0.4, 0, 1, 1] as const
@@ -39,100 +39,33 @@ export function MotionPage({
   )
 }
 
-// Dialog backdrop + panel. Keep a short y settle for modal focus, not for page chrome.
+// Dialog backdrop + panel. Stack order and interaction are owned by ModalSurface.
 export function MotionDialogPanel({
   onCancel,
   children,
   className = "",
-  nested = false,
-  system = false,
   ariaLabel = "对话框",
   restoreFocus,
+  "aria-labelledby": ariaLabelledBy,
 }: {
   onCancel: () => void
   children: React.ReactNode
   className?: string
-  nested?: boolean
-  system?: boolean
   ariaLabel?: string
   restoreFocus?: HTMLElement | null
+  "aria-labelledby"?: string
 }) {
-  const shouldReduceMotion = useReducedMotion()
-  const panelRef = React.useRef<HTMLElement | null>(null)
-  const previousFocusRef = React.useRef<HTMLElement | null>(
-    restoreFocus || (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null),
-  )
-  const onCancelRef = React.useRef(onCancel)
-  onCancelRef.current = onCancel
-  const backdropClass = nested
-    ? "dialog-backdrop dialog-backdrop-nested"
-    : (system ? "dialog-backdrop dialog-backdrop-system" : "dialog-backdrop")
-
-  React.useEffect(() => {
-    const panel = panelRef.current
-    if (!panel) return
-    const focusable = panel.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])')
-    window.requestAnimationFrame(() => (focusable || panel).focus())
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onCancelRef.current()
-        return
-      }
-      if (event.key !== 'Tab') return
-      const elements = Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'))
-      if (!elements.length) {
-        event.preventDefault()
-        panel.focus()
-        return
-      }
-      const first = elements[0]
-      const last = elements[elements.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus()
-    }
-  }, [])
-
-  const content = (
-    <m.div
-      className={backdropClass}
-      role="presentation"
-      onMouseDown={e => {
-        if (e.target === e.currentTarget) onCancel()
-      }}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: shouldReduceMotion ? 0.01 : 0.2, ease: "easeOut" }}
+  return (
+    <ModalSurface
+      onClose={onCancel}
+      panelClassName={`dialog ${className}`}
+      ariaLabel={ariaLabel}
+      ariaLabelledBy={ariaLabelledBy}
+      restoreFocus={restoreFocus}
     >
-      <m.section
-        ref={panelRef}
-        className={`dialog ${className}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel}
-        tabIndex={-1}
-        initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
-        animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-        exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }}
-        transition={{ duration: shouldReduceMotion ? 0.01 : 0.22, ease: easeOut as any }}
-      >
-        {children}
-      </m.section>
-    </m.div>
+      {children}
+    </ModalSurface>
   )
-
-  return typeof document === "undefined" ? content : createPortal(content, document.body)
 }
 
 // List container. No stagger by default — page crossfade already handles entrance.

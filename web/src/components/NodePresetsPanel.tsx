@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Layers, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { useDialogs } from './ui/dialog-context'
 import { Select } from './ui/select'
 import { SettingsRow } from './settings/SettingsLayout'
 import { SnellProfileCards, SnellProfileEditor, emptySnellDraft, snellDraftFromProfile, type SnellDraft, type SnellProfile } from './SnellProfilesPanel'
@@ -279,6 +280,7 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
 }
 
 export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPanelProps) {
+  const dialogs = useDialogs()
   const presets: NodePreset[] = data.node_presets || []
   const snellProfiles: SnellProfile[] = data.snell_profiles || []
   const [filter, setFilter] = useState<ProtocolFilter>('all')
@@ -355,7 +357,7 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   }
 
   const deleteNode = async (preset: NodePreset) => {
-    if (!window.confirm(`确认删除预设「${preset.name}」？`)) return
+    if (!await dialogs.confirm({ title: `删除预设「${preset.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
     try {
       await client.request(`/node-presets/${preset.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
@@ -366,7 +368,7 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   }
 
   const deleteSnell = async (profile: SnellProfile) => {
-    if (!window.confirm(`确认删除预设「${profile.name}」？`)) return
+    if (!await dialogs.confirm({ title: `删除预设「${profile.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
     try {
       await client.request(`/snell-profiles/${profile.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
@@ -388,7 +390,12 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
   }
 
   const restoreSystem = async () => {
-    if (!window.confirm('确认将全部内置节点预设恢复为系统模板？此操作会覆盖内置模板的自定义修改，但不会影响自定义预设与入口引用。')) return
+    if (!await dialogs.confirm({
+      title: '恢复全部系统模板？',
+      message: '此操作会覆盖内置模板的自定义修改，但不会影响自定义预设与入口引用。',
+      confirmText: '恢复模板',
+      tone: 'danger',
+    })) return
     setSaving(true)
     try {
       await client.request('/node-presets/restore-system', { method: 'POST', body: '{}' })

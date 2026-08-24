@@ -4,21 +4,32 @@ import * as React from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DialogContext, type DialogApi } from '../components/ui/dialog-context'
 import { NodeWorkspacePage } from './NodeWorkspacePage'
 
 async function flushEffects() {
   await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 0)) })
 }
 
+function renderWithDialogs(root: Root, node: React.ReactNode, dialogs: DialogApi) {
+  root.render(<DialogContext.Provider value={dialogs}>{node}</DialogContext.Provider>)
+}
+
 describe('NodeWorkspacePage', () => {
   let container: HTMLDivElement
   let root: Root
+  let dialogs: DialogApi
 
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
+    dialogs = {
+      alert: vi.fn(async () => undefined),
+      confirm: vi.fn(async () => true),
+      prompt: vi.fn(async () => null),
+    }
   })
 
   afterEach(() => {
@@ -44,7 +55,7 @@ describe('NodeWorkspacePage', () => {
       throw new Error(`unexpected request: ${path}`)
     })
     await act(async () => {
-      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
 
@@ -97,7 +108,7 @@ describe('NodeWorkspacePage', () => {
       throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
     })
     await act(async () => {
-      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
     act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
@@ -150,7 +161,7 @@ describe('NodeWorkspacePage', () => {
       throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
     })
     await act(async () => {
-      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
 
@@ -191,11 +202,11 @@ describe('NodeWorkspacePage', () => {
     })
     const load = vi.fn().mockResolvedValue(undefined)
     await act(async () => {
-      root.render(<NodeWorkspacePage data={{ current_user: { id: 1 } }} client={{ request }} load={load} />)
+      renderWithDialogs(root, <NodeWorkspacePage data={{ current_user: { id: 1 } }} client={{ request }} load={load} />, dialogs)
     })
     await flushEffects()
     await act(async () => {
-      root.render(<NodeWorkspacePage data={{ session: { role: 'admin' }, current_user: { id: 1 }, users: [{ id: 1, username: 'admin', status: 'active' }], servers: [], subscription_plans: [] }} client={{ request }} load={load} />)
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'admin' }, current_user: { id: 1 }, users: [{ id: 1, username: 'admin', status: 'active' }], servers: [], subscription_plans: [] }} client={{ request }} load={load} />, dialogs)
     })
     await flushEffects()
 
@@ -226,7 +237,7 @@ describe('NodeWorkspacePage', () => {
       throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
     })
     await act(async () => {
-      root.render(<NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
     act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
@@ -268,4 +279,71 @@ describe('NodeWorkspacePage', () => {
     expect(container.querySelector('.node-group-edit')).toBeNull()
     expect(container.querySelectorAll('[aria-label^="编辑 "]').length).toBe(3)
   })
+
+  it('waits for shared confirmation before deleting a node group', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [
+        { id: 1, kind: 'oboard', system_key: 'oboard', name: 'OBoard', node_count: 1 },
+        { id: 2, kind: 'manual', name: '机场 B', node_count: 2 },
+      ],
+      node_sources: [],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: [1, 2] }],
+    }
+    let resolveConfirm!: (value: boolean) => void
+    dialogs.confirm = vi.fn(() => new Promise<boolean>(resolve => { resolveConfirm = resolve }))
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/node-workspace') return workspace
+      if (path === '/node-library') return { nodes: [] }
+      if (path === '/node-groups/2' && init?.method === 'DELETE') return {}
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
+    })
+    await flushEffects()
+    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+    act(() => (container.querySelector('[aria-label="删除 机场 B"]') as HTMLButtonElement).click())
+
+    expect(dialogs.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: '删除节点组“机场 B”？', tone: 'danger' }))
+    expect(request.mock.calls.some(([path, init]) => path === '/node-groups/2' && init?.method === 'DELETE')).toBe(false)
+
+    await act(async () => {
+      resolveConfirm(true)
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+    })
+    await flushEffects()
+    expect(request.mock.calls.some(([path, init]) => path === '/node-groups/2' && init?.method === 'DELETE')).toBe(true)
+  })
+
+  it('creates a combination from the shared prompt result', async () => {
+    const workspace = {
+      subject: { id: 7, username: 'alice' },
+      node_groups: [{ id: 1, kind: 'oboard', system_key: 'oboard', name: 'OBoard', node_count: 1 }],
+      node_sources: [],
+      subscription_outputs: [{ id: 2, name: '默认组合', is_default: true, enabled: true, group_ids: [1] }],
+    }
+    dialogs.prompt = vi.fn(async () => '新组合')
+    const created: Array<Record<string, unknown>> = []
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/node-workspace') return workspace
+      if (path === '/node-library') return { nodes: [] }
+      if (path === '/subscription-outputs' && init?.method === 'POST') {
+        created.push(JSON.parse(String(init.body)))
+        return {}
+      }
+      throw new Error(`unexpected request: ${path} ${init?.method || ''}`)
+    })
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
+    })
+    await flushEffects()
+    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
+    act(() => (container.querySelector('[aria-label="新建组合"]') as HTMLButtonElement).click())
+    await flushEffects()
+
+    expect(dialogs.prompt).toHaveBeenCalledWith(expect.objectContaining({ title: '新建组合订阅', confirmText: '创建' }))
+    expect(created).toEqual([{ name: '新组合', group_ids: [1] }])
+  })
+
 })

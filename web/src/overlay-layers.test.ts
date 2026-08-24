@@ -14,8 +14,6 @@ describe('global overlay layers', () => {
     const layers = [
       'navigation',
       'dialog',
-      'dialog-nested',
-      'dialog-system',
       'popover',
       'loading',
       'theme-transition',
@@ -29,10 +27,10 @@ describe('global overlay layers', () => {
 
   it('binds shared portal surfaces to semantic layers', () => {
     expect(stylesheet).toMatch(/\.top-toast-viewport\s*\{[^}]*z-index:\s*var\(--z-toast\)/s)
-    expect(stylesheet).toMatch(/\.dialog-backdrop\s*\{[^}]*z-index:\s*var\(--z-dialog\)/s)
-    expect(stylesheet).toMatch(/\.dialog-backdrop-nested\s*\{[^}]*z-index:\s*var\(--z-dialog-nested\)/s)
-    expect(stylesheet).toMatch(/\.dialog-backdrop-system\s*\{[^}]*z-index:\s*var\(--z-dialog-system\)/s)
-    expect(stylesheet).toMatch(/\.dialog-root\s*\{[^}]*z-index:\s*var\(--z-dialog-system\)/s)
+    expect(stylesheet).toMatch(/\.dialog-layer\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ var\(--dialog-layer-index, 0\)\)/s)
+    expect(stylesheet).toMatch(/\.dialog-layer\[data-modal-top="false"\] \.dialog-backdrop\s*\{[^}]*background:\s*transparent/s)
+    expect(stylesheet).not.toMatch(/--z-dialog-(nested|system)/)
+    expect(stylesheet).not.toMatch(/\.dialog-backdrop-(nested|system)/)
     expect(stylesheet).toMatch(/\.custom-select-menu\s*\{[^}]*z-index:\s*var\(--z-popover\)/s)
     expect(stylesheet).toMatch(/\.portal-loader\s*\{[^}]*z-index:\s*var\(--z-loading\)/s)
   })

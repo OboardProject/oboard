@@ -35,7 +35,8 @@ function fmtDate(iso?: string) {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-export function UserPlanDialog({ user, binding, plans, client, onClose }: {
+export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }: {
+  isOpen: boolean
   user: { id: number; username: string }
   binding?: Binding
   plans: Plan[]
@@ -69,7 +70,18 @@ export function UserPlanDialog({ user, binding, plans, client, onClose }: {
     }
   }
 
-  React.useEffect(() => { void reload() }, [])
+  React.useEffect(() => {
+    if (!isOpen) return
+    setPlanID(binding?.plan_id || 0)
+    setStartsAt(toLocalInputValue(binding?.starts_at))
+    setExpiresAt(toLocalInputValue(binding?.expires_at))
+    setPreview(null)
+    setMessage('')
+    setExForm({ node_key: '', effect: 'allow', reason: '', expires_at: '' })
+    setSearchQuery('')
+    setSearchResults([])
+    void reload()
+  }, [isOpen, user.id])
 
   const runPreview = async () => {
     if (!planID) { setMessage('请先选择套餐'); return }
@@ -160,7 +172,7 @@ export function UserPlanDialog({ user, binding, plans, client, onClose }: {
   const currentPlan = plans.find(p => p.id === (binding?.plan_id || 0))
 
   return (
-    <Dialog isOpen onClose={onClose} title={`套餐与例外：${user.username}`} size="xl">
+    <Dialog isOpen={isOpen} onClose={onClose} title={`套餐与例外：${user.username}`} size="xl">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <div className="card-custom" style={{ padding: 14 }}>

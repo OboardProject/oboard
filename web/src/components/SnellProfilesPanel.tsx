@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Layers, Pencil, Plus, Trash2 } from 'lucide-react'
+import { useDialogs } from './ui/dialog-context'
 import { Select } from './ui/select'
 import { SettingsGroup, SettingsRow } from './settings/SettingsLayout'
 
@@ -115,6 +116,7 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
 }
 
 export function SnellProfilesPanel({ data, client, load, notify }: SnellProfilesPanelProps) {
+  const dialogs = useDialogs()
   const profiles: SnellProfile[] = data.snell_profiles || []
   const [editing, setEditing] = useState<null | { id?: number; draft: SnellDraft }>(null)
   const [saving, setSaving] = useState(false)
@@ -141,7 +143,7 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   }
 
   const deleteProfile = async (profile: SnellProfile) => {
-    if (!window.confirm(`确认删除预设「${profile.name}」？`)) return
+    if (!await dialogs.confirm({ title: `删除预设「${profile.name}」？`, message: '删除后无法恢复。', confirmText: '删除', tone: 'danger' })) return
     try {
       await client.request(`/snell-profiles/${profile.id}`, { method: 'DELETE' })
       notify('预设已删除', 'success')
