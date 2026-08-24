@@ -9183,7 +9183,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <div className="server-list-subinfo">
               <span>#{server.id}</span>
               <span>·</span>
-              <span>{regionLabel(serverRegionCode(server))}</span>
+              <span title={regionLabel(serverRegionCode(server))}>{normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</span>
             </div>
           </div>
         </div>
@@ -9233,7 +9233,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
 
         {/* Mobile-only compact metadata line */}
         <div className="server-list-mobile-meta">
-          <span className="server-list-mobile-tag">#{server.id} {regionLabel(serverRegionCode(server))}</span>
+          <span className="server-list-mobile-tag" title={regionLabel(serverRegionCode(server))}>#{server.id} {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</span>
           <span className="server-list-mobile-sep">·</span>
           <span className="server-list-mobile-stat">CPU {Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
           <span className="server-list-mobile-sep">·</span>
@@ -9255,7 +9255,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <RegionFlag code={serverRegionCode(server)} size={20} />
           <div>
             <h3>{server.name || `server-${server.id}`}</h3>
-            <p>#{server.id} · {regionLabel(serverRegionCode(server))}</p>
+            <p title={regionLabel(serverRegionCode(server))}>#{server.id} · {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</p>
           </div>
         </div>
 
@@ -9906,7 +9906,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
           <h2>{server.name || `服务器 #${server.id}`} · 监控</h2>
-          <p>#{server.id} · {regionLabel(serverRegionCode(server))}</p>
+          <p title={regionLabel(serverRegionCode(server))}>#{server.id} · {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</p>
         </div>
       </div>
       <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
@@ -10070,7 +10070,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
           <RegionFlag code={serverRegionCode(server)} size={28} />
           <div>
             <h2>{server.name || `server-${server.id}`}</h2>
-            <p>服务器 #{server.id} · {regionLabel(serverRegionCode(server))}</p>
+            <p title={regionLabel(serverRegionCode(server))}>服务器 #{server.id} · {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</p>
           </div>
         </div>
         <div className="server-detail-head-actions">
