@@ -87,6 +87,63 @@ func sshSubscriptionFixtureNode() SubscriptionNode {
 	}}
 }
 
+// TestTCPFastOpenSubscriptionMapping pins the per-client mapping of the listen
+// side tcp_fast_open option: sing-box keeps the raw dial field, the mihomo
+// engine uses `tfo`, Surge uses `tfo=true`, formats without an equivalent
+// parameter drop it, and QUIC-only proxies never carry it at all.
+func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
+	nodes := []SubscriptionNode{
+		{Name: "VLESS TFO", Group: "自动选择", Raw: map[string]any{
+			"type": "vless", "tag": "VLESS TFO", "server": "edge.example.com", "server_port": 443,
+			"uuid": "11111111-1111-4111-8111-111111111111", "tcp_fast_open": true,
+			"tls": map[string]any{"enabled": true, "server_name": "edge.example.com"},
+		}},
+		{Name: "SS TFO", Group: "备用", Raw: map[string]any{
+			"type": "shadowsocks", "tag": "SS TFO", "server": "ss.example.com", "server_port": 8388,
+			"method": "chacha20-ietf-poly1305", "password": "ss-pass", "tcp_fast_open": true,
+		}},
+	}
+	for _, test := range []struct {
+		format model.SubscriptionFormat
+		want   string
+	}{
+		{format: model.SubscriptionFormatSingBox, want: `"tcp_fast_open": true`},
+		{format: model.SubscriptionFormatMihomo, want: "tfo: true"},
+		{format: model.SubscriptionFormatSurge, want: "tfo=true"},
+		{format: model.SubscriptionFormatClash},
+		{format: model.SubscriptionFormatSurfboard},
+	} {
+		t.Run(string(test.format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget(nodes, test.format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.want == "" {
+				if strings.Contains(output, "tfo") {
+					t.Fatalf("output contains tfo:\n%s", output)
+				}
+				return
+			}
+			if !strings.Contains(output, test.want) {
+				t.Fatalf("output missing %q:\n%s", test.want, output)
+			}
+		})
+	}
+	hy2 := []SubscriptionNode{{Name: "HY2", Group: "自动选择", Raw: map[string]any{
+		"type": "hysteria2", "tag": "HY2", "server": "hy2.example.com", "server_port": 8443, "password": "hy2-pass",
+		"tcp_fast_open": true, "tls": map[string]any{"enabled": true, "server_name": "hy2.example.com"},
+	}}}
+	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatSurge} {
+		output, err := renderSubscriptionTarget(hy2, format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(output, "tfo") || strings.Contains(output, "tcp_fast_open") {
+			t.Fatalf("%s advertised TCP Fast Open for a QUIC proxy:\n%s", format, output)
+		}
+	}
+}
+
 func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 	nodes := subscriptionFormatFixtureNodes()
 	tests := []struct {

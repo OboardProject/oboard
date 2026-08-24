@@ -7940,7 +7940,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
           <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
-            <Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
+            <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
           {draft.entry_ip_mode === 'custom' ? (
             <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
@@ -7948,7 +7948,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
               <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
             </FormField>
           ) : draft.entry_address ? (
-            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义。</span></div>
+            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
           ) : null}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
             <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
@@ -8118,14 +8118,14 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => update({ entry_ip_mode: e.target.value as EntryIPMode })}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           {draft.entry_ip_mode === 'custom' ? (
             <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
               <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
               <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
             </FormField>
           ) : draft.entry_address ? (
-            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义。</span></div>
+            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
           ) : null}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
@@ -14550,6 +14550,72 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   </MotionDialogPanel>
 }
 
+// Connection reuse and TCP Fast Open are three separate capabilities, so the
+// form only offers what the selected protocol really has: sing-box generic MUX
+// (VLESS / SS), a protocol's own reuse layer, and the TCP-only socket option.
+type TransportCapability = { genericMux: boolean; nativeMux: string; tfo: boolean }
+
+function transportCapability(protocol: Protocol, config: Record<string, any>): TransportCapability {
+  switch (protocol) {
+    case 'vless':
+      return { genericMux: true, nativeMux: '', tfo: String(objectConfig(config.transport).type || '').toLowerCase() !== 'quic' }
+    case 'shadowsocks':
+      return { genericMux: true, nativeMux: '', tfo: true }
+    case 'anytls':
+      return { genericMux: false, nativeMux: 'AnyTLS 协议自带 Session / Stream 复用，无需通用 MUX。', tfo: true }
+    case 'hy2':
+      return { genericMux: false, nativeMux: 'Hysteria2 走 QUIC 原生多流，数据面是 UDP，因此没有通用 MUX 与 TCP Fast Open。', tfo: false }
+    case 'mieru':
+      return { genericMux: false, nativeMux: 'Mieru 使用自己的复用级别（上方“复用级别”）。', tfo: String(config.transport || 'TCP').toUpperCase() === 'TCP' }
+    case 'snell':
+      return { genericMux: false, nativeMux: 'Snell 使用自身的连接复用（reuse），不使用通用 MUX。', tfo: true }
+    case 'socks':
+      return { genericMux: false, nativeMux: 'SOCKS 没有复用层，仅可开启 TCP Fast Open。', tfo: true }
+    default:
+      return { genericMux: false, nativeMux: '', tfo: false }
+  }
+}
+
+function serverTCPFastOpenNote(server?: Server) {
+  const state = String(server?.tcp_fastopen_state || '')
+  const value = Number(server?.tcp_fastopen_value || 0)
+  if (!server || !state) return '服务器尚未上报内核 TCP Fast Open 状态。'
+  if (state === 'unavailable') return '服务器未提供 net.ipv4.tcp_fastopen，开启后不会生效。'
+  if (state === 'server' || state === 'client_server') return `服务器内核已开放服务端 TFO（net.ipv4.tcp_fastopen=${value}）。`
+  return `服务器内核仅开放客户端 TFO（net.ipv4.tcp_fastopen=${value}），入站需要 server 位（含 2）才会生效。`
+}
+
+function InboundTransportFields({ protocol, config, updateConfig, server }: { protocol: Protocol; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; server?: Server }) {
+  const capability = transportCapability(protocol, config)
+  const multiplex = objectConfig(config.multiplex)
+  const muxEnabled = Boolean(multiplex.enabled)
+  const uotServer = server?.udp_inbound_mode === 'uot'
+  const muxBlocked = protocol === 'shadowsocks' && uotServer
+  const tfoReady = server ? ['server', 'client_server'].includes(String(server.tcp_fastopen_state || '')) : true
+  const setMux = (patch: Record<string, any>) => {
+    const next = { ...multiplex, ...patch }
+    updateConfig({ multiplex: next.enabled ? next : undefined })
+  }
+  if (!capability.genericMux && !capability.tfo && !capability.nativeMux) return null
+  return <div className="preset-fields">
+    <div className="form-section-title">连接复用与 TCP Fast Open</div>
+    {capability.nativeMux && <div className="access-note compact"><strong>复用方式</strong><span>{capability.nativeMux}</span></div>}
+    {capability.genericMux && <>
+      <div className="switch-form-row"><span className="switch-form-label">通用多路复用（MUX）</span><Switch checked={muxEnabled && !muxBlocked} disabled={muxBlocked} onChange={checked => setMux({ enabled: checked || undefined })} ariaLabel="通用多路复用" /></div>
+      {muxBlocked
+        ? <div className="access-note warning"><strong>与 UoT 冲突</strong><span>该服务器 UDP 策略为 udp_over_tcp，Shadowsocks 不能同时使用 UoT 与 MUX；如需 MUX 请先把服务器 UDP 策略改为放行或阻止。</span></div>
+        : <small className="field-hint">默认关闭。公网节点开启前请确认客户端支持相同的 MUX 语义（h2mux / smux / yamux 由客户端选择）。</small>}
+      {muxEnabled && !muxBlocked && <div className="switch-form-row"><span className="switch-form-label">MUX 填充（padding）</span><Switch checked={Boolean(multiplex.padding)} onChange={checked => setMux({ padding: checked || undefined })} ariaLabel="MUX 填充" /></div>}
+    </>}
+    {capability.tfo
+      ? <>
+        <div className="switch-form-row"><span className="switch-form-label">TCP Fast Open</span><Switch checked={Boolean(config.tcp_fast_open)} onChange={checked => updateConfig({ tcp_fast_open: checked || undefined })} ariaLabel="TCP Fast Open" /></div>
+        <small className={`field-hint${config.tcp_fast_open && !tfoReady ? ' warning-text' : ''}`}>{serverTCPFastOpenNote(server)}</small>
+      </>
+      : <div className="access-note compact"><strong>TCP Fast Open</strong><span>{protocol === 'mieru' ? '当前为 UDP 传输，不使用 TCP 套接字，因此不可用。' : '该协议的数据面不跑在 TCP 上，因此不可用。'}</span></div>}
+  </div>
+}
+
 function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onGenerateRealityKeypair, realityKeyLoading, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onGenerateRealityKeypair?: () => void; realityKeyLoading?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
@@ -19734,7 +19800,7 @@ function Panel({ title, children, className = '', actions = null }: any) {
 type ProtocolAuth = { username: string; uuid: string; password: string; method: string }
 
 // SnellProfile mirrors model.SnellProfile from the Controller REST contract.
-type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
+type SnellProfile = { id: number; name: string; version: number; psk: string; obfs_mode: string; obfs_host: string; mode: string; reuse: boolean; tcp_fast_open: boolean; remark: string; builtin: boolean; enabled: boolean; usage_count: number }
 
 type InboundPreset = { id: string; protocol: Protocol; label: string; description: string; defaultPort: number }
 

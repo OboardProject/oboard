@@ -810,7 +810,7 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 			out["obfs-opts"] = opts
 		}
 	}
-	if proxy.TCPFastOpen && clashFormatSupportsTFO(format) && clashTypeSupportsTFO(proxy.Type) {
+	if proxy.TCPFastOpen && clashFormatSupportsTFO(format) && subscriptionTypeSupportsTFO(proxy.Type) {
 		out["tfo"] = true
 	}
 	return out, nil
@@ -822,7 +822,10 @@ func clashFormatSupportsTFO(format model.SubscriptionFormat) bool {
 	return format == model.SubscriptionFormatMihomo || format == model.SubscriptionFormatClashMeta
 }
 
-func clashTypeSupportsTFO(proxyType string) bool {
+// subscriptionTypeSupportsTFO reports whether a rendered proxy type carries its
+// payload over TCP. QUIC proxies (hysteria2, tuic) and SSH never receive a TCP
+// Fast Open flag even if a stored configuration somehow asks for one.
+func subscriptionTypeSupportsTFO(proxyType string) bool {
 	switch proxyType {
 	case "vless", "vmess", "trojan", "ss", "socks5", "snell", "anytls":
 		return true
@@ -1189,7 +1192,7 @@ func renderSurgeLine(proxy subscriptionProxy, format model.SubscriptionFormat) (
 	}
 	// `tfo` is a documented Surge proxy parameter; Surfboard has no equivalent,
 	// so it stays out of the Surfboard line.
-	if proxy.TCPFastOpen && proxy.Type != "ssh" && (format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac) {
+	if proxy.TCPFastOpen && subscriptionTypeSupportsTFO(proxy.Type) && (format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac) {
 		parts = append(parts, "tfo=true")
 	}
 	return strings.Join(parts, ","), nil

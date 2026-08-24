@@ -194,8 +194,8 @@ describe('traffic forwarding draft helpers', () => {
 })
 
 const servers = [
-  server({ id: 1, name: '香港入口', entry_address: 'hk.example.com', port_range_start: 10000, port_range_end: 20000 }),
-  server({ id: 2, name: '东京入口', entry_address: 'jp.example.com', port_range_start: 10000, port_range_end: 20000 }),
+  server({ id: 1, name: '香港入口', entry_address: 'hk.example.com', entry_ip_mode: 'custom', port_range_start: 10000, port_range_end: 20000 }),
+  server({ id: 2, name: '东京入口', entry_address: 'jp.example.com', entry_ip_mode: 'custom', port_range_start: 10000, port_range_end: 20000 }),
 ]
 
 const forwards: TrafficForward[] = [

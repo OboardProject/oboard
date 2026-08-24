@@ -63,6 +63,8 @@ export type Server = {
   sing_box_version: string
   kernel_version?: string
   kernel_capabilities?: string[]
+  tcp_fastopen_state?: '' | 'unavailable' | 'disabled' | 'client' | 'server' | 'client_server'
+  tcp_fastopen_value?: number
   agent_connected?: boolean
   monitoring_mode: 'lightweight' | 'standard'
   resource_history_enabled: boolean

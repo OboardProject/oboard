@@ -128,6 +128,27 @@ function objectConfig(value: any): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
 
+// Only VLESS and Shadowsocks accept the sing-box `multiplex` object; the other
+// protocols multiplex inside their own transport, and Hysteria2 has no TCP data
+// path at all, so neither option applies there.
+function presetSupportsGenericMux(kind: string) {
+  return kind.startsWith('vless-') || kind.startsWith('ss-')
+}
+
+function presetNativeMuxNote(kind: string) {
+  if (kind.startsWith('anytls-')) return 'AnyTLS 协议自带 Session / Stream 复用，无需通用 MUX。'
+  if (kind === 'hy2-tls') return 'Hysteria2 走 QUIC 原生多流，数据面是 UDP。'
+  if (kind === 'mieru-basic') return 'Mieru 使用自己的复用级别（上方“多路复用”）。'
+  return ''
+}
+
+function presetSupportsTCPFastOpen(kind: string, config: Record<string, any>) {
+  if (kind === 'hy2-tls') return false
+  if (kind === 'mieru-basic') return String(config.transport || 'TCP').toUpperCase() === 'TCP'
+  if (kind.startsWith('vless-')) return String(objectConfig(config.transport).type || '').toLowerCase() !== 'quic'
+  return true
+}
+
 function presetMetaLine(preset: NodePreset) {
   const meta = kindMeta(preset.kind)
   const parts = [meta?.label || preset.kind, `端口 ${preset.default_port || meta?.defaultPort || 443}`]
@@ -169,6 +190,11 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
     setDraft({ ...draft, kind: next.id, config: structuredClone(next.config) as Record<string, any>, default_port: next.defaultPort })
   }
   const updateConfig = (patch: Record<string, any>) => setDraft({ ...draft, config: { ...draft.config, ...patch } })
+  const multiplex = objectConfig(draft.config.multiplex)
+  const setMultiplex = (patch: Record<string, any>) => {
+    const next = { ...multiplex, ...patch }
+    updateConfig({ multiplex: next.enabled ? next : undefined })
+  }
   const setTLS = (patch: Record<string, any>) => updateConfig({ tls: { ...tls, ...patch } })
   const setTransport = (patch: Record<string, any>) => updateConfig({ transport: { ...transport, ...patch } })
   const realityDomains: string[] = Array.isArray(draft.config.reality_domains) ? (draft.config.reality_domains as string[]).filter(item => typeof item === 'string' && item.trim()) : [...builtinRealityDomains]
@@ -281,6 +307,24 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
           </Select>
         </SettingsRow>
       </>}
+      {presetSupportsGenericMux(draft.kind) && <>
+        <SettingsRow label="通用多路复用（MUX）" description="sing-box 通用 MUX（h2mux / smux / yamux 由客户端选择）。默认关闭；Shadowsocks 不能与服务器的 udp_over_tcp 策略同时使用。">
+          <input type="checkbox" checked={Boolean(multiplex.enabled)} onChange={event => setMultiplex({ enabled: event.target.checked || undefined })} />
+        </SettingsRow>
+        {Boolean(multiplex.enabled) && <SettingsRow label="MUX 填充（padding）" description="为复用流增加填充，牺牲少量带宽换取更少的长度特征。">
+          <input type="checkbox" checked={Boolean(multiplex.padding)} onChange={event => setMultiplex({ padding: event.target.checked || undefined })} />
+        </SettingsRow>}
+      </>}
+      {presetNativeMuxNote(draft.kind) && <SettingsRow label="复用方式" description={presetNativeMuxNote(draft.kind)}>
+        <span className="muted">协议原生</span>
+      </SettingsRow>}
+      {presetSupportsTCPFastOpen(draft.kind, draft.config)
+        ? <SettingsRow label="TCP Fast Open" description="仅当服务器内核开放了 server 位（net.ipv4.tcp_fastopen 含 2）时才会生效，默认关闭。">
+          <input type="checkbox" checked={Boolean(draft.config.tcp_fast_open)} onChange={event => updateConfig({ tcp_fast_open: event.target.checked || undefined })} />
+        </SettingsRow>
+        : <SettingsRow label="TCP Fast Open" description={draft.kind === 'mieru-basic' ? 'UDP 传输不使用 TCP 套接字，因此不可用。' : '该协议的数据面不跑在 TCP 上，因此不可用。'}>
+          <span className="muted">不适用</span>
+        </SettingsRow>}
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
         <input value={draft.remark} onChange={event => setDraft({ ...draft, remark: event.target.value })} placeholder="可选" />
       </SettingsRow>
