@@ -70,6 +70,11 @@ type connectivityLatencyPoint struct {
 	Count     int       `json:"count"`
 }
 
+type connectivityFailedProbePoint struct {
+	At    time.Time `json:"at"`
+	Count int       `json:"count"`
+}
+
 type connectivityOutage struct {
 	StartedAt           time.Time  `json:"started_at"`
 	EndedAt             *time.Time `json:"ended_at"`
@@ -88,6 +93,7 @@ type connectivityResponse struct {
 	Current               connectivityCurrent                `json:"current"`
 	Buckets               []connectivityBucket               `json:"buckets"`
 	LatencyPoints         []connectivityLatencyPoint         `json:"latency_points"`
+	FailedProbePoints     []connectivityFailedProbePoint     `json:"failed_probe_points"`
 	RegionalLatencyPoints []model.ServerRegionalLatencyPoint `json:"regional_latency_points"`
 	Outages               []connectivityOutage               `json:"outages"`
 	DataStartAt           *time.Time                         `json:"data_start_at"`
@@ -107,6 +113,7 @@ type connectivityState struct {
 	probeEnabledKnown         bool
 	controllerConnected       bool
 	controllerConnectionKnown bool
+	controllerUpdate          bool
 	availability              connectivityAvailability
 	cause                     string
 	lastProbeAt               *time.Time
@@ -195,6 +202,7 @@ func applyConnectivityEvent(state *connectivityState, event model.ServerConnecti
 	case model.ConnectivityEventProbeResult:
 		state.probeEnabledKnown = true
 		state.probeEnabled = true
+		state.controllerUpdate = false
 		checkedAt := event.EffectiveAt.UTC()
 		state.lastProbeAt = &checkedAt
 		state.lastProbeLatency = event.LatencyMS
@@ -210,20 +218,29 @@ func applyConnectivityEvent(state *connectivityState, event model.ServerConnecti
 			state.cause = "probe_failed"
 		}
 	case model.ConnectivityEventServerOffline:
-		if !state.controllerConnectionKnown && state.probeEnabledKnown && state.probeEnabled {
+		if !state.controllerUpdate && !state.controllerConnectionKnown && state.probeEnabledKnown && state.probeEnabled {
 			state.availability = connectivityUnavailable
 			state.cause = "server_offline"
 		}
 	case model.ConnectivityEventControllerConnected:
 		state.controllerConnectionKnown = true
 		state.controllerConnected = true
+		state.controllerUpdate = false
 		state.availability = connectivityAvailable
 		state.cause = "controller_connected"
 	case model.ConnectivityEventControllerDisconnected:
-		state.controllerConnectionKnown = true
 		state.controllerConnected = false
-		state.availability = connectivityUnavailable
-		state.cause = "controller_disconnected"
+		if event.Source == model.ConnectivityEventSourceControllerUpdate {
+			state.controllerConnectionKnown = false
+			state.controllerUpdate = true
+			state.availability = connectivityUnknown
+			state.cause = "controller_update"
+		} else {
+			state.controllerConnectionKnown = true
+			state.controllerUpdate = false
+			state.availability = connectivityUnavailable
+			state.cause = "controller_disconnected"
+		}
 	}
 }
 
@@ -387,6 +404,31 @@ func connectivityLatencyPointInterval(duration time.Duration) time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
+func buildConnectivityFailedProbePoints(from time.Time, duration time.Duration, events []model.ServerConnectivityEvent) []connectivityFailedProbePoint {
+	interval := connectivityLatencyPointInterval(duration)
+	counts := map[int]int{}
+	for _, event := range events {
+		if event.Kind != model.ConnectivityEventProbeResult || event.Available == nil || *event.Available {
+			continue
+		}
+		index := int(event.EffectiveAt.Sub(from) / interval)
+		if index < 0 || time.Duration(index)*interval >= duration {
+			continue
+		}
+		counts[index]++
+	}
+	indexes := make([]int, 0, len(counts))
+	for index := range counts {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	points := make([]connectivityFailedProbePoint, 0, len(indexes))
+	for _, index := range indexes {
+		points = append(points, connectivityFailedProbePoint{At: from.Add(time.Duration(index) * interval), Count: counts[index]})
+	}
+	return points
+}
+
 func buildConnectivityLatencyPoints(from time.Time, duration time.Duration, probes []model.ServerConnectivityEvent) []connectivityLatencyPoint {
 	interval := connectivityLatencyPointInterval(duration)
 	type group struct {
@@ -508,16 +550,17 @@ func BuildConnectivityResponse(serverID int64, window connectivityWindow, histor
 	current.CheckedAt = currentState.lastProbeAt
 	current.Error = currentState.lastProbeError
 	response := connectivityResponse{
-		ServerID:      serverID,
-		Window:        window,
-		Summary:       connectivitySummary{SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds(), ObservedSeconds: observed.Seconds(), CoveragePercent: coverage, OutageCount: len(outages), LongestOutageSecond: longest},
-		Probes:        probes,
-		Latency:       connectivityLatencyStats(successfulProbes),
-		Current:       current,
-		Buckets:       buildConnectivityBuckets(window, segments, successfulProbes),
-		LatencyPoints: buildConnectivityLatencyPoints(window.From, window.Duration, successfulProbes),
-		Outages:       outages,
-		DataStartAt:   history.DataStart,
+		ServerID:          serverID,
+		Window:            window,
+		Summary:           connectivitySummary{SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds(), ObservedSeconds: observed.Seconds(), CoveragePercent: coverage, OutageCount: len(outages), LongestOutageSecond: longest},
+		Probes:            probes,
+		Latency:           connectivityLatencyStats(successfulProbes),
+		Current:           current,
+		Buckets:           buildConnectivityBuckets(window, segments, successfulProbes),
+		LatencyPoints:     buildConnectivityLatencyPoints(window.From, window.Duration, successfulProbes),
+		FailedProbePoints: buildConnectivityFailedProbePoints(window.From, window.Duration, history.Events),
+		Outages:           outages,
+		DataStartAt:       history.DataStart,
 	}
 	if len(response.Outages) > 10 {
 		response.Outages = response.Outages[len(response.Outages)-10:]

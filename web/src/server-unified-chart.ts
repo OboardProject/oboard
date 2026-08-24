@@ -62,6 +62,14 @@ export interface SeriesSegmentPoint {
   value: number
 }
 
+export interface FailedProbePoint {
+  at: string
+  count: number
+}
+
+export const DEFAULT_CONNECT_GAPS = true
+export const DEFAULT_SMOOTH_LINES = false
+
 export const REGIONAL_SERIES_COLORS = [
   '#8b5cf6', // purple
   '#ec4899', // pink
@@ -83,7 +91,15 @@ export function formatBucketTime(ts: number): string {
   return `${month}-${day} ${hours}:${mins}`
 }
 
-export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string): SeriesSegmentPoint[][] {
+export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string, connectGaps = false): SeriesSegmentPoint[][] {
+  if (connectGaps) {
+    const connected = buckets.flatMap((bucket, index) => {
+      const value = bucket.values[seriesID]
+      return value == null || !Number.isFinite(value) ? [] : [{ index, value }]
+    })
+    return connected.length > 0 ? [connected] : []
+  }
+
   const segments: SeriesSegmentPoint[][] = []
   let current: SeriesSegmentPoint[] = []
 
@@ -99,6 +115,41 @@ export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: str
 
   if (current.length > 0) segments.push(current)
   return segments
+}
+
+export function buildLinearPath(points: { x: number; y: number }[]): string {
+  if (points.length === 0) return ''
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
+}
+
+export function buildSmoothPath(points: { x: number; y: number }[]): string {
+  if (points.length < 3) return buildLinearPath(points)
+
+  let path = `M ${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const previous = index > 0 ? points[index - 1] : points[index]
+    const current = points[index]
+    const next = points[index + 1]
+    const following = index < points.length - 2 ? points[index + 2] : next
+    const control1X = current.x + (next.x - previous.x) / 6
+    const control1Y = current.y + (next.y - previous.y) / 6
+    const control2X = next.x - (following.x - current.x) / 6
+    const control2Y = next.y - (following.y - current.y) / 6
+    path += ` C ${control1X.toFixed(1)},${control1Y.toFixed(1)} ${control2X.toFixed(1)},${control2Y.toFixed(1)} ${next.x.toFixed(1)},${next.y.toFixed(1)}`
+  }
+  return path
+}
+
+export function buildLinePath(points: { x: number; y: number }[], smooth: boolean): string {
+  return smooth ? buildSmoothPath(points) : buildLinearPath(points)
+}
+
+export function buildAreaPath(points: { x: number; y: number }[], baselineY: number, smooth: boolean): string {
+  if (points.length < 2) return ''
+  const linePath = buildLinePath(points, smooth)
+  const first = points[0]
+  const last = points[points.length - 1]
+  return `${linePath} L ${last.x.toFixed(1)},${baselineY.toFixed(1)} L ${first.x.toFixed(1)},${baselineY.toFixed(1)} Z`
 }
 
 export function alignUnifiedMetrics({
@@ -237,6 +288,31 @@ export function alignUnifiedMetrics({
   })
 
   return { seriesList, buckets }
+}
+
+export function alignFailedProbePoints({
+  points,
+  windowHours,
+  bucketCount,
+  now,
+}: {
+  points: FailedProbePoint[]
+  windowHours: number
+  bucketCount: number
+  now: number
+}): { index: number; count: number }[] {
+  if (bucketCount <= 0) return []
+  const windowMs = Math.max(1, windowHours) * 60 * 60 * 1000
+  const start = now - windowMs
+  const bucketDuration = windowMs / bucketCount
+  const counts = new Map<number, number>()
+  points.forEach(point => {
+    const timestamp = new Date(point.at).getTime()
+    if (!Number.isFinite(timestamp) || timestamp < start || timestamp > now) return
+    const index = Math.max(0, Math.min(bucketCount - 1, Math.floor((timestamp - start) / bucketDuration)))
+    counts.set(index, (counts.get(index) || 0) + Math.max(1, Number(point.count) || 1))
+  })
+  return Array.from(counts.entries()).sort((left, right) => left[0] - right[0]).map(([index, count]) => ({ index, count }))
 }
 
 export function computeMaxLatency(buckets: UnifiedBucketPoint[], enabledSeries: Record<string, boolean>): number {

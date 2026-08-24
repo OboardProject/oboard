@@ -75,7 +75,7 @@ import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-t
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import './style.css'
-import { alignUnifiedMetrics, computeMaxLatency, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
+import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
 import { Switch } from './components/ui/switch'
 import { DateTimePicker } from './components/ui/datetime-picker'
@@ -9435,6 +9435,7 @@ function ServerUnifiedTelemetryChart({
   resourcePoints = [],
   latencyPoints = [],
   regionalProbes = [],
+  failedProbePoints = [],
   includeResources = true,
   windowHours = 24,
   windowEndAt,
@@ -9442,6 +9443,7 @@ function ServerUnifiedTelemetryChart({
   resourcePoints?: ServerResourcePoint[]
   latencyPoints?: ServerLatencyPoint[]
   regionalProbes?: LatencyProbeResultSample[]
+  failedProbePoints?: ConnectivityResponse['failed_probe_points']
   includeResources?: boolean
   windowHours?: number
   windowEndAt?: string
@@ -9452,6 +9454,8 @@ function ServerUnifiedTelemetryChart({
   }, [resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndAt])
 
   const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
+  const [connectGaps, setConnectGaps] = useState(DEFAULT_CONNECT_GAPS)
+  const [smoothLines, setSmoothLines] = useState(DEFAULT_SMOOTH_LINES)
 
   useEffect(() => {
     setEnabledSeries(prev => {
@@ -9481,6 +9485,7 @@ function ServerUnifiedTelemetryChart({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const chartTitleID = React.useId()
   const chartDescriptionID = React.useId()
+  const gradientPrefix = React.useId().replace(/:/g, '')
 
   const hasPercentageSeries = includeResources
   const activeSeries = seriesList.filter(s => enabledSeries[s.id] !== false)
@@ -9495,6 +9500,13 @@ function ServerUnifiedTelemetryChart({
   const plotH = padB - padT
 
   const getX = (idx: number) => padL + (idx / Math.max(1, buckets.length - 1)) * plotW
+  const windowEndMS = windowEndAt ? new Date(windowEndAt).getTime() : Date.now()
+  const failedProbeBuckets = useMemo(() => alignFailedProbePoints({
+    points: failedProbePoints,
+    windowHours,
+    bucketCount: buckets.length,
+    now: Number.isFinite(windowEndMS) ? windowEndMS : Date.now(),
+  }), [failedProbePoints, windowHours, buckets.length, windowEndMS])
 
   const getY = (val: number, s: MetricSeries) => {
     if (s.yAxis === 'left') {
@@ -9545,6 +9557,22 @@ function ServerUnifiedTelemetryChart({
             <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(true)}>全选</button>
             <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(false)}>清空</button>
           </div>
+          <div className="komari-chart-options" aria-label="延迟图绘制选项">
+            <button
+              type="button"
+              className={`komari-chart-option${connectGaps ? ' active' : ''}`}
+              aria-pressed={connectGaps}
+              title="连接缺失时间桶两侧的有效延迟点"
+              onClick={() => setConnectGaps(value => !value)}
+            >断点连接</button>
+            <button
+              type="button"
+              className={`komari-chart-option${smoothLines ? ' active' : ''}`}
+              aria-pressed={smoothLines}
+              title="使用平滑曲线显示延迟趋势"
+              onClick={() => setSmoothLines(value => !value)}
+            >平滑</button>
+          </div>
         </div>
       </div>
 
@@ -9560,13 +9588,15 @@ function ServerUnifiedTelemetryChart({
           onPointerLeave={handlePointerLeave}
         >
           <title id={chartTitleID}>服务器监控趋势</title>
-          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；空白区间表示没有保存的数据。</desc>
+          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色短线表示实际公网探测失败，普通缺报不会标记为丢包。</desc>
           <defs>
-            <linearGradient id="komari-grad-public" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.22" />
-              <stop offset="90%" stopColor="#f59e0b" stopOpacity="0.02" />
-              <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.0" />
-            </linearGradient>
+            {activeSeries.map((series, index) => (
+              <linearGradient key={series.id} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={series.color} stopOpacity="0.2" />
+                <stop offset="88%" stopColor={series.color} stopOpacity="0.035" />
+                <stop offset="100%" stopColor={series.color} stopOpacity="0" />
+              </linearGradient>
+            ))}
           </defs>
 
           {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
@@ -9586,25 +9616,25 @@ function ServerUnifiedTelemetryChart({
             )
           })}
 
-          {activeSeries.map(s => {
-            const segments = splitSeriesSegments(buckets, s.id)
+          {activeSeries.map((series, seriesIndex) => {
+            const segments = splitSeriesSegments(buckets, series.id, connectGaps)
             if (segments.length === 0) return null
             return (
-              <g key={s.id}>
+              <g key={series.id}>
                 {segments.map((segment, segmentIndex) => {
-                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, s) }))
+                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
                   if (points.length === 1) {
-                    return <circle key={segmentIndex} cx={points[0].x} cy={points[0].y} r="3" fill={s.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                    return <circle key={segmentIndex} cx={points[0].x} cy={points[0].y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
                   }
-                  const linePath = buildSmoothPath(points)
-                  const areaPath = s.id === 'public_latency' ? buildSmoothArea(points, padB) : ''
+                  const linePath = buildLinePath(points, smoothLines)
+                  const areaPath = connectGaps ? buildAreaPath(points, padB, smoothLines) : ''
                   return (
                     <React.Fragment key={segmentIndex}>
-                      {areaPath ? <path d={areaPath} fill="url(#komari-grad-public)" /> : null}
+                      {areaPath ? <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" /> : null}
                       <path
                         d={linePath}
                         fill="none"
-                        stroke={s.color}
+                        stroke={series.color}
                         strokeWidth="2.2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -9617,6 +9647,21 @@ function ServerUnifiedTelemetryChart({
               </g>
             )
           })}
+
+          <g className="komari-loss-markers" aria-hidden="true">
+            {failedProbeBuckets.map(point => (
+              <line
+                key={point.index}
+                x1={getX(point.index)}
+                x2={getX(point.index)}
+                y1={padB - 9}
+                y2={padB}
+                className="komari-loss-marker"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </g>
 
           {hoveredIdx !== null && (
             <g>
@@ -9913,6 +9958,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
             <ServerUnifiedTelemetryChart
               latencyPoints={response.latency_points || []}
               regionalProbes={response.regional_latency_points || []}
+              failedProbePoints={response.failed_probe_points || []}
               includeResources={false}
               windowHours={currentWindowHours}
               windowEndAt={response.window.to}

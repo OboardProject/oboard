@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -29,6 +30,7 @@ const (
 	controllerBackupSetting              = "controller_update_backup_path"
 	controllerBackupTargetBuildSetting   = "controller_update_backup_target_build"
 	controllerUpdateErrorSetting         = "controller_update_controller_error"
+	controllerUpdateMaintenanceSetting   = "controller_update_maintenance"
 	controllerUpdateSchedulerPeriod      = time.Minute
 	controllerUpdatePanelIdlePeriod      = 5 * time.Minute
 	controllerUpdateInstallTimeout       = 20 * time.Minute
@@ -36,6 +38,74 @@ const (
 	updateWindowDefaultStartHour         = 3
 	updateWindowDefaultEndHour           = 7
 )
+
+type controllerUpdateMaintenanceMarker struct {
+	StartedAt   time.Time `json:"started_at"`
+	TargetBuild string    `json:"target_build"`
+}
+
+func (s *Server) beginControllerUpdateMaintenance(ctx context.Context, targetBuild string) error {
+	targetBuild = strings.TrimSpace(targetBuild)
+	if targetBuild == "" {
+		return errors.New("Controller update target build is required")
+	}
+	marker := controllerUpdateMaintenanceMarker{StartedAt: time.Now().UTC(), TargetBuild: targetBuild}
+	encoded, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	if err := s.store.SetSetting(ctx, controllerUpdateMaintenanceSetting, string(encoded)); err != nil {
+		return err
+	}
+	s.controllerUpdateMaintenance.Store(true)
+	return nil
+}
+
+func (s *Server) clearControllerUpdateMaintenance(ctx context.Context) {
+	if err := s.store.SetSetting(ctx, controllerUpdateMaintenanceSetting, ""); err != nil {
+		log.Printf("clear Controller update maintenance marker: %v", err)
+	}
+	s.controllerUpdateMaintenance.Store(false)
+}
+
+func (s *Server) installControllerUpdate(ctx context.Context, targetBuild string) (controllerupdate.Status, error) {
+	if err := s.beginControllerUpdateMaintenance(ctx, targetBuild); err != nil {
+		return controllerupdate.Status{}, fmt.Errorf("record Controller update maintenance: %w", err)
+	}
+	status, err := s.controllerUpdater.Install(ctx)
+	if err != nil && status.State != "installing" {
+		s.clearControllerUpdateMaintenance(ctx)
+	}
+	return status, err
+}
+
+func (s *Server) restoreControllerUpdateMaintenance(ctx context.Context) {
+	raw, err := s.store.GetSetting(ctx, controllerUpdateMaintenanceSetting)
+	if err != nil {
+		log.Printf("read Controller update maintenance marker: %v", err)
+		_ = s.store.CloseOpenControllerConnections(ctx, time.Now().UTC())
+		return
+	}
+	now := time.Now().UTC()
+	var marker controllerUpdateMaintenanceMarker
+	decoded := json.Unmarshal([]byte(raw), &marker) == nil
+	targetBuild := strings.TrimSpace(marker.TargetBuild)
+	valid := strings.TrimSpace(raw) != "" && decoded && !marker.StartedAt.IsZero() && !marker.StartedAt.After(now.Add(2*time.Minute)) && marker.StartedAt.After(now.Add(-controllerUpdateInstallTimeout-10*time.Minute)) && targetBuild != "" && targetBuild == strings.TrimSpace(version.Build)
+	if !valid {
+		if strings.TrimSpace(raw) != "" {
+			_ = s.store.SetSetting(ctx, controllerUpdateMaintenanceSetting, "")
+		}
+		_ = s.store.CloseOpenControllerConnections(ctx, now)
+		return
+	}
+	s.controllerUpdateMaintenance.Store(true)
+	if err := s.store.CloseOpenControllerConnectionsWithSource(ctx, now, model.ConnectivityEventSourceControllerUpdate); err != nil {
+		log.Printf("close Controller update connections: %v", err)
+		s.controllerUpdateMaintenance.Store(false)
+		return
+	}
+	s.clearControllerUpdateMaintenance(ctx)
+}
 
 func (s *Server) ConfigureControllerUpdates(dbPath, listenAddress string) {
 	s.controllerListenAddress = listenAddress
@@ -232,7 +302,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 		}
 		return
 	}
-	if installStatus, err := s.controllerUpdater.Install(ctx); err != nil {
+	if installStatus, err := s.installControllerUpdate(ctx, targetBuild); err != nil {
 		publicErr := controllerUpdateOperationError("启动自动更新失败", installStatus, err)
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
 		s.notifyControllerUpdateFailure(ctx, "安装更新", status.Available.Version, publicErr.Error())
@@ -494,7 +564,7 @@ func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, pr
 		s.publishRealtime("controller_update")
 		return
 	}
-	status, err = s.controllerUpdater.Install(ctx)
+	status, err = s.installControllerUpdate(ctx, status.Available.Build)
 	if err != nil {
 		if (status.State == "cancelled" || status.State == "cancelling") && strings.TrimSpace(status.LastError) == "" {
 			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
@@ -574,6 +644,9 @@ func (s *Server) startControllerUpdateWatch() {
 					idleSamples++
 				}
 				if !active && (activeSeen || idleSamples >= 5) {
+					if s.controllerUpdateMaintenance.Load() {
+						s.clearControllerUpdateMaintenance(ctx)
+					}
 					settings, listErr := s.store.ListSettings(ctx)
 					if listErr == nil {
 						s.removeSuccessfulControllerUpdateBackup(ctx, settings, status)

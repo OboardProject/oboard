@@ -115,6 +115,7 @@ type Server struct {
 	notificationMu                sync.Mutex
 	notificationWake              chan struct{}
 	monitorStarted                atomic.Bool
+	controllerUpdateMaintenance   atomic.Bool
 	periodicLogMu                 sync.Mutex
 	periodicLogNext               map[string]time.Time
 	connectionAuditNotificationMu sync.Mutex
@@ -211,7 +212,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
-	_ = store.CloseOpenControllerConnections(context.Background(), time.Now().UTC())
+	s.restoreControllerUpdateMaintenance(context.Background())
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)
@@ -12707,7 +12708,11 @@ func (s *Server) trackAgentConnection(ctx context.Context, serverID int64, conne
 	}
 	s.agentConnectionMu.Unlock()
 	if (connected && previous == 0) || (!connected && previous > 0 && next == 0) {
-		_ = s.store.RecordControllerConnectionEvent(ctx, serverID, connected, effectiveAt.UTC())
+		source := model.ConnectivityEventSourceAgentSocket
+		if !connected && s.controllerUpdateMaintenance.Load() {
+			source = model.ConnectivityEventSourceControllerUpdate
+		}
+		_ = s.store.RecordControllerConnectionEventWithSource(ctx, serverID, connected, effectiveAt.UTC(), source)
 	}
 }
 
@@ -12851,9 +12856,14 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 					inFlightTimeout = nil
 				}
 			}
-			acceptedReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
-			if acceptedReportID != "" {
-				if err := conn.WriteJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedReportID, "ts": time.Now().UTC()}); err != nil {
+			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
+			if acceptedLatencyReportID != "" {
+				if err := conn.WriteJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID, "ts": time.Now().UTC()}); err != nil {
+					return
+				}
+			}
+			if acceptedMetricReportID != "" {
+				if err := conn.WriteJSON(map[string]any{"type": "metric_report_ack", "report_id": acceptedMetricReportID, "ts": time.Now().UTC()}); err != nil {
 					return
 				}
 			}
@@ -12901,8 +12911,9 @@ func signAgentTaskEnvelope(secret string, task model.AgentTask) string {
 	return security.SignTaskEnvelope(secret, security.TaskEnvelope{ID: task.ID, ServerID: task.ServerID, Type: task.Type, ConfigVersion: task.ConfigVersion, Nonce: task.Nonce, PayloadJSON: task.PayloadJSON})
 }
 
-func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Server, msg map[string]json.RawMessage, remoteIP string) string {
+func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Server, msg map[string]json.RawMessage, remoteIP string) (string, string) {
 	acceptedReportID := ""
+	acceptedMetricReportID := ""
 	if raw, ok := msg["latency_probe_report"]; ok {
 		var report model.LatencyProbeResultReport
 		if err := json.Unmarshal(raw, &report); err != nil {
@@ -12914,6 +12925,21 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 		} else {
 			acceptedReportID = report.ReportID
 			s.publishRealtime("server_metrics", "latency_probes")
+		}
+	}
+	if raw, ok := msg["metric_report"]; ok {
+		var report model.MetricReport
+		if err := json.Unmarshal(raw, &report); err != nil {
+			log.Printf("reject metric report server=%d: %v", server.ID, err)
+		} else if err := validateMetricReport(&report, time.Now().UTC()); err != nil {
+			log.Printf("reject metric report server=%d: %v", server.ID, err)
+		} else if inserted, err := s.store.SaveMetricReport(ctx, server.ID, report); err != nil {
+			log.Printf("save metric report server=%d: %v", server.ID, err)
+		} else {
+			acceptedMetricReportID = report.ReportID
+			if inserted {
+				s.publishRealtime("server_metrics")
+			}
 		}
 	}
 	if raw, ok := msg["presence_delta"]; ok {
@@ -12961,7 +12987,36 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			}
 		}
 	}
-	return acceptedReportID
+	return acceptedReportID, acceptedMetricReportID
+}
+
+func validateMetricReport(report *model.MetricReport, now time.Time) error {
+	report.ReportID = strings.TrimSpace(report.ReportID)
+	if report.ReportID == "" || len(report.ReportID) > 128 {
+		return errors.New("metric report id is invalid")
+	}
+	if report.SampledAt.IsZero() || report.SampledAt.Before(now.Add(-35*24*time.Hour)) || report.SampledAt.After(now.Add(2*time.Minute)) {
+		return errors.New("metric report timestamp is outside the accepted window")
+	}
+	report.SampledAt = report.SampledAt.UTC()
+	if math.IsNaN(report.CPUUsagePercent) || math.IsInf(report.CPUUsagePercent, 0) || report.CPUUsagePercent < 0 || report.CPUUsagePercent > 100 {
+		return errors.New("metric report cpu usage is invalid")
+	}
+	if report.MemoryTotalBytes > 0 && report.MemoryUsedBytes > report.MemoryTotalBytes {
+		return errors.New("metric report memory usage is invalid")
+	}
+	if report.DiskTotalBytes > 0 && report.DiskUsedBytes > report.DiskTotalBytes {
+		return errors.New("metric report disk usage is invalid")
+	}
+	const maxSystemCount = uint64(10_000_000)
+	if report.TCPConnectionCount > maxSystemCount || report.UDPConnectionCount > maxSystemCount || report.ProcessCount > maxSystemCount {
+		return errors.New("metric report system count is invalid")
+	}
+	const maxNetworkBPS = uint64(100 << 30)
+	if report.NetworkUploadBPS > maxNetworkBPS || report.NetworkDownloadBPS > maxNetworkBPS {
+		return errors.New("metric report network rate is invalid")
+	}
+	return nil
 }
 
 func sanitizeServerHealthReport(report *model.HealthReport) {

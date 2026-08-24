@@ -1952,6 +1952,8 @@ type AgentSocketMessage struct {
 	Task                     *AgentTask      `json:"task,omitempty"`
 	Signature                string          `json:"signature,omitempty"`
 	HealthReport             *HealthReport   `json:"health_report,omitempty"`
+	MetricReport             *MetricReport   `json:"metric_report,omitempty"`
+	ReportID                 string          `json:"report_id,omitempty"`
 	DesiredConfigRevision    uint64          `json:"desired_config_revision,omitempty"`
 	ConfigurationSyncState   string          `json:"configuration_sync_state,omitempty"`
 	ConfigurationSyncVersion int64           `json:"configuration_sync_version,omitempty"`
@@ -2942,6 +2944,21 @@ type HealthReport struct {
 	Timestamp                 time.Time    `json:"timestamp"`
 	AppliedConfigVersion      int64        `json:"applied_config_version,omitempty"`
 	AppliedConfigDigest       string       `json:"applied_config_digest,omitempty"`
+}
+
+type MetricReport struct {
+	ReportID           string    `json:"report_id"`
+	SampledAt          time.Time `json:"sampled_at"`
+	CPUUsagePercent    float64   `json:"cpu_usage_percent"`
+	MemoryUsedBytes    uint64    `json:"memory_used_bytes"`
+	MemoryTotalBytes   uint64    `json:"memory_total_bytes"`
+	DiskUsedBytes      uint64    `json:"disk_used_bytes"`
+	DiskTotalBytes     uint64    `json:"disk_total_bytes"`
+	TCPConnectionCount uint64    `json:"tcp_connection_count"`
+	UDPConnectionCount uint64    `json:"udp_connection_count"`
+	ProcessCount       uint64    `json:"process_count"`
+	NetworkUploadBPS   uint64    `json:"network_upload_bps"`
+	NetworkDownloadBPS uint64    `json:"network_download_bps"`
 }
 
 type ServerTrafficWindow struct {

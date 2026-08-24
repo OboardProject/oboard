@@ -119,6 +119,24 @@ func TestConnectivitySLADurationIntegration(t *testing.T) {
 	})
 }
 
+func TestConnectivityFailedProbePointsAggregateActualFailures(t *testing.T) {
+	from := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	window := connectivityTestWindow(from, time.Hour, 15*time.Minute)
+	events := []model.ServerConnectivityEvent{
+		connectivityTestEvent(1, from.Add(5*time.Minute+10*time.Second), model.ConnectivityEventProbeResult, boolPointer(false), 0),
+		connectivityTestEvent(2, from.Add(5*time.Minute+50*time.Second), model.ConnectivityEventProbeResult, boolPointer(false), 0),
+		connectivityTestEvent(3, from.Add(6*time.Minute), model.ConnectivityEventProbeResult, boolPointer(true), 25),
+		connectivityTestEvent(4, from.Add(7*time.Minute), model.ConnectivityEventControllerDisconnected, nil, 0),
+	}
+	response := BuildConnectivityResponse(1, window, model.ServerConnectivityHistory{Events: events})
+	if len(response.FailedProbePoints) != 1 || response.FailedProbePoints[0].At != from.Add(5*time.Minute) || response.FailedProbePoints[0].Count != 2 {
+		t.Fatalf("failed probe points = %#v", response.FailedProbePoints)
+	}
+	if response.Probes.Failed != 2 || response.Probes.Available != 1 {
+		t.Fatalf("probe counts = %#v", response.Probes)
+	}
+}
+
 func TestConnectivityConnectionAndOfflineProbeStateMachine(t *testing.T) {
 	from := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
 	window := connectivityTestWindow(from, time.Hour, 15*time.Minute)
@@ -138,6 +156,29 @@ func TestConnectivityConnectionAndOfflineProbeStateMachine(t *testing.T) {
 		t.Fatalf("state machine response = %#v", response)
 	}
 	assertNear(t, *response.Summary.SLAPercent, 66.6666667, 0.0001)
+}
+
+func TestControllerUpdateDisconnectIsUnknownUntilReplayedProbeEvidence(t *testing.T) {
+	from := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+	window := connectivityTestWindow(from, time.Hour, 15*time.Minute)
+	connected := connectivityTestEvent(1, from, model.ConnectivityEventControllerConnected, nil, 0)
+	maintenance := connectivityTestEvent(2, from.Add(10*time.Minute), model.ConnectivityEventControllerDisconnected, nil, 0)
+	maintenance.Source = model.ConnectivityEventSourceControllerUpdate
+	offline := connectivityTestEvent(3, from.Add(15*time.Minute), model.ConnectivityEventServerOffline, nil, 0)
+	failed := connectivityTestEvent(4, from.Add(20*time.Minute), model.ConnectivityEventProbeResult, boolPointer(false), 0)
+	succeeded := connectivityTestEvent(5, from.Add(30*time.Minute), model.ConnectivityEventProbeResult, boolPointer(true), 25)
+	reconnected := connectivityTestEvent(6, from.Add(40*time.Minute), model.ConnectivityEventControllerConnected, nil, 0)
+	response := BuildConnectivityResponse(1, window, model.ServerConnectivityHistory{Events: []model.ServerConnectivityEvent{connected, maintenance, offline, failed, succeeded, reconnected}})
+	assertNear(t, response.Summary.AvailableSeconds, 40*60, 0.001)
+	assertNear(t, response.Summary.UnavailableSeconds, 10*60, 0.001)
+	assertNear(t, response.Summary.UnknownSeconds, 10*60, 0.001)
+	assertNear(t, *response.Summary.SLAPercent, 80, 0.001)
+
+	normal := maintenance
+	normal.Source = model.ConnectivityEventSourceAgentSocket
+	normalResponse := BuildConnectivityResponse(1, window, model.ServerConnectivityHistory{Events: []model.ServerConnectivityEvent{connected, normal, reconnected}})
+	assertNear(t, normalResponse.Summary.UnavailableSeconds, 30*60, 0.001)
+	assertNear(t, normalResponse.Summary.UnknownSeconds, 0, 0.001)
 }
 
 func TestConnectivityPendingUnknownAndBaseline(t *testing.T) {

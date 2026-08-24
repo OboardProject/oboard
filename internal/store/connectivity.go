@@ -91,6 +91,13 @@ func (s *Store) RecordConnectivityProbeSettingEvent(ctx context.Context, serverI
 }
 
 func (s *Store) RecordControllerConnectionEvent(ctx context.Context, serverID int64, connected bool, effectiveAt time.Time) error {
+	return s.RecordControllerConnectionEventWithSource(ctx, serverID, connected, effectiveAt, model.ConnectivityEventSourceAgentSocket)
+}
+
+func (s *Store) RecordControllerConnectionEventWithSource(ctx context.Context, serverID int64, connected bool, effectiveAt time.Time, source string) error {
+	if source != model.ConnectivityEventSourceControllerUpdate {
+		source = model.ConnectivityEventSourceAgentSocket
+	}
 	kind := model.ConnectivityEventControllerDisconnected
 	state := "disconnected"
 	available := 0
@@ -109,14 +116,14 @@ func (s *Store) RecordControllerConnectionEvent(ctx context.Context, serverID in
 	inserted, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{
 		ServerID:    serverID,
 		Kind:        kind,
-		Source:      "agent_socket",
+		Source:      source,
 		EffectiveAt: effectiveAt.UTC(),
 		EventKey:    "controller:" + state + ":" + effectiveAt.UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
 		return err
 	}
-	if inserted {
+	if inserted && !(source == model.ConnectivityEventSourceControllerUpdate && !connected) {
 		if _, err := tx.ExecContext(ctx, `update server_telemetry set connectivity_available=?,connectivity_error=?,updated_at=? where server_id=?`, available, statusError, time.Now().UTC().Format(time.RFC3339Nano), serverID); err != nil {
 			return err
 		}
@@ -125,6 +132,10 @@ func (s *Store) RecordControllerConnectionEvent(ctx context.Context, serverID in
 }
 
 func (s *Store) CloseOpenControllerConnections(ctx context.Context, effectiveAt time.Time) error {
+	return s.CloseOpenControllerConnectionsWithSource(ctx, effectiveAt, model.ConnectivityEventSourceAgentSocket)
+}
+
+func (s *Store) CloseOpenControllerConnectionsWithSource(ctx context.Context, effectiveAt time.Time, source string) error {
 	rows, err := s.db.QueryContext(ctx, `select e.server_id from server_connectivity_events e where e.kind=? and not exists(select 1 from server_connectivity_events newer where newer.server_id=e.server_id and newer.kind in (?,?) and (newer.effective_at>e.effective_at or (newer.effective_at=e.effective_at and newer.id>e.id)))`, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected)
 	if err != nil {
 		return err
@@ -141,11 +152,24 @@ func (s *Store) CloseOpenControllerConnections(ctx context.Context, effectiveAt 
 		return err
 	}
 	for _, serverID := range serverIDs {
-		if err := s.RecordControllerConnectionEvent(ctx, serverID, false, effectiveAt); err != nil {
+		if err := s.RecordControllerConnectionEventWithSource(ctx, serverID, false, effectiveAt, source); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func connectivityEventPriority(kind model.ConnectivityEventKind) int {
+	switch kind {
+	case model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled, model.ConnectivityEventProbeTargetChanged:
+		return 0
+	case model.ConnectivityEventProbeResult, model.ConnectivityEventServerOffline:
+		return 1
+	case model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
@@ -165,11 +189,15 @@ func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, fro
 	}
 	sort.Slice(history.Baseline, func(i, j int) bool {
 		if history.Baseline[i].EffectiveAt.Equal(history.Baseline[j].EffectiveAt) {
+			left, right := connectivityEventPriority(history.Baseline[i].Kind), connectivityEventPriority(history.Baseline[j].Kind)
+			if left != right {
+				return left < right
+			}
 			return history.Baseline[i].ID < history.Baseline[j].ID
 		}
 		return history.Baseline[i].EffectiveAt.Before(history.Baseline[j].EffectiveAt)
 	})
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and effective_at>=? and effective_at<? order by effective_at asc,id asc`, serverID, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and effective_at>=? and effective_at<? order by effective_at asc,case when kind in ('probe_enabled','probe_disabled','probe_target_changed') then 0 when kind in ('probe_result','server_offline') then 1 when kind in ('controller_connected','controller_disconnected') then 2 else 3 end asc,id asc`, serverID, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return history, err
 	}

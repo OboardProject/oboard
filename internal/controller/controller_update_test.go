@@ -18,6 +18,7 @@ import (
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
+	"github.com/OboardProject/oboard/internal/version"
 )
 
 func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
@@ -576,4 +577,112 @@ func TestControllerUpdateChannelAPI(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
 	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/channel", viewerLogin["token"].(string), map[string]any{"channel": "stable"}, http.StatusForbidden)
+}
+
+func TestControllerUpdateInstallMarksMaintenanceBeforeUpdaterCall(t *testing.T) {
+	socketDir, err := os.MkdirTemp("/tmp", "obu-maintenance-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "updater.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	markerSeen := make(chan controllerUpdateMaintenanceMarker, 1)
+	updater := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := db.GetSetting(r.Context(), controllerUpdateMaintenanceSetting)
+		var marker controllerUpdateMaintenanceMarker
+		_ = json.Unmarshal([]byte(raw), &marker)
+		markerSeen <- marker
+		_ = json.NewEncoder(w).Encode(controllerupdate.Status{State: "installing", Available: controllerupdate.BuildInfo{Build: "target-build"}})
+	})}
+	done := make(chan error, 1)
+	go func() { done <- updater.Serve(listener) }()
+	t.Cleanup(func() { _ = updater.Close(); <-done })
+	app := newTestServer(db, "test-secret", "")
+	app.controllerUpdater = controllerupdate.NewClient(socketPath)
+	status, err := app.installControllerUpdate(t.Context(), "target-build")
+	if err != nil || status.State != "installing" {
+		t.Fatalf("install status=%#v err=%v", status, err)
+	}
+	select {
+	case marker := <-markerSeen:
+		if marker.TargetBuild != "target-build" || marker.StartedAt.IsZero() {
+			t.Fatalf("maintenance marker=%#v", marker)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("updater did not observe maintenance marker")
+	}
+	if !app.controllerUpdateMaintenance.Load() {
+		t.Fatal("maintenance flag was not active during install")
+	}
+	app.clearControllerUpdateMaintenance(t.Context())
+}
+
+func TestControllerStartupConsumesUpdateMaintenanceForOpenConnections(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "maintenance-node", AgentID: "maintenance-agent"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	connectedAt := time.Now().UTC().Add(-time.Minute)
+	if err := db.RecordControllerConnectionEvent(ctx, server.ID, true, connectedAt); err != nil {
+		t.Fatal(err)
+	}
+	marker, _ := json.Marshal(controllerUpdateMaintenanceMarker{StartedAt: time.Now().UTC().Add(-30 * time.Second), TargetBuild: version.Build})
+	if err := db.SetSetting(ctx, controllerUpdateMaintenanceSetting, string(marker)); err != nil {
+		t.Fatal(err)
+	}
+	_ = newTestServer(db, "test-secret", "")
+	history, err := db.ListConnectivityHistory(ctx, server.ID, connectedAt.Add(-time.Second), time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundMaintenanceDisconnect := false
+	for _, event := range history.Events {
+		if event.Kind == model.ConnectivityEventControllerDisconnected && event.Source == model.ConnectivityEventSourceControllerUpdate {
+			foundMaintenanceDisconnect = true
+		}
+	}
+	if !foundMaintenanceDisconnect {
+		t.Fatalf("maintenance connection history=%#v", history.Events)
+	}
+	if raw, err := db.GetSetting(ctx, controllerUpdateMaintenanceSetting); err != nil || raw != "" {
+		t.Fatalf("maintenance marker after startup=%q err=%v", raw, err)
+	}
+
+	reconnectedAt := time.Now().UTC()
+	if err := db.RecordControllerConnectionEvent(ctx, server.ID, true, reconnectedAt); err != nil {
+		t.Fatal(err)
+	}
+	mismatched, _ := json.Marshal(controllerUpdateMaintenanceMarker{StartedAt: time.Now().UTC(), TargetBuild: version.Build + "-other"})
+	if err := db.SetSetting(ctx, controllerUpdateMaintenanceSetting, string(mismatched)); err != nil {
+		t.Fatal(err)
+	}
+	_ = newTestServer(db, "test-secret", "")
+	history, err = db.ListConnectivityHistory(ctx, server.ID, reconnectedAt.Add(-time.Second), time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastSource := ""
+	for _, event := range history.Events {
+		if event.Kind == model.ConnectivityEventControllerDisconnected {
+			lastSource = event.Source
+		}
+	}
+	if lastSource != model.ConnectivityEventSourceAgentSocket {
+		t.Fatalf("mismatched maintenance marker source=%q history=%#v", lastSource, history.Events)
+	}
 }

@@ -5,6 +5,9 @@ import "time"
 type ConnectivityEventKind string
 
 const (
+	ConnectivityEventSourceAgentSocket      = "agent_socket"
+	ConnectivityEventSourceControllerUpdate = "controller_update"
+
 	ConnectivityEventProbeResult            ConnectivityEventKind = "probe_result"
 	ConnectivityEventServerOffline          ConnectivityEventKind = "server_offline"
 	ConnectivityEventProbeEnabled           ConnectivityEventKind = "probe_enabled"

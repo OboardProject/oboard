@@ -1,7 +1,32 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { alignUnifiedMetrics, computeMaxLatency, formatBucketTime, splitSeriesSegments } from './server-unified-chart'
+import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, formatBucketTime, splitSeriesSegments } from './server-unified-chart'
+
+const monitorSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+const monitorStyles = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
 
 describe('server-unified-chart helper', () => {
+  it('uses connect-gaps on and smoothing off as the dialog defaults', () => {
+    expect(DEFAULT_CONNECT_GAPS).toBe(true)
+    expect(DEFAULT_SMOOTH_LINES).toBe(false)
+  })
+
+  it('renders exactly two native pressed-state controls with compact spring feedback', () => {
+    expect(monitorSource.match(/className={`komari-chart-option/g)).toHaveLength(2)
+    expect(monitorSource).toContain('aria-pressed={connectGaps}')
+    expect(monitorSource).toContain('aria-pressed={smoothLines}')
+    expect(monitorSource).toContain('>断点连接</button>')
+    expect(monitorSource).toContain('>平滑</button>')
+    expect(monitorStyles).toContain('cubic-bezier(0.175, 0.885, 0.32, 1.5)')
+    expect(monitorStyles).toContain('transform: scale(0.97) translateY(1px)')
+  })
+
+  it('uses each enabled series color for its connect-gaps area', () => {
+    expect(monitorSource).toContain('stopColor={series.color}')
+    expect(monitorSource).toContain('connectGaps ? buildAreaPath(points, padB, smoothLines)')
+    expect(monitorSource).toContain('fill={`url(#${gradientPrefix}-${seriesIndex})`}')
+  })
+
   it('formats bucket time correctly', () => {
     const ts = new Date('2026-08-13T12:34:00Z').getTime()
     expect(formatBucketTime(ts)).toMatch(/\d{2}-\d{2} \d{2}:\d{2}/)
@@ -74,6 +99,45 @@ describe('server-unified-chart helper', () => {
     expect(segments).toEqual([
       [{ index: 0, value: 20 }],
       [{ index: 2, value: 30 }],
+    ])
+  })
+
+  it('connects finite points across empty buckets when requested', () => {
+    const buckets = [
+      { timestamp: 1, timeLabel: 't1', values: { public_latency: 20 } },
+      { timestamp: 2, timeLabel: 't2', values: { public_latency: null } },
+      { timestamp: 3, timeLabel: 't3', values: { public_latency: 30 } },
+    ]
+
+    expect(splitSeriesSegments(buckets, 'public_latency', true)).toEqual([[
+      { index: 0, value: 20 },
+      { index: 2, value: 30 },
+    ]])
+  })
+
+  it('uses linear paths by default and only emits curves when smoothing is enabled', () => {
+    const points = [{ x: 0, y: 10 }, { x: 10, y: 5 }, { x: 20, y: 12 }]
+    expect(buildLinePath(points, false)).toBe('M 0.0,10.0 L 10.0,5.0 L 20.0,12.0')
+    expect(buildLinePath(points, true)).toContain(' C ')
+    expect(buildAreaPath(points, 20, false)).toBe('M 0.0,10.0 L 10.0,5.0 L 20.0,12.0 L 20.0,20.0 L 0.0,20.0 Z')
+  })
+
+  it('aligns failed probes to the same first, middle, and last chart bucket indexes', () => {
+    const now = new Date('2026-08-13T12:00:00Z').getTime()
+    const start = now - 60 * 60 * 1000
+    expect(alignFailedProbePoints({
+      points: [
+        { at: new Date(start).toISOString(), count: 1 },
+        { at: new Date(start + 30 * 60 * 1000).toISOString(), count: 2 },
+        { at: new Date(now - 1).toISOString(), count: 1 },
+      ],
+      windowHours: 1,
+      bucketCount: 60,
+      now,
+    })).toEqual([
+      { index: 0, count: 1 },
+      { index: 30, count: 2 },
+      { index: 59, count: 1 },
     ])
   })
 
