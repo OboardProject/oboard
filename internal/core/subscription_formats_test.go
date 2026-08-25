@@ -158,7 +158,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatClashMeta, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252", "type: snell", "psk: snell-v4-psk"}, excludes: []string{"snell-v6-psk"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru", "type: snell"}},
-		{format: model.SubscriptionFormatShadowrocket, proxyCount: 8, contains: []string{"proxies:", "type: vless", "type: mieru", "user-hint-is-mandatory: true", "type: snell", "psk: snell-v4-psk", "version: 4", "psk: snell-v6-psk", "version: 6"}, excludes: []string{"proxy-groups:", "rules:"}},
+		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"vless://", "hysteria2://", "mierus://"}, excludes: []string{"proxies:", "proxy-groups:", "rules:", "snell"}},
 		{format: model.SubscriptionFormatEgern, proxyCount: 6, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:", "snell:", "psk: snell-v4-psk"}, excludes: []string{"mieru:", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru", "snell"}},
 		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"udp-over-tcp=sp.v1", "hysteria2=", "mieru", "snell"}},
@@ -215,7 +215,6 @@ func TestSSHSubscriptionTargetMappings(t *testing.T) {
 		model.SubscriptionFormatMihomo,
 		model.SubscriptionFormatStash,
 		model.SubscriptionFormatEgern,
-		model.SubscriptionFormatShadowrocket,
 	}
 	for _, format := range yamlFormats {
 		t.Run(string(format), func(t *testing.T) {
@@ -276,12 +275,19 @@ func TestSSHSubscriptionTargetMappings(t *testing.T) {
 		})
 	}
 
-	output, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatV2RayURI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if output != "ssh://oboard-7:test-password@ssh.example.com:2222#SSH%20Managed\n" {
-		t.Fatalf("V2Ray URI SSH output = %q", output)
+	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatShadowrocket, model.SubscriptionFormatV2RayURI} {
+		output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output != "ssh://oboard-7:test-password@ssh.example.com:2222#SSH%20Managed\n" {
+			t.Fatalf("%s SSH URI = %q", format, output)
+		}
+		for _, forbidden := range []string{"host-key", "host_key", "public-key", sshSubscriptionHostKey} {
+			if strings.Contains(output, forbidden) {
+				t.Fatalf("%s SSH URI contains key-auth field %q: %s", format, forbidden, output)
+			}
+		}
 	}
 }
 
@@ -512,7 +518,7 @@ func TestMieruURIProfileUsesPercentEncodedSpaces(t *testing.T) {
 	}
 }
 
-func TestShadowrocketMieruYAMLEnablesUserHint(t *testing.T) {
+func TestShadowrocketMieruURIEnablesUserHint(t *testing.T) {
 	node := SubscriptionNode{Name: "Mieru", Raw: map[string]any{
 		"type": "mieru", "server": "mieru.example.com", "server_port": 25250,
 		"transport": "TCP", "username": "oboard-u7", "password": "mieru-pass",
@@ -522,14 +528,12 @@ func TestShadowrocketMieruYAMLEnablesUserHint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document struct {
-		Proxies []map[string]any `yaml:"proxies"`
-	}
-	if err := yaml.Unmarshal([]byte(output), &document); err != nil {
+	shareURL, err := url.Parse(strings.TrimSpace(output))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(document.Proxies) != 1 || document.Proxies[0]["user-hint-is-mandatory"] != true {
-		t.Fatalf("Shadowrocket Mieru proxy = %#v, want mandatory user hint", document.Proxies)
+	if got := shareURL.Query().Get("user-hint-is-mandatory"); got != "true" {
+		t.Fatalf("Shadowrocket Mieru user hint = %q, want true: %s", got, output)
 	}
 
 	official, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatMieru)
@@ -595,11 +599,13 @@ func TestSubscriptionContentTypesMatchNativeTargets(t *testing.T) {
 		model.SubscriptionFormatStash,
 		model.SubscriptionFormatClash,
 		model.SubscriptionFormatEgern,
-		model.SubscriptionFormatShadowrocket,
 	} {
 		if got := SubscriptionContentType(format); got != "text/yaml; charset=utf-8" {
 			t.Fatalf("%s content type = %q", format, got)
 		}
+	}
+	if got := SubscriptionContentType(model.SubscriptionFormatShadowrocket); got != "text/plain; charset=utf-8" {
+		t.Fatalf("shadowrocket content type = %q", got)
 	}
 }
 
@@ -612,9 +618,9 @@ func countRenderedSubscriptionProxies(t *testing.T, format model.SubscriptionFor
 			t.Fatal(err)
 		}
 		return len(parsed.Outbounds) - 1
-	case model.SubscriptionFormatMieru, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatSurfboard, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatV2RayURI:
+	case model.SubscriptionFormatMieru, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatSurfboard, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatV2RayURI:
 		return len(strings.Split(strings.TrimSpace(output), "\n"))
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash, model.SubscriptionFormatEgern, model.SubscriptionFormatShadowrocket:
+	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash, model.SubscriptionFormatEgern:
 		var parsed struct {
 			Proxies []map[string]any `yaml:"proxies"`
 		}

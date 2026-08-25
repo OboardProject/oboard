@@ -172,7 +172,7 @@ func renderSubscriptionTargetFromProxies(proxies []subscriptionProxy, format mod
 	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
 		return renderClashTarget(proxies, format)
 	case model.SubscriptionFormatShadowrocket:
-		return renderProxyListYAML(proxies, format)
+		return renderCanonicalURIList(proxies)
 	case model.SubscriptionFormatEgern:
 		return renderProxyListYAML(proxies, format)
 	case model.SubscriptionFormatSurge, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatSurfboard:

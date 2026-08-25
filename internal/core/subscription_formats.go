@@ -497,8 +497,8 @@ func qxSupports(proxy subscriptionProxy) bool {
 //     Snell nodes are filtered for Stash (same silent-filter convention as
 //     Mieru).
 //   - Egern: Snell v1-v5, v6 filtered.
-//   - Shadowrocket: Snell v1-v6 in a Clash-style YAML proxy list, so OBoard's
-//     v4 and v6 nodes are both rendered.
+//   - Shadowrocket: OBoard renders a native URI list. Snell has no supported
+//     share URI, so Snell nodes are filtered instead of emitting invalid data.
 //   - Loon, Quantumult X, classic Clash, and V2Ray URI formats: no Snell.
 func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
 	if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
@@ -515,10 +515,9 @@ func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProx
 		return true
 	case model.SubscriptionFormatEgern:
 		return proxy.Version == SnellVersionV4
-	case model.SubscriptionFormatShadowrocket:
-		return true
 	case model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatClash,
-		model.SubscriptionFormatStash, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
+		model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket,
+		model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
 		return false
 	default:
 		return false
@@ -766,28 +765,11 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 	case "ssh":
 		if format == model.SubscriptionFormatStash {
 			out["user"] = proxy.Username
-		} else if format == model.SubscriptionFormatShadowrocket {
-			// Shadowrocket's internal DB uses `host`/`user`, while Clash
-			// uses `server`/`username`. Provide both spellings so either
-			// parser can locate the field. Keep `host` alias for `server`
-			// as well as `user`/`username` for the login name.
-			out["username"] = proxy.Username
-			out["user"] = proxy.Username
-			out["host"] = proxy.Server
 		} else {
 			out["username"] = proxy.Username
 		}
 		out["password"] = proxy.Password
-		hostKeys := append([]string(nil), proxy.HostKeys...)
-		out["host-key"] = hostKeys
-		if format == model.SubscriptionFormatShadowrocket {
-			// Some Shadowrocket builds document/parse `host_key` or
-			// `public-key` instead of `host-key`.
-			out["host_key"] = hostKeys
-			if len(hostKeys) > 0 {
-				out["public-key"] = hostKeys[0]
-			}
-		}
+		out["host-key"] = append([]string(nil), proxy.HostKeys...)
 	case "mieru":
 		ports, err := mieruPortsFromValue(proxy.Port, proxy.ServerPorts)
 		if err != nil {

@@ -666,7 +666,7 @@ func SubscriptionContentType(format model.SubscriptionFormat) string {
 	switch normalizeSubscriptionFormat(format) {
 	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
 		return "application/json"
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatClash:
+	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatClash:
 		return "text/yaml; charset=utf-8"
 	default:
 		return "text/plain; charset=utf-8"

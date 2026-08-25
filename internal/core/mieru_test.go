@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
-	"go.yaml.in/yaml/v3"
 )
 
 func TestNormalizeMieruPortConfigCanonicalizesAndCompresses(t *testing.T) {
@@ -176,21 +175,15 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 		})
 	}
 
-	if got := SubscriptionContentType(model.SubscriptionFormatShadowrocket); got != "text/yaml; charset=utf-8" {
+	if got := SubscriptionContentType(model.SubscriptionFormatShadowrocket); got != "text/plain; charset=utf-8" {
 		t.Fatalf("Shadowrocket content type = %q", got)
 	}
 	empty, err := renderSubscriptionTarget(nil, model.SubscriptionFormatShadowrocket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document struct {
-		Proxies []map[string]any `yaml:"proxies"`
-	}
-	if err := yaml.Unmarshal([]byte(empty), &document); err != nil {
-		t.Fatalf("empty Shadowrocket subscription is invalid YAML: %v", err)
-	}
-	if len(document.Proxies) != 0 {
-		t.Fatalf("empty Shadowrocket proxies = %#v", document.Proxies)
+	if empty != "" {
+		t.Fatalf("empty Shadowrocket subscription = %q", empty)
 	}
 }
 
