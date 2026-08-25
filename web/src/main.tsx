@@ -151,7 +151,6 @@ import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   automationConnectArtifacts,
   normalizeAutomationControllerURL,
-  type AutomationConnectClient,
 } from './automation-connect'
 import { ProviderEditor } from './components/ai-provider/ProviderEditor'
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
@@ -3345,7 +3344,6 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const [working, setWorking] = useState('')
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
-  const [connectClient, setConnectClient] = useState<AutomationConnectClient>('codex')
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
   const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
   const refresh = async () => {
@@ -3383,7 +3381,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
-  const connectArtifacts = automationConnectArtifacts(connectClient, publicControllerURL)
+  const connectArtifacts = automationConnectArtifacts(publicControllerURL)
   const connectReady = true
   return <Panel title="自动化" className="automation-panel">
     <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
@@ -3421,10 +3419,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
           <Info size={18} /><div><strong>缺少主控公开地址</strong><span>请先在系统设置中填写客户端可访问的完整 HTTPS 地址。</span></div>
           <button type="button" onClick={() => window.location.assign(appPath('/settings'))}>前往设置</button>
         </div> : <>
-          <div className="automation-connect-choices">
-            <div><span>客户端</span><div className="automation-connect-segments" role="radiogroup" aria-label="客户端">{([
-              ['codex', 'Codex'], ['claude', 'Claude Code'], ['generic', '通用 MCP'],
-            ] as [AutomationConnectClient, string][]).map(([value, label]) => <button type="button" role="radio" aria-checked={connectClient === value} className={connectClient === value ? 'active' : ''} key={value} onClick={() => setConnectClient(value)}>{label}</button>)}</div></div>
+          <div className="automation-connect-choices is-single">
             <div><span>权限说明</span><div className="automation-connect-permission">
               <span><strong>跟随当前用户权限</strong><small>授权后由服务端按角色、资源边界和审批策略实时检查</small></span>
             </div></div>
@@ -3432,9 +3427,8 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
           <div className="automation-connect-endpoint"><span>MCP 地址</span><CopyBlock value={`${publicControllerURL}/api/v1/mcp`} /></div>
           <div className="automation-connect-notice"><ShieldCheck size={18} /><div><strong>浏览器确认授权</strong><span>OBoard MCP 仅接受 OAuth Access Token。权限、资源范围和自动审批级别均由授权页和服务端策略决定。</span></div></div>
           {connectReady && <div className="automation-connect-results">
-            {connectArtifacts.command && <section className="automation-connect-output"><div className="automation-connect-output-head"><strong>配置命令</strong><span>写入当前用户配置</span></div><CommandCopyBlock value={connectArtifacts.command} /></section>}
-            <section className="automation-connect-output"><div className="automation-connect-output-head"><strong>配置参考</strong><span>{connectClient === 'codex' ? 'config.toml' : 'JSON'}</span></div><CommandCopyBlock value={connectArtifacts.config} buttonText="复制配置" /></section>
-            <section className="automation-connect-output automation-connect-prompt"><div className="automation-connect-output-head"><strong>交给客户端配置</strong><span>包含 OAuth 登录步骤</span></div><CommandCopyBlock value={connectArtifacts.prompt} buttonText="复制整段提示词" /></section>
+            <section className="automation-connect-output"><div className="automation-connect-output-head"><strong>配置参考</strong><span>JSON</span></div><CommandCopyBlock value={connectArtifacts.config} buttonText="复制配置" /></section>
+            <section className="automation-connect-output automation-connect-prompt"><div className="automation-connect-output-head"><strong>交给 Hermes 配置</strong><span>包含 OAuth 登录步骤</span></div><CommandCopyBlock value={connectArtifacts.prompt} buttonText="复制整段提示词" /></section>
           </div>}
         </>}
       </div>
