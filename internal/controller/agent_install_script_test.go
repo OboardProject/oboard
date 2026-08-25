@@ -57,6 +57,62 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 	}
 }
 
+func TestAgentDownloadProgressOutput(t *testing.T) {
+	for _, installer := range []struct {
+		name   string
+		script string
+	}{{name: "install", script: testAgentInstallScript(t)}, {name: "self-update", script: testAgentSelfUpdateScript(t)}} {
+		t.Run(installer.name, func(t *testing.T) {
+			if !strings.Contains(installer.script, "--progress-bar") {
+				t.Fatal("interactive download progress bar is missing")
+			}
+			root := t.TempDir()
+			bin := filepath.Join(root, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			curlLog := filepath.Join(root, "curl.log")
+			writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+printf '%s\n' "$*" > "$CURL_LOG"
+destination=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then
+    shift
+    destination=$1
+  fi
+  shift
+done
+printf payload > "$destination"
+printf '1048576 524288'
+`)
+			harness := strings.Join([]string{
+				"set -eu",
+				extractShellFunction(t, installer.script, "format_download_value"),
+				extractShellFunction(t, installer.script, "download_component"),
+				"download_component Agent https://panel.example/downloads/agent " + shellQuote(filepath.Join(root, "agent")),
+			}, "\n")
+			cmd := exec.Command(testPOSIXShell(t), "-c", harness)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_LOG="+curlLog)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("download helper failed: %v\n%s", err, output)
+			}
+			if !strings.Contains(string(output), "完成：1.0 MB · 512.0 KB/s") {
+				t.Fatalf("download summary missing size or speed:\n%s", output)
+			}
+			log, err := os.ReadFile(curlLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"--silent", "--write-out", "%{size_download} %{speed_download}"} {
+				if !strings.Contains(string(log), want) {
+					t.Errorf("curl invocation missing %q: %s", want, log)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentInstallScriptRegistersObagPath(t *testing.T) {
 	for _, installer := range []struct {
 		name   string

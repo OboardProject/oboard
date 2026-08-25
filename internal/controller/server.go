@@ -15140,6 +15140,8 @@ ensure_acme_sh
 fix_hostname_resolution
 load_target_version
 
+__AGENT_DOWNLOAD_HELPERS__
+
 make_update_tmp() {
   for cleanup_root in "${OBOARD_TMPDIR:-}" /var/tmp "$STATE_DIR" /tmp /run; do
     [ -n "$cleanup_root" ] || continue
@@ -15174,11 +15176,11 @@ download_binaries() {
   core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
   agent_url="${BASE_URL}/downloads/${agent_name}"
   core_url="${BASE_URL}/downloads/${core_name}"
-  curl -fsSL "$agent_url" -o "$tmp/$agent_name"
-  curl -fsSL "$core_url" -o "$tmp/$core_name"
+  download_component "Agent" "$agent_url" "$tmp/$agent_name"
+  download_component "优化内核" "$core_url" "$tmp/$core_name"
   echo "[3/4] 校验并安装组件"
-  curl -fsSL "${BASE_URL}/downloads/release-manifest.json" -o "$tmp/release-manifest.json"
-  curl -fsSL "${BASE_URL}/downloads/release-manifest.json.sig" -o "$tmp/release-manifest.json.sig"
+  download_quiet "${BASE_URL}/downloads/release-manifest.json" "$tmp/release-manifest.json"
+  download_quiet "${BASE_URL}/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
   verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" >> "$INSTALL_LOG" 2>&1
   chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
@@ -15462,8 +15464,49 @@ esac
 	script = strings.ReplaceAll(script, "__BASE_URL__", shellSingleQuote(baseURL))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", shellSingleQuote(version.ReleasePublicKey))
 	script = strings.ReplaceAll(script, "__AGENT_RELEASE_VERIFIER__", agentReleaseVerifierShell)
+	script = strings.ReplaceAll(script, "__AGENT_DOWNLOAD_HELPERS__", agentDownloadHelpersShell)
 	_, _ = w.Write([]byte(script))
 }
+
+const agentDownloadHelpersShell = `format_download_value() {
+  awk -v bytes="${1:-0}" 'BEGIN {
+    split("B KB MB GB TB", units, " ")
+    value = bytes + 0
+    unit = 1
+    while (value >= 1024 && unit < 5) {
+      value /= 1024
+      unit++
+    }
+    if (unit == 1) printf "%.0f %s", value, units[unit]
+    else printf "%.1f %s", value, units[unit]
+  }'
+}
+
+download_component() {
+  label=$1
+  url=$2
+  destination=$3
+  echo "  $label"
+  if [ -t 2 ]; then
+    meter=--progress-bar
+  else
+    meter=--silent
+  fi
+  if ! stats=$(curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
+    --fail --location --show-error --retry 3 --connect-timeout 15 "$meter" \
+    --write-out '%{size_download} %{speed_download}' "$url" -o "$destination"); then
+    echo "下载失败：$label" >&2
+    return 1
+  fi
+  size=${stats%% *}
+  speed=${stats#* }
+  printf '  完成：%s · %s/s\n' "$(format_download_value "$size")" "$(format_download_value "$speed")"
+}
+
+download_quiet() {
+  curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
+    --fail --silent --show-error --location --retry 3 --connect-timeout 15 "$1" -o "$2"
+}`
 
 const agentReleaseVerifierShell = `ensure_release_verifier() {
   need_tools=0
@@ -15913,18 +15956,19 @@ make_update_tmp() {
   return 1
 }
 
+__AGENT_DOWNLOAD_HELPERS__
+
 tmp=$(make_update_tmp)
 cleanup() { rm -rf "$tmp"; }
 trap cleanup EXIT
 
 agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
 core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
-echo "下载 Agent：$BASE_URL/downloads/$agent_name"
-curl -fsSL "$BASE_URL/downloads/$agent_name" -o "$tmp/$agent_name"
-echo "下载优化内核：$BASE_URL/downloads/$core_name"
-curl -fsSL "$BASE_URL/downloads/$core_name" -o "$tmp/$core_name"
-curl -fsSL "$BASE_URL/downloads/release-manifest.json" -o "$tmp/release-manifest.json"
-curl -fsSL "$BASE_URL/downloads/release-manifest.json.sig" -o "$tmp/release-manifest.json.sig"
+echo "下载 Agent 组件"
+download_component "Agent" "$BASE_URL/downloads/$agent_name" "$tmp/$agent_name"
+download_component "优化内核" "$BASE_URL/downloads/$core_name" "$tmp/$core_name"
+download_quiet "$BASE_URL/downloads/release-manifest.json" "$tmp/release-manifest.json"
+download_quiet "$BASE_URL/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
 verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name"
 chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
 
@@ -16110,6 +16154,7 @@ print_management_help
 `, "__BASE_URL__", shellSingleQuote(baseURL))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", shellSingleQuote(version.ReleasePublicKey))
 	script = strings.ReplaceAll(script, "__AGENT_RELEASE_VERIFIER__", agentReleaseVerifierShell)
+	script = strings.ReplaceAll(script, "__AGENT_DOWNLOAD_HELPERS__", agentDownloadHelpersShell)
 	_, _ = w.Write([]byte(script))
 }
 

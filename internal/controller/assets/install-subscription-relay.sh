@@ -115,20 +115,66 @@ need_command tar
 need_command install
 manager=$(service_manager)
 echo "环境：linux/$ARCH 服务管理器=$manager"
-if command -v curl >/dev/null 2>&1; then
-	download() { curl -fSsL --retry 3 --connect-timeout 15 "$1" -o "$2" || { echo "下载失败：$1" >&2; return 1; }; }
-elif command -v wget >/dev/null 2>&1; then
-	download() { wget -q -O "$2" "$1" || { echo "下载失败：$1" >&2; return 1; }; }
-else
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
 	fail "需要 curl 或 wget。"
 fi
+
+format_download_value() {
+	awk -v bytes="${1:-0}" 'BEGIN {
+		split("B KB MB GB TB", units, " ")
+		value = bytes + 0
+		unit = 1
+		while (value >= 1024 && unit < 5) {
+			value /= 1024
+			unit++
+		}
+		if (unit == 1) printf "%.0f %s", value, units[unit]
+		else printf "%.1f %s", value, units[unit]
+	}'
+}
+
+download_component() {
+	label=$1
+	url=$2
+	destination=$3
+	echo "  $label"
+	if command -v curl >/dev/null 2>&1; then
+		if [ -t 2 ]; then meter=--progress-bar; else meter=--silent; fi
+		if ! stats=$(curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+			--retry 3 --connect-timeout 15 "$meter" --write-out '%{size_download} %{speed_download}' \
+			"$url" -o "$destination"); then
+			echo "下载失败：$label" >&2
+			return 1
+		fi
+		size=${stats%% *}
+		speed=${stats#* }
+		printf '  完成：%s · %s/s\n' "$(format_download_value "$size")" "$(format_download_value "$speed")"
+		return 0
+	fi
+	if [ -t 2 ]; then
+		wget -O "$destination" "$url" || { echo "下载失败：$label" >&2; return 1; }
+	else
+		wget -q -O "$destination" "$url" || { echo "下载失败：$label" >&2; return 1; }
+	fi
+	size=$(wc -c < "$destination" | tr -d '[:space:]')
+	printf '  完成：%s\n' "$(format_download_value "$size")"
+}
+
+download_quiet() {
+	if command -v curl >/dev/null 2>&1; then
+		curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+			--retry 3 --connect-timeout 15 "$1" -o "$2"
+	else
+		wget -q -O "$2" "$1"
+	fi
+}
 echo "[2/4] 从主控下载中继组件"
 echo "目标版本：$VERSION_VALUE"
 ARCHIVE=oboard-subscription-relay-linux-${ARCH}.tar.gz
 BASE_URL=${CONTROLLER_URL%/}/downloads
 TMP_DIR=$(mktemp -d /tmp/oboard-subscription-relay.XXXXXX)
-download "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从主控下载 $ARCHIVE。"
-download "$BASE_URL/subscription-relay-sha256s.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从主控下载订阅中继校验文件。"
+download_component "中继组件" "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从主控下载 $ARCHIVE。"
+download_quiet "$BASE_URL/subscription-relay-sha256s.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从主控下载订阅中继校验文件。"
 
 echo "[3/4] 校验并安装中继组件"
 expected=$(awk -v name="$ARCHIVE" '$2 == name {print $1}' "$TMP_DIR/sha256sums.txt")
