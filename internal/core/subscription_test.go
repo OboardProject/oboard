@@ -153,6 +153,36 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 	}
 }
 
+func TestSSHStandaloneInboundRendersImplicitDirectBranch(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "ssh-pass", SSHRandomID: "123456789012"}
+	server := model.Server{ID: 1, Name: "ixp", PublicIPv4: "203.0.113.10"}
+	inbound := model.Inbound{ID: 11, ServerID: server.ID, Name: "ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, Enabled: true}
+	opts := SubscriptionOptions{
+		EffectiveNodes:    map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
+		SSHServerHostKeys: map[int64]string{server.ID: sshSubscriptionHostKey},
+	}
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Key != NodeKeyOf(model.AssignableNodeInbound, inbound.ID) {
+		t.Fatalf("implicit SSH direct node = %#v", nodes)
+	}
+	raw := nodes[0].Raw
+	if raw["username"] != "u123456789012-p11" || raw["password"] != user.ProxyPassword || raw["server"] != server.PublicIPv4 {
+		t.Fatalf("implicit SSH direct raw = %#v", raw)
+	}
+
+	opts.ProxyPaths = []model.ProxyPath{{ID: 17, Kind: model.ProxyPathKindDirect, Name: "configured", InboundID: inbound.ID, Enabled: true}}
+	nodes, err = BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("inbound grant bypassed configured SSH branch authorization: %#v", nodes)
+	}
+}
+
 func TestSubscriptionWithoutEffectiveNodesReturnsNoNodes(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	nodes, err := BuildSubscriptionNodes(user,

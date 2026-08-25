@@ -790,7 +790,7 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
-	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(ctx, user, data, snapshot.ProxyPathUserBindings())
+	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(ctx, user, data, snapshot.InboundUserBindings(), snapshot.ProxyPathUserBindings())
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}

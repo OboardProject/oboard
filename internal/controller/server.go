@@ -2395,7 +2395,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				if configErr != nil {
 					err = configErr
 				} else {
-					_, pathBindings, _, bindingsErr := s.runtimeAccessBindings(ctx, config)
+					inboundBindings, pathBindings, _, bindingsErr := s.runtimeAccessBindings(ctx, config)
 					if bindingsErr != nil {
 						err = bindingsErr
 						break
@@ -2411,7 +2411,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 					}
 					accesses := make([]map[string]any, 0)
 					for _, server := range config.Servers {
-						plan, planErr := buildSSHInboundPlan(0, server, config, pathBindings, nil)
+						plan, planErr := buildSSHInboundPlan(0, server, config, inboundBindings, pathBindings, nil)
 						if planErr != nil {
 							err = planErr
 							break
@@ -2441,7 +2441,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 								expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, identity)
 								persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, identity)
 								if expectedOK && persistedOK && matchingSSHPasswordDeployment(persisted, expected) && matchingSSHIdentityRoutePlan(plan, deployedPlan, identity) {
-									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": pathNames[access.PathID], "address": inbound.Address, "port": inbound.Port, "username": access.Username, "device_id_hash": access.DeviceIDHash, "credential_epoch": access.CredentialEpoch, "credential_status": access.CredentialStatus})
+									accessName := pathNames[access.PathID]
+									if strings.TrimSpace(accessName) == "" && access.PathID == core.SSHDirectBranchPathID(inbound.InboundID) {
+										accessName = inbound.Name
+									}
+									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": accessName, "address": inbound.Address, "port": inbound.Port, "username": access.Username, "device_id_hash": access.DeviceIDHash, "credential_epoch": access.CredentialEpoch, "credential_status": access.CredentialStatus})
 								}
 							}
 						}
@@ -11716,7 +11720,7 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	if _, err := s.syncDNSInbounds(ctx, servers, in); err != nil {
 		return nil, 0, deploymentFail(400, err)
 	}
-	_, pathBindings, _, err := s.runtimeAccessBindings(ctx, data)
+	inboundBindings, pathBindings, _, err := s.runtimeAccessBindings(ctx, data)
 	if err != nil {
 		return nil, 0, deploymentFail(500, err)
 	}
@@ -11798,7 +11802,7 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 		if err != nil {
 			return nil, 0, deploymentFail(400, err)
 		}
-		sshInboundPlan, err := buildSSHInboundPlan(version, server, data, pathBindings, generated.TrafficPolicies)
+		sshInboundPlan, err := buildSSHInboundPlan(version, server, data, inboundBindings, pathBindings, generated.TrafficPolicies)
 		if err != nil {
 			return nil, 0, deploymentFail(400, err)
 		}
@@ -11895,7 +11899,7 @@ func validateTrustedForwardDeploymentScope(selectedServerID int64, required map[
 // buildSSHInboundPlan turns the regular inbound permissions into a dedicated
 // user-facing SSH listener plan. It reuses the user's proxy password and never
 // exposes the panel login password.
-func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, pathUsers []model.ProxyPathUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
+func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
 	plan := model.SSHInboundPlan{Version: version, Inbounds: []model.SSHInbound{}}
 	users := make(map[int64][]model.User, len(data.Users))
 	for _, user := range core.ExpandDeviceUsers(data.Users, data.UserDevices) {
@@ -11930,6 +11934,28 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		}
 		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seenPolicy := map[int64]bool{}
+		appendSSHUser := func(user model.User, pathID int64, routeInboundTag, routeAuthUser string) error {
+			if user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") || strings.TrimSpace(user.ProxyPassword) == "" {
+				return nil
+			}
+			if strings.TrimSpace(user.SSHRandomID) == "" {
+				return fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
+			}
+			credential := core.UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSSH)
+			status := strings.TrimSpace(user.CredentialStatus)
+			if status == "" {
+				status = "active"
+			}
+			entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, pathID), Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: pathID, RouteKind: "kernel", RouteInboundTag: routeInboundTag, RouteAuthUser: routeAuthUser, Enabled: true})
+			if !seenPolicy[user.ID] {
+				seenPolicy[user.ID] = true
+				if policy, ok := policies[user.ID]; ok {
+					policy.InboundID = inbound.ID
+					entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
+				}
+			}
+			return nil
+		}
 		for _, path := range pathsByInbound[inbound.ID] {
 			_, _, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
 			if err != nil {
@@ -11937,28 +11963,27 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 			}
 			for _, userID := range pathBound[path.ID] {
 				for _, user := range users[userID] {
-					if user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") || strings.TrimSpace(user.ProxyPassword) == "" {
-						continue
-					}
-					if strings.TrimSpace(user.SSHRandomID) == "" {
-						return model.SSHInboundPlan{}, fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
-					}
-					credential := core.UserCredentialForRoute(user, inbound.ID, path.ID, model.ProtocolSSH)
 					routeInboundTag, routeAuthUser, err := core.ProxyPathEntryRoutingIdentity(path, inbound, user)
 					if err != nil {
 						return model.SSHInboundPlan{}, fmt.Errorf("SSH path %s: %w", path.Name, err)
 					}
-					status := strings.TrimSpace(user.CredentialStatus)
-					if status == "" {
-						status = "active"
+					if err := appendSSHUser(user, path.ID, routeInboundTag, routeAuthUser); err != nil {
+						return model.SSHInboundPlan{}, err
 					}
-					entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, path.ID), Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: path.ID, RouteKind: "kernel", RouteInboundTag: routeInboundTag, RouteAuthUser: routeAuthUser, Enabled: true})
-					if !seenPolicy[user.ID] {
-						seenPolicy[user.ID] = true
-						if policy, ok := policies[user.ID]; ok {
-							policy.InboundID = inbound.ID
-							entry.Policies[fmt.Sprintf("user:%d", user.ID)] = policy
-						}
+				}
+			}
+		}
+		if len(pathsByInbound[inbound.ID]) == 0 {
+			// A branchless SSH inbound serves its inbound-level grants over one
+			// implicit direct-exit route with a virtual branch id.
+			for _, binding := range inboundUsers {
+				if !binding.Enabled || binding.InboundID != inbound.ID {
+					continue
+				}
+				for _, user := range users[binding.UserID] {
+					routeInboundTag, routeAuthUser, pathID := core.SSHDirectBranchIdentity(inbound.ID, user.Username)
+					if err := appendSSHUser(user, pathID, routeInboundTag, routeAuthUser); err != nil {
+						return model.SSHInboundPlan{}, err
 					}
 				}
 			}
@@ -12084,7 +12109,7 @@ func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identi
 	return currentOK && deployedOK && currentDigest == deployedDigest
 }
 
-func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
+func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
 	deployments, err := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
 	if err != nil {
 		return nil, err
@@ -12092,7 +12117,7 @@ func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.U
 	identity := sshPasswordDeploymentIdentityForUser(user)
 	hostKeys := map[int64]string{}
 	for _, server := range data.Servers {
-		plan, err := buildSSHInboundPlan(0, server, data, pathUsers, nil)
+		plan, err := buildSSHInboundPlan(0, server, data, inboundUsers, pathUsers, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -12925,7 +12950,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pullPathUsers := snapshot.ProxyPathUserBindings()
-	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(r.Context(), subscriptionUser, data, pullPathUsers)
+	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(r.Context(), subscriptionUser, data, snapshot.InboundUserBindings(), pullPathUsers)
 	if err != nil {
 		fail(w, err, 500)
 		return

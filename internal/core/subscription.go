@@ -139,6 +139,30 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 			if strings.TrimSpace(user.ProxyPassword) == "" || strings.TrimSpace(user.SSHRandomID) == "" || hostKey == "" {
 				continue
 			}
+			if len(authorizedBranches) == 0 {
+				// A branchless SSH inbound renders one implicit direct-exit
+				// route authorized by the inbound grant itself.
+				if len(configuredBranches) > 0 || !inboundAllowed {
+					continue
+				}
+				pathID := SSHDirectBranchPathID(inbound.ID)
+				credentialUser := UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSSH)
+				group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeInbound, inbound.ID), defaultGroup)
+				raw := map[string]any{
+					"type":         "ssh",
+					"server":       server.EntryAddress,
+					"server_port":  InboundSubscriptionPort(inbound),
+					"username":     fmt.Sprintf("u%s-p%d", user.SSHRandomID, pathID),
+					"password":     credentialUser.ProxyPassword,
+					"host_key":     []string{hostKey},
+					"oboard_group": group,
+				}
+				topo := topologies[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]
+				nodes = append(nodes, newSubscriptionNode(topo, model.AssignableNodeInbound, inbound.ID, standaloneName, group, opts.NodeOrderPositions, inbound, server, raw))
+				regionCode, _ := EffectiveServerRegion(server)
+				nameRefs = append(nameRefs, subscriptionNodeNameRef{index: len(nodes) - 1, kind: subscriptionNodeNameStandalone, resourceID: inbound.ID, serverID: server.ID, regionCode: regionCode})
+				continue
+			}
 			for _, path := range authorizedBranches {
 				credentialUser := UserCredentialForRoute(user, inbound.ID, path.ID, model.ProtocolSSH)
 				branchName := strings.TrimSpace(path.Name)
@@ -451,6 +475,20 @@ func disambiguateSubscriptionNodeNames(nodes []SubscriptionNode, refs []subscrip
 			break
 		}
 	}
+}
+
+// SSHDirectBranchPathID is the virtual branch id for a branchless SSH
+// inbound: the inbound renders one implicit direct-exit route whose login
+// name and kernel auth identity encode this id instead of a proxy path id.
+// It is only used while the inbound has no real proxy-path branches.
+func SSHDirectBranchPathID(inboundID int64) int64 { return inboundID }
+
+// SSHDirectBranchIdentity returns the kernel route identity for the implicit
+// direct branch of a branchless SSH inbound. It mirrors the identity a real
+// direct proxy path would receive so the Agent validates both identically.
+func SSHDirectBranchIdentity(inboundID int64, username string) (routeInboundTag, routeAuthUser string, pathID int64) {
+	pathID = SSHDirectBranchPathID(inboundID)
+	return fmt.Sprintf("in-%d", inboundID), fmt.Sprintf("%s__oboard_path_%d", username, pathID), pathID
 }
 
 func subscriptionBranchesForInbound(inbound model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep) []model.ProxyPath {

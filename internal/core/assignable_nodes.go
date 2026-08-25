@@ -107,12 +107,6 @@ func BuildAssignableNodeCatalog(input AssignableNodeCatalogInput) ([]AssignableN
 		if !inbound.Enabled {
 			continue
 		}
-		// SSH nodes render only through proxy-path branches (the per-user
-		// login name encodes the path id), so a branchless SSH inbound must
-		// never become a standalone assignable node.
-		if inbound.Protocol == model.ProtocolSSH {
-			continue
-		}
 		configuredBranches := subscriptionBranchesForInbound(inbound, paths, input.ProxyPathSteps)
 		if len(configuredBranches) > 0 {
 			continue

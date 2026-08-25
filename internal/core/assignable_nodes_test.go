@@ -96,7 +96,7 @@ func TestBuildAssignableNodeCatalog(t *testing.T) {
 	_ = now
 }
 
-func TestBuildAssignableNodeCatalogSSHRequiresBranch(t *testing.T) {
+func TestBuildAssignableNodeCatalogSSHStandaloneAndBranch(t *testing.T) {
 	input := AssignableNodeCatalogInput{
 		Servers: []model.Server{
 			{ID: 1, Name: "ixp", Status: model.ServerOnline},
@@ -109,15 +109,16 @@ func TestBuildAssignableNodeCatalogSSHRequiresBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nodes) != 0 {
-		t.Fatalf("branchless SSH inbound must not be assignable: %#v", nodes)
+	if len(nodes) != 1 || nodes[0].Key != "inbound:31" || nodes[0].EntryProtocol != model.ProtocolSSH {
+		t.Fatalf("branchless SSH inbound must stay standalone assignable: %#v", nodes)
 	}
 	topologies, _, _, err := ResolveAssignableNodeTopologies(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(topologies) != 0 {
-		t.Fatalf("branchless SSH inbound must not expose topology: %#v", topologies)
+	topo, ok := topologies["inbound:31"]
+	if !ok || topo.ExitKind != "direct" {
+		t.Fatalf("branchless SSH inbound topology = %#v", topo)
 	}
 
 	input.ProxyPaths = []model.ProxyPath{{ID: 300, Kind: model.ProxyPathKindDirect, Name: "ixp-direct", InboundID: 31, Enabled: true}}

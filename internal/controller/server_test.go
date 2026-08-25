@@ -408,7 +408,7 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(2, *server, data, snapshotBindingsFromData(data), policies)
+	plan, err := buildSSHInboundPlan(2, *server, data, nil, snapshotBindingsFromData(data), policies)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,6 +417,101 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	}
 	if _, ok := plan.Inbounds[0].Policies["user:"+strconv.FormatInt(user.ID, 10)]; !ok {
 		t.Fatalf("SSH plan lacks user traffic policy: %#v", plan.Inbounds[0].Policies)
+	}
+}
+
+func TestSSHInboundPlanBuildsImplicitDirectRouteForStandaloneGrant(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "ixp", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "alice-id", ProxyPassword: "alice-pass", SubscriptionToken: "implicit-ssh-subscription-token"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "standalone-ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, EntryIPMode: model.EntryIPModeIPv4, ConfigJSON: `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	grantTestPlanNode(t, db, user.ID, model.AssignableNodeInbound, inbound.ID)
+	data, err := db.FullRoutingConfigData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := srv.buildAccessSnapshot(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildSSHInboundPlan(3, *server, data, snapshot.InboundUserBindings(), snapshot.ProxyPathUserBindings(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 {
+		t.Fatalf("implicit SSH direct plan = %#v", plan)
+	}
+	planned := plan.Inbounds[0].Users[0]
+	pathID := core.SSHDirectBranchPathID(inbound.ID)
+	if planned.PathID != pathID || planned.Username != sshLoginName(*user, pathID) || planned.Password != user.ProxyPassword || planned.RouteKind != "kernel" || planned.RouteInboundTag != "in-"+strconv.FormatInt(inbound.ID, 10) || planned.RouteAuthUser != user.Username+"__oboard_path_"+strconv.FormatInt(pathID, 10) {
+		t.Fatalf("implicit SSH direct user = %#v", planned)
+	}
+
+	_, hostPrivateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostPublicKey, err := ssh.NewPublicKey(hostPrivateKey.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostIdentity := model.SSHServerHostKey{ServerID: server.ID, PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey), PlanDigest: sshInboundPlanDigest(plan), ConfigVersion: plan.Version}
+	deployments, err := srv.sshPasswordDeploymentsFromPlan(server.ID, plan)
+	if err != nil || len(deployments) != 1 {
+		t.Fatalf("implicit SSH deployments = %#v, err=%v", deployments, err)
+	}
+	if err := db.ApplySSHDeploymentState(ctx, hostIdentity, deployments); err != nil {
+		t.Fatal(err)
+	}
+	payloadJSON, err := json.Marshal(model.DeploymentTaskPayload{Version: plan.Version, SSHInbounds: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payloadJSON), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: plan.Version, Nonce: "implicit-ssh-baseline"}); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/implicit-ssh-subscription-token?format=sing-box", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("implicit SSH subscription status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var document struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	sshOutbounds := make([]map[string]any, 0, len(document.Outbounds))
+	for _, outbound := range document.Outbounds {
+		if outbound["type"] == "ssh" {
+			sshOutbounds = append(sshOutbounds, outbound)
+		}
+	}
+	if len(sshOutbounds) != 1 || sshOutbounds[0]["user"] != planned.Username {
+		t.Fatalf("implicit SSH subscription = %#v", document.Outbounds)
+	}
+	workspaceNodes, _, err := srv.workspaceAllNodes(ctx, *user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workspaceNodes) != 1 || workspaceNodes[0].Key != core.NodeKeyOf(model.AssignableNodeInbound, inbound.ID) || workspaceNodes[0].Raw["type"] != "ssh" {
+		t.Fatalf("implicit SSH workspace nodes = %#v", workspaceNodes)
 	}
 }
 
@@ -452,7 +547,7 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(7, *server, data, snapshotBindingsFromData(data), nil)
+	plan, err := buildSSHInboundPlan(7, *server, data, nil, snapshotBindingsFromData(data), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +602,7 @@ func TestSSHInboundPlanListenFollowsDetectedFamilies(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, err := buildSSHInboundPlan(2, server, data, snapshotBindingsFromData(data), nil)
+			plan, err := buildSSHInboundPlan(2, server, data, nil, snapshotBindingsFromData(data), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -660,7 +755,7 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildSSHInboundPlan(0, *server, config, snapshotBindingsFromData(config), nil)
+	plan, err := buildSSHInboundPlan(0, *server, config, nil, snapshotBindingsFromData(config), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
