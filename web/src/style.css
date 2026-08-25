@@ -12452,8 +12452,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .dns-domain-input > .custom-select,
 .dns-domain-suffix {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   width: auto;
+  min-width: 0;
   max-width: 58%;
   border: 0;
   border-left: 1px solid var(--border);
@@ -12462,19 +12463,24 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   color: var(--muted);
 }
 
-.dns-domain-input > .custom-select {
-  min-width: 150px;
-}
-
 .dns-domain-input > .custom-select .custom-select-trigger,
 .dns-domain-input > .custom-select.open .custom-select-trigger,
 .dns-domain-input > .custom-select .custom-select-trigger:focus-visible {
   min-height: 100%;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  padding: 0 10px 0 14px;
+  gap: 6px;
   border: 0;
   border-radius: 0;
   background: var(--surface-2);
   box-shadow: none;
   color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  justify-content: flex-start;
 }
 
 .dns-domain-suffix {
@@ -12491,7 +12497,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 @media (max-width: 520px) {
   .dns-domain-input > .custom-select,
   .dns-domain-suffix { max-width: 62%; }
-  .dns-domain-input > .custom-select { min-width: 0; }
 }
 
 .check-row {
