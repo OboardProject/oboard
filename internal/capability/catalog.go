@@ -109,6 +109,26 @@ func (c *Catalog) ListMCP(principal application.Principal) []Descriptor {
 	return out
 }
 
+func (c *Catalog) AllMCPDescriptors() []Descriptor {
+	out := make([]Descriptor, 0, len(c.items))
+	for _, item := range c.items {
+		if item.MCPEnabled {
+			out = append(out, item)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func (c *Catalog) AllDescriptors() []Descriptor {
+	out := make([]Descriptor, 0, len(c.items))
+	for _, item := range c.items {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func (c *Catalog) Authorize(principal application.Principal, name string) (Descriptor, bool) {
 	item, ok := c.Get(name)
 	return item, ok && c.authorizePrincipal(principal, item)
@@ -606,7 +626,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
-			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
@@ -628,7 +648,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 			"expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
-			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":

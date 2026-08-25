@@ -2547,6 +2547,21 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 	return tx.Commit()
 }
 
+func (s *Store) SetServerTrafficUsed(ctx context.Context, serverID int64, used int64, window model.ServerTrafficWindow) error {
+	if serverID <= 0 {
+		return errors.New("server id required")
+	}
+	if used < 0 {
+		return errors.New("traffic used must be >= 0")
+	}
+	if window.Key == "" {
+		return errors.New("traffic window required")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `update server_telemetry set period_key=?, period_start=?, period_end=?, traffic_upload_bytes=?, traffic_download_bytes=?, updated_at=? where server_id=?`, window.Key, window.Start.UTC().Format(time.RFC3339Nano), window.End.UTC().Format(time.RFC3339Nano), uint64(used), uint64(0), now, serverID)
+	return err
+}
+
 func (s *Store) attachServerTelemetry(ctx context.Context, servers []model.Server) error {
 	if len(servers) == 0 {
 		return nil

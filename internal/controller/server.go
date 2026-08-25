@@ -3347,6 +3347,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			TrafficResetMode       *string                   `json:"traffic_reset_mode"`
 			TrafficResetDay        *int                      `json:"traffic_reset_day"`
 			TrafficLimitBytes      *int64                    `json:"traffic_limit_bytes"`
+			TrafficUsedBytes       *int64                    `json:"traffic_used_bytes"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3435,6 +3436,14 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			}
 			v.TrafficLimitBytes = *input.TrafficLimitBytes
 		}
+		var trafficUsedBytes *int64
+		if input.TrafficUsedBytes != nil {
+			if *input.TrafficUsedBytes < 0 {
+				fail(w, errors.New("traffic_used_bytes must be >= 0"), 400)
+				return
+			}
+			trafficUsedBytes = input.TrafficUsedBytes
+		}
 		if err := validateServer(&v); err != nil {
 			fail(w, err, 400)
 			return
@@ -3449,6 +3458,15 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.CreateServer(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
+		}
+		if trafficUsedBytes != nil {
+			loc := trafficLocation(settings)
+			k, sTime, eTime := trafficWindow(time.Now(), v.TrafficResetMode, v.TrafficResetDay, time.Time{}, loc)
+			window := model.ServerTrafficWindow{Key: k, Start: sTime, End: eTime}
+			if err := s.store.SetServerTrafficUsed(r.Context(), v.ID, *trafficUsedBytes, window); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		auditReq(s, r, "create", "server", fmt.Sprint(v.ID))
 		created, _ := s.store.GetServer(r.Context(), v.ID)
@@ -3693,6 +3711,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			TrafficResetMode         *string                     `json:"traffic_reset_mode"`
 			TrafficResetDay          *int                        `json:"traffic_reset_day"`
 			TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes"`
+			TrafficUsedBytes         *int64                      `json:"traffic_used_bytes"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -3782,6 +3801,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			}
 			v.TrafficLimitBytes = *input.TrafficLimitBytes
 		}
+		if input.TrafficUsedBytes != nil && *input.TrafficUsedBytes < 0 {
+			fail(w, errors.New("traffic_used_bytes must be >= 0"), 400)
+			return
+		}
 		v.LatencyProbeEnabled = current.LatencyProbeEnabled
 		v.LatencyProbeMode = current.LatencyProbeMode
 		v.LatencyProbePublicTarget = current.LatencyProbePublicTarget
@@ -3835,6 +3858,16 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.UpdateServer(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
+		}
+		if input.TrafficUsedBytes != nil {
+			settings, _ := s.store.ListSettings(r.Context())
+			loc := trafficLocation(settings)
+			k, sTime, eTime := trafficWindow(time.Now(), v.TrafficResetMode, v.TrafficResetDay, time.Time{}, loc)
+			window := model.ServerTrafficWindow{Key: k, Start: sTime, End: eTime}
+			if err := s.store.SetServerTrafficUsed(r.Context(), v.ID, *input.TrafficUsedBytes, window); err != nil {
+				fail(w, err, 500)
+				return
+			}
 		}
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
 		updated, _ := s.store.GetServer(r.Context(), v.ID)

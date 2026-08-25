@@ -6947,7 +6947,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
 }
 
 function GridViewIcon() {
@@ -8009,6 +8009,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
             <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
           </FormField>
+          <FormField label="已用流量" hint="当前周期已产生的流量，默认为 0，创建时可填入已用的一半等初始值。">
+            <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
+          </FormField>
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
@@ -8081,6 +8084,7 @@ function serverToDraft(server: Server) {
     internal_port_range_end: server.internal_port_range_end || 59999,
     entry_ip_mode: (server.entry_ip_mode || 'auto') as EntryIPMode,
     traffic_limit_bytes: Number(server.traffic_limit_bytes || 0),
+    traffic_used_bytes: (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0),
     expires_at: serverExpiryInputValue(server.expires_at),
     renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly',
     auto_renew_enabled: Boolean(server.auto_renew_enabled),
@@ -8171,6 +8175,9 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
             <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
+          </FormField>
+          <FormField label="已用流量" hint="当前周期已产生的流量，默认为 0，创建时可填入已用的一半等初始值。">
+            <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
           </FormField>
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
