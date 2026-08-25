@@ -2254,7 +2254,13 @@ export function App() {
   }
 
   const cachePageData = (page: string, data: any) => {
-    pageCacheRef.current[page] = { data: mergeServerTelemetryData({ ...data, load_errors: [] as string[] }, latestTelemetryRef.current), fetchedAt: Date.now() }
+    const merged = mergeServerTelemetryData({ ...data, load_errors: [] as string[] }, latestTelemetryRef.current)
+    const cached = pageCacheRef.current[page]?.data
+    const cacheMetrics = (cached?.server_metrics || []) as ServerMetricSample[]
+    const freshMetrics = (merged.server_metrics || []) as ServerMetricSample[]
+    const nextMetrics = cacheMetrics.length && freshMetrics.length ? mergePersistedServerMetrics(cacheMetrics, freshMetrics) : freshMetrics
+    const nextData = nextMetrics ? { ...merged, server_metrics: nextMetrics } : merged
+    pageCacheRef.current[page] = { data: nextData, fetchedAt: Date.now() }
   }
 
   const patchPageData: PageDataPatch = React.useCallback((patch) => {
@@ -2325,9 +2331,19 @@ export function App() {
       const merged = mergeServerTelemetryData({ ...next, load_errors: [] as string[] }, latestTelemetryRef.current)
       // Always warm the per-tab cache, even if the user has already navigated away.
       // That way a quick A→B→A return crossfades into fresh content without a blank stage.
-      pageCacheRef.current[page] = { data: merged, fetchedAt: Date.now() }
+      const cachedForPage = pageCacheRef.current[page]?.data
+      const cacheMetrics = (cachedForPage?.server_metrics || []) as ServerMetricSample[]
+      const mergedMetricsForCache = cacheMetrics.length && (merged.server_metrics as ServerMetricSample[])?.length ? mergePersistedServerMetrics(cacheMetrics, merged.server_metrics as ServerMetricSample[]) : (merged.server_metrics as ServerMetricSample[] | undefined)
+      const mergedForCache = mergedMetricsForCache ? { ...merged, server_metrics: mergedMetricsForCache } : merged
+      pageCacheRef.current[page] = { data: mergedForCache, fetchedAt: Date.now() }
       if (seq !== loadSeq.current) return
-      setData((old: any) => ({ ...old, ...merged }))
+      setData((old: any) => {
+        const oldMetrics = (old?.server_metrics || []) as ServerMetricSample[]
+        const freshMetrics = (merged.server_metrics || []) as ServerMetricSample[]
+        const nextMetrics = oldMetrics.length && freshMetrics.length ? mergePersistedServerMetrics(oldMetrics, freshMetrics) : freshMetrics
+        const nextData = nextMetrics ? { ...merged, server_metrics: nextMetrics } : merged
+        return { ...old, ...nextData }
+      })
     } catch (e: any) {
       if (e instanceof SupersededAuthRequestError) return
       if (e?.name === 'AbortError') return
@@ -7058,7 +7074,37 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   useEffect(() => {
     setServers(((data.servers || []) as Server[]).filter(server => !pendingDeleteServerIDsRef.current.has(server.id)))
   }, [data.servers])
-  useEffect(() => { setServerMetrics(data.server_metrics || []) }, [data.server_metrics])
+  useEffect(() => {
+    const incoming = (data.server_metrics || []) as ServerMetricSample[]
+    setServerMetrics(current => {
+      if (!current.length) return incoming
+      if (!incoming.length) return current
+      // Merge incoming DB samples with current live samples to avoid flicker when DB is sparser (rate-limited).
+      // Keep live points that are not yet persisted and dedupe by sampled_at.
+      const key = (sample: ServerMetricSample) => `${Number(sample.server_id)}:${String(sample.sampled_at)}`
+      const mergedMap = new Map<string, ServerMetricSample>()
+      for (const sample of incoming) mergedMap.set(key(sample), sample)
+      for (const sample of current) {
+        const k = key(sample)
+        if (!mergedMap.has(k)) mergedMap.set(k, sample)
+      }
+      const grouped = new Map<number, ServerMetricSample[]>()
+      for (const sample of mergedMap.values()) {
+        const id = Number(sample.server_id)
+        const list = grouped.get(id)
+        if (list) list.push(sample)
+        else grouped.set(id, [sample])
+      }
+      const result: ServerMetricSample[] = []
+      for (const list of grouped.values()) {
+        list.sort((a, b) => new Date(String(a.sampled_at)).getTime() - new Date(String(b.sampled_at)).getTime())
+        const trimmed = list.length > 60 ? list.slice(-60) : list
+        result.push(...trimmed)
+      }
+      result.sort((a, b) => Number(a.server_id) - Number(b.server_id) || new Date(String(a.sampled_at)).getTime() - new Date(String(b.sampled_at)).getTime())
+      return result
+    })
+  }, [data.server_metrics])
   useEffect(() => { if (realtimeStatus === 'open') setServerRefreshFailed(false) }, [realtimeStatus])
   useEffect(() => { saveServerListPreferences(listPreferences) }, [listPreferences])
   useEffect(() => {
@@ -7667,6 +7713,33 @@ function appendLiveServerMetrics(current: ServerMetricSample[], servers: Server[
     grouped.set(Number(server.id), list.slice(-60))
   })
   return Array.from(grouped.values()).flat()
+}
+
+function mergePersistedServerMetrics(oldMetrics: ServerMetricSample[], freshMetrics: ServerMetricSample[]): ServerMetricSample[] {
+  if (!oldMetrics.length) return freshMetrics
+  if (!freshMetrics.length) return oldMetrics
+  const key = (sample: ServerMetricSample) => `${Number(sample.server_id)}:${String(sample.sampled_at)}`
+  const mergedMap = new Map<string, ServerMetricSample>()
+  for (const sample of freshMetrics) mergedMap.set(key(sample), sample)
+  for (const sample of oldMetrics) {
+    const k = key(sample)
+    if (!mergedMap.has(k)) mergedMap.set(k, sample)
+  }
+  const grouped = new Map<number, ServerMetricSample[]>()
+  for (const sample of mergedMap.values()) {
+    const id = Number(sample.server_id)
+    const list = grouped.get(id)
+    if (list) list.push(sample)
+    else grouped.set(id, [sample])
+  }
+  const result: ServerMetricSample[] = []
+  for (const list of grouped.values()) {
+    list.sort((a, b) => new Date(String(a.sampled_at)).getTime() - new Date(String(b.sampled_at)).getTime())
+    const trimmed = list.length > 60 ? list.slice(-60) : list
+    result.push(...trimmed)
+  }
+  result.sort((a, b) => Number(a.server_id) - Number(b.server_id) || new Date(String(a.sampled_at)).getTime() - new Date(String(b.sampled_at)).getTime())
+  return result
 }
 
 function effectiveControllerURL(data: any) {
@@ -8793,16 +8866,20 @@ function ServerTelemetryChart({ samples, type }: { samples: ServerMetricSample[]
   const second = type === 'network' ? points.map(x => Number(x.network_upload_bps || 0)) : []
   const scaleMax = Math.max(1, ...first, ...second)
   const formatScale = (value: number) => type === 'network' ? formatByteRate(value) : `${Math.round(value)} ms`
-  if (points.length < 2) return <div className="server-chart-empty">等待更多数据</div>
-  return <div className={`server-chart-wrap ${type}`}>
+  const hasData = points.length >= 2
+  return <div className={`server-chart-wrap ${type}${hasData ? '' : ' is-empty'}`}>
     <svg className={`server-mini-chart ${type}`} viewBox="0 0 240 48" preserveAspectRatio="none" role="img" aria-label={type === 'network' ? '近期上下行速率' : '近期公网延迟'}>
       <line x1="0" y1="16" x2="240" y2="16" className="server-chart-grid" />
       <line x1="0" y1="32" x2="240" y2="32" className="server-chart-grid" />
-      <polyline points={telemetryPolyline(first, 240, 48, scaleMax)} className="server-chart-line primary" vectorEffect="non-scaling-stroke" />
-      {second.length ? <polyline points={telemetryPolyline(second, 240, 48, scaleMax)} className="server-chart-line secondary" vectorEffect="non-scaling-stroke" /> : null}
+      {hasData ? <>
+        <polyline points={telemetryPolyline(first, 240, 48, scaleMax)} className="server-chart-line primary" vectorEffect="non-scaling-stroke" />
+        {second.length ? <polyline points={telemetryPolyline(second, 240, 48, scaleMax)} className="server-chart-line secondary" vectorEffect="non-scaling-stroke" /> : null}
+      </> : null}
     </svg>
-    <span className="server-chart-scale-label high" aria-hidden="true">{formatScale(scaleMax * 2 / 3)}</span>
-    <span className="server-chart-scale-label low" aria-hidden="true">{formatScale(scaleMax / 3)}</span>
+    {hasData ? <>
+      <span className="server-chart-scale-label high" aria-hidden="true">{formatScale(scaleMax * 2 / 3)}</span>
+      <span className="server-chart-scale-label low" aria-hidden="true">{formatScale(scaleMax / 3)}</span>
+    </> : <span className="server-chart-empty-label" aria-hidden="true">等待更多数据</span>}
   </div>
 }
 

@@ -3222,11 +3222,14 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-chart-empty {
   width: 100%;
   height: 48px;
+  box-sizing: border-box;
 }
 
 .server-chart-wrap {
   position: relative;
   min-width: 0;
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .server-mini-chart {
@@ -3259,6 +3262,42 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   border-bottom: 1px solid var(--border);
   color: var(--muted);
   font-size: 9px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.server-chart-wrap.is-empty {
+  display: grid;
+  place-items: center;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  box-sizing: border-box;
+}
+
+.server-chart-wrap.is-empty .server-mini-chart {
+  position: absolute;
+  inset: 0;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.server-chart-empty-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-solid) 72%, transparent);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.server-chart-wrap.is-empty .server-mini-chart + .server-chart-empty-label {
+  z-index: 1;
 }
 
 .server-chart-grid {
@@ -10831,9 +10870,23 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 .server-connectivity .server-chart-wrap {
   height: 34px;
+  min-height: 34px;
 }
 .server-connectivity .server-mini-chart {
   height: 34px;
+  min-height: 34px;
+}
+.server-connectivity .server-chart-empty {
+  height: 34px;
+  min-height: 34px;
+}
+.server-connectivity .server-chart-wrap.is-empty {
+  height: 34px;
+  min-height: 34px;
+}
+.server-connectivity .server-chart-wrap.is-empty .server-mini-chart {
+  height: 34px;
+  min-height: 34px;
 }
 .server-connectivity .server-chart-scale-label {
   font-size: 7.5px;
