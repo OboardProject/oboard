@@ -19041,7 +19041,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
     <div className="section-toolbar">
       <div>
         <h3>通知通道</h3>
-        <p className="muted">{isAdmin ? '先配置 OBoard Telegram Bot，再为自己的通知渠道选择事件并绑定 Telegram 账号。' : '选择要接收的通知类型，并把 Telegram 通知渠道绑定到管理员配置的 Bot。'}</p>
+        {!isAdmin && <p className="muted">选择要接收的通知类型，并把 Telegram 通知渠道绑定到管理员配置的 Bot。</p>}
       </div>
       <div className="section-actions">
         {isAdmin && <button type="button" className="ghost" onClick={() => { setBotEnabled(data.telegram_bot?.enabled === true); setBotToken(''); setBotSettingsOpen(true) }}><Bot size={15} /><span>Telegram Bot 设置</span></button>}
