@@ -21,10 +21,20 @@ describe('server-unified-chart helper', () => {
     expect(monitorStyles).toContain('transform: scale(0.97) translateY(1px)')
   })
 
-  it('uses each enabled series color for its connect-gaps area', () => {
+  it('keeps each enabled series shadow visible independently of connect-gaps', () => {
     expect(monitorSource).toContain('stopColor={series.color}')
-    expect(monitorSource).toContain('connectGaps ? buildAreaPath(points, padB, smoothLines)')
+    expect(monitorSource).toContain('const areaPath = buildAreaPath(points, padB, smoothLines)')
+    expect(monitorSource).not.toContain('connectGaps ? buildAreaPath')
+    expect(monitorSource).toContain('const singlePoint = points.length === 1 ? points[0] : null')
     expect(monitorSource).toContain('fill={`url(#${gradientPrefix}-${seriesIndex})`}')
+  })
+
+  it('renders failed probe buckets as anomaly-colored time bands instead of vertical markers', () => {
+    expect(monitorSource).toContain('className="komari-loss-bands"')
+    expect(monitorSource).toContain('fill="var(--danger, #ef4444)"')
+    expect(monitorSource).toContain('红色异常区块表示该时间桶发生实际公网探测丢包')
+    expect(monitorSource).toContain('丢包{hoveredFailedProbeCount > 1')
+    expect(monitorSource).not.toContain('className="komari-loss-marker"')
   })
 
   it('formats bucket time correctly', () => {

@@ -9618,6 +9618,8 @@ function ServerUnifiedTelemetryChart({
   const plotH = padB - padT
 
   const getX = (idx: number) => padL + (idx / Math.max(1, buckets.length - 1)) * plotW
+  const getBucketStartX = (idx: number) => idx <= 0 ? padL : (getX(idx - 1) + getX(idx)) / 2
+  const getBucketEndX = (idx: number) => idx >= buckets.length - 1 ? W - padR : (getX(idx) + getX(idx + 1)) / 2
   const windowEndMS = windowEndAt ? new Date(windowEndAt).getTime() : Date.now()
   const failedProbeBuckets = useMemo(() => alignFailedProbePoints({
     points: failedProbePoints,
@@ -9625,6 +9627,10 @@ function ServerUnifiedTelemetryChart({
     bucketCount: buckets.length,
     now: Number.isFinite(windowEndMS) ? windowEndMS : Date.now(),
   }), [failedProbePoints, windowHours, buckets.length, windowEndMS])
+  const failedProbeCountByBucket = useMemo(
+    () => new Map(failedProbeBuckets.map(point => [point.index, point.count])),
+    [failedProbeBuckets],
+  )
 
   const getY = (val: number, s: MetricSeries) => {
     if (s.yAxis === 'left') {
@@ -9650,6 +9656,7 @@ function ServerUnifiedTelemetryChart({
   }
 
   const hoveredBucket = hoveredIdx !== null ? buckets[hoveredIdx] : null
+  const hoveredFailedProbeCount = hoveredIdx !== null ? failedProbeCountByBucket.get(hoveredIdx) || 0 : 0
 
   return (
     <div className="komari-chart-container">
@@ -9680,7 +9687,7 @@ function ServerUnifiedTelemetryChart({
               type="button"
               className={`komari-chart-option${connectGaps ? ' active' : ''}`}
               aria-pressed={connectGaps}
-              title="连接缺失时间桶两侧的有效延迟点"
+              title="连接缺失时间桶两侧的有效延迟点；阴影始终保留"
               onClick={() => setConnectGaps(value => !value)}
             >断点连接</button>
             <button
@@ -9706,7 +9713,7 @@ function ServerUnifiedTelemetryChart({
           onPointerLeave={handlePointerLeave}
         >
           <title id={chartTitleID}>服务器监控趋势</title>
-          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色短线表示实际公网探测失败，普通缺报不会标记为丢包。</desc>
+          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色异常区块表示该时间桶发生实际公网探测丢包，普通缺报不会标记为丢包。</desc>
           <defs>
             {activeSeries.map((series, index) => (
               <linearGradient key={series.id} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
@@ -9734,6 +9741,25 @@ function ServerUnifiedTelemetryChart({
             )
           })}
 
+          <g className="komari-loss-bands" aria-hidden="true">
+            {failedProbeBuckets.map(point => {
+              const startX = getBucketStartX(point.index)
+              return (
+                <rect
+                  key={point.index}
+                  x={startX}
+                  y={padT}
+                  width={Math.max(1, getBucketEndX(point.index) - startX)}
+                  height={plotH}
+                  rx="1.5"
+                  fill="var(--danger, #ef4444)"
+                  fillOpacity="0.14"
+                  pointerEvents="none"
+                />
+              )
+            })}
+          </g>
+
           {activeSeries.map((series, seriesIndex) => {
             const segments = splitSeriesSegments(buckets, series.id, connectGaps)
             if (segments.length === 0) return null
@@ -9741,45 +9767,43 @@ function ServerUnifiedTelemetryChart({
               <g key={series.id}>
                 {segments.map((segment, segmentIndex) => {
                   const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
-                  if (points.length === 1) {
-                    return <circle key={segmentIndex} cx={points[0].x} cy={points[0].y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                  }
                   const linePath = buildLinePath(points, smoothLines)
-                  const areaPath = connectGaps ? buildAreaPath(points, padB, smoothLines) : ''
+                  const areaPath = buildAreaPath(points, padB, smoothLines)
+                  const singlePoint = points.length === 1 ? points[0] : null
                   return (
                     <React.Fragment key={segmentIndex}>
-                      {areaPath ? <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" /> : null}
-                      <path
-                        d={linePath}
-                        fill="none"
-                        stroke={series.color}
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="komari-chart-polyline"
-                        vectorEffect="non-scaling-stroke"
-                      />
+                      {singlePoint ? (
+                        <rect
+                          x={getBucketStartX(segment[0].index)}
+                          y={singlePoint.y}
+                          width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
+                          height={Math.max(0, padB - singlePoint.y)}
+                          fill={`url(#${gradientPrefix}-${seriesIndex})`}
+                          className="komari-chart-area"
+                        />
+                      ) : areaPath ? (
+                        <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" />
+                      ) : null}
+                      {singlePoint ? (
+                        <circle cx={singlePoint.x} cy={singlePoint.y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                      ) : (
+                        <path
+                          d={linePath}
+                          fill="none"
+                          stroke={series.color}
+                          strokeWidth="2.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="komari-chart-polyline"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      )}
                     </React.Fragment>
                   )
                 })}
               </g>
             )
           })}
-
-          <g className="komari-loss-markers" aria-hidden="true">
-            {failedProbeBuckets.map(point => (
-              <line
-                key={point.index}
-                x1={getX(point.index)}
-                x2={getX(point.index)}
-                y1={padB - 9}
-                y2={padB}
-                className="komari-loss-marker"
-                strokeWidth="2"
-                vectorEffect="non-scaling-stroke"
-              />
-            ))}
-          </g>
 
           {hoveredIdx !== null && (
             <g>
@@ -9841,6 +9865,15 @@ function ServerUnifiedTelemetryChart({
               >
                 <div className="komari-tooltip-time">{hoveredBucket.timeLabel}</div>
                 <div className="komari-tooltip-list">
+                  {hoveredFailedProbeCount > 0 && (
+                    <div className="komari-tooltip-row">
+                      <span className="komari-tooltip-label">
+                        <span className="komari-legend-dot" style={{ backgroundColor: 'var(--danger, #ef4444)' }} />
+                        公网探测
+                      </span>
+                      <span className="komari-tooltip-val">丢包{hoveredFailedProbeCount > 1 ? ` × ${hoveredFailedProbeCount}` : ''}</span>
+                    </div>
+                  )}
                   {activeSeries.map(s => {
                     const val = hoveredBucket.values[s.id]
                     if (val == null) return null
