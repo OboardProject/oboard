@@ -73,6 +73,53 @@ func TestValidateNetworkInterfacesTaskResult(t *testing.T) {
 	}
 }
 
+func TestNetworkInterfaceIPStackIgnoresLocalOnlyAddresses(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		addresses []string
+		want      model.IPStack
+	}{
+		{name: "IPv4", addresses: []string{"192.0.2.10/24", "fe80::1/64"}, want: model.IPStackIPv4Only},
+		{name: "HE IPv6", addresses: []string{"2001:470:1f00::2/64", "fe80::1/64"}, want: model.IPStackIPv6Only},
+		{name: "dual stack", addresses: []string{"10.0.0.2/24", "2001:db8::2/64"}, want: model.IPStackDualStack},
+		{name: "local only", addresses: []string{"127.0.0.1/8", "::1/128", "fe80::1/64"}, want: model.IPStackAuto},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := networkInterfaceIPStack(model.NetworkInterfaceInfo{Addresses: test.addresses}); got != test.want {
+				t.Fatalf("networkInterfaceIPStack(%v) = %q, want %q", test.addresses, got, test.want)
+			}
+		})
+	}
+}
+
+func TestRoutingRulesUseLatestAgentInterfaceIPStack(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "edge", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeListNetworkInterfaces, PayloadJSON: `{}`, Status: "pending", ResultJSON: `{}`, Nonce: "interfaces"}
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompleteTask(ctx, task.ID, "succeeded", `{"interfaces":[{"name":"he-ipv6","up":true,"running":true,"loopback":false,"addresses":["2001:470:1f00::2/64","fe80::1/64"]}]}`); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(db, "test-secret", "")
+	rules, err := srv.routingRulesWithInterfaceIPStacks(ctx, server.ID, []model.RoutingRule{{ServerID: server.ID, Action: model.RouteActionProxyPath, InterfaceName: "he-ipv6", Enabled: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].InterfaceIPStack != model.IPStackIPv6Only {
+		t.Fatalf("resolved rules = %#v", rules)
+	}
+}
+
 func TestNetworkInterfacesTaskCallbackRejectsInvalidResult(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

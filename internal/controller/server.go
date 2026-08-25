@@ -12571,10 +12571,82 @@ func deploymentConfigErrorStatus(err error) int {
 }
 
 func (s *Server) generateServerCoreConfigWithLedger(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {
+	var err error
+	data.RoutingRules, err = s.routingRulesWithInterfaceIPStacks(ctx, server.ID, data.RoutingRules)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	if ledger == nil {
 		ledger = core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
 	}
 	return s.generateServerCoreConfigInner(ctx, server, data, ledger)
+}
+
+func (s *Server) routingRulesWithInterfaceIPStacks(ctx context.Context, serverID int64, rules []model.RoutingRule) ([]model.RoutingRule, error) {
+	needsInventory := false
+	for _, rule := range rules {
+		if rule.Enabled && rule.ServerID == serverID && rule.Action == model.RouteActionProxyPath && strings.TrimSpace(rule.InterfaceName) != "" {
+			needsInventory = true
+			break
+		}
+	}
+	if !needsInventory {
+		return rules, nil
+	}
+	task, err := s.store.LastSuccessfulTaskByServerType(ctx, serverID, model.AgentTaskTypeListNetworkInterfaces)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rules, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Interfaces []model.NetworkInterfaceInfo `json:"interfaces"`
+	}
+	if err := json.Unmarshal([]byte(task.ResultJSON), &result); err != nil {
+		return nil, fmt.Errorf("decode server %d network interface inventory: %w", serverID, err)
+	}
+	stacks := make(map[string]model.IPStack, len(result.Interfaces))
+	for _, networkInterface := range result.Interfaces {
+		stacks[strings.TrimSpace(networkInterface.Name)] = networkInterfaceIPStack(networkInterface)
+	}
+	resolved := append([]model.RoutingRule(nil), rules...)
+	for index := range resolved {
+		rule := &resolved[index]
+		if rule.Enabled && rule.ServerID == serverID && rule.Action == model.RouteActionProxyPath && strings.TrimSpace(rule.InterfaceName) != "" {
+			rule.InterfaceIPStack = stacks[strings.TrimSpace(rule.InterfaceName)]
+		}
+	}
+	return resolved, nil
+}
+
+func networkInterfaceIPStack(networkInterface model.NetworkInterfaceInfo) model.IPStack {
+	var ipv4, ipv6 bool
+	for _, raw := range networkInterface.Addresses {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		address := prefix.Addr().Unmap()
+		if !address.IsValid() || address.IsUnspecified() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsMulticast() {
+			continue
+		}
+		if address.Is4() {
+			ipv4 = true
+		} else if address.Is6() {
+			ipv6 = true
+		}
+	}
+	switch {
+	case ipv4 && ipv6:
+		return model.IPStackDualStack
+	case ipv4:
+		return model.IPStackIPv4Only
+	case ipv6:
+		return model.IPStackIPv6Only
+	default:
+		return model.IPStackAuto
+	}
 }
 
 func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {

@@ -824,23 +824,25 @@ func TestProxyPathStageRuleSpecificWARPInheritsEgressBinding(t *testing.T) {
 	readyConfig := `{"type":"wireguard","address":["172.16.0.2/32"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}]}`
 
 	tests := []struct {
-		name          string
-		status        model.WARPStatus
-		configJSON    string
-		interfaceName string
-		sourcePrefix  string
+		name             string
+		status           model.WARPStatus
+		configJSON       string
+		interfaceName    string
+		interfaceIPStack model.IPStack
+		sourcePrefix     string
+		wantDNSStrategy  string
 	}{
-		{name: "ready interface", status: model.WARPStatusReady, configJSON: readyConfig, interfaceName: "eth1"},
-		{name: "ready source prefix", status: model.WARPStatusReady, configJSON: readyConfig, sourcePrefix: "2001:db8:100::/64"},
-		{name: "pending interface", status: model.WARPStatusRequested, configJSON: `{}`, interfaceName: "eth1"},
-		{name: "pending source prefix", status: model.WARPStatusRequested, configJSON: `{}`, sourcePrefix: "2001:db8:100::/64"},
+		{name: "ready IPv6 interface", status: model.WARPStatusReady, configJSON: readyConfig, interfaceName: "eth1", interfaceIPStack: model.IPStackIPv6Only, wantDNSStrategy: "ipv6_only"},
+		{name: "ready IPv6 source prefix", status: model.WARPStatusReady, configJSON: readyConfig, sourcePrefix: "2001:db8:100::/64", wantDNSStrategy: "ipv6_only"},
+		{name: "pending IPv4 interface", status: model.WARPStatusRequested, configJSON: `{}`, interfaceName: "eth1", interfaceIPStack: model.IPStackIPv4Only, wantDNSStrategy: "ipv4_only"},
+		{name: "pending IPv6 source prefix", status: model.WARPStatusRequested, configJSON: `{}`, sourcePrefix: "2001:db8:100::/64", wantDNSStrategy: "ipv6_only"},
 	}
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			rule := model.RoutingRule{
 				ID: int64(80 + index), ServerID: server.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &fallbackID,
 				SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: test.name, MatchJSON: `{"domain":["warp.example"]}`,
-				Action: model.RouteActionProxyPath, TargetProxyPathID: &targetID, InterfaceName: test.interfaceName, SourcePrefix: test.sourcePrefix, Enabled: true,
+				Action: model.RouteActionProxyPath, TargetProxyPathID: &targetID, InterfaceName: test.interfaceName, InterfaceIPStack: test.interfaceIPStack, SourcePrefix: test.sourcePrefix, Enabled: true,
 			}
 			profile := model.WARPProfile{ID: 30, ServerID: server.ID, Name: "warp", Status: test.status, ConfigJSON: test.configJSON, Enabled: true}
 			config := mustServerConfig(t, server, []model.Inbound{root}, []model.User{user}, ConfigOptions{
@@ -869,6 +871,10 @@ func TestProxyPathStageRuleSpecificWARPInheritsEgressBinding(t *testing.T) {
 				if prefixOutbound := findOutbound(config, prefixTag); prefixOutbound["type"] != "source-prefix" || prefixOutbound["prefix"] != test.sourcePrefix {
 					t.Fatalf("source-prefix outbound = %#v", prefixOutbound)
 				}
+			}
+			resolver, ok := bound["domain_resolver"].(map[string]any)
+			if !ok || resolver["server"] != primaryBootstrapDNSTag || resolver["strategy"] != test.wantDNSStrategy {
+				t.Fatalf("bound WARP domain_resolver = %#v, want strategy=%q", bound["domain_resolver"], test.wantDNSStrategy)
 			}
 			if test.status != model.WARPStatusReady && bound["_oboard_warp_pending"] != float64(profile.ID) {
 				t.Fatalf("bound pending WARP endpoint lost profile marker: %#v", bound)

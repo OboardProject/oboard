@@ -1002,14 +1002,14 @@ type Server struct {
 }
 
 type Inbound struct {
-	ID            int64    `json:"id"`
-	ServerID      int64    `json:"server_id"`
-	Name          string   `json:"name"`
-	Protocol      Protocol `json:"protocol"`
-	ListenIP      string   `json:"listen_ip"`
-	Port          int      `json:"port"`
-	AdvertisePort int      `json:"advertise_port"`
-	EntryIPMode   EntryIPMode `json:"entry_ip_mode"`
+	ID                int64                `json:"id"`
+	ServerID          int64                `json:"server_id"`
+	Name              string               `json:"name"`
+	Protocol          Protocol             `json:"protocol"`
+	ListenIP          string               `json:"listen_ip"`
+	Port              int                  `json:"port"`
+	AdvertisePort     int                  `json:"advertise_port"`
+	EntryIPMode       EntryIPMode          `json:"entry_ip_mode"`
 	ExternalIP        string               `json:"external_ip"`
 	DNSSyncEnabled    bool                 `json:"dns_sync_enabled"`
 	DNSCredentialID   *int64               `json:"dns_credential_id,omitempty"`
@@ -1293,6 +1293,7 @@ type RoutingRule struct {
 	TargetServerID        *int64            `json:"target_server_id,omitempty"`
 	OutboundTag           string            `json:"outbound_tag"`
 	InterfaceName         string            `json:"interface_name,omitempty"`
+	InterfaceIPStack      IPStack           `json:"-"`
 	SourcePrefix          string            `json:"source_prefix,omitempty"`
 	SyncGroupID           string            `json:"sync_group_id,omitempty"`
 	SyncSourceRuleID      *int64            `json:"sync_source_rule_id,omitempty"`

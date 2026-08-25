@@ -3502,12 +3502,26 @@ func (s *Store) GetOutbound(ctx context.Context, id int64) (*model.Outbound, err
 	return nil, sql.ErrNoRows
 }
 
-func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
-	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
+func setStoredRoutingRuleBinding(v *model.RoutingRule) {
+	switch v.Action {
+	case model.RouteActionInterface:
 		v.OutboundTag = v.InterfaceName
-	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
+	case model.RouteActionSourcePrefix:
 		v.OutboundTag = v.SourcePrefix
+	case model.RouteActionProxyPath:
+		switch {
+		case strings.TrimSpace(v.InterfaceName) != "":
+			v.OutboundTag = v.InterfaceName
+		case strings.TrimSpace(v.SourcePrefix) != "":
+			v.OutboundTag = v.SourcePrefix
+		default:
+			v.OutboundTag = ""
+		}
 	}
+}
+
+func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
+	setStoredRoutingRuleBinding(v)
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
@@ -3520,11 +3534,7 @@ func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 }
 
 func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) error {
-	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
-		v.OutboundTag = v.InterfaceName
-	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
-		v.OutboundTag = v.SourcePrefix
-	}
+	setStoredRoutingRuleBinding(v)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -3596,11 +3606,7 @@ func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRul
 		}
 	}
 	v.SyncGroupID = sourceGroup
-	if v.Action == model.RouteActionInterface && v.InterfaceName != "" {
-		v.OutboundTag = v.InterfaceName
-	} else if v.Action == model.RouteActionSourcePrefix && v.SourcePrefix != "" {
-		v.OutboundTag = v.SourcePrefix
-	}
+	setStoredRoutingRuleBinding(v)
 	ts := now()
 	res, err := tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,ipv4_target_proxy_path_id,ipv6_target_proxy_path_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.IPv4TargetProxyPathID, v.IPv6TargetProxyPathID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
@@ -3653,10 +3659,17 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 		if targetID.Valid {
 			v.TargetServerID = &targetID.Int64
 		}
-		if v.Action == model.RouteActionInterface {
+		switch v.Action {
+		case model.RouteActionInterface:
 			v.InterfaceName = v.OutboundTag
-		} else if v.Action == model.RouteActionSourcePrefix {
+		case model.RouteActionSourcePrefix:
 			v.SourcePrefix = v.OutboundTag
+		case model.RouteActionProxyPath:
+			if _, err := netip.ParsePrefix(v.OutboundTag); err == nil {
+				v.SourcePrefix = v.OutboundTag
+			} else {
+				v.InterfaceName = v.OutboundTag
+			}
 		}
 		v.Enabled = en == 1
 		v.CreatedAt = parseTime(ca)

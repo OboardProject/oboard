@@ -2497,6 +2497,29 @@ func firstNonNil(values ...any) any {
 	return nil
 }
 
+func routingRuleWARPBindingDNSStrategy(rule model.RoutingRule) (string, error) {
+	if strings.TrimSpace(rule.InterfaceName) != "" {
+		switch rule.InterfaceIPStack {
+		case model.IPStackIPv4Only:
+			return "ipv4_only", nil
+		case model.IPStackIPv6Only:
+			return "ipv6_only", nil
+		case model.IPStackDualStack:
+			return "", nil
+		default:
+			return "", markInvalidDesiredState(fmt.Errorf("分流规则 %s 无法确认网卡 %s 的地址族；请重新读取 Agent 网卡后再下发", rule.Name, rule.InterfaceName))
+		}
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.SourcePrefix))
+	if err != nil {
+		return "", fmt.Errorf("routing rule %s source_prefix: %w", rule.Name, err)
+	}
+	if prefix.Addr().Is4() {
+		return "ipv4_only", nil
+	}
+	return "ipv6_only", nil
+}
+
 func applyRoutingRuleWARPEndpointBindings(server model.Server, rules []model.RoutingRule, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile, endpoints *[]map[string]any) error {
 	if endpoints == nil {
 		return nil
@@ -2525,6 +2548,13 @@ func applyRoutingRuleWARPEndpointBindings(server model.Server, rules []model.Rou
 		bound := cloneNestedMap(base)
 		boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
 		bound["tag"] = boundTag
+		strategy, err := routingRuleWARPBindingDNSStrategy(rule)
+		if err != nil {
+			return err
+		}
+		if strategy != "" {
+			applyManagedWARPDomainResolver(bound, strategy)
+		}
 		if interfaceName := strings.TrimSpace(rule.InterfaceName); interfaceName != "" {
 			if err := ValidateNetworkInterfaceName(interfaceName); err != nil {
 				return fmt.Errorf("routing rule %s interface_name: %w", rule.Name, err)
