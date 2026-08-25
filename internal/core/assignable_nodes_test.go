@@ -96,6 +96,40 @@ func TestBuildAssignableNodeCatalog(t *testing.T) {
 	_ = now
 }
 
+func TestBuildAssignableNodeCatalogSSHRequiresBranch(t *testing.T) {
+	input := AssignableNodeCatalogInput{
+		Servers: []model.Server{
+			{ID: 1, Name: "ixp", Status: model.ServerOnline},
+		},
+		Inbounds: []model.Inbound{
+			{ID: 31, ServerID: 1, Name: "ixp-ssh", Protocol: model.ProtocolSSH, Port: 2222, Enabled: true},
+		},
+	}
+	nodes, err := BuildAssignableNodeCatalog(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("branchless SSH inbound must not be assignable: %#v", nodes)
+	}
+	topologies, _, _, err := ResolveAssignableNodeTopologies(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topologies) != 0 {
+		t.Fatalf("branchless SSH inbound must not expose topology: %#v", topologies)
+	}
+
+	input.ProxyPaths = []model.ProxyPath{{ID: 300, Kind: model.ProxyPathKindDirect, Name: "ixp-direct", InboundID: 31, Enabled: true}}
+	nodes, err = BuildAssignableNodeCatalog(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Key != "proxy_path:300" || nodes[0].EntryProtocol != model.ProtocolSSH {
+		t.Fatalf("SSH direct branch node = %#v", nodes)
+	}
+}
+
 func TestUserEffectiveNodeSetPriority(t *testing.T) {
 	now := time.Now()
 	plan := &model.SubscriptionPlan{ID: 1, Name: "premium", Enabled: true}

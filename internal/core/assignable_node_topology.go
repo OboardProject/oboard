@@ -71,6 +71,11 @@ func ResolveAssignableNodeTopologies(input AssignableNodeCatalogInput) (map[stri
 		if !inbound.Enabled {
 			continue
 		}
+		// SSH renders only through proxy-path branches; keep the topology
+		// consistent with the subscription generator and the node catalog.
+		if inbound.Protocol == model.ProtocolSSH {
+			continue
+		}
 		if len(subscriptionBranchesForInbound(inbound, paths, input.ProxyPathSteps)) > 0 {
 			continue
 		}
