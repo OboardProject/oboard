@@ -17,6 +17,7 @@ import (
 )
 
 const defaultConfigurationReconcileDelay = 150 * time.Millisecond
+const certificateConfigurationRetryDelay = time.Second
 
 type automaticConfigurationSyncContextKey struct{}
 
@@ -320,7 +321,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	for _, state := range claimed {
 		task, ok := tasksByServer[state.ServerID]
 		if !ok {
-			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "部署未生成该服务器任务")
+			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成")
 			continue
 		}
 		if err := s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task)); err != nil {

@@ -60,6 +60,41 @@ func TestConfigurationSyncStateLifecycleAndStaleResult(t *testing.T) {
 	}
 }
 
+func TestConfigurationSyncWaitingDoesNotCountAsFailure(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "waiting-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, 12, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.ClaimConfigurationSync(ctx, server.ID, 12); err != nil || !ok {
+		t.Fatalf("claim=%v err=%v", ok, err)
+	}
+	retryAt := time.Now().UTC().Add(time.Minute)
+	if err := db.MarkConfigurationSyncWaiting(ctx, server.ID, 12, retryAt, "等待证书签发完成"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "pending" || state.RetryCount != 0 || state.NextRetryAt == nil || state.LastError != "等待证书签发完成" {
+		t.Fatalf("waiting state = %#v, err=%v", state, err)
+	}
+	due, err := db.ListConfigurationSyncStates(ctx, time.Now().UTC())
+	if err != nil || len(due) != 0 {
+		t.Fatalf("waiting state became due early = %#v, err=%v", due, err)
+	}
+	due, err = db.ListConfigurationSyncStates(ctx, retryAt.Add(time.Second))
+	if err != nil || len(due) != 1 || due[0].ServerID != server.ID {
+		t.Fatalf("waiting state was not due after retry time = %#v, err=%v", due, err)
+	}
+}
+
 func TestEnsureConfigurationSyncRevisionDoesNotReopenCurrentState(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

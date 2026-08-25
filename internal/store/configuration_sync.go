@@ -127,8 +127,21 @@ func (s *Store) MarkConfigurationSyncDrift(ctx context.Context, serverID int64, 
 	return err
 }
 
+// MarkConfigurationSyncWaiting returns a claimed desired state to the pending
+// queue without counting a retry or presenting it as a failure. It is used for
+// prerequisites that are already progressing elsewhere, such as managed
+// certificate issuance.
+func (s *Store) MarkConfigurationSyncWaiting(ctx context.Context, serverID int64, revision uint64, retryAt time.Time, reason string) error {
+	if len(reason) > 2000 {
+		reason = reason[:2000]
+	}
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',next_retry_at=?,last_error=?,updated_at=? where server_id=? and wanted_revision=? and state='preparing'`, retryAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(reason), time.Now().UTC().Format(time.RFC3339Nano), serverID, revision)
+	return err
+}
+
 func (s *Store) ListConfigurationSyncStates(ctx context.Context, now time.Time) ([]ConfigurationSyncState, error) {
-	rows, err := s.db.QueryContext(ctx, `select server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,changed_at,updated_at from configuration_sync_states where state='pending' or (state='failed' and retry_count<6 and (next_retry_at is null or next_retry_at<=?)) order by wanted_revision,server_id`, now.UTC().Format(time.RFC3339Nano))
+	formattedNow := now.UTC().Format(time.RFC3339Nano)
+	rows, err := s.db.QueryContext(ctx, `select server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,changed_at,updated_at from configuration_sync_states where (state='pending' and (next_retry_at is null or next_retry_at<=?)) or (state='failed' and retry_count<6 and (next_retry_at is null or next_retry_at<=?)) order by wanted_revision,server_id`, formattedNow, formattedNow)
 	if err != nil {
 		return nil, err
 	}

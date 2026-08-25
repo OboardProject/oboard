@@ -81,7 +81,72 @@ func (s *Server) markCertificateIssueFailed(ctx context.Context, certificate *mo
 	if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
 		log.Printf("certificate %d: persist issuance failure: %v", certificate.ID, err)
 	}
+	s.signalConfigurationReconcile()
 	s.notifyCertificateIssueFailure(ctx, certificate)
+}
+
+// markCertificateServersForSync makes completed certificate issuance and
+// renewal part of desired-state convergence without making certificates
+// themselves part of the routing revision. Existing bindings identify every
+// Agent that must receive the next certificate revision; forcing drift also
+// supersedes an in-flight payload that may still reference the previous one.
+func (s *Server) markCertificateServersForSync(ctx context.Context, certificateID int64) {
+	if certificateID <= 0 {
+		return
+	}
+	// Wait for any deployment preparation that may have captured the previous
+	// certificate revision. Once it releases the lock, forcing drift cannot be
+	// overwritten by that stale preparation being marked queued.
+	s.deploymentMu.Lock()
+	defer s.deploymentMu.Unlock()
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		log.Printf("certificate %d: list inbounds for configuration sync: %v", certificateID, err)
+		return
+	}
+	bindings, err := s.store.ListInboundCertificateBindings(ctx)
+	if err != nil {
+		log.Printf("certificate %d: list bindings for configuration sync: %v", certificateID, err)
+		return
+	}
+	boundInboundIDs := map[int64]bool{}
+	for _, binding := range bindings {
+		if binding.CertificateID != nil && *binding.CertificateID == certificateID {
+			boundInboundIDs[binding.InboundID] = true
+		}
+	}
+	serverIDs := map[int64]bool{}
+	for _, inbound := range inbounds {
+		if !inbound.Enabled || inbound.CertificateMode == model.CertificateModeExternal {
+			continue
+		}
+		if inbound.CertificateID != nil && *inbound.CertificateID == certificateID || boundInboundIDs[inbound.ID] {
+			serverIDs[inbound.ServerID] = true
+		}
+	}
+	if len(serverIDs) == 0 {
+		return
+	}
+	revision, err := s.store.ConfigurationRevision(ctx)
+	if err != nil || revision == 0 {
+		log.Printf("certificate %d: read configuration revision for sync: %v", certificateID, err)
+		return
+	}
+	ids := make([]int64, 0, len(serverIDs))
+	for serverID := range serverIDs {
+		ids = append(ids, serverID)
+	}
+	if _, err := s.store.MarkConfigurationSyncPending(ctx, revision, ids); err != nil {
+		log.Printf("certificate %d: mark configuration sync pending: %v", certificateID, err)
+		return
+	}
+	for _, serverID := range ids {
+		if err := s.store.MarkConfigurationSyncDrift(ctx, serverID, revision); err != nil {
+			log.Printf("certificate %d: mark server %d configuration drift: %v", certificateID, serverID, err)
+		}
+	}
+	s.publishRealtime("configuration", "deployments", "tasks")
+	s.signalConfigurationReconcile()
 }
 
 func (s *Server) runDNSCertificateIssue(ctx context.Context, certificate *model.Certificate, renew, resumeManual bool) error {

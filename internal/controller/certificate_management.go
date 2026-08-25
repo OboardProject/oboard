@@ -571,7 +571,11 @@ func (s *Server) storeCertificateMaterial(ctx context.Context, certificate *mode
 	certificate.ValidationRecords = nil
 	certificate.LastError = ""
 	certificate.LastIssuedAt = &now
-	return s.store.UpdateCertificate(ctx, certificate)
+	if err := s.store.UpdateCertificate(ctx, certificate); err != nil {
+		return err
+	}
+	s.markCertificateServersForSync(context.WithoutCancel(ctx), certificate.ID)
+	return nil
 }
 
 func containsWildcard(domains []string) bool {

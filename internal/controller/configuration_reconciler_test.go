@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,6 +186,80 @@ func TestConfigurationWriteRespondsBeforeAsyncDeployment(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("background reconciler did not queue saved state within 2s: %#v err=%v", state, err)
+}
+
+func TestConfigurationReconcilerWaitsForCertificateWithoutBlockingOtherServers(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	waitingServer := &model.Server{Name: "certificate-waiting", AgentID: "certificate-waiting-agent", AgentTokenHash: security.HashSecret("certificate-waiting-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	readyServer := &model.Server{Name: "certificate-independent", AgentID: "certificate-independent-agent", AgentTokenHash: security.HashSecret("certificate-independent-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 20001, PortRangeEnd: 30000}
+	for _, server := range []*model.Server{waitingServer, readyServer} {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	credential := &model.DNSCredential{Name: "certificate-dns", Provider: model.DNSProviderCloudflare, ZoneName: "example.com", Enabled: true}
+	if err := db.CreateDNSCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	credentialID := credential.ID
+	certificate := &model.Certificate{Name: "issuing certificate", PrimaryDomain: "waiting.example.com", Domains: []string{"waiting.example.com"}, ChallengeType: model.CertificateChallengeDNS, DNSCredentialID: &credentialID, ACMECA: "letsencrypt", Status: model.CertificateStatusIssuing, AutoRenew: true}
+	if err := db.CreateCertificate(ctx, certificate); err != nil {
+		t.Fatal(err)
+	}
+	waitingInbound := &model.Inbound{ServerID: waitingServer.ID, Name: "waiting entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443, DNSCredentialID: &credentialID, DNSDomain: "waiting.example.com", TLS: true, ConfigJSON: `{}`, Enabled: true}
+	readyInbound := &model.Inbound{ServerID: readyServer.ID, Name: "ready entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 20443, ConfigJSON: `{}`, Enabled: true}
+	for _, inbound := range []*model.Inbound{waitingInbound, readyInbound} {
+		if err := db.CreateInbound(ctx, inbound); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.UpsertInboundCertificateBinding(ctx, &model.InboundCertificateBinding{InboundID: waitingInbound.ID, CertificateID: &certificate.ID, Mode: model.CertificateModeAuto, ServerName: "waiting.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := db.ConfigurationRevision(ctx)
+	if err != nil || revision == 0 {
+		t.Fatalf("configuration revision=%d err=%v", revision, err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, revision, []int64{waitingServer.ID, readyServer.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.reconcileConfiguration(ctx)
+	waitingState, err := db.ConfigurationSyncState(ctx, waitingServer.ID)
+	if err != nil || waitingState.State != "pending" || waitingState.RetryCount != 0 || waitingState.NextRetryAt == nil || waitingState.LastError != "等待证书签发完成" {
+		t.Fatalf("certificate server state = %#v err=%v", waitingState, err)
+	}
+	readyState, err := db.ConfigurationSyncState(ctx, readyServer.ID)
+	if err != nil || readyState.State != "queued" || readyState.LastTaskID == 0 {
+		t.Fatalf("independent server state = %#v err=%v", readyState, err)
+	}
+	if tasks, err := db.ListTasksByServer(ctx, waitingServer.ID, 10); err != nil || len(tasks) != 0 {
+		t.Fatalf("certificate server queued before certificate was ready: tasks=%#v err=%v", tasks, err)
+	}
+
+	expiresAt := time.Now().UTC().Add(60 * 24 * time.Hour)
+	certificate.Status = model.CertificateStatusReady
+	certificate.Revision = "issued-revision"
+	certificate.NotAfter = &expiresAt
+	if err := db.UpdateCertificate(ctx, certificate); err != nil {
+		t.Fatal(err)
+	}
+	srv.markCertificateServersForSync(ctx, certificate.ID)
+	srv.reconcileConfiguration(ctx)
+	waitingState, err = db.ConfigurationSyncState(ctx, waitingServer.ID)
+	if err != nil || waitingState.State != "queued" || waitingState.LastTaskID == 0 || waitingState.RetryCount != 0 || waitingState.LastError != "" {
+		t.Fatalf("certificate server did not resume after issuance = %#v err=%v", waitingState, err)
+	}
+	task, err := db.GetTask(ctx, waitingState.LastTaskID)
+	if err != nil || task.ServerID != waitingServer.ID || task.Type != model.AgentTaskTypeApplyDeployment || !strings.Contains(task.PayloadJSON, "issued-revision") {
+		t.Fatalf("resumed deployment task = %#v err=%v", task, err)
+	}
 }
 
 func TestInvalidConfigurationWriteDoesNotCreateDesiredState(t *testing.T) {

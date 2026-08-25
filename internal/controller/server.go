@@ -11733,6 +11733,7 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 		payload  model.DeploymentTaskPayload
 	}
 	prepared := make([]preparedDeployment, 0, len(servers))
+	waitingForCertificate := map[int64]bool{}
 	for _, server := range servers {
 		if effectiveScope != 0 && server.ID != effectiveScope {
 			continue
@@ -11765,6 +11766,10 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 
 		generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
 		if err != nil {
+			if automaticConfigurationSync(ctx) && errors.Is(err, errCertificateProvisioning) {
+				waitingForCertificate[server.ID] = true
+				continue
+			}
 			// Generation rejects operator-fixable desired state too — a listener
 			// conflict, an unreachable address, an unsupported protocol field. Those
 			// are 400s like the dedicated validators below, not server faults.
@@ -11855,6 +11860,27 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 			MTUDetection:         mtuPlan,
 		}
 		prepared = append(prepared, preparedDeployment{serverID: server.ID, payload: payload})
+	}
+	// Trusted-forward members must move together. If one member is waiting for a
+	// certificate, hold the complete trusted-forward scope while still allowing
+	// unrelated servers in this reconciliation batch to proceed.
+	trustedScopeWaiting := false
+	for serverID := range waitingForCertificate {
+		if trustedServers[serverID] {
+			trustedScopeWaiting = true
+			break
+		}
+	}
+	if trustedScopeWaiting {
+		filtered := prepared[:0]
+		for _, item := range prepared {
+			if trustedServers[item.serverID] {
+				waitingForCertificate[item.serverID] = true
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		prepared = filtered
 	}
 	// Every server validated, so the ports this projection chose are the ones the
 	// Agents will receive. Persist them before queueing any task: from now on a
