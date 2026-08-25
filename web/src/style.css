@@ -8300,6 +8300,13 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .managed-update-hours { display: grid; grid-template-columns: minmax(112px, 1fr) auto minmax(112px, 1fr); align-items: end; gap: 8px; padding: 10px 14px; border-left: 1px solid var(--border); }
 .managed-update-hours > span { padding-bottom: 10px; color: var(--muted); font-size: 13px; }
 .managed-update-hours .field { margin: 0; }
+.managed-update-hours .form-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  align-items: stretch;
+}
+.managed-update-hours .form-field .form-field-meta { padding-top: 0; gap: 2px; }
+.managed-update-hours .form-field .form-field-control { gap: 6px; }
 .controller-update-actions { justify-content: flex-end; }
 .controller-update-actions button { display: inline-flex; align-items: center; gap: 6px; }
 

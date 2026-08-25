@@ -70,13 +70,20 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const placement: MenuPosition['placement'] = below >= Math.min(desiredHeight, 180) || below >= above ? 'bottom' : 'top'
     const available = Math.max(96, (placement === 'bottom' ? below : above) - gutter)
     const maxHeight = Math.min(desiredHeight, available)
-    const width = Math.min(rect.width, window.innerWidth - viewportPadding * 2)
+    const longestLabelLen = options.reduce((max, opt) => {
+      const raw = typeof opt.label === 'string' || typeof opt.label === 'number'
+        ? String(opt.label)
+        : String(opt.value ?? '')
+      return Math.max(max, raw.length)
+    }, 0)
+    const estimatedMinWidth = Math.min(240, Math.max(120, longestLabelLen * 9 + 40))
+    const width = Math.min(Math.max(rect.width, estimatedMinWidth), window.innerWidth - viewportPadding * 2)
     const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding - width)
     const top = placement === 'bottom'
       ? rect.bottom + gutter
       : Math.max(viewportPadding, rect.top - gutter - maxHeight)
     setMenuPosition({ top, left, width, maxHeight, placement })
-  }, [menuHeader, options.length])
+  }, [menuHeader, options])
 
   const openMenu = useCallback((preferredIndex = selectedIndex) => {
     if (disabled || (options.length === 0 && !menuHeader)) return
