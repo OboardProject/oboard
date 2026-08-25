@@ -11773,6 +11773,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .form-section-title {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 10px 0 0;
   padding: 12px 0 2px;
   border-top: 1px solid var(--border);
@@ -11780,6 +11783,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.01em;
+}
+
+.form-section-title > svg {
+  flex: 0 0 auto;
+  color: var(--primary);
 }
 
 .form-section-title:first-child {
@@ -12180,7 +12188,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .entry-dialog {
-  width: min(640px, calc(100vw - 28px));
+  width: min(720px, calc(100vw - 28px));
   max-height: min(90vh, 860px);
 }
 
@@ -12201,14 +12209,145 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.entry-form-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-solid);
+}
+
+.entry-form-section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.entry-form-section-head > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--primary);
+}
+
+.entry-form-section-head h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.entry-form-section-head p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.entry-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.entry-form-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.entry-form-disclosure {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.entry-form-disclosure.is-accent {
+  border-color: color-mix(in srgb, #f38020 24%, var(--border));
+  background: color-mix(in srgb, #f38020 7%, var(--surface-solid));
+}
+
+.entry-form-disclosure > summary {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  list-style: none;
+}
+
+.entry-form-disclosure[open] > summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.entry-form-disclosure > summary::-webkit-details-marker { display: none; }
+.entry-form-disclosure > summary:hover { background: color-mix(in srgb, var(--surface-solid) 58%, transparent); }
+.entry-form-disclosure > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+.entry-form-disclosure-icon {
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+}
+
+.entry-form-disclosure-copy {
+  min-width: 0;
+}
+
+.entry-form-disclosure-copy strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.entry-form-disclosure-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entry-form-disclosure-chevron {
+  color: var(--muted);
+  transition: transform var(--duration-appica) var(--ease-appica-spring);
+}
+
+.entry-form-disclosure[open] .entry-form-disclosure-chevron { transform: rotate(180deg); }
+
+.entry-form-disclosure-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.entry-form input:read-only {
+  color: var(--muted);
+  background: var(--surface-2);
+  cursor: default;
 }
 
 .entry-form .preset-help,
 .entry-form .auth-fields,
 .entry-form .access-note,
 .entry-form .managed-entry-box,
-.entry-form .preset-fields {
+.entry-form .preset-fields,
+.entry-form .entry-form-section,
+.entry-form .entry-form-disclosure {
   grid-column: 1 / -1;
 }
 
@@ -12432,11 +12571,24 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .advanced-config summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 14px;
   color: var(--text-strong);
   font-weight: 750;
   cursor: pointer;
+  list-style: none;
   background: var(--surface-2);
+}
+
+.advanced-config summary::-webkit-details-marker { display: none; }
+.advanced-config summary > svg { flex: 0 0 auto; color: var(--primary); }
+.advanced-config summary > span { flex: 1 1 auto; }
+.advanced-config summary > small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .advanced-config .config-preview-head {
@@ -12504,13 +12656,25 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .preset-help {
   grid-column: 1 / -1;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: flex-start;
+  gap: 10px;
   padding: 10px 12px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   color: var(--muted);
   background: var(--surface-2);
+}
+
+.preset-help > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--primary);
+}
+
+.preset-help > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
 .preset-help strong {
@@ -14622,12 +14786,17 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 @media (max-width: 760px) {
   .entry-form,
+  .entry-form-grid,
   .preset-fields,
   .user-form,
   .access-pick-grid,
   .compact-form {
     grid-template-columns: 1fr;
   }
+  .entry-form-disclosure > summary {
+    grid-template-columns: 18px minmax(0, 1fr) 16px;
+  }
+  .entry-form-disclosure-summary { display: none; }
   .entry-access-add {
     grid-template-columns: 1fr;
   }
@@ -19035,6 +19204,11 @@ button.ui-btn-ghost:hover {
   }
 
   .entry-form {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .entry-form-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 16px;
     row-gap: 12px;
@@ -19047,27 +19221,27 @@ button.ui-btn-ghost:hover {
 
   .server-dialog-form > .form-section-title,
   .server-dialog-form > .form-extra-row,
-  .entry-form > .preset-help,
-  .entry-form > .access-note,
-  .entry-form > .managed-entry-box,
+  .entry-form-grid > .preset-help,
+  .entry-form-grid > .access-note,
+  .entry-form-grid > .form-field-full,
   .entry-form > .preset-fields,
+  .entry-form > .entry-form-section,
+  .entry-form > .entry-form-disclosure,
   .entry-form > .entry-access-settings,
   .entry-form > .access-pick-grid,
-  .entry-form > .auth-fields,
-  .entry-form > .form-field-full,
-  .entry-form > .form-field:has(textarea) {
+  .entry-form > .auth-fields {
     grid-column: 1 / -1;
   }
 
-  .entry-form > .form-field {
+  .entry-form-grid > .form-field {
     grid-template-columns: minmax(0, 1fr);
     gap: 5px;
     align-content: start;
     align-items: stretch;
   }
 
-  .entry-form > .form-field .form-field-meta {
-    min-height: 40px;
+  .entry-form-grid > .form-field .form-field-meta {
+    min-height: 0;
     padding-top: 0;
   }
 

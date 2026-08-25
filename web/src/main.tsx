@@ -99,7 +99,7 @@ import { Select } from './components/ui/select'
 import { Toast } from './components/ui/toast'
 import { Dialog } from './components/ui/dialog'
 import { DialogContext, useDialogs, type DialogApi, type DialogState } from './components/ui/dialog-context'
-import { FormField, TrafficLimitInput } from './components/ui/form-field'
+import { FormField, FieldHelp, TrafficLimitInput } from './components/ui/form-field'
 import { TableSkeleton, CardSkeleton, DashboardSkeleton } from './components/ui/skeleton'
 import { MCPAccessPage } from './features/mcp/MCPAccessPage'
 import { AnimatePresence, LazyMotion, domAnimation, m, motion, useReducedMotion } from 'motion/react'
@@ -14387,6 +14387,57 @@ function preferredProtocolPortInRange(protocol: Protocol, start: number, end: nu
   return 0
 }
 
+function EntryFormSection({ icon, title, description, children }: { icon: React.ReactNode; title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <section className="entry-form-section">
+      <div className="entry-form-section-head">
+        {icon}
+        <div>
+          <h3>{title}</h3>
+          {description ? <p>{description}</p> : null}
+        </div>
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function EntryFormDisclosure({ icon, title, hint, summary, defaultOpen = false, tone = 'default', children }: {
+  icon: React.ReactNode
+  title: string
+  hint?: string
+  summary?: React.ReactNode
+  defaultOpen?: boolean
+  tone?: 'default' | 'accent'
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <details className={`entry-form-disclosure${tone === 'accent' ? ' is-accent' : ''}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary>
+        <span className="entry-form-disclosure-icon">{icon}</span>
+        <span className="entry-form-disclosure-copy">
+          <strong>
+            {title}
+            {hint ? <FieldHelp label={title} hint={hint} placement="bottom" /> : null}
+          </strong>
+        </span>
+        {summary ? <span className="entry-form-disclosure-summary">{summary}</span> : null}
+        <ChevronDown size={16} className="entry-form-disclosure-chevron" aria-hidden="true" />
+      </summary>
+      <div className="entry-form-disclosure-body">{children}</div>
+    </details>
+  )
+}
+
+function certificateModeSummary(mode?: string) {
+  if (mode === 'exact') return '仅精确子域'
+  if (mode === 'wildcard') return '仅泛域名'
+  if (mode === 'explicit') return '指定证书'
+  if (mode === 'external') return '外部路径'
+  return '自动匹配'
+}
+
 function certificateCoversSNI(certificate: Certificate, serverName: string) {
   const normalized = serverName.trim().toLowerCase().replace(/\.$/, '')
   if (!normalized) return false
@@ -14510,6 +14561,13 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
   const regenerate = () => {
     applyPreset(presetID)
   }
+  const muxEnabled = Boolean(objectConfig(cfg.multiplex).enabled)
+  const tfoEnabled = Boolean(cfg.tcp_fast_open)
+  const natEnabled = Number(draft.advertise_port) > 0
+  const displayPort = natEnabled ? Number(draft.advertise_port) : (Number(draft.port) || 0)
+  const listenOverride = String(draft.listen_ip || '').trim() && String(draft.listen_ip) !== '0.0.0.0'
+  const transport = transportCapability(protocol, cfg)
+  const hasTransport = protocol !== 'ssh' && (transport.genericMux || transport.tfo || Boolean(transport.nativeMux))
   return <MotionDialogPanel onCancel={onCancel} className="entry-dialog">
       <header className="dialog-head">
         <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">设置入口协议、地址和端口。</p></div>
@@ -14517,92 +14575,184 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
       </header>
       <div className="dialog-body">
         <div className="entry-form labeled-form">
-          <FormField label="服务器" required><Select value={draft.server_id} onChange={e => changeServer(Number(e.target.value))}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select></FormField>
-          <FormField label="入口名称" required><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
-          <FormField label="协议大类" required><Select value={presetProtocol} onChange={e => changePresetProtocol(e.target.value as Protocol)}>{protocols.map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select></FormField>
-          <FormField label="具体类型" required><Select value={presetID} onChange={e => applyPreset(e.target.value)}>{presetOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</Select></FormField>
-          <div className="preset-help"><strong>{selectedPreset.label}</strong><span>{selectedPreset.description}</span><small>协议：{labelProtocol(selectedPreset.protocol)}</small></div>
-          {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
-          <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。">
-            <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
-          </FormField>
-          {entryMode === 'custom' && <FormField label="自定义入口地址" required hint="可填写域名、IPv4 或 IPv6。">
-            <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
-          </FormField>}
-          <div className="managed-entry-box">
-            <div className="switch-setting-row" style={{ padding: '4px 0', marginBottom: 8 }}>
-              <span className="switch-setting-label">自动同步 DNS 解析</span>
-              <Switch checked={Boolean(draft.dns_sync_enabled)} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || dnsCredentials.find(item => item.verified_at)?.id) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} />
+          <EntryFormSection icon={<ServerIcon size={16} aria-hidden="true" />} title="基础信息" description="选择服务器并命名这个入口。">
+            <div className="entry-form-grid">
+              <FormField label="服务器" required hint="入口会部署到这台服务器的 Agent。" placement="bottom">
+                <Select value={draft.server_id} onChange={e => changeServer(Number(e.target.value))}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
+              </FormField>
+              <FormField label="入口名称" required hint="用于拓扑图、订阅和任务识别。留空时按服务器、协议和端口自动命名。" placement="bottom">
+                <input value={draft.name} onChange={e => update({ name: e.target.value })} />
+              </FormField>
             </div>
-            {draft.dns_sync_enabled && <>
-              <FormField label="域名服务账号" required>
-                <Select value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))}><option value={0}>选择凭据</option>{dnsCredentials.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
+          </EntryFormSection>
+
+          <EntryFormSection icon={<Layers size={16} aria-hidden="true" />} title="协议" description="先选大类，再选具体形态。">
+            <div className="entry-form-grid">
+              <FormField label="协议大类" required hint="决定入口使用的传输协议。" placement="bottom">
+                <Select value={presetProtocol} onChange={e => changePresetProtocol(e.target.value as Protocol)}>{protocols.map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select>
               </FormField>
-              <FormField label="解析域名" required hint="客户端连接使用的域名。">
-                <div className="dns-domain-input">
-                  <input value={dnsPrefix} onChange={e => changeDNSPrefix(e.target.value)} placeholder="例如 entry" aria-label="解析域名前缀" disabled={!selectedDNSZoneName} />
-                  {dnsZoneOptions.length > 1
-                    ? <Select value={selectedDNSZoneName} onChange={e => changeDNSZone(e.target.value)} aria-label="解析域名后缀">{dnsZoneOptions.map(zone => <option key={zone.id} value={zone.zone_name}>.{zone.zone_name}</option>)}</Select>
-                    : <span className="dns-domain-suffix">{selectedDNSZoneName ? `.${selectedDNSZoneName}` : '请先选择域名账号'}</span>}
+              <FormField label="具体类型" required hint="同协议下的传输与伪装组合，保存后按类型生成配置。" placement="bottom">
+                <Select value={presetID} onChange={e => applyPreset(e.target.value)}>{presetOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</Select>
+              </FormField>
+              <div className="preset-help">
+                <Shield size={16} aria-hidden="true" />
+                <div>
+                  <strong>{selectedPreset.label}</strong>
+                  <span>{selectedPreset.description}</span>
                 </div>
+              </div>
+              {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
+            </div>
+          </EntryFormSection>
+
+          <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="连接地址" description="客户端订阅里看到的入口地址。">
+            <div className="entry-form-grid">
+              <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。自动模式跟随服务器检测结果。" placement="bottom">
+                <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
               </FormField>
-              <FormField label="地址类型" hint={entryMode === 'custom' && isDomainLike(draft.external_ip || '') ? '域名目标会创建 CNAME。' : '选择要创建的解析记录。'}>
-                <Select variant="segmented" value={draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a')} onChange={e => update({ dns_record_types: e.target.value as DNSRecordTypes })} disabled={entryMode === 'custom' && isDomainLike(draft.external_ip || '')}>
-                  {dnsRecordTypes.map(x => <option key={x} value={x}>{dnsRecordTypeLabel(x)}</option>)}
-                </Select>
+              <FormField label="当前入口地址" hint={`订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`} placement="bottom">
+                <input readOnly value={entryAddress ? formatHostPort(entryAddress, displayPort) : '待 Agent 检测或填写自定义地址'} />
               </FormField>
-              {selectedDNSCredential?.provider === 'cloudflare' && <FormField label="Cloudflare 代理" hint="普通代理建议使用 DNS only。">
-                <Select variant="segmented" value={String(Boolean(draft.dns_proxy_enabled))} onChange={e => update({ dns_proxy_enabled: e.target.value === 'true' })}><option value="false">DNS only</option><option value="true">开启代理</option></Select>
+              {entryMode === 'custom' && <FormField label="自定义入口地址" required full hint="可填写域名、IPv4 或 IPv6。">
+                <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
               </FormField>}
-              {entryMode !== 'custom' && <div className="switch-setting-row" style={{ padding: '4px 0', marginTop: 8 }}>
-                <span className="switch-setting-label">公网 IP 变化时定时更新</span>
-                <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} />
-              </div>}
-              {draft.ddns_enabled && <FormField label="检查间隔"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
-              <div className="access-note compact"><strong>同步时机</strong><span>下发前同步，开启定时更新后按间隔刷新。</span></div>
-              {!dnsCredentials.length && <div className="access-note warning"><strong>还没有可用的域名服务账号</strong><span>请先到“域名解析”创建并验证账号。</span></div>}
-            </>}
-          </div>
-          {certificateRequired && <div className="managed-entry-box">
-            <FormField label="证书模式"><Select value={draft.certificate_mode || 'auto'} onChange={e => { const certificateMode = e.target.value as CertificateMode; update({ certificate_mode: certificateMode, certificate_domain: certificateMode === 'external' ? '' : (draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificateMode === 'explicit' ? selectedCertificate : null)), certificate_id: certificateMode === 'explicit' ? draft.certificate_id : undefined }) }}><option value="auto">自动匹配</option><option value="exact">仅精确子域证书</option><option value="wildcard">仅泛域名证书</option><option value="explicit">指定证书</option><option value="external">Agent 外部路径</option></Select></FormField>
-            {draft.certificate_mode === 'explicit' && <FormField label="指定证书" required><Select value={Number(draft.certificate_id || 0)} onChange={e => { const certificateID = Number(e.target.value) || undefined; const certificate = certificates.find(item => item.id === certificateID); update({ certificate_id: certificateID, certificate_domain: draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificate || null) }) }}><option value={0}>选择证书</option>{certificates.filter(item => item.status === 'ready').map(item => <option key={item.id} value={item.id}>{item.name} · {item.domains.join(', ')}</option>)}</Select></FormField>}
+            </div>
+            <EntryFormDisclosure
+              icon={<Globe size={15} aria-hidden="true" />}
+              title="DNS 解析"
+              hint="下发前把当前入口地址写入所选域名；开启定时更新后按间隔刷新。"
+              summary={draft.dns_sync_enabled ? (draft.dns_domain || '已开启') : '未开启'}
+              defaultOpen={Boolean(draft.dns_sync_enabled)}
+              tone={draft.dns_sync_enabled ? 'accent' : 'default'}
+            >
+              <div className="switch-setting-row">
+                <span className="switch-setting-label">
+                  自动同步 DNS 解析
+                  <FieldHelp label="自动同步 DNS 解析" hint="开启后，部署前会按入口地址创建或更新解析记录。" />
+                </span>
+                <Switch checked={Boolean(draft.dns_sync_enabled)} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || dnsCredentials.find(item => item.verified_at)?.id) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} ariaLabel="自动同步 DNS 解析" />
+              </div>
+              {draft.dns_sync_enabled && <>
+                <FormField label="域名服务账号" required hint="使用已验证的域名解析账号。">
+                  <Select value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))}><option value={0}>选择凭据</option>{dnsCredentials.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
+                </FormField>
+                <FormField label="解析域名" required hint="客户端连接使用的域名。">
+                  <div className="dns-domain-input">
+                    <input value={dnsPrefix} onChange={e => changeDNSPrefix(e.target.value)} placeholder="例如 entry" aria-label="解析域名前缀" disabled={!selectedDNSZoneName} />
+                    {dnsZoneOptions.length > 1
+                      ? <Select value={selectedDNSZoneName} onChange={e => changeDNSZone(e.target.value)} aria-label="解析域名后缀">{dnsZoneOptions.map(zone => <option key={zone.id} value={zone.zone_name}>.{zone.zone_name}</option>)}</Select>
+                      : <span className="dns-domain-suffix">{selectedDNSZoneName ? `.${selectedDNSZoneName}` : '请先选择域名账号'}</span>}
+                  </div>
+                </FormField>
+                <FormField label="地址类型" hint={entryMode === 'custom' && isDomainLike(draft.external_ip || '') ? '域名目标会创建 CNAME。' : '选择要创建的解析记录。'}>
+                  <Select variant="segmented" value={draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a')} onChange={e => update({ dns_record_types: e.target.value as DNSRecordTypes })} disabled={entryMode === 'custom' && isDomainLike(draft.external_ip || '')}>
+                    {dnsRecordTypes.map(x => <option key={x} value={x}>{dnsRecordTypeLabel(x)}</option>)}
+                  </Select>
+                </FormField>
+                {selectedDNSCredential?.provider === 'cloudflare' && <FormField label="Cloudflare 代理" hint="普通代理建议使用 DNS only。">
+                  <Select variant="segmented" value={String(Boolean(draft.dns_proxy_enabled))} onChange={e => update({ dns_proxy_enabled: e.target.value === 'true' })}><option value="false">DNS only</option><option value="true">开启代理</option></Select>
+                </FormField>}
+                {entryMode !== 'custom' && <div className="switch-setting-row">
+                  <span className="switch-setting-label">
+                    公网 IP 变化时定时更新
+                    <FieldHelp label="公网 IP 变化时定时更新" hint="服务器公网地址变化后，按间隔把解析记录更新到新地址。" />
+                  </span>
+                  <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="公网 IP 变化时定时更新" />
+                </div>}
+                {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
+                {!dnsCredentials.length && <div className="access-note warning"><strong>还没有可用的域名服务账号</strong><span>请先到“域名解析”创建并验证账号。</span></div>}
+              </>}
+            </EntryFormDisclosure>
+          </EntryFormSection>
+
+          <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description="Agent 在本机打开的地址和端口。">
+            <div className="entry-form-grid">
+              <FormField label="监听端口" required hint={draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}>
+                <div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div>
+              </FormField>
+              <FormField label="状态" hint="禁用后保留配置，但不再对外提供这个入口。">
+                <Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select>
+              </FormField>
+            </div>
+            <EntryFormDisclosure
+              icon={<Network size={15} aria-hidden="true" />}
+              title="高级监听"
+              hint="通常保持 0.0.0.0。NAT 环境才需要把监听端口和对外端口分开。"
+              summary={`${draft.listen_ip || '0.0.0.0'}${natEnabled ? ` · 对外 ${draft.advertise_port}` : ''}`}
+              defaultOpen={listenOverride || natEnabled}
+            >
+              <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖服务器监听模式。">
+                <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
+              </FormField>
+              <div className="switch-setting-row">
+                <span className="switch-setting-label">
+                  NAT 端口映射
+                  <FieldHelp label="NAT 端口映射" hint="监听端口与对外端口分离。例如本机监听 443，网关对外 8443。关闭则两者一致。" />
+                </span>
+                <Switch checked={natEnabled} onChange={checked => {
+                  if (checked) {
+                    const current = Number(draft.port) || 443
+                    const existing = Number(draft.advertise_port) || 0
+                    const next = existing > 0 && existing !== current ? existing : (current === 443 ? 8443 : current)
+                    if (next === current) update({ advertise_port: current === 65535 ? 8443 : current + 1 })
+                    else update({ advertise_port: next })
+                  } else {
+                    update({ advertise_port: 0 })
+                  }
+                }} ariaLabel="NAT 端口映射" />
+              </div>
+              {natEnabled && (
+                <FormField label="对外端口" required hint="NAT 网关对外的公网端口，客户端通过此端口连接。">
+                  <input value={draft.advertise_port || ''} onChange={e => update({ advertise_port: Number(e.target.value) || 0 })} inputMode="numeric" placeholder={String(draft.port || 443)} />
+                  {Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
+                </FormField>
+              )}
+            </EntryFormDisclosure>
+          </EntryFormSection>
+
+          {certificateRequired && <EntryFormDisclosure
+            icon={<Lock size={15} aria-hidden="true" />}
+            title="证书与 SNI"
+            hint="TLS 入口默认自动匹配已签发证书。仅在需要指定证书、自定义 SNI 或使用 Agent 外部证书时展开。"
+            summary={certificateModeSummary(draft.certificate_mode)}
+            defaultOpen={(draft.certificate_mode && draft.certificate_mode !== 'auto') || Boolean(draft.__custom_sni)}
+          >
+            <FormField label="证书模式" hint="自动匹配会按入口域名选择已签发证书。">
+              <Select value={draft.certificate_mode || 'auto'} onChange={e => { const certificateMode = e.target.value as CertificateMode; update({ certificate_mode: certificateMode, certificate_domain: certificateMode === 'external' ? '' : (draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificateMode === 'explicit' ? selectedCertificate : null)), certificate_id: certificateMode === 'explicit' ? draft.certificate_id : undefined }) }}>
+                <option value="auto">自动匹配</option>
+                <option value="exact">仅精确子域证书</option>
+                <option value="wildcard">仅泛域名证书</option>
+                <option value="explicit">指定证书</option>
+                <option value="external">Agent 外部路径</option>
+              </Select>
+            </FormField>
+            {draft.certificate_mode === 'explicit' && <FormField label="指定证书" required hint="只列出已就绪的证书。"><Select value={Number(draft.certificate_id || 0)} onChange={e => { const certificateID = Number(e.target.value) || undefined; const certificate = certificates.find(item => item.id === certificateID); update({ certificate_id: certificateID, certificate_domain: draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificate || null) }) }}><option value={0}>选择证书</option>{certificates.filter(item => item.status === 'ready').map(item => <option key={item.id} value={item.id}>{item.name} · {item.domains.join(', ')}</option>)}</Select></FormField>}
             {draft.certificate_mode !== 'external' && <>
               <FormField label="SNI 设置" hint="默认使用证书匹配的入口域名；需要连接其他域名时可自定义。"><Select variant="segmented" value={draft.__custom_sni ? 'custom' : 'certificate'} onChange={e => update({ __custom_sni: e.target.value === 'custom', certificate_domain: e.target.value === 'custom' ? draft.certificate_domain : followedSNI })}><option value="certificate">跟随证书域名</option><option value="custom">自定义 SNI</option></Select></FormField>
               {draft.__custom_sni
                 ? <FormField label="自定义 SNI" required hint="该域名必须包含在所选证书中。"><input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField>
                 : <div className="access-note compact"><strong>当前 SNI</strong><span>{followedSNI || '选择解析域名或指定证书后自动填写。'}</span></div>}
             </>}
-            {draft.certificate_mode === 'external' && <><FormField label="SNI 域名" required hint="填写外部证书覆盖的域名。"><input value={String(tlsForReality.server_name || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, server_name: e.target.value } })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField><FormField label="证书路径" required><input value={String(tlsForReality.certificate_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, certificate_path: e.target.value } })} placeholder="/etc/ssl/example/fullchain.pem" /></FormField><FormField label="私钥路径" required><input value={String(tlsForReality.key_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, key_path: e.target.value } })} placeholder="/etc/ssl/example/privkey.pem" /></FormField></>}
-          </div>}
-          <div className="access-note compact"><strong>当前入口地址</strong><span>{entryAddress ? formatHostPort(entryAddress, Number(draft.advertise_port) > 0 ? Number(draft.advertise_port) : (Number(draft.port) || 0)) : '待 Agent 检测或填写自定义地址。'}</span><small className="field-hint">订阅与客户端使用 {Number(draft.advertise_port) > 0 ? '对外端口' : '监听端口'}；Agent 本机仍监听 {Number(draft.port) || 0}。</small></div>
-          <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
-          <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
-          <div className="switch-setting-row" style={{ padding: '6px 0' }}>
-            <span className="switch-setting-label">NAT 端口映射（监听与对外端口分离）</span>
-            <Switch checked={Number(draft.advertise_port) > 0} onChange={checked => {
-              if (checked) {
-                const current = Number(draft.port) || 443
-                const existing = Number(draft.advertise_port) || 0
-                const next = existing > 0 && existing !== current ? existing : (current === 443 ? 8443 : current)
-                if (next === current) update({ advertise_port: current === 65535 ? 8443 : current + 1 })
-                else update({ advertise_port: next })
-              } else {
-                update({ advertise_port: 0 })
-              }
-            }} ariaLabel="NAT 端口映射" />
-          </div>
-          {Number(draft.advertise_port) > 0 && (
-            <FormField label="对外端口" required hint="NAT 网关对外的公网端口，客户端通过此端口连接；例如监听 443，对外 8443。关闭则与监听端口一致。">
-              <input value={draft.advertise_port || ''} onChange={e => update({ advertise_port: Number(e.target.value) || 0 })} inputMode="numeric" placeholder={String(draft.port || 443)} />
-              {Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
-            </FormField>
-          )}
-          <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
+            {draft.certificate_mode === 'external' && <>
+              <FormField label="SNI 域名" required hint="填写外部证书覆盖的域名。"><input value={String(tlsForReality.server_name || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, server_name: e.target.value } })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField>
+              <FormField label="证书路径" required hint="Agent 主机上的证书文件路径。"><input value={String(tlsForReality.certificate_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, certificate_path: e.target.value } })} placeholder="/etc/ssl/example/fullchain.pem" /></FormField>
+              <FormField label="私钥路径" required hint="Agent 主机上的私钥文件路径。"><input value={String(tlsForReality.key_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, key_path: e.target.value } })} placeholder="/etc/ssl/example/privkey.pem" /></FormField>
+            </>}
+          </EntryFormDisclosure>}
+
           {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
-          {protocol !== 'ssh' && <InboundTransportFields protocol={protocol} config={cfg} updateConfig={updateConfig} server={server} />}
+          {hasTransport && <EntryFormDisclosure
+            icon={<Zap size={15} aria-hidden="true" />}
+            title="连接优化"
+            hint="默认关闭。仅在客户端明确支持相同语义时开启 MUX 或 TCP Fast Open。"
+            summary={muxEnabled ? 'MUX 已开启' : tfoEnabled ? 'TFO 已开启' : '默认关闭'}
+            defaultOpen={muxEnabled || tfoEnabled}
+          >
+            <InboundTransportFields protocol={protocol} config={cfg} updateConfig={updateConfig} server={server} />
+          </EntryFormDisclosure>}
         </div>
         <details className="advanced-config">
-          <summary>高级：查看生成配置</summary>
+          <summary><FileText size={15} aria-hidden="true" /><span>生成配置</span><small>一般不需要手动修改</small></summary>
           <div className="config-preview-head">
             <div><strong>生成配置</strong><p className="muted">上方表单会同步更新这里；一般不需要手动修改。</p></div>
             <div><button className="ghost" onClick={regenerate}>按类型重新生成</button><button className="ghost" onClick={copyConfig}>复制配置</button></div>
@@ -14664,8 +14814,7 @@ function InboundTransportFields({ protocol, config, updateConfig, server }: { pr
     updateConfig({ multiplex: next.enabled ? next : undefined })
   }
   if (!capability.genericMux && !capability.tfo && !capability.nativeMux) return null
-  return <div className="preset-fields">
-    <div className="form-section-title">连接复用与 TCP Fast Open</div>
+  return <div className="entry-form-stack">
     {capability.nativeMux && <div className="access-note compact"><strong>复用方式</strong><span>{capability.nativeMux}</span></div>}
     {capability.genericMux && <>
       <div className="switch-form-row"><span className="switch-form-label">通用多路复用（MUX）</span><Switch checked={muxEnabled && !muxBlocked} disabled={muxBlocked} onChange={checked => setMux({ enabled: checked || undefined })} ariaLabel="通用多路复用" /></div>
@@ -14738,7 +14887,7 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     const isCustomRealityDomain = Boolean(realityServerName && !presetRealityDomains.includes(realityServerName))
     const showCustomSNI = isCustomRealityDomain || realityCustomForced
     return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
-      <div className="form-section-title">TCP / Reality / Vision 设置</div>
+      <div className="form-section-title"><Shield size={14} aria-hidden="true" />TCP / Reality / Vision 设置</div>
       {nodePresetPicker}
       <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
       <FormField label="SNI / 握手域名" hint={`同时用于客户端 SNI 和 Reality 伪装站点；可从预设选择或输入自定义域名。模板首项 ${presetRealityDomains[0] || defaultVLESSRealityServerName} 为默认。${presetHintSuffix}`} className={presetActive ? 'is-preset-applied' : ''}>
@@ -14776,14 +14925,14 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     </div>
   }
   if (presetID === 'vless-ws') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
-    <div className="form-section-title">WebSocket / TLS 设置</div>
+    <div className="form-section-title"><Globe size={14} aria-hidden="true" />WebSocket / TLS 设置</div>
     {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     <FormField label="WebSocket 路径" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
     <FormField label="Host 头" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
   if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic' || presetID === 'anytls-large-padding') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
-    <div className="form-section-title">TLS 设置</div>
+    <div className="form-section-title"><Lock size={14} aria-hidden="true" />TLS 设置</div>
     {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     {presetID === 'hy2-tls' && <>
@@ -14793,7 +14942,7 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     {presetID.startsWith('anytls-') && <FormField label="Padding 填充方案" className={presetFieldClass} hint={`每行一条规则：stop=N、序号=min-max；c 用于在数据耗尽时停止后续填充。${presetHintSuffix}`}><textarea rows={6} value={anyTLSPaddingText(config.padding_scheme)} onChange={event => updateConfig({ padding_scheme: event.target.value === '' ? undefined : event.target.value.replace(/\r\n/g, '\n').split('\n') })} spellCheck={false} /></FormField>}
   </div>
   if (presetID.startsWith('ss-')) return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
-    <div className="form-section-title">SS 设置</div>
+    <div className="form-section-title"><Key size={14} aria-hidden="true" />SS 设置</div>
     {nodePresetPicker}
     <FormField label="加密方法" className={presetFieldClass} hint={presetHintSuffix || undefined}><Select value={String(config.method || '2022-blake3-aes-128-gcm')} onChange={e => updateConfig({ method: e.target.value })}>{shadowsocksMethods.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}</Select></FormField>
     {!String(config.method || '').startsWith('2022-') && <div className="access-note compact"><strong>单用户入口</strong><span>多人使用请选择 SS 2022 或其他多用户协议。</span></div>}
@@ -14838,14 +14987,14 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
     })
   }
   if (version === 4) return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
-    <div className="form-section-title">Snell v4 设置</div>
+    <div className="form-section-title"><Key size={14} aria-hidden="true" />Snell v4 设置</div>
     <div className="access-note compact"><strong>协议形态</strong><span>v4 单 PSK；UDP relay 随 TCP 流承载，无需单独 UDP 端口。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
     <FormField label="混淆模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.obfs_mode || 'none')} onChange={event => updateConfig({ obfs_mode: event.target.value, obfs_host: event.target.value === 'none' ? undefined : config.obfs_host })}><option value="none">无</option><option value="http">HTTP</option></Select></FormField>
     {String(config.obfs_mode || 'none') !== 'none' && <FormField label="混淆 Host" className={snellFieldClass} hint={snellHint || undefined}><input value={String(config.obfs_host || '')} onChange={event => updateConfig({ obfs_host: event.target.value })} placeholder="例如 bing.com" /></FormField>}
   </div>
   return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
-    <div className="form-section-title">Snell v6 设置</div>
+    <div className="form-section-title"><Key size={14} aria-hidden="true" />Snell v6 设置</div>
     <div className="access-note compact"><strong>测试版协议</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
     <FormField label="传输模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value })}><option value="default">默认</option><option value="unshaped">无整形</option><option value="unsafe-raw">unsafe-raw</option></Select></FormField>
@@ -14862,7 +15011,7 @@ function MieruConfigFields({ config, updateConfig, rangeKey, udpAllowed = true, 
   }
   const presetClass = presetApplied ? ' is-preset-applied' : ''
   return <div className={`preset-fields${presetApplied ? ' is-preset' : ''}`}>
-    <div className="form-section-title">Mieru 设置</div>
+    <div className="form-section-title"><Layers size={14} aria-hidden="true" />Mieru 设置</div>
     <FormField label="传输协议" className={presetClass} hint={presetHint}><Select variant="segmented" value={String(config.transport || 'TCP').toUpperCase()} onChange={event => updateConfig({ transport: event.target.value })}><option value="TCP">TCP</option><option value="UDP" disabled={!udpAllowed}>UDP</option></Select></FormField>
     <FormField label="额外端口范围" className={presetClass} hint={presetHint}><input value={rangeText} onChange={event => updateRanges(event.target.value)} placeholder="8965-8970, 9000-9002" /></FormField>
     <FormField label="复用级别" className={presetClass} hint={presetHint}><Select value={String(config.multiplexing || 'MULTIPLEXING_DEFAULT')} onChange={event => updateConfig({ multiplexing: event.target.value })}>{mieruMultiplexingLevels.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}</Select></FormField>

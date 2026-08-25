@@ -3,8 +3,39 @@ import { useState } from 'react'
 import { HelpCircle } from 'lucide-react'
 import { Select } from './select'
 
-export function FormField({ label, hint, required, children, className = '', full = false, placement = 'top' }: { label: string; hint?: string; required?: boolean; children: React.ReactNode; className?: string; full?: boolean; placement?: 'top' | 'bottom' }) {
+type HelpPlacement = 'top' | 'bottom'
+
+export function FieldHelp({ label, hint, placement = 'top' }: { label: string; hint: string; placement?: HelpPlacement }) {
   const hintID = React.useId()
+  const stopToggle = (event: React.SyntheticEvent) => {
+    event.stopPropagation()
+  }
+  return (
+    <button
+      type="button"
+      className="form-field-help"
+      aria-label={`${label}说明`}
+      aria-describedby={hintID}
+      tabIndex={0}
+      onClick={event => {
+        event.preventDefault()
+        event.stopPropagation()
+      }}
+      onPointerDown={stopToggle}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      }}
+    >
+      <HelpCircle size={14} aria-hidden="true" />
+      <span id={hintID} role="tooltip" className={`form-field-help-popover${placement === 'bottom' ? ' popover-bottom' : ''}`}>{hint}</span>
+    </button>
+  )
+}
+
+export function FormField({ label, hint, required, children, className = '', full = false, placement = 'top' }: { label: string; hint?: string; required?: boolean; children: React.ReactNode; className?: string; full?: boolean; placement?: HelpPlacement }) {
   return (
     <div className={`form-field${full ? ' form-field-full' : ''}${className ? ` ${className}` : ''}`.trim()}>
       <div className="form-field-meta">
@@ -12,22 +43,7 @@ export function FormField({ label, hint, required, children, className = '', ful
           {label}
           {required ? <em aria-label="必填">*</em> : null}
         </label>
-        {hint ? (
-          <button
-            type="button"
-            className="form-field-help"
-            aria-label={`${label}说明`}
-            aria-describedby={hintID}
-            tabIndex={0}
-            onClick={event => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-          >
-            <HelpCircle size={14} aria-hidden="true" />
-            <span id={hintID} role="tooltip" className={`form-field-help-popover${placement === 'bottom' ? ' popover-bottom' : ''}`}>{hint}</span>
-          </button>
-        ) : null}
+        {hint ? <FieldHelp label={label} hint={hint} placement={placement} /> : null}
       </div>
       <div className="form-field-control">{children}</div>
     </div>
