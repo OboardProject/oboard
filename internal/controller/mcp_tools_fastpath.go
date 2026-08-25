@@ -48,6 +48,7 @@ func (s *Server) addMCPTaskTool(server *mcp.Server, principal application.Princi
 		})),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpTaskInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := mcpPrincipal(ctx)
 		started := time.Now()
 		result := s.prepareMCPTask(ctx, principal, input)
 		s.recordFastPathMetric(ctx, principal, result, "prepare", time.Since(started))
@@ -62,6 +63,7 @@ func (s *Server) addMCPCommitTaskTool(server *mcp.Server, principal application.
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"prepared_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "idempotency_key": map[string]any{"type": "string", "minLength": 8, "maxLength": 128}, "reason": map[string]any{"type": "string", "maxLength": 4000}}, "prepared_id", "idempotency_key")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(true),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpCommitTaskInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := mcpPrincipal(ctx)
 		started := time.Now()
 		result := s.commitMCPTask(ctx, principal, input)
 		s.recordFastPathMetric(ctx, principal, result, "commit", time.Since(started))

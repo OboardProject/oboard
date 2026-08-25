@@ -998,9 +998,15 @@ func (s *Server) staticMCPResource(ctx context.Context, uri string) (any, error)
 	}
 	switch uri {
 	case "oboard://system/version":
-		return map[string]any{"controller": version.Version, "api": "v1", "mcp_protocol": "2026-07-28", "mcp_transport": "streamable_http", "agent_protocol": "v1"}, nil
+		manifest := s.mcpCurrentManifest()
+		return map[string]any{
+			"controller": version.Version, "api": mcpAPIVersion, "capability_revision": manifest.CapabilityRevision, "toolset_hash": manifest.ToolsetHash,
+			"mcp_protocol": mcpMinProtocol, "mcp_transport": "streamable_http", "agent_protocol": "v1",
+			"min_mcp_protocol": mcpMinProtocol, "instructions_hash": manifest.InstructionsHash,
+		}, nil
 	case "oboard://system/capabilities", "oboard://docs/capabilities":
-		return mcpCapabilityViews(s.capabilities.ListMCP(principal)), nil
+		manifest := s.mcpCurrentManifest()
+		return map[string]any{"capabilities": mcpCapabilityViews(s.capabilities.ListMCP(principal)), "manifest": manifest}, nil
 	case "oboard://context/bootstrap":
 		return s.mcpBootstrapContext(ctx)
 	case "oboard://auth/grant":

@@ -125,8 +125,14 @@ func mustRawSchema(value any) json.RawMessage {
 
 // mcpDiscoverData builds the oboard_discover payload from the live grant.
 func (s *Server) mcpDiscoverData(ctx context.Context, includeDenied, includeSchemaSummaries bool) map[string]any {
-	principal, _ := mcpPrincipal(ctx)
-	grant, _ := mcpGrantPrincipal(ctx)
+	principal, _ := s.mcpPrincipalFromRequest(ctx, nil)
+	if principal.ID == "" {
+		principal, _ = mcpPrincipal(ctx)
+	}
+	grant, _ := s.mcpGrantPrincipalFromRequest(ctx, nil)
+	if grant.Grant.GrantID == "" {
+		grant, _ = mcpGrantPrincipal(ctx)
+	}
 	authorized := s.capabilities.ListMCP(principal)
 	denied := []map[string]any{}
 	if includeDenied {
@@ -148,6 +154,7 @@ func (s *Server) mcpDiscoverData(ctx context.Context, includeDenied, includeSche
 			delete(view, "output_schema")
 		}
 	}
+	manifest := s.mcpCurrentManifest()
 	return map[string]any{
 		"grant": map[string]any{
 			"grant_id": grant.Grant.GrantID, "client_id": grant.Grant.ClientID, "user_id": grant.Grant.UserID,
@@ -164,11 +171,16 @@ func (s *Server) mcpDiscoverData(ctx context.Context, includeDenied, includeSche
 		"workflow_rules":          map[string]any{"write_via_changeset": true, "ssh_supported": false, "shell_supported": false, "admin_deletion_supported": false, "risk4_auto_approval": false},
 		"limits":                  map[string]any{"max_changeset_operations": 64, "changeset_ttl_seconds": 1800, "plan_ttl_seconds": 1800},
 		"recommended_actions":     []string{"Read oboard://auth/grant before planning a change"},
+		"capability_revision":     manifest.CapabilityRevision,
+		"toolset_hash":            manifest.ToolsetHash,
+		"api_version":             manifest.APIVersion,
+		"min_mcp_protocol":        manifest.MinMCPProtocol,
 	}
 }
 
 func (s *Server) mcpDiscoverCompactData(ctx context.Context) map[string]any {
 	principal, _ := mcpPrincipal(ctx)
+	manifest := s.mcpCurrentManifest()
 	groups := map[string]bool{}
 	for _, descriptor := range s.capabilities.ListMCP(principal) {
 		group, _, _ := strings.Cut(descriptor.Name, ".")
@@ -186,7 +198,8 @@ func (s *Server) mcpDiscoverCompactData(ctx context.Context) map[string]any {
 	return map[string]any{
 		"primary_tool": "oboard_task", "recipes": recipes, "capability_groups": capabilityGroups,
 		"fallback_tools": []string{"oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_submit_changeset"},
-		"workflow_rules": map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false},
+		"workflow_rules":     map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false},
+		"capability_revision": manifest.CapabilityRevision, "toolset_hash": manifest.ToolsetHash, "api_version": manifest.APIVersion,
 	}
 }
 

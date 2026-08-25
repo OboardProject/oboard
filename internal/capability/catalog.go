@@ -625,8 +625,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"resource_history_enabled": boolValue, "latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
-			"expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
-			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"service_start_at": stringValue, "expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空时自动按 service_start_at(优先)或 expires_at 的日推导(仅日精度),例如 2025-07-05 起租即每月5日重置"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
@@ -647,8 +647,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion},
 			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
-			"expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
-			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"service_start_at": stringValue, "clear_service_start_at": boolValue, "expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
+			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":

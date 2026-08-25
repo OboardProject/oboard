@@ -67,6 +67,10 @@ func (s *Server) registerMCPTools(server *mcp.Server, principal application.Prin
 		s.addMCPRetryWorkflowStepTool(server, principal)
 		s.addMCPRedeemExternalActionTool(server, principal)
 	}
+	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+		s.addMCPSystemCapabilitiesTool(server)
+		s.addMCPSystemBootstrapTool(server)
+	}
 	s.registerMCPCapabilityTools(server, principal)
 }
 
@@ -81,7 +85,8 @@ func (s *Server) addMCPDiscoverTool(server *mcp.Server, principal application.Pr
 		Name: "oboard_discover", Title: "Discover OBoard", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task first. Return a compact recipe and capability-group index by default; request detail_level=full only when Fast Path returned fallback_required.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"include_denied": map[string]any{"type": "boolean", "default": false}, "include_schema_summaries": map[string]any{"type": "boolean", "default": false}, "detail_level": map[string]any{"type": "string", "enum": []string{"compact", "full"}, "default": "compact"}})),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpDiscoverInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpDiscoverInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		decision := s.evaluatorForRead(ctx)
 		if !decision.Allowed {
 			return mcpFailureResult(decision, ""), nil, nil
@@ -125,7 +130,8 @@ func (s *Server) addMCPGetCapabilitySchemaTool(server *mcp.Server, principal app
 		Name: "oboard_get_capability_schema", Title: "Get Capability Schema", Description: "ADVANCED / FALLBACK TOOL. Routine OBoard operations should use oboard_task first. Return one authorized capability's strict schema after Fast Path reports fallback_required.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"capability_id": map[string]any{"type": "string", "minLength": 1}}, "capability_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpCapabilitySchemaInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpCapabilitySchemaInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		descriptor, known := s.capabilities.Get(strings.TrimSpace(input.CapabilityID))
 		if !known || !descriptor.MCPEnabled {
 			return mcpPlainFailureResult("", "capability is not available to this grant"), nil, nil
@@ -211,7 +217,8 @@ func (s *Server) addMCPPlanDesiredStateTool(server *mcp.Server, principal applic
 			"assumptions":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		}, "capability_id", "goal", "desired_state")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpPlanDesiredStateInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpPlanDesiredStateInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		decision := s.authorizePlanOperation(ctx, strings.TrimSpace(input.CapabilityID), input.DesiredState)
 		if !decision.Allowed {
 			return mcpFailureResult(decision, ""), nil, nil
@@ -293,7 +300,8 @@ func (s *Server) addMCPValidateDesiredStateTool(server *mcp.Server, principal ap
 			"refresh_revisions": map[string]any{"type": "boolean"},
 		}, "plan", "plan_digest")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpValidateDesiredStateInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpValidateDesiredStateInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		plan, err := parseDesiredStatePlan(input.Plan)
 		if err != nil {
 			return mcpPlainFailureResult("", err.Error()), nil, nil
@@ -402,7 +410,8 @@ func (s *Server) addMCPSubmitChangesetTool(server *mcp.Server, principal applica
 			"approval_preference": map[string]any{"type": "string", "enum": []string{"request_approval", "use_preapproval_if_available"}},
 		}, "validated_plan", "validation_digest", "idempotency_key", "reason")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpSubmitChangesetInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpSubmitChangesetInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		result, err := s.submitMCPChangeset(ctx, principal, input)
 		if err != nil {
 			return mcpPlainFailureResult("", err.Error()), nil, nil
@@ -427,7 +436,7 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 		}
 	}
 	result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, input.Reason, input.IdempotencyKey, input.ApprovalPreference)
-	if err == nil {
+if err == nil {
 		s.recordToolCall(ctx, principal, "changesets.submit", input, result.Status, capability.DataInternal)
 	}
 	return result, err
@@ -695,7 +704,8 @@ func (s *Server) addMCPGetChangesetTool(server *mcp.Server, principal applicatio
 		Name: "oboard_get_changeset", Title: "Get Changeset", Description: "Return one authorized Changeset with validation, operations, expected revisions, approvals, workflow reference, and redacted results.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"changeset_id": map[string]any{"type": "string", "minLength": 1}}, "changeset_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpChangesetIDInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpChangesetIDInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		item, err := s.automation.Get(ctx, strings.TrimSpace(input.ChangesetID))
 		if err != nil || item.PrincipalID != principal.ID {
 			return mcpPlainFailureResult("", "changeset not found"), nil, nil
@@ -715,7 +725,8 @@ func (s *Server) addMCPGetWorkflowTool(server *mcp.Server, principal application
 		Name: "oboard_get_workflow", Title: "Get Workflow", Description: "Return a compact authorized Workflow status by default. Use detail=full only for recovery or debugging. Workflow is the canonical execution state; do not infer completion from Changeset creation.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}, "detail": map[string]any{"type": "string", "enum": []string{"compact", "full"}, "default": "compact"}}, "workflow_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpWorkflowIDInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpWorkflowIDInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		item, err := s.automation.GetWorkflow(ctx, principal, strings.TrimSpace(input.WorkflowID))
 		if err != nil {
 			return mcpPlainFailureResult("", "workflow not found"), nil, nil
@@ -769,7 +780,8 @@ func (s *Server) addMCPCancelWorkflowTool(server *mcp.Server, principal applicat
 		Name: "oboard_cancel_workflow", Title: "Cancel Workflow", Description: "Request cancellation of an authorized cancellable Workflow. Cancellation is idempotent and never claims rollback of operations that have already completed.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}, "idempotency_key": map[string]any{"type": "string", "minLength": 8, "maxLength": 200}, "reason": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000}}, "workflow_id", "idempotency_key", "reason")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(true),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpCancelWorkflowInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpCancelWorkflowInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		item, err := s.cancelWorkflow(ctx, principal, strings.TrimSpace(input.WorkflowID))
 		if err != nil {
 			return mcpPlainFailureResult("", "workflow cannot be cancelled in its current state"), nil, nil
@@ -814,7 +826,8 @@ func (s *Server) addMCPRetryWorkflowStepTool(server *mcp.Server, principal appli
 		Name: "oboard_retry_workflow_step", Title: "Retry Workflow Step", Description: "Retry one authorized retryable Workflow step using the original validated operation and resource boundary. The retry cannot change targets, broaden permissions, or bypass revision and approval checks.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"workflow_id": map[string]any{"type": "string", "minLength": 1}, "step_id": map[string]any{"type": "string", "minLength": 1}}, "workflow_id", "step_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpRetryWorkflowInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpRetryWorkflowInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		workflowID, stepID := strings.TrimSpace(input.WorkflowID), strings.TrimSpace(input.StepID)
 		workflow, err := s.automation.GetWorkflow(ctx, principal, workflowID)
 		if err != nil {
@@ -902,7 +915,8 @@ func (s *Server) addMCPRedeemExternalActionTool(server *mcp.Server, principal ap
 		Name: "oboard_redeem_external_action", Title: "Redeem External Action", Description: "Redeem one authorized, pending, one-time external action produced by an OBoard Workflow. Sensitive material is returned at most once, is never exposed through resources, and must not be logged or persisted by the client.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"action_id": map[string]any{"type": "string", "minLength": 1}}, "action_id")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotationsWrite(false),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input mcpRedeemExternalActionInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpRedeemExternalActionInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		actionID := strings.TrimSpace(input.ActionID)
 		action, err := s.store.GetExternalAction(ctx, actionID)
 		if err != nil || action.GrantID != principal.GrantID || action.ConsumedAt != nil {

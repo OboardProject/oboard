@@ -1,7 +1,10 @@
 package controller
 
 import (
+	"context"
 	"net/http"
+	"strings"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -43,25 +46,115 @@ When a Workflow reports failed, read its error message first. For access_change 
 
 Keep the requested blast radius as small as possible. Explain required approvals, external actions, unresolved assumptions, rollback considerations, and recovery actions.`
 
-// newMCPHandler builds the /api/v1/mcp HTTP handler. Authentication is handled by the
-// dedicated mcpAuth middleware; here we only assemble the transport, origin,
-// and host protections.
+var (
+	mcpSingletonMu sync.Mutex
+	mcpSingletons  = map[*Server]*mcp.Server{}
+	mcpHandlers    = map[*Server]http.Handler{}
+)
+
+// newMCPHandler builds the /api/v1/mcp HTTP handler with explicit
+// tools/resources/prompts listChanged capabilities.
+//
+// The handler is hybrid: POST/DELETE are stateful (Stateless=false) so that
+// modern clients can receive notifications/tools/list_changed via the
+// subscriptions/listen stream, while GET is handled by a stateless transport
+// that immediately returns 405 for the legacy standalone SSE. This avoids the
+// test harness hanging on the legacy GET SSE that the SDK opens for protocol
+// versions < 2026-07-28, while still supporting dynamic tool discovery for
+// Hermes/Claude via listChanged.
 func (s *Server) newMCPHandler() http.Handler {
-	transport := mcp.NewStreamableHTTPHandler(s.mcpServerForRequest, &mcp.StreamableHTTPOptions{
+	mcpSingletonMu.Lock()
+	defer mcpSingletonMu.Unlock()
+	if h, ok := mcpHandlers[s]; ok {
+		return h
+	}
+	server := s.mcpSingletonServerLocked()
+	stateful := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		return server
+	}, &mcp.StreamableHTTPOptions{
+		Stateless:                    false,
+		JSONResponse:                 true,
+		DisableLocalhostProtection:   true,
+		MaxRequestBodyBytes:          1 << 20,
+		PropagateRequestCancellation: true,
+	})
+	stateless := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		return server
+	}, &mcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 true,
 		DisableLocalhostProtection:   true,
 		MaxRequestBodyBytes:          1 << 20,
 		PropagateRequestCancellation: true,
 	})
-	return s.mcpLocalhostProtection(s.mcpOriginProtection(transport))
+	combined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			stateless.ServeHTTP(w, r)
+			return
+		}
+		stateful.ServeHTTP(w, r)
+	})
+	h := s.mcpLocalhostProtection(s.mcpOriginProtection(combined))
+	mcpHandlers[s] = h
+	return h
 }
 
-// mcpServerForRequest builds a fresh server per request so tools, resources,
-// and prompts are listed exactly per the current grant. Unauthorized surface is
-// never advertised to a client that could only fail to use it.
+// mcpSingletonServerLocked creates or returns the singleton MCP server for this
+// Controller instance. It advertises listChanged for tools/resources/prompts so
+// clients that support notifications/tools/list_changed (Hermes, Claude, etc.)
+// can hot-reload the tool list without reconnect. Per-principal filtering is
+// done in the receiving middleware, not at registration time, so the singleton
+// holds the full tool/resource/prompt set computed for a synthetic admin.
+func (s *Server) mcpSingletonServerLocked() *mcp.Server {
+	if srv, ok := mcpSingletons[s]; ok && srv != nil {
+		return srv
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: "oboard", Version: version.Version}, &mcp.ServerOptions{
+		Instructions: mcpServerInstructions,
+		Capabilities: &mcp.ServerCapabilities{
+			Tools:     &mcp.ToolCapabilities{ListChanged: true},
+			Resources: &mcp.ResourceCapabilities{ListChanged: true},
+			Prompts:   &mcp.PromptCapabilities{ListChanged: true},
+		},
+	})
+	// Synthetic admin sees every MCPEnabled capability plus every built-in tool
+	// so the singleton holds the superset. Real clients are filtered per request.
+	admin := application.Principal{
+		ID:          "mcp-singleton",
+		Role:        model.RoleAdmin,
+		AccessLevel: mcpauth.AccessOperate,
+	}
+	// Scopes are derived from the admin role so that capability filtering via
+	// ListMCP is maximal.
+	admin.Scopes = s.capabilities.ScopesForGrant(admin)
+	s.registerMCPTools(server, admin)
+	s.registerMCPResources(server, admin)
+	s.registerMCPPrompts(server, admin)
+	// The two stable manifest tools are registered for every grant regardless
+	// of fast-path, so also add them to the singleton explicitly (they are
+	// already added via registerMCPTools if admin can see them, but keep as
+	// stable guarantee).
+	s.addMCPSystemCapabilitiesTool(server)
+	s.addMCPSystemBootstrapTool(server)
+
+	server.AddReceivingMiddleware(s.mcpFilterMiddleware)
+
+	mcpSingletons[s] = server
+	return server
+}
+
+// mcpServerForRequest is the legacy per-request server factory. It is retained
+// for tests that construct a server directly without going through the
+// singleton handler. New code should use the singleton via newMCPHandler.
 func (s *Server) mcpServerForRequest(req *http.Request) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "oboard", Version: version.Version}, &mcp.ServerOptions{Instructions: mcpServerInstructions})
+	server := mcp.NewServer(&mcp.Implementation{Name: "oboard", Version: version.Version}, &mcp.ServerOptions{
+		Instructions: mcpServerInstructions,
+		Capabilities: &mcp.ServerCapabilities{
+			Tools:     &mcp.ToolCapabilities{ListChanged: true},
+			Resources: &mcp.ResourceCapabilities{ListChanged: true},
+			Prompts:   &mcp.PromptCapabilities{ListChanged: true},
+		},
+	})
 	principal, err := mcpPrincipal(req.Context())
 	if err != nil {
 		return server
@@ -69,7 +162,218 @@ func (s *Server) mcpServerForRequest(req *http.Request) *mcp.Server {
 	s.registerMCPTools(server, principal)
 	s.registerMCPResources(server, principal)
 	s.registerMCPPrompts(server, principal)
+	s.addMCPSystemCapabilitiesTool(server)
+	s.addMCPSystemBootstrapTool(server)
 	return server
+}
+
+// mcpFilterMiddleware enforces per-principal tool/resource/prompt visibility on
+// every list call. The singleton server holds the full superset; the middleware
+// trims the response to the current grant's authorized view so that
+// role/grant changes are visible immediately without closing the session.
+// It also enriches the context with the current principal/grant so that
+// downstream CallTool handlers see the up-to-date role even for stateful
+// sessions where the handler's context would otherwise carry the stale
+// session-creation principal.
+func (s *Server) mcpFilterMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if principal, err := s.mcpPrincipalFromRequest(ctx, req); err == nil {
+			ctx = context.WithValue(ctx, apiPrincipalContextKey{}, principal)
+			if gp, err := s.mcpGrantPrincipalFromRequest(ctx, req); err == nil {
+				ctx = context.WithValue(ctx, mcpGrantPrincipalContextKey{}, gp)
+			}
+		}
+		res, err := next(ctx, method, req)
+		if err != nil || res == nil {
+			return res, err
+		}
+		principal, pErr := s.mcpPrincipalFromRequest(ctx, req)
+		if pErr != nil {
+			return res, nil
+		}
+		switch method {
+		case "tools/list":
+			if r, ok := res.(*mcp.ListToolsResult); ok {
+				r.Tools = s.mcpFilterToolsForPrincipal(r.Tools, principal)
+			}
+		case "resources/list":
+			if r, ok := res.(*mcp.ListResourcesResult); ok {
+				r.Resources = s.mcpFilterResourcesForPrincipal(r.Resources, principal)
+			}
+		case "resources/templates/list":
+			if r, ok := res.(*mcp.ListResourceTemplatesResult); ok {
+				r.ResourceTemplates = s.mcpFilterResourceTemplatesForPrincipal(r.ResourceTemplates, principal)
+			}
+		case "prompts/list":
+			if r, ok := res.(*mcp.ListPromptsResult); ok {
+				// Prompts are currently gated only by read access; the singleton
+				// only registers prompts when admin has read, so filtering is
+				// just read vs none.
+				if !s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+					r.Prompts = nil
+				}
+			}
+		}
+		return res, nil
+	}
+}
+
+func (s *Server) mcpFilterToolsForPrincipal(tools []*mcp.Tool, principal application.Principal) []*mcp.Tool {
+	// Build the allowed set once per call.
+	allowed := s.mcpAllowedToolNames(principal)
+	filtered := make([]*mcp.Tool, 0, len(tools))
+	for _, t := range tools {
+		if allowed[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+func (s *Server) mcpAllowedToolNames(principal application.Principal) map[string]bool {
+	allowed := map[string]bool{}
+	// Fast-path and stable manifest tools: mirror registerMCPTools logic.
+	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+		allowed["oboard_task"] = true
+		allowed["oboard_discover"] = true
+		allowed["oboard_get_capability_schema"] = true
+		allowed["oboard_plan_desired_state"] = true
+		allowed["oboard_validate_desired_state"] = true
+		allowed["oboard_get_changeset"] = true
+		allowed["oboard_get_workflow"] = true
+	}
+	if s.grantAllowsOperate(principal) {
+		allowed["oboard_commit_task"] = true
+		allowed["oboard_submit_changeset"] = true
+		allowed["oboard_cancel_workflow"] = true
+		allowed["oboard_retry_workflow_step"] = true
+		allowed["oboard_redeem_external_action"] = true
+	}
+	// Stable manifest tools are always visible to readers (and also to
+	// operators, since read implies operate's ability to see them).
+	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+		allowed["system_get_capabilities"] = true
+		allowed["system_bootstrap"] = true
+	}
+	// Capability tools: filtered by ListMCP.
+	for _, desc := range s.capabilities.ListMCP(principal) {
+		if !desc.MCPEnabled {
+			continue
+		}
+		name := mcpCapabilityToolName(desc.Name)
+		if desc.ReadOnly || desc.Executable {
+			allowed[name] = true
+		}
+	}
+	return allowed
+}
+
+func (s *Server) mcpFilterResourcesForPrincipal(resources []*mcp.Resource, principal application.Principal) []*mcp.Resource {
+	filtered := make([]*mcp.Resource, 0, len(resources))
+	for _, r := range resources {
+		if s.mcpResourceAllowedForPrincipal(r.URI, principal) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func (s *Server) mcpFilterResourceTemplatesForPrincipal(templates []*mcp.ResourceTemplate, principal application.Principal) []*mcp.ResourceTemplate {
+	filtered := make([]*mcp.ResourceTemplate, 0, len(templates))
+	for _, t := range templates {
+		// For templates, check the capability gate if present; the URI template
+		// itself contains the capability via the def's capability field, but we
+		// only have the URI here. Use a permissive check: if the template's URI
+		// maps to a capability resource, verify it.
+		// For now, allow all templates that the principal can read; resource
+		// reads will still enforce per-URI authorization.
+		if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+			// Further gate capability-backed templates.
+			capName := s.mcpCapabilityForResourceURITemplate(t.URITemplate)
+			if capName != "" {
+				if _, ok := s.capabilities.Authorize(principal, capName); !ok {
+					continue
+				}
+			}
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+func (s *Server) mcpResourceAllowedForPrincipal(uri string, principal application.Principal) bool {
+	// Fast path: static docs and version resources are read-gated.
+	if strings.HasPrefix(uri, "oboard://docs/") || uri == "oboard://system/version" || uri == "oboard://system/capabilities" || uri == "oboard://context/bootstrap" || uri == "oboard://auth/grant" {
+		return s.grantAllowsAccess(principal, mcpauth.AccessRead)
+	}
+	// Capability-backed resources: check the capability map.
+	for _, def := range s.mcpResourceDefs() {
+		if def.uri == uri {
+			if def.capability == "" {
+				return s.grantAllowsAccess(principal, mcpauth.AccessRead)
+			}
+			if _, ok := s.capabilities.Authorize(principal, def.capability); ok {
+				return true
+			}
+			return false
+		}
+	}
+	for _, def := range s.mcpResourceTemplateDefs() {
+		// Template URIs are not in the resources list; filtered separately.
+		_ = def
+	}
+	// Capability generic resources.
+	if strings.HasPrefix(uri, "oboard://capability/") {
+		capName := strings.TrimPrefix(uri, "oboard://capability/")
+		if idx := strings.Index(capName, "/"); idx != -1 {
+			capName = capName[:idx]
+		}
+		if _, ok := s.capabilities.Authorize(principal, capName); ok {
+			return true
+		}
+		return false
+	}
+	// Default: require read.
+	return s.grantAllowsAccess(principal, mcpauth.AccessRead)
+}
+
+func (s *Server) mcpCapabilityForResourceURITemplate(tmpl string) string {
+	for _, def := range s.mcpResourceDefs() {
+		if def.uri == tmpl {
+			return def.capability
+		}
+	}
+	// Check capability generic templates
+	if strings.HasPrefix(tmpl, "oboard://capability/") {
+		rest := strings.TrimPrefix(tmpl, "oboard://capability/")
+		if idx := strings.Index(rest, "/"); idx != -1 {
+			rest = rest[:idx]
+		}
+		return rest
+	}
+	return ""
+}
+
+// mcpBroadcastToolListChanged triggers a tools/list_changed notification to
+// every connected MCP session. It is the single chokepoint for "capability hot
+// update": when the registry's revision or hash changes, call this and every
+// Hermes/Claude/Codex client that declared tools.listChanged will re-fetch
+// tools/list automatically. For stateless clients that do not hold a GET SSE
+// stream, the next tools/list will still return the new snapshot, so polling
+// system_get_capabilities remains a correct fallback.
+func (s *Server) mcpBroadcastToolListChanged() {
+	mcpSingletonMu.Lock()
+	srv := mcpSingletons[s]
+	mcpSingletonMu.Unlock()
+	if srv == nil {
+		return
+	}
+	// Re-adding a stable tool is enough to make the SDK schedule a
+	// notifications/tools/list_changed after its debounce window. This does
+	// not change the visible tool list (the tool already exists with the same
+	// schema) but still notifies legacy and modern sessions.
+	s.addMCPSystemCapabilitiesTool(srv)
+	s.addMCPSystemBootstrapTool(srv)
 }
 
 func (s *Server) mcpEvaluator() *mcpauth.Evaluator {

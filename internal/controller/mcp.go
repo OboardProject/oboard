@@ -11,9 +11,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/capability"
+	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/version"
@@ -125,6 +130,87 @@ func mcpPrincipal(ctx context.Context) (application.Principal, error) {
 		return application.Principal{}, errors.New("authenticated OBoard principal is required")
 	}
 	return principal, nil
+}
+
+func (s *Server) mcpPrincipalFromRequest(ctx context.Context, req mcp.Request) (application.Principal, error) {
+	// Prefer re-authenticating from the current HTTP Authorization header so
+	// that role/grant changes are visible immediately even for long-lived
+	// stateful sessions. The ctx's apiPrincipalContextKey may still carry the
+	// stale session-creation principal.
+	if req != nil && req.GetExtra() != nil && req.GetExtra().Header != nil {
+		if token, ok := bearerToken(req.GetExtra().Header.Get("Authorization")); ok {
+			canonical, err := s.publicBaseURL(ctx)
+			if err == nil {
+				resource := strings.TrimRight(canonical, "/") + "/api/v1/mcp"
+				if storedToken, _, userStatus, _, err := s.store.AuthenticateMCPAccessToken(ctx, security.HashAPISecret(s.sessionSecret, token), resource, time.Now().UTC()); err == nil && userStatus == "active" {
+					if grant, effectiveRole, active, err := s.store.ResolveActiveGrant(ctx, storedToken.GrantID, time.Now().UTC()); err == nil && active {
+						client, _ := s.store.GetOAuthClient(ctx, storedToken.ClientID)
+						clientName := ""
+						if client != nil {
+							clientName = client.Name
+						}
+						accessLevel := mcpAccessLevelForRole(effectiveRole)
+						boundary := s.oauthRoleBoundary(effectiveRole)
+						grantPolicy := mcpauth.GrantPolicy{
+							GrantID: grant.ID, ClientID: grant.ClientID, UserID: fmt.Sprint(grant.UserID),
+							PrincipalID: grant.PrincipalID, AccessLevel: accessLevel,
+							ResourceBoundary: boundary, ApprovalProfile: grant.ApprovalProfileID,
+							PolicyVersion: grant.PolicyVersion, RoleVersion: grant.RoleVersion,
+							ConsentVersion: grant.ConsentVersion, IssuedAt: grant.CreatedAt,
+							ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt,
+						}
+						principal := application.Principal{
+							ID: grant.PrincipalID, GrantID: grant.ID, UserID: &grant.UserID,
+							Name: clientName + " / " + string(effectiveRole), Type: model.APIPrincipalOAuth,
+							Role: effectiveRole, AccessLevel: accessLevel, GrantPolicy: &grantPolicy,
+							ClientName: clientName, Interactive: false,
+						}
+						principal.Scopes = s.capabilities.ScopesForGrant(principal)
+						principal.ResourceFilter = application.ResourceFilterFromBoundary(boundary)
+						return principal, nil
+					}
+				}
+			}
+		}
+	}
+	if p, err := mcpPrincipal(ctx); err == nil {
+		return p, nil
+	}
+	if info := auth.TokenInfoFromContext(ctx); info != nil {
+		if p, ok := info.Extra["principal"].(application.Principal); ok && p.ID != "" {
+			return p, nil
+		}
+	}
+	return application.Principal{}, errors.New("authenticated OBoard principal is required")
+}
+
+func (s *Server) mcpGrantPrincipalFromRequest(ctx context.Context, req mcp.Request) (mcpauth.GrantPrincipal, error) {
+	if p, err := mcpGrantPrincipal(ctx); err == nil {
+		return p, nil
+	}
+	if req != nil && req.GetExtra() != nil && req.GetExtra().Header != nil {
+		if token, ok := bearerToken(req.GetExtra().Header.Get("Authorization")); ok {
+			canonical, err := s.publicBaseURL(ctx)
+			if err == nil {
+				resource := strings.TrimRight(canonical, "/") + "/api/v1/mcp"
+				if storedToken, _, userStatus, _, err := s.store.AuthenticateMCPAccessToken(ctx, security.HashAPISecret(s.sessionSecret, token), resource, time.Now().UTC()); err == nil && userStatus == "active" {
+					if grant, effectiveRole, active, err := s.store.ResolveActiveGrant(ctx, storedToken.GrantID, time.Now().UTC()); err == nil && active {
+						boundary := s.oauthRoleBoundary(effectiveRole)
+						grantPolicy := mcpauth.GrantPolicy{
+							GrantID: grant.ID, ClientID: grant.ClientID, UserID: fmt.Sprint(grant.UserID),
+							PrincipalID: grant.PrincipalID, AccessLevel: mcpAccessLevelForRole(effectiveRole),
+							ResourceBoundary: boundary, ApprovalProfile: grant.ApprovalProfileID,
+							PolicyVersion: grant.PolicyVersion, RoleVersion: grant.RoleVersion,
+							ConsentVersion: grant.ConsentVersion, IssuedAt: grant.CreatedAt,
+							ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt,
+						}
+						return mcpauth.GrantPrincipal{Grant: grantPolicy, Role: effectiveRole, UserID: grant.UserID, ClientID: grant.ClientID}, nil
+					}
+				}
+			}
+		}
+	}
+	return mcpauth.GrantPrincipal{}, errors.New("authenticated OAuth grant is required")
 }
 
 func (s *Server) recordToolCall(ctx context.Context, principal application.Principal, name string, arguments any, result string, classification capability.DataClassification) {
