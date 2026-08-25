@@ -497,10 +497,8 @@ func qxSupports(proxy subscriptionProxy) bool {
 //     Snell nodes are filtered for Stash (same silent-filter convention as
 //     Mieru).
 //   - Egern: Snell v1-v5, v6 filtered.
-//   - Shadowrocket: Sub-Store accepts Snell v1-v6 but emits a Clash-style
-//     YAML body, while OBoard renders the shadowrocket format as a line URI
-//     list; Snell has no standard URI scheme, so nodes are filtered and the
-//     capability is documented in docs/SUBSCRIPTION_CONVERSION.md.
+//   - Shadowrocket: Snell v1-v6 in a Clash-style YAML proxy list, so OBoard's
+//     v4 and v6 nodes are both rendered.
 //   - Loon, Quantumult X, classic Clash, and V2Ray URI formats: no Snell.
 func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
 	if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
@@ -517,9 +515,10 @@ func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProx
 		return true
 	case model.SubscriptionFormatEgern:
 		return proxy.Version == SnellVersionV4
+	case model.SubscriptionFormatShadowrocket:
+		return true
 	case model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatClash,
-		model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket,
-		model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
+		model.SubscriptionFormatStash, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
 		return false
 	default:
 		return false

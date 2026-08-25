@@ -1543,7 +1543,7 @@ func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 	if got := fetch(persistentToken); got.Code != http.StatusOK {
 		t.Fatalf("persistent subscription second fetch status=%d body=%s", got.Code, got.Body.String())
 	}
-	if got := fetch(persistentToken + "?format=shadowrocket"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/plain; charset=utf-8" || got.Body.String() != "" {
+	if got := fetch(persistentToken + "?format=shadowrocket"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/yaml; charset=utf-8" || got.Body.String() != "proxies: []\n" {
 		t.Fatalf("Shadowrocket subscription status=%d headers=%#v body=%s", got.Code, got.Header(), got.Body.String())
 	}
 	if got := fetch(persistentToken + "?format=surge-mac"); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
