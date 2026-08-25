@@ -497,8 +497,7 @@ func qxSupports(proxy subscriptionProxy) bool {
 //     Snell nodes are filtered for Stash (same silent-filter convention as
 //     Mieru).
 //   - Egern: Snell v1-v5, v6 filtered.
-//   - Shadowrocket: OBoard renders a native URI list. Snell has no supported
-//     share URI, so Snell nodes are filtered instead of emitting invalid data.
+//   - Shadowrocket: native snell:// share URIs support both v4 and v6.
 //   - Loon, Quantumult X, classic Clash, and V2Ray URI formats: no Snell.
 func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
 	if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
@@ -515,9 +514,10 @@ func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProx
 		return true
 	case model.SubscriptionFormatEgern:
 		return proxy.Version == SnellVersionV4
+	case model.SubscriptionFormatShadowrocket:
+		return true
 	case model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatClash,
-		model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket,
-		model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
+		model.SubscriptionFormatStash, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
 		return false
 	default:
 		return false
@@ -1527,6 +1527,30 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 		setQueryIfNotEmpty(query, "multiplexing", proxy.Multiplexing)
 		setQueryIfNotEmpty(query, "traffic-pattern", proxy.TrafficPattern)
 		return (&url.URL{Scheme: "mierus", User: url.UserPassword(proxy.Username, proxy.Password), Host: subscriptionEndpoint(proxy.Server, 0), RawQuery: encodeURIQuery(query)}).String(), nil
+	case "snell":
+		// Shadowrocket exports Snell by base64-encoding the legacy
+		// cipher:psk@host:port authority and carrying Snell options in the
+		// query string. The cipher label is part of Shadowrocket's container
+		// syntax; Snell's actual protocol cipher is selected by its version.
+		encoded := base64.RawStdEncoding.EncodeToString([]byte("chacha20-ietf-poly1305:" + proxy.PSK + "@" + endpoint))
+		params := []string{"version=" + strconv.Itoa(proxy.Version)}
+		if proxy.Reuse {
+			params = append(params, "reuse=1")
+		}
+		params = append(params, "udp=1")
+		if proxy.ObfsType != "" {
+			params = append(params, "obfs="+escapeURIComponent(proxy.ObfsType))
+		}
+		if proxy.ObfsHost != "" {
+			params = append(params, "obfsParam="+escapeURIComponent(proxy.ObfsHost))
+		}
+		if proxy.Mode != "" && proxy.Mode != "default" {
+			params = append(params, "mode="+escapeURIComponent(proxy.Mode))
+		}
+		if proxy.TCPFastOpen {
+			params = append(params, "tfo=1")
+		}
+		return "snell://" + encoded + "?" + strings.Join(params, "&") + "#" + fragment, nil
 	default:
 		return "", fmt.Errorf("URI subscriptions do not support proxy type %q", proxy.Type)
 	}

@@ -158,7 +158,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatClashMeta, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252", "type: snell", "psk: snell-v4-psk"}, excludes: []string{"snell-v6-psk"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru", "type: snell"}},
-		{format: model.SubscriptionFormatShadowrocket, proxyCount: 6, contains: []string{"vless://", "hysteria2://", "mierus://"}, excludes: []string{"proxies:", "proxy-groups:", "rules:", "snell"}},
+		{format: model.SubscriptionFormatShadowrocket, proxyCount: 8, contains: []string{"vless://", "hysteria2://", "mierus://", "snell://", "version=4", "version=6"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
 		{format: model.SubscriptionFormatEgern, proxyCount: 6, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:", "snell:", "psk: snell-v4-psk"}, excludes: []string{"mieru:", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatLoon, proxyCount: 5, contains: []string{"=vless,", "=Hysteria2,", "udp-over-tcp=true"}, excludes: []string{"mieru", "snell"}},
 		{format: model.SubscriptionFormatQX, proxyCount: 4, contains: []string{"vless=", "anytls=", "udp-over-tcp=sp.v2"}, excludes: []string{"udp-over-tcp=sp.v1", "hysteria2=", "mieru", "snell"}},
@@ -546,6 +546,71 @@ func TestShadowrocketMieruURIEnablesUserHint(t *testing.T) {
 	}
 	if _, exists := officialURL.Query()["user-hint-is-mandatory"]; exists {
 		t.Fatalf("official Mieru URI unexpectedly received a Shadowrocket option: %s", official)
+	}
+}
+
+func TestShadowrocketSnellURI(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        map[string]any
+		wantBody   string
+		wantQuery  map[string]string
+		wantAbsent []string
+	}{
+		{
+			name: "Snell v4",
+			raw: map[string]any{
+				"type": "snell", "server": "snell.example.com", "server_port": 8443,
+				"version": 4, "psk": "v4-test-psk", "reuse": true,
+				"obfs_mode": "http", "obfs_host": "bing.com", "tcp_fast_open": true,
+			},
+			wantBody:  "chacha20-ietf-poly1305:v4-test-psk@snell.example.com:8443",
+			wantQuery: map[string]string{"version": "4", "reuse": "1", "udp": "1", "obfs": "http", "obfsParam": "bing.com", "tfo": "1"},
+		},
+		{
+			name: "Snell v6",
+			raw: map[string]any{
+				"type": "snell", "server": "2001:db8::6", "server_port": 7177,
+				"version": 6, "psk": "v6-test-secret", "mode": "unshaped",
+			},
+			wantBody:   "chacha20-ietf-poly1305:v6-test-secret@[2001:db8::6]:7177",
+			wantQuery:  map[string]string{"version": "6", "udp": "1", "mode": "unshaped"},
+			wantAbsent: []string{"reuse", "obfs", "obfsParam", "tfo"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := renderSubscriptionTarget([]SubscriptionNode{{Name: test.name, Raw: test.raw}}, model.SubscriptionFormatShadowrocket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := strings.TrimSpace(output)
+			parsed, err := url.Parse(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Scheme != "snell" || parsed.Fragment != test.name {
+				t.Fatalf("unexpected Snell URI envelope: %s", line)
+			}
+			encoded := strings.SplitN(strings.TrimPrefix(line, "snell://"), "?", 2)[0]
+			decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(decoded) != test.wantBody {
+				t.Fatalf("decoded Snell URI body = %q, want %q", decoded, test.wantBody)
+			}
+			for key, want := range test.wantQuery {
+				if got := parsed.Query().Get(key); got != want {
+					t.Fatalf("Snell URI query %s = %q, want %q: %s", key, got, want, line)
+				}
+			}
+			for _, key := range test.wantAbsent {
+				if _, exists := parsed.Query()[key]; exists {
+					t.Fatalf("Snell URI unexpectedly contains %s: %s", key, line)
+				}
+			}
+		})
 	}
 }
 
