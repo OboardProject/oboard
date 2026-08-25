@@ -152,6 +152,38 @@ func ValidatePort(port int) error {
 	return nil
 }
 
+func InboundAdvertisePort(inbound model.Inbound) int {
+	if inbound.AdvertisePort > 0 {
+		return inbound.AdvertisePort
+	}
+	return inbound.Port
+}
+
+func InboundHasAdvertisePort(inbound model.Inbound) bool {
+	return inbound.AdvertisePort > 0 && inbound.AdvertisePort != inbound.Port
+}
+
+func InboundSubscriptionPort(inbound model.Inbound) int {
+	return InboundAdvertisePort(inbound)
+}
+
+func MieruInboundSubscriptionPorts(inbound model.Inbound) ([]int, error) {
+	ports, err := MieruInboundPorts(inbound)
+	if err != nil {
+		return nil, err
+	}
+	if len(ports) == 0 {
+		return ports, nil
+	}
+	if inbound.AdvertisePort > 0 && inbound.AdvertisePort != inbound.Port {
+		ports[0] = inbound.AdvertisePort
+		if len(ports) > 1 {
+			return nil, fmt.Errorf("NAT port mapping does not support multi-port Mieru")
+		}
+	}
+	return ports, nil
+}
+
 const MieruMaxPorts = 64
 
 func MieruInboundPorts(inbound model.Inbound) ([]int, error) {
@@ -3351,7 +3383,7 @@ func (a vlessAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 }
 func (a vlessAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
 	extra := parseExtra(inbound.ConfigJSON)
-	node := map[string]any{"type": "vless", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "uuid": user.ProxyUUID, "packet_encoding": stringValue(extra, "packet_encoding", "xudp")}
+	node := map[string]any{"type": "vless", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "uuid": user.ProxyUUID, "packet_encoding": stringValue(extra, "packet_encoding", "xudp")}
 	if flow := stringValue(extra, "flow", ""); flow != "" {
 		node["flow"] = flow
 	}
@@ -3418,7 +3450,7 @@ func (a hy2Adapter) Outbound(v model.Outbound, user *model.User) (map[string]any
 }
 func (a hy2Adapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
 	extra := parseExtra(inbound.ConfigJSON)
-	node := map[string]any{"type": "hysteria2", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "password": user.ProxyPassword}
+	node := map[string]any{"type": "hysteria2", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "password": user.ProxyPassword}
 	if tls, ok := extra["tls"]; ok {
 		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
@@ -3484,7 +3516,7 @@ func (a anyTLSAdapter) Outbound(v model.Outbound, user *model.User) (map[string]
 }
 func (a anyTLSAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
 	extra := parseExtra(inbound.ConfigJSON)
-	node := map[string]any{"type": "anytls", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "password": user.ProxyPassword}
+	node := map[string]any{"type": "anytls", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "password": user.ProxyPassword}
 	if tls, ok := extra["tls"]; ok {
 		node["tls"] = subscriptionTLSForInbound(inbound, tls)
 	}
@@ -3600,7 +3632,7 @@ func (a mieruAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 		return nil, fmt.Errorf("mieru password for user %d exceeds 64 bytes", user.ID)
 	}
 	extra := parseExtra(inbound.ConfigJSON)
-	ports, _ := MieruInboundPorts(inbound)
+	ports, _ := MieruInboundSubscriptionPorts(inbound)
 	node := map[string]any{
 		"type":        "mieru",
 		"tag":         inbound.Name,
@@ -3720,7 +3752,7 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 		return nil, err
 	}
 	extra := parseExtra(inbound.ConfigJSON)
-	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "version": "5", "username": user.Username, "password": user.ProxyPassword}
+	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": "5", "username": user.Username, "password": user.ProxyPassword}
 	applyAllowed(node, extra, "network", "udp_over_tcp", "tcp_fast_open")
 	return node, nil
 }
@@ -4029,7 +4061,7 @@ func (a snellAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	if err != nil {
 		return nil, err
 	}
-	node := map[string]any{"type": "snell", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "version": clientVersion, "psk": psk}
+	node := map[string]any{"type": "snell", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": clientVersion, "psk": psk}
 	if clientVersion == SnellVersionV4 {
 		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
 			return nil, err
@@ -4154,7 +4186,7 @@ func (a ssAdapter) SubscriptionNode(user model.User, inbound model.Inbound, serv
 	if serverPassword := stringValue(extra, "password", ""); serverPassword != "" && shadowsocksMethodSupportsUsers(method) {
 		password = normalizeSS2022Key(serverPassword, method) + ":" + normalizeSS2022Key(user.ProxyPassword, method)
 	}
-	node := map[string]any{"type": "shadowsocks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": inbound.Port, "method": method, "password": password}
+	node := map[string]any{"type": "shadowsocks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "method": method, "password": password}
 	applyAllowed(node, extra, "tcp_fast_open")
 	if server.UDPInboundMode == model.UDPInboundUoT {
 		// UoT wins over multiplexing on the client side, and the inbound is

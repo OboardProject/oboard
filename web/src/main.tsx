@@ -14337,6 +14337,24 @@ function autoInboundName(server: Server | undefined, protocol: Protocol, port: n
   return `${server?.name || 'server'}-${protocol}-${port || 443}`
 }
 
+function inboundDisplayPort(inbound: any): number {
+  const adv = Number(inbound?.advertise_port || 0)
+  return adv > 0 ? adv : Number(inbound?.port || 0)
+}
+
+function inboundListenPort(inbound: any): number {
+  return Number(inbound?.port || 0)
+}
+
+function formatInboundDisplayEndpoint(data: any, inbound: any): string {
+  const addr = inboundEntryAddress(data, inbound)
+  const displayPort = inboundDisplayPort(inbound)
+  const listenPort = inboundListenPort(inbound)
+  const base = formatHostPort(addr, displayPort)
+  if (listenPort && displayPort && listenPort !== displayPort) return `${base}（监听 ${listenPort}）`
+  return base
+}
+
 function nextAvailableInboundPort(data: any, server: Server | undefined, protocol: Protocol, fallbackPort = 443, excludeInboundID = 0) {
   if (!server) return fallbackPort
   const start = Number(server.port_range_start || 0)
@@ -14556,9 +14574,29 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
             </>}
             {draft.certificate_mode === 'external' && <><FormField label="SNI 域名" required hint="填写外部证书覆盖的域名。"><input value={String(tlsForReality.server_name || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, server_name: e.target.value } })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField><FormField label="证书路径" required><input value={String(tlsForReality.certificate_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, certificate_path: e.target.value } })} placeholder="/etc/ssl/example/fullchain.pem" /></FormField><FormField label="私钥路径" required><input value={String(tlsForReality.key_path || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, key_path: e.target.value } })} placeholder="/etc/ssl/example/privkey.pem" /></FormField></>}
           </div>}
-          <div className="access-note compact"><strong>当前入口地址</strong><span>{entryAddress ? formatHostPort(entryAddress, Number(draft.port) || 0) : '待 Agent 检测或填写自定义地址。'}</span></div>
+          <div className="access-note compact"><strong>当前入口地址</strong><span>{entryAddress ? formatHostPort(entryAddress, Number(draft.advertise_port) > 0 ? Number(draft.advertise_port) : (Number(draft.port) || 0)) : '待 Agent 检测或填写自定义地址。'}</span><small className="field-hint">订阅与客户端使用 {Number(draft.advertise_port) > 0 ? '对外端口' : '监听端口'}；Agent 本机仍监听 {Number(draft.port) || 0}。</small></div>
           <FormField label="监听 IP"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" /></FormField>
           <FormField label="监听端口" required><div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div><small className="field-hint">{draft.__port_manual ? '已手动指定。' : '从服务器端口池自动选择。'}</small></FormField>
+          <div className="switch-setting-row" style={{ padding: '6px 0' }}>
+            <span className="switch-setting-label">NAT 端口映射（监听与对外端口分离）</span>
+            <Switch checked={Number(draft.advertise_port) > 0} onChange={checked => {
+              if (checked) {
+                const current = Number(draft.port) || 443
+                const existing = Number(draft.advertise_port) || 0
+                const next = existing > 0 && existing !== current ? existing : (current === 443 ? 8443 : current)
+                if (next === current) update({ advertise_port: current === 65535 ? 8443 : current + 1 })
+                else update({ advertise_port: next })
+              } else {
+                update({ advertise_port: 0 })
+              }
+            }} ariaLabel="NAT 端口映射" />
+          </div>
+          {Number(draft.advertise_port) > 0 && (
+            <FormField label="对外端口" required hint="NAT 网关对外的公网端口，客户端通过此端口连接；例如监听 443，对外 8443。关闭则与监听端口一致。">
+              <input value={draft.advertise_port || ''} onChange={e => update({ advertise_port: Number(e.target.value) || 0 })} inputMode="numeric" placeholder={String(draft.port || 443)} />
+              {Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
+            </FormField>
+          )}
           <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => update({ enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">禁用</option></Select></FormField>
           {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
           {protocol !== 'ssh' && <InboundTransportFields protocol={protocol} config={cfg} updateConfig={updateConfig} server={server} />}
@@ -15178,7 +15216,7 @@ function ServerBranchTree({ data, server }: { data: any; server: Server }) {
     <MotionList className="tree-lane" stagger={0.03}>
       <MotionCard className="tree-node root-node" whileHover={{}}><strong>主机</strong><span>{labelValue(server.status || 'unknown')}</span></MotionCard>
       {entries.length ? entries.map(x => <div className="tree-branch" key={`in-${x.id}`}>
-        <MotionCard className="tree-node entry-node" whileHover={{}}><strong>{x.name}</strong><span>{labelProtocol(x.protocol)} · {formatHostPort(inboundEntryAddress(data, x), x.port)}</span><small>{entryAddressModeLabel(x.entry_ip_mode || 'auto', server)} · {inboundAccessSummary(data, x)}{x.dns_sync_enabled ? ` · DNS ${x.dns_sync_error ? '失败' : (x.dns_sync_status || '待同步')}` : ''}</small></MotionCard>
+        <MotionCard className="tree-node entry-node" whileHover={{}}><strong>{x.name}</strong><span>{labelProtocol(x.protocol)} · {formatInboundDisplayEndpoint(data, x)}</span><small>{entryAddressModeLabel(x.entry_ip_mode || 'auto', server)} · {inboundAccessSummary(data, x)}{x.dns_sync_enabled ? ` · DNS ${x.dns_sync_error ? '失败' : (x.dns_sync_status || '待同步')}` : ''}{Number(x.advertise_port) > 0 && Number(x.advertise_port) !== Number(x.port) ? ` · NAT ${x.port}→${x.advertise_port}` : ''}</small></MotionCard>
         <MotionCard className="tree-node exit-node" whileHover={{}}><strong>出口</strong><span>Direct / 路径出口</span></MotionCard>
       </div>) : <MotionCard className="tree-node muted-node" whileHover={{}}>这台主机还没有入口节点。把“入口节点”工具拖到链路图里创建。</MotionCard>}
       {!!forwards.length && <MotionCard className="branch-note" whileHover={{}}>端口转发：{forwards.map(x => `${x.listen_port}->${x.target_port}`).join('、')}</MotionCard>}
@@ -15701,7 +15739,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const entryCount = serverEntryCounts.get(x.server_id) || visibleEntryCountByServer.get(x.server_id) || 1
     const position = positions[id] || defaultEntryGraphPosition(serverPosition, entryIndex, entryCount, serverWidths.get(x.server_id) || graphServerNodeWidth(entryCount))
     const probe = latestInboundProbeSummary(data, x.id)
-	    nodes.push({ id, className: `graph-node entry-graph-node probe-${probe.tone}`, position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'entry', id: x.id, label: x.name || `入口 ${x.id}` } as GraphEntity, pathIDs: pathIDsByEntry.get(x.id) || [], label: <GraphNode kind="一级入口" title={x.name} meta="" pathHandles={continuationByNode.get(id) || []} entryPathInfo={entryPathInfo.get(x.id)} entryDetails={{ protocol: labelProtocol(x.protocol), address: formatHostPort(inboundEntryAddress(data, x), x.port), probe: probe.label, access: inboundAccessSummary(data, x), dns: x.dns_sync_enabled ? `DNS ${x.dns_sync_error ? '同步失败' : '已同步'}` : '' }} /> } })
+	    nodes.push({ id, className: `graph-node entry-graph-node probe-${probe.tone}`, position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'entry', id: x.id, label: x.name || `入口 ${x.id}` } as GraphEntity, pathIDs: pathIDsByEntry.get(x.id) || [], label: <GraphNode kind="一级入口" title={x.name} meta="" pathHandles={continuationByNode.get(id) || []} entryPathInfo={entryPathInfo.get(x.id)} entryDetails={{ protocol: labelProtocol(x.protocol), address: formatInboundDisplayEndpoint(data, x), probe: probe.label, access: inboundAccessSummary(data, x), dns: x.dns_sync_enabled ? `DNS ${x.dns_sync_error ? '同步失败' : '已同步'}` : '' }} /> } })
     edges.push({
       id: `belongs-${x.id}`,
       source: id,
@@ -16555,7 +16593,7 @@ function Inbounds({ data, client, load }: any) {
   const [f, setF] = useState({ server_id: 0, name: 'vless-in', protocol: 'vless', listen_ip: '0.0.0.0', port: 443, config_json: '{}', enabled: true })
   const rows = (data.inbounds || []).map((inbound: Inbound) => {
     const probe = latestInboundProbeSummary(data, inbound.id)
-    return { id: inbound.id, name: inbound.name, protocol: inbound.protocol, endpoint: formatHostPort(inboundEntryAddress(data, inbound), inbound.port), probe_status: probe.label, probe_detail: probe.detail, enabled: inbound.enabled, _raw: inbound }
+    return { id: inbound.id, name: inbound.name, protocol: inbound.protocol, endpoint: formatInboundDisplayEndpoint(data, inbound), probe_status: probe.label, probe_detail: probe.detail, enabled: inbound.enabled, _raw: inbound }
   })
   return <Panel title="入口节点"><p className="muted">每个入口节点都是一条代理拓扑的第一个节点。保存后会自动协调相关服务器，在线入口会自动检查本机监听和公网端口。</p><ProtocolForm value={f} setValue={setF} servers={data.servers || []} submit={async () => { await client.request('/inbounds', { method: 'POST', body: JSON.stringify(f) }) }} /><Table rows={rows} actions={(r: any) => <><button onClick={async () => { await client.request(`/inbounds/${r._raw.id}/probe`, { method: 'POST', body: '{}' }); await load() }}>立即探测</button><button onClick={() => remove(client, `/inbounds/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /></Panel>
 }
@@ -18765,7 +18803,7 @@ function Subscriptions({ data, client, load, notify }: any) {
             <div className="sub-user-table">
               {sshInbounds.map(inbound => {
                 const granted = Array.from(planGrantedUserIDsForEntry(data, inbound)).map(id => users.find(user => user.id === id)).filter(Boolean) as User[]
-                const endpoint = formatHostPort(inboundEntryAddress(data, inbound), inbound.port)
+                const endpoint = formatInboundDisplayEndpoint(data, inbound)
                 return <div className="sub-user-row ssh-row" key={inbound.id}>
                   <div className="sub-user-main"><span className="sub-user-avatar"><Lock size={14} /></span><div><strong>{inbound.name}</strong><small>{endpoint}</small></div></div>
                   <div className="sub-security-stack">

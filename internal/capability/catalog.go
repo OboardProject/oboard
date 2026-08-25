@@ -676,6 +676,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hy2", "anytls", "shadowsocks", "mieru", "snell", "socks", "ssh"}},
 			"listen_ip":             map[string]any{"type": "string", "maxLength": 255},
 			"port":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
+			"advertise_port":        map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同"},
 			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
 			"external_ip":           map[string]any{"type": "string", "maxLength": 255},
 			"dns_sync_enabled":      boolValue,
@@ -709,7 +710,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS certificate kinds use certificate fields; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
-			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"},
+			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},
 			"entry_ip_mode": stringValue, "external_ip": stringValue, "dns_sync_enabled": boolValue,
 			"dns_domain": stringValue, "tls": boolValue, "certificate_mode": stringValue,
 			"certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue,

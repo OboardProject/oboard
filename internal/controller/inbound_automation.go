@@ -23,7 +23,7 @@ type inboundUpdateOperation struct {
 }
 
 var inboundAutomationFields = map[string]bool{
-	"server_id": true, "name": true, "protocol": true, "listen_ip": true, "port": true,
+	"server_id": true, "name": true, "protocol": true, "listen_ip": true, "port": true, "advertise_port": true,
 	"entry_ip_mode": true, "external_ip": true, "dns_sync_enabled": true, "dns_credential_id": true,
 	"dns_domain": true, "dns_proxy_enabled": true, "dns_record_types": true, "ddns_enabled": true,
 	"ddns_interval_seconds": true, "tls": true, "certificate_mode": true, "certificate_id": true,
@@ -343,7 +343,7 @@ func automationInboundView(inbound model.Inbound) map[string]any {
 	return map[string]any{
 		"id": inbound.ID, "revision": inbound.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		"server_id": inbound.ServerID, "name": inbound.Name, "protocol": inbound.Protocol,
-		"listen_ip": inbound.ListenIP, "port": inbound.Port, "entry_ip_mode": inbound.EntryIPMode,
+		"listen_ip": inbound.ListenIP, "port": inbound.Port, "advertise_port": inbound.AdvertisePort, "entry_ip_mode": inbound.EntryIPMode,
 		"external_ip": inbound.ExternalIP, "dns_sync_enabled": inbound.DNSSyncEnabled,
 		"dns_domain": inbound.DNSDomain, "tls": inbound.TLS, "certificate_mode": inbound.CertificateMode,
 		"certificate_domain": inbound.CertificateDomain, "kind": inferredInboundKind(inbound), "enabled": inbound.Enabled,

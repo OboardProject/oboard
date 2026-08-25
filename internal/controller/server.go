@@ -5749,6 +5749,39 @@ func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbou
 			}
 		}
 	}
+	if v.AdvertisePort > 0 {
+		advertisePort := v.AdvertisePort
+		for _, existing := range items {
+			if existing.ID == v.ID || !existing.Enabled {
+				continue
+			}
+			if existing.ServerID != v.ServerID {
+				continue
+			}
+			existingAdvertise := existing.AdvertisePort
+			if existingAdvertise == 0 {
+				existingAdvertise = existing.Port
+			}
+			// For Mieru, compare only primary ports; multi-port NAT is already rejected.
+			if existingAdvertise == advertisePort {
+				return fmt.Errorf("对外端口 %d 在服务器 %d 已被 %s (id %d) 占用", advertisePort, v.ServerID, existing.Name, existing.ID)
+			}
+			// Also prevent advertised port colliding with another inbound's listen port when NAT is off (same effective external port).
+			if existingAdvertise == 0 {
+				// handled above, but keep for clarity
+			}
+		}
+	} else {
+		// When NAT is off, the effective external port is the listen port; ensure no other inbound advertises this port.
+		for _, existing := range items {
+			if existing.ID == v.ID || !existing.Enabled || existing.ServerID != v.ServerID || existing.AdvertisePort == 0 {
+				continue
+			}
+			if existing.AdvertisePort == v.Port {
+				return fmt.Errorf("监听端口 %d 在服务器 %d 已被 %s (id %d) 的对外端口占用", v.Port, v.ServerID, existing.Name, existing.ID)
+			}
+		}
+	}
 	allocations, err := s.store.ListProxyPathPortAllocations(ctx)
 	if err != nil {
 		return err
@@ -6279,6 +6312,9 @@ func mergeInboundPatch(current model.Inbound, patch model.Inbound, fields map[st
 	if _, ok := fields["port"]; ok {
 		merged.Port = patch.Port
 	}
+	if _, ok := fields["advertise_port"]; ok {
+		merged.AdvertisePort = patch.AdvertisePort
+	}
 	if _, ok := fields["entry_ip_mode"]; ok {
 		merged.EntryIPMode = patch.EntryIPMode
 	}
@@ -6371,6 +6407,9 @@ func normalizeInbound(v model.Inbound) model.Inbound {
 	}
 	if strings.TrimSpace(v.ListenIP) == "" {
 		v.ListenIP = "0.0.0.0"
+	}
+	if v.AdvertisePort < 0 || v.AdvertisePort > 65535 {
+		v.AdvertisePort = 0
 	}
 	return v
 }
@@ -6593,6 +6632,19 @@ func validateInbound(v model.Inbound) error {
 	}
 	if v.Name == "" {
 		return errors.New("name required")
+	}
+	if v.AdvertisePort != 0 {
+		if err := core.ValidatePort(v.AdvertisePort); err != nil {
+			return fmt.Errorf("advertise_port: %w", err)
+		}
+		if v.AdvertisePort == v.Port {
+			return errors.New("advertise_port must differ from listen port; disable NAT mapping to use the same port")
+		}
+		if v.Protocol == model.ProtocolMieru {
+			if ports, err := core.MieruInboundPorts(v); err == nil && len(ports) > 1 {
+				return errors.New("NAT 端口映射暂不支持多端口 Mieru 入口，请先移除额外 listen_ports")
+			}
+		}
 	}
 	if v.EntryIPMode == "" {
 		v.EntryIPMode = model.EntryIPModeAuto

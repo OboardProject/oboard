@@ -118,6 +118,7 @@ export type Inbound = {
   protocol: Protocol
   listen_ip: string
   port: number
+  advertise_port: number
   entry_ip_mode: EntryIPMode
   external_ip: string
   dns_sync_enabled: boolean

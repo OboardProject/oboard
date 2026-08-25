@@ -1002,13 +1002,14 @@ type Server struct {
 }
 
 type Inbound struct {
-	ID                int64                `json:"id"`
-	ServerID          int64                `json:"server_id"`
-	Name              string               `json:"name"`
-	Protocol          Protocol             `json:"protocol"`
-	ListenIP          string               `json:"listen_ip"`
-	Port              int                  `json:"port"`
-	EntryIPMode       EntryIPMode          `json:"entry_ip_mode"`
+	ID            int64    `json:"id"`
+	ServerID      int64    `json:"server_id"`
+	Name          string   `json:"name"`
+	Protocol      Protocol `json:"protocol"`
+	ListenIP      string   `json:"listen_ip"`
+	Port          int      `json:"port"`
+	AdvertisePort int      `json:"advertise_port"`
+	EntryIPMode   EntryIPMode `json:"entry_ip_mode"`
 	ExternalIP        string               `json:"external_ip"`
 	DNSSyncEnabled    bool                 `json:"dns_sync_enabled"`
 	DNSCredentialID   *int64               `json:"dns_credential_id,omitempty"`

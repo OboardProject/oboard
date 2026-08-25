@@ -149,7 +149,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 				raw := map[string]any{
 					"type":         "ssh",
 					"server":       server.EntryAddress,
-					"server_port":  inbound.Port,
+					"server_port":  InboundSubscriptionPort(inbound),
 					"username":     fmt.Sprintf("u%s-p%d", user.SSHRandomID, path.ID),
 					"password":     credentialUser.ProxyPassword,
 					"host_key":     []string{hostKey},
