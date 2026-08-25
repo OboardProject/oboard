@@ -16312,8 +16312,10 @@ function GraphNode({
               <span className={`entry-probe entry-probe-${entryProbeTone}`}>{entryProbe || '待探测'}</span>
               <span><UsersIcon size={10} />{entryAccess || '未授权用户'}</span>
             </div>
-            <div className="rf-node-route-summary"><Workflow size={10} />{entryPathInfo?.pathCount ? `${entryPathInfo.pathCount} 条代理路径` : '直接接入'}</div>
-            {entryDetails?.dns && <div className="rf-node-footnote"><Globe size={10} />{entryDetails.dns}</div>}
+            <div className="rf-node-route-summary">
+              <span className="rf-node-route-main"><Workflow size={10} />{entryPathInfo?.pathCount ? `${entryPathInfo.pathCount} 条代理路径` : '直接接入'}</span>
+              {entryDetails?.dns ? <span className="rf-node-route-dns"><Globe size={10} />{entryDetails.dns}</span> : null}
+            </div>
           </>
         )}
       </div>
@@ -19160,6 +19162,51 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   </Panel>
 }
 
+function TelegramBotTokenField({ token, setToken, tokenConfigured }: { token: string; setToken: (value: string) => void; tokenConfigured: boolean }) {
+  const [visible, setVisible] = useState(false)
+  return <div className="telegram-bot-token-field" style={{ position: 'relative', display: 'flex', alignItems: 'center', width: '100%' }}>
+    <input type="text" name="prevent-autofill-username" autoComplete="username" tabIndex={-1} aria-hidden="true" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} readOnly />
+    <input type="password" name="prevent-autofill-password" autoComplete="new-password" tabIndex={-1} aria-hidden="true" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, pointerEvents: 'none' }} readOnly />
+    <input
+      id="telegram-bot-token"
+      name="oboard-telegram-bot-token"
+      type="text"
+      value={token}
+      onChange={event => setToken(event.target.value)}
+      placeholder={tokenConfigured ? '留空保持当前 Token' : '123456:ABC-DEF...'}
+      autoComplete="off"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      autoFocus
+      data-form-type="other"
+      data-lpignore="true"
+      data-1p-ignore="true"
+      data-bwignore="true"
+      inputMode="text"
+      aria-label="Bot Token"
+      style={{
+        flex: 1,
+        width: '100%',
+        minWidth: 0,
+        paddingRight: token ? 36 : undefined,
+        ...((token && !visible) ? ({ WebkitTextSecurity: 'disc' } as any) : {}),
+      }}
+    />
+    {token ? <button
+      type="button"
+      className="ghost icon-button"
+      onClick={() => setVisible(value => !value)}
+      aria-label={visible ? '隐藏 Token' : '显示 Token'}
+      title={visible ? '隐藏' : '显示'}
+      style={{ position: 'absolute', right: 6, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+      tabIndex={-1}
+    >
+      {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+    </button> : null}
+  </div>
+}
+
 function TelegramBotSettingsDialog({
   enabled,
   setEnabled,
@@ -19198,7 +19245,7 @@ function TelegramBotSettingsDialog({
           <Switch checked={enabled} onChange={setEnabled} ariaLabel="启用 Telegram Bot" />
         </FormField>
         <FormField label="Bot Token" required={enabled && !tokenConfigured} hint={tokenConfigured ? 'Token 已保存。留空会继续使用当前 Token。' : '从 @BotFather 获取 Bot Token。'}>
-          <input type="password" value={token} onChange={event => setToken(event.target.value)} placeholder={tokenConfigured ? '留空保持当前 Token' : '123456:ABC-DEF...'} autoComplete="new-password" spellCheck={false} autoFocus />
+          <TelegramBotTokenField token={token} setToken={setToken} tokenConfigured={tokenConfigured} />
         </FormField>
       </div>
     </div>

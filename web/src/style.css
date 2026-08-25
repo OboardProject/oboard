@@ -16439,18 +16439,35 @@ button[aria-busy="true"] {
 .entry-probe-ok { color: var(--success); background: var(--success-soft); }
 .entry-probe-danger { color: var(--danger); background: var(--danger-soft); }
 .rf-node-entry-state > span:last-child,
-.rf-node-footnote,
-.rf-node-route-summary {
+.rf-node-footnote {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--muted);
 }
 .rf-node-route-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
-  color: var(--graph-node-accent);
   font-weight: 700;
+  min-height: 16px;
+}
+.rf-node-route-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--graph-node-accent);
+}
+.rf-node-route-dns {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
 }
 .rf-node-footnote { margin-top: auto; }
 
