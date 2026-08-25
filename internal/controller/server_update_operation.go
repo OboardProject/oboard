@@ -54,6 +54,8 @@ type serverUpdateChanges struct {
 	ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled,omitempty"`
 	TrafficResetMode         *string                     `json:"traffic_reset_mode,omitempty"`
 	TrafficResetDay          *int                        `json:"traffic_reset_day,omitempty"`
+	TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes,omitempty"`
+	TrafficUsedBytes         *int64                      `json:"traffic_used_bytes,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -87,6 +89,9 @@ func decodeServerUpdateOperation(input json.RawMessage) (serverUpdateOperation, 
 func (s *Server) validateServerUpdateOperation(ctx context.Context, principal application.Principal, request serverUpdateOperation) (*model.Server, []string, error) {
 	if !principal.AllowsInt64("server_ids", request.ServerID) {
 		return nil, nil, errors.New("authorized server_id is required")
+	}
+	if request.Changes.TrafficUsedBytes != nil && *request.Changes.TrafficUsedBytes < 0 {
+		return nil, nil, errors.New("traffic_used_bytes must be >= 0")
 	}
 	current, err := s.store.GetServer(ctx, request.ServerID)
 	if err != nil {
@@ -191,6 +196,11 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("expiry_notify_enabled", changes.ExpiryNotifyEnabled != nil, func() { next.ExpiryNotifyEnabled = *changes.ExpiryNotifyEnabled })
 	set("traffic_reset_mode", changes.TrafficResetMode != nil, func() { next.TrafficResetMode = normalizeControllerTrafficResetMode(*changes.TrafficResetMode) })
 	set("traffic_reset_day", changes.TrafficResetDay != nil, func() { next.TrafficResetDay = normalizeControllerTrafficResetDay(*changes.TrafficResetDay) })
+	set("traffic_limit_bytes", changes.TrafficLimitBytes != nil, func() { next.TrafficLimitBytes = *changes.TrafficLimitBytes })
+	set("traffic_used_bytes", changes.TrafficUsedBytes != nil, func() {
+		next.TrafficUploadBytes = uint64(*changes.TrafficUsedBytes)
+		next.TrafficDownloadBytes = 0
+	})
 	return changed
 }
 
@@ -232,6 +242,15 @@ func (s *Server) registerServerUpdateOperation() {
 		}
 		if err := s.store.UpdateServer(ctx, next); err != nil {
 			return nil, err
+		}
+		if request.Changes.TrafficUsedBytes != nil {
+			settings, _ := s.store.ListSettings(ctx)
+			location := trafficLocation(settings)
+			key, start, end := trafficWindow(time.Now(), next.TrafficResetMode, next.TrafficResetDay, time.Time{}, location)
+			window := model.ServerTrafficWindow{Key: key, Start: start, End: end}
+			if err := s.store.SetServerTrafficUsed(ctx, next.ID, *request.Changes.TrafficUsedBytes, window); err != nil {
+				return nil, err
+			}
 		}
 		if current.TimeCorrectionMode != next.TimeCorrectionMode {
 			if err := s.store.ResetServerTimeCheck(ctx, next.ID); err != nil {

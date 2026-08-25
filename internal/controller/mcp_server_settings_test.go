@@ -13,6 +13,9 @@ import (
 )
 
 func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
+	const trafficLimitBytes int64 = 578 * 1024 * 1024 * 1024
+	const trafficUsedBytes int64 = 123456789
+
 	db := openControllerAutomationTestStore(t)
 	srv := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
@@ -75,6 +78,8 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 			"expires_at":                "2028-03-04T05:06:07Z",
 			"renewal_cycle":             "monthly",
 			"auto_renew_enabled":        false,
+			"traffic_limit_bytes":       trafficLimitBytes,
+			"traffic_used_bytes":        trafficUsedBytes,
 		},
 	})
 	applyAutomationChangeset(t, srv, principal, "update-settings", automation.OperationRequest{Capability: "servers.update", Input: update})
@@ -85,6 +90,12 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 	}
 	nextExpiry, _ := time.Parse(time.RFC3339Nano, "2028-03-04T05:06:07Z")
 	assertStoredServerSettings(t, *updated, 14000, 15000, 50000, 55000, nextExpiry, model.ServerRenewalCycleMonthly, false, false)
+	if updated.TrafficLimitBytes != trafficLimitBytes {
+		t.Fatalf("stored traffic_limit_bytes = %d, want %d", updated.TrafficLimitBytes, trafficLimitBytes)
+	}
+	if used := updated.TrafficUploadBytes + updated.TrafficDownloadBytes; used != uint64(trafficUsedBytes) {
+		t.Fatalf("stored traffic used = %d, want %d", used, trafficUsedBytes)
+	}
 
 	updatedDTO, err := srv.application.GetServer(ctx, principal, stored.ID)
 	if err != nil {
