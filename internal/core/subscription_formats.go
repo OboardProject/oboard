@@ -766,11 +766,28 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 	case "ssh":
 		if format == model.SubscriptionFormatStash {
 			out["user"] = proxy.Username
+		} else if format == model.SubscriptionFormatShadowrocket {
+			// Shadowrocket's internal DB uses `host`/`user`, while Clash
+			// uses `server`/`username`. Provide both spellings so either
+			// parser can locate the field. Keep `host` alias for `server`
+			// as well as `user`/`username` for the login name.
+			out["username"] = proxy.Username
+			out["user"] = proxy.Username
+			out["host"] = proxy.Server
 		} else {
 			out["username"] = proxy.Username
 		}
 		out["password"] = proxy.Password
-		out["host-key"] = append([]string(nil), proxy.HostKeys...)
+		hostKeys := append([]string(nil), proxy.HostKeys...)
+		out["host-key"] = hostKeys
+		if format == model.SubscriptionFormatShadowrocket {
+			// Some Shadowrocket builds document/parse `host_key` or
+			// `public-key` instead of `host-key`.
+			out["host_key"] = hostKeys
+			if len(hostKeys) > 0 {
+				out["public-key"] = hostKeys[0]
+			}
+		}
 	case "mieru":
 		ports, err := mieruPortsFromValue(proxy.Port, proxy.ServerPorts)
 		if err != nil {
