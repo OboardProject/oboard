@@ -156,6 +156,7 @@ import { ProviderEditor } from './components/ai-provider/ProviderEditor'
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
 import { getDashboardAttention, type DashboardAttention } from './dashboard-attention'
+import { dashboardServerTrafficBytes } from './dashboard-traffic'
 import {
   deploymentStatusFromSummary,
   groupTasksForTimeline,
@@ -6826,8 +6827,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
   const auditCalculating = auditOverview.ready === false
   const elevatedRiskCount = Number(auditOverview.elevated_risk_count || 0)
   const auditWindowHours = Number(auditOverview.window_hours || 24)
-  const activeUsers = summary.users_active ?? summary.users_total ?? (data.users || []).length ?? 0
-  const totalTraffic = formatBytes(Number(summary.traffic_upload_bytes || 0) + Number(summary.traffic_download_bytes || 0))
+  const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
 
   const groupedTasks = groupTasksForTimeline(data.agent_tasks || [], labelValue)
   const recentTasks = groupedTasks.slice(0, 6).map((g: TaskGroup) => {
@@ -6906,7 +6906,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
             <Zap size={16} />
           </div>
           <strong>{totalTraffic}</strong>
-          <small>{activeUsers} 位活跃用户 · 当前账期累计</small>
+          <small>{totalServers} 台服务器 · 当前账期累计</small>
         </div>
       </section>
 
