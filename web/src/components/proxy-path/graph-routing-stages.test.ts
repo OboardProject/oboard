@@ -9,6 +9,8 @@ import {
   graphRoutingStageSourceHandleID,
   graphPathHasImplicitDirectFallback,
   graphPathHasTerminalCatchAll,
+  graphDirectExitHiddenByRouting,
+  routingHostForGraphSource,
 } from './graph-routing-stages'
 
 it('encodes and parses rule-specific source handles separately from fallback handles', () => {
@@ -109,5 +111,97 @@ describe('graph routing stages', () => {
     )
 
     expect(graphPathHasTerminalCatchAll(41, stages)).toBe(false)
+  })
+
+  it('does not treat a sibling direct exit as the implicit fallback of another path\'s split', () => {
+    const stages = buildGraphRoutingStages(
+      [
+        { id: 41, inbound_id: 7, kind: 'chain', enabled: true },
+        { id: 42, inbound_id: 7, kind: 'direct', enabled: true, branch_source_step_id: 501 },
+      ],
+      [
+        { id: 501, path_id: 41, position: 1, node_type: 'server_inbound' },
+        { id: 601, path_id: 42, position: 1, node_type: 'server_inbound' },
+      ],
+      [{ id: 101, scope: 'path_stage', proxy_path_id: 41, stage_step_id: 501, name: 'cn', enabled: true }],
+    )
+
+    expect(graphPathHasImplicitDirectFallback(42, [
+      { id: 601, path_id: 42, position: 1, node_type: 'server_inbound' },
+    ], stages)).toBe(false)
+    expect(graphPathHasImplicitDirectFallback(41, [
+      { id: 501, path_id: 41, position: 1, node_type: 'server_inbound' },
+    ], stages)).toBe(true)
+  })
+
+  it('keeps an explicit direct exit visible when a sibling chain already exists at the fork', () => {
+    const paths = [
+      { id: 41, inbound_id: 7, kind: 'chain', enabled: true },
+      { id: 42, inbound_id: 7, kind: 'direct', enabled: true, branch_source_step_id: 501 },
+    ]
+    const steps = [
+      { id: 501, path_id: 41, position: 1, node_type: 'server_inbound' },
+      { id: 601, path_id: 42, position: 1, node_type: 'server_inbound' },
+    ]
+    const stages = buildGraphRoutingStages(paths, steps, [
+      { id: 101, scope: 'path_stage', proxy_path_id: 42, stage_step_id: 601, name: 'cn', enabled: true },
+    ])
+
+    expect(graphDirectExitHiddenByRouting(paths[1], paths, steps, stages)).toBe(false)
+    expect(graphDirectExitHiddenByRouting(
+      { id: 42, inbound_id: 7, kind: 'direct', enabled: true },
+      [{ id: 42, inbound_id: 7, kind: 'direct', enabled: true }],
+      [],
+      [{ pathID: 42, stageStepID: 0, ruleIDs: [101], enabledRuleCount: 1 }],
+    )).toBe(true)
+  })
+})
+
+describe('routing host for a new graph split', () => {
+  it('hosts an inbound split on a sibling chain instead of an existing direct exit', () => {
+    expect(routingHostForGraphSource(
+      [
+        { id: 42, inbound_id: 7, kind: 'direct', enabled: true },
+        { id: 41, inbound_id: 7, kind: 'chain', enabled: true },
+      ],
+      [{ id: 501, path_id: 41, position: 1, node_type: 'server_inbound' }],
+      { inbound_id: 7 },
+    )).toEqual({ pathID: 41, stageStepID: 0 })
+  })
+
+  it('retargets a direct-exit prefix step to the parent chain at the same fork', () => {
+    expect(routingHostForGraphSource(
+      [
+        { id: 41, inbound_id: 7, kind: 'chain', enabled: true },
+        { id: 42, inbound_id: 7, kind: 'direct', enabled: true, branch_source_step_id: 501 },
+      ],
+      [
+        { id: 501, path_id: 41, position: 1, node_type: 'server_inbound' },
+        { id: 601, path_id: 42, position: 1, node_type: 'server_inbound' },
+      ],
+      { step_id: 601 },
+    )).toEqual({ pathID: 41, stageStepID: 501 })
+  })
+
+  it('keeps a chain step as the host instead of stealing a sibling direct exit', () => {
+    expect(routingHostForGraphSource(
+      [
+        { id: 41, inbound_id: 7, kind: 'chain', enabled: true },
+        { id: 42, inbound_id: 7, kind: 'direct', enabled: true, branch_source_step_id: 501 },
+      ],
+      [
+        { id: 501, path_id: 41, position: 1, node_type: 'server_inbound' },
+        { id: 601, path_id: 42, position: 1, node_type: 'server_inbound' },
+      ],
+      { step_id: 501 },
+    )).toEqual({ pathID: 41, stageStepID: 501 })
+  })
+
+  it('keeps a lone direct exit as the host when no sibling chain exists', () => {
+    expect(routingHostForGraphSource(
+      [{ id: 42, inbound_id: 7, kind: 'direct', enabled: true }],
+      [],
+      { inbound_id: 7 },
+    )).toEqual({ pathID: 42, stageStepID: 0 })
   })
 })

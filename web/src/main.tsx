@@ -66,8 +66,8 @@ import {
   graphRoutingRuleSourceHandleID,
   graphRoutingStageSource,
   graphRoutingStageSourceHandleID,
-  graphPathHasImplicitDirectFallback,
-  graphPathHasTerminalCatchAll,
+  graphDirectExitHiddenByRouting,
+  routingHostForGraphSource,
   type GraphRoutingStage,
 } from './components/proxy-path/graph-routing-stages'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
@@ -11785,20 +11785,16 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     })
   }
   const openRoutingForSource = (source: ProxyPathReuseSource, canvasTargetID: string) => {
-    if (source.step_id) {
-      const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === source.step_id)
-      if (!step) return dialogs.alert({ title: '无法添加分流', message: '没有找到这条路径的位置，请刷新后重试。' })
-      const stage = routingStages(data, step.path_id).find(item => item.stepID === step.id && item.available)
-      if (!stage) return dialogs.alert({ title: '此处不能执行分流', message: '分流规则需要连接到可执行规则的受控服务器节点。' })
-      return openRouting({ pathID: step.path_id, stageStepID: stage.stepID, serverID: stage.serverID, canvasTargetID })
-    }
-    const inboundID = Number(source.inbound_id || 0)
-    const path = ((data.proxy_paths || []) as ProxyPath[])
-      .filter(item => item.enabled !== false && item.inbound_id === inboundID)
-      .sort((left, right) => left.id - right.id)[0]
-    if (!path) return openRouting({ inboundID, canvasTargetID })
-    const stage = routingStages(data, path.id).find(item => item.available)
-    return openRouting({ pathID: path.id, stageStepID: stage?.stepID, serverID: stage?.serverID, canvasTargetID })
+    const paths = (data.proxy_paths || []) as ProxyPath[]
+    const steps = (data.proxy_path_steps || []) as ProxyPathStep[]
+    const host = routingHostForGraphSource(paths, steps, source)
+    if (!host) return dialogs.alert({ title: '无法添加分流', message: '没有找到这条路径的位置，请刷新后重试。' })
+    if ('inboundID' in host) return openRouting({ inboundID: host.inboundID, canvasTargetID })
+    const stages = routingStages(data, host.pathID)
+    const stage = stages.find(item => item.stepID === host.stageStepID && item.available)
+      || stages.find(item => item.available)
+    if (!stage) return dialogs.alert({ title: '此处不能执行分流', message: '分流规则需要连接到可执行规则的受控服务器节点。' })
+    return openRouting({ pathID: host.pathID, stageStepID: stage.stepID, serverID: stage.serverID, canvasTargetID })
   }
   const submitRoutingDraft = async () => {
     if (!routingDraft) return
@@ -16118,8 +16114,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	  })
 	  const directPaths = visiblePaths.filter(path => {
     if (path.kind !== 'direct') return false
-	if (graphPathHasImplicitDirectFallback(path.id, stepsByPath.get(path.id) || [], graphRoutingStages)) return false
-	if (graphPathHasTerminalCatchAll(path.id, graphRoutingStages)) return false
+	if (graphDirectExitHiddenByRouting(path, visiblePaths, data.proxy_path_steps || [], graphRoutingStages)) return false
     if (path.branch_source_step_id) return Boolean(stepByID.get(path.branch_source_step_id))
     return Boolean(inboundByID.get(path.inbound_id))
   })
@@ -16282,9 +16277,9 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
 	      sourceHandle = pathStepHandleID(step.id)
 	      activeStageStepID = step.node_type === 'server_inbound' ? step.id : null
 	    })
+	    insertRoutingStage()
 	    if (path.kind === 'direct') {
-	      if (insertRoutingStage()) return
-	      if (graphPathHasTerminalCatchAll(path.id, graphRoutingStages)) return
+	      if (graphDirectExitHiddenByRouting(path, visiblePaths, data.proxy_path_steps || [], graphRoutingStages)) return
 	      edges.push(graphTransportEdge(
         `proxy-path-direct-${path.id}`,
         source,
