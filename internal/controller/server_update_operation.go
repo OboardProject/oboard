@@ -45,6 +45,8 @@ type serverUpdateChanges struct {
 	TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode,omitempty"`
 	OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled,omitempty"`
 	OfflineAfterSeconds      *int                        `json:"offline_after_seconds,omitempty"`
+	ServiceStartAt           *time.Time                  `json:"service_start_at,omitempty"`
+	ClearServiceStartAt      *bool                       `json:"clear_service_start_at,omitempty"`
 	ExpiresAt                *time.Time                  `json:"expires_at,omitempty"`
 	ClearExpiresAt           *bool                       `json:"clear_expires_at,omitempty"`
 	RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle,omitempty"`
@@ -92,6 +94,22 @@ func (s *Server) validateServerUpdateOperation(ctx context.Context, principal ap
 	}
 	next := *current
 	changed := applyServerUpdateChanges(&next, request.Changes)
+	// Auto-derive server traffic reset when the caller leaves traffic_reset_mode/day
+	// unspecified but updates billing dates. Priority: service_start_at > expires_at.
+	if request.Changes.TrafficResetMode == nil && request.Changes.TrafficResetDay == nil {
+		billingChanged := request.Changes.ServiceStartAt != nil || (request.Changes.ClearServiceStartAt != nil && *request.Changes.ClearServiceStartAt) || request.Changes.ExpiresAt != nil || (request.Changes.ClearExpiresAt != nil && *request.Changes.ClearExpiresAt)
+		if billingChanged {
+			settings, _ := s.store.ListSettings(ctx)
+			loc := trafficLocation(settings)
+			if derivedMode, derivedDay, ok := deriveServerTrafficReset(nil, nil, next.ServiceStartAt, next.ExpiresAt, loc); ok {
+				if derivedMode != next.TrafficResetMode || derivedDay != next.TrafficResetDay {
+					next.TrafficResetMode = derivedMode
+					next.TrafficResetDay = derivedDay
+					changed = append(changed, "traffic_reset_mode", "traffic_reset_day")
+				}
+			}
+		}
+	}
 	if err := s.validateServerUpdateCandidate(ctx, *current, &next); err != nil {
 		return nil, nil, err
 	}
@@ -164,6 +182,8 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("time_correction_mode", changes.TimeCorrectionMode != nil, func() { next.TimeCorrectionMode = *changes.TimeCorrectionMode })
 	set("offline_notify_enabled", changes.OfflineNotifyEnabled != nil, func() { next.OfflineNotifyEnabled = *changes.OfflineNotifyEnabled })
 	set("offline_after_seconds", changes.OfflineAfterSeconds != nil, func() { next.OfflineAfterSeconds = *changes.OfflineAfterSeconds })
+	set("service_start_at", changes.ServiceStartAt != nil, func() { next.ServiceStartAt = changes.ServiceStartAt })
+	set("clear_service_start_at", changes.ClearServiceStartAt != nil && *changes.ClearServiceStartAt, func() { next.ServiceStartAt = nil })
 	set("expires_at", changes.ExpiresAt != nil, func() { next.ExpiresAt = changes.ExpiresAt })
 	set("clear_expires_at", changes.ClearExpiresAt != nil && *changes.ClearExpiresAt, func() { next.ExpiresAt = nil })
 	set("renewal_cycle", changes.RenewalCycle != nil, func() { next.RenewalCycle = normalizeServerRenewalCycle(*changes.RenewalCycle) })

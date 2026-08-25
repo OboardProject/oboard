@@ -3340,6 +3340,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			ConnectionAuditEnabled *bool                     `json:"connection_audit_enabled"`
 			OfflineNotifyEnabled   *bool                     `json:"offline_notify_enabled"`
 			OfflineAfterSeconds    *int                      `json:"offline_after_seconds"`
+			ServiceStartAt         *time.Time                `json:"service_start_at"`
 			ExpiresAt              *time.Time                `json:"expires_at"`
 			AutoRenewEnabled       *bool                     `json:"auto_renew_enabled"`
 			RenewalCycle           *model.ServerRenewalCycle `json:"renewal_cycle"`
@@ -3398,6 +3399,12 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		if input.OfflineAfterSeconds != nil {
 			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
 		}
+		if input.ServiceStartAt != nil {
+			startAt := *input.ServiceStartAt
+			v.ServiceStartAt = &startAt
+		} else {
+			v.ServiceStartAt = nil
+		}
 		if input.ExpiresAt != nil {
 			expiresAt := *input.ExpiresAt
 			v.ExpiresAt = &expiresAt
@@ -3419,15 +3426,27 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
 		}
-		if input.TrafficResetMode == nil {
-			v.TrafficResetMode = "monthly"
+		// Server traffic reset day is derived from billing dates when the caller
+		// leaves traffic_reset_mode/day unspecified: service_start_at > expires_at.
+		if input.TrafficResetMode == nil && input.TrafficResetDay == nil {
+			if derivedMode, derivedDay, ok := deriveServerTrafficReset(input.TrafficResetMode, input.TrafficResetDay, v.ServiceStartAt, v.ExpiresAt, trafficLocation(settings)); ok {
+				v.TrafficResetMode = derivedMode
+				v.TrafficResetDay = derivedDay
+			} else {
+				v.TrafficResetMode = "monthly"
+				v.TrafficResetDay = 1
+			}
 		} else {
-			v.TrafficResetMode = normalizeControllerTrafficResetMode(*input.TrafficResetMode)
-		}
-		if input.TrafficResetDay == nil {
-			v.TrafficResetDay = 1
-		} else {
-			v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
+			if input.TrafficResetMode == nil {
+				v.TrafficResetMode = "monthly"
+			} else {
+				v.TrafficResetMode = normalizeControllerTrafficResetMode(*input.TrafficResetMode)
+			}
+			if input.TrafficResetDay == nil {
+				v.TrafficResetDay = 1
+			} else {
+				v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
+			}
 		}
 		if input.TrafficLimitBytes != nil {
 			if *input.TrafficLimitBytes < 0 {
@@ -3703,6 +3722,8 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets"`
 			OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled"`
 			OfflineAfterSeconds      *int                        `json:"offline_after_seconds"`
+			ServiceStartAt           *time.Time                  `json:"service_start_at"`
+			ClearServiceStartAt      *bool                       `json:"clear_service_start_at"`
 			ExpiresAt                *time.Time                  `json:"expires_at"`
 			ClearExpiresAt           *bool                       `json:"clear_expires_at"`
 			AutoRenewEnabled         *bool                       `json:"auto_renew_enabled"`
@@ -3753,6 +3774,14 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.OfflineAfterSeconds = *input.OfflineAfterSeconds
 		}
+		if input.ClearServiceStartAt != nil && *input.ClearServiceStartAt {
+			v.ServiceStartAt = nil
+		} else if input.ServiceStartAt != nil {
+			startAt := *input.ServiceStartAt
+			v.ServiceStartAt = &startAt
+		} else {
+			v.ServiceStartAt = current.ServiceStartAt
+		}
 		if input.ClearExpiresAt != nil && *input.ClearExpiresAt {
 			v.ExpiresAt = nil
 		} else if input.ExpiresAt != nil {
@@ -3776,21 +3805,52 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		} else {
 			v.RenewalCycle = normalizeServerRenewalCycle(*input.RenewalCycle)
 		}
-		if input.TrafficResetMode == nil {
-			v.TrafficResetMode = current.TrafficResetMode
-			if strings.TrimSpace(v.TrafficResetMode) == "" {
-				v.TrafficResetMode = "monthly"
+		// Server traffic reset auto-derivation: start > expires, day precision only.
+		if input.TrafficResetMode == nil && input.TrafficResetDay == nil {
+			billingChanged := input.ServiceStartAt != nil || (input.ClearServiceStartAt != nil && *input.ClearServiceStartAt) || input.ExpiresAt != nil || (input.ClearExpiresAt != nil && *input.ClearExpiresAt)
+			if billingChanged {
+				settings, _ := s.store.ListSettings(r.Context())
+				loc := trafficLocation(settings)
+				if derivedMode, derivedDay, ok := deriveServerTrafficReset(nil, nil, v.ServiceStartAt, v.ExpiresAt, loc); ok {
+					v.TrafficResetMode = derivedMode
+					v.TrafficResetDay = derivedDay
+				} else {
+					v.TrafficResetMode = current.TrafficResetMode
+					if strings.TrimSpace(v.TrafficResetMode) == "" {
+						v.TrafficResetMode = "monthly"
+					}
+					v.TrafficResetDay = current.TrafficResetDay
+					if v.TrafficResetDay == 0 {
+						v.TrafficResetDay = 1
+					}
+				}
+			} else {
+				v.TrafficResetMode = current.TrafficResetMode
+				if strings.TrimSpace(v.TrafficResetMode) == "" {
+					v.TrafficResetMode = "monthly"
+				}
+				v.TrafficResetDay = current.TrafficResetDay
+				if v.TrafficResetDay == 0 {
+					v.TrafficResetDay = 1
+				}
 			}
 		} else {
-			v.TrafficResetMode = normalizeControllerTrafficResetMode(*input.TrafficResetMode)
-		}
-		if input.TrafficResetDay == nil {
-			v.TrafficResetDay = current.TrafficResetDay
-			if v.TrafficResetDay == 0 {
-				v.TrafficResetDay = 1
+			if input.TrafficResetMode == nil {
+				v.TrafficResetMode = current.TrafficResetMode
+				if strings.TrimSpace(v.TrafficResetMode) == "" {
+					v.TrafficResetMode = "monthly"
+				}
+			} else {
+				v.TrafficResetMode = normalizeControllerTrafficResetMode(*input.TrafficResetMode)
 			}
-		} else {
-			v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
+			if input.TrafficResetDay == nil {
+				v.TrafficResetDay = current.TrafficResetDay
+				if v.TrafficResetDay == 0 {
+					v.TrafficResetDay = 1
+				}
+			} else {
+				v.TrafficResetDay = normalizeControllerTrafficResetDay(*input.TrafficResetDay)
+			}
 		}
 		if input.TrafficLimitBytes == nil {
 			v.TrafficLimitBytes = current.TrafficLimitBytes
@@ -6006,6 +6066,40 @@ func normalizeControllerTrafficResetDay(day int) int {
 		return 31
 	}
 	return day
+}
+
+// deriveServerTrafficReset implements the server-traffic billing principle:
+// when the caller leaves traffic_reset_mode/day unspecified, the reset day is
+// derived from the billing anchor. The anchor priority is service_start_at
+// (if present) > expires_at > none. Day precision only; renewal_cycle does
+// not change the derivation (traffic is always monthly, quarterly still resets
+// monthly on the same day). A derived result always uses month_day mode so
+// the day is explicit; callers that explicitly set mode/day are never
+// overridden.
+func deriveServerTrafficReset(explicitMode *string, explicitDay *int, startAt, expiresAt *time.Time, loc *time.Location) (string, int, bool) {
+	if explicitMode != nil || explicitDay != nil {
+		return "", 0, false
+	}
+	var anchor *time.Time
+	if startAt != nil && !startAt.IsZero() {
+		anchor = startAt
+	} else if expiresAt != nil && !expiresAt.IsZero() {
+		anchor = expiresAt
+	}
+	if anchor == nil {
+		return "", 0, false
+	}
+	if loc == nil {
+		loc = time.FixedZone("Asia/Shanghai", 8*3600)
+	}
+	day := anchor.In(loc).Day()
+	if day < 1 {
+		day = 1
+	}
+	if day > 31 {
+		day = 31
+	}
+	return model.TrafficResetMonthDay, normalizeControllerTrafficResetDay(day), true
 }
 
 func trafficLocation(settings map[string]string) *time.Location {

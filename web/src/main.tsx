@@ -6947,7 +6947,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
 }
 
 function GridViewIcon() {
@@ -7189,7 +7189,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const createServer = async () => {
     try {
-      const payload = { ...draft, expires_at: draft.expires_at ? serverExpiryOutputValue(draft.expires_at) : null }
+      const payload = { ...draft, service_start_at: draft.service_start_at ? serverExpiryOutputValue(draft.service_start_at) : null, expires_at: draft.expires_at ? serverExpiryOutputValue(draft.expires_at) : null }
       const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(payload) }) as { server?: Server }
       if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
       setServers(current => upsertServerSnapshot(current, result.server as Server))
@@ -7206,6 +7206,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       const modeChanged = editServer?.time_correction_mode !== next.time_correction_mode
       const payload = {
         ...next,
+        service_start_at: next.service_start_at ? serverExpiryOutputValue(next.service_start_at) : null,
+        clear_service_start_at: !next.service_start_at,
         expires_at: next.expires_at ? serverExpiryOutputValue(next.expires_at) : null,
         clear_expires_at: !next.expires_at,
       }
@@ -7909,7 +7911,25 @@ function CommandCopyBlock({ value, buttonText = '复制命令', language = 'bash
 }
 
 function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
-  const update = (patch: Record<string, any>) => setDraft((old: any) => ({ ...old, ...patch }))
+  const update = (patch: Record<string, any>) => setDraft((old: any) => {
+    const next: any = { ...old, ...patch }
+    const hasTraffic = 'traffic_reset_mode' in patch || 'traffic_reset_day' in patch
+    if (!hasTraffic) {
+      const isDefault = (old.traffic_reset_mode || 'monthly') === 'monthly' && Number(old.traffic_reset_day || 1) === 1
+      const hasBilling = 'service_start_at' in patch || 'expires_at' in patch
+      if (isDefault && hasBilling) {
+        const anchor = (patch.service_start_at !== undefined ? patch.service_start_at : old.service_start_at) || (patch.expires_at !== undefined ? patch.expires_at : old.expires_at)
+        if (anchor) {
+          const day = Number(String(anchor).split('-')[2]) || 1
+          if (day >= 1 && day <= 31) {
+            next.traffic_reset_mode = 'month_day'
+            next.traffic_reset_day = day
+          }
+        }
+      }
+    }
+    return next
+  })
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -7957,9 +7977,13 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </FormField>
 
           <div className="form-section-title">到期与续期</div>
-          <FormField label="到期日" hint="留空表示不追踪服务器到期。" placement="bottom">
+          <FormField label="计费开始日" hint="用于自动推导流量重置日；有此日则按此日，无则按到期日。留空不影响到期追踪。仅取日精度，例如 2025-07-05 起租即每月 5 日重置。" placement="bottom">
+            <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
+          </FormField>
+          <FormField label="到期日" hint="留空表示不追踪服务器到期。已填计费开始日时到期日仅用于续期计算，不再影响重置日。" placement="bottom">
             <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
           </FormField>
+          {draft.service_start_at || draft.expires_at ? <div className="access-note"><strong>流量重置已自动推导</strong><span>当前计费锚点为 {draft.service_start_at ? `${draft.service_start_at} (起租日)` : draft.expires_at}，将按每月 {(() => { const a = draft.service_start_at || draft.expires_at; const d = a ? Number(String(a).split('-')[2]) : 1; return isNaN(d) ? 1 : d })()} 日重置；可在下方“流量重置”中手动覆盖。</span></div> : null}
           <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
             <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
           </FormField>
@@ -8085,6 +8109,7 @@ function serverToDraft(server: Server) {
     entry_ip_mode: (server.entry_ip_mode || 'auto') as EntryIPMode,
     traffic_limit_bytes: Number(server.traffic_limit_bytes || 0),
     traffic_used_bytes: (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0),
+    service_start_at: serverExpiryInputValue((server as any).service_start_at),
     expires_at: serverExpiryInputValue(server.expires_at),
     renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly',
     auto_renew_enabled: Boolean(server.auto_renew_enabled),
@@ -8099,7 +8124,24 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
-  const update = (patch: any) => setDraft((old: any) => ({ ...old, ...patch }))
+  const update = (patch: any) => setDraft((old: any) => {
+    const next: any = { ...old, ...patch }
+    const hasTraffic = 'traffic_reset_mode' in patch || 'traffic_reset_day' in patch
+    if (!hasTraffic) {
+      const hasBilling = 'service_start_at' in patch || 'expires_at' in patch
+      if (hasBilling) {
+        const anchor = (patch.service_start_at !== undefined ? patch.service_start_at : old.service_start_at) || (patch.expires_at !== undefined ? patch.expires_at : old.expires_at)
+        if (anchor) {
+          const day = Number(String(anchor).split('-')[2]) || 1
+          if (day >= 1 && day <= 31) {
+            next.traffic_reset_mode = 'month_day'
+            next.traffic_reset_day = day
+          }
+        }
+      }
+    }
+    return next
+  })
   const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
   const submit = async () => {
     if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
@@ -8133,6 +8175,9 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <div className="form-section-title">到期与续期</div>
+          <FormField label="计费开始日" hint="用于自动推导流量重置日；有此日则按此日，无则按到期日。留空不影响到期追踪。仅取日精度，例如 2025-07-05 起租即每月 5 日重置。" placement="bottom">
+            <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
+          </FormField>
           <FormField label="到期日" hint="留空表示不追踪服务器到期。" placement="bottom">
             <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
             <div className="server-expiry-quick-row">
@@ -8142,6 +8187,7 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
               ))}
             </div>
           </FormField>
+          {draft.service_start_at || draft.expires_at ? <div className="access-note"><strong>流量重置已自动推导</strong><span>当前计费锚点为 {draft.service_start_at ? `${draft.service_start_at} (起租日)` : draft.expires_at}，将按每月 {(() => { const a = draft.service_start_at || draft.expires_at; const d = a ? Number(String(a).split('-')[2]) : 1; return isNaN(d) ? 1 : d })()} 日重置；可在下方“流量重置”中手动覆盖。</span></div> : null}
           <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
             <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
           </FormField>

@@ -1301,15 +1301,27 @@ func (s *Server) applyServerOnboardingDefaults(ctx context.Context, input json.R
 	if _, ok := envelope.Server["connection_audit_enabled"]; !ok {
 		request.Server.ConnectionAuditEnabled = settingBool(settings, settingConnectionAuditEnabled, true)
 	}
-	if _, ok := envelope.Server["traffic_reset_mode"]; !ok {
-		request.Server.TrafficResetMode = "monthly"
+	_, hasMode := envelope.Server["traffic_reset_mode"]
+	_, hasDay := envelope.Server["traffic_reset_day"]
+	if !hasMode && !hasDay {
+		if derivedMode, derivedDay, ok := deriveServerTrafficReset(nil, nil, request.Server.ServiceStartAt, request.Server.ExpiresAt, trafficLocation(settings)); ok {
+			request.Server.TrafficResetMode = derivedMode
+			request.Server.TrafficResetDay = derivedDay
+		} else {
+			request.Server.TrafficResetMode = "monthly"
+			request.Server.TrafficResetDay = 1
+		}
 	} else {
-		request.Server.TrafficResetMode = normalizeControllerTrafficResetMode(request.Server.TrafficResetMode)
-	}
-	if _, ok := envelope.Server["traffic_reset_day"]; !ok {
-		request.Server.TrafficResetDay = 1
-	} else {
-		request.Server.TrafficResetDay = normalizeControllerTrafficResetDay(request.Server.TrafficResetDay)
+		if !hasMode {
+			request.Server.TrafficResetMode = "monthly"
+		} else {
+			request.Server.TrafficResetMode = normalizeControllerTrafficResetMode(request.Server.TrafficResetMode)
+		}
+		if !hasDay {
+			request.Server.TrafficResetDay = 1
+		} else {
+			request.Server.TrafficResetDay = normalizeControllerTrafficResetDay(request.Server.TrafficResetDay)
+		}
 	}
 	return nil
 }

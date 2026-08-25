@@ -976,6 +976,7 @@ type Server struct {
 	ConnectionAuditEnabled      bool                 `json:"connection_audit_enabled"`
 	OfflineNotifyEnabled        bool                 `json:"offline_notify_enabled"`
 	OfflineAfterSeconds         int                  `json:"offline_after_seconds"`
+	ServiceStartAt              *time.Time           `json:"service_start_at,omitempty"`
 	ExpiresAt                   *time.Time           `json:"expires_at,omitempty"`
 	RenewalCycle                ServerRenewalCycle   `json:"renewal_cycle"`
 	AutoRenewEnabled            bool                 `json:"auto_renew_enabled"`
