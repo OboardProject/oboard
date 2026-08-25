@@ -12084,6 +12084,38 @@ func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identi
 	return currentOK && deployedOK && currentDigest == deployedDigest
 }
 
+func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
+	deployments, err := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	identity := sshPasswordDeploymentIdentityForUser(user)
+	hostKeys := map[int64]string{}
+	for _, server := range data.Servers {
+		plan, err := buildSSHInboundPlan(0, server, data, pathUsers, nil)
+		if err != nil {
+			return nil, err
+		}
+		expectedDeployments, err := s.sshPasswordDeploymentsFromPlan(server.ID, plan)
+		if err != nil {
+			return nil, err
+		}
+		expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, identity)
+		persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, identity)
+		if !expectedOK || !persistedOK || !matchingSSHPasswordDeployment(persisted, expected) {
+			continue
+		}
+		hostKey, deployedPlan, ready, err := s.matchingDeployedSSHPlan(ctx, server.ID, plan)
+		if err != nil {
+			return nil, err
+		}
+		if ready && matchingSSHIdentityRoutePlan(plan, deployedPlan, identity) {
+			hostKeys[server.ID] = hostKey.PublicKey
+		}
+	}
+	return hostKeys, nil
+}
+
 func (s *Server) matchingDeployedSSHPlan(ctx context.Context, serverID int64, current model.SSHInboundPlan) (*model.SSHServerHostKey, model.SSHInboundPlan, bool, error) {
 	hostKey, err := s.store.GetSSHServerHostKey(ctx, serverID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -12856,12 +12888,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	servers, in := data.Servers, data.Inbounds
-	sshServerHostKeys := map[int64]string{}
-	deployments, deploymentErr := s.store.ListSSHPasswordDeploymentsForUser(r.Context(), user.ID)
-	if deploymentErr != nil {
-		fail(w, deploymentErr, 500)
-		return
-	}
 	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
 	if err != nil {
 		fail(w, err, 500)
@@ -12899,31 +12925,10 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pullPathUsers := snapshot.ProxyPathUserBindings()
-	subscriptionIdentity := sshPasswordDeploymentIdentityForUser(subscriptionUser)
-	for _, server := range servers {
-		plan, planErr := buildSSHInboundPlan(0, server, data, pullPathUsers, nil)
-		if planErr != nil {
-			fail(w, planErr, 500)
-			return
-		}
-		expectedDeployments, expectedErr := s.sshPasswordDeploymentsFromPlan(server.ID, plan)
-		if expectedErr != nil {
-			fail(w, expectedErr, 500)
-			return
-		}
-		expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, subscriptionIdentity)
-		persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, subscriptionIdentity)
-		if !expectedOK || !persistedOK || !matchingSSHPasswordDeployment(persisted, expected) {
-			continue
-		}
-		hostKey, deployedPlan, ready, readyErr := s.matchingDeployedSSHPlan(r.Context(), server.ID, plan)
-		if readyErr != nil {
-			fail(w, readyErr, 500)
-			return
-		}
-		if ready && matchingSSHIdentityRoutePlan(plan, deployedPlan, subscriptionIdentity) {
-			sshServerHostKeys[server.ID] = hostKey.PublicKey
-		}
+	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(r.Context(), subscriptionUser, data, pullPathUsers)
+	if err != nil {
+		fail(w, err, 500)
+		return
 	}
 	opts := core.SubscriptionOptions{
 		Format:                 format,

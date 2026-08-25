@@ -790,6 +790,10 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
+	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(ctx, user, data, snapshot.ProxyPathUserBindings())
+	if err != nil {
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
+	}
 	orderPolicy, orderPositions, planNodeNames, err := s.store.GetEffectiveSubscriptionNodePresentation(ctx, user.ID, time.Now())
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
@@ -802,7 +806,7 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	for key, item := range metadata {
 		globalNames[key] = item.DisplayNameOverride
 	}
-	opts := core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, RoutingRules: data.RoutingRules, ProxyPathEgressResults: data.ProxyPathEgressResults, ExternalOutbounds: data.ExternalOutbounds, EffectiveNodes: snapshot.EffectiveNodeKeys(user.ID), EffectiveNodeGroups: snapshot.EffectiveNodeGroups(user.ID), NodeOrderPositions: orderPositions, GlobalNodeNames: globalNames, PlanNodeNames: planNodeNames}
+	opts := core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, RoutingRules: data.RoutingRules, ProxyPathEgressResults: data.ProxyPathEgressResults, ExternalOutbounds: data.ExternalOutbounds, SSHServerHostKeys: sshServerHostKeys, EffectiveNodes: snapshot.EffectiveNodeKeys(user.ID), EffectiveNodeGroups: snapshot.EffectiveNodeGroups(user.ID), NodeOrderPositions: orderPositions, GlobalNodeNames: globalNames, PlanNodeNames: planNodeNames}
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy
 	}

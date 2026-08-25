@@ -691,6 +691,20 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 		}
 		return nodes
 	}
+	readWorkspaceSSHNodes := func() []core.SubscriptionNode {
+		t.Helper()
+		nodes, _, err := srv.workspaceAllNodes(ctx, *user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sshNodes := make([]core.SubscriptionNode, 0, len(nodes))
+		for _, node := range nodes {
+			if node.Raw["type"] == "ssh" {
+				sshNodes = append(sshNodes, node)
+			}
+		}
+		return sshNodes
+	}
 	if nodes := readSubscription(); len(nodes) != 0 {
 		t.Fatalf("SSH subscription appeared before deployment: %#v", nodes)
 	}
@@ -715,6 +729,10 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	nodes := readSubscription()
 	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(*user, path.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
 		t.Fatalf("matching SSH subscription = %#v", nodes)
+	}
+	workspaceNodes := readWorkspaceSSHNodes()
+	if len(workspaceNodes) != 1 || workspaceNodes[0].Raw["username"] != sshLoginName(*user, path.ID) {
+		t.Fatalf("matching SSH workspace nodes = %#v", workspaceNodes)
 	}
 
 	other := &model.User{Username: "bob", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "bob-id", ProxyPassword: "bob-pass", SubscriptionToken: "bob-subscription-token"}
