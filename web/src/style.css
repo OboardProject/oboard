@@ -14977,6 +14977,13 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   stroke-linejoin: round;
   opacity: .94;
 }
+.flow .react-flow__edge .proxy-edge-arrow {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .flow .react-flow__edge.transport-direct .react-flow__edge-path { stroke: var(--graph-direct) !important; }
 .flow .react-flow__edge.transport-singbox .react-flow__edge-path { stroke: var(--graph-chain) !important; }
 .flow .react-flow__edge.transport-port_forward .react-flow__edge-path { stroke: var(--graph-forward) !important; }
@@ -15017,7 +15024,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   white-space: nowrap;
   pointer-events: all;
 }
-button.proxy-edge-label:hover { transform: none; border-color: var(--primary); background: var(--surface-solid); }
+button.proxy-edge-label:hover { border-color: var(--primary); background: var(--surface-solid); }
 .proxy-edge-label.shared { color: var(--text-secondary); border-color: var(--border-strong); cursor: default; }
 .proxy-edge-label.path-focus-muted { opacity: .08; pointer-events: none; }
 .proxy-edge-label.path-focus-context { opacity: .28; }
@@ -15273,24 +15280,26 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
   z-index: 9;
   max-width: 90px;
   padding: 3px 8px;
+  overflow: hidden;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
   color: var(--text-secondary);
   font-size: 10px;
   font-family: var(--font-mono);
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
   transform: translateX(-50%);
+  opacity: 0;
   pointer-events: none;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
+  transition: opacity 140ms ease;
 }
 .flow .react-flow__node.graph-node:hover .server-entry-source-label,
 .flow .react-flow__node.graph-node.selected .server-entry-source-label {
+  opacity: 1;
   color: var(--color-primary);
   border-color: var(--color-primary);
   box-shadow: var(--shadow-md);
@@ -15376,29 +15385,40 @@ button.proxy-edge-label:hover { transform: none; border-color: var(--primary); b
   font-weight: 750;
   line-height: 1.2;
   transform: translateX(-50%);
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 140ms ease;
+}
+.flow .react-flow__node.graph-node:hover .server-shared-source-label,
+.flow .react-flow__node.graph-node.selected .server-shared-source-label {
+  opacity: 1;
 }
 
 .path-step-source-label {
   position: absolute;
-  bottom: -44px;
+  bottom: -22px;
   z-index: 9;
   max-width: 78px;
   padding: 2px 6px;
+  overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-solid) 94%, transparent);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, .08);
   color: var(--primary);
   font-size: 9px;
   font-weight: 750;
   line-height: 1.2;
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
   transform: translateX(-50%);
+  opacity: 0;
   pointer-events: none;
-  opacity: .88;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, .08);
+  transition: opacity 140ms ease;
+}
+.flow .react-flow__node.graph-node:hover .path-step-source-label,
+.flow .react-flow__node.graph-node.selected .path-step-source-label {
+  opacity: 1;
 }
 
 .graph-context-menu {

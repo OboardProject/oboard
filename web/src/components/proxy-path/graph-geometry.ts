@@ -234,3 +234,68 @@ export function curvedGraphPath(points: GraphPoint[], radius = 24): string {
   }
   return roundedOrthogonalPath(route, radius)
 }
+
+export const GRAPH_EDGE_ARROW_GAP = 3
+export const GRAPH_EDGE_ARROW_LENGTH = 8
+export const GRAPH_EDGE_ARROW_WIDTH = 5
+
+/** Shortens the last orthogonal segments so a stroke can stop at an arrow base. */
+export function trimRouteEnd(points: GraphPoint[], distance: number): GraphPoint[] {
+  const route = normalizeOrthogonalPoints(points).map(point => ({ ...point }))
+  if (route.length < 2 || distance <= 0) return route
+  let remaining = distance
+  while (route.length >= 2 && remaining > 0) {
+    const last = route[route.length - 1]
+    const previous = route[route.length - 2]
+    const length = Math.abs(last.x - previous.x) + Math.abs(last.y - previous.y)
+    if (length <= remaining + 0.5) {
+      remaining -= length
+      route.pop()
+      continue
+    }
+    const ratio = remaining / length
+    last.x = routingCoordinate(last.x - (last.x - previous.x) * ratio)
+    last.y = routingCoordinate(last.y - (last.y - previous.y) * ratio)
+    remaining = 0
+  }
+  return route.length ? route : normalizeOrthogonalPoints(points)
+}
+
+export type GraphEdgeArrow = {
+  tip: GraphPoint
+  left: GraphPoint
+  right: GraphPoint
+}
+
+/** Slim dart aligned to the last segment, tip held `gap` short of the node. */
+export function routeEndArrowPoints(
+  points: GraphPoint[],
+  gap = GRAPH_EDGE_ARROW_GAP,
+  length = GRAPH_EDGE_ARROW_LENGTH,
+  width = GRAPH_EDGE_ARROW_WIDTH,
+): GraphEdgeArrow | undefined {
+  const toTip = trimRouteEnd(points, gap)
+  if (toTip.length < 2) return undefined
+  const tip = toTip[toTip.length - 1]
+  const previous = toTip[toTip.length - 2]
+  const dx = tip.x - previous.x
+  const dy = tip.y - previous.y
+  const segmentLength = Math.hypot(dx, dy)
+  if (segmentLength < length + 0.5) return undefined
+  const ux = dx / segmentLength
+  const uy = dy / segmentLength
+  const px = -uy
+  const py = ux
+  const baseX = tip.x - ux * length
+  const baseY = tip.y - uy * length
+  const half = width / 2
+  return {
+    tip: { x: routingCoordinate(tip.x), y: routingCoordinate(tip.y) },
+    left: { x: routingCoordinate(baseX + px * half), y: routingCoordinate(baseY + py * half) },
+    right: { x: routingCoordinate(baseX - px * half), y: routingCoordinate(baseY - py * half) },
+  }
+}
+
+export function routeEndArrowPath(arrow: GraphEdgeArrow): string {
+  return `M ${pointText(arrow.tip)} L ${pointText(arrow.left)} L ${pointText(arrow.right)} Z`
+}

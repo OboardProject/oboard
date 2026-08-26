@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  GRAPH_EDGE_ARROW_GAP,
+  GRAPH_EDGE_ARROW_LENGTH,
+  GRAPH_EDGE_ARROW_WIDTH,
   collinearOverlapLength,
   normalizeOrthogonalPoints,
   pointToPolylineDistance,
   roundedOrthogonalPath,
+  routeEndArrowPoints,
   segmentIntersectsRectInterior,
+  trimRouteEnd,
   type GraphSegment,
 } from './graph-geometry'
 
@@ -62,6 +67,40 @@ describe('pointToPolylineDistance', () => {
     expect(pointToPolylineDistance({ x: 8, y: 40 }, route)).toBe(8)
     expect(pointToPolylineDistance({ x: 70, y: 112 }, route)).toBe(12)
     expect(pointToPolylineDistance({ x: -3, y: -4 }, route)).toBe(5)
+  })
+})
+
+describe('trimRouteEnd', () => {
+  it('shortens a vertical drop without moving earlier corners', () => {
+    expect(trimRouteEnd([{ x: 10, y: 0 }, { x: 10, y: 100 }], 8)).toEqual([
+      { x: 10, y: 0 },
+      { x: 10, y: 92 },
+    ])
+  })
+
+  it('walks back through a short last segment', () => {
+    expect(trimRouteEnd([{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 40, y: 6 }], 10)).toEqual([
+      { x: 0, y: 0 },
+      { x: 36, y: 0 },
+    ])
+  })
+})
+
+describe('routeEndArrowPoints', () => {
+  it('keeps a downward dart centered on the last segment', () => {
+    const arrow = routeEndArrowPoints([{ x: 20, y: 0 }, { x: 20, y: 80 }])
+    const tipY = 80 - GRAPH_EDGE_ARROW_GAP
+    const baseY = tipY - GRAPH_EDGE_ARROW_LENGTH
+    const half = GRAPH_EDGE_ARROW_WIDTH / 2
+    expect(arrow).toEqual({
+      tip: { x: 20, y: tipY },
+      left: { x: 20 - half, y: baseY },
+      right: { x: 20 + half, y: baseY },
+    })
+  })
+
+  it('skips arrows when the last segment is too short to seat them', () => {
+    expect(routeEndArrowPoints([{ x: 0, y: 0 }, { x: 0, y: 6 }])).toBeUndefined()
   })
 })
 

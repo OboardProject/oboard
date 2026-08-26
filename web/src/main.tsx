@@ -7,7 +7,7 @@ import {
   normalizeTheme,
   toggleThemeWithTransition,
 } from './theme'
-import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, MarkerType, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type {
@@ -55,7 +55,7 @@ import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetO
 import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
-import { curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
+import { GRAPH_EDGE_ARROW_GAP, GRAPH_EDGE_ARROW_LENGTH, curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, routeEndArrowPath, routeEndArrowPoints, trimRouteEnd, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
 import { routeProxyGraph, type GraphRoutingEdgeData, type GraphRoutingClass } from './components/proxy-path/graph-routing'
 import {
   buildGraphRoutingStages,
@@ -15674,7 +15674,6 @@ type GraphEntryDetails = {
 
 function ProxyGraphEdge({
   id,
-  markerEnd,
   style,
   data,
 }: EdgeProps<GraphTransportEdgeData>) {
@@ -15683,7 +15682,10 @@ function ProxyGraphEdge({
     if (import.meta.env.DEV) console.warn('[proxy-routing] failed to route edge', id)
     return null
   }
-  const path = curvedGraphPath(points, 24)
+  const showArrow = data?.routingClass !== 'belongs'
+  const arrow = showArrow ? routeEndArrowPoints(points) : undefined
+  const drawPoints = arrow ? trimRouteEnd(points, GRAPH_EDGE_ARROW_GAP + GRAPH_EDGE_ARROW_LENGTH) : points
+  const path = curvedGraphPath(drawPoints, 24)
   const labelX = data.route?.labelPoint?.x
   const labelY = data.route?.labelPoint?.y
   let phaseHash = 0
@@ -15691,7 +15693,15 @@ function ProxyGraphEdge({
   const phase = (phaseHash % 2400) / 1000
   return <>
     <path d={path} className="proxy-edge-casing" pointerEvents="none" />
-    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={40} />
+    <BaseEdge id={id} path={path} style={style} interactionWidth={40} />
+    {arrow && (
+      <path
+        d={routeEndArrowPath(arrow)}
+        className="proxy-edge-arrow"
+        pointerEvents="none"
+        style={{ color: style?.stroke as string }}
+      />
+    )}
     {!data?.unhealthy && data?.focusState === 'active' && (
       <g className="edge-flow" pointerEvents="none" style={{ color: style?.stroke as string }}>
         <circle r="1.7" fill="currentColor" opacity="0.5">
@@ -15707,7 +15717,7 @@ function ProxyGraphEdge({
         ? <button
             type="button"
             className={`proxy-edge-label nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            style={{ transform: `translate(-50%, calc(-100% - 8px)) translate(${labelX}px, ${labelY}px)` }}
             title={data.pathLabelTitle || data.pathLabel}
             onContextMenu={data.onContextMenu}
             onClick={event => {
@@ -15717,7 +15727,7 @@ function ProxyGraphEdge({
           >{data.pathLabel}</button>
         : <span
             className={`proxy-edge-label shared nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            style={{ transform: `translate(-50%, calc(-100% - 8px)) translate(${labelX}px, ${labelY}px)` }}
             title={data.pathLabelTitle || data.pathLabel}
             onContextMenu={data.onContextMenu}
           >{data.pathLabel}</span>}
@@ -15889,7 +15899,6 @@ function graphTransportEdge(
       strokeWidth: 2.8,
       ...(routingClass === 'auxiliary' ? { strokeDasharray: '6 5', opacity: 0.62 } : {}),
     },
-    markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
     zIndex: routingClass === 'primary' ? 2 : routingClass === 'auxiliary' ? 1 : 0,
     data: { ...data, routingClass },
     ...options,
