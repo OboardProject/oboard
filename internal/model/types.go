@@ -1029,9 +1029,18 @@ type Inbound struct {
 	Kind              string               `json:"kind,omitempty"`
 	Reality           *InboundRealityInput `json:"reality,omitempty"`
 	RotateRealityKey  bool                 `json:"rotate_reality_key,omitempty"`
+	AnyTLSPadding     *AnyTLSPaddingInput  `json:"anytls_padding,omitempty"`
 	Enabled           bool                 `json:"enabled"`
 	CreatedAt         time.Time            `json:"created_at"`
 	UpdatedAt         time.Time            `json:"updated_at"`
+}
+
+// AnyTLSPaddingInput is a create-only choice. Controller resolves it into the
+// immutable padding_scheme snapshot and _oboard_padding metadata stored in
+// ConfigJSON; it is never sent to Agent or sing-box.
+type AnyTLSPaddingInput struct {
+	PresetID string `json:"preset_id"`
+	AutoTune *bool  `json:"auto_tune,omitempty"`
 }
 
 // InboundRealityInput is the public, non-secret Reality configuration. The

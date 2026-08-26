@@ -11,7 +11,6 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
-	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -596,7 +595,7 @@ func defaultInboundPresetConfig(protocol string) string {
 	case "hysteria2", "hy2":
 		return `{"tls":{"enabled":true},"up_mbps":1000,"down_mbps":500}`
 	case "anytls":
-		encoded, _ := json.Marshal(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme()})
+		encoded, _ := json.Marshal(map[string]any{"tls": map[string]any{"enabled": true}})
 		return string(encoded)
 	case "shadowsocks":
 		return `{"method":"2022-blake3-aes-128-gcm"}`

@@ -96,7 +96,7 @@ func TestDefaultCatalogDoesNotExposeEscapeCapabilities(t *testing.T) {
 func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{
-		"inbounds.create", "inbounds.update", "inbounds.delete",
+		"inbounds.create", "inbounds.update", "inbounds.padding.update", "inbounds.delete",
 		"proxy_paths.create_direct", "proxy_paths.update", "proxy_paths.delete",
 		"proxy_path_steps.create", "proxy_path_steps.update", "proxy_path_steps.truncate",
 	} {
@@ -115,6 +115,10 @@ func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
 				t.Fatalf("%s is missing destructive metadata", name)
 			}
 		}
+	}
+	padding, _ := catalog.Get("inbounds.padding.update")
+	if padding.RBACPermission != "admin.settings" || !strings.Contains(string(padding.InputSchema), "replace_preset") || !strings.Contains(string(padding.InputSchema), "set_custom") {
+		t.Fatalf("inbounds.padding.update contract = %#v", padding)
 	}
 }
 
@@ -157,7 +161,7 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
 	}
 	raw := string(descriptor.InputSchema)
-	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"examples"`, `"gateway.icloud.com"`} {
+	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"anytls_padding"`, `"balanced_v1"`, `"light_v1"`, `"examples"`, `"gateway.icloud.com"`} {
 		if !strings.Contains(raw, fragment) {
 			t.Fatalf("inbounds.create schema lacks %s: %s", fragment, raw)
 		}

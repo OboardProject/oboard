@@ -237,6 +237,9 @@ func TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin(t *testing.T) {
 	if _, err := db.Exec(`insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,1,1,?,?)`, legacyAnyTLSBasicPresetName, "anytls", "anytls-basic", legacyAnyTLSBasicPresetConfig, 443, legacyAnyTLSBasicPresetRemark, builtinNodePresetSeedTimestamp, builtinNodePresetSeedTimestamp); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,1,1,?,?)`, "AnyTLS 大包填充", "anytls", "anytls-large-padding", legacyAnyTLSLargePresetConfig, 443, "前三次写入使用 900-1400 字节填充，需要证书", builtinNodePresetSeedTimestamp, builtinNodePresetSeedTimestamp); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +267,9 @@ func TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin(t *testing.T) {
 	}
 	assertNodePresetPadding(t, byKind["anytls-basic"][0], core.AnyTLSBalancedPaddingScheme())
 	assertNodePresetPadding(t, byKind["anytls-large-padding"][0], core.AnyTLSLargePaddingScheme())
+	if byKind["anytls-large-padding"][0].Name != "AnyTLS 轻量填充" {
+		t.Fatalf("light preset name = %q", byKind["anytls-large-padding"][0].Name)
+	}
 	count := len(items)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

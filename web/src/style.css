@@ -12388,6 +12388,55 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   border-top: 1px solid var(--border);
 }
 
+.inbound-padding-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inbound-padding-summary > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.inbound-padding-summary span,
+.inbound-padding-summary strong {
+  display: block;
+}
+
+.inbound-padding-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inbound-padding-summary strong {
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbound-padding-scheme pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  font: 12px/1.65 var(--font-mono);
+  white-space: pre;
+}
+
+.inline-actions {
+  justify-content: flex-start;
+  padding: 0;
+}
+
+@media (max-width: 720px) {
+  .inbound-padding-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .entry-form input:read-only {
   color: var(--muted);
   background: var(--surface-2);

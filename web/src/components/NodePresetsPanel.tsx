@@ -62,8 +62,8 @@ const protocolLabels: Record<string, string> = {
 
 const builtinRealityDomains = ['gateway.icloud.com', 'cdn.icloud-content.com', 'www.tesla.com', 'www.nvidia.com', 'www.sony.com', 'www.mozilla.org'] as const
 
-const anyTLSBalancedPaddingScheme = ['stop=8', '0=64-128', '1=200-450', '2=450-650,c,700-1100,c,700-1100', '3=32-96,600-900', '4=450-850', '5=500-900', '6=550-950', '7=600-1000'] as const
-const anyTLSLargePaddingScheme = ['stop=3', '0=900-1400', '1=900-1400', '2=900-1400'] as const
+const anyTLSBalancedPaddingScheme = ['stop=8', '0=32-160', '1=180-480', '2=260-520,c,560-960,c,760-1280', '3=24-96,c,420-900', '4=360-980', '5=280-860', '6=420-1120', '7=300-940'] as const
+const anyTLSLightPaddingScheme = ['stop=5', '0=16-80', '1=120-320', '2=320-620,c,580-980', '3=180-520', '4=220-620'] as const
 
 export const nodePresetKinds = [
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com', defaultPort: 443, config: { flow: 'xtls-rprx-vision', reality_domains: [...builtinRealityDomains], tls: { enabled: true, server_name: 'gateway.icloud.com', reality: { enabled: true, handshake: { server: 'gateway.icloud.com', server_port: 443 } } }, tcp_fast_open: true } },
@@ -73,7 +73,7 @@ export const nodePresetKinds = [
 	{ id: 'hy2-tls', protocol: 'hy2', label: 'Hysteria2 标准', description: 'HY2 标准模式，需要证书', defaultPort: 443, config: { tls: { enabled: true } } },
 	{ id: 'hy2-salamander', protocol: 'hy2', label: 'Hysteria2 Salamander', description: 'HY2 Salamander 混淆，需要证书；混淆密码每个入口单独生成', defaultPort: 443, config: { tls: { enabled: true }, obfs: { type: 'salamander' } } },
   { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSBalancedPaddingScheme], tcp_fast_open: true } },
-  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSLargePaddingScheme], tcp_fast_open: true } },
+  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 轻量填充', description: '低开销填充，适合高延迟、移动网络和短连接，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSLightPaddingScheme], tcp_fast_open: true } },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388, config: { method: 'aes-128-gcm', tcp_fast_open: true } },
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388, config: { method: 'aes-256-gcm', tcp_fast_open: true } },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388, config: { method: '2022-blake3-aes-128-gcm', tcp_fast_open: true } },

@@ -361,6 +361,7 @@ func defaultDescriptors() []Descriptor {
 		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
 		{"inbounds.create", "topology:write", 3, true, DataSensitive, []string{"inbound.config_json"}},
 		{"inbounds.update", "topology:write", 3, true, DataSensitive, []string{"changes.config_json"}},
+		{"inbounds.padding.update", "topology:write", 3, true, DataInternal, nil},
 		{"topology.write", "topology:write", 3, true, DataInternal, nil},
 		{"proxy_paths.create_direct", "topology:write", 3, true, DataInternal, nil},
 		{"proxy_paths.update", "topology:write", 3, true, DataInternal, nil},
@@ -374,10 +375,14 @@ func defaultDescriptors() []Descriptor {
 		description := "创建受验证和审批保护的管理变更"
 		if domain.name == "servers.onboard" {
 			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue"
+		} else if domain.name == "inbounds.padding.update" {
+			description = "显式更换、重新生成或自定义 AnyTLS PaddingScheme；会改变流量形态并需要重新部署"
 		}
 		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: description, InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
 		if domain.name == "servers.onboard" {
 			descriptors[len(descriptors)-1].SensitiveOutput = []string{"enrollment_token"}
+		} else if domain.name == "inbounds.padding.update" {
+			descriptors[len(descriptors)-1].RBACPermission = "admin.settings"
 		}
 	}
 	enrollmentInput, enrollmentOutput, _ := executableSchemas("servers.enrollment.issue")
@@ -552,7 +557,7 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return topologyWriteRefs
 	case "inbounds.create":
 		return inboundCreateRefs
-	case "inbounds.update":
+	case "inbounds.update", "inbounds.padding.update":
 		return inboundUpdateRefs
 	case "proxy_paths.update":
 		return proxyPathUpdateRefs
@@ -695,6 +700,10 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"rotate_reality_key":    boolValue,
 			"enabled":               boolValue,
 		}
+		inboundProperties["anytls_padding"] = closedObject(map[string]any{
+			"preset_id": map[string]any{"type": "string", "enum": []string{"balanced_v1", "light_v1"}},
+			"auto_tune": boolValue,
+		}, "preset_id")
 		// Guidance for the most common protocol shapes so clients do not need
 		// to reverse-engineer the stored config_json contracts:
 		//   vless Reality: kind plus the non-secret reality object is the public
@@ -728,9 +737,18 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			}}})
 			return input, simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 		}
+		delete(inboundProperties, "anytls_padding")
 		inboundFields := closedObject(inboundProperties)
 		input := schemaObject(map[string]any{"inbound_id": positiveID, "changes": inboundFields}, "inbound_id", "changes")
 		return withSchemaDescription(input, inboundGuidance), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
+	case "inbounds.padding.update":
+		return schemaObject(map[string]any{
+			"inbound_id":     positiveID,
+			"operation":      map[string]any{"type": "string", "enum": []string{"replace_preset", "regenerate", "set_custom"}},
+			"preset_id":      map[string]any{"type": "string", "enum": []string{"balanced_v1", "light_v1"}},
+			"auto_tune":      boolValue,
+			"padding_scheme": map[string]any{"type": "array", "minItems": 2, "maxItems": 65, "items": stringValue},
+		}, "inbound_id", "operation"), simpleOutput(map[string]any{"inbound": map[string]any{"type": "object"}, "requires_deployment": boolValue}), "server_ids"
 	case "topology.reuse_inbound":
 		source := closedObject(map[string]any{"inbound_id": positiveID, "step_id": positiveID})
 		return schemaObject(map[string]any{"sources": map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": source}, "target_server_id": positiveID, "target_kind": stringValue, "target_inbound_id": positiveID, "chain_protocol": map[string]any{"type": "string", "enum": []string{"shadowsocks", "vless", "mieru", "socks"}}, "chain_method": stringValue, "reality_handshake_server": stringValue, "reality_handshake_port": map[string]any{"type": "integer"}, "transport_mode": stringValue, "tunnel_type": stringValue, "ssh_port": map[string]any{"type": "integer"}, "persistent_keepalive": map[string]any{"type": "integer"}, "copy_mode": stringValue, "branch_path_id": positiveID}, "sources", "target_server_id", "target_kind"), simpleOutput(map[string]any{"result_path_count": map[string]any{"type": "integer"}, "affected_server_ids": idArray(0, 100), "requires_deployment": boolValue}), "server_ids"

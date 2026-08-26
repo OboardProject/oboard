@@ -111,15 +111,9 @@ func applyNonRealityInboundKindDefaults(v *model.Inbound) error {
 		v.TLS = true
 	case "anytls-basic":
 		ensureObject(cfg, "tls")["enabled"] = true
-		if cfg["padding_scheme"] == nil {
-			cfg["padding_scheme"] = core.AnyTLSBalancedPaddingScheme()
-		}
 		v.TLS = true
 	case "anytls-large-padding":
 		ensureObject(cfg, "tls")["enabled"] = true
-		if cfg["padding_scheme"] == nil {
-			cfg["padding_scheme"] = core.AnyTLSLargePaddingScheme()
-		}
 		v.TLS = true
 	case "ss-aes-128-gcm":
 		cfg["method"] = "aes-128-gcm"

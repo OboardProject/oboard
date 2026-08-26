@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | 服务器 | `POST /servers`, `PATCH/DELETE /servers/:id` | `servers.onboard`, `servers.update`, `servers.delete` | 完整部署 | 新增/修改为目标服务器；删除为剩余完整拓扑 |
 | 服务器到期 | `PATCH /servers/:id` 到期字段, `POST /servers/:id/extend-expiry` | `servers.update`, `servers.extend_expiry` | 不触发 Agent | 仅主控到期元数据、自动续期和通知调度 |
-| 入口 | `POST/PATCH/DELETE /inbounds` | `inbounds.create/update/delete` | 完整部署 | 入口所属服务器及以该入口为根的路径成员；可信转发前缀再扩展 |
+| 入口 | `POST/PATCH/DELETE /inbounds`, `POST /inbounds/:id/padding` | `inbounds.create/update/delete`, `inbounds.padding.update` | 完整部署 | 入口所属服务器及以该入口为根的路径成员；可信转发前缀再扩展；AnyTLS Padding 只有显式操作可改写 |
 | 管理出口 | `POST/PATCH/DELETE /outbounds` | `outbounds.*` | 完整部署 | owner 与 next server |
 | 第三方出口 | create/update/delete/import | `external_outbounds.*` | 完整部署 | scope server 或所有服务器；路径引用由部署影响分析扩展 |
 | 代理路径 | path/step create/update/delete, reuse, direct branch | `topology.write`, `topology.reuse_inbound`, `proxy_paths.*`, `proxy_path_steps.*` | 完整部署 | 路径成员；可信转发前缀自动扩展为完整范围 |

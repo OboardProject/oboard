@@ -64,6 +64,7 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		{name: "servers.dns_policy.set", want: true},
 		{name: "servers.dns_test", want: false},
 		{name: "inbounds.create", want: true},
+		{name: "inbounds.padding.update", want: true},
 		{name: "inbounds.probe", want: false},
 		{name: "proxy_paths.update", want: true},
 		{name: "proxy_paths.probe_egress", want: false},

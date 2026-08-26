@@ -185,7 +185,7 @@ func configurationMutationPath(path, method string) bool {
 		}
 		return len(parts) == 3 && parts[2] == "dns-policy"
 	case "inbounds":
-		return len(parts) <= 2
+		return len(parts) <= 2 || len(parts) == 3 && parts[2] == "padding"
 	case "proxy-paths":
 		return len(parts) <= 2 && parts[len(parts)-1] != "reuse-preview" || len(parts) == 2 && (parts[1] == "reuse" || parts[1] == "direct-branches")
 	case "port-forwards":

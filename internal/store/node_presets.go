@@ -30,6 +30,7 @@ const (
 	legacyAnyTLSBasicPresetConfig  = `{"tls":{"enabled":true}}`
 	legacyAnyTLSBasicPresetName    = "AnyTLS"
 	legacyAnyTLSBasicPresetRemark  = "AnyTLS 标准配置，需要证书"
+	legacyAnyTLSLargePresetConfig  = `{"padding_scheme":["stop=3","0=900-1400","1=900-1400","2=900-1400"],"tcp_fast_open":true,"tls":{"enabled":true}}`
 	legacyHY2TLSPresetConfig       = `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`
 	legacyHY2TLSPresetName         = "Hysteria2"
 	legacyHY2TLSPresetRemark       = "HY2 标准配置，需要证书"
@@ -43,7 +44,7 @@ var builtinNodePresets = []nodePresetSeed{
 	{Name: "Hysteria2 标准", Protocol: "hy2", Kind: "hy2-tls", DefaultPort: 443, Remark: "HY2 标准模式，需要证书", ConfigJSON: `{"tls":{"enabled":true}}`},
 	{Name: "Hysteria2 Salamander", Protocol: "hy2", Kind: "hy2-salamander", DefaultPort: 443, Remark: "HY2 Salamander 混淆，需要证书；混淆密码每个入口单独生成", ConfigJSON: `{"tls":{"enabled":true},"obfs":{"type":"salamander"}}`},
 	{Name: "AnyTLS 均衡填充", Protocol: "anytls", Kind: "anytls-basic", DefaultPort: 443, Remark: "OBoard 均衡填充，兼顾额外开销与包长变化，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme(), "tcp_fast_open": true})},
-	{Name: "AnyTLS 大包填充", Protocol: "anytls", Kind: "anytls-large-padding", DefaultPort: 443, Remark: "前三次写入使用 900-1400 字节填充，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSLargePaddingScheme(), "tcp_fast_open": true})},
+	{Name: "AnyTLS 轻量填充", Protocol: "anytls", Kind: "anytls-large-padding", DefaultPort: 443, Remark: "低开销填充，适合高延迟、移动网络和短连接，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSLightPaddingScheme(), "tcp_fast_open": true})},
 	{Name: "SS 128", Protocol: "shadowsocks", Kind: "ss-aes-128-gcm", DefaultPort: 8388, Remark: "AES-128-GCM，单用户", ConfigJSON: `{"method":"aes-128-gcm","tcp_fast_open":true}`},
 	{Name: "SS 256", Protocol: "shadowsocks", Kind: "ss-aes-256-gcm", DefaultPort: 8388, Remark: "AES-256-GCM，单用户", ConfigJSON: `{"method":"aes-256-gcm","tcp_fast_open":true}`},
 	{Name: "SS 2022-128", Protocol: "shadowsocks", Kind: "ss-2022-128", DefaultPort: 8388, Remark: "AES-128-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","tcp_fast_open":true}`},
@@ -128,6 +129,46 @@ func (s *Store) migrateAnyTLSPaddingPresets(ctx context.Context) error {
 			item.remark = seed.Remark
 		}
 		if _, err := s.db.ExecContext(ctx, `update node_presets set name=?,remark=?,config_json=?,updated_at=? where id=?`, item.name, item.remark, seed.ConfigJSON, now(), item.id); err != nil {
+			return err
+		}
+	}
+	var lightSeed *nodePresetSeed
+	for index := range builtinNodePresets {
+		if builtinNodePresets[index].Kind == "anytls-large-padding" {
+			lightSeed = &builtinNodePresets[index]
+			break
+		}
+	}
+	if lightSeed == nil {
+		return errors.New("AnyTLS light builtin preset seed missing")
+	}
+	rows, err = s.db.QueryContext(ctx, `select id,name,remark,config_json from node_presets where builtin=1 and kind='anytls-large-padding'`)
+	if err != nil {
+		return err
+	}
+	legacyRows = legacyRows[:0]
+	for rows.Next() {
+		var item legacyPreset
+		if err := rows.Scan(&item.id, &item.name, &item.remark, &item.config); err != nil {
+			rows.Close()
+			return err
+		}
+		legacyRows = append(legacyRows, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range legacyRows {
+		if !sameJSONDocument(item.config, legacyAnyTLSLargePresetConfig) {
+			continue
+		}
+		if item.name == "AnyTLS 大包填充" {
+			item.name = lightSeed.Name
+		}
+		if item.remark == "前三次写入使用 900-1400 字节填充，需要证书" {
+			item.remark = lightSeed.Remark
+		}
+		if _, err := s.db.ExecContext(ctx, `update node_presets set name=?,remark=?,config_json=?,updated_at=? where id=?`, item.name, item.remark, lightSeed.ConfigJSON, now(), item.id); err != nil {
 			return err
 		}
 	}

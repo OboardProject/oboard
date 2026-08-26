@@ -307,6 +307,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agents/update-all", s.auth(s.agentsUpdateAll, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/inbounds", s.auth(s.inbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbounds/", s.auth(s.inbounds, model.RoleOperator))
+	mux.HandleFunc("/api/v1/anytls-padding-presets", s.auth(s.anyTLSPaddingPresets, model.RoleOperator))
 	mux.HandleFunc("/api/v1/user-groups", s.auth(s.userGroups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-groups/", s.auth(s.userGroups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/user-group-members", s.auth(s.userGroupMembers, model.RoleAdmin))
@@ -1818,6 +1819,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["server_dns_policies"] = dnsPolicies
 		out["snell_profiles"] = snellProfiles
 		out["node_presets"] = nodePresets
+		out["anytls_padding_presets"] = core.AnyTLSPaddingPresets()
 		out["inbound_probes"] = inboundProbes
 		out["port_forward_probes"] = forwardProbes
 		if roleAllows(role, model.RoleAdmin) {
@@ -1883,6 +1885,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out["node_presets"] = nodePresets
+		out["anytls_padding_presets"] = core.AnyTLSPaddingPresets()
 		probes, err := s.store.ListInboundProbeResults(ctx, 0, 0, 200)
 		if err != nil {
 			return err
@@ -5485,6 +5488,11 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 }
 
 func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/padding") {
+		path := strings.TrimSuffix(strings.TrimRight(r.URL.Path, "/"), "/padding")
+		s.anyTLSPaddingOperation(w, r, idFromPath(path, "/api/v1/inbounds/"))
+		return
+	}
 	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/probe") {
 		path := strings.TrimSuffix(strings.TrimRight(r.URL.Path, "/"), "/probe")
 		s.inboundProbeNow(w, r, idFromPath(path, "/api/v1/inbounds/"))
@@ -5532,6 +5540,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		v.ConfigJSON = normalized
 		v = normalizeInbound(v)
 		if err := normalizeMieruInboundPorts(&v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.application.PrepareInboundCreate(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -5599,6 +5611,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		v = mergeInboundPatch(*current, v, fields)
 		v.ID = id
+		if _, supplied := fields["anytls_padding"]; supplied {
+			fail(w, errors.New("anytls_padding can only be changed through the explicit padding operation"), 400)
+			return
+		}
 		if v.ConfigJSON == "" {
 			v.ConfigJSON = "{}"
 		}
@@ -5613,6 +5629,18 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		v.ConfigJSON = normalized
 		v = normalizeInbound(v)
+		if current.Protocol == model.ProtocolAnyTLS && v.Protocol == model.ProtocolAnyTLS {
+			v.ConfigJSON, err = core.PreserveAnyTLSPaddingSnapshot(current.ConfigJSON, v.ConfigJSON)
+			if err != nil {
+				fail(w, err, 400)
+				return
+			}
+		} else if current.Protocol != model.ProtocolAnyTLS && v.Protocol == model.ProtocolAnyTLS {
+			if err := s.application.PrepareInboundCreate(r.Context(), &v); err != nil {
+				fail(w, err, 400)
+				return
+			}
+		}
 		if err := normalizeMieruInboundPorts(&v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5716,6 +5744,44 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func (s *Server) anyTLSPaddingPresets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"presets": core.AnyTLSPaddingPresets()})
+}
+
+func (s *Server) anyTLSPaddingOperation(w http.ResponseWriter, r *http.Request, inboundID int64) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	if inboundID <= 0 {
+		fail(w, errors.New("missing id"), http.StatusBadRequest)
+		return
+	}
+	if !roleAllows(currentRole(r), model.RoleAdmin) {
+		fail(w, errors.New("administrator role required"), http.StatusForbidden)
+		return
+	}
+	var operation core.AnyTLSPaddingOperation
+	if !decode(w, r, &operation) {
+		return
+	}
+	inbound, err := s.application.UpdateAnyTLSPadding(r.Context(), subscriptionCustomPathPrincipal(r), inboundID, operation)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+		}
+		fail(w, err, status)
+		return
+	}
+	auditReq(s, r, "anytls_padding."+operation.Operation, "inbound", fmt.Sprint(inboundID))
+	write(w, http.StatusOK, map[string]any{"inbound": inbound, "requires_deployment": true})
 }
 func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbound) error {
 	if !v.Enabled {

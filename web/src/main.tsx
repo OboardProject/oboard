@@ -12724,8 +12724,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       </div>
     </div>
     <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
-    <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} />}</AnimatePresence>
-    <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} />}</AnimatePresence>
+    <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
+    <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} />}</AnimatePresence>
     <AnimatePresence>{trafficForwardingOpen && <TrafficForwardingDialog
       servers={servers}
@@ -14619,7 +14619,109 @@ function certificateCoversSNI(certificate: Certificate, serverName: string) {
   })
 }
 
-function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onCancel, onSubmit }: { mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+type AnyTLSPaddingPresetView = { id: string; version: number; name: string; description: string; recommended?: boolean; padding_scheme: string[] }
+type AnyTLSPaddingMetadataView = { mode: 'preset' | 'tuned' | 'custom'; preset_id?: string; preset_version?: number; generation: number; generated_at?: string; fingerprint?: string }
+
+function anyTLSPaddingPresetViews(data: any): AnyTLSPaddingPresetView[] {
+  const supplied = data.anytls_padding_presets as AnyTLSPaddingPresetView[] | undefined
+  if (supplied?.length) return supplied
+  return [
+    { id: 'balanced_v1', version: 1, name: '均衡型', description: '推荐；兼顾包长变化与额外开销', recommended: true, padding_scheme: [...anyTLSBalancedPaddingScheme] },
+    { id: 'light_v1', version: 1, name: '轻量型', description: '适合高延迟、移动网络和短连接', padding_scheme: [...anyTLSLightPaddingScheme] },
+  ]
+}
+
+function anyTLSPaddingSnapshot(configJSON: string) {
+  const config = parseConfig(configJSON) || {}
+  const metadata = objectConfig(config._oboard_padding) as AnyTLSPaddingMetadataView
+  return { metadata: metadata.mode ? metadata : null, scheme: anyTLSPaddingLines(config.padding_scheme) }
+}
+
+function anyTLSPaddingModeLabel(mode?: string) {
+  if (mode === 'tuned') return '预设微调'
+  if (mode === 'preset') return '标准预设'
+  if (mode === 'custom') return '自定义'
+  return '尚未配置'
+}
+
+function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: { mode: 'create' | 'edit'; draft: any; update: (patch: any) => void; data: any; client: ReturnType<typeof api>; onUpdated: (result: Record<string, any>) => void }) {
+  const dialogs = useDialogs()
+  const presets = anyTLSPaddingPresetViews(data)
+  const selection = draft.anytls_padding || { preset_id: 'balanced_v1', auto_tune: true }
+  const snapshot = anyTLSPaddingSnapshot(draft.config_json || '{}')
+  const currentPreset = presets.find(preset => preset.id === snapshot.metadata?.preset_id)
+  const [replacementPresetID, setReplacementPresetID] = useState(snapshot.metadata?.preset_id || 'balanced_v1')
+  const [replacementAutoTune, setReplacementAutoTune] = useState(snapshot.metadata?.mode !== 'preset')
+  const [customText, setCustomText] = useState(snapshot.scheme.join('\n'))
+  const [busy, setBusy] = useState(false)
+  const isAdmin = data.current_user?.role === 'admin' || data.session?.role === 'admin'
+
+  useEffect(() => {
+    setCustomText(snapshot.scheme.join('\n'))
+  }, [draft.config_json])
+
+  if (mode === 'create') {
+    const selected = presets.find(preset => preset.id === selection.preset_id) || presets[0]
+    return <EntryFormSection icon={<Fingerprint size={16} aria-hidden="true" />} title="Padding 填充" description="为此入口保存独立且稳定的 AnyTLS 填充方案。">
+      <div className="entry-form-grid">
+        <FormField label="Padding 预设" required hint="均衡型适合大多数线路；轻量型更重视低开销。">
+          <Select value={selected?.id || 'balanced_v1'} onChange={event => update({ anytls_padding: { ...selection, preset_id: event.target.value } })}>
+            {presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}{preset.recommended ? '（推荐）' : ''}</option>)}
+          </Select>
+        </FormField>
+        <div className="switch-setting-row">
+          <span className="switch-setting-label">为此入口自动微调<FieldHelp label="为此入口自动微调" hint="只改变长度区间，不改变 stop、包编号或 c 的结构。" /></span>
+          <Switch checked={selection.auto_tune !== false} onChange={checked => update({ anytls_padding: { ...selection, auto_tune: checked } })} ariaLabel="为此入口自动微调" />
+        </div>
+      </div>
+      <div className="access-note compact"><strong>{selected?.name} v{selected?.version}</strong><span>{selected?.description}</span></div>
+      <small className="field-hint">微调只在创建入口时执行一次，生成后会固定保存；修改分支和其他配置不会重新生成。</small>
+    </EntryFormSection>
+  }
+
+  const runOperation = async (payload: Record<string, any>, confirmText: string) => {
+    const confirmed = await dialogs.confirm({ title: confirmText, message: '这会改变入口的 AnyTLS 流量形态并触发配置重新部署。', tone: 'danger', confirmText })
+    if (!confirmed) return
+    setBusy(true)
+    try {
+      const result = await client.request(`/inbounds/${draft.id}/padding`, { method: 'POST', body: JSON.stringify(payload) }) as Record<string, any>
+      onUpdated(result)
+    } catch (error: any) {
+      await dialogs.alert({ title: '更新 Padding 失败', message: localizeErrorMessage(error.message || error) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const generatedAt = snapshot.metadata?.generated_at ? new Date(snapshot.metadata.generated_at).toLocaleString('zh-CN') : '—'
+  return <EntryFormSection icon={<Fingerprint size={16} aria-hidden="true" />} title="Padding 填充" description="方案已经固化到入口，普通编辑不会改变。">
+    {!snapshot.scheme.length && <div className="access-note warning"><strong>尚未配置 OBoard PaddingScheme</strong><span>现有入口保持原状；管理员可明确应用默认预设。</span></div>}
+    <div className="inbound-padding-summary">
+      <div><span>当前模式</span><strong>{anyTLSPaddingModeLabel(snapshot.metadata?.mode)}</strong></div>
+      <div><span>预设</span><strong>{currentPreset ? `${currentPreset.name} v${snapshot.metadata?.preset_version || currentPreset.version}` : '—'}</strong></div>
+      <div><span>微调</span><strong>{snapshot.metadata?.mode === 'tuned' ? '是' : '否'}</strong></div>
+      <div><span>代次</span><strong>{snapshot.metadata?.generation || '—'}</strong></div>
+      <div><span>生成时间</span><strong>{generatedAt}</strong></div>
+      <div><span>指纹</span><strong>{snapshot.metadata?.fingerprint?.slice(0, 16) || '—'}</strong></div>
+    </div>
+    {!!snapshot.scheme.length && <details className="advanced-config inbound-padding-scheme"><summary><FileText size={15} aria-hidden="true" /><span>实际 padding_scheme</span><small>{snapshot.scheme.length} 行</small></summary><pre>{snapshot.scheme.join('\n')}</pre></details>}
+    {isAdmin ? <div className="entry-form-stack">
+      <div className="entry-form-grid">
+        <FormField label="更换预设"><Select value={replacementPresetID} onChange={event => setReplacementPresetID(event.target.value)}>{presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name} v{preset.version}</option>)}</Select></FormField>
+        <div className="switch-setting-row"><span className="switch-setting-label">自动微调新快照</span><Switch checked={replacementAutoTune} onChange={setReplacementAutoTune} ariaLabel="更换预设时自动微调" /></div>
+      </div>
+      <div className="dialog-actions inline-actions">
+        <button type="button" className="ghost" disabled={busy || snapshot.metadata?.mode === 'custom'} onClick={() => void runOperation({ operation: 'regenerate' }, '重新生成')}>重新生成</button>
+        <button type="button" disabled={busy} onClick={() => void runOperation({ operation: 'replace_preset', preset_id: replacementPresetID, auto_tune: replacementAutoTune }, snapshot.scheme.length ? '更换预设' : '应用默认预设')}>{snapshot.scheme.length ? '更换预设' : '应用 OBoard 默认预设'}</button>
+      </div>
+      <details className="entry-form-disclosure">
+        <summary><span className="entry-form-disclosure-copy"><strong>改为自定义</strong></span><ChevronDown size={16} aria-hidden="true" /></summary>
+        <div className="entry-form-disclosure-body"><FormField label="自定义 padding_scheme" required hint="每行一条规则；保存后模式切换为 custom。"><textarea rows={8} value={customText} onChange={event => setCustomText(event.target.value)} spellCheck={false} /></FormField><button type="button" disabled={busy || !customText.trim()} onClick={() => void runOperation({ operation: 'set_custom', padding_scheme: customText.replace(/\r\n/g, '\n').split('\n') }, '保存自定义方案')}>保存自定义方案</button></div>
+      </details>
+    </div> : <small className="field-hint">只有管理员可以重新生成、更换预设或改为自定义方案。</small>}
+  </EntryFormSection>
+}
+
+function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, client, onCancel, onSubmit, onPaddingUpdated }: { mode?: 'create' | 'edit'; draft: any; setDraft: React.Dispatch<React.SetStateAction<any | null>>; data: any; servers: Server[]; client: ReturnType<typeof api>; onCancel: () => void; onSubmit: () => Promise<void>; onPaddingUpdated?: (result: Record<string, any>) => void }) {
   const server = servers.find(s => s.id === Number(draft.server_id)) || servers[0]
   const protocol = draft.protocol as Protocol
   const [presetID, setPresetID] = useState(() => inferInboundPreset(protocol, draft.config_json))
@@ -14676,6 +14778,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
         if (previous.down_mbps != null) next.down_mbps = previous.down_mbps
         nextConfig = JSON.stringify(next, null, 2)
       }
+	  if (mode === 'edit' && old.protocol === 'anytls' && preset.protocol === 'anytls') {
+		const next = parseConfig(nextConfig) || {}
+		if (previous.padding_scheme !== undefined) next.padding_scheme = previous.padding_scheme
+		if (previous._oboard_padding !== undefined) next._oboard_padding = previous._oboard_padding
+		nextConfig = JSON.stringify(next, null, 2)
+	  }
       return {
         ...old,
         protocol: preset.protocol,
@@ -14686,6 +14794,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
         certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip)) : '',
         certificate_id: presetRequiresCertificate(preset.id) ? old.certificate_id : undefined,
+		anytls_padding: preset.protocol === 'anytls' && mode === 'create' ? (old.anytls_padding || { preset_id: 'balanced_v1', auto_tune: true }) : undefined,
       }
     })
   }
@@ -14780,6 +14889,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
               {protocol === 'ssh' && <div className="access-note warning"><strong>SSH 暴露确认</strong><span>使用代理密码认证，仅允许本地/动态转发；不提供 shell、SFTP、远程转发或主机账户。保存时仍需再次确认。</span></div>}
             </div>
           </EntryFormSection>
+
+		  {protocol === 'anytls' && <AnyTLSPaddingSection mode={mode} draft={draft} update={update} data={data} client={client} onUpdated={result => {
+			const inbound = result.inbound as Inbound | undefined
+			if (inbound?.config_json) update({ config_json: inbound.config_json })
+			onPaddingUpdated?.(result)
+		  }} />}
 
           <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="连接地址" description="客户端订阅里看到的入口地址。">
             <div className="entry-form-grid">
@@ -15122,7 +15237,6 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
       <input value={String(objectConfig(config.obfs).password || '')} onChange={e => updateConfig({ obfs: { type: 'salamander', password: e.target.value } })} autoCapitalize="none" spellCheck={false} />
       <button type="button" className="ghost" onClick={() => updateConfig({ obfs: { type: 'salamander', password: randomSalamanderPassword() } })}>重新生成</button>
     </FormField>}
-    {presetID.startsWith('anytls-') && <FormField label="Padding 填充方案" className={presetFieldClass} hint={`每行一条规则：stop=N、序号=min-max；c 用于在数据耗尽时停止后续填充。${presetHintSuffix}`}><textarea rows={6} value={anyTLSPaddingText(config.padding_scheme)} onChange={event => updateConfig({ padding_scheme: event.target.value === '' ? undefined : event.target.value.replace(/\r\n/g, '\n').split('\n') })} spellCheck={false} /></FormField>}
   </div>
   if (presetID.startsWith('ss-')) return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title"><Key size={14} aria-hidden="true" />SS 设置</div>
@@ -15209,9 +15323,11 @@ function objectConfig(value: any): Record<string, any> {
 
 function controlledInboundPayload(draft: any) {
   const __graphPosition = draft.__graphPosition
+  const editing = Boolean(draft.__edit)
   const rotateRealityKey = Boolean(draft.__rotate_reality_key)
   const body: Record<string, any> = { ...draft }
   for (const field of ['__edit', '__graphPosition', '__port_manual', '__custom_sni', '__rotate_reality_key', 'kind', 'reality', 'rotate_reality_key']) delete body[field]
+  if (editing) delete body.anytls_padding
   const kind = inferInboundPreset(body.protocol as Protocol, body.config_json || '{}')
   body.kind = kind
   if (kind !== 'vless-reality') return { __graphPosition, body }
@@ -20283,21 +20399,23 @@ type InboundPreset = { id: string; protocol: Protocol; label: string; descriptio
 
 const anyTLSBalancedPaddingScheme = [
   'stop=8',
-  '0=64-128',
-  '1=200-450',
-  '2=450-650,c,700-1100,c,700-1100',
-  '3=32-96,600-900',
-  '4=450-850',
-  '5=500-900',
-  '6=550-950',
-  '7=600-1000',
+  '0=32-160',
+  '1=180-480',
+  '2=260-520,c,560-960,c,760-1280',
+  '3=24-96,c,420-900',
+  '4=360-980',
+  '5=280-860',
+  '6=420-1120',
+  '7=300-940',
 ] as const
 
-const anyTLSLargePaddingScheme = [
-  'stop=3',
-  '0=900-1400',
-  '1=900-1400',
-  '2=900-1400',
+const anyTLSLightPaddingScheme = [
+  'stop=5',
+  '0=16-80',
+  '1=120-320',
+  '2=320-620,c,580-980',
+  '3=180-520',
+  '4=220-620',
 ] as const
 
 const inboundPresets: InboundPreset[] = [
@@ -20307,8 +20425,7 @@ const inboundPresets: InboundPreset[] = [
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443 },
   { id: 'hy2-tls', protocol: 'hy2', label: 'HY2 标准', description: 'HY2 标准模式，需要证书', defaultPort: 443 },
   { id: 'hy2-salamander', protocol: 'hy2', label: 'HY2 Salamander', description: 'HY2 Salamander 混淆，需要证书', defaultPort: 443 },
-  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化', defaultPort: 443 },
-  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充', defaultPort: 443 },
+  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: 'TLS 入口；Padding 在下方单独选择并由 Controller 固化', defaultPort: 443 },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
@@ -20423,8 +20540,7 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
     return String(obfs.type || '').toLowerCase() === 'salamander' ? 'hy2-salamander' : 'hy2-tls'
   }
   if (protocol === 'anytls') {
-    const padding = anyTLSPaddingLines(cfg.padding_scheme)
-    return padding.length === anyTLSLargePaddingScheme.length && padding.every((line, index) => line === anyTLSLargePaddingScheme[index]) ? 'anytls-large-padding' : 'anytls-basic'
+    return 'anytls-basic'
   }
   if (protocol === 'mieru') return 'mieru-basic'
   if (protocol === 'snell') {
@@ -20534,9 +20650,8 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
     cfg.down_mbps = 500
     if (preset.id === 'hy2-salamander') ensureHY2SalamanderObfs(cfg)
   }
-  if (preset.id === 'anytls-basic' || preset.id === 'anytls-large-padding') {
+  if (preset.id === 'anytls-basic') {
     cfg.tls = { enabled: true }
-    cfg.padding_scheme = [...(preset.id === 'anytls-large-padding' ? anyTLSLargePaddingScheme : anyTLSBalancedPaddingScheme)]
   }
   if (preset.id === 'mieru-basic') {
     cfg.transport = 'TCP'
@@ -20554,6 +20669,7 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
   const stored = matchingNodePreset(preset.id, presets)
   if (stored) {
     const merged = mergeInboundTemplate(parseNodePresetConfig(stored.config_json), cfg)
+	if (preset.protocol === 'anytls') delete merged.padding_scheme
     merged.node_preset_id = stored.id
     return JSON.stringify(merged, null, 2)
   }

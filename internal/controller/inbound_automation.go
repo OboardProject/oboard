@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -22,6 +23,14 @@ type inboundUpdateOperation struct {
 	Changes   json.RawMessage `json:"changes"`
 }
 
+type inboundPaddingUpdateOperation struct {
+	InboundID     int64    `json:"inbound_id"`
+	Operation     string   `json:"operation"`
+	PresetID      string   `json:"preset_id,omitempty"`
+	AutoTune      *bool    `json:"auto_tune,omitempty"`
+	PaddingScheme []string `json:"padding_scheme,omitempty"`
+}
+
 var inboundAutomationFields = map[string]bool{
 	"server_id": true, "name": true, "protocol": true, "listen_ip": true, "port": true, "advertise_port": true,
 	"entry_ip_mode": true, "external_ip": true, "dns_sync_enabled": true, "dns_credential_id": true,
@@ -29,9 +38,41 @@ var inboundAutomationFields = map[string]bool{
 	"ddns_interval_seconds": true, "tls": true, "certificate_mode": true, "certificate_id": true,
 	"certificate_domain": true, "config_json": true, "kind": true, "reality": true,
 	"rotate_reality_key": true, "enabled": true,
+	"anytls_padding": true,
 }
 
 func (s *Server) registerInboundAutomationOperations() {
+	s.automation.RegisterValidator("inbounds.padding.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, inbound, err := s.decodeInboundPaddingUpdateOperation(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		updated, err := core.ApplyAnyTLSPaddingOperation(inbound.ConfigJSON, request.coreOperation(), nil, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		metadata, _, _ := core.AnyTLSPaddingMetadataFromJSON(updated)
+		return map[string]any{"inbound_id": inbound.ID, "anytls_padding": metadata, "requires_deployment": true}, nil
+	})
+	s.automation.RegisterRevisionResolver("inbounds.padding.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		_, inbound, err := s.decodeInboundPaddingUpdateOperation(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return s.inboundAutomationRevisions(ctx, principal, inbound.ID, inbound.ServerID)
+	})
+	s.automation.Register("inbounds.padding.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		request, _, err := s.decodeInboundPaddingUpdateOperation(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		inbound, err := s.application.UpdateAnyTLSPadding(ctx, principal, request.InboundID, request.coreOperation())
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"inbound": automationInboundView(*inbound), "requires_deployment": true}, nil
+	})
+
 	s.automation.RegisterValidator("inbounds.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		inbound, pathCount, err := s.inboundDeleteAutomationCandidate(ctx, principal, input)
 		if err != nil {
@@ -96,6 +137,9 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
+		if err := s.application.PrepareInboundCreate(ctx, &inbound); err != nil {
+			return nil, err
+		}
 		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
@@ -155,6 +199,34 @@ func (s *Server) registerInboundAutomationOperations() {
 		}
 		return map[string]any{"inbound": automationInboundView(inbound), "requires_deployment": true}, nil
 	})
+}
+
+func (request inboundPaddingUpdateOperation) coreOperation() core.AnyTLSPaddingOperation {
+	return core.AnyTLSPaddingOperation{Operation: request.Operation, PresetID: request.PresetID, AutoTune: request.AutoTune, Scheme: request.PaddingScheme}
+}
+
+func (s *Server) decodeInboundPaddingUpdateOperation(ctx context.Context, principal application.Principal, input json.RawMessage) (inboundPaddingUpdateOperation, *model.Inbound, error) {
+	var request inboundPaddingUpdateOperation
+	if err := strictAutomationInput(input, &request); err != nil {
+		return request, nil, err
+	}
+	if principal.Role != model.RoleAdmin {
+		return request, nil, errors.New("administrator role required")
+	}
+	if request.InboundID <= 0 {
+		return request, nil, errors.New("inbound_id must be a positive integer")
+	}
+	inbound, err := s.store.GetInbound(ctx, request.InboundID)
+	if err != nil {
+		return request, nil, err
+	}
+	if !principal.AllowsInt64("server_ids", inbound.ServerID) {
+		return request, nil, errors.New("inbound is outside the authorized server boundary")
+	}
+	if inbound.Protocol != model.ProtocolAnyTLS {
+		return request, nil, errors.New("AnyTLS padding operations require an AnyTLS inbound")
+	}
+	return request, inbound, nil
 }
 
 func (s *Server) inboundDeleteAutomationCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (model.Inbound, int, error) {
@@ -239,6 +311,9 @@ func (s *Server) decodeInboundUpdateOperation(ctx context.Context, principal app
 	if len(fields) == 0 {
 		return nil, model.Inbound{}, errors.New("changes must contain at least one inbound field")
 	}
+	if _, supplied := fields["anytls_padding"]; supplied {
+		return nil, model.Inbound{}, errors.New("anytls_padding can only be changed through inbounds.padding.update")
+	}
 	var patch model.Inbound
 	if err := json.Unmarshal(request.Changes, &patch); err != nil {
 		return nil, model.Inbound{}, err
@@ -246,6 +321,11 @@ func (s *Server) decodeInboundUpdateOperation(ctx context.Context, principal app
 	inbound := mergeInboundPatch(*current, patch, fields)
 	inbound.ID = current.ID
 	inbound, err = normalizeInboundAutomationCandidate(inbound, current)
+	if err == nil && current.Protocol == model.ProtocolAnyTLS && inbound.Protocol == model.ProtocolAnyTLS {
+		inbound.ConfigJSON, err = core.PreserveAnyTLSPaddingSnapshot(current.ConfigJSON, inbound.ConfigJSON)
+	} else if err == nil && current.Protocol != model.ProtocolAnyTLS && inbound.Protocol == model.ProtocolAnyTLS {
+		err = s.application.PrepareInboundCreate(ctx, &inbound)
+	}
 	return current, inbound, err
 }
 
@@ -340,7 +420,7 @@ func (s *Server) inboundAutomationRevisions(ctx context.Context, principal appli
 }
 
 func automationInboundView(inbound model.Inbound) map[string]any {
-	return map[string]any{
+	view := map[string]any{
 		"id": inbound.ID, "revision": inbound.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		"server_id": inbound.ServerID, "name": inbound.Name, "protocol": inbound.Protocol,
 		"listen_ip": inbound.ListenIP, "port": inbound.Port, "advertise_port": inbound.AdvertisePort, "entry_ip_mode": inbound.EntryIPMode,
@@ -349,4 +429,9 @@ func automationInboundView(inbound model.Inbound) map[string]any {
 		"certificate_domain": inbound.CertificateDomain, "kind": inferredInboundKind(inbound), "enabled": inbound.Enabled,
 		"advanced_configured": strings.TrimSpace(inbound.ConfigJSON) != "" && strings.TrimSpace(inbound.ConfigJSON) != "{}",
 	}
+	if inbound.Protocol == model.ProtocolAnyTLS {
+		metadata, scheme, _ := core.AnyTLSPaddingMetadataFromJSON(inbound.ConfigJSON)
+		view["anytls_padding"] = map[string]any{"metadata": metadata, "padding_scheme": scheme}
+	}
+	return view
 }
