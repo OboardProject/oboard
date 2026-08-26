@@ -15504,6 +15504,15 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   opacity: 1;
 }
 
+.graph-context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 79;
+  background: transparent;
+}
+.graph-context-menu-overlay.is-sheet {
+  background: color-mix(in srgb, var(--text-strong) 28%, transparent);
+}
 .graph-context-menu {
   position: fixed;
   z-index: 80;
@@ -15515,6 +15524,7 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   background: color-mix(in srgb, var(--surface-solid) 98%, transparent);
   box-shadow: 0 18px 42px rgba(15, 23, 42, .18);
   backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .graph-context-menu-title {
   width: 100%;
@@ -15538,6 +15548,7 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   box-shadow: none;
   color: var(--text-strong);
   background: transparent;
+  touch-action: manipulation;
 }
 .graph-context-menu button:hover {
   color: var(--text-strong);
@@ -15549,61 +15560,62 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   color: var(--danger);
   background: var(--danger-soft);
 }
-.danger-text { color: var(--danger); }
-
-.graph-selection-toolbar {
-  position: absolute;
-  left: 50%;
-  bottom: 16px;
-  z-index: 35;
-  max-width: calc(100% - 150px);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface-solid) 97%, transparent);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, .16);
-  backdrop-filter: blur(14px);
-  transform: translateX(-50%);
+.graph-context-menu-handle {
+  display: none;
+}
+.graph-context-menu-cancel {
+  margin-top: 4px;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0 0 10px 10px;
+  justify-content: center !important;
+  color: var(--muted) !important;
 }
 
-.graph-selection-toolbar > strong {
+.graph-context-menu.is-sheet {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
   min-width: 0;
-  max-width: 180px;
-  padding: 0 6px;
-  overflow: hidden;
-  color: var(--text-strong);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-height: min(72vh, 560px);
+  padding: 8px 10px max(12px, env(safe-area-inset-bottom));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: 18px 18px 0 0;
+  transform-origin: bottom center;
+  animation-name: graph-sheet-in;
+}
+.graph-context-menu.is-sheet .graph-context-menu-handle {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 4px auto 8px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+.graph-context-menu.is-sheet .graph-context-menu-title {
+  padding: 8px 10px 10px;
+  font-size: 13px;
+}
+.graph-context-menu.is-sheet button {
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 14px;
 }
 
-.graph-selection-toolbar > button {
-  min-height: 32px;
-  padding: 6px 9px;
-  font-size: 11px;
-  white-space: nowrap;
+@keyframes graph-sheet-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.graph-selection-toolbar > .icon-button {
-  width: 32px;
-  min-width: 32px;
-  padding: 0;
+@media (pointer: coarse) {
+  .graph-context-menu:not(.is-sheet) button { min-height: 40px; }
 }
 
-@media (max-width: 720px) {
-  .graph-selection-toolbar {
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
-    max-width: none;
-    transform: none;
-  }
-
-  .graph-selection-toolbar > strong { flex: 1 1 auto; }
-  .graph-selection-toolbar > button { min-height: 38px; }
+.flow .react-flow__node,
+.flow .react-flow__edge,
+.flow .proxy-edge-label {
+  -webkit-touch-callout: none;
 }
 
 .flow .react-flow__node.server-graph-node .connect-source-bottom {
@@ -15724,12 +15736,15 @@ button[aria-busy="true"] {
   }
 }
 .action-menu-popover,
-.graph-context-menu,
+.graph-context-menu:not(.is-sheet),
 .dropdown-menu-content {
   animation: popover-in var(--duration-appica) var(--ease-appica-spring) forwards;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   transform-origin: top right;
+}
+.graph-context-menu.is-sheet {
+  animation: graph-sheet-in var(--duration-appica) var(--ease-appica-spring) forwards;
 }
 
 /* 5. React Flow Graph Node Transitions (on inner wrapper to avoid coordinate jump) */
@@ -20135,13 +20150,6 @@ button.ui-btn-ghost:hover {
     height: 44px;
     min-height: 44px;
   }
-  .graph-selection-toolbar > .icon-button {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
-  }
-
   .age-key-status { min-height: 40px; padding: 8px 10px; }
   .sub-user-actions button { min-height: 40px; }
   .sub-chip { min-height: 40px; padding-block: 6px; }

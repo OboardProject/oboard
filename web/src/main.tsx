@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import {
@@ -10526,7 +10526,44 @@ type TunnelDraft = { name: string; source_server_id: number; target_server_id: n
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
-type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' }
+type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge'; sheet: boolean }
+
+function graphMenuShouldUseSheet() {
+  return window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 720
+}
+
+function isGraphHandleTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('.react-flow__handle'))
+}
+
+function graphPointerIsCoarse(event: { pointerType?: string; nativeEvent?: Event }) {
+  const pointerType = event.pointerType || (event.nativeEvent as PointerEvent | undefined)?.pointerType
+  if (pointerType === 'touch' || pointerType === 'pen') return true
+  if (pointerType === 'mouse') return false
+  return window.matchMedia('(pointer: coarse)').matches
+}
+
+function graphEntityRemoveLabel(entity: GraphEntity, verbose = false) {
+  const fromCanvas = Boolean(
+    entity.node_id?.startsWith('canvas-server-')
+    || entity.node_id?.startsWith('direct-exit-canvas-')
+    || entity.node_id?.startsWith('warp-canvas-')
+    || entity.node_id?.startsWith('routing-canvas-')
+    || entity.type === 'detached-step',
+  )
+  if (fromCanvas) return verbose ? '从画布移除' : '移出画布'
+  if (entity.type === 'proxy-path-step') return verbose ? '取消此处及后续节点' : '取消后续'
+  return '删除'
+}
+
+function graphEntityPrimaryActionLabel(entity: GraphEntity, step?: ProxyPathStep) {
+  if (entity.type === 'proxy-path-step') return step?.node_type === 'warp' ? '' : '更改传递方式'
+  if (entity.type === 'entry') return '编辑入口'
+  if (entity.type === 'imported') return '节点设置'
+  if (entity.type === 'server') return '链路详情'
+  if (entity.type === 'routing') return '配置分流'
+  return ''
+}
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
 type CanvasServerInstance = { instance_id: string; server_id: number }
 type CanvasWARPInstance = { instance_id: string; root_server_id: number }
@@ -10629,25 +10666,120 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
 	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<GraphContextMenu | null>(null)
-  const [activeGraphEntity, setActiveGraphEntity] = useState<GraphEntity | null>(null)
-  const [activeGraphPathIDs, setActiveGraphPathIDs] = useState<number[]>([])
-  const [activeGraphSource, setActiveGraphSource] = useState<'node' | 'edge'>('node')
+  const graphMenuRef = useRef<HTMLDivElement | null>(null)
+  const suppressGraphClickRef = useRef(false)
+  const nodesRef = useRef<Node[]>([])
+  const edgesRef = useRef<Edge[]>([])
+  const openGraphContextMenuRef = useRef<(clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => void>(() => undefined)
   const [relatedGraphTarget, setRelatedGraphTarget] = useState<RelatedGraphTarget | null>(null)
   const [inboundFocusAnnouncement, setInboundFocusAnnouncement] = useState('')
   const pathFocusTimer = useRef<number | null>(null)
 	const inboundFocusTimer = useRef<number | null>(null)
 	const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
+	  const sheet = graphMenuShouldUseSheet()
 	  const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
-	  const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 248 : entity.type === 'direct' ? 126 : 132
+	  if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
 	  setGraphMenu({
-	    x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
-	    y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
+	    x: sheet ? 0 : Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
+	    y: sheet ? 0 : Math.max(8, Math.min(clientY, window.innerHeight - 280)),
 	    entity,
 	    pathIDs,
 	    source,
+	    sheet,
 	  })
 	}
+  nodesRef.current = nodes
+  edgesRef.current = edges
+  openGraphContextMenuRef.current = openGraphContextMenu
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
+  useLayoutEffect(() => {
+    if (!graphMenu || graphMenu.sheet) return
+    const menu = graphMenuRef.current
+    if (!menu) return
+    const width = menu.offsetWidth
+    const height = menu.offsetHeight
+    const x = Math.max(8, Math.min(graphMenu.x, window.innerWidth - width - 8))
+    const y = Math.max(8, Math.min(graphMenu.y, window.innerHeight - height - 8))
+    if (x !== graphMenu.x || y !== graphMenu.y) setGraphMenu({ ...graphMenu, x, y })
+  }, [graphMenu])
+  useEffect(() => {
+    if (!graphMenu) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setGraphMenu(null) }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.graph-context-menu, .graph-context-menu-overlay')) return
+      setGraphMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [graphMenu])
+  useEffect(() => {
+    const flowEl = workspaceRef.current?.querySelector<HTMLElement>('.proxy-flow')
+    if (!flowEl) return
+    const longPressMs = 460
+    const moveTolerance = 12
+    let timer: number | null = null
+    let startX = 0
+    let startY = 0
+    let opened = false
+    const clearTimer = () => {
+      if (timer != null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.react-flow__handle, .graph-context-menu, .graph-toolbox, a, input, textarea')) return
+      const nodeEl = target?.closest('.react-flow__node')
+      const edgeEl = target?.closest('.react-flow__edge, .proxy-edge-label')
+      if (!nodeEl && !edgeEl) return
+      const nodeID = nodeEl?.getAttribute('data-id') || ''
+      const edgeID = edgeEl?.getAttribute('data-id') || edgeEl?.closest('.react-flow__edge')?.getAttribute('data-id') || edgeEl?.getAttribute('data-graph-edge-id') || ''
+      startX = event.clientX
+      startY = event.clientY
+      opened = false
+      clearTimer()
+      timer = window.setTimeout(() => {
+        timer = null
+        opened = true
+        suppressGraphClickRef.current = true
+        const node = nodeID ? nodesRef.current.find(item => item.id === nodeID) : undefined
+        const edge = edgeID ? edgesRef.current.find(item => item.id === edgeID) : undefined
+        const item = node || edge
+        const entity = item?.data?.entity as GraphEntity | undefined
+        if (!entity) return
+        const pathIDs = ((item?.data?.pathIDs || []) as number[])
+        openGraphContextMenuRef.current(event.clientX, event.clientY, entity, pathIDs, node ? 'node' : 'edge')
+      }, longPressMs)
+    }
+    const onPointerMove = (event: PointerEvent) => {
+      if (timer == null) return
+      if (Math.abs(event.clientX - startX) > moveTolerance || Math.abs(event.clientY - startY) > moveTolerance) clearTimer()
+    }
+    const onPointerEnd = (event: PointerEvent) => {
+      clearTimer()
+      if (!opened) return
+      event.preventDefault()
+      window.setTimeout(() => { suppressGraphClickRef.current = false }, 320)
+    }
+    flowEl.addEventListener('pointerdown', onPointerDown)
+    flowEl.addEventListener('pointermove', onPointerMove)
+    flowEl.addEventListener('pointerup', onPointerEnd)
+    flowEl.addEventListener('pointercancel', onPointerEnd)
+    return () => {
+      clearTimer()
+      flowEl.removeEventListener('pointerdown', onPointerDown)
+      flowEl.removeEventListener('pointermove', onPointerMove)
+      flowEl.removeEventListener('pointerup', onPointerEnd)
+      flowEl.removeEventListener('pointercancel', onPointerEnd)
+    }
+  }, [initialViewportReady])
   useEffect(() => {
     const inboundID = Number(focusRequest?.inboundID || 0)
     if (!inboundID || !flowInstance) return
@@ -10660,12 +10792,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const locate = (attempt = 0) => {
       const node = flowInstance.getNode(`entry-${inboundID}`)
       if (node) {
-        const entity = node.data?.entity as GraphEntity | undefined
-        const pathIDs = (node.data?.pathIDs || []) as number[]
         setNodes(current => current.map(item => ({ ...item, selected: item.id === node.id })))
-        setActiveGraphEntity(entity || { type: 'entry', id: inbound.id, label: inbound.name || `入口 ${inbound.id}` })
-        setActiveGraphPathIDs(pathIDs)
-        setActiveGraphSource('node')
         setFocusedPathID(0)
         setHoveredGraphFocus({ kind: 'direct-entry', entryID: inbound.id, serverID: inbound.server_id })
         flowInstance.fitView({ nodes: [node], padding: 0.7, minZoom: 0.55, maxZoom: 1.05, duration: 320 })
@@ -12323,6 +12450,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     runTool(rawAction, position ? snapGraphPosition({ x: position.x - 110, y: position.y - 44 }) : undefined)
   }
   const onNodeDoubleClick = (_: React.MouseEvent, node: Node) => {
+	  setGraphMenu(null)
 	  const entity = node.data?.entity as GraphEntity | undefined
 	  if (entity?.type === 'server') {
       setSelectedServer(entity.id)
@@ -12368,19 +12496,24 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const stopPreviewingGraphPaths = () => {
 	    if (!focusedPathID) setHoveredGraphFocus(undefined)
 	  }
-	  const onNodeClick = (_: React.MouseEvent, _node: Node) => {
-		  setGraphMenu(null)
-	    setActiveGraphEntity(_node.data?.entity as GraphEntity || null)
-	    const pathIDs = graphPathIDs(_node)
-	    setActiveGraphPathIDs(pathIDs)
-	    setActiveGraphSource('node')
+	  const selectGraphItem = (item: Node | Edge) => {
+	    const entity = item.data?.entity as GraphEntity | undefined
+	    const pathIDs = graphPathIDs(item)
 	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
+	    return { entity, pathIDs }
+	  }
+	  const onNodeClick = (event: React.MouseEvent, node: Node) => {
+	    if (suppressGraphClickRef.current || event.detail > 1 || isGraphHandleTarget(event.target)) return
+	    const { entity, pathIDs } = selectGraphItem(node)
+	    if (entity && graphPointerIsCoarse(event)) openGraphContextMenu(event.clientX, event.clientY, entity, pathIDs, 'node')
+	    else setGraphMenu(null)
 	  }
 	  const onNodeContextMenu = (e: React.MouseEvent, node: Node) => {
 	    const entity = node.data?.entity as GraphEntity | undefined
 	    if (!entity) return
     e.preventDefault()
     e.stopPropagation()
+	    selectGraphItem(node)
 	    openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(node), 'node')
   }
   const onEdgeContextMenu = (e: React.MouseEvent, edge: Edge) => {
@@ -12388,6 +12521,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!entity) return
     e.preventDefault()
     e.stopPropagation()
+	    selectGraphItem(edge)
 	    openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(edge), 'edge')
   }
 	const onPaneContextMenu = (e: React.MouseEvent) => {
@@ -12403,23 +12537,20 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }, null)
 	  if (!closest || closest.distance > 36) return
 	  const entity = closest.edge.data?.entity as GraphEntity
+	  selectGraphItem(closest.edge)
 	  openGraphContextMenu(e.clientX, e.clientY, entity, graphPathIDs(closest.edge), 'edge')
 	}
-	  const onEdgeClick = (_: React.MouseEvent, edge: Edge) => {
-	    setGraphMenu(null)
-	    setActiveGraphEntity(edge.data?.entity as GraphEntity || null)
-	    const pathIDs = graphPathIDs(edge)
-	    setActiveGraphPathIDs(pathIDs)
-	    setActiveGraphSource('edge')
-	    if (pathIDs.length === 1) setFocusedPathID(pathIDs[0])
+	  const onEdgeClick = (event: React.MouseEvent, edge: Edge) => {
+	    if (suppressGraphClickRef.current || event.detail > 1) return
+	    const { entity, pathIDs } = selectGraphItem(edge)
+	    if (entity && graphPointerIsCoarse(event)) openGraphContextMenu(event.clientX, event.clientY, entity, pathIDs, 'edge')
+	    else setGraphMenu(null)
 	  }
-	  const closeGraphMenu = () => {
+	  const dismissGraphMenu = () => {
 	    setGraphMenu(null)
-	    setActiveGraphEntity(null)
-	    setActiveGraphPathIDs([])
 	  }
 	  const clearGraphSelection = () => {
-	    closeGraphMenu()
+	    dismissGraphMenu()
 	    setFocusedPathID(0)
 	    setHoveredGraphFocus(undefined)
 	  }
@@ -12442,8 +12573,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (related.rootServerID !== selected?.id) selectEntryServer(related.rootServerID)
 	  setFocusedPathID(related.path.id)
 	  setHoveredGraphFocus(undefined)
-	  setActiveGraphEntity(null)
-	  setActiveGraphPathIDs([])
 	  const fitAttempt = (attempt = 0) => {
 	    if (!flowInstance) return
 	    const pathNodes = flowInstance.getNodes().filter(node => ((node.data?.pathIDs || []) as number[]).includes(related.path.id))
@@ -12472,20 +12601,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  setGraphMenu(null)
 	  if (entity) await disconnectGraphEdge(entity, pathIDs)
 	}
-  const activeGraphStep = activeGraphEntity?.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === activeGraphEntity.id) : undefined
-  const activeGraphActionLabel = activeGraphEntity?.type === 'proxy-path-step'
-    ? activeGraphStep?.node_type === 'warp' ? '' : '传递方式'
-    : activeGraphEntity?.type === 'entry'
-      ? '编辑入口'
-      : activeGraphEntity?.type === 'imported'
-        ? '节点设置'
-	        : activeGraphEntity?.type === 'server'
-	          ? '链路详情'
-	          : activeGraphEntity?.type === 'routing'
-	            ? '配置分流'
-	          : ''
-  const openActiveGraphEntity = async () => {
-    const entity = activeGraphEntity
+  const graphMenuStep = graphMenu?.entity.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id) : undefined
+  const graphMenuPrimaryLabel = graphMenu ? graphEntityPrimaryActionLabel(graphMenu.entity, graphMenuStep) : ''
+  const openGraphMenuEntity = async () => {
+    const entity = graphMenu?.entity
+    setGraphMenu(null)
     if (!entity) return
     if (entity.type === 'proxy-path-step') return editProxyPathTransportForEntity(entity)
     if (entity.type === 'entry') {
@@ -12504,19 +12624,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       setInspectorOpen(true)
       setIsToolbarCollapsed(true)
     }
-	    if (entity.type === 'routing') openRouting({ canvasTargetID: entity.node_id })
+    if (entity.type === 'routing') {
+      if (entity.path_id) openRouting({ pathID: entity.path_id, stageStepID: entity.stage_step_id, canvasTargetID: '' })
+      else openRouting({ canvasTargetID: entity.node_id })
+    }
   }
-  const deleteActiveGraphEntity = async () => {
-    const entity = activeGraphEntity
-    setActiveGraphEntity(null)
-    if (entity) await deleteGraphEntity(entity)
-  }
-	const disconnectActiveGraphEdge = async () => {
-	  const entity = activeGraphEntity
-	  const pathIDs = activeGraphPathIDs
-	  setActiveGraphEntity(null)
-	  if (entity) await disconnectGraphEdge(entity, pathIDs)
-	}
   const entryServerRegions = useMemo(() => {
     return orderServerRegions(servers, regionLabel)
   }, [servers])
@@ -12607,7 +12719,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		      onChange={value => {
 		        setFocusedPathID(Number(value) || 0)
 		        setHoveredGraphFocus(undefined)
-		        setActiveGraphEntity(null)
 		      }}
 		      options={pathFocusOptions}
 		      selectedLabel={pathFocusLabel(focusedPath)}
@@ -12660,7 +12771,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  onEdgeContextMenu={onEdgeContextMenu}
 		  onPaneClick={clearGraphSelection}
 		  onPaneContextMenu={onPaneContextMenu}
-		  onMoveStart={closeGraphMenu}
+		  onMoveStart={dismissGraphMenu}
           onConnect={onConnect}
           connectionLineType={ConnectionLineType.SmoothStep}
           panOnScroll={false}
@@ -12682,27 +12793,32 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
           <Controls position="bottom-right" />
         </ReactFlow>
         <ProxyGraphLegend />
-        {activeGraphEntity && <div className="graph-selection-toolbar" role="toolbar" aria-label="当前选中项操作">
-          <strong title={activeGraphEntity.label}>{activeGraphEntity.label}</strong>
-		  {(activeGraphEntity.type === 'proxy-path-step' || (activeGraphEntity.type === 'direct' && activeGraphEntity.path_id)) && <button type="button" className="ghost" onClick={() => editProxyPathNameForEntity(activeGraphEntity)}><Edit3 size={13} />链路设置</button>}
-		  {activeGraphSource === 'edge' && activeGraphEntity.type === 'proxy-path-step' && <button type="button" className="ghost" onClick={() => void disconnectActiveGraphEdge()}><Unlink size={13} />断开连接</button>}
-		  {activeGraphSource === 'node' && relationTargetForEntity(activeGraphEntity, activeGraphPathIDs) && <button type="button" className="ghost" onClick={() => openRelatedPaths(activeGraphEntity, activeGraphPathIDs)}><Workflow size={13} aria-hidden="true" />相关链路</button>}
-	          {activeGraphActionLabel && <button type="button" className="ghost" onClick={() => void openActiveGraphEntity()}><Edit3 size={13} />{activeGraphActionLabel}</button>}
-			  {activeGraphEntity.type === 'direct' && <button type="button" className="ghost" onClick={() => copyDirectExit(activeGraphEntity)}><Copy size={13} />复制直接出口</button>}
-			  <button type="button" className="ghost danger-text" onClick={() => void deleteActiveGraphEntity()}><Trash2 size={13} />{activeGraphEntity.node_id?.startsWith('canvas-server-') || activeGraphEntity.node_id?.startsWith('direct-exit-canvas-') || activeGraphEntity.node_id?.startsWith('warp-canvas-') || activeGraphEntity.node_id?.startsWith('routing-canvas-') || activeGraphEntity.type === 'detached-step' ? '移出画布' : activeGraphEntity.type === 'proxy-path-step' ? '取消后续' : '删除'}</button>
-		  <button type="button" className="ghost icon-button" onClick={clearGraphSelection} aria-label="取消选择" title="取消选择"><X size={13} /></button>
-        </div>}
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
-
-        {graphMenu && <div className="graph-context-menu" style={{ left: graphMenu.x, top: graphMenu.y }} onContextMenu={e => e.preventDefault()}>
-          <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
-			  {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
-			  {graphMenu.source === 'edge' && graphMenu.entity.type === 'proxy-path-step' && <button onClick={() => void disconnectGraphMenuEdge()}><Unlink size={14} />断开连接</button>}
-			  {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
-			  {graphMenu.entity.type === 'proxy-path-step' && ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id)?.node_type !== 'warp' && <button onClick={editProxyPathTransport}><ArrowLeftRight size={14} />更改传递方式</button>}
-			  {graphMenu.entity.type === 'direct' && <button onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
-			  <button className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphMenu.entity.node_id?.startsWith('canvas-server-') || graphMenu.entity.node_id?.startsWith('direct-exit-canvas-') || graphMenu.entity.node_id?.startsWith('warp-canvas-') || graphMenu.entity.node_id?.startsWith('routing-canvas-') || graphMenu.entity.type === 'detached-step' ? '从画布移除' : graphMenu.entity.type === 'proxy-path-step' ? '取消此处及后续节点' : '删除'}</button>
-        </div>}
+        {graphMenu && createPortal(
+          <>
+            {graphMenu.sheet && <div className="graph-context-menu-overlay is-sheet" onPointerDown={dismissGraphMenu} />}
+            <div
+              ref={graphMenuRef}
+              className={`graph-context-menu${graphMenu.sheet ? ' is-sheet' : ''}`}
+              role="menu"
+              aria-label={`${graphMenu.entity.label} 操作`}
+              style={graphMenu.sheet ? undefined : { left: graphMenu.x, top: graphMenu.y }}
+              onContextMenu={e => e.preventDefault()}
+              onPointerDown={e => e.stopPropagation()}
+            >
+              {graphMenu.sheet && <div className="graph-context-menu-handle" aria-hidden="true" />}
+              <div className="graph-context-menu-title">{graphMenu.entity.label}</div>
+              {(graphMenu.entity.type === 'proxy-path-step' || (graphMenu.entity.type === 'direct' && graphMenu.entity.path_id)) && <button type="button" role="menuitem" onClick={editProxyPathName}><Edit3 size={14} />链路设置</button>}
+              {graphMenu.source === 'edge' && graphMenu.entity.type === 'proxy-path-step' && <button type="button" role="menuitem" onClick={() => void disconnectGraphMenuEdge()}><Unlink size={14} />断开连接</button>}
+              {graphMenu.source === 'node' && relationTargetForEntity(graphMenu.entity, graphMenu.pathIDs) && <button type="button" role="menuitem" onClick={() => openRelatedPaths(graphMenu.entity, graphMenu.pathIDs)}><Workflow size={14} aria-hidden="true" />相关链路</button>}
+              {graphMenuPrimaryLabel && <button type="button" role="menuitem" onClick={() => void openGraphMenuEntity()}>{graphMenu.entity.type === 'proxy-path-step' ? <ArrowLeftRight size={14} /> : <Edit3 size={14} />}{graphMenuPrimaryLabel}</button>}
+              {graphMenu.entity.type === 'direct' && <button type="button" role="menuitem" onClick={copyGraphMenuDirectExit}><Copy size={14} />复制直接出口</button>}
+              <button type="button" role="menuitem" className="danger-text" onClick={deleteGraphMenuEntity}><Trash2 size={14} />{graphEntityRemoveLabel(graphMenu.entity, true)}</button>
+              {graphMenu.sheet && <button type="button" role="menuitem" className="graph-context-menu-cancel" onClick={dismissGraphMenu}>取消</button>}
+            </div>
+          </>,
+          document.body,
+        )}
         </div>
         {inspectorOpen && <aside className="graph-inspector open">
           <button className="ghost inspector-toggle" onClick={() => { setInspectorOpen(false); setRelatedGraphTarget(null) }}><X size={15} aria-hidden="true" />收起详情</button>
@@ -15850,6 +15966,7 @@ function ProxyGraphEdge({
         ? <button
             type="button"
             className={`proxy-edge-label nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
+            data-graph-edge-id={id}
             style={{ transform: `translate(-50%, calc(-100% - 8px)) translate(${labelX}px, ${labelY}px)` }}
             title={data.pathLabelTitle || data.pathLabel}
             onContextMenu={data.onContextMenu}
@@ -15860,6 +15977,7 @@ function ProxyGraphEdge({
           >{data.pathLabel}</button>
         : <span
             className={`proxy-edge-label shared nodrag nopan${data.focusState ? ` path-focus-${data.focusState}` : ''}`}
+            data-graph-edge-id={id}
             style={{ transform: `translate(-50%, calc(-100% - 8px)) translate(${labelX}px, ${labelY}px)` }}
             title={data.pathLabelTitle || data.pathLabel}
             onContextMenu={data.onContextMenu}
