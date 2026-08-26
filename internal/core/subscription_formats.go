@@ -320,6 +320,12 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 		"server_port": proxy.Port,
 	}
 	for _, key := range allowed[proxy.Type] {
+		if key == "tcp_fast_open" {
+			if subscriptionProxyAdvertisesTFO(proxy) {
+				out[key] = true
+			}
+			continue
+		}
 		if value, ok := raw[key]; ok && value != nil {
 			if key == "tls" {
 				value = sanitizeTLSForSubscription(value)
@@ -808,16 +814,33 @@ func clashStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionFormat
 			out["obfs-opts"] = opts
 		}
 	}
-	if proxy.TCPFastOpen && clashFormatSupportsTFO(format) && subscriptionTypeSupportsTFO(proxy.Type) {
+	if clashFormatSupportsTFO(format) && subscriptionProxyAdvertisesTFO(proxy) {
 		out["tfo"] = true
 	}
 	return out, nil
 }
 
-// clashFormatSupportsTFO limits the `tfo` key to the mihomo engine, which
-// documents it as a shared proxy option.
+// clashFormatSupportsTFO limits the `tfo` key to Clash.Meta-family engines,
+// which document it as a shared proxy option. Classic Clash has no equivalent.
 func clashFormatSupportsTFO(format model.SubscriptionFormat) bool {
-	return format == model.SubscriptionFormatMihomo || format == model.SubscriptionFormatClashMeta
+	return format == model.SubscriptionFormatMihomo || format == model.SubscriptionFormatClashMeta || format == model.SubscriptionFormatStash
+}
+
+// subscriptionProxyAdvertisesTFO reports whether a rendered node should carry a
+// client-side TCP Fast Open flag. The inbound listen switch is the source of
+// truth; QUIC proxies, SSH, Mieru UDP, and VLESS QUIC transport never advertise
+// it even if a stored configuration somehow asks for one.
+func subscriptionProxyAdvertisesTFO(proxy subscriptionProxy) bool {
+	if !proxy.TCPFastOpen {
+		return false
+	}
+	if proxy.Type == "mieru" {
+		return strings.EqualFold(proxy.Network, "tcp")
+	}
+	if proxy.Type == "vless" && proxy.Network == "quic" {
+		return false
+	}
+	return subscriptionTypeSupportsTFO(proxy.Type)
 }
 
 // subscriptionTypeSupportsTFO reports whether a rendered proxy type carries its
@@ -951,6 +974,9 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 		}
 		setNonEmpty(out, "obfs", proxy.ObfsType)
 		setNonEmpty(out, "obfs_host", proxy.ObfsHost)
+	}
+	if subscriptionProxyAdvertisesTFO(proxy) {
+		out["tfo"] = true
 	}
 	return map[string]any{typeName: out}
 }
@@ -1190,7 +1216,7 @@ func renderSurgeLine(proxy subscriptionProxy, format model.SubscriptionFormat) (
 	}
 	// `tfo` is a documented Surge proxy parameter; Surfboard has no equivalent,
 	// so it stays out of the Surfboard line.
-	if proxy.TCPFastOpen && subscriptionTypeSupportsTFO(proxy.Type) && (format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac) {
+	if subscriptionProxyAdvertisesTFO(proxy) && (format == model.SubscriptionFormatSurge || format == model.SubscriptionFormatSurgeMac) {
 		parts = append(parts, "tfo=true")
 	}
 	return strings.Join(parts, ","), nil
@@ -1262,6 +1288,13 @@ func renderLoonLine(proxy subscriptionProxy) (string, error) {
 		}
 	default:
 		return "", fmt.Errorf("Loon does not support subscription proxy type %q", proxy.Type)
+	}
+	if subscriptionProxyAdvertisesTFO(proxy) {
+		if proxy.Type == "socks5" {
+			parts = append(parts, "tfo=true")
+		} else {
+			parts = append(parts, "fast-open=true")
+		}
 	}
 	return strings.Join(parts, ","), nil
 }
@@ -1342,6 +1375,9 @@ func renderQXLine(proxy subscriptionProxy) (string, error) {
 		parts = append(parts, "udp-relay=true")
 	default:
 		return "", fmt.Errorf("Quantumult X does not support subscription proxy type %q", proxy.Type)
+	}
+	if subscriptionProxyAdvertisesTFO(proxy) {
+		parts = append(parts, "fast-open=true")
 	}
 	parts = append(parts, "tag="+escapeConf(proxy.Name))
 	return strings.Join(parts, ","), nil
@@ -1451,6 +1487,7 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 			query.Del("insecure")
 			query.Set("allowInsecure", "1")
 		}
+		appendURITFO(query, proxy)
 		return "vless://" + escapeURIComponent(proxy.UUID) + "@" + endpoint + "?" + query.Encode() + "#" + fragment, nil
 	case "vmess":
 		transportType := defaultString(proxy.Network, "tcp")
@@ -1470,6 +1507,7 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 		query := url.Values{}
 		appendURITransport(query, proxy)
 		appendURITLS(query, proxy.TLS)
+		appendURITFO(query, proxy)
 		return "trojan://" + escapeURIComponent(proxy.Password) + "@" + endpoint + querySuffix(query) + "#" + fragment, nil
 	case "tuic":
 		query := url.Values{}
@@ -1495,6 +1533,7 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 		query.Set("encryption", "none")
 		appendURITransport(query, proxy)
 		appendURITLS(query, proxy.TLS)
+		appendURITFO(query, proxy)
 		return "anytls://" + escapeURIComponent(proxy.Password) + "@" + endpoint + querySuffix(query) + "#" + fragment, nil
 	case "ss":
 		var userInfo string
@@ -1507,10 +1546,13 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 		if proxy.UoT {
 			query.Set("uot", "1")
 		}
+		appendURITFO(query, proxy)
 		return "ss://" + userInfo + "@" + endpoint + querySuffix(query) + "#" + fragment, nil
 	case "socks5":
 		credentials := base64.StdEncoding.EncodeToString([]byte(proxy.Username + ":" + proxy.Password))
-		return "socks://" + escapeURIComponent(credentials) + "@" + endpoint + "#" + fragment, nil
+		query := url.Values{}
+		appendURITFO(query, proxy)
+		return "socks://" + escapeURIComponent(credentials) + "@" + endpoint + querySuffix(query) + "#" + fragment, nil
 	case "ssh":
 		shareURL := &url.URL{Scheme: "ssh", User: url.UserPassword(proxy.Username, proxy.Password), Host: endpoint, Fragment: proxy.Name}
 		return shareURL.String(), nil
@@ -1547,7 +1589,7 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 		if proxy.Mode != "" && proxy.Mode != "default" {
 			params = append(params, "mode="+escapeURIComponent(proxy.Mode))
 		}
-		if proxy.TCPFastOpen {
+		if subscriptionProxyAdvertisesTFO(proxy) {
 			params = append(params, "tfo=1")
 		}
 		return "snell://" + encoded + "?" + strings.Join(params, "&") + "#" + fragment, nil
@@ -1595,4 +1637,11 @@ func appendURITLS(query url.Values, tls subscriptionTLS) {
 	if len(tls.ALPN) > 0 {
 		query.Set("alpn", strings.Join(tls.ALPN, ","))
 	}
+}
+
+func appendURITFO(query url.Values, proxy subscriptionProxy) {
+	if !subscriptionProxyAdvertisesTFO(proxy) || proxy.Type == "mieru" {
+		return
+	}
+	query.Set("tfo", "1")
 }

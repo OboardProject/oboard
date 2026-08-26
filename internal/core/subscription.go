@@ -528,7 +528,7 @@ func externalOutboundSubscriptionRaw(external model.ExternalOutbound) (map[strin
 		raw := map[string]any{"type": "socks", "server": external.TargetAddress, "server_port": external.TargetPort}
 		var extra map[string]any
 		_ = json.Unmarshal([]byte(external.ConfigJSON), &extra)
-		for _, key := range []string{"version", "username", "password", "network", "udp_over_tcp"} {
+		for _, key := range []string{"version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open"} {
 			if extra != nil && extra[key] != nil {
 				raw[key] = extra[key]
 			}

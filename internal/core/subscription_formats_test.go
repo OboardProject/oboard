@@ -88,9 +88,9 @@ func sshSubscriptionFixtureNode() SubscriptionNode {
 }
 
 // TestTCPFastOpenSubscriptionMapping pins the per-client mapping of the listen
-// side tcp_fast_open option: sing-box keeps the raw dial field, the mihomo
-// engine uses `tfo`, Surge uses `tfo=true`, formats without an equivalent
-// parameter drop it, and QUIC-only proxies never carry it at all.
+// side tcp_fast_open option: formats that have a documented client field emit
+// it, formats without an equivalent drop it, and QUIC-only proxies never carry
+// it at all.
 func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 	nodes := []SubscriptionNode{
 		{Name: "VLESS TFO", Group: "自动选择", Raw: map[string]any{
@@ -102,6 +102,10 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 			"type": "shadowsocks", "tag": "SS TFO", "server": "ss.example.com", "server_port": 8388,
 			"method": "chacha20-ietf-poly1305", "password": "ss-pass", "tcp_fast_open": true,
 		}},
+		{Name: "SOCKS TFO", Group: "备用", Raw: map[string]any{
+			"type": "socks", "tag": "SOCKS TFO", "server": "socks.example.com", "server_port": 1080,
+			"username": "alice", "password": "socks-pass", "tcp_fast_open": true,
+		}},
 	}
 	for _, test := range []struct {
 		format model.SubscriptionFormat
@@ -109,7 +113,13 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 	}{
 		{format: model.SubscriptionFormatSingBox, want: `"tcp_fast_open": true`},
 		{format: model.SubscriptionFormatMihomo, want: "tfo: true"},
+		{format: model.SubscriptionFormatClashMeta, want: "tfo: true"},
+		{format: model.SubscriptionFormatStash, want: "tfo: true"},
+		{format: model.SubscriptionFormatEgern, want: "tfo: true"},
 		{format: model.SubscriptionFormatSurge, want: "tfo=true"},
+		{format: model.SubscriptionFormatLoon, want: "fast-open=true"},
+		{format: model.SubscriptionFormatQX, want: "fast-open=true"},
+		{format: model.SubscriptionFormatShadowrocket, want: "tfo=1"},
 		{format: model.SubscriptionFormatClash},
 		{format: model.SubscriptionFormatSurfboard},
 	} {
@@ -119,7 +129,7 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.want == "" {
-				if strings.Contains(output, "tfo") {
+				if strings.Contains(output, "tfo") || strings.Contains(output, "fast-open") || strings.Contains(output, "tcp_fast_open") {
 					t.Fatalf("output contains tfo:\n%s", output)
 				}
 				return
@@ -129,19 +139,88 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 			}
 		})
 	}
+	loon, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatLoon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(loon, "tfo=true") {
+		t.Fatalf("Loon SOCKS line missing tfo=true:\n%s", loon)
+	}
 	hy2 := []SubscriptionNode{{Name: "HY2", Group: "自动选择", Raw: map[string]any{
 		"type": "hysteria2", "tag": "HY2", "server": "hy2.example.com", "server_port": 8443, "password": "hy2-pass",
 		"tcp_fast_open": true, "tls": map[string]any{"enabled": true, "server_name": "hy2.example.com"},
 	}}}
-	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatSurge} {
+	for _, format := range []model.SubscriptionFormat{
+		model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatSurge,
+		model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatLoon,
+		model.SubscriptionFormatShadowrocket,
+	} {
 		output, err := renderSubscriptionTarget(hy2, format)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(output, "tfo") || strings.Contains(output, "tcp_fast_open") {
+		if strings.Contains(output, "tfo") || strings.Contains(output, "tcp_fast_open") || strings.Contains(output, "fast-open") || strings.Contains(output, "fastopen") {
 			t.Fatalf("%s advertised TCP Fast Open for a QUIC proxy:\n%s", format, output)
 		}
 	}
+}
+
+func TestSubscriptionNodesFollowInboundTCPFastOpenSwitch(t *testing.T) {
+	user := model.User{ID: 4, Username: "tfo-user", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "secret"}
+	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.21"}
+	onInbound := model.Inbound{
+		ID: 31, ServerID: server.ID, Name: "ss-tfo-on", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, Enabled: true,
+		ConfigJSON: `{"method":"aes-128-gcm","tcp_fast_open":true}`,
+	}
+	offInbound := model.Inbound{
+		ID: 32, ServerID: server.ID, Name: "ss-tfo-off", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8389, Enabled: true,
+		ConfigJSON: `{"method":"aes-128-gcm"}`,
+	}
+	opts := SubscriptionOptions{EffectiveNodes: map[string]bool{
+		NodeKeyOf(model.AssignableNodeInbound, onInbound.ID):  true,
+		NodeKeyOf(model.AssignableNodeInbound, offInbound.ID): true,
+	}}
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{onInbound, offInbound}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(nodes))
+	}
+	onNode, offNode := nodes[0], nodes[1]
+	if onNode.Raw["tcp_fast_open"] != true {
+		onNode, offNode = nodes[1], nodes[0]
+	}
+	if onNode.Raw["tcp_fast_open"] != true {
+		t.Fatalf("enabled inbound node missing tcp_fast_open: %#v", onNode.Raw)
+	}
+	if _, exists := offNode.Raw["tcp_fast_open"]; exists {
+		t.Fatalf("disabled inbound node still carries tcp_fast_open: %#v", offNode.Raw)
+	}
+	for _, format := range []model.SubscriptionFormat{
+		model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash,
+		model.SubscriptionFormatEgern, model.SubscriptionFormatSurge, model.SubscriptionFormatLoon,
+		model.SubscriptionFormatQX, model.SubscriptionFormatShadowrocket,
+	} {
+		onOutput, err := renderSubscriptionTarget([]SubscriptionNode{onNode}, format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		offOutput, err := renderSubscriptionTarget([]SubscriptionNode{offNode}, format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !subscriptionOutputHasTFO(onOutput) {
+			t.Fatalf("%s did not advertise TFO for an enabled inbound:\n%s", format, onOutput)
+		}
+		if subscriptionOutputHasTFO(offOutput) {
+			t.Fatalf("%s advertised TFO for a disabled inbound:\n%s", format, offOutput)
+		}
+	}
+}
+
+func subscriptionOutputHasTFO(output string) bool {
+	return strings.Contains(output, "tfo") || strings.Contains(output, "tcp_fast_open") || strings.Contains(output, "fast-open")
 }
 
 func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
