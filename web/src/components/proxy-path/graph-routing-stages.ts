@@ -148,7 +148,7 @@ export function routingHostForGraphSource(
 
     const parentStep = path.branch_source_step_id ? stepByID.get(path.branch_source_step_id) : undefined
     const parentPath = parentStep ? pathByID.get(parentStep.path_id) : undefined
-    if (parentPath && parentPath.kind !== 'direct') {
+    if (parentStep && parentPath && parentPath.kind !== 'direct') {
       const directSteps = orderedPathSteps(steps, path.id)
       const parentPrefix = orderedPathSteps(steps, parentPath.id)
         .filter(item => Number(item.position || 0) <= Number(parentStep.position || 0))
