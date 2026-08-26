@@ -541,6 +541,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateAnyTLSPaddingPresets(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateHY2Presets(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateRoutingCacheRevisionTriggers(ctx); err != nil {
 		return err
 	}

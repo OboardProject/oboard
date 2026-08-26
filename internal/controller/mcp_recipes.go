@@ -566,7 +566,7 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 			if _, exists := values["tls"]; !exists {
 				values["tls"] = false
 			}
-		} else if kind == "vless-tls-vision" || kind == "vless-ws" || kind == "hy2-tls" || strings.HasPrefix(kind, "anytls-") {
+		} else if kind == "vless-tls-vision" || kind == "vless-ws" || kind == "hy2-tls" || kind == "hy2-salamander" || strings.HasPrefix(kind, "anytls-") {
 			values["certificate_mode"] = "auto"
 			if _, exists := values["tls"]; !exists {
 				values["tls"] = true
@@ -585,15 +585,16 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 }
 
 // defaultInboundPresetConfig mirrors the panel's default inbound presets
-// (vless-reality, hy2-tls, anytls-basic balanced padding, ss-2022-128,
-// mieru-basic, ssh-restricted). Credentials and Reality keypairs are left empty so the
-// Controller generates them on save, exactly like the panel flow.
+// (vless-reality, hy2-tls / hy2-salamander, anytls-basic balanced padding, ss-2022-128,
+// mieru-basic, ssh-restricted). Credentials, Reality keypairs, and Salamander
+// obfs passwords are left empty so the Controller generates them on save,
+// exactly like the panel flow.
 func defaultInboundPresetConfig(protocol string) string {
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case "vless":
 		return `{"flow":"xtls-rprx-vision","tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443}}}}`
 	case "hysteria2", "hy2":
-		return `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`
+		return `{"tls":{"enabled":true},"up_mbps":1000,"down_mbps":500}`
 	case "anytls":
 		encoded, _ := json.Marshal(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme()})
 		return string(encoded)
@@ -616,6 +617,8 @@ func defaultInboundKindConfig(kind, protocol string) string {
 		return `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}}}`
 	case "vless-tcp":
 		return `{}`
+	case "hy2-salamander":
+		return `{"tls":{"enabled":true},"up_mbps":1000,"down_mbps":500,"obfs":{"type":"salamander"}}`
 	default:
 		return defaultInboundPresetConfig(protocol)
 	}

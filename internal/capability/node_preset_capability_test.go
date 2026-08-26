@@ -24,7 +24,7 @@ func TestNodePresetCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
 		t.Fatal("node_presets.create missing")
 	}
 	raw := string(create.InputSchema)
-	if !jsonStringContains(raw, `"kind"`) || !jsonStringContains(raw, `"vless-reality"`) || !jsonStringContains(raw, `"anytls-large-padding"`) || !jsonStringContains(raw, `"config_json"`) {
+	if !jsonStringContains(raw, `"kind"`) || !jsonStringContains(raw, `"vless-reality"`) || !jsonStringContains(raw, `"hy2-salamander"`) || !jsonStringContains(raw, `"anytls-large-padding"`) || !jsonStringContains(raw, `"config_json"`) {
 		t.Fatalf("node_presets.create schema lacks template fields: %s", raw)
 	}
 	var input map[string]any

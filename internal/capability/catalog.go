@@ -663,7 +663,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	case "deployments.apply":
 		return schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids"), simpleOutput(map[string]any{"deployment": closedObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "server_ids": idArray(0, 100), "status": stringValue})}), "server_ids"
 	case "inbounds.create", "inbounds.update":
-		inboundKinds := []string{"vless-reality", "vless-tls-vision", "vless-ws", "vless-tcp", "hy2-tls", "anytls-basic", "anytls-large-padding", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "snell-v4", "snell-v6", "socks5-auth", "ssh-restricted"}
+		inboundKinds := []string{"vless-reality", "vless-tls-vision", "vless-ws", "vless-tcp", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "snell-v4", "snell-v6", "socks5-auth", "ssh-restricted"}
 		realityInput := closedObject(map[string]any{
 			"handshake_server": map[string]any{"type": "string", "minLength": 1, "maxLength": 253},
 			"handshake_port":   map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
@@ -699,6 +699,9 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		// to reverse-engineer the stored config_json contracts:
 		//   vless Reality: kind plus the non-secret reality object is the public
 		//     input. Controller owns TLS/flow normalization and the keypair.
+		//   hysteria2: kind hy2-tls is standard TLS; hy2-salamander adds
+		//     per-inbound Salamander obfs. Bandwidth is per-inbound
+		//     (default 1000/500) and is not stored in node presets.
 		//   hysteria2/anytls: config_json must include "tls":{"enabled":true}
 		//     and the certificate is bound through certificate_id/mode.
 		//   shadowsocks 2022: method + password (generated when omitted).
@@ -707,7 +710,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//   snell: single-PSK protocol; version 4/6 with optional
 		//     obfs_mode/obfs_host (v4) or mode (v6), reusable via
 		//     config_json.snell_profile_id.
-		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS certificate kinds use certificate fields; config_json remains available only for protocol-specific advanced options"
+		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS certificate kinds use certificate fields; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},

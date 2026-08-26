@@ -6500,10 +6500,20 @@ var inboundPresetMetadataKeys = map[string]bool{
 	"reality_domains": true,
 }
 
+// inboundPresetInboundOwnedKeys stay on the inbound. Node presets must not
+// supply or overwrite them; HY2 bandwidth is per-entry, not a template field.
+var inboundPresetInboundOwnedKeys = map[string]bool{
+	"up_mbps": true, "down_mbps": true,
+}
+
 func mergeInboundPresetConfig(preset, inbound map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range preset {
-		if inboundPresetSecretKeys[key] || inboundPresetMetadataKeys[key] {
+		if inboundPresetSecretKeys[key] || inboundPresetMetadataKeys[key] || inboundPresetInboundOwnedKeys[key] {
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			out[key] = mergeInboundPresetConfig(nested, nil)
 			continue
 		}
 		out[key] = cloneJSONAny(value)
@@ -6780,6 +6790,14 @@ func applyInboundConfigDefaults(protocol model.Protocol, raw string) (string, er
 				return "", err
 			}
 			cfg["password"] = secret
+		}
+	}
+	if protocol == model.ProtocolHY2 {
+		applyHY2BandwidthDefaults(cfg)
+		if hy2ObfsType(cfg) == "salamander" {
+			if err := applyHY2SalamanderObfs(cfg); err != nil {
+				return "", err
+			}
 		}
 	}
 	if protocol == model.ProtocolVLESS {

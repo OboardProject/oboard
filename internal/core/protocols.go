@@ -3345,6 +3345,25 @@ func applyAllowed(dst map[string]any, extra map[string]any, keys ...string) {
 	}
 }
 
+func validateHY2Obfs(extra map[string]any) error {
+	raw, exists := extra["obfs"]
+	if !exists || raw == nil {
+		return nil
+	}
+	obfs, ok := raw.(map[string]any)
+	if !ok {
+		return &ConfigFieldError{Path: "config_json.obfs", Problem: "must be an object"}
+	}
+	typ := strings.ToLower(strings.TrimSpace(stringValue(obfs, "type", "")))
+	if typ != "salamander" {
+		return fmt.Errorf("unsupported hysteria2 obfs type %q (only salamander)", typ)
+	}
+	if strings.TrimSpace(stringValue(obfs, "password", "")) == "" {
+		return errors.New("hysteria2 salamander obfs requires password")
+	}
+	return nil
+}
+
 var quicFieldKeys = []string{
 	"init_stream_receive_window",
 	"max_stream_receive_window",
@@ -3434,7 +3453,11 @@ func (hy2Adapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidatePort(v.Port); err != nil {
 		return err
 	}
-	if err := validateTransportOptions(model.ProtocolHY2, parseExtra(v.ConfigJSON), transportSideInbound); err != nil {
+	extra := parseExtra(v.ConfigJSON)
+	if err := validateTransportOptions(model.ProtocolHY2, extra, transportSideInbound); err != nil {
+		return err
+	}
+	if err := validateHY2Obfs(extra); err != nil {
 		return err
 	}
 	return requireInboundTLS(v.ConfigJSON, "hysteria2")
@@ -3446,7 +3469,11 @@ func (hy2Adapter) ValidateOutbound(v model.Outbound) error {
 	if err := ValidatePort(v.TargetPort); err != nil {
 		return err
 	}
-	return validateTransportOptions(model.ProtocolHY2, parseExtra(v.ConfigJSON), transportSideOutbound)
+	extra := parseExtra(v.ConfigJSON)
+	if err := validateTransportOptions(model.ProtocolHY2, extra, transportSideOutbound); err != nil {
+		return err
+	}
+	return validateHY2Obfs(extra)
 }
 func (a hy2Adapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {

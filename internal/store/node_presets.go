@@ -30,6 +30,9 @@ const (
 	legacyAnyTLSBasicPresetConfig  = `{"tls":{"enabled":true}}`
 	legacyAnyTLSBasicPresetName    = "AnyTLS"
 	legacyAnyTLSBasicPresetRemark  = "AnyTLS 标准配置，需要证书"
+	legacyHY2TLSPresetConfig       = `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`
+	legacyHY2TLSPresetName         = "Hysteria2"
+	legacyHY2TLSPresetRemark       = "HY2 标准配置，需要证书"
 )
 
 var builtinNodePresets = []nodePresetSeed{
@@ -37,7 +40,8 @@ var builtinNodePresets = []nodePresetSeed{
 	{Name: "VLESS TLS Vision", Protocol: "vless", Kind: "vless-tls-vision", DefaultPort: 443, Remark: "TCP + TLS + Vision，需要证书", ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true},"tcp_fast_open":true}`},
 	{Name: "VLESS WebSocket", Protocol: "vless", Kind: "vless-ws", DefaultPort: 443, Remark: "WebSocket + TLS，需要证书", ConfigJSON: `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}},"tcp_fast_open":true}`},
 	{Name: "VLESS TCP", Protocol: "vless", Kind: "vless-tcp", DefaultPort: 443, Remark: "无 TLS，适合内网或测试", ConfigJSON: `{"tcp_fast_open":true}`},
-	{Name: "Hysteria2", Protocol: "hy2", Kind: "hy2-tls", DefaultPort: 443, Remark: "HY2 标准配置，需要证书", ConfigJSON: `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`},
+	{Name: "Hysteria2 标准", Protocol: "hy2", Kind: "hy2-tls", DefaultPort: 443, Remark: "HY2 标准模式，需要证书", ConfigJSON: `{"tls":{"enabled":true}}`},
+	{Name: "Hysteria2 Salamander", Protocol: "hy2", Kind: "hy2-salamander", DefaultPort: 443, Remark: "HY2 Salamander 混淆，需要证书；混淆密码每个入口单独生成", ConfigJSON: `{"tls":{"enabled":true},"obfs":{"type":"salamander"}}`},
 	{Name: "AnyTLS 均衡填充", Protocol: "anytls", Kind: "anytls-basic", DefaultPort: 443, Remark: "OBoard 均衡填充，兼顾额外开销与包长变化，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme(), "tcp_fast_open": true})},
 	{Name: "AnyTLS 大包填充", Protocol: "anytls", Kind: "anytls-large-padding", DefaultPort: 443, Remark: "前三次写入使用 900-1400 字节填充，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSLargePaddingScheme(), "tcp_fast_open": true})},
 	{Name: "SS 128", Protocol: "shadowsocks", Kind: "ss-aes-128-gcm", DefaultPort: 8388, Remark: "AES-128-GCM，单用户", ConfigJSON: `{"method":"aes-128-gcm","tcp_fast_open":true}`},
@@ -130,6 +134,123 @@ func (s *Store) migrateAnyTLSPaddingPresets(ctx context.Context) error {
 	return nil
 }
 
+func (s *Store) migrateHY2Presets(ctx context.Context) error {
+	var seed *nodePresetSeed
+	for index := range builtinNodePresets {
+		if builtinNodePresets[index].Kind == "hy2-tls" {
+			seed = &builtinNodePresets[index]
+			break
+		}
+	}
+	if seed == nil {
+		return errors.New("hy2-tls builtin preset seed missing")
+	}
+	rows, err := s.db.QueryContext(ctx, `select id,name,remark,config_json from node_presets where builtin=1 and kind='hy2-tls' and updated_at=?`, builtinNodePresetSeedTimestamp)
+	if err != nil {
+		return err
+	}
+	type legacyPreset struct {
+		id                   int64
+		name, remark, config string
+	}
+	var legacyRows []legacyPreset
+	for rows.Next() {
+		var item legacyPreset
+		if err := rows.Scan(&item.id, &item.name, &item.remark, &item.config); err != nil {
+			rows.Close()
+			return err
+		}
+		legacyRows = append(legacyRows, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range legacyRows {
+		if !sameJSONDocument(item.config, legacyHY2TLSPresetConfig) {
+			continue
+		}
+		if item.name == legacyHY2TLSPresetName {
+			var conflicts int
+			if err := s.db.QueryRowContext(ctx, `select count(*) from node_presets where id<>? and name=?`, item.id, seed.Name).Scan(&conflicts); err != nil {
+				return err
+			}
+			if conflicts == 0 {
+				item.name = seed.Name
+			}
+		}
+		if item.remark == legacyHY2TLSPresetRemark {
+			item.remark = seed.Remark
+		}
+		if _, err := s.db.ExecContext(ctx, `update node_presets set name=?,remark=?,config_json=?,updated_at=? where id=?`, item.name, item.remark, seed.ConfigJSON, now(), item.id); err != nil {
+			return err
+		}
+	}
+	return s.stripHY2PresetInboundOwnedFields(ctx)
+}
+
+func (s *Store) stripHY2PresetInboundOwnedFields(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `select id,kind,config_json from node_presets where protocol='hy2'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var toUpdate []struct {
+		id         int64
+		configJSON string
+	}
+	for rows.Next() {
+		var id int64
+		var kind, configJSON string
+		if err := rows.Scan(&id, &kind, &configJSON); err != nil {
+			return err
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil || cfg == nil {
+			continue
+		}
+		sanitizeHY2NodePresetConfig(kind, cfg)
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			return err
+		}
+		if string(encoded) == strings.TrimSpace(configJSON) || sameJSONDocument(string(encoded), configJSON) {
+			continue
+		}
+		toUpdate = append(toUpdate, struct {
+			id         int64
+			configJSON string
+		}{id: id, configJSON: string(encoded)})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, row := range toUpdate {
+		if _, err := s.db.ExecContext(ctx, `update node_presets set config_json=?, updated_at=? where id=?`, row.configJSON, now(), row.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sanitizeHY2NodePresetConfig(kind string, cfg map[string]any) {
+	if cfg == nil {
+		return
+	}
+	delete(cfg, "up_mbps")
+	delete(cfg, "down_mbps")
+	if kind == "hy2-tls" {
+		delete(cfg, "obfs")
+		return
+	}
+	if kind != "hy2-salamander" {
+		return
+	}
+	cfg["obfs"] = map[string]any{"type": "salamander"}
+}
+
 func sameJSONDocument(left, right string) bool {
 	var leftValue, rightValue any
 	if json.Unmarshal([]byte(left), &leftValue) != nil || json.Unmarshal([]byte(right), &rightValue) != nil {
@@ -160,7 +281,7 @@ func (s *Store) migratePresetTCPFastOpen(ctx context.Context) error {
 		if err := rows.Scan(&row.id, &row.kind, &row.configJSON); err != nil {
 			return err
 		}
-		if row.kind == "hy2-tls" {
+		if strings.HasPrefix(row.kind, "hy2-") {
 			continue
 		}
 		var cfg map[string]any
@@ -340,6 +461,7 @@ var nodePresetKinds = map[string]string{
 	"vless-ws":             "vless",
 	"vless-tcp":            "vless",
 	"hy2-tls":              "hy2",
+	"hy2-salamander":       "hy2",
 	"anytls-basic":         "anytls",
 	"anytls-large-padding": "anytls",
 	"ss-aes-128-gcm":       "shadowsocks",
@@ -395,6 +517,9 @@ func normalizeNodePresetConfig(kind, raw string) (string, error) {
 		return "", errors.New("config_json must be a JSON object")
 	}
 	merged := mergeJSONObjects(defaultNodePresetConfig(kind), parsed)
+	if strings.HasPrefix(kind, "hy2-") {
+		sanitizeHY2NodePresetConfig(kind, merged)
+	}
 	if strings.HasPrefix(kind, "anytls-") {
 		if err := core.ValidateAnyTLSPaddingScheme(merged["padding_scheme"]); err != nil {
 			return "", err

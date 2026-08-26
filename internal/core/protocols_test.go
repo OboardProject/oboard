@@ -2479,6 +2479,28 @@ func TestHY2LatestFieldsPassThrough(t *testing.T) {
 	}
 }
 
+func TestHY2SalamanderObfsValidation(t *testing.T) {
+	adapter, err := AdapterFor(model.ProtocolHY2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := model.Inbound{ID: 5, Protocol: model.ProtocolHY2, ListenIP: "127.0.0.1", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"},"obfs":{"type":"salamander","password":"obfs-pass"}}`, Enabled: true}
+	block, err := adapter.Inbound(valid, []model.User{{Username: "u", Status: "active", ProxyPassword: "pass"}})
+	if err != nil {
+		t.Fatalf("valid salamander inbound: %v", err)
+	}
+	obfs, _ := block["obfs"].(map[string]any)
+	if obfs["type"] != "salamander" || obfs["password"] != "obfs-pass" {
+		t.Fatalf("salamander obfs = %#v", block["obfs"])
+	}
+	if _, err := adapter.Inbound(model.Inbound{ID: 6, Protocol: model.ProtocolHY2, ListenIP: "127.0.0.1", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"},"obfs":{"type":"salamander"}}`, Enabled: true}, nil); err == nil {
+		t.Fatal("salamander without password must be rejected")
+	}
+	if _, err := adapter.Inbound(model.Inbound{ID: 7, Protocol: model.ProtocolHY2, ListenIP: "127.0.0.1", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"},"obfs":{"type":"gecko","password":"x"}}`, Enabled: true}, nil); err == nil {
+		t.Fatal("unsupported hy2 obfs type must be rejected")
+	}
+}
+
 func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.T) {
 	outboundID := int64(10)
 	externalID := int64(20)

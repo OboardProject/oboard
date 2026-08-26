@@ -14668,12 +14668,20 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, onC
       const nextPort = keepManualPort ? currentPort : nextAvailableInboundPort(data, server, preset.protocol, stored?.default_port || preset.defaultPort, old.id)
       const oldAutoName = autoInboundName(server, old.protocol || protocol, currentPort)
       const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(old.name))
+      const previous = parseConfig(old.config_json) || {}
+      let nextConfig = buildInboundPresetConfig(preset.id, data.node_presets)
+      if (old.protocol === 'hy2' && preset.protocol === 'hy2') {
+        const next = parseConfig(nextConfig) || {}
+        if (previous.up_mbps != null) next.up_mbps = previous.up_mbps
+        if (previous.down_mbps != null) next.down_mbps = previous.down_mbps
+        nextConfig = JSON.stringify(next, null, 2)
+      }
       return {
         ...old,
         protocol: preset.protocol,
         port: nextPort,
         name: shouldRename ? autoInboundName(server, preset.protocol, nextPort) : old.name,
-        config_json: buildInboundPresetConfig(preset.id, data.node_presets),
+        config_json: nextConfig,
         tls: presetRequiresCertificate(preset.id),
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
         certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip)) : '',
@@ -15034,7 +15042,10 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     const preset = nodePresets.find(item => item.id === presetIDValue)
     if (!preset) return
     setRealityCustomForced(false)
-    updateConfig({ ...mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config), node_preset_id: preset.id })
+    const merged = mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config)
+    if (preset.kind === 'hy2-salamander') ensureHY2SalamanderObfs(merged, String(objectConfig(config.obfs).password || ''))
+    if (preset.kind === 'hy2-tls') delete merged.obfs
+    updateConfig({ ...merged, node_preset_id: preset.id })
   }
   const nodePresetPicker = matchingPresets.length > 0 ? <FormField label="套用节点预设" hint="默认配置来自设置中的节点预设；密钥仍由当前入口单独生成。"><Select value={Number(config.node_preset_id || 0) || ''} onChange={event => applyNodePreset(Number(event.target.value))}><option value="">不使用预设</option>{matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}{item.usage_count > 0 ? `（${item.usage_count} 个入口）` : ''}</option>)}</Select></FormField> : null
   if (presetID === 'vless-reality') {
@@ -15099,14 +15110,18 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     <FormField label="WebSocket 路径" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
     <FormField label="Host 头" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
-  if (presetID === 'vless-tls-vision' || presetID === 'hy2-tls' || presetID === 'anytls-basic' || presetID === 'anytls-large-padding') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
+  if (presetID === 'vless-tls-vision' || isHY2Preset(presetID) || presetID === 'anytls-basic' || presetID === 'anytls-large-padding') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title"><Lock size={14} aria-hidden="true" />TLS 设置</div>
     {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
-    {presetID === 'hy2-tls' && <>
-      <FormField label="上传带宽 Mbps" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={Number(config.up_mbps || 100)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
-      <FormField label="下载带宽 Mbps" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={Number(config.down_mbps || 100)} onChange={e => updateConfig({ down_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
+    {isHY2Preset(presetID) && <>
+      <FormField label="上传带宽 Mbps" hint="入口协商带宽上限，不属于节点预设。"><input value={Number(config.up_mbps || 1000)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
+      <FormField label="下载带宽 Mbps" hint="入口协商带宽上限，不属于节点预设。"><input value={Number(config.down_mbps || 500)} onChange={e => updateConfig({ down_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
     </>}
+    {presetID === 'hy2-salamander' && <FormField label="Salamander 密码" required hint="每个入口单独生成；订阅会下发此混淆密码。">
+      <input value={String(objectConfig(config.obfs).password || '')} onChange={e => updateConfig({ obfs: { type: 'salamander', password: e.target.value } })} autoCapitalize="none" spellCheck={false} />
+      <button type="button" className="ghost" onClick={() => updateConfig({ obfs: { type: 'salamander', password: randomSalamanderPassword() } })}>重新生成</button>
+    </FormField>}
     {presetID.startsWith('anytls-') && <FormField label="Padding 填充方案" className={presetFieldClass} hint={`每行一条规则：stop=N、序号=min-max；c 用于在数据耗尽时停止后续填充。${presetHintSuffix}`}><textarea rows={6} value={anyTLSPaddingText(config.padding_scheme)} onChange={event => updateConfig({ padding_scheme: event.target.value === '' ? undefined : event.target.value.replace(/\r\n/g, '\n').split('\n') })} spellCheck={false} /></FormField>}
   </div>
   if (presetID.startsWith('ss-')) return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
@@ -20290,7 +20305,8 @@ const inboundPresets: InboundPreset[] = [
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision', defaultPort: 443 },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS', defaultPort: 443 },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443 },
-  { id: 'hy2-tls', protocol: 'hy2', label: 'HY2', description: 'HY2 标准配置', defaultPort: 443 },
+  { id: 'hy2-tls', protocol: 'hy2', label: 'HY2 标准', description: 'HY2 标准模式，需要证书', defaultPort: 443 },
+  { id: 'hy2-salamander', protocol: 'hy2', label: 'HY2 Salamander', description: 'HY2 Salamander 混淆，需要证书', defaultPort: 443 },
   { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化', defaultPort: 443 },
   { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充', defaultPort: 443 },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388 },
@@ -20377,8 +20393,12 @@ function defaultInboundPreset(protocol: Protocol) {
   return defaults[protocol]
 }
 
+function isHY2Preset(id: string) {
+  return id === 'hy2-tls' || id === 'hy2-salamander'
+}
+
 function presetRequiresCertificate(presetID: string) {
-  return presetID === 'vless-tls-vision' || presetID === 'vless-ws' || presetID === 'hy2-tls' || presetID.startsWith('anytls-')
+  return presetID === 'vless-tls-vision' || presetID === 'vless-ws' || isHY2Preset(presetID) || presetID.startsWith('anytls-')
 }
 
 function inferInboundPreset(protocol: Protocol, configJson: string) {
@@ -20398,7 +20418,10 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
     if (tls.enabled) return 'vless-tls-vision'
     return 'vless-tcp'
   }
-  if (protocol === 'hy2') return 'hy2-tls'
+  if (protocol === 'hy2') {
+    const obfs = objectConfig(cfg.obfs)
+    return String(obfs.type || '').toLowerCase() === 'salamander' ? 'hy2-salamander' : 'hy2-tls'
+  }
   if (protocol === 'anytls') {
     const padding = anyTLSPaddingLines(cfg.padding_scheme)
     return padding.length === anyTLSLargePaddingScheme.length && padding.every((line, index) => line === anyTLSLargePaddingScheme[index]) ? 'anytls-large-padding' : 'anytls-basic'
@@ -20414,6 +20437,7 @@ function inferInboundPreset(protocol: Protocol, configJson: string) {
 
 const inboundTemplateSecretKeys = new Set(['password', 'psk', 'uuid', 'private_key', 'public_key', 'short_id'])
 const inboundTemplateMetadataKeys = new Set(['reality_domains'])
+const inboundTemplateInboundOwnedKeys = new Set(['up_mbps', 'down_mbps'])
 
 function parseNodePresetConfig(raw: NodePreset['config_json'] | string | Record<string, any> | undefined): Record<string, any> {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw
@@ -20433,7 +20457,7 @@ function matchingNodePreset(kind: string, presets: NodePreset[] = []) {
 function mergeInboundTemplate(template: Record<string, any>, inbound: Record<string, any>): Record<string, any> {
   const out: Record<string, any> = {}
   Object.entries(template || {}).forEach(([key, value]) => {
-    if (inboundTemplateSecretKeys.has(key) || inboundTemplateMetadataKeys.has(key)) return
+    if (inboundTemplateSecretKeys.has(key) || inboundTemplateMetadataKeys.has(key) || inboundTemplateInboundOwnedKeys.has(key)) return
     out[key] = value && typeof value === 'object' && !Array.isArray(value) ? mergeInboundTemplate(value, {}) : value
   })
   Object.entries(inbound || {}).forEach(([key, value]) => {
@@ -20449,6 +20473,17 @@ function mergeInboundTemplate(template: Record<string, any>, inbound: Record<str
     if (value !== undefined && value !== null && value !== '') out[key] = value
   })
   return out
+}
+
+function randomSalamanderPassword() {
+  return randomToken(24)
+}
+
+function ensureHY2SalamanderObfs(cfg: Record<string, any>, existingPassword = '') {
+  const current = objectConfig(cfg.obfs)
+  const password = String(existingPassword || current.password || '').trim() || randomSalamanderPassword()
+  cfg.obfs = { type: 'salamander', password }
+  return cfg
 }
 
 function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
@@ -20493,10 +20528,11 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
     cfg.tls = { enabled: true }
     cfg.transport = { type: 'ws', path: '/vless', headers: {} }
   }
-  if (preset.id === 'hy2-tls') {
+  if (preset.id === 'hy2-tls' || preset.id === 'hy2-salamander') {
     cfg.tls = { enabled: true }
-    cfg.up_mbps = 100
-    cfg.down_mbps = 100
+    cfg.up_mbps = 1000
+    cfg.down_mbps = 500
+    if (preset.id === 'hy2-salamander') ensureHY2SalamanderObfs(cfg)
   }
   if (preset.id === 'anytls-basic' || preset.id === 'anytls-large-padding') {
     cfg.tls = { enabled: true }

@@ -70,7 +70,8 @@ export const nodePresetKinds = [
   { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision，需要证书', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true }, tcp_fast_open: true } },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，需要证书', defaultPort: 443, config: { tls: { enabled: true }, transport: { type: 'ws', path: '/vless', headers: {} }, tcp_fast_open: true } },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443, config: { tcp_fast_open: true } },
-  { id: 'hy2-tls', protocol: 'hy2', label: 'Hysteria2', description: 'HY2 标准配置，需要证书', defaultPort: 443, config: { tls: { enabled: true }, up_mbps: 100, down_mbps: 100 } },
+	{ id: 'hy2-tls', protocol: 'hy2', label: 'Hysteria2 标准', description: 'HY2 标准模式，需要证书', defaultPort: 443, config: { tls: { enabled: true } } },
+	{ id: 'hy2-salamander', protocol: 'hy2', label: 'Hysteria2 Salamander', description: 'HY2 Salamander 混淆，需要证书；混淆密码每个入口单独生成', defaultPort: 443, config: { tls: { enabled: true }, obfs: { type: 'salamander' } } },
   { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSBalancedPaddingScheme], tcp_fast_open: true } },
   { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSLargePaddingScheme], tcp_fast_open: true } },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388, config: { method: 'aes-128-gcm', tcp_fast_open: true } },
@@ -135,15 +136,19 @@ function presetSupportsGenericMux(kind: string) {
   return kind.startsWith('vless-') || kind.startsWith('ss-')
 }
 
+function isHY2Kind(kind: string) {
+  return kind === 'hy2-tls' || kind === 'hy2-salamander'
+}
+
 function presetNativeMuxNote(kind: string) {
   if (kind.startsWith('anytls-')) return 'AnyTLS 协议自带 Session / Stream 复用，无需通用 MUX。'
-  if (kind === 'hy2-tls') return 'Hysteria2 走 QUIC 原生多流，数据面是 UDP。'
+  if (isHY2Kind(kind)) return 'Hysteria2 走 QUIC 原生多流，数据面是 UDP。'
   if (kind === 'mieru-basic') return 'Mieru 使用自己的复用级别（上方“多路复用”）。'
   return ''
 }
 
 function presetSupportsTCPFastOpen(kind: string, config: Record<string, any>) {
-  if (kind === 'hy2-tls') return false
+  if (isHY2Kind(kind)) return false
   if (kind === 'mieru-basic') return String(config.transport || 'TCP').toUpperCase() === 'TCP'
   if (kind.startsWith('vless-')) return String(objectConfig(config.transport).type || '').toLowerCase() !== 'quic'
   return true
@@ -274,14 +279,9 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
           <input value={String(headers.Host || '')} onChange={event => setTransport({ ...transport, type: 'ws', headers: { ...headers, Host: event.target.value } })} placeholder="example.com" />
         </SettingsRow>
       </>}
-      {draft.kind === 'hy2-tls' && <>
-        <SettingsRow label="上传带宽 Mbps" description="HY2 协商带宽上限。">
-          <input value={Number(draft.config.up_mbps || 100)} onChange={event => updateConfig({ up_mbps: Number(event.target.value) })} inputMode="numeric" />
-        </SettingsRow>
-        <SettingsRow label="下载带宽 Mbps" description="HY2 协商带宽上限。">
-          <input value={Number(draft.config.down_mbps || 100)} onChange={event => updateConfig({ down_mbps: Number(event.target.value) })} inputMode="numeric" />
-        </SettingsRow>
-      </>}
+      {draft.kind === 'hy2-salamander' && <SettingsRow label="Salamander 混淆" description="混淆密码不保存在预设中，创建入口时为每个入口随机生成。">
+        <span className="muted">每个入口单独生成</span>
+      </SettingsRow>}
       {draft.kind.startsWith('anytls-') && <SettingsRow label="Padding 填充方案" description="每行一条规则：stop=N、序号=min-max；c 用于在数据耗尽时停止后续填充。">
         <textarea rows={6} value={anyTLSPaddingText(draft.config.padding_scheme)} onChange={event => updateConfig({ padding_scheme: event.target.value.replace(/\r\n/g, '\n').split('\n') })} spellCheck={false} />
       </SettingsRow>}

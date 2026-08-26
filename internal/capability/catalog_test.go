@@ -157,7 +157,7 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
 	}
 	raw := string(descriptor.InputSchema)
-	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"examples"`, `"gateway.icloud.com"`} {
+	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"examples"`, `"gateway.icloud.com"`} {
 		if !strings.Contains(raw, fragment) {
 			t.Fatalf("inbounds.create schema lacks %s: %s", fragment, raw)
 		}

@@ -38,13 +38,15 @@ func TestNodePresetsSeededAndProtected(t *testing.T) {
 		}
 		kinds[preset.Kind] = preset
 	}
-	for _, kind := range []string{"vless-reality", "hy2-tls", "anytls-basic", "anytls-large-padding", "ss-2022-128", "mieru-basic", "socks5-auth"} {
+	for _, kind := range []string{"vless-reality", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-2022-128", "mieru-basic", "socks5-auth"} {
 		if _, exists := kinds[kind]; !exists {
 			t.Fatalf("missing builtin kind %s", kind)
 		}
 	}
 	assertNodePresetPadding(t, kinds["anytls-basic"], core.AnyTLSBalancedPaddingScheme())
 	assertNodePresetPadding(t, kinds["anytls-large-padding"], core.AnyTLSLargePaddingScheme())
+	assertHY2PresetShape(t, kinds["hy2-tls"], false)
+	assertHY2PresetShape(t, kinds["hy2-salamander"], true)
 	reopened, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -288,6 +290,78 @@ func TestNormalizeNodePresetRejectsInvalidAnyTLSPadding(t *testing.T) {
 	}
 }
 
+func TestHY2PresetsMigrateFromLegacyBuiltin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`create table node_presets (id integer primary key autoincrement, name text not null unique, protocol text not null, kind text not null, config_json text not null default '{}', default_port integer not null default 443, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,1,1,?,?)`, legacyHY2TLSPresetName, "hy2", "hy2-tls", legacyHY2TLSPresetConfig, 443, legacyHY2TLSPresetRemark, builtinNodePresetSeedTimestamp, builtinNodePresetSeedTimestamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.ListNodePresets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[string][]model.NodePreset{}
+	for _, item := range items {
+		byKind[item.Kind] = append(byKind[item.Kind], item)
+	}
+	if len(byKind["hy2-tls"]) != 1 {
+		t.Fatalf("legacy migration created duplicate hy2-tls presets: %#v", byKind["hy2-tls"])
+	}
+	if len(byKind["hy2-salamander"]) != 1 {
+		t.Fatalf("salamander preset count = %d", len(byKind["hy2-salamander"]))
+	}
+	if byKind["hy2-tls"][0].Name != "Hysteria2 标准" {
+		t.Fatalf("legacy preset name = %q", byKind["hy2-tls"][0].Name)
+	}
+	assertHY2PresetShape(t, byKind["hy2-tls"][0], false)
+	assertHY2PresetShape(t, byKind["hy2-salamander"][0], true)
+	count := len(items)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	again, err := reopened.ListNodePresets(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != count {
+		t.Fatalf("hy2 preset migration is not idempotent: %d -> %d", count, len(again))
+	}
+}
+
+func TestNormalizeNodePresetStripsHY2BandwidthAndSecrets(t *testing.T) {
+	standard := model.NodePreset{Name: "自定义 HY2", Protocol: "hy2", Kind: "hy2-tls", ConfigJSON: `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100,"obfs":{"type":"salamander","password":"preset-secret"}}`}
+	if err := NormalizeNodePreset(&standard); err != nil {
+		t.Fatal(err)
+	}
+	assertHY2PresetShape(t, standard, false)
+
+	salamander := model.NodePreset{Name: "自定义 Salamander", Protocol: "hy2", Kind: "hy2-salamander", ConfigJSON: `{"up_mbps":50,"down_mbps":20,"obfs":{"type":"salamander","password":"preset-secret"}}`}
+	if err := NormalizeNodePreset(&salamander); err != nil {
+		t.Fatal(err)
+	}
+	assertHY2PresetShape(t, salamander, true)
+}
+
 func assertNodePresetPadding(t *testing.T, preset model.NodePreset, want []string) {
 	t.Helper()
 	var config map[string]any
@@ -318,4 +392,31 @@ func firstBuiltinNodePreset(t *testing.T, s *Store) model.NodePreset {
 	}
 	t.Fatal("no builtin preset")
 	return model.NodePreset{}
+}
+
+func assertHY2PresetShape(t *testing.T, preset model.NodePreset, salamander bool) {
+	t.Helper()
+	var config map[string]any
+	if err := json.Unmarshal([]byte(preset.ConfigJSON), &config); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := config["up_mbps"]; exists {
+		t.Fatalf("preset %s must not store up_mbps: %#v", preset.Kind, config)
+	}
+	if _, exists := config["down_mbps"]; exists {
+		t.Fatalf("preset %s must not store down_mbps: %#v", preset.Kind, config)
+	}
+	obfs, _ := config["obfs"].(map[string]any)
+	if !salamander {
+		if obfs != nil {
+			t.Fatalf("preset %s must not store obfs: %#v", preset.Kind, config)
+		}
+		return
+	}
+	if obfs == nil || obfs["type"] != "salamander" {
+		t.Fatalf("preset %s obfs = %#v, want salamander type", preset.Kind, config["obfs"])
+	}
+	if _, exists := obfs["password"]; exists {
+		t.Fatalf("preset %s must not store salamander password: %#v", preset.Kind, obfs)
+	}
 }

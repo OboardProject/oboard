@@ -9,6 +9,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 var inboundKindProtocols = map[string]model.Protocol{
@@ -17,6 +18,7 @@ var inboundKindProtocols = map[string]model.Protocol{
 	"vless-ws":             model.ProtocolVLESS,
 	"vless-tcp":            model.ProtocolVLESS,
 	"hy2-tls":              model.ProtocolHY2,
+	"hy2-salamander":       model.ProtocolHY2,
 	"anytls-basic":         model.ProtocolAnyTLS,
 	"anytls-large-padding": model.ProtocolAnyTLS,
 	"ss-aes-128-gcm":       model.ProtocolSS,
@@ -97,11 +99,14 @@ func applyNonRealityInboundKindDefaults(v *model.Inbound) error {
 		v.CertificateDomain = ""
 	case "hy2-tls":
 		ensureObject(cfg, "tls")["enabled"] = true
-		if cfg["up_mbps"] == nil {
-			cfg["up_mbps"] = 100
-		}
-		if cfg["down_mbps"] == nil {
-			cfg["down_mbps"] = 100
+		applyHY2BandwidthDefaults(cfg)
+		delete(cfg, "obfs")
+		v.TLS = true
+	case "hy2-salamander":
+		ensureObject(cfg, "tls")["enabled"] = true
+		applyHY2BandwidthDefaults(cfg)
+		if err := applyHY2SalamanderObfs(cfg); err != nil {
+			return err
 		}
 		v.TLS = true
 	case "anytls-basic":
@@ -295,6 +300,37 @@ func validControlledRealityShortID(value string) bool {
 	return err == nil
 }
 
+const (
+	defaultHY2UpMbps   = 1000
+	defaultHY2DownMbps = 500
+)
+
+func applyHY2BandwidthDefaults(cfg map[string]any) {
+	if cfg["up_mbps"] == nil {
+		cfg["up_mbps"] = defaultHY2UpMbps
+	}
+	if cfg["down_mbps"] == nil {
+		cfg["down_mbps"] = defaultHY2DownMbps
+	}
+}
+
+func applyHY2SalamanderObfs(cfg map[string]any) error {
+	obfs := ensureObject(cfg, "obfs")
+	obfs["type"] = "salamander"
+	if strings.TrimSpace(stringFromMap(obfs, "password")) == "" {
+		secret, err := security.RandomToken(18)
+		if err != nil {
+			return err
+		}
+		obfs["password"] = secret
+	}
+	return nil
+}
+
+func hy2ObfsType(cfg map[string]any) string {
+	return strings.ToLower(strings.TrimSpace(stringFromMap(objectMap(cfg["obfs"]), "type")))
+}
+
 func encodeInboundJSON(value any) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
@@ -319,6 +355,9 @@ func inferredInboundKind(v model.Inbound) string {
 	}
 	switch v.Protocol {
 	case model.ProtocolHY2:
+		if hy2ObfsType(cfg) == "salamander" {
+			return "hy2-salamander"
+		}
 		return "hy2-tls"
 	case model.ProtocolAnyTLS:
 		actual, _ := json.Marshal(cfg["padding_scheme"])
