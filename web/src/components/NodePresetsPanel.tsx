@@ -66,19 +66,19 @@ const anyTLSBalancedPaddingScheme = ['stop=8', '0=64-128', '1=200-450', '2=450-6
 const anyTLSLargePaddingScheme = ['stop=3', '0=900-1400', '1=900-1400', '2=900-1400'] as const
 
 export const nodePresetKinds = [
-  { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com', defaultPort: 443, config: { flow: 'xtls-rprx-vision', reality_domains: [...builtinRealityDomains], tls: { enabled: true, server_name: 'gateway.icloud.com', reality: { enabled: true, handshake: { server: 'gateway.icloud.com', server_port: 443 } } } } },
-  { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision，需要证书', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true } } },
-  { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，需要证书', defaultPort: 443, config: { tls: { enabled: true }, transport: { type: 'ws', path: '/vless', headers: {} } } },
-  { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443, config: {} },
+  { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com', defaultPort: 443, config: { flow: 'xtls-rprx-vision', reality_domains: [...builtinRealityDomains], tls: { enabled: true, server_name: 'gateway.icloud.com', reality: { enabled: true, handshake: { server: 'gateway.icloud.com', server_port: 443 } } }, tcp_fast_open: true } },
+  { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision，需要证书', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true }, tcp_fast_open: true } },
+  { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，需要证书', defaultPort: 443, config: { tls: { enabled: true }, transport: { type: 'ws', path: '/vless', headers: {} }, tcp_fast_open: true } },
+  { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443, config: { tcp_fast_open: true } },
   { id: 'hy2-tls', protocol: 'hy2', label: 'Hysteria2', description: 'HY2 标准配置，需要证书', defaultPort: 443, config: { tls: { enabled: true }, up_mbps: 100, down_mbps: 100 } },
-  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSBalancedPaddingScheme] } },
-  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSLargePaddingScheme] } },
-  { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388, config: { method: 'aes-128-gcm' } },
-  { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388, config: { method: 'aes-256-gcm' } },
-  { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388, config: { method: '2022-blake3-aes-128-gcm' } },
-  { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388, config: { method: '2022-blake3-aes-256-gcm' } },
-  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250, config: { transport: 'TCP', multiplexing: 'MULTIPLEXING_DEFAULT', user_hint_is_mandatory: true } },
-  { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080, config: { version: '5' } },
+  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS 均衡填充', description: 'OBoard 均衡填充，兼顾额外开销与包长变化，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSBalancedPaddingScheme], tcp_fast_open: true } },
+  { id: 'anytls-large-padding', protocol: 'anytls', label: 'AnyTLS 大包填充', description: '前三次写入使用 900-1400 字节填充，需要证书', defaultPort: 443, config: { tls: { enabled: true }, padding_scheme: [...anyTLSLargePaddingScheme], tcp_fast_open: true } },
+  { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388, config: { method: 'aes-128-gcm', tcp_fast_open: true } },
+  { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388, config: { method: 'aes-256-gcm', tcp_fast_open: true } },
+  { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388, config: { method: '2022-blake3-aes-128-gcm', tcp_fast_open: true } },
+  { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388, config: { method: '2022-blake3-aes-256-gcm', tcp_fast_open: true } },
+  { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250, config: { transport: 'TCP', multiplexing: 'MULTIPLEXING_DEFAULT', user_hint_is_mandatory: true, tcp_fast_open: true } },
+  { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080, config: { version: '5', tcp_fast_open: true } },
 ] as const
 
 const shadowsocksMethods = [
@@ -319,7 +319,7 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
         <span className="muted">协议原生</span>
       </SettingsRow>}
       {presetSupportsTCPFastOpen(draft.kind, draft.config)
-        ? <SettingsRow label="TCP Fast Open" description="仅当服务器内核开放了 server 位（net.ipv4.tcp_fastopen 含 2）时才会生效，默认关闭。">
+        ? <SettingsRow label="TCP Fast Open" description="仅当服务器内核开放了 server 位（net.ipv4.tcp_fastopen 含 2）时才会生效，支持 TFO 的预设默认开启。">
           <input type="checkbox" checked={Boolean(draft.config.tcp_fast_open)} onChange={event => updateConfig({ tcp_fast_open: event.target.checked || undefined })} />
         </SettingsRow>
         : <SettingsRow label="TCP Fast Open" description={draft.kind === 'mieru-basic' ? 'UDP 传输不使用 TCP 套接字，因此不可用。' : '该协议的数据面不跑在 TCP 上，因此不可用。'}>

@@ -378,7 +378,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, pool text not null default 'public', listen_ip text not null default '', network text not null default 'tcp_udp', generation integer not null default 1, ordinal integer not null default 0, port integer not null, state text not null default 'active', policy_revision integer not null default 0, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id,generation,ordinal))`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
-		`create table if not exists snell_profiles (id integer primary key autoincrement, name text not null unique, version integer not null default 4, psk text not null default '', obfs_mode text not null default 'none', obfs_host text not null default '', mode text not null default 'default', reuse integer not null default 0, tcp_fast_open integer not null default 0, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists snell_profiles (id integer primary key autoincrement, name text not null unique, version integer not null default 4, psk text not null default '', obfs_mode text not null default 'none', obfs_host text not null default '', mode text not null default 'default', reuse integer not null default 0, tcp_fast_open integer not null default 1, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_snell_profiles_name on snell_profiles(name)`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 标准',4,'','none','','default',0,'v4 基础参数，无混淆；psk 为空时取绑定用户密码',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 HTTP 混淆',4,'','http','','default',0,'v4 搭配 HTTP 型混淆，需填写混淆 Host',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
@@ -588,6 +588,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		if err := s.ensureColumn(ctx, column.table, column.name, column.statement); err != nil {
 			return err
 		}
+	}
+	if err := s.migratePresetTCPFastOpen(ctx); err != nil {
+		return err
 	}
 	if err := s.migrateUnifiedLatencyProbeSettings(ctx); err != nil {
 		return err
@@ -2863,6 +2866,9 @@ func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, lim
 		for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
 			out[left], out[right] = out[right], out[left]
 		}
+	}
+	if err := s.overlayPublicLatencyOnMetricSamples(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

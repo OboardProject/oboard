@@ -31,7 +31,7 @@ export type SnellDraft = {
   enabled: boolean
 }
 
-export const emptySnellDraft = (version = 4): SnellDraft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, tcp_fast_open: false, remark: '', enabled: true })
+export const emptySnellDraft = (version = 4): SnellDraft => ({ name: '', version, psk: '', obfs_mode: 'none', obfs_host: '', mode: 'default', reuse: false, tcp_fast_open: true, remark: '', enabled: true })
 
 export function snellDraftFromProfile(profile: SnellProfile): SnellDraft {
   return { name: profile.name, version: profile.version, psk: profile.psk, obfs_mode: profile.obfs_mode, obfs_host: profile.obfs_host, mode: profile.mode, reuse: profile.reuse, tcp_fast_open: Boolean(profile.tcp_fast_open), remark: profile.remark, enabled: profile.enabled }

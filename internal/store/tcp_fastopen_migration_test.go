@@ -66,9 +66,13 @@ func TestTCPFastOpenColumnsMigrateFromPreviousSchema(t *testing.T) {
 	for index := range profiles {
 		if profiles[index].ID == profile.ID {
 			migrated = &profiles[index]
+			if profiles[index].TCPFastOpen {
+				t.Fatalf("migrated custom profile %q must default to TFO off", profiles[index].Name)
+			}
+			continue
 		}
-		if profiles[index].TCPFastOpen {
-			t.Fatalf("migrated profile %q must default to TFO off", profiles[index].Name)
+		if profiles[index].Builtin && !profiles[index].TCPFastOpen {
+			t.Fatalf("migrated builtin profile %q must default to TFO on", profiles[index].Name)
 		}
 	}
 	if migrated == nil || migrated.PSK != "secret-psk-1234" {

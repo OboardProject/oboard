@@ -33,19 +33,19 @@ const (
 )
 
 var builtinNodePresets = []nodePresetSeed{
-	{Name: "VLESS Reality Vision", Protocol: "vless", Kind: "vless-reality", DefaultPort: 443, Remark: "TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com", ConfigJSON: `{"flow":"xtls-rprx-vision","reality_domains":["gateway.icloud.com","cdn.icloud-content.com","www.tesla.com","www.nvidia.com","www.sony.com","www.mozilla.org"],"tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443}}}}`},
-	{Name: "VLESS TLS Vision", Protocol: "vless", Kind: "vless-tls-vision", DefaultPort: 443, Remark: "TCP + TLS + Vision，需要证书", ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`},
-	{Name: "VLESS WebSocket", Protocol: "vless", Kind: "vless-ws", DefaultPort: 443, Remark: "WebSocket + TLS，需要证书", ConfigJSON: `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}}}`},
-	{Name: "VLESS TCP", Protocol: "vless", Kind: "vless-tcp", DefaultPort: 443, Remark: "无 TLS，适合内网或测试", ConfigJSON: `{}`},
+	{Name: "VLESS Reality Vision", Protocol: "vless", Kind: "vless-reality", DefaultPort: 443, Remark: "TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com", ConfigJSON: `{"flow":"xtls-rprx-vision","reality_domains":["gateway.icloud.com","cdn.icloud-content.com","www.tesla.com","www.nvidia.com","www.sony.com","www.mozilla.org"],"tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443}}},"tcp_fast_open":true}`},
+	{Name: "VLESS TLS Vision", Protocol: "vless", Kind: "vless-tls-vision", DefaultPort: 443, Remark: "TCP + TLS + Vision，需要证书", ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true},"tcp_fast_open":true}`},
+	{Name: "VLESS WebSocket", Protocol: "vless", Kind: "vless-ws", DefaultPort: 443, Remark: "WebSocket + TLS，需要证书", ConfigJSON: `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}},"tcp_fast_open":true}`},
+	{Name: "VLESS TCP", Protocol: "vless", Kind: "vless-tcp", DefaultPort: 443, Remark: "无 TLS，适合内网或测试", ConfigJSON: `{"tcp_fast_open":true}`},
 	{Name: "Hysteria2", Protocol: "hy2", Kind: "hy2-tls", DefaultPort: 443, Remark: "HY2 标准配置，需要证书", ConfigJSON: `{"tls":{"enabled":true},"up_mbps":100,"down_mbps":100}`},
-	{Name: "AnyTLS 均衡填充", Protocol: "anytls", Kind: "anytls-basic", DefaultPort: 443, Remark: "OBoard 均衡填充，兼顾额外开销与包长变化，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme()})},
-	{Name: "AnyTLS 大包填充", Protocol: "anytls", Kind: "anytls-large-padding", DefaultPort: 443, Remark: "前三次写入使用 900-1400 字节填充，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSLargePaddingScheme()})},
-	{Name: "SS 128", Protocol: "shadowsocks", Kind: "ss-aes-128-gcm", DefaultPort: 8388, Remark: "AES-128-GCM，单用户", ConfigJSON: `{"method":"aes-128-gcm"}`},
-	{Name: "SS 256", Protocol: "shadowsocks", Kind: "ss-aes-256-gcm", DefaultPort: 8388, Remark: "AES-256-GCM，单用户", ConfigJSON: `{"method":"aes-256-gcm"}`},
-	{Name: "SS 2022-128", Protocol: "shadowsocks", Kind: "ss-2022-128", DefaultPort: 8388, Remark: "AES-128-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-128-gcm"}`},
-	{Name: "SS 2022-256", Protocol: "shadowsocks", Kind: "ss-2022-256", DefaultPort: 8388, Remark: "AES-256-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-256-gcm"}`},
-	{Name: "Mieru", Protocol: "mieru", Kind: "mieru-basic", DefaultPort: 25250, Remark: "Mieru 多用户入口", ConfigJSON: `{"transport":"TCP","multiplexing":"MULTIPLEXING_DEFAULT","user_hint_is_mandatory":true}`},
-	{Name: "SOCKS5", Protocol: "socks", Kind: "socks5-auth", DefaultPort: 1080, Remark: "用户名密码认证，支持 TCP 与 UDP", ConfigJSON: `{"version":"5"}`},
+	{Name: "AnyTLS 均衡填充", Protocol: "anytls", Kind: "anytls-basic", DefaultPort: 443, Remark: "OBoard 均衡填充，兼顾额外开销与包长变化，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSBalancedPaddingScheme(), "tcp_fast_open": true})},
+	{Name: "AnyTLS 大包填充", Protocol: "anytls", Kind: "anytls-large-padding", DefaultPort: 443, Remark: "前三次写入使用 900-1400 字节填充，需要证书", ConfigJSON: mustNodePresetConfig(map[string]any{"tls": map[string]any{"enabled": true}, "padding_scheme": core.AnyTLSLargePaddingScheme(), "tcp_fast_open": true})},
+	{Name: "SS 128", Protocol: "shadowsocks", Kind: "ss-aes-128-gcm", DefaultPort: 8388, Remark: "AES-128-GCM，单用户", ConfigJSON: `{"method":"aes-128-gcm","tcp_fast_open":true}`},
+	{Name: "SS 256", Protocol: "shadowsocks", Kind: "ss-aes-256-gcm", DefaultPort: 8388, Remark: "AES-256-GCM，单用户", ConfigJSON: `{"method":"aes-256-gcm","tcp_fast_open":true}`},
+	{Name: "SS 2022-128", Protocol: "shadowsocks", Kind: "ss-2022-128", DefaultPort: 8388, Remark: "AES-128-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","tcp_fast_open":true}`},
+	{Name: "SS 2022-256", Protocol: "shadowsocks", Kind: "ss-2022-256", DefaultPort: 8388, Remark: "AES-256-GCM，多用户", ConfigJSON: `{"method":"2022-blake3-aes-256-gcm","tcp_fast_open":true}`},
+	{Name: "Mieru", Protocol: "mieru", Kind: "mieru-basic", DefaultPort: 25250, Remark: "Mieru 多用户入口", ConfigJSON: `{"transport":"TCP","multiplexing":"MULTIPLEXING_DEFAULT","user_hint_is_mandatory":true,"tcp_fast_open":true}`},
+	{Name: "SOCKS5", Protocol: "socks", Kind: "socks5-auth", DefaultPort: 1080, Remark: "用户名密码认证，支持 TCP 与 UDP", ConfigJSON: `{"version":"5","tcp_fast_open":true}`},
 }
 
 func mustNodePresetConfig(config map[string]any) string {
@@ -138,6 +138,73 @@ func sameJSONDocument(left, right string) bool {
 	leftJSON, leftErr := json.Marshal(leftValue)
 	rightJSON, rightErr := json.Marshal(rightValue)
 	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
+func (s *Store) migratePresetTCPFastOpen(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `update snell_profiles set tcp_fast_open=1, updated_at=? where builtin=1 and tcp_fast_open=0`, now()); err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `select id, kind, config_json from node_presets where builtin=1`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type presetRow struct {
+		id         int64
+		kind       string
+		configJSON string
+	}
+	var toUpdate []presetRow
+	for rows.Next() {
+		var row presetRow
+		if err := rows.Scan(&row.id, &row.kind, &row.configJSON); err != nil {
+			return err
+		}
+		if row.kind == "hy2-tls" {
+			continue
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(row.configJSON), &cfg); err != nil || cfg == nil {
+			continue
+		}
+		if _, exists := cfg["tcp_fast_open"]; exists {
+			continue
+		}
+		// Mieru UDP does not support TFO; builtin Mieru is TCP so it should receive TFO.
+		if row.kind == "mieru-basic" {
+			transport := "TCP"
+			if value, ok := cfg["transport"].(string); ok && strings.TrimSpace(value) != "" {
+				transport = value
+			}
+			if strings.ToUpper(strings.TrimSpace(transport)) != "TCP" {
+				continue
+			}
+		}
+		if row.kind == "vless-ws" || strings.HasPrefix(row.kind, "vless-") {
+			// VLESS with QUIC transport does not support TFO; no builtin uses QUIC, so enable.
+			if raw, ok := cfg["transport"].(map[string]any); ok {
+				if typ, _ := raw["type"].(string); strings.ToLower(strings.TrimSpace(typ)) == "quic" {
+					continue
+				}
+			}
+		}
+		cfg["tcp_fast_open"] = true
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			return err
+		}
+		row.configJSON = string(encoded)
+		toUpdate = append(toUpdate, row)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, row := range toUpdate {
+		if _, err := s.db.ExecContext(ctx, `update node_presets set config_json=?, updated_at=? where id=?`, row.configJSON, now(), row.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) CreateNodePreset(ctx context.Context, v *model.NodePreset) error {

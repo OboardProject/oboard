@@ -22,9 +22,12 @@ import (
 //     (QUIC/UDP) and WireGuard never expose it, and Mieru exposes it only in
 //     TCP transport mode.
 //
-// Defaults stay off everywhere: TFO depends on the host `net.ipv4.tcp_fastopen`
-// bitmask and on middlebox behaviour, and generic MUX changes client
-// compatibility, so both are opt-in per inbound.
+// Defaults: generic multiplex stays off for compatibility. TCP Fast Open is
+// enabled by default in builtin preset templates that have a TCP data path
+// (VLESS, AnyTLS, Shadowsocks, Mieru TCP, SOCKS5, Snell), but the listen
+// option only takes effect when the host `net.ipv4.tcp_fastopen` server bit
+// is set and can be disabled per inbound. Mieru UDP and Hysteria2 never
+// expose TFO.
 type GenericMuxSupport string
 
 const (

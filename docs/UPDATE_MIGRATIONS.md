@@ -59,6 +59,7 @@
 | `controller-db-20260824-anytls-padding-presets` | Controller | SQLite seed / data backfill | `dev-8e5b40cc790e` | 待发布 | 生效中 | - |
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
+| `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
@@ -80,6 +81,26 @@
 - **失败行为：** 列扩展失败会阻止 Controller 打开数据库；限额校验失败返回 400，不写入持久化状态。
 - **回归测试：** 现有 `server` 相关 Store/Controller 套件覆盖读写；新增限额为 0 时保持不限量展示，限额 >0 时卡片展示 `已用/限额` 与进度条语义正确，MCP 输出通过 `servers.get` schema 校验。
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `traffic_limit_bytes`，且恢复入口不得导入缺少该列的 `server_telemetry`。
+- **移除状态：** 生效中。
+
+### controller-db-20260826-preset-tfo-defaults
+
+- **引入日期：** 2026-08-26
+- **引入提交：** `OboardProject/oboard@4ef9a80efa97`
+- **引入版本：** `dev-4ef9a80efa97`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/core`、Web
+- **类别：** SQLite seed / data backfill
+- **原因：** 支持 TCP Fast Open 的预设（VLESS、AnyTLS、Shadowsocks、Mieru TCP、SOCKS5、Snell）默认应开启 TFO 以减少握手延迟；旧内置预设均未包含该选项，新建入口需手动勾选。
+- **源状态：** `node_presets` 内置模板的 `config_json` 不含 `tcp_fast_open`；`snell_profiles` 内置行 `tcp_fast_open=0`（新建表默认 0）；Web 新建预设草稿默认关闭。
+- **目标状态：** 支持 TFO 的 `node_presets` 内置模板写入 `"tcp_fast_open":true`（HY2 除外，Mieru 仅 TCP，VLESS QUIC 跳过）；`snell_profiles` 内置行 `tcp_fast_open=1`，新建表默认 1；Web 新建草稿默认开启；已有未显式关闭的内置模板通过迁移补齐。
+- **实现位置：** `oboard/internal/store/node_presets.go`（内置种子与 `migratePresetTCPFastOpen`）、`store.go`（建表默认、种子与迁移注册）；`oboard/internal/core/transport_capability.go`（注释）；`oboard/web/src/components/NodePresetsPanel.tsx`、`SnellProfilesPanel.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时先通过 `ensureColumn` 幂等补列，再对内置行执行幂等回填：Snell `builtin=1 and tcp_fast_open=0` 置 1，Node 预设对仍缺少该键的内置行注入 `true`（HY2、Mieru UDP、VLESS QUIC 跳过，显式 `false` 保留）。
+- **数据影响：** 仅改写仍缺少 TFO 键的内置预设；已显式设置 `false` 的预设保留关闭；Snell 自定义预设不改写；既有入口已保存的 `config_json` 不回填。
+- **重复执行：** Snell 更新按 `builtin=1 and tcp_fast_open=0` 判断，Node 预设按 JSON 键存在判断，均幂等；重复打开不覆盖已显式关闭的预设。
+- **失败行为：** 查询或更新失败阻止 Controller 打开数据库，无半迁移状态。
+- **回归测试：** `TestTCPFastOpenColumnsMigrateFromPreviousSchema` 更新为校验内置 Snell 回填为开、自定义保持关；手动回退验证（移除 TFO 后重开补齐）覆盖 Node 预设与 Snell；`TestNodePresetsSeededAndProtected` 仍覆盖种子校验。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含带 TFO 的内置预设，且恢复入口不得导入旧内置模板；当前种子与校验保留。
 - **移除状态：** 生效中。
 
 ### controller-db-20260824-anytls-padding-presets
