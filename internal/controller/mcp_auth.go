@@ -90,8 +90,16 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 		if principal.SourceIP == (netip.Addr{}) {
 			principal.SourceIP = netip.MustParseAddr("0.0.0.0")
 		}
+		grantPrincipal := mcpauth.GrantPrincipal{Grant: grantPolicy, Role: effectiveRole, UserID: grant.UserID, ClientID: grant.ClientID}
+		if item, err := s.store.GetMCPPrivilegedGrantByOAuthGrant(r.Context(), grant.ID); err == nil {
+			if policy := loadPrivilegedGrantPolicy(item); policy != nil {
+				grantPrincipal.PrivilegedGrant = policy
+				principal.PrivilegedClasses = append([]string(nil), policy.Capabilities...)
+				principal.Scopes = s.capabilities.ScopesForGrant(principal)
+			}
+		}
 		ctx := context.WithValue(r.Context(), apiPrincipalContextKey{}, principal)
-		ctx = context.WithValue(ctx, mcpGrantPrincipalContextKey{}, mcpauth.GrantPrincipal{Grant: grantPolicy, Role: effectiveRole, UserID: grant.UserID, ClientID: grant.ClientID})
+		ctx = context.WithValue(ctx, mcpGrantPrincipalContextKey{}, grantPrincipal)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

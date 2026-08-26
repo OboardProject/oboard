@@ -23,7 +23,7 @@ import (
 // and start the canonical Workflow.
 func (s *Server) registerMCPCapabilityTools(server *mcp.Server, principal application.Principal) {
 	for _, descriptor := range s.capabilities.ListMCP(principal) {
-		if !descriptor.MCPEnabled {
+		if !descriptor.MCPEnabled || descriptor.PrivilegeClass != "" {
 			continue
 		}
 		if descriptor.ReadOnly {

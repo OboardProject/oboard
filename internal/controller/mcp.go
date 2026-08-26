@@ -165,6 +165,11 @@ func (s *Server) mcpPrincipalFromRequest(ctx context.Context, req mcp.Request) (
 							Role: effectiveRole, AccessLevel: accessLevel, GrantPolicy: &grantPolicy,
 							ClientName: clientName, Interactive: false,
 						}
+						if item, err := s.store.GetMCPPrivilegedGrantByOAuthGrant(ctx, grant.ID); err == nil {
+							if policy := loadPrivilegedGrantPolicy(item); policy != nil {
+								principal.PrivilegedClasses = append([]string(nil), policy.Capabilities...)
+							}
+						}
 						principal.Scopes = s.capabilities.ScopesForGrant(principal)
 						principal.ResourceFilter = application.ResourceFilterFromBoundary(boundary)
 						return principal, nil
@@ -204,7 +209,13 @@ func (s *Server) mcpGrantPrincipalFromRequest(ctx context.Context, req mcp.Reque
 							ConsentVersion: grant.ConsentVersion, IssuedAt: grant.CreatedAt,
 							ExpiresAt: grant.ExpiresAt, RevokedAt: grant.RevokedAt,
 						}
-						return mcpauth.GrantPrincipal{Grant: grantPolicy, Role: effectiveRole, UserID: grant.UserID, ClientID: grant.ClientID}, nil
+						return mcpauth.GrantPrincipal{Grant: grantPolicy, Role: effectiveRole, UserID: grant.UserID, ClientID: grant.ClientID, PrivilegedGrant: func() *mcpauth.PrivilegedGrantPolicy {
+							item, err := s.store.GetMCPPrivilegedGrantByOAuthGrant(ctx, grant.ID)
+							if err != nil {
+								return nil
+							}
+							return loadPrivilegedGrantPolicy(item)
+						}()}, nil
 					}
 				}
 			}

@@ -109,6 +109,9 @@ import { SearchableMultiSelect } from './components/ui/SearchableMultiSelect'
 import { SearchableCombobox } from './components/ui/SearchableCombobox'
 import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
+import { RemoteAccessSettings } from './components/remote-access/RemoteAccessSettings'
+import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatus'
+import { RemoteTerminal } from './components/remote-access/RemoteTerminal'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
 import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
@@ -3425,6 +3428,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <button type="button" onClick={() => openConnectDialog()}><Cable size={15} />接入客户端</button>
       </div>
       <MCPAccessPage
+        request={client.request}
         requestV2={client.requestV2}
         notify={notify}
         confirm={dialogs.confirm}
@@ -3753,7 +3757,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'remote-access' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3915,6 +3919,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'connection', label: '基础设置', icon: LinkIcon, description: '面板地址、路径和受信代理。' },
     { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
     { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' },
+    { key: 'remote-access', label: '远程访问', icon: Terminal, description: 'Web 远程终端和 MCP 主机执行，默认全部关闭。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
     { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密和独立订阅入口。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
@@ -4036,6 +4041,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         </SettingsGroup>
       </section>}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} />}
+      {activeSection === 'remote-access' && <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
@@ -7645,7 +7651,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
-    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} client={client} notify={notify} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}
@@ -10289,7 +10295,8 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   </MotionDialogPanel>
 }
 
-function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () => void }) {
+function ServerDetailDialog({ server, client, notify, onClose }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; onClose: () => void }) {
+  const [terminalOpen, setTerminalOpen] = useState(false)
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const connectivityLabel = !server.latency_probe_enabled
     ? '未启用检测'
@@ -10298,6 +10305,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
       : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'
 
   return (
+    <>
     <MotionDialogPanel onCancel={onClose} className="server-detail-dialog">
       <header className="dialog-head server-detail-head">
         <div className="server-detail-title">
@@ -10408,9 +10416,16 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
           {server.time_check_error && <div className="server-time-alert limitation"><div><strong>时间检测未完整生效</strong><span>{server.time_check_error}</span></div></div>}
           {server.time_logical_active && (server.time_unsupported_paths || []).length > 0 && <div className="server-time-alert limitation"><div><strong>部分路径无法完整使用逻辑时间</strong><span>{(server.time_unsupported_paths || []).join('、')}</span></div></div>}
         </section>
+
+        <section className="server-detail-section">
+          <div className="server-detail-section-head"><Terminal size={15} /><h3>远程访问</h3></div>
+          <RemoteAccessStatus serverId={server.id} client={client} notify={notify} onOpenTerminal={() => setTerminalOpen(true)} />
+        </section>
       </div>
       <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
     </MotionDialogPanel>
+    {terminalOpen ? <RemoteTerminal serverId={server.id} serverName={server.name || `server-${server.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${server.id}/terminal/ws/${sessionId}`)} onClose={() => setTerminalOpen(false)} /> : null}
+    </>
   )
 }
 

@@ -62,6 +62,28 @@ func (e *Evaluator) Authorize(ctx context.Context, principal GrantPrincipal, spe
 	if denied := grant.ResourceBoundary.Denied(refs); len(denied) != 0 {
 		return DenyResources(denied)
 	}
+	if spec.PrivilegeClass != "" {
+		privileged := principal.PrivilegedGrant
+		if privileged == nil {
+			return DenyDecision(CodePrivilegedGrantRequired, "this operation requires a dedicated privileged MCP grant", true)
+		}
+		if privileged.RevokedAt != nil {
+			return DenyDecision(CodePrivilegedGrantRevoked, "the privileged MCP grant has been revoked", false)
+		}
+		if privileged.ExpiresAt != nil && time.Now().After(*privileged.ExpiresAt) {
+			return DenyDecision(CodePrivilegedGrantExpired, "the privileged MCP grant has expired", true)
+		}
+		if !privileged.HasCapability(spec.PrivilegeClass) {
+			if spec.PrivilegeClass == "remote_shell" {
+				return DenyDecision(CodeRawShellNotGranted, "raw shell is not included in the privileged grant", true)
+			}
+			return DenyDecision(CodePrivilegedGrantRequired, "the privileged grant does not include this host operation", true)
+		}
+		if denied := privileged.ResourceBoundary.Denied(refs); len(denied) != 0 {
+			return DenyResources(denied)
+		}
+		return AllowDecision(authorization.ApprovalAutomatic, spec.RiskClass)
+	}
 	approval := authorization.ApprovalRequired
 	if spec.ApprovalRequired {
 		approval = e.approvals.Resolve(grant.ApprovalMaxRisk, spec.RiskClass, true)

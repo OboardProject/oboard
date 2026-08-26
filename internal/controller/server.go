@@ -112,6 +112,10 @@ type Server struct {
 	latencyProbeMu                sync.Mutex
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
+	agentLiveMu                   sync.Mutex
+	agentLive                     map[int64]chan any
+	remoteExecHub                 *remoteExecResultHub
+	terminalHub                   *terminalSessionHub
 	notificationMu                sync.Mutex
 	notificationWake              chan struct{}
 	monitorStarted                atomic.Bool
@@ -211,6 +215,9 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	}
 	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
+	s.agentLive = map[int64]chan any{}
+	s.remoteExecHub = newRemoteExecResultHub()
+	s.terminalHub = newTerminalSessionHub()
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.initializeTrustedProxies()
@@ -402,8 +409,14 @@ func (s *Server) Handler() http.Handler {
 	machineMux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { writeNotFoundJSON(w) })
 	s.registerOAuthRoutes(mux)
 	mcpHandler := s.newMCPHandler()
+	mux.HandleFunc("/api/v1/auth/step-up/begin", s.auth(s.stepUpBegin, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/auth/step-up/password", s.auth(s.stepUpPassword, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/auth/step-up/passkey/finish", s.auth(s.stepUpPasskeyFinish, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/mcp/grants/", s.auth(s.mcpPrivilegedAccess, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/remote-access/audit", s.auth(s.remoteAccessAudit, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/agent/enroll", s.agentEnroll)
 	mux.HandleFunc("/api/v1/agent/connect", s.agentConnect)
+	mux.HandleFunc("/api/v1/agent/interactive/", s.agentInteractive)
 	mux.HandleFunc("/api/v1/agent/task-results", s.agentTaskResults)
 	mux.HandleFunc("/api/v1/agent/assets", s.agentManagedAssets)
 	mux.HandleFunc("/api/v1/agent/certificate-issues", s.agentCertificateIssues)
@@ -842,6 +855,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerExpiryNotifyTime        *string            `json:"server_expiry_notify_time"`
 			RegistrationEnabled           *bool              `json:"registration_enabled"`
 			RegistrationDefaultGroupID    *int64             `json:"registration_default_group_id"`
+			RemoteTerminalEnabled         *bool              `json:"remote_terminal_enabled"`
+			MCPRemoteOperationsEnabled    *bool              `json:"mcp_remote_operations_enabled"`
+			MCPStructuredExecEnabled      *bool              `json:"mcp_structured_exec_enabled"`
+			MCPRawShellEnabled            *bool              `json:"mcp_raw_shell_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -1318,6 +1335,24 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, settingRegistrationDefaultGroupID)
 		}
+		for _, item := range []struct {
+			value *bool
+			key   string
+		}{
+			{req.RemoteTerminalEnabled, settingRemoteTerminalEnabled},
+			{req.MCPRemoteOperationsEnabled, settingMCPRemoteOperationsEnabled},
+			{req.MCPStructuredExecEnabled, settingMCPStructuredExecEnabled},
+			{req.MCPRawShellEnabled, settingMCPRawShellEnabled},
+		} {
+			if item.value == nil {
+				continue
+			}
+			if err := s.store.SetSetting(r.Context(), item.key, strconv.FormatBool(*item.value)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, item.key)
+		}
 		if len(changed) > 0 {
 			s.invalidateConnectionAuditCache()
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
@@ -1341,7 +1376,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: false, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[updateWindowEnabledSetting] = false
@@ -1408,6 +1443,10 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 		}
 	}
 	out["base_path"] = s.currentBasePath()
+	out[settingRemoteTerminalEnabled] = settingBool(items, settingRemoteTerminalEnabled, false)
+	out[settingMCPRemoteOperationsEnabled] = settingBool(items, settingMCPRemoteOperationsEnabled, false)
+	out[settingMCPStructuredExecEnabled] = settingBool(items, settingMCPStructuredExecEnabled, false)
+	out[settingMCPRawShellEnabled] = settingBool(items, settingMCPRawShellEnabled, false)
 	if migration, err := s.basePathMigrationProgress(ctx); err == nil {
 		out["base_path_migration"] = migration
 	}
@@ -3514,6 +3553,14 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "enroll-token" {
 		s.enrollToken(w, r, id)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "remote-access" {
+		s.serverRemoteAccess(w, r, id)
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "terminal" {
+		s.serverTerminal(w, r, id, parts[2:])
 		return
 	}
 	if len(parts) == 2 && parts[1] == "tasks" {
@@ -13615,7 +13662,10 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	log.Printf("agent connected server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(server.AgentID), safeLogField(clientIP(r)))
 	connectedAt := time.Now()
 	s.trackAgentConnection(r.Context(), server.ID, true, connectedAt.UTC())
+	controlCh := make(chan any, 16)
+	s.registerAgentLive(server.ID, controlCh)
 	defer func() {
+		s.unregisterAgentLive(server.ID, controlCh)
 		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
 		log.Printf("agent disconnected server=%d(%s) connected_for=%s", server.ID, safeLogField(server.Name), time.Since(connectedAt).Round(time.Second))
 	}()
@@ -13660,6 +13710,19 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			inFlightTimer.Stop()
 		}
 		if inFlightTaskID == 0 {
+			return
+		}
+		if inFlightTaskType == model.AgentTaskTypeRemoteExec || inFlightTaskType == model.AgentTaskTypeRemoteOperation {
+			result, _ := json.Marshal(map[string]any{
+				"error":    "agent connection closed before remote execution result was acknowledged",
+				"code":     "remote_exec_result_lost",
+				"agent_id": server.AgentID,
+			})
+			if err := s.store.CompleteTask(context.Background(), inFlightTaskID, "failed", string(result)); err != nil {
+				log.Printf("complete remote exec task %d after agent disconnect: %v", inFlightTaskID, err)
+			} else {
+				s.publishRealtime(realtimeResourcesForTask(inFlightTaskType)...)
+			}
 			return
 		}
 		result, _ := json.Marshal(map[string]any{
@@ -13755,6 +13818,10 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-notifyCh:
 			claimTask()
+		case payload := <-controlCh:
+			if err := conn.WriteJSON(payload); err != nil {
+				return
+			}
 		case <-heartbeatTimer.C:
 			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
 				server = latest
@@ -13859,6 +13926,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				// Refresh the connection's in-memory server copy so heartbeat
 				// and plan generation observe the report without a reload.
 				applyHealthReportToServer(server, result)
+				_ = s.store.UpsertServerRemoteAccessStatus(ctx, server.ID, h.RemoteAccess)
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishServerPatch(result)
@@ -14089,6 +14157,9 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	if task.ServerID != server.ID {
 		fail(w, errors.New("task does not belong to this agent"), 403)
 		return
+	}
+	if task.Type == model.AgentTaskTypeRemoteExec || task.Type == model.AgentTaskTypeRemoteOperation {
+		req.ResultJSON = s.captureRemoteExecResult(*task, req.Status, req.ResultJSON)
 	}
 	if task.Type == model.AgentTaskTypeListNetworkInterfaces && req.Status == "succeeded" {
 		if err := validateNetworkInterfacesTaskResult(req.ResultJSON); err != nil {
@@ -16664,7 +16735,15 @@ func fail(w http.ResponseWriter, err error, status int) {
 	if errors.As(err, &located) && strings.TrimSpace(located.ValidationPath()) != "" {
 		payload["error_path"] = located.ValidationPath()
 	}
+	var coded interface{ Code() string }
+	if errors.As(err, &coded) && strings.TrimSpace(coded.Code()) != "" {
+		payload["code"] = coded.Code()
+	}
 	write(w, status, payload)
+}
+
+func failCode(w http.ResponseWriter, code, message string, status int) {
+	write(w, status, map[string]any{"error": message, "code": code})
 }
 func method(w http.ResponseWriter) { fail(w, errors.New("method not allowed"), 405) }
 func writeNotFoundJSON(w http.ResponseWriter) {

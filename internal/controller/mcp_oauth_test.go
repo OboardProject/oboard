@@ -187,6 +187,11 @@ func TestMCPOperateGrantListsOnlyFinalTools(t *testing.T) {
 			t.Fatalf("tools/list is missing dynamic capability tool %q", name)
 		}
 	}
+	for _, name := range []string{"server_exec", "server_exec_shell", "server_get_system_info"} {
+		if _, ok := byName[name]; ok {
+			t.Fatalf("operate tools/list leaked privileged tool %q", name)
+		}
+	}
 	if alwaysLoad, ok := byName["oboard_task"].Meta["anthropic/alwaysLoad"].(bool); !ok || !alwaysLoad {
 		t.Fatalf("oboard_task must advertise anthropic/alwaysLoad: %#v", byName["oboard_task"].Meta)
 	}

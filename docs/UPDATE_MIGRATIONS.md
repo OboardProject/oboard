@@ -61,6 +61,7 @@
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
+| `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-pending` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
@@ -577,6 +578,26 @@
 复制以下条目到“生效中的迁移”，并在“登记摘要”增加一行：
 
 ```markdown
+### controller-db-20260827-remote-access
+
+- **引入日期：** 2026-08-27
+- **引入提交：** pending
+- **引入版本：** `dev-pending`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、`internal/mcpauth`、Web
+- **类别：** SQLite schema
+- **原因：** Remote Terminal 与 MCP 主机执行需要独立的全局/服务器策略、Privileged Grant、Step-up 挑战和仅元数据审计，且升级后必须保持全部关闭。
+- **源状态：** 不存在 `server_remote_access_policies`、`server_remote_access_status`、`mcp_privileged_grants`、`remote_access_audit`、`step_up_challenges`、`consumed_step_up_tokens`。
+- **目标状态：** 上述表以 `create table if not exists` 存在；策略布尔列默认 0；`mcp_privileged_grants.oauth_grant_id` 唯一并随 OAuth Grant 级联；终端会话不进 SQLite。
+- **实现位置：** `internal/store/store.go`、`internal/store/remote_access.go`
+- **更新脚本：** 进程启动 `Open()` 执行
+- **数据影响：** 仅新增表，不改现有业务行
+- **重复执行：** `create table if not exists`，幂等
+- **失败行为：** 启动失败
+- **回归测试：** `TestRemoteAccessTablesMigrateFromPreviousSchema`
+- **移除条件：** 最老直接升级版本与可恢复备份均已包含这些表，且恢复入口拒绝缺少它们的 schema
+- **移除状态：** 生效中
+
 ### <component>-<category>-<YYYYMMDD>-<short-name>
 
 - **引入日期：** YYYY-MM-DD

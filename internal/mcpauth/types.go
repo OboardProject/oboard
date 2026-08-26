@@ -84,12 +84,52 @@ type CapabilitySpec struct {
 	ResourceTypes       []string
 	DataClassification  string
 	ResolveResourceRefs func(ctx context.Context, input any) ([]ResourceRef, error)
+	PrivilegeClass      string
+	ApprovalPolicy      string
+}
+
+// PrivilegedGrantPolicy is the extra host-execution authorization bound to an
+// OAuth grant. It is never encoded as an OAuth scope.
+type PrivilegedGrantPolicy struct {
+	ID               int64
+	OAuthGrantID     string
+	Capabilities     []string
+	ResourceBoundary ResourceBoundary
+	ExpiresAt        *time.Time
+	RevokedAt        *time.Time
+	Revision         int64
+}
+
+func (p *PrivilegedGrantPolicy) Active(now time.Time) bool {
+	if p == nil {
+		return false
+	}
+	if p.RevokedAt != nil && !p.RevokedAt.IsZero() {
+		return false
+	}
+	if p.ExpiresAt != nil && !p.ExpiresAt.IsZero() && !p.ExpiresAt.After(now) {
+		return false
+	}
+	return true
+}
+
+func (p *PrivilegedGrantPolicy) HasCapability(name string) bool {
+	if p == nil {
+		return false
+	}
+	for _, item := range p.Capabilities {
+		if item == name {
+			return true
+		}
+	}
+	return false
 }
 
 // GrantPrincipal is the caller identity evaluated by the Evaluator.
 type GrantPrincipal struct {
-	Grant    GrantPolicy
-	Role     model.Role
-	UserID   int64
-	ClientID string
+	Grant           GrantPolicy
+	Role            model.Role
+	UserID          int64
+	ClientID        string
+	PrivilegedGrant *PrivilegedGrantPolicy
 }

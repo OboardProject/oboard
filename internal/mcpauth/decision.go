@@ -24,8 +24,17 @@ const (
 	CodeAlreadyConsumed        = "already_consumed"
 	CodeIdempotencyConflict    = "idempotency_conflict"
 	CodeWorkflowNotRetryable   = "workflow_not_retryable"
-	CodeExternalActionRequired = "external_action_required"
-	CodeClientMetadataInvalid  = "client_metadata_invalid"
+	CodeExternalActionRequired     = "external_action_required"
+	CodeClientMetadataInvalid      = "client_metadata_invalid"
+	CodePrivilegedGrantRequired    = "privileged_grant_required"
+	CodePrivilegedGrantExpired     = "privileged_grant_expired"
+	CodePrivilegedGrantRevoked     = "privileged_grant_revoked"
+	CodeRawShellNotGranted         = "raw_shell_not_granted"
+	CodeRemoteAccessGlobalDisabled = "remote_access_global_disabled"
+	CodeRemoteAccessServerDisabled = "remote_access_server_disabled"
+	CodeAgentOffline               = "agent_offline"
+	CodeAgentUpgradeRequired       = "agent_upgrade_required"
+	CodeAgentLocalGateDenied       = "agent_local_gate_denied"
 )
 
 // Decision builders produce uniformly structured AuthorizationDecision values.

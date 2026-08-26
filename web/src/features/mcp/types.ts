@@ -53,6 +53,7 @@ export interface OAuthGrant {
 export type ToastTone = 'error' | 'success' | 'warning' | 'info'
 
 export interface MCPAccessPageProps {
+  request: (path: string, init?: RequestInit) => Promise<any>
   requestV2: (path: string, init?: RequestInit) => Promise<any>
   notify: (message: string, tone?: ToastTone) => void
   confirm: (options: {

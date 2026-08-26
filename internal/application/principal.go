@@ -29,6 +29,9 @@ type Principal struct {
 	// GrantPolicy is the live grant snapshot used by the unified evaluator. It
 	// is never persisted on the principal row.
 	GrantPolicy *mcpauth.GrantPolicy
+	// PrivilegedClasses lists PrivilegeClass values from the active Privileged
+	// MCP Grant. Ordinary OAuth consent never populates this field.
+	PrivilegedClasses []string
 }
 
 type ResourceSelection struct {

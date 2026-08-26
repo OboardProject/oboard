@@ -269,6 +269,9 @@ func (s *Store) RevokeOAuthGrantReason(ctx context.Context, id string, at time.T
 	if _, err := tx.ExecContext(ctx, `update oauth_refresh_tokens set revoked_at=? where grant_id=? and revoked_at is null`, ts, id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `update mcp_privileged_grants set revoked_at=coalesce(revoked_at,?),updated_at=? where oauth_grant_id=? and revoked_at is null`, ts, ts, id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 

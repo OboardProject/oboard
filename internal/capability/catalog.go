@@ -54,6 +54,10 @@ type Descriptor struct {
 	// ResolveResourceRefs extracts resource references from operation input for
 	// the unified MCP evaluator's resource-boundary check.
 	ResolveResourceRefs func(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) `json:"-"`
+	// PrivilegeClass is empty for ordinary capabilities. Privileged host
+	// operations (remote_operations / remote_exec / remote_shell) are never
+	// included in default OAuth consent and require a dedicated Privileged Grant.
+	PrivilegeClass string `json:"privilege_class,omitempty"`
 }
 
 type Catalog struct {
@@ -101,7 +105,7 @@ func (c *Catalog) List(principal application.Principal) []Descriptor {
 func (c *Catalog) ListMCP(principal application.Principal) []Descriptor {
 	out := make([]Descriptor, 0, len(c.items))
 	for _, item := range c.items {
-		if item.MCPEnabled && c.authorizePrincipal(principal, item) {
+		if item.MCPEnabled && c.authorizePrincipal(principal, item) && principalAllowsPrivilege(principal, item) {
 			out = append(out, item)
 		}
 	}
@@ -150,6 +154,18 @@ func (c *Catalog) authorizePrincipal(principal application.Principal, item Descr
 	return scopesAllow(principal, item.RequiredScopes)
 }
 
+func principalAllowsPrivilege(principal application.Principal, item Descriptor) bool {
+	if item.PrivilegeClass == "" {
+		return true
+	}
+	for _, class := range principal.PrivilegedClasses {
+		if class == item.PrivilegeClass {
+			return true
+		}
+	}
+	return false
+}
+
 // ScopesForGrant derives the legacy fine-grained scope set implied by a coarse
 // MCP grant. It is the union of every MCP-enabled capability that the grant's
 // access level and the human role allow. This keeps application handlers that
@@ -158,7 +174,7 @@ func (c *Catalog) authorizePrincipal(principal application.Principal, item Descr
 func (c *Catalog) ScopesForGrant(principal application.Principal) []string {
 	seen := map[string]bool{}
 	for _, item := range c.items {
-		if !item.MCPEnabled || !c.authorizePrincipal(principal, item) {
+		if !item.MCPEnabled || !c.authorizePrincipal(principal, item) || item.PrivilegeClass != "" {
 			continue
 		}
 		for _, scope := range item.RequiredScopes {
@@ -430,6 +446,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, systemDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, nodeOperationsDescriptors(positiveID, stringValue, boolValue, nullableString)...)
 	descriptors = append(descriptors, nodeWorkspaceDescriptors(positiveID, stringValue, boolValue)...)
+	descriptors = append(descriptors, remoteAccessDescriptors(positiveID, stringValue, boolValue)...)
 	for index := range descriptors {
 		descriptors[index].Version = "1"
 		descriptors[index].Documentation = "oboard://schemas/" + descriptors[index].Name

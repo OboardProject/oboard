@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ShieldCheck, Trash2 } from 'lucide-react'
+import { ShieldCheck, Trash2, KeyRound } from 'lucide-react'
+import { MCPPrivilegedAccess } from '../../components/mcp/MCPPrivilegedAccess'
 import { listGrants, revokeGrant, type RequestV2 } from './api'
 import type { OAuthGrant, ToastTone } from './types'
 
 interface OAuthGrantListProps {
+  request: (path: string, init?: RequestInit) => Promise<any>
   requestV2: RequestV2
   notify: (message: string, tone?: ToastTone) => void
   confirm: (options: { title: string; message: string; confirmText?: string; tone?: 'danger' }) => Promise<boolean>
@@ -22,9 +24,10 @@ function inheritedRoleLabel(grant: OAuthGrant) {
   return '继承只读权限'
 }
 
-export function OAuthGrantList({ requestV2, notify, confirm }: OAuthGrantListProps) {
+export function OAuthGrantList({ request, requestV2, notify, confirm }: OAuthGrantListProps) {
   const [grants, setGrants] = useState<OAuthGrant[]>([])
   const [working, setWorking] = useState('')
+  const [privilegedGrant, setPrivilegedGrant] = useState<OAuthGrant | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -68,9 +71,13 @@ export function OAuthGrantList({ requestV2, notify, confirm }: OAuthGrantListPro
             <span>{grant.username || `用户 ${grant.user_id}`} · 权限随用户角色实时更新</span>
             <small>最近使用 {grant.last_used_at ? formatTime(grant.last_used_at) : '暂无'}</small>
           </div>
-          <div><button type="button" className="ghost icon-button danger-text" disabled={working === `grant-revoke-${grant.id}`} onClick={() => void revoke(grant)} title="撤销授权" aria-label={`撤销 ${grant.client_name || grant.id}`}><Trash2 size={15} /></button></div>
+          <div>
+            <button type="button" className="ghost icon-button" onClick={() => setPrivilegedGrant(grant)} title="敏感服务器访问" aria-label={`${grant.client_name || grant.id} 敏感服务器访问`}><KeyRound size={15} /></button>
+            <button type="button" className="ghost icon-button danger-text" disabled={working === `grant-revoke-${grant.id}`} onClick={() => void revoke(grant)} title="撤销授权" aria-label={`撤销 ${grant.client_name || grant.id}`}><Trash2 size={15} /></button>
+          </div>
         </div>
       }) : <div className="automation-empty"><ShieldCheck size={20} /><span>暂无 OAuth Grant。客户端首次登录并完成同意后会显示在这里。</span></div>}</div>
+      {privilegedGrant ? <MCPPrivilegedAccess grant={privilegedGrant} request={request} notify={notify} confirm={confirm} onClose={() => setPrivilegedGrant(null)} /> : null}
     </section>
   )
 }

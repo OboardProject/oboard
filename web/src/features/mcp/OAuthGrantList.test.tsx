@@ -62,7 +62,7 @@ describe('OAuthGrantList', () => {
     const confirm = vi.fn(async () => true)
 
     await act(async () => {
-      root.render(<OAuthGrantList requestV2={requestV2} notify={notify} confirm={confirm} />)
+      root.render(<OAuthGrantList request={vi.fn()} requestV2={requestV2} notify={notify} confirm={confirm} />)
       await Promise.resolve()
     })
 
