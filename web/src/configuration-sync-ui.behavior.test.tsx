@@ -19,6 +19,7 @@ describe('ConfigurationSyncStatus', () => {
 
   afterEach(() => {
     act(() => root.unmount())
+    document.body.replaceChildren()
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
@@ -36,13 +37,41 @@ describe('ConfigurationSyncStatus', () => {
     const retry = vi.fn()
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'failed', error: 'prepare failed' }, { server_id: 2, state: 'synced' }]} onRetry={retry} />))
     const button = container.querySelector('button') as HTMLButtonElement | null
-    expect(button?.textContent).toContain('1 台同步失败，点击重试')
+    expect(button?.textContent).toContain('1 台同步失败 · 1 个问题')
     act(() => button?.click())
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重试 1 台服务器'))
+    act(() => retryButton?.click())
     expect(retry).toHaveBeenCalledTimes(1)
 
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'pending' }]} />))
     expect(container.querySelector('button')).toBeNull()
     expect(container.textContent).toContain('正在同步 1 台服务器')
+  })
+
+  it('opens deduplicated, actionable failure details without a hover-only tooltip', () => {
+    const navigate = vi.fn()
+    const repeated = '入口 15 已存在相同位置的直接出口分支'
+    act(() => root.render(<ConfigurationSyncStatus
+      rows={[
+        { server_id: 1, state: 'failed', error: repeated },
+        { server_id: 2, state: 'failed', error: repeated },
+      ]}
+      servers={[{ id: 1, name: '东京入口' }, { id: 2, name: '香港出口' }]}
+      onNavigate={navigate}
+      onRetry={vi.fn()}
+    />))
+    const trigger = container.querySelector('button') as HTMLButtonElement
+    expect(trigger.title).toBe('')
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
+    act(() => trigger.click())
+    expect(document.body.textContent).toContain('入口 15 存在重复的直接出口分支')
+    expect(document.body.textContent).toContain('相同错误已合并显示')
+    expect(document.body.textContent).toContain('东京入口')
+    expect(document.body.textContent).toContain('香港出口')
+    expect(document.body.textContent?.split(repeated)).toHaveLength(2)
+    const target = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent === '打开代理拓扑')
+    act(() => target?.click())
+    expect(navigate).toHaveBeenCalledWith('proxy-paths')
   })
 
   it('rolls back the rendered entity and exposes an actionable error after a failed save', async () => {

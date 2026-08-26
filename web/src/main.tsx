@@ -2873,7 +2873,9 @@ export function App() {
                   saving={mutationSaving}
                   retrying={syncRetrying}
                   canOperate={canOperate}
+                  servers={data.servers || []}
                   onRetry={() => void retryFailedSync()}
+                  onNavigate={navigateTab}
                 />
 
                 <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab, { forceFresh: true })} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>

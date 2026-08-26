@@ -367,11 +367,8 @@ func (s *Server) proxyPathStepTruncateAutomationCandidate(ctx context.Context, p
 		pathDeleted = !retained
 	}
 	if !pathDeleted {
-		remainingSteps := deleted < len(steps)
-		if remainingSteps {
-			if err := s.validateProxyPathTruncation(ctx, step.PathID, step.Position); err != nil {
-				return model.ProxyPathStep{}, 0, false, err
-			}
+		if err := s.validateProxyPathTruncation(ctx, step.PathID, step.Position); err != nil {
+			return model.ProxyPathStep{}, 0, false, err
 		}
 	}
 	if pathDeleted {

@@ -15,13 +15,70 @@ export type ConfigurationSyncPresentation = {
   busy: boolean
 }
 
+export type ConfigurationSyncFailureIssue = {
+  key: string
+  title: string
+  explanation: string
+  resolution: string
+  rawError: string
+  serverIDs: number[]
+  taskIDs: number[]
+  targetTab: 'proxy-paths' | 'tasks'
+  targetLabel: string
+}
+
+function describeConfigurationSyncError(rawError: string) {
+  const directBranch = rawError.match(/入口\s+(\d+).*(?:相同位置的直接出口分支|同一分支位置存在多条直接出口)/)
+  if (directBranch) {
+    const inboundID = directBranch[1]
+    return {
+      title: `入口 ${inboundID} 存在重复的直接出口分支`,
+      explanation: '同一个入口在同一分叉位置只能保留一条直接出口分支，否则无法确定应使用哪条直出路由。',
+      resolution: `前往「代理拓扑」，找到入口 ${inboundID}，删除或停用同一位置的重复直出分支。保存后系统会自动重新同步。`,
+      targetTab: 'proxy-paths' as const,
+      targetLabel: '打开代理拓扑',
+    }
+  }
+  return {
+    title: '配置生成或下发失败',
+    explanation: rawError || 'Controller 没有返回具体错误信息。',
+    resolution: '请在「任务部署中心」查看对应任务和服务器日志，修正配置或运行环境后再重试。',
+    targetTab: 'tasks' as const,
+    targetLabel: '打开任务部署中心',
+  }
+}
+
+export function configurationSyncFailureIssues(rows: ConfigurationSyncRow[]): ConfigurationSyncFailureIssue[] {
+  const groups = new Map<string, { rawError: string; rows: ConfigurationSyncRow[] }>()
+  rows.filter(item => item.state === 'failed').forEach(item => {
+    const rawError = String(item.error || '').trim()
+    const key = rawError || '__missing_error__'
+    const current = groups.get(key)
+    if (current) current.rows.push(item)
+    else groups.set(key, { rawError, rows: [item] })
+  })
+  return Array.from(groups.entries()).map(([key, group]) => {
+    const description = describeConfigurationSyncError(group.rawError)
+    return {
+      key,
+      ...description,
+      rawError: group.rawError,
+      serverIDs: group.rows.map(item => item.server_id),
+      taskIDs: group.rows.map(item => Number(item.task_id || 0)).filter(Boolean),
+    }
+  })
+}
+
 export function configurationSyncPresentation(rows: ConfigurationSyncRow[], saving = false, retrying = false): ConfigurationSyncPresentation {
   const failed = rows.filter(item => item.state === 'failed')
   const active = rows.filter(item => ['pending', 'preparing', 'queued', 'running'].includes(item.state))
   const synced = rows.length > 0 && rows.every(item => item.state === 'synced')
   if (saving) return { tone: 'info', label: '正在保存...', retryServerIDs: [], busy: true }
   if (retrying) return { tone: 'info', label: '正在重试同步...', retryServerIDs: failed.map(item => item.server_id), busy: true }
-  if (failed.length > 0) return { tone: 'danger', label: `${failed.length} 台同步失败，点击重试`, retryServerIDs: failed.map(item => item.server_id), busy: false }
+  if (failed.length > 0) {
+    const issueCount = configurationSyncFailureIssues(failed).length
+    return { tone: 'danger', label: `${failed.length} 台同步失败 · ${issueCount} 个问题`, retryServerIDs: failed.map(item => item.server_id), busy: false }
+  }
   if (active.length > 0) return { tone: 'info', label: `正在同步 ${active.length} 台服务器`, retryServerIDs: [], busy: true }
   if (synced) return { tone: 'ok', label: '配置已同步', retryServerIDs: [], busy: false }
   return { tone: 'warn', label: '配置已保存', retryServerIDs: [], busy: false }

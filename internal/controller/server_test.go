@@ -3642,6 +3642,20 @@ func TestProxyPathStepDeletePreservesRootRoutingRulesAsDirectPath(t *testing.T) 
 	stepID := int64(step["proxy_path_step"].(map[string]any)["id"].(float64))
 	rule := request(t, h, http.MethodPost, "/api/v1/ui/routing-rules", token, map[string]any{"scope": "path_stage", "proxy_path_id": pathID, "sort_position": 0, "match_source": "inline", "name": "all-via-eth0", "match_json": `{}`, "action": "interface", "interface_name": "eth0", "enabled": true}, http.StatusCreated)
 	ruleID := int64(rule["routing_rule"].(map[string]any)["id"].(float64))
+	direct := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths/direct-branches", token, map[string]any{"inbound_id": inboundID}, http.StatusCreated)
+	directID := int64(direct["proxy_path"].(map[string]any)["id"].(float64))
+
+	conflict := request(t, h, http.MethodDelete, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusBadRequest)
+	if !strings.Contains(conflict["error"].(string), "同一分支位置存在多条直接出口") {
+		t.Fatalf("delete conflict = %#v", conflict)
+	}
+	if storedPath, err := db.GetProxyPath(context.Background(), pathID); err != nil || storedPath.Kind != model.ProxyPathKindChain {
+		t.Fatalf("rejected delete changed path: %#v err=%v", storedPath, err)
+	}
+	if _, err := db.GetProxyPathStep(context.Background(), stepID); err != nil {
+		t.Fatalf("rejected delete removed the path step: %v", err)
+	}
+	request(t, h, http.MethodDelete, "/api/v1/ui/proxy-paths/"+itoa(directID), token, nil, http.StatusOK)
 
 	deleted := request(t, h, http.MethodDelete, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusOK)
 	if deleted["path_deleted"] != false || int(deleted["deleted_steps"].(float64)) != 1 {

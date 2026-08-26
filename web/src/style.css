@@ -17219,7 +17219,6 @@ button[aria-busy="true"] {
 .deploy-status-pill.danger { background: var(--danger-soft); color: var(--danger); }
 .deploy-status-pill.info { background: var(--primary-soft); color: var(--text-strong); }
 
-/* Failure status can be clicked away; native title is the lightweight tip. */
 button.deploy-status-pill {
   cursor: pointer;
   box-shadow: none;
@@ -17234,46 +17233,73 @@ button.deploy-status-pill.danger {
   color: var(--danger);
   border-color: transparent;
 }
-button.deploy-status-pill.dismissable:hover {
+button.deploy-status-pill.details-trigger:hover {
   filter: brightness(0.97);
   transform: none;
   box-shadow: none;
 }
-button.deploy-status-pill.dismissable:active {
+button.deploy-status-pill.details-trigger:active {
   transform: scale(0.98);
 }
-button.deploy-status-pill.dismissable:focus-visible {
+button.deploy-status-pill.details-trigger:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--danger) 40%, transparent);
   outline-offset: 2px;
 }
 
-/* CSS tooltip fallback that looks cleaner than bare title in some browsers. */
-button.deploy-status-pill.dismissable {
-  position: relative;
+.configuration-sync-dialog {
+  width: min(680px, calc(100vw - 32px));
 }
-button.deploy-status-pill.dismissable::after {
-  content: attr(title);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%) translateY(2px);
-  padding: 5px 8px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--text-strong) 92%, transparent);
-  color: var(--bg-page);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease, transform 0.12s ease;
-  z-index: 30;
+.configuration-sync-dialog-body {
+  display: grid;
+  gap: 18px;
 }
-button.deploy-status-pill.dismissable:hover::after,
-button.deploy-status-pill.dismissable:focus-visible::after {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+.configuration-sync-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.configuration-sync-summary > svg { flex: 0 0 auto; margin-top: 1px; }
+.configuration-sync-summary strong { display: block; color: var(--text-strong); }
+.configuration-sync-summary p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.configuration-sync-issue-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.configuration-sync-issue {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+.configuration-sync-issue-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.configuration-sync-issue-head small { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.configuration-sync-issue-head h4 { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; line-height: 1.4; }
+.configuration-sync-issue-head > span { flex: 0 0 auto; padding: 3px 8px; border-radius: var(--radius-full); background: var(--danger-soft); color: var(--danger); font-size: 11px; font-weight: 700; }
+.configuration-sync-issue > p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.configuration-sync-resolution { display: grid; gap: 3px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13px; line-height: 1.55; }
+.configuration-sync-resolution strong { color: var(--text-strong); }
+.configuration-sync-resolution span { color: var(--text-secondary); }
+.configuration-sync-issue details { color: var(--text-secondary); font-size: 12px; }
+.configuration-sync-issue summary { width: fit-content; cursor: pointer; color: var(--primary); font-weight: 600; }
+.configuration-sync-issue details ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.configuration-sync-issue details li { padding: 3px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text-secondary); }
+.configuration-sync-issue details code { display: block; margin-top: 8px; padding: 9px 10px; overflow-wrap: anywhere; white-space: normal; border-radius: 6px; background: var(--surface-2); color: var(--text-secondary); }
+.configuration-sync-target { justify-self: start; }
+.configuration-sync-actions { margin-top: 0; padding-top: 2px; }
+.configuration-sync-actions button { display: inline-flex; align-items: center; gap: 7px; }
+@media (max-width: 640px) {
+  .configuration-sync-issue-head { align-items: stretch; flex-direction: column; gap: 8px; }
+  .configuration-sync-issue-head > span { align-self: flex-start; }
 }
 
 @media (max-width: 1100px) {

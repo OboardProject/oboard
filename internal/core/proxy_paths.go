@@ -1254,7 +1254,7 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 			}
 			signature := directProxyPathSignature(path.InboundID, ordered)
 			if directSignatures[signature] {
-				return fmt.Errorf("入口 %d 已存在相同位置的直接出口分支", path.InboundID)
+				return fmt.Errorf("入口 %d 的同一分支位置存在多条直接出口；请删除或停用重复分支后再同步", path.InboundID)
 			}
 			directSignatures[signature] = true
 		}

@@ -9107,19 +9107,40 @@ func (s *Server) validateProxyPathTruncation(ctx context.Context, pathID int64, 
 	if err != nil {
 		return err
 	}
-	resolveRoutingProxyPathNames(&data)
 	steps := make([]model.ProxyPathStep, 0, len(data.ProxyPathSteps))
+	remainingPathSteps := 0
 	for _, step := range data.ProxyPathSteps {
 		if step.PathID == pathID && step.Position >= position {
 			continue
 		}
 		steps = append(steps, step)
+		if step.PathID == pathID {
+			remainingPathSteps++
+		}
+	}
+	if remainingPathSteps == 0 {
+		keepAsDirect, err := s.proxyPathHasRootRoutingRules(ctx, pathID)
+		if err != nil {
+			return err
+		}
+		if keepAsDirect {
+			for index := range data.ProxyPaths {
+				if data.ProxyPaths[index].ID != pathID {
+					continue
+				}
+				data.ProxyPaths[index].Kind = model.ProxyPathKindDirect
+				data.ProxyPaths[index].BranchSourceStepID = nil
+				break
+			}
+		}
 	}
 	// The remaining leading transparent segment may end on a different hop, so
 	// mirror normalizeProxyPathProcessingRoles instead of reusing stale flags.
 	if err := normalizeProxyPathProcessingRolesInMemory(steps, pathID); err != nil {
 		return err
 	}
+	data.ProxyPathSteps = steps
+	resolveRoutingProxyPathNames(&data)
 	_, err = core.BuildProxyPathPlansWithLedger(data.ProxyPaths, steps, data.Servers, data.Inbounds, core.NewProxyPathPortLedger(data.ProxyPathPortAllocations))
 	return err
 }
@@ -9514,7 +9535,15 @@ func (s *Server) proxyPathSteps(w http.ResponseWriter, r *http.Request) {
 		// Verify the projection of the remaining chain before deleting anything.
 		// Deleting first would leave the operator with a 400 response and a path
 		// that has already lost its steps.
-		if deletedSteps < len(steps) {
+		keepAsDirect := false
+		if deletedSteps == len(steps) {
+			keepAsDirect, err = s.proxyPathHasRootRoutingRules(r.Context(), current.PathID)
+			if err != nil {
+				fail(w, err, 500)
+				return
+			}
+		}
+		if deletedSteps < len(steps) || keepAsDirect {
 			if err := s.validateProxyPathTruncation(r.Context(), current.PathID, current.Position); err != nil {
 				fail(w, err, 400)
 				return

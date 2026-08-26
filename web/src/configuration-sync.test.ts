@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
+import { configurationSyncFailureIssues, configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
 
 describe('configuration sync feedback', () => {
   it('shows local saving feedback synchronously before a response exists', () => {
@@ -12,7 +12,26 @@ describe('configuration sync feedback', () => {
       { server_id: 2, state: 'failed', error: 'prepare failed' },
       { server_id: 3, state: 'failed', error: 'agent failed' },
     ])
-    expect(status).toMatchObject({ tone: 'danger', label: '2 台同步失败，点击重试', retryServerIDs: [2, 3], busy: false })
+    expect(status).toMatchObject({ tone: 'danger', label: '2 台同步失败 · 2 个问题', retryServerIDs: [2, 3], busy: false })
+  })
+
+  it('deduplicates repeated server failures and explains the direct-branch conflict', () => {
+    const rows = Array.from({ length: 8 }, (_, index) => ({
+      server_id: index + 1,
+      state: 'failed',
+      error: '入口 15 已存在相同位置的直接出口分支',
+      task_id: 100 + index,
+    }))
+    const issues = configurationSyncFailureIssues(rows)
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({
+      title: '入口 15 存在重复的直接出口分支',
+      serverIDs: [1, 2, 3, 4, 5, 6, 7, 8],
+      targetTab: 'proxy-paths',
+      targetLabel: '打开代理拓扑',
+    })
+    expect(issues[0].resolution).toContain('删除或停用同一位置的重复直出分支')
+    expect(configurationSyncPresentation(rows).label).toBe('8 台同步失败 · 1 个问题')
   })
 
   it('merges desired revision and sync rows without discarding page entities', () => {
