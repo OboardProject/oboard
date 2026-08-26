@@ -2114,6 +2114,7 @@ export function App() {
   const [realtimeResources, setRealtimeResources] = useState<string[]>([])
   const [syncRetrying, setSyncRetrying] = useState(false)
   const [mutationSaving, setMutationSaving] = useState(false)
+  const [proxyInboundFocus, setProxyInboundFocus] = useState<ProxyInboundFocusRequest | null>(null)
   const mutationActivityRef = useRef(new MutationActivityTracker())
   const { dialogs, dialog, setDialog } = useDialogController()
   const mergeMutationResponse = React.useCallback((path: string, result: any) => {
@@ -2634,6 +2635,10 @@ export function App() {
     if (window.location.pathname !== path) window.history.pushState({ tab: next }, '', path)
     setIsSidebarOpen(false)
   }
+  const locateProxyInbound = (inboundID: number) => {
+    setProxyInboundFocus({ inboundID, requestID: Date.now() })
+    navigateTab('proxy-paths')
+  }
 
   useEffect(() => {
     if (token && sessionUser && !tabAllowedForRole(tab, sessionUser.role)) {
@@ -2709,6 +2714,9 @@ export function App() {
   }
 
   const configurationSync: ConfigurationSyncRow[] = Array.isArray(data.configuration_sync) ? data.configuration_sync : []
+  const cachedTopologyData = Object.values(pageCacheRef.current).find(entry => Array.isArray(entry.data?.inbounds) && Array.isArray(entry.data?.servers))?.data
+  const configurationSyncServers = Array.isArray(data.servers) ? data.servers : cachedTopologyData?.servers || []
+  const configurationSyncInbounds = Array.isArray(data.inbounds) ? data.inbounds : cachedTopologyData?.inbounds || []
   const failedSync = configurationSync.filter(item => item.state === 'failed')
   const dashboardAttention = getDashboardAttention(data)
   const dashboardAttentionStorageKey = `oboard.dashboard-attention.${sessionUser?.id || data.current_user?.id || sessionUser?.username || data.current_user?.username || 'anonymous'}`
@@ -2873,9 +2881,11 @@ export function App() {
                   saving={mutationSaving}
                   retrying={syncRetrying}
                   canOperate={canOperate}
-                  servers={data.servers || []}
+                  servers={configurationSyncServers}
+                  inbounds={configurationSyncInbounds}
                   onRetry={() => void retryFailedSync()}
                   onNavigate={navigateTab}
+                  onLocateInbound={locateProxyInbound}
                 />
 
                 <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab, { forceFresh: true })} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
@@ -2885,7 +2895,7 @@ export function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={tab}>
-                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData)}
+                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -3212,7 +3222,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify?: (message: string, tone?: ToastKind) => void, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null) {
   if (tab === 'account') return (
     <AccountPage
       data={data}
@@ -3238,7 +3248,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
-  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} />
+  if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} focusRequest={proxyInboundFocus} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
@@ -9345,17 +9355,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <RegionFlag code={serverRegionCode(server)} size={22} />
           <div className="server-list-identity-text">
             <div className="server-list-name-row">
-              <strong className="server-list-name">{server.name || `server-${server.id}`}</strong>
+              <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
               <ServerExpiryBadge server={server} />
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
               {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
-            </div>
-            <div className="server-list-subinfo">
-              <span>#{server.id}</span>
-              <span>·</span>
-              <span title={regionLabel(serverRegionCode(server))}>{normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</span>
             </div>
           </div>
         </div>
@@ -9419,7 +9424,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
 
         {/* Mobile-only compact metadata line */}
         <div className="server-list-mobile-meta">
-          <span className="server-list-mobile-tag" title={regionLabel(serverRegionCode(server))}>#{server.id} {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</span>
+          <span className="server-list-mobile-tag">#{server.id}</span>
           <span className="server-list-mobile-sep">·</span>
           <span className="server-list-mobile-stat">CPU {Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
           <span className="server-list-mobile-sep">·</span>
@@ -9440,8 +9445,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         <div className="server-card-title">
           <RegionFlag code={serverRegionCode(server)} size={20} />
           <div>
-            <h3>{server.name || `server-${server.id}`}</h3>
-            <p title={regionLabel(serverRegionCode(server))}>#{server.id} · {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</p>
+            <h3>{server.name || `server-${server.id}`} <span style={{ fontWeight: 500, opacity: 0.55, fontSize: '0.9em' }}>#{server.id}</span></h3>
           </div>
         </div>
 
@@ -10134,8 +10138,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
       <div className="connectivity-title">
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
         <div>
-          <h2>{server.name || `服务器 #${server.id}`} · 监控</h2>
-          <p title={regionLabel(serverRegionCode(server))}>#{server.id} · {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</p>
+          <h2>{server.name ? <>{server.name} <span style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></> : `服务器 #${server.id}`} · 监控</h2>
         </div>
       </div>
       <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
@@ -10298,8 +10301,7 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
         <div className="server-detail-title">
           <RegionFlag code={serverRegionCode(server)} size={28} />
           <div>
-            <h2>{server.name || `server-${server.id}`}</h2>
-            <p title={regionLabel(serverRegionCode(server))}>服务器 #{server.id} · {normalizeRegionCode(serverRegionCode(server)) ? regionFlagEmoji(serverRegionCode(server)) : regionLabel(serverRegionCode(server))}</p>
+            <h2>{server.name ? <>{server.name} <span style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></> : `server-${server.id}`}</h2>
           </div>
         </div>
         <div className="server-detail-head-actions">
@@ -10458,24 +10460,31 @@ function inboundEntryAddress(data: any, entry: Inbound) {
 type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
-function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData }: any) {
+function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest }: any) {
   const [servers, setServers] = useState<Server[]>(data.servers || [])
   useEffect(() => { setServers(data.servers || []) }, [data.servers])
   const visibleData = useMemo(() => ({ ...data, servers }), [data, servers])
-  const preferredRoot = servers.find((server: Server) => (visibleData.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || servers[0]
+  const requestedInbound = (visibleData.inbounds || []).find((entry: Inbound) => entry.id === Number(focusRequest?.inboundID || 0))
+  const preferredRoot = servers.find((server: Server) => server.id === requestedInbound?.server_id)
+    || servers.find((server: Server) => (visibleData.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false))
+    || servers[0]
   const [selectedServer, setSelectedServer] = useState<number>(preferredRoot?.id || 0)
   useEffect(() => {
+    if (requestedInbound && selectedServer !== requestedInbound.server_id) {
+      setSelectedServer(requestedInbound.server_id)
+      return
+    }
     if (selectedServer && servers.some(server => server.id === selectedServer)) return
     const next = servers.find(server => (visibleData.inbounds || []).some((entry: Inbound) => entry.server_id === server.id && entry.enabled !== false)) || servers[0]
     if (next) setSelectedServer(next.id)
-  }, [servers, visibleData.inbounds, selectedServer])
+  }, [servers, visibleData.inbounds, selectedServer, requestedInbound?.server_id, focusRequest?.requestID])
   if (loading && !servers.length) return <Panel className="proxy-path-panel"><DashboardSkeleton /></Panel>
   const conflicts = deploymentConflicts(visibleData)
   return <Panel className="proxy-path-panel">
     {conflicts.length > 0 && <div className="error"><strong>下发前需要处理：</strong>{conflicts.map((x, i) => <div key={i}>{x}</div>)}</div>}
     <div className="proxy-shell">
       <ProxyGraphBoundary onRetry={load}>
-        <ProxyOverview data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} patchPageData={patchPageData} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
+        <ProxyOverview data={visibleData} client={client} load={load} selectedServer={selectedServer} setSelectedServer={setSelectedServer} topbarTarget={topbarTarget} patchPageData={patchPageData} focusRequest={focusRequest} onServerSnapshot={(server: Server) => setServers(current => upsertServerSnapshot(current, server))} />
       </ProxyGraphBoundary>
     </div>
   </Panel>
@@ -10513,6 +10522,7 @@ type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_
 type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; ipv4_target_proxy_path_id: number; ipv6_target_proxy_path_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
 type TunnelDraft = { name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
+type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
 type RelatedGraphTarget = { entity: GraphEntity; relation: GraphRelationTarget }
 type GraphContextMenu = { x: number; y: number; entity: GraphEntity; pathIDs: number[]; source: 'node' | 'edge' }
 type ImportedNodeDraft = { content: string; scope: 'global' | 'server'; server_id: number; expose_to_users: boolean; position?: GraphPosition | null }
@@ -10539,7 +10549,7 @@ type TransportDialogRequest = {
 }
 type GraphSourceSelectionRequest = { title: string; options: GraphSourceOption[]; multiple: boolean; resolve: (value: ProxyPathReuseSource[] | null) => void }
 
-function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData }: any) {
+function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest }: any) {
   const dialogs = useDialogs()
   const latencyProbeResource = useLatencyProbeResource(client)
   const servers: Server[] = data.servers || []
@@ -10621,7 +10631,9 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const [activeGraphPathIDs, setActiveGraphPathIDs] = useState<number[]>([])
   const [activeGraphSource, setActiveGraphSource] = useState<'node' | 'edge'>('node')
   const [relatedGraphTarget, setRelatedGraphTarget] = useState<RelatedGraphTarget | null>(null)
+  const [inboundFocusAnnouncement, setInboundFocusAnnouncement] = useState('')
   const pathFocusTimer = useRef<number | null>(null)
+	const inboundFocusTimer = useRef<number | null>(null)
 	const openGraphContextMenu = (clientX: number, clientY: number, entity: GraphEntity, pathIDs: number[], source: 'node' | 'edge') => {
 	  const menuWidth = Math.min(260, Math.max(148, window.innerWidth - 16))
 	  const menuHeight = entity.type === 'proxy-path-step' || (entity.type === 'direct' && entity.path_id) ? 248 : entity.type === 'direct' ? 126 : 132
@@ -10634,6 +10646,50 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  })
 	}
   useEffect(() => { setNodes(builtFlow.nodes); setEdges(builtFlow.edges) }, [builtFlow])
+  useEffect(() => {
+    const inboundID = Number(focusRequest?.inboundID || 0)
+    if (!inboundID || !flowInstance) return
+    const inbound = entries.find(entry => entry.id === inboundID)
+    if (!inbound) return
+    if (inbound.server_id !== selected?.id) {
+      setSelectedServer(inbound.server_id)
+      return
+    }
+    const locate = (attempt = 0) => {
+      const node = flowInstance.getNode(`entry-${inboundID}`)
+      if (node) {
+        const entity = node.data?.entity as GraphEntity | undefined
+        const pathIDs = (node.data?.pathIDs || []) as number[]
+        setNodes(current => current.map(item => ({ ...item, selected: item.id === node.id })))
+        setActiveGraphEntity(entity || { type: 'entry', id: inbound.id, label: inbound.name || `入口 ${inbound.id}` })
+        setActiveGraphPathIDs(pathIDs)
+        setActiveGraphSource('node')
+        setFocusedPathID(0)
+        setHoveredGraphFocus({ kind: 'direct-entry', entryID: inbound.id, serverID: inbound.server_id })
+        flowInstance.fitView({ nodes: [node], padding: 0.7, minZoom: 0.55, maxZoom: 1.05, duration: 320 })
+        setInboundFocusAnnouncement(`已定位并选中入口 ${inbound.name || `#${inbound.id}`}`)
+        window.requestAnimationFrame(() => {
+          const element = workspaceRef.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="entry-${inboundID}"]`)
+          element?.focus()
+        })
+        inboundFocusTimer.current = null
+        return
+      }
+      if (attempt >= 8) {
+        inboundFocusTimer.current = null
+        return
+      }
+      inboundFocusTimer.current = window.setTimeout(() => locate(attempt + 1), 50)
+    }
+    if (inboundFocusTimer.current !== null) window.clearTimeout(inboundFocusTimer.current)
+    inboundFocusTimer.current = window.setTimeout(() => locate(), 50)
+    return () => {
+      if (inboundFocusTimer.current !== null) {
+        window.clearTimeout(inboundFocusTimer.current)
+        inboundFocusTimer.current = null
+      }
+    }
+  }, [focusRequest?.requestID, focusRequest?.inboundID, flowInstance, selected?.id, builtFlow])
   useEffect(() => {
     if (focusedPathID && !visibleProxyPaths.some(path => path.id === focusedPathID)) setFocusedPathID(0)
     setHoveredGraphFocus(undefined)
@@ -10784,6 +10840,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (serverSafeFitTimer.current !== null) window.clearTimeout(serverSafeFitTimer.current)
     if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
     if (pathFocusTimer.current !== null) window.clearTimeout(pathFocusTimer.current)
+    if (inboundFocusTimer.current !== null) window.clearTimeout(inboundFocusTimer.current)
   }, [])
   useEffect(() => {
     if (!flowInstance || !selected?.id || pendingServerSafeFit.current !== selected.id) return
@@ -12559,6 +12616,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         topbarTarget,
       )}
       <div ref={workspaceRef} className={`proxy-editor-workspace${isToolbarCollapsed ? ' toolbox-collapsed' : ''}${inspectorOpen ? ' inspector-open' : ''}`}>
+        <div className="proxy-focus-announcement" role="status" aria-live="polite">{inboundFocusAnnouncement}</div>
         <div ref={toolboxRef} className={`proxy-editor-sidebar${toolboxDragging ? ' is-dragging' : ''}`} style={{ left: toolboxPosition.x, top: toolboxPosition.y }}>
           <ProxyGraphToolbox
             collapsed={isToolbarCollapsed}
