@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, sortServerEntriesForGraph } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, sortServerEntriesForGraph } from './layout'
 
 describe('proxy graph server layout', () => {
   it('keeps server cards fixed width regardless of inbound count', () => {
@@ -69,7 +69,7 @@ describe('proxy graph server layout', () => {
     const childY = children.map(child => result.positions[child.id].y)
     expect(new Set(childY).size).toBe(1)
     expect(result.bands['child-19'].left).toBeGreaterThan(result.bands['child-0'].right)
-    expect(result.layerChannels[0].bottom - result.layerChannels[0].top).toBeGreaterThan(120)
+    expect(result.layerChannels[0].bottom - result.layerChannels[0].top).toBe(ROUTING_MIN_CHANNEL_HEIGHT)
   })
 
   it('uses longest-path ranks and subtree bands deterministically', () => {

@@ -9,6 +9,7 @@ import {
   roundedOrthogonalPath,
   routeEndArrowPoints,
   segmentIntersectsRectInterior,
+  segmentsCross,
   trimRouteEnd,
   type GraphSegment,
 } from './graph-geometry'
@@ -39,6 +40,14 @@ describe('collinearOverlapLength', () => {
     expect(collinearOverlapLength(segment([0, 0], [20, 0]), segment([10, 0], [30, 0]))).toBe(10)
     expect(collinearOverlapLength(segment([0, 0], [20, 0]), segment([0, 0], [20, 0]))).toBe(20)
     expect(collinearOverlapLength(segment([0, 0], [20, 0]), segment([10, -10], [10, 10]))).toBe(0)
+  })
+})
+
+describe('segmentsCross', () => {
+  it('treats an interior X as a crossing and a T-junction as contact', () => {
+    expect(segmentsCross(segment([0, 10], [20, 10]), segment([10, 0], [10, 20]))).toBe(true)
+    expect(segmentsCross(segment([0, 10], [20, 10]), segment([10, 10], [10, 20]))).toBe(false)
+    expect(segmentsCross(segment([0, 10], [10, 10]), segment([10, 10], [10, 20]))).toBe(false)
   })
 })
 

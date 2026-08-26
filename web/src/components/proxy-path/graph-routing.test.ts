@@ -54,26 +54,36 @@ describe('global proxy graph routing', () => {
     })
   })
 
-  it('separates both edges of a two-way branch immediately', () => {
+  it('fans sibling branches from one shared stub then left and right', () => {
     const input = autoGraph(['root', 'b', 'c'], [
       { id: 'root-b', source: 'root', target: 'b', pathIDs: [1] },
       { id: 'root-c', source: 'root', target: 'c', pathIDs: [2] },
     ])
     const result = expectClean(input)
-    expect(routeOverlapLength(result.routes['root-b'].points, result.routes['root-c'].points)).toBe(0)
-    expect(result.routes['root-b'].points[0]).not.toEqual(result.routes['root-c'].points[0])
+    const left = result.routes['root-b']
+    const right = result.routes['root-c']
+    expect(left.points[0]).toEqual(right.points[0])
+    expect(left.points[1].x).toBe(left.points[0].x)
+    expect(left.points[1].y).toBeGreaterThan(left.points[0].y)
+    expect(right.points[1].x).toBe(right.points[0].x)
+    expect(right.points[1].y).toBeGreaterThan(right.points[0].y)
+    expect(left.quality).toBe('preferred')
+    expect(right.quality).toBe('preferred')
+    expect(routeOverlapLength(left.points, right.points)).toBeGreaterThan(0)
   })
 
-  it.each([8, 20, 47])('routes %i sibling branches with no collision, overlap, or crossing', count => {
+  it.each([8, 20, 47])('routes %i sibling branches from one stub without collisions or crossings', count => {
     const children = Array.from({ length: count }, (_, index) => `child-${String(index).padStart(2, '0')}`)
     const edges = children.map((target, index) => ({ id: `edge-${String(index).padStart(2, '0')}`, source: 'root', target, pathIDs: [index + 1] }))
     const input = autoGraph(['root', ...children], edges)
     const result = expectClean(input)
-    for (let left = 0; left < edges.length; left++) {
-      for (let right = left + 1; right < edges.length; right++) {
-        expect(routeOverlapLength(result.routes[edges[left].id].points, result.routes[edges[right].id].points)).toBe(0)
-      }
-    }
+    const origin = result.routes[edges[0].id].points[0]
+    edges.forEach(edge => {
+      expect(result.routes[edge.id].quality).toBe('preferred')
+      expect(result.routes[edge.id].points[0]).toEqual(origin)
+      expect(result.routes[edge.id].points[1].x).toBe(origin.x)
+      expect(result.routes[edge.id].points[1].y).toBeGreaterThan(origin.y)
+    })
   })
 
   it('keeps nested subtrees geometrically independent', () => {
@@ -108,6 +118,29 @@ describe('global proxy graph routing', () => {
     const result = expectClean(input)
     expect(result.routes.edge.quality).toBe('pathfinder')
     expect(routeIntersectsRect(result.routes.edge.points, expandRect(input.nodes[1].rect, NODE_CLEARANCE))).toBe(false)
+  })
+
+  it('reaches a side-shifted child without routing over the graph', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'source', rect: { left: 0, top: 0, right: 200, bottom: 100 } },
+        { id: 'below', rect: { left: -40, top: 220, right: 160, bottom: 320 } },
+        { id: 'side', rect: { left: 520, top: 40, right: 720, bottom: 160 } },
+      ],
+      edges: [
+        { id: 'to-below', source: 'source', target: 'below', routingClass: 'primary', pathIDs: [1], sourceRank: 0, targetRank: 1 },
+        { id: 'to-side', source: 'source', target: 'side', routingClass: 'primary', pathIDs: [2], sourceRank: 0, targetRank: 1 },
+      ],
+    }
+    const result = expectClean(input)
+    const side = result.routes['to-side']
+    expect(side.quality).toBe('preferred')
+    expect(Math.min(...side.points.map(point => point.y))).toBeGreaterThanOrEqual(40)
+    expect(side.points[0]).toEqual(result.routes['to-below'].points[0])
+    expect(side.points[1].x).toBe(side.points[0].x)
+    expect(side.points[1].y).toBeGreaterThan(side.points[0].y)
+    expect(routeIntersectsRect(side.points, input.nodes[0].rect)).toBe(false)
+    expect(routeIntersectsRect(side.points, input.nodes[2].rect)).toBe(false)
   })
 
   it('routes auxiliary infrastructure after the primary tree through an outer gutter', () => {

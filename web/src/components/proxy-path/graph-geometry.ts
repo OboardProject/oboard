@@ -135,7 +135,8 @@ export function segmentsCross(a: GraphSegment, b: GraphSegment): boolean {
   const intersection = { x: vertical.from.x, y: horizontal.from.y }
   if (!betweenInclusive(intersection.x, horizontal.from.x, horizontal.to.x)
     || !betweenInclusive(intersection.y, vertical.from.y, vertical.to.y)) return false
-  return !(isSegmentEndpoint(intersection, horizontal) && isSegmentEndpoint(intersection, vertical))
+  // A T-junction or L-corner touches at an endpoint. Only an interior X is a crossing.
+  return !isSegmentEndpoint(intersection, horizontal) && !isSegmentEndpoint(intersection, vertical)
 }
 
 export function collinearOverlapLength(a: GraphSegment, b: GraphSegment): number {

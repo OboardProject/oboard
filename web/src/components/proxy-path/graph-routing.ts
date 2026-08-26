@@ -98,11 +98,13 @@ export type RouteCandidateValidation = {
 export const NODE_CLEARANCE = 16
 export const PORT_MARGIN = 16
 export const ROUTING_TRACK_GAP = 14
+export const BRANCH_STUB_LENGTH = 28
 export const OUTER_GUTTER = 60
 export const OUTER_TRACK_GAP = 16
 export const BEND_COST = 40
 export const CROSSING_COST = 5000
 export const NODE_PROXIMITY_COST = 6
+export const ABOVE_SOURCE_COST = 4000
 
 function sortedPair(left: string, right: string): [string, string] {
   return left < right ? [left, right] : [right, left]
@@ -154,13 +156,14 @@ export class EdgeReservationIndex {
     })
   }
 
-  overlapLength(segment: GraphSegment, excludedEdgeID?: string) {
+  overlapLength(segment: GraphSegment, ignoredEdgeIDs?: string | Iterable<string>) {
+    const ignored = ignoredSet(ignoredEdgeIDs)
     const normalized = orthogonalSegment(segment.from, segment.to)
     const axis = segmentAxis(normalized)
     const fixed = axis === 'horizontal' ? normalized.from.y : normalized.from.x
     const candidates = (axis === 'horizontal' ? this.horizontalByY : this.verticalByX).get(fixed) || []
     return candidates.reduce((total, reservation) => {
-      if (reservation.edgeID === excludedEdgeID) return total
+      if (ignored.has(reservation.edgeID)) return total
       const reservedSegment = axis === 'horizontal'
         ? orthogonalSegment({ x: reservation.start, y: fixed }, { x: reservation.end, y: fixed })
         : orthogonalSegment({ x: fixed, y: reservation.start }, { x: fixed, y: reservation.end })
@@ -168,17 +171,33 @@ export class EdgeReservationIndex {
     }, 0)
   }
 
-  crossingCount(segment: GraphSegment, excludedEdgeID?: string) {
+  crossingCount(segment: GraphSegment, ignoredEdgeIDs?: string | Iterable<string>) {
+    const ignored = ignoredSet(ignoredEdgeIDs)
     const normalized = orthogonalSegment(segment.from, segment.to)
     const opposite = segmentAxis(normalized) === 'horizontal' ? this.allVertical : this.allHorizontal
     return opposite.filter(reservation => {
-      if (reservation.edgeID === excludedEdgeID) return false
+      if (ignored.has(reservation.edgeID)) return false
       const reservedSegment = reservation.axis === 'horizontal'
         ? orthogonalSegment({ x: reservation.start, y: reservation.fixed }, { x: reservation.end, y: reservation.fixed })
         : orthogonalSegment({ x: reservation.fixed, y: reservation.start }, { x: reservation.fixed, y: reservation.end })
       return segmentsCross(normalized, reservedSegment)
     }).length
   }
+}
+
+function ignoredSet(ignoredEdgeIDs?: string | Iterable<string>) {
+  if (!ignoredEdgeIDs) return new Set<string>()
+  return typeof ignoredEdgeIDs === 'string' ? new Set([ignoredEdgeIDs]) : new Set(ignoredEdgeIDs)
+}
+
+function branchGroupKey(edge: RoutingEdge) {
+  if (edge.routingClass !== 'primary') return edge.id
+  return `${edge.source}\u001f${edge.sourceHandle || ''}`
+}
+
+function branchSiblingIDs(edge: RoutingEdge, edges: RoutingEdge[]) {
+  const key = branchGroupKey(edge)
+  return new Set(edges.filter(item => item.id === edge.id || branchGroupKey(item) === key).map(item => item.id))
 }
 
 function edgeSide(routingClass: GraphRoutingClass, endpoint: 'source' | 'target') {
@@ -221,7 +240,19 @@ function allocateSidePorts(
 
     if (!unhandledEdges.length) return
 
-    const ordered = unhandledEdges.slice().sort((left, right) => {
+    const shareCenter = endpoint === 'source' && (side === 'top' || side === 'bottom')
+    const sharedEdges = shareCenter ? unhandledEdges.filter(edge => edge.routingClass === 'primary') : []
+    const spreadEdges = shareCenter ? unhandledEdges.filter(edge => edge.routingClass !== 'primary') : unhandledEdges
+    if (sharedEdges.length) {
+      const point = {
+        x: routingCoordinate((node.rect.left + node.rect.right) / 2),
+        y: routingCoordinate(side === 'top' ? node.rect.top : node.rect.bottom),
+      }
+      sharedEdges.forEach(edge => ports.set(edge.id, { edgeID: edge.id, nodeID, side, point }))
+    }
+    if (!spreadEdges.length) return
+
+    const ordered = spreadEdges.slice().sort((left, right) => {
       const leftNode = nodeByID.get(left[oppositeEndpoint])
       const rightNode = nodeByID.get(right[oppositeEndpoint])
       const leftCenter = leftNode ? nodeCenter(leftNode.rect) : { x: 0, y: 0 }
@@ -266,6 +297,7 @@ export function validateRouteCandidate(
   points: GraphPoint[],
   nodes: RoutingNode[],
   reservations: EdgeReservationIndex,
+  ignoredEdgeIDs?: Iterable<string>,
 ): RouteCandidateValidation {
   let route: GraphPoint[]
   try {
@@ -273,11 +305,12 @@ export function validateRouteCandidate(
   } catch {
     return { valid: false, nodeIntersections: [], overlapLength: Number.POSITIVE_INFINITY, crossings: 0 }
   }
+  const ignored = ignoredSet(ignoredEdgeIDs ?? edge.id)
   const nodeIntersections = routeObstacles(edge, nodes)
     .filter(obstacle => routeIntersectsRect(route, obstacle.rect))
     .map(obstacle => obstacle.id)
-  const overlapLength = routeSegments(route).reduce((total, segment) => total + reservations.overlapLength(segment, edge.id), 0)
-  const crossings = routeSegments(route).reduce((total, segment) => total + reservations.crossingCount(segment, edge.id), 0)
+  const overlapLength = routeSegments(route).reduce((total, segment) => total + reservations.overlapLength(segment, ignored), 0)
+  const crossings = routeSegments(route).reduce((total, segment) => total + reservations.crossingCount(segment, ignored), 0)
   const allowCrossings = edge.routingClass === 'belongs' || edge.routingClass === 'auxiliary'
   return {
     valid: nodeIntersections.length === 0 && overlapLength === 0 && (allowCrossings || crossings === 0),
@@ -287,6 +320,15 @@ export function validateRouteCandidate(
   }
 }
 
+function primarySideApproachX(source: GraphPoint, target: GraphPoint, targetRect: GraphRect) {
+  const goingRight = target.x >= source.x
+  const sideX = goingRight
+    ? routingCoordinate(targetRect.left - NODE_CLEARANCE)
+    : routingCoordinate(targetRect.right + NODE_CLEARANCE)
+  if ((goingRight && sideX >= target.x) || (!goingRight && sideX <= target.x)) return target.x
+  return sideX
+}
+
 function preferredRoute(
   edge: RoutingEdge,
   sourcePort: GraphRoutePort,
@@ -294,6 +336,7 @@ function preferredRoute(
   input: GraphRoutingInput,
   outerLaneIndex: number,
   belongsTracks?: Map<string, number>,
+  busYByGroup?: Map<string, number>,
 ): GraphPoint[] {
   const source = sourcePort.point
   const target = targetPort.point
@@ -308,10 +351,21 @@ function preferredRoute(
       ?? routingCoordinate(source.y + (target.y - source.y) / 2)
     return normalizeOrthogonalPoints([source, { x: source.x, y: trackY }, { x: target.x, y: trackY }, target])
   }
-  const channel = input.layerChannels?.find(item => item.sourceRank === edge.sourceRank && item.targetRank === edge.targetRank)
-  const trackY = channel?.tracks[edge.id]
-    ?? routingCoordinate(source.y + (target.y - source.y) / 2)
-  return normalizeOrthogonalPoints([source, { x: source.x, y: trackY }, { x: target.x, y: trackY }, target])
+  const stubY = routingCoordinate(source.y + BRANCH_STUB_LENGTH)
+  const dropY = busYByGroup?.get(branchGroupKey(edge)) ?? stubY
+  const busY = Math.max(dropY, stubY)
+  if (busY <= target.y) {
+    return normalizeOrthogonalPoints([source, { x: source.x, y: busY }, { x: target.x, y: busY }, target])
+  }
+  const targetNode = input.nodes.find(node => node.id === edge.target)
+  const sideX = targetNode ? primarySideApproachX(source, target, targetNode.rect) : target.x
+  return normalizeOrthogonalPoints([
+    source,
+    { x: source.x, y: busY },
+    { x: sideX, y: busY },
+    { x: sideX, y: target.y },
+    target,
+  ])
 }
 
 type RoutingDirection = 'none' | GraphAxis
@@ -382,12 +436,13 @@ function pathfindRoute(
   target: GraphPoint,
   input: GraphRoutingInput,
   reservations: EdgeReservationIndex,
+  ignoredEdgeIDs?: Iterable<string>,
 ): GraphPoint[] | undefined {
   const bounds = graphBounds(input.nodes)
   const obstacles = routeObstacles(edge, input.nodes).map(item => item.rect)
+  const ignored = ignoredSet(ignoredEdgeIDs ?? edge.id)
   const outerLeft = bounds.left - OUTER_GUTTER
   const outerRight = bounds.right + OUTER_GUTTER
-  const outerTop = bounds.top - OUTER_GUTTER
   const outerBottom = bounds.bottom + OUTER_GUTTER
   const xValues = coordinateList([
     source.x,
@@ -400,7 +455,7 @@ function pathfindRoute(
   const yValues = coordinateList([
     source.y,
     target.y,
-    outerTop,
+    source.y + BRANCH_STUB_LENGTH,
     outerBottom,
     ...obstacles.flatMap(rect => [rect.top, rect.bottom]),
     ...(input.layerChannels || []).flatMap(channel => Object.values(channel.tracks)),
@@ -439,10 +494,11 @@ function pathfindRoute(
       const to = { x: xValues[xIndex], y: yValues[yIndex] }
       if (obstacles.some(rect => segmentIntersectsRectInterior({ from, to }, rect))) return
       const move = orthogonalSegment(from, to)
-      if (reservations.overlapLength(move, edge.id) > 0) return
+      if (reservations.overlapLength(move, ignored) > 0) return
       const bend = current.state.direction !== 'none' && current.state.direction !== direction ? BEND_COST : 0
-      const crossing = reservations.crossingCount(move, edge.id) * CROSSING_COST
-      const nextCost = current.cost + segmentLength(move) + bend + crossing + segmentProximityCost(move, obstacles)
+      const crossing = reservations.crossingCount(move, ignored) * CROSSING_COST
+      const aboveSource = to.y < source.y ? ABOVE_SOURCE_COST : 0
+      const nextCost = current.cost + segmentLength(move) + bend + crossing + aboveSource + segmentProximityCost(move, obstacles)
       const state: RoutingState = { xIndex, yIndex, direction }
       const key = pointKey(state)
       if (nextCost >= (costs.get(key) ?? Number.POSITIVE_INFINITY)) return
@@ -467,11 +523,16 @@ function pathfindRoute(
 export function routeLabelPoint(points: GraphPoint[]): GraphPoint | undefined {
   const segments = routeSegments(points)
   if (!segments.length) return undefined
-  const horizontal = segments.filter(segment => segmentAxis(segment) === 'horizontal')
-  const preferred = horizontal.filter(segment => segmentLength(segment) >= 80)
-  const candidates = preferred.length ? preferred : horizontal.length ? horizontal : segments.filter(segment => segmentAxis(segment) === 'vertical')
-  const selected = candidates.slice().sort((left, right) => segmentLength(right) - segmentLength(left)
-    || left.from.x - right.from.x || left.from.y - right.from.y)[0]
+  const last = segments[segments.length - 1]
+  const selected = segmentAxis(last) === 'vertical' && segmentLength(last) >= 20
+    ? last
+    : (() => {
+      const horizontal = segments.filter(segment => segmentAxis(segment) === 'horizontal')
+      const preferred = horizontal.filter(segment => segmentLength(segment) >= 80)
+      const candidates = preferred.length ? preferred : horizontal.length ? horizontal : segments.filter(segment => segmentAxis(segment) === 'vertical')
+      return candidates.slice().sort((left, right) => segmentLength(right) - segmentLength(left)
+        || left.from.x - right.from.x || left.from.y - right.from.y)[0]
+    })()
   if (!selected) return undefined
   return {
     x: routingCoordinate((selected.from.x + selected.to.x) / 2 + (segmentAxis(selected) === 'vertical' ? 12 : 0)),
@@ -530,25 +591,24 @@ function inferPrimaryRoutingMetadata(input: GraphRoutingInput): GraphRoutingInpu
       .sort((left, right) => {
         const leftSource = nodeByID.get(left.source)
         const rightSource = nodeByID.get(right.source)
-        const leftTarget = nodeByID.get(left.target)
-        const rightTarget = nodeByID.get(right.target)
         const leftSourceX = leftSource ? nodeCenter(leftSource.rect).x : 0
         const rightSourceX = rightSource ? nodeCenter(rightSource.rect).x : 0
-        if (leftSourceX !== rightSourceX) return leftSourceX - rightSourceX
-        const leftTargetX = leftTarget ? nodeCenter(leftTarget.rect).x : 0
-        const rightTargetX = rightTarget ? nodeCenter(rightTarget.rect).x : 0
-        const leftDirection = Math.sign(leftTargetX - leftSourceX)
-        const rightDirection = Math.sign(rightTargetX - rightSourceX)
-        if (leftDirection !== rightDirection) return leftDirection - rightDirection
-        const targetOrder = leftDirection > 0 ? rightTargetX - leftTargetX : leftTargetX - rightTargetX
-        return targetOrder || left.id.localeCompare(right.id)
+        return leftSourceX - rightSourceX || left.id.localeCompare(right.id)
       })
     if (!boundaryEdges.length) continue
+    const sourceIndex = new Map<string, number>()
+    boundaryEdges.forEach(edge => {
+      const key = branchGroupKey(edge)
+      if (!sourceIndex.has(key)) sourceIndex.set(key, sourceIndex.size)
+    })
     const sourceNodes = boundaryEdges.map(edge => nodeByID.get(edge.source)).filter((node): node is RoutingNode => Boolean(node))
     const targetNodes = boundaryEdges.map(edge => nodeByID.get(edge.target)).filter((node): node is RoutingNode => Boolean(node))
     const top = Math.max(...sourceNodes.map(node => node.rect.bottom))
     const bottom = Math.min(...targetNodes.map(node => node.rect.top))
-    const tracks = Object.fromEntries(boundaryEdges.map((edge, index) => [edge.id, routingCoordinate(top + 28 + index * ROUTING_TRACK_GAP)]))
+    const tracks = Object.fromEntries(boundaryEdges.map(edge => [
+      edge.id,
+      routingCoordinate(top + BRANCH_STUB_LENGTH + (sourceIndex.get(branchGroupKey(edge)) || 0) * ROUTING_TRACK_GAP),
+    ]))
     layerChannels.push({ sourceRank, targetRank: sourceRank + 1, top, bottom, tracks })
   }
   return { ...input, edges, layerChannels }
@@ -572,7 +632,12 @@ export function validateGraphRoutes(input: GraphRoutingInput, routes: Record<str
     for (let rightIndex = leftIndex + 1; rightIndex < routedIDs.length; rightIndex++) {
       const leftID = routedIDs[leftIndex]
       const rightID = routedIDs[rightIndex]
-      if (routeOverlapLength(routes[leftID].points, routes[rightID].points) > 0) overlappingEdgePairs.push(sortedPair(leftID, rightID))
+      if (routeOverlapLength(routes[leftID].points, routes[rightID].points) > 0) {
+        const leftEdge = edgeByID.get(leftID)
+        const rightEdge = edgeByID.get(rightID)
+        const siblingTrunk = leftEdge && rightEdge && branchGroupKey(leftEdge) === branchGroupKey(rightEdge)
+        if (!siblingTrunk) overlappingEdgePairs.push(sortedPair(leftID, rightID))
+      }
       if (edgeByID.get(leftID)?.routingClass === 'primary'
         && edgeByID.get(rightID)?.routingClass === 'primary'
         && routeCrossingCount(routes[leftID].points, routes[rightID].points) > 0) {
@@ -637,6 +702,24 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
       belongsTracks.set(edge.id, routingCoordinate(base + offset))
     })
   })
+  const busYByGroup = new Map<string, number>()
+  const primaryByGroup = new Map<string, RoutingEdge[]>()
+  edges.forEach(edge => {
+    if (edge.routingClass !== 'primary') return
+    const key = branchGroupKey(edge)
+    primaryByGroup.set(key, [...(primaryByGroup.get(key) || []), edge])
+  })
+  primaryByGroup.forEach((groupEdges, key) => {
+    const sourcePort = sourcePorts.get(groupEdges[0].id)
+    if (!sourcePort) return
+    const channel = routingInput.layerChannels?.find(item => (
+      groupEdges.some(edge => item.sourceRank === edge.sourceRank && item.targetRank === edge.targetRank)
+    ))
+    const trackY = groupEdges
+      .map(edge => channel?.tracks[edge.id])
+      .find((value): value is number => value !== undefined && value > sourcePort.point.y)
+    busYByGroup.set(key, routingCoordinate(Math.max(sourcePort.point.y + BRANCH_STUB_LENGTH, trackY ?? 0)))
+  })
   edges.forEach(edge => {
     const sourcePort = sourcePorts.get(edge.id)
     const targetPort = targetPorts.get(edge.id)
@@ -644,20 +727,21 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
       routes[edge.id] = { points: [], quality: 'failed' }
       return
     }
-    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, belongsTracks)
+    const ignored = branchSiblingIDs(edge, edges)
+    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, belongsTracks, busYByGroup)
     if (edge.routingClass === 'auxiliary') auxiliaryIndex++
-    const preferredValidation = validateRouteCandidate(edge, preferred, routingInput.nodes, reservations)
+    const preferredValidation = validateRouteCandidate(edge, preferred, routingInput.nodes, reservations, ignored)
     let points: GraphPoint[] | undefined
     let quality: GraphRouteQuality = 'preferred'
     if (preferredValidation.valid || input.avoidObstacles === false) {
       points = preferred
       if (edge.routingClass === 'auxiliary') quality = 'outer-gutter'
     } else {
-      points = pathfindRoute(edge, sourcePort.point, targetPort.point, routingInput, reservations)
+      points = pathfindRoute(edge, sourcePort.point, targetPort.point, routingInput, reservations, ignored)
       quality = points ? 'pathfinder' : 'failed'
       const bounds = graphBounds(routingInput.nodes)
       if (points?.some(point => point.x <= bounds.left - OUTER_GUTTER || point.x >= bounds.right + OUTER_GUTTER
-        || point.y <= bounds.top - OUTER_GUTTER || point.y >= bounds.bottom + OUTER_GUTTER)) quality = 'outer-gutter'
+        || point.y >= bounds.bottom + OUTER_GUTTER)) quality = 'outer-gutter'
     }
     if (!points || points.length < 2) {
       routes[edge.id] = { points: preferred, quality: 'preferred', labelPoint: routeLabelPoint(preferred) }

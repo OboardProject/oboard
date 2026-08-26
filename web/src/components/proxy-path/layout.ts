@@ -289,26 +289,25 @@ export function layoutProxyGraphTopology(
         const leftSource = bands[left.source]?.left || 0
         const rightSource = bands[right.source]?.left || 0
         if (leftSource !== rightSource) return leftSource - rightSource
-        const sourceCenter = bands[left.source]?.centerX || 0
-        const leftTarget = bands[left.target]?.centerX || 0
-        const rightTarget = bands[right.target]?.centerX || 0
-        const leftDirection = Math.sign(leftTarget - sourceCenter)
-        const rightDirection = Math.sign(rightTarget - sourceCenter)
-        if (leftDirection !== rightDirection) return leftDirection - rightDirection
-        // Fan-out tracks run from the outside toward the source center. That
-        // keeps each horizontal dogleg beyond the source stubs that continue
-        // to deeper tracks, so divergent edges do not cross near the card.
-        const targetOrder = leftDirection > 0 ? rightTarget - leftTarget : leftTarget - rightTarget
-        return targetOrder || compareLayoutEdges(left, right)
+        return compareLayoutEdges(left, right)
       })
+    const sourceKey = (edge: ProxyLayoutEdge) => `${edge.source}\u001f${edge.sourceHandle || ''}`
+    const sourceIndex = new Map<string, number>()
+    crossingEdges.forEach(edge => {
+      const key = sourceKey(edge)
+      if (!sourceIndex.has(key)) sourceIndex.set(key, sourceIndex.size)
+    })
     const channelHeight = Math.max(
       ROUTING_MIN_CHANNEL_HEIGHT,
-      channelPadding * 2 + Math.max(0, crossingEdges.length - 1) * trackGap,
+      channelPadding * 2 + Math.max(0, sourceIndex.size - 1) * trackGap,
     )
     const currentHeight = Math.max(GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, ...(nodesByRank.get(sourceRank) || []).map(node => node.height))
     const top = layerY[sourceRank] + currentHeight
     const bottom = top + channelHeight
-    const tracks = Object.fromEntries(crossingEdges.map((edge, index) => [edge.id, top + channelPadding + index * trackGap]))
+    const tracks = Object.fromEntries(crossingEdges.map(edge => [
+      edge.id,
+      top + channelPadding + (sourceIndex.get(sourceKey(edge)) || 0) * trackGap,
+    ]))
     layerChannels.push({ sourceRank, targetRank: sourceRank + 1, top, bottom, tracks })
     layerY[sourceRank + 1] = bottom
   }
