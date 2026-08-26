@@ -11775,7 +11775,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     try {
       let finalDraft = entryDraft
       if (finalDraft.protocol === 'ssh') {
-        const confirmed = await dialogs.confirm({ title: '确认公开 SSH 受限代理入口', message: '该入口会向已授权用户公开由 Agent 实现的受限 SSH 代理服务，不会授予服务器登录权限，也不会创建主机账户。仅允许使用用户代理密码认证和本地/动态转发，目标仅限公网地址；shell、SFTP、会话通道和远程转发均会被拒绝。', tone: 'danger', confirmText: '确认创建 SSH 入口' })
+        const confirmed = await dialogs.confirm({ title: '确认公开 SSH 受限代理入口', message: '该入口仅提供受限 SSH 代理，不授予服务器登录权限。', tone: 'danger', confirmText: '确认创建 SSH 入口' })
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
@@ -11796,7 +11796,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     try {
       let finalDraft = editEntry
       if (finalDraft.protocol === 'ssh') {
-        const confirmed = await dialogs.confirm({ title: '确认更新 SSH 受限代理入口', message: '该入口会向已授权用户公开由 Agent 实现的受限 SSH 代理服务，不会授予服务器登录权限，也不会创建主机账户。仅允许使用用户代理密码认证和本地/动态转发，目标仅限公网地址；shell、SFTP、会话通道和远程转发均会被拒绝。', tone: 'danger', confirmText: '确认保存' })
+        const confirmed = await dialogs.confirm({ title: '确认更新 SSH 受限代理入口', message: '该入口仅提供受限 SSH 代理，不授予服务器登录权限。', tone: 'danger', confirmText: '确认保存' })
         if (!confirmed) return
         finalDraft = { ...finalDraft, config_json: JSON.stringify({ ...(parseConfig(finalDraft.config_json) || {}), exposure_confirmed: true, exposure_confirmation_version: 'ssh-inbound-v1', access_mode: 'restricted_proxy' }) }
       }
