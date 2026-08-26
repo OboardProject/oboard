@@ -61,7 +61,7 @@
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
-| `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-pending` | 待发布 | 生效中 | - |
+| `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
@@ -581,8 +581,8 @@
 ### controller-db-20260827-remote-access
 
 - **引入日期：** 2026-08-27
-- **引入提交：** pending
-- **引入版本：** `dev-pending`
+- **引入提交：** `OboardProject/oboard@82937c69f06c9b4616f906352f43d81acabbb6fe`
+- **引入版本：** `dev-82937c69f06c`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、`internal/mcpauth`、Web
 - **类别：** SQLite schema
