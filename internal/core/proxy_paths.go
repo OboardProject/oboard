@@ -1194,7 +1194,7 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 	enabledByInbound := map[int64][]model.ProxyPath{}
 	transparentSignatureByInbound := map[int64]string{}
 	transparentCountByInbound := map[int64]int{}
-	directSignatures := map[string]bool{}
+	directSignatures := map[string]model.ProxyPath{}
 	for _, path := range paths {
 		if !path.Enabled {
 			continue
@@ -1253,10 +1253,18 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 				}
 			}
 			signature := directProxyPathSignature(path.InboundID, ordered)
-			if directSignatures[signature] {
-				return fmt.Errorf("入口 %d 的同一分支位置存在多条直接出口；请删除或停用重复分支后再同步", path.InboundID)
+			if previous, exists := directSignatures[signature]; exists {
+				previousName := strings.TrimSpace(previous.Name)
+				if previousName == "" {
+					previousName = fmt.Sprintf("#%d", previous.ID)
+				}
+				pathName := strings.TrimSpace(path.Name)
+				if pathName == "" {
+					pathName = fmt.Sprintf("#%d", path.ID)
+				}
+				return fmt.Errorf("入口 %d 的直接出口分支「%s」与「%s」位于同一位置；请删除或停用其中一条后再同步", path.InboundID, previousName, pathName)
 			}
-			directSignatures[signature] = true
+			directSignatures[signature] = path
 		}
 		transparent, err := validateProxyPathTransportSemantics(path, root, ordered)
 		if err != nil {

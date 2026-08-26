@@ -17285,6 +17285,11 @@ button.deploy-status-pill.details-trigger:focus-visible {
 .configuration-sync-issue-head small { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .configuration-sync-issue-head h4 { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; line-height: 1.4; }
 .configuration-sync-issue-head > span { flex: 0 0 auto; padding: 3px 8px; border-radius: var(--radius-full); background: var(--danger-soft); color: var(--danger); font-size: 11px; font-weight: 700; }
+.configuration-sync-resource { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.configuration-sync-resource > div { min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.configuration-sync-resource dt { margin-bottom: 3px; color: var(--muted); font-size: 11px; }
+.configuration-sync-resource dd { margin: 0; overflow-wrap: anywhere; color: var(--text-strong); font-size: 12px; font-weight: 650; }
+.configuration-sync-resource code { color: var(--muted); font-size: 11px; font-weight: 600; }
 .configuration-sync-issue > p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 .configuration-sync-resolution { display: grid; gap: 3px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13px; line-height: 1.55; }
 .configuration-sync-resolution strong { color: var(--text-strong); }
@@ -17297,9 +17302,21 @@ button.deploy-status-pill.details-trigger:focus-visible {
 .configuration-sync-target { justify-self: start; }
 .configuration-sync-actions { margin-top: 0; padding-top: 2px; }
 .configuration-sync-actions button { display: inline-flex; align-items: center; gap: 7px; }
+.proxy-focus-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 @media (max-width: 640px) {
   .configuration-sync-issue-head { align-items: stretch; flex-direction: column; gap: 8px; }
   .configuration-sync-issue-head > span { align-self: flex-start; }
+  .configuration-sync-resource { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1100px) {

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,7 +89,8 @@ func TestConfigurationMutationAffectedServerScope(t *testing.T) {
 	srv := newTestServer(db, "test-secret", "")
 	first := &model.Server{Name: "scope-a", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
 	second := &model.Server{Name: "scope-b", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 20001, PortRangeEnd: 30000}
-	for _, server := range []*model.Server{first, second} {
+	third := &model.Server{Name: "scope-unrelated", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 30001, PortRangeEnd: 40000}
+	for _, server := range []*model.Server{first, second, third} {
 		if err := db.CreateServer(ctx, server); err != nil {
 			t.Fatal(err)
 		}
@@ -106,6 +108,32 @@ func TestConfigurationMutationAffectedServerScope(t *testing.T) {
 	got := srv.configurationMutationServerIDs(ctx, "/api/v1/ui/port-forwards/"+itoa(forward.ID), "DELETE")
 	if len(got) != 2 || got[0] != first.ID || got[1] != second.ID {
 		t.Fatalf("forward delete scope = %v", got)
+	}
+	inbound := &model.Inbound{ServerID: first.ID, Name: "scoped-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{InboundID: inbound.ID, Kind: model.ProxyPathKindChain, Name: "scope-a-b", Secret: "scope-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	step := &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &second.ID, ConfigJSON: "{}"}
+	if err := db.CreateProxyPathStep(ctx, step); err != nil {
+		t.Fatal(err)
+	}
+	for label, scoped := range map[string][]int64{
+		"inbound": srv.configurationMutationServerIDs(ctx, "/api/v1/ui/inbounds/"+itoa(inbound.ID), http.MethodPatch),
+		"path":    srv.configurationMutationServerIDs(ctx, "/api/v1/ui/proxy-paths/"+itoa(path.ID), http.MethodPatch),
+		"step":    srv.configurationMutationServerIDs(ctx, "/api/v1/ui/proxy-path-steps/"+itoa(step.ID), http.MethodDelete),
+	} {
+		if len(scoped) != 2 || scoped[0] != first.ID || scoped[1] != second.ID {
+			t.Fatalf("%s topology scope = %v, want [%d %d] without unrelated server %d", label, scoped, first.ID, second.ID, third.ID)
+		}
+	}
+	response, _ := json.Marshal(map[string]any{"proxy_path_step": map[string]any{"id": step.ID, "path_id": path.ID}})
+	responseScope, resolved := srv.configurationMutationResponseServerIDs(ctx, "/api/v1/ui/proxy-path-steps", response)
+	if !resolved || len(responseScope) != 2 || responseScope[0] != first.ID || responseScope[1] != second.ID {
+		t.Fatalf("step create response scope = %v resolved=%t", responseScope, resolved)
 	}
 }
 

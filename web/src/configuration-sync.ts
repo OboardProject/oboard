@@ -23,18 +23,23 @@ export type ConfigurationSyncFailureIssue = {
   rawError: string
   serverIDs: number[]
   taskIDs: number[]
+  inboundID?: number
+  conflictingPathNames?: string[]
   targetTab: 'proxy-paths' | 'tasks'
   targetLabel: string
 }
 
 function describeConfigurationSyncError(rawError: string) {
-  const directBranch = rawError.match(/入口\s+(\d+).*(?:相同位置的直接出口分支|同一分支位置存在多条直接出口)/)
+  const directBranch = rawError.match(/入口\s+(\d+).*(?:相同位置的直接出口分支|同一分支位置存在多条直接出口|直接出口分支.*位于同一位置)/)
   if (directBranch) {
     const inboundID = directBranch[1]
+    const namedPaths = rawError.match(/直接出口分支「([^」]+)」与「([^」]+)」位于同一位置/)
     return {
       title: `入口 ${inboundID} 存在重复的直接出口分支`,
       explanation: '同一个入口在同一分叉位置只能保留一条直接出口分支，否则无法确定应使用哪条直出路由。',
       resolution: `前往「代理拓扑」，找到入口 ${inboundID}，删除或停用同一位置的重复直出分支。保存后系统会自动重新同步。`,
+      inboundID: Number(inboundID),
+      conflictingPathNames: namedPaths ? [namedPaths[1], namedPaths[2]] : undefined,
       targetTab: 'proxy-paths' as const,
       targetLabel: '打开代理拓扑',
     }
@@ -77,7 +82,7 @@ export function configurationSyncPresentation(rows: ConfigurationSyncRow[], savi
   if (retrying) return { tone: 'info', label: '正在重试同步...', retryServerIDs: failed.map(item => item.server_id), busy: true }
   if (failed.length > 0) {
     const issueCount = configurationSyncFailureIssues(failed).length
-    return { tone: 'danger', label: `${failed.length} 台同步失败 · ${issueCount} 个问题`, retryServerIDs: failed.map(item => item.server_id), busy: false }
+    return { tone: 'danger', label: `配置同步被阻塞 · ${issueCount} 个问题`, retryServerIDs: failed.map(item => item.server_id), busy: false }
   }
   if (active.length > 0) return { tone: 'info', label: `正在同步 ${active.length} 台服务器`, retryServerIDs: [], busy: true }
   if (synced) return { tone: 'ok', label: '配置已同步', retryServerIDs: [], busy: false }

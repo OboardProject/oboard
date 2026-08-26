@@ -37,9 +37,9 @@ describe('ConfigurationSyncStatus', () => {
     const retry = vi.fn()
     act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'failed', error: 'prepare failed' }, { server_id: 2, state: 'synced' }]} onRetry={retry} />))
     const button = container.querySelector('button') as HTMLButtonElement | null
-    expect(button?.textContent).toContain('1 台同步失败 · 1 个问题')
+    expect(button?.textContent).toContain('配置同步被阻塞 · 1 个问题')
     act(() => button?.click())
-    const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重试 1 台服务器'))
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重新尝试 1 个同步任务'))
     act(() => retryButton?.click())
     expect(retry).toHaveBeenCalledTimes(1)
 
@@ -49,29 +49,33 @@ describe('ConfigurationSyncStatus', () => {
   })
 
   it('opens deduplicated, actionable failure details without a hover-only tooltip', () => {
-    const navigate = vi.fn()
-    const repeated = '入口 15 已存在相同位置的直接出口分支'
+    const locateInbound = vi.fn()
+    const repeated = '入口 15 的直接出口分支「东京直出」与「备用直出」位于同一位置；请删除或停用其中一条后再同步'
     act(() => root.render(<ConfigurationSyncStatus
       rows={[
         { server_id: 1, state: 'failed', error: repeated },
         { server_id: 2, state: 'failed', error: repeated },
       ]}
       servers={[{ id: 1, name: '东京入口' }, { id: 2, name: '香港出口' }]}
-      onNavigate={navigate}
+      inbounds={[{ id: 15, server_id: 1, name: '日本主入口', protocol: 'vless', listen_ip: '0.0.0.0', port: 443 }]}
+      onLocateInbound={locateInbound}
       onRetry={vi.fn()}
     />))
     const trigger = container.querySelector('button') as HTMLButtonElement
     expect(trigger.title).toBe('')
     expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
     act(() => trigger.click())
-    expect(document.body.textContent).toContain('入口 15 存在重复的直接出口分支')
-    expect(document.body.textContent).toContain('相同错误已合并显示')
+    expect(document.body.textContent).toContain('入口「日本主入口」存在重复的直接出口分支')
+    expect(document.body.textContent).toContain('东京入口')
+    expect(document.body.textContent).toContain('VLESS · 0.0.0.0:443')
+    expect(document.body.textContent).toContain('东京直出 ↔ 备用直出')
+    expect(document.body.textContent).toContain('这不表示 2 台服务器各自都有问题')
     expect(document.body.textContent).toContain('东京入口')
     expect(document.body.textContent).toContain('香港出口')
     expect(document.body.textContent?.split(repeated)).toHaveLength(2)
-    const target = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent === '打开代理拓扑')
+    const target = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent === '定位并选中「日本主入口」')
     act(() => target?.click())
-    expect(navigate).toHaveBeenCalledWith('proxy-paths')
+    expect(locateInbound).toHaveBeenCalledWith(15)
   })
 
   it('rolls back the rendered entity and exposes an actionable error after a failed save', async () => {

@@ -234,9 +234,13 @@ func (s *Server) configurationMutationServerIDs(ctx context.Context, path, metho
 		}
 		return []int64{id}
 	case "inbounds":
-		// Entry edits can change every proxy path rooted at the inbound; deletion
-		// also cascades those paths, so use the complete topology scope.
-		return nil
+		return s.configurationTopologyServerIDs(ctx, []int64{id}, nil)
+	case "proxy-paths":
+		return s.configurationTopologyServerIDs(ctx, nil, []int64{id})
+	case "proxy-path-steps":
+		if item, err := s.store.GetProxyPathStep(ctx, id); err == nil {
+			return s.configurationTopologyServerIDs(ctx, nil, []int64{item.PathID})
+		}
 	case "outbounds":
 		if item, err := s.store.GetOutbound(ctx, id); err == nil {
 			return uniquePositiveIDs([]int64{item.ServerID, valueOrZero(item.NextServerID)})
@@ -254,6 +258,129 @@ func (s *Server) configurationMutationServerIDs(ctx context.Context, path, metho
 	// conservatively scoped to all servers. Trusted-forward expansion remains
 	// inside deployConfiguration.
 	return nil
+}
+
+func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs, pathIDs []int64) []int64 {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return nil
+	}
+	inboundSet := make(map[int64]bool, len(inboundIDs))
+	for _, inboundID := range inboundIDs {
+		if inboundID > 0 {
+			inboundSet[inboundID] = true
+		}
+	}
+	pathSet := make(map[int64]bool, len(pathIDs))
+	for _, pathID := range pathIDs {
+		if pathID > 0 {
+			pathSet[pathID] = true
+		}
+	}
+	for _, path := range data.ProxyPaths {
+		if inboundSet[path.InboundID] {
+			pathSet[path.ID] = true
+		}
+	}
+	inboundByID := make(map[int64]model.Inbound, len(data.Inbounds))
+	for _, inbound := range data.Inbounds {
+		inboundByID[inbound.ID] = inbound
+	}
+	serverIDs := make([]int64, 0)
+	for inboundID := range inboundSet {
+		if inbound, ok := inboundByID[inboundID]; ok {
+			serverIDs = append(serverIDs, inbound.ServerID)
+		}
+	}
+	for _, path := range data.ProxyPaths {
+		if !pathSet[path.ID] {
+			continue
+		}
+		if inbound, ok := inboundByID[path.InboundID]; ok {
+			serverIDs = append(serverIDs, inbound.ServerID)
+		}
+	}
+	for _, step := range data.ProxyPathSteps {
+		if !pathSet[step.PathID] {
+			continue
+		}
+		if step.ServerID != nil {
+			serverIDs = append(serverIDs, *step.ServerID)
+		}
+		if step.InboundID != nil {
+			if inbound, ok := inboundByID[*step.InboundID]; ok {
+				serverIDs = append(serverIDs, inbound.ServerID)
+			}
+		}
+	}
+	return uniquePositiveIDs(serverIDs)
+}
+
+func (s *Server) configurationMutationResponseServerIDs(ctx context.Context, path string, body []byte) ([]int64, bool) {
+	segment := strings.Split(strings.Trim(normalizeConfigurationPath(path), "/"), "/")[0]
+	if segment != "inbounds" && segment != "proxy-paths" && segment != "proxy-path-steps" {
+		return nil, false
+	}
+	var response map[string]any
+	if len(body) == 0 || json.Unmarshal(body, &response) != nil {
+		return nil, false
+	}
+	inboundIDs := make([]int64, 0)
+	pathIDs := make([]int64, 0)
+	appendEntity := func(value any, kind string) {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return
+		}
+		if kind == "inbound" {
+			if id := int64FromAny(item["id"]); id > 0 {
+				inboundIDs = append(inboundIDs, id)
+			}
+			return
+		}
+		if kind == "path" {
+			if id := int64FromAny(item["id"]); id > 0 {
+				pathIDs = append(pathIDs, id)
+			}
+			return
+		}
+		if id := int64FromAny(item["path_id"]); id > 0 {
+			pathIDs = append(pathIDs, id)
+		}
+	}
+	appendEntity(response["inbound"], "inbound")
+	appendEntity(response["proxy_path"], "path")
+	appendEntity(response["proxy_path_step"], "step")
+	for key, kind := range map[string]string{"inbounds": "inbound", "proxy_paths": "path", "proxy_path_steps": "step"} {
+		if items, ok := response[key].([]any); ok {
+			for _, item := range items {
+				appendEntity(item, kind)
+			}
+		}
+	}
+	if len(inboundIDs) == 0 && len(pathIDs) == 0 {
+		return nil, false
+	}
+	return s.configurationTopologyServerIDs(ctx, inboundIDs, pathIDs), true
+}
+
+func int64FromAny(value any) int64 {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed)
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case json.Number:
+		result, _ := typed.Int64()
+		return result
+	case string:
+		result, _ := strconv.ParseInt(typed, 10, 64)
+		return result
+	default:
+		return 0
+	}
 }
 
 func valueOrZero(value *int64) int64 {

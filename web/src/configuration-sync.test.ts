@@ -12,14 +12,14 @@ describe('configuration sync feedback', () => {
       { server_id: 2, state: 'failed', error: 'prepare failed' },
       { server_id: 3, state: 'failed', error: 'agent failed' },
     ])
-    expect(status).toMatchObject({ tone: 'danger', label: '2 台同步失败 · 2 个问题', retryServerIDs: [2, 3], busy: false })
+    expect(status).toMatchObject({ tone: 'danger', label: '配置同步被阻塞 · 2 个问题', retryServerIDs: [2, 3], busy: false })
   })
 
   it('deduplicates repeated server failures and explains the direct-branch conflict', () => {
     const rows = Array.from({ length: 8 }, (_, index) => ({
       server_id: index + 1,
       state: 'failed',
-      error: '入口 15 已存在相同位置的直接出口分支',
+      error: '入口 15 的直接出口分支「东京直出」与「备用直出」位于同一位置；请删除或停用其中一条后再同步',
       task_id: 100 + index,
     }))
     const issues = configurationSyncFailureIssues(rows)
@@ -29,9 +29,12 @@ describe('configuration sync feedback', () => {
       serverIDs: [1, 2, 3, 4, 5, 6, 7, 8],
       targetTab: 'proxy-paths',
       targetLabel: '打开代理拓扑',
+      inboundID: 15,
+      conflictingPathNames: ['东京直出', '备用直出'],
     })
     expect(issues[0].resolution).toContain('删除或停用同一位置的重复直出分支')
-    expect(configurationSyncPresentation(rows).label).toBe('8 台同步失败 · 1 个问题')
+    expect(configurationSyncPresentation(rows).label).toBe('配置同步被阻塞 · 1 个问题')
+    expect(configurationSyncFailureIssues([{ server_id: 1, state: 'failed', error: '入口 15 已存在相同位置的直接出口分支' }])[0].inboundID).toBe(15)
   })
 
   it('merges desired revision and sync rows without discarding page entities', () => {

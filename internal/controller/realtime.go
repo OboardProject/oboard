@@ -781,6 +781,11 @@ func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
 			s.publishRealtime(realtimeResourcesForRequest(r.URL.Path)...)
 			if configurationMutation && s.store != nil {
 				if afterRevision, err := s.store.ConfigurationRevision(r.Context()); err == nil && afterRevision > beforeRevision {
+					if len(affectedServerIDs) == 0 {
+						if responseServerIDs, resolved := s.configurationMutationResponseServerIDs(r.Context(), r.URL.Path, responseBody); resolved {
+							affectedServerIDs = responseServerIDs
+						}
+					}
 					s.markConfigurationRevision(r.Context(), afterRevision, affectedServerIDs)
 					responseBody = s.configurationMutationResponse(r.Context(), responseBody, afterRevision, affectedServerIDs)
 				}

@@ -3646,7 +3646,7 @@ func TestProxyPathStepDeletePreservesRootRoutingRulesAsDirectPath(t *testing.T) 
 	directID := int64(direct["proxy_path"].(map[string]any)["id"].(float64))
 
 	conflict := request(t, h, http.MethodDelete, "/api/v1/ui/proxy-path-steps/"+itoa(stepID), token, nil, http.StatusBadRequest)
-	if !strings.Contains(conflict["error"].(string), "同一分支位置存在多条直接出口") {
+	if !strings.Contains(conflict["error"].(string), "位于同一位置") {
 		t.Fatalf("delete conflict = %#v", conflict)
 	}
 	if storedPath, err := db.GetProxyPath(context.Background(), pathID); err != nil || storedPath.Kind != model.ProxyPathKindChain {
