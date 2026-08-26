@@ -172,6 +172,121 @@ func connectivityEventPriority(kind model.ConnectivityEventKind) int {
 	}
 }
 
+type publicLatencyPoint struct {
+	serverID  int64
+	available bool
+	latencyMS int64
+	at        time.Time
+}
+
+// overlayPublicLatencyOnMetricSamples fills samples that were stored without
+// connectivity (the historical metric_report path writes -1/0) using the latest
+// public probe_result in the same UTC minute. Recorded connectivity is left as-is.
+func (s *Store) overlayPublicLatencyOnMetricSamples(ctx context.Context, samples []model.ServerMetricSample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	needed := false
+	serverIDs := make([]any, 0, 8)
+	seen := map[int64]struct{}{}
+	var minAt, maxAt time.Time
+	for _, sample := range samples {
+		if sample.SampledAt.IsZero() {
+			continue
+		}
+		if minAt.IsZero() || sample.SampledAt.Before(minAt) {
+			minAt = sample.SampledAt
+		}
+		if maxAt.IsZero() || sample.SampledAt.After(maxAt) {
+			maxAt = sample.SampledAt
+		}
+		if sample.ConnectivityAvailable == nil && sample.ServerID > 0 {
+			needed = true
+			if _, ok := seen[sample.ServerID]; !ok {
+				seen[sample.ServerID] = struct{}{}
+				serverIDs = append(serverIDs, sample.ServerID)
+			}
+		}
+	}
+	if !needed || len(serverIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(serverIDs))
+	args := make([]any, 0, len(serverIDs)+3)
+	args = append(args, model.ConnectivityEventProbeResult)
+	for index := range serverIDs {
+		placeholders[index] = "?"
+		args = append(args, serverIDs[index])
+	}
+	from := minAt.UTC().Truncate(time.Minute)
+	to := maxAt.UTC().Truncate(time.Minute).Add(time.Minute)
+	args = append(args, from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, `select server_id,available,latency_ms,effective_at from server_connectivity_events where kind=? and server_id in (`+strings.Join(placeholders, ",")+`) and effective_at>=? and effective_at<? order by server_id,effective_at asc,id asc`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	probesByServer := map[int64][]publicLatencyPoint{}
+	for rows.Next() {
+		var point publicLatencyPoint
+		var available sql.NullInt64
+		var effectiveAt string
+		if err := rows.Scan(&point.serverID, &available, &point.latencyMS, &effectiveAt); err != nil {
+			return err
+		}
+		if !available.Valid {
+			continue
+		}
+		point.available = available.Int64 == 1
+		point.at = parseTime(effectiveAt)
+		if point.at.IsZero() {
+			continue
+		}
+		probesByServer[point.serverID] = append(probesByServer[point.serverID], point)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	indexesByServer := map[int64][]int{}
+	for index, sample := range samples {
+		if sample.ConnectivityAvailable != nil || sample.ServerID <= 0 {
+			continue
+		}
+		indexesByServer[sample.ServerID] = append(indexesByServer[sample.ServerID], index)
+	}
+	for serverID, indexes := range indexesByServer {
+		probes := probesByServer[serverID]
+		if len(probes) == 0 {
+			continue
+		}
+		sort.Slice(indexes, func(i, j int) bool {
+			return samples[indexes[i]].SampledAt.Before(samples[indexes[j]].SampledAt)
+		})
+		probeIndex := 0
+		for _, sampleIndex := range indexes {
+			slotStart := samples[sampleIndex].SampledAt.UTC().Truncate(time.Minute)
+			slotEnd := slotStart.Add(time.Minute)
+			for probeIndex < len(probes) && probes[probeIndex].at.Before(slotStart) {
+				probeIndex++
+			}
+			matched := -1
+			for cursor := probeIndex; cursor < len(probes); cursor++ {
+				if !probes[cursor].at.Before(slotEnd) {
+					break
+				}
+				matched = cursor
+			}
+			if matched < 0 {
+				continue
+			}
+			available := probes[matched].available
+			samples[sampleIndex].ConnectivityAvailable = &available
+			samples[sampleIndex].ConnectivityLatencyMS = probes[matched].latencyMS
+		}
+	}
+	return nil
+}
+
 func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
 	var history model.ServerConnectivityHistory
 	for _, kinds := range [][]model.ConnectivityEventKind{

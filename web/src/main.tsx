@@ -8865,20 +8865,22 @@ function compactBuildLabel(value?: string) {
   return build || '—'
 }
 
-function telemetryPolyline(values: number[], width = 240, height = 48, scaleMax?: number) {
-  if (!values.length) return ''
-  const max = Math.max(1, scaleMax || 0, ...values)
+function telemetryPolyline(values: Array<number | null>, width = 240, height = 48, scaleMax?: number) {
+  const points = values.flatMap((value, index) => value == null || !Number.isFinite(value) ? [] : [{ index, value }])
+  if (!points.length) return ''
+  const max = Math.max(1, scaleMax || 0, ...points.map(point => point.value))
   const denominator = Math.max(1, values.length - 1)
-  return values.map((value, index) => `${(index / denominator) * width},${height - (Math.max(0, value) / max) * (height - 4) - 2}`).join(' ')
+  return points.map(point => `${(point.index / denominator) * width},${height - (Math.max(0, point.value) / max) * (height - 4) - 2}`).join(' ')
 }
 
 function ServerTelemetryChart({ samples, type }: { samples: ServerMetricSample[]; type: 'network' | 'latency' }) {
   const points = samples.slice(-60)
-  const first = type === 'network' ? points.map(x => Number(x.network_download_bps || 0)) : points.map(x => Number(x.connectivity_latency_ms || 0))
+  const first = type === 'network' ? points.map(x => Number(x.network_download_bps || 0)) : points.map(x => x.connectivity_available === undefined ? null : Number(x.connectivity_latency_ms || 0))
   const second = type === 'network' ? points.map(x => Number(x.network_upload_bps || 0)) : []
-  const scaleMax = Math.max(1, ...first, ...second)
+  const plotted = [...first, ...second].filter((value): value is number => value != null && Number.isFinite(value))
+  const scaleMax = Math.max(1, ...plotted)
   const formatScale = (value: number) => type === 'network' ? formatByteRate(value) : `${Math.round(value)} ms`
-  const hasData = points.length >= 2
+  const hasData = plotted.length >= 2
   return <div className={`server-chart-wrap ${type}${hasData ? '' : ' is-empty'}`}>
     <svg className={`server-mini-chart ${type}`} viewBox="0 0 240 48" preserveAspectRatio="none" role="img" aria-label={type === 'network' ? '近期上下行速率' : '近期公网延迟'}>
       <line x1="0" y1="16" x2="240" y2="16" className="server-chart-grid" />
@@ -9566,7 +9568,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <strong>{connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
             <span>{connectivityProbeDomain(server)} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}</span>
           </span>
-          <ServerTelemetryChart samples={samples.filter(x => x.connectivity_available !== undefined)} type="latency" />
+          <ServerTelemetryChart samples={samples} type="latency" />
         </div>
       </div>
     </MotionCard>
