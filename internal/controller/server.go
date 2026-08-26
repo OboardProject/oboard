@@ -11626,6 +11626,10 @@ func deploymentFail(status int, err error) error {
 // deployment when the selected server belongs to a trusted transparent
 // forwarding prefix, because those members must change together.
 func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64, expandTrustedScope bool) ([]model.AgentTask, int64, error) {
+	return s.deployConfigurationScoped(ctx, selectedServerID, expandTrustedScope, nil, nil)
+}
+
+func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID int64, expandTrustedScope bool, allowedServerIDs, ignoredPathIDs map[int64]bool) ([]model.AgentTask, int64, error) {
 	// Preparation repairs stored topology, refreshes derived roles and allocates
 	// one monotonic config version. Serialize it so two concurrent applies cannot
 	// interleave those writes or queue overlapping desired state.
@@ -11643,6 +11647,9 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
 		return nil, 0, deploymentFail(500, err)
+	}
+	if len(ignoredPathIDs) > 0 {
+		data = routingConfigWithoutProxyPaths(data, ignoredPathIDs)
 	}
 	resolveRoutingProxyPathNames(&data)
 	servers, in := data.Servers, data.Inbounds
@@ -11666,7 +11673,18 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	}
 	trustedServers := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	effectiveScope := selectedServerID
-	if expandTrustedScope && effectiveScope != 0 && trustedServers[effectiveScope] {
+	if allowedServerIDs != nil {
+		for serverID := range allowedServerIDs {
+			if !expandTrustedScope || !trustedServers[serverID] {
+				continue
+			}
+			for trustedServerID := range trustedServers {
+				allowedServerIDs[trustedServerID] = true
+			}
+			break
+		}
+		effectiveScope = 0
+	} else if expandTrustedScope && effectiveScope != 0 && trustedServers[effectiveScope] {
 		effectiveScope = 0
 	}
 	externalEgressTargetsByServer := map[int64][]model.ExternalEgressProbeTarget{}
@@ -11676,6 +11694,9 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 			return nil, 0, deploymentFail(http.StatusBadRequest, fmt.Errorf("第三方出口探测分支过多，单次最多支持 %d 个", maxExternalEgressTargets))
 		}
 		for _, target := range targets {
+			if allowedServerIDs != nil && !allowedServerIDs[target.OwnerServerID] {
+				continue
+			}
 			externalEgressTargetsByServer[target.OwnerServerID] = append(externalEgressTargetsByServer[target.OwnerServerID], target)
 		}
 		for serverID, targets := range externalEgressTargetsByServer {
@@ -11708,7 +11729,7 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	if err := validateTrustedForwardAgentBuilds(servers, trustedServers); err != nil {
 		return nil, 0, deploymentFail(http.StatusConflict, err)
 	}
-	if err := validateTrustedForwardDeploymentScope(effectiveScope, trustedServers); err != nil {
+	if err := validateTrustedForwardDeploymentSelection(effectiveScope, allowedServerIDs, trustedServers); err != nil {
 		return nil, 0, deploymentFail(http.StatusConflict, err)
 	}
 	forwards, err := s.store.ListPortForwards(ctx)
@@ -11718,6 +11739,10 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	tunnels, err := s.store.ListTunnels(ctx)
 	if err != nil {
 		return nil, 0, deploymentFail(500, err)
+	}
+	if allowedServerIDs != nil {
+		forwards = filterPortForwardsForServers(forwards, allowedServerIDs)
+		tunnels = filterTunnelsForServers(tunnels, allowedServerIDs)
 	}
 	// Reuse the ports already recorded for generated listeners and let the
 	// projection allocate only what is genuinely new. One ledger is shared by the
@@ -11746,7 +11771,12 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	if err := core.ValidateTopologyDAG(servers, forwards, tunnels); err != nil {
 		return nil, 0, deploymentFail(400, err)
 	}
-	if _, err := s.syncDNSInbounds(ctx, servers, in); err != nil {
+	dnsServers, dnsInbounds := servers, in
+	if allowedServerIDs != nil {
+		dnsServers = filterServersByID(servers, allowedServerIDs)
+		dnsInbounds = filterInboundsByServerID(in, allowedServerIDs)
+	}
+	if _, err := s.syncDNSInbounds(ctx, dnsServers, dnsInbounds); err != nil {
 		return nil, 0, deploymentFail(400, err)
 	}
 	inboundBindings, pathBindings, _, err := s.runtimeAccessBindings(ctx, data)
@@ -11764,7 +11794,7 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	prepared := make([]preparedDeployment, 0, len(servers))
 	waitingForCertificate := map[int64]bool{}
 	for _, server := range servers {
-		if effectiveScope != 0 && server.ID != effectiveScope {
+		if allowedServerIDs != nil && !allowedServerIDs[server.ID] || allowedServerIDs == nil && effectiveScope != 0 && server.ID != effectiveScope {
 			continue
 		}
 		warpRequests := make([]model.WARPRequestPlan, 0)
@@ -11914,7 +11944,11 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 	// Every server validated, so the ports this projection chose are the ones the
 	// Agents will receive. Persist them before queueing any task: from now on a
 	// later topology change must reuse these values instead of re-deriving them.
-	if err := s.store.SaveProxyPathPortAllocations(ctx, ledger.Pending(), core.StaleProxyPathPortAllocationIDs(allocations, ledger)); err != nil {
+	staleAllocationIDs := core.StaleProxyPathPortAllocationIDs(allocations, ledger)
+	if len(ignoredPathIDs) > 0 {
+		staleAllocationIDs = nil
+	}
+	if err := s.store.SaveProxyPathPortAllocations(ctx, ledger.Pending(), staleAllocationIDs); err != nil {
 		return nil, 0, deploymentFail(500, err)
 	}
 	tasks := make([]model.AgentTask, 0, len(prepared))
@@ -11949,6 +11983,119 @@ func validateTrustedForwardDeploymentScope(selectedServerID int64, required map[
 		return errors.New("可信透明转发涉及多台服务器；请执行完整部署，不能仅部署其中一台服务器")
 	}
 	return nil
+}
+
+func validateTrustedForwardDeploymentSelection(selectedServerID int64, allowed, required map[int64]bool) error {
+	if allowed == nil {
+		return validateTrustedForwardDeploymentScope(selectedServerID, required)
+	}
+	selectedTrusted := false
+	for serverID := range allowed {
+		if required[serverID] {
+			selectedTrusted = true
+			break
+		}
+	}
+	if !selectedTrusted {
+		return nil
+	}
+	for serverID := range required {
+		if !allowed[serverID] {
+			return errors.New("可信透明转发涉及多台服务器；必须同步完整成员集合")
+		}
+	}
+	return nil
+}
+
+func routingConfigWithoutProxyPaths(data store.FullRoutingConfig, ignored map[int64]bool) store.FullRoutingConfig {
+	paths := data.ProxyPaths[:0]
+	for _, path := range data.ProxyPaths {
+		if !ignored[path.ID] {
+			paths = append(paths, path)
+		}
+	}
+	data.ProxyPaths = paths
+	steps := data.ProxyPathSteps[:0]
+	for _, step := range data.ProxyPathSteps {
+		if !ignored[step.PathID] {
+			steps = append(steps, step)
+		}
+	}
+	data.ProxyPathSteps = steps
+	rules := data.RoutingRules[:0]
+	for _, rule := range data.RoutingRules {
+		if optionalIDInSet(rule.ProxyPathID, ignored) || optionalIDInSet(rule.TargetProxyPathID, ignored) || optionalIDInSet(rule.IPv4TargetProxyPathID, ignored) || optionalIDInSet(rule.IPv6TargetProxyPathID, ignored) {
+			continue
+		}
+		rules = append(rules, rule)
+	}
+	data.RoutingRules = rules
+	results := data.ProxyPathEgressResults[:0]
+	for _, result := range data.ProxyPathEgressResults {
+		if !ignored[result.PathID] {
+			results = append(results, result)
+		}
+	}
+	data.ProxyPathEgressResults = results
+	planNodes := data.ActivePlanNodes[:0]
+	for _, node := range data.ActivePlanNodes {
+		if node.NodeType != model.AssignableNodeProxyPath || !ignored[node.NodeID] {
+			planNodes = append(planNodes, node)
+		}
+	}
+	data.ActivePlanNodes = planNodes
+	exceptions := data.UserNodeExceptions[:0]
+	for _, exception := range data.UserNodeExceptions {
+		if exception.NodeType != model.AssignableNodeProxyPath || !ignored[exception.NodeID] {
+			exceptions = append(exceptions, exception)
+		}
+	}
+	data.UserNodeExceptions = exceptions
+	return data
+}
+
+func optionalIDInSet(id *int64, set map[int64]bool) bool {
+	return id != nil && set[*id]
+}
+
+func filterPortForwardsForServers(items []model.PortForward, allowed map[int64]bool) []model.PortForward {
+	out := items[:0]
+	for _, item := range items {
+		if allowed[item.SourceServerID] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func filterTunnelsForServers(items []model.Tunnel, allowed map[int64]bool) []model.Tunnel {
+	out := items[:0]
+	for _, item := range items {
+		if allowed[item.SourceServerID] || allowed[item.TargetServerID] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func filterServersByID(items []model.Server, allowed map[int64]bool) []model.Server {
+	out := make([]model.Server, 0, len(allowed))
+	for _, item := range items {
+		if allowed[item.ID] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func filterInboundsByServerID(items []model.Inbound, allowed map[int64]bool) []model.Inbound {
+	out := make([]model.Inbound, 0)
+	for _, item := range items {
+		if allowed[item.ServerID] {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // buildSSHInboundPlan turns the regular inbound permissions into a dedicated

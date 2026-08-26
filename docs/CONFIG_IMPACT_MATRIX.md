@@ -41,5 +41,6 @@
 - 入口、代理路径和路径步骤写入按响应实体或写入前资源反查路径成员，不得因 URL 中缺少数字 ID 就默认把所有服务器标记为待同步。全局校验错误可以阻塞同一部署准备批次，但 UI 必须区分“问题来源服务器”和“被阻塞的同步任务”，不能把两者都称为受影响服务器。
 - 150ms 合并窗口只生成最新 revision；每秒数据库恢复扫描覆盖通知丢失和 Controller 重启。
 - 新 revision 失败预算重置，单 revision 最多 6 次自动重试；failed 状态保留脱敏错误并允许人工重试。
+- 自动批次按问题路径成员隔离准备失败；无关服务器继续排队。可信透明转发成员保持成组原子边界，但该边界不扩散到其他服务器。显式全量部署仍在任何准备错误时整体停止。
 - 未领取的旧 `apply_deployment` 会被 supersede；running 任务完成后再次比较最新 desired revision。
 - 离线 Agent 的自动配置任务保持 pending；重连、hello/heartbeat health report 和 recovery scan 都会重新唤醒。

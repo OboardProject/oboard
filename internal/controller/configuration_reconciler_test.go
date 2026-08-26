@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,65 @@ func TestConfigurationMutationAffectedServerScope(t *testing.T) {
 	responseScope, resolved := srv.configurationMutationResponseServerIDs(ctx, "/api/v1/ui/proxy-path-steps", response)
 	if !resolved || len(responseScope) != 2 || responseScope[0] != first.ID || responseScope[1] != second.ID {
 		t.Fatalf("step create response scope = %v resolved=%t", responseScope, resolved)
+	}
+}
+
+func TestConfigurationReconcilerIsolatesDuplicateDirectBranchFailure(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	servers := []*model.Server{
+		{Name: "broken-entry", AgentID: "broken-agent", AgentTokenHash: security.HashSecret("broken-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 19999},
+		{Name: "healthy-a", AgentID: "healthy-a-agent", AgentTokenHash: security.HashSecret("healthy-a-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 29999},
+		{Name: "healthy-b", AgentID: "healthy-b-agent", AgentTokenHash: security.HashSecret("healthy-b-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 39999},
+	}
+	for _, server := range servers {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries := make([]*model.Inbound, 0, len(servers))
+	for index, server := range servers {
+		inbound := &model.Inbound{ServerID: server.ID, Name: server.Name + "-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443 + index, ConfigJSON: "{}", Enabled: true}
+		if err := db.CreateInbound(ctx, inbound); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, inbound)
+	}
+	duplicatePathIDs := make([]int64, 0, 2)
+	for _, name := range []string{"duplicate-a", "duplicate-b"} {
+		path := &model.ProxyPath{InboundID: entries[0].ID, Kind: model.ProxyPathKindDirect, Name: name, Secret: name + "-secret", Enabled: true}
+		if err := db.CreateProxyPath(ctx, path); err != nil {
+			t.Fatal(err)
+		}
+		duplicatePathIDs = append(duplicatePathIDs, path.ID)
+	}
+	revision, err := db.ConfigurationRevision(ctx)
+	if err != nil || revision == 0 {
+		t.Fatalf("configuration revision=%d err=%v", revision, err)
+	}
+	serverIDs := []int64{servers[0].ID, servers[1].ID, servers[2].ID}
+	if _, err := db.MarkConfigurationSyncPending(ctx, revision, serverIDs); err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileConfiguration(ctx)
+	broken, err := db.ConfigurationSyncState(ctx, servers[0].ID)
+	if err != nil || broken.State != "failed" || !strings.Contains(broken.LastError, fmt.Sprintf("#%d", duplicatePathIDs[0])) || !strings.Contains(broken.LastError, fmt.Sprintf("#%d", duplicatePathIDs[1])) {
+		t.Fatalf("broken server state=%#v err=%v", broken, err)
+	}
+	for _, server := range servers[1:] {
+		state, stateErr := db.ConfigurationSyncState(ctx, server.ID)
+		if stateErr != nil || state.State != "queued" || state.LastTaskID == 0 {
+			t.Fatalf("healthy server %s state=%#v err=%v", server.Name, state, stateErr)
+		}
+		task, taskErr := db.GetTask(ctx, state.LastTaskID)
+		if taskErr != nil || task.ServerID != server.ID || task.Type != model.AgentTaskTypeApplyDeployment {
+			t.Fatalf("healthy server %s task=%#v err=%v", server.Name, task, taskErr)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -435,6 +436,10 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	}
 	preparedTasks, version, deployErr := s.deployConfiguration(withAutomaticConfigurationSync(ctx), selectedServerID, true)
 	if deployErr != nil {
+		if s.reconcileConfigurationAroundDuplicateDirectPaths(ctx, claimed) {
+			s.publishRealtime("configuration", "deployments", "tasks")
+			return
+		}
 		for _, state := range claimed {
 			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, deployErr.Error())
 		}
@@ -456,6 +461,106 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		}
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")
+}
+
+func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Context, claimed []store.ConfigurationSyncState) bool {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return false
+	}
+	resolveRoutingProxyPathNames(&data)
+	conflicts := core.DuplicateDirectProxyPathConflicts(data.ProxyPaths, data.ProxyPathSteps)
+	if len(conflicts) == 0 {
+		return false
+	}
+	ignoredPathIDs := make(map[int64]bool)
+	affectedServerIDs := make(map[int64]bool)
+	pathByID := make(map[int64]model.ProxyPath, len(data.ProxyPaths))
+	for _, path := range data.ProxyPaths {
+		pathByID[path.ID] = path
+	}
+	conflictMessages := make([]string, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		for _, pathID := range conflict.PathIDs {
+			ignoredPathIDs[pathID] = true
+		}
+		for _, serverID := range s.configurationTopologyServerIDs(ctx, nil, conflict.PathIDs) {
+			affectedServerIDs[serverID] = true
+		}
+		pathNames := make([]string, 0, len(conflict.PathIDs))
+		for _, pathID := range conflict.PathIDs {
+			name := strings.TrimSpace(pathByID[pathID].Name)
+			if name == "" {
+				name = fmt.Sprintf("#%d", pathID)
+			} else {
+				name = fmt.Sprintf("%s (#%d)", name, pathID)
+			}
+			pathNames = append(pathNames, "「"+name+"」")
+		}
+		conflictMessages = append(conflictMessages, fmt.Sprintf("入口 %d 的直接出口分支 %s 位于同一位置；请只保留其中一条", conflict.InboundID, strings.Join(pathNames, "、")))
+	}
+	for _, rule := range data.RoutingRules {
+		if optionalIDInSet(rule.ProxyPathID, ignoredPathIDs) || optionalIDInSet(rule.TargetProxyPathID, ignoredPathIDs) || optionalIDInSet(rule.IPv4TargetProxyPathID, ignoredPathIDs) || optionalIDInSet(rule.IPv6TargetProxyPathID, ignoredPathIDs) {
+			affectedServerIDs[rule.ServerID] = true
+		}
+	}
+	validServerIDs := make(map[int64]bool)
+	claimedByServer := make(map[int64]store.ConfigurationSyncState, len(claimed))
+	message := strings.Join(conflictMessages, "；")
+	for _, state := range claimed {
+		claimedByServer[state.ServerID] = state
+		if affectedServerIDs[state.ServerID] {
+			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, message)
+			continue
+		}
+		validServerIDs[state.ServerID] = true
+	}
+	filteredData := routingConfigWithoutProxyPaths(data, ignoredPathIDs)
+	trustedServers := core.TrustedForwardServerIDs(filteredData.ProxyPaths, filteredData.ProxyPathSteps, filteredData.Inbounds)
+	trustedBlocked := false
+	for serverID := range trustedServers {
+		if affectedServerIDs[serverID] {
+			trustedBlocked = true
+			break
+		}
+	}
+	if trustedBlocked {
+		for serverID := range trustedServers {
+			delete(validServerIDs, serverID)
+			if state, ok := claimedByServer[serverID]; ok && !affectedServerIDs[serverID] {
+				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "关联的可信透明转发成员存在配置问题；修复该成员后会成组重试")
+			}
+		}
+	}
+	if len(validServerIDs) == 0 {
+		return true
+	}
+	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, validServerIDs, ignoredPathIDs)
+	if deployErr != nil {
+		for serverID := range validServerIDs {
+			if state, ok := claimedByServer[serverID]; ok {
+				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, deployErr.Error())
+			}
+		}
+		return true
+	}
+	tasksByServer := make(map[int64]model.AgentTask, len(preparedTasks))
+	for _, task := range preparedTasks {
+		tasksByServer[task.ServerID] = task
+	}
+	for serverID := range validServerIDs {
+		state, ok := claimedByServer[serverID]
+		if !ok {
+			continue
+		}
+		task, ok := tasksByServer[serverID]
+		if !ok {
+			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成")
+			continue
+		}
+		_ = s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task))
+	}
+	return true
 }
 
 func configurationTaskPayloadDigest(task model.AgentTask) string {

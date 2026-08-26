@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -485,6 +486,22 @@ func TestProxyPathDerivedTunnelsReuseStableResources(t *testing.T) {
 			t.Fatalf("deleting the first path rotated shared WireGuard state: before=%#v after=%#v", first, got)
 		}
 	})
+}
+
+func TestDuplicateDirectProxyPathConflictsGroupsOnlyMatchingPositions(t *testing.T) {
+	inboundID := int64(10)
+	serverID := int64(20)
+	paths := []model.ProxyPath{
+		{ID: 1, InboundID: inboundID, Kind: model.ProxyPathKindDirect, Enabled: true},
+		{ID: 2, InboundID: inboundID, Kind: model.ProxyPathKindDirect, Enabled: true},
+		{ID: 3, InboundID: inboundID, Kind: model.ProxyPathKindDirect, Enabled: true},
+		{ID: 4, InboundID: inboundID, Kind: model.ProxyPathKindDirect, Enabled: false},
+	}
+	steps := []model.ProxyPathStep{{PathID: 3, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverID}}
+	conflicts := DuplicateDirectProxyPathConflicts(paths, steps)
+	if len(conflicts) != 1 || conflicts[0].InboundID != inboundID || !reflect.DeepEqual(conflicts[0].PathIDs, []int64{1, 2}) {
+		t.Fatalf("duplicate direct conflicts = %#v", conflicts)
+	}
 }
 
 func TestProxyPathAccountingUsesFirstDecryptingServer(t *testing.T) {

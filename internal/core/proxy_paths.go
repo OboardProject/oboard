@@ -1257,10 +1257,14 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 				previousName := strings.TrimSpace(previous.Name)
 				if previousName == "" {
 					previousName = fmt.Sprintf("#%d", previous.ID)
+				} else {
+					previousName = fmt.Sprintf("%s (#%d)", previousName, previous.ID)
 				}
 				pathName := strings.TrimSpace(path.Name)
 				if pathName == "" {
 					pathName = fmt.Sprintf("#%d", path.ID)
+				} else {
+					pathName = fmt.Sprintf("%s (#%d)", pathName, path.ID)
 				}
 				return fmt.Errorf("入口 %d 的直接出口分支「%s」与「%s」位于同一位置；请删除或停用其中一条后再同步", path.InboundID, previousName, pathName)
 			}
@@ -1360,6 +1364,47 @@ func directProxyPathSignature(inboundID int64, steps []model.ProxyPathStep) stri
 		b.WriteString(strings.TrimSpace(step.ConfigJSON))
 	}
 	return b.String()
+}
+
+type DuplicateDirectProxyPathConflict struct {
+	InboundID int64
+	PathIDs   []int64
+}
+
+// DuplicateDirectProxyPathConflicts reports enabled direct branches that occupy
+// the same logical position. It intentionally requires no server projection so
+// the automatic reconciler can isolate an invalid path set and continue
+// preparing unrelated servers.
+func DuplicateDirectProxyPathConflicts(paths []model.ProxyPath, steps []model.ProxyPathStep) []DuplicateDirectProxyPathConflict {
+	stepsByPath := make(map[int64][]model.ProxyPathStep)
+	for _, step := range steps {
+		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
+	}
+	groups := make(map[string][]int64)
+	inboundBySignature := make(map[string]int64)
+	for _, path := range paths {
+		if !path.Enabled || path.Kind != model.ProxyPathKindDirect {
+			continue
+		}
+		signature := directProxyPathSignature(path.InboundID, orderedProxyPathSteps(stepsByPath[path.ID]))
+		groups[signature] = append(groups[signature], path.ID)
+		inboundBySignature[signature] = path.InboundID
+	}
+	out := make([]DuplicateDirectProxyPathConflict, 0)
+	for signature, pathIDs := range groups {
+		if len(pathIDs) < 2 {
+			continue
+		}
+		sort.Slice(pathIDs, func(i, j int) bool { return pathIDs[i] < pathIDs[j] })
+		out = append(out, DuplicateDirectProxyPathConflict{InboundID: inboundBySignature[signature], PathIDs: pathIDs})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].InboundID == out[j].InboundID {
+			return out[i].PathIDs[0] < out[j].PathIDs[0]
+		}
+		return out[i].InboundID < out[j].InboundID
+	})
+	return out
 }
 
 func orderedProxyPathSteps(steps []model.ProxyPathStep) []model.ProxyPathStep {

@@ -3693,6 +3693,15 @@ func TestTrustedForwardAgentBuildGateAndSecretScrubbing(t *testing.T) {
 	if err := validateTrustedForwardDeploymentScope(0, map[int64]bool{1: true, 2: true}); err != nil {
 		t.Fatalf("full deployment was rejected: %v", err)
 	}
+	if err := validateTrustedForwardDeploymentSelection(0, map[int64]bool{1: true}, map[int64]bool{1: true, 2: true}); err == nil {
+		t.Fatal("partial trusted-forward member selection was allowed")
+	}
+	if err := validateTrustedForwardDeploymentSelection(0, map[int64]bool{1: true, 2: true}, map[int64]bool{1: true, 2: true}); err != nil {
+		t.Fatalf("complete trusted-forward member selection was rejected: %v", err)
+	}
+	if err := validateTrustedForwardDeploymentSelection(0, map[int64]bool{3: true}, map[int64]bool{1: true, 2: true}); err != nil {
+		t.Fatalf("unrelated isolated server was rejected: %v", err)
+	}
 
 	raw := `{"port_forwards":{"rules":[{"trusted_forward":{"version":1,"receiver_id":"one","key":"sender-secret","max_clock_skew_seconds":120}}]},"config":"{\"_oboard\":{\"trusted_forward\":{\"receivers\":[{\"version\":1,\"id\":\"one\",\"target_port\":1234,\"key\":\"receiver-secret\",\"max_clock_skew_seconds\":120}]}}}"}`
 	scrubbed := scrubManagedTunnelSecretsJSON(raw)
