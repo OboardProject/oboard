@@ -17837,7 +17837,11 @@ function UserManagement({ data, client, load }: any) {
                           {isSuspended ? '已暂停' : isQuotaExceeded ? '已达量' : '正常'}
                         </span>
                       </div>
-                      {usr.traffic_quota_state && <span className="user-table-period">{trafficQuotaLabel(usr.traffic_quota_state)}{usr.traffic_period_end ? ` · ${formatDate(usr.traffic_period_end)}` : ''}</span>}
+                      {(usr.traffic_period_end || isQuotaExceeded) && (
+                        <span className="user-table-period">
+                          {usr.traffic_period_end ? `到期 ${formatDate(usr.traffic_period_end)}` : trafficQuotaLabel(usr.traffic_quota_state)}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="user-col-plan" data-label="套餐">
