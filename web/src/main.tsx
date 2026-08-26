@@ -14713,10 +14713,10 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
         <button type="button" className="ghost" disabled={busy || snapshot.metadata?.mode === 'custom'} onClick={() => void runOperation({ operation: 'regenerate' }, '重新生成')}>重新生成</button>
         <button type="button" disabled={busy} onClick={() => void runOperation({ operation: 'replace_preset', preset_id: replacementPresetID, auto_tune: replacementAutoTune }, snapshot.scheme.length ? '更换预设' : '应用默认预设')}>{snapshot.scheme.length ? '更换预设' : '应用 OBoard 默认预设'}</button>
       </div>
-      <details className="entry-form-disclosure">
-        <summary><span className="entry-form-disclosure-copy"><strong>改为自定义</strong></span><ChevronDown size={16} aria-hidden="true" /></summary>
-        <div className="entry-form-disclosure-body"><FormField label="自定义 padding_scheme" required hint="每行一条规则；保存后模式切换为 custom。"><textarea rows={8} value={customText} onChange={event => setCustomText(event.target.value)} spellCheck={false} /></FormField><button type="button" disabled={busy || !customText.trim()} onClick={() => void runOperation({ operation: 'set_custom', padding_scheme: customText.replace(/\r\n/g, '\n').split('\n') }, '保存自定义方案')}>保存自定义方案</button></div>
-      </details>
+      <EntryFormDisclosure icon={<Edit3 size={15} aria-hidden="true" />} title="改为自定义">
+        <FormField label="自定义 padding_scheme" required hint="每行一条规则；保存后模式切换为 custom。"><textarea rows={8} value={customText} onChange={event => setCustomText(event.target.value)} spellCheck={false} /></FormField>
+        <button type="button" disabled={busy || !customText.trim()} onClick={() => void runOperation({ operation: 'set_custom', padding_scheme: customText.replace(/\r\n/g, '\n').split('\n') }, '保存自定义方案')}>保存自定义方案</button>
+      </EntryFormDisclosure>
     </div> : <small className="field-hint">只有管理员可以重新生成、更换预设或改为自定义方案。</small>}
   </EntryFormSection>
 }

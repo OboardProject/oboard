@@ -12327,8 +12327,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .entry-form-disclosure > summary {
   min-height: 44px;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+  display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
@@ -12347,12 +12346,14 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .entry-form-disclosure > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
 .entry-form-disclosure-icon {
+  flex: 0 0 18px;
   display: grid;
   place-items: center;
   color: var(--primary);
 }
 
 .entry-form-disclosure-copy {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -12363,9 +12364,12 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   color: var(--text-strong);
   font-size: 13px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .entry-form-disclosure-summary {
+  flex: 0 1 auto;
+  max-width: 42%;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
@@ -12375,6 +12379,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .entry-form-disclosure-chevron {
+  flex: 0 0 16px;
+  margin-left: auto;
   color: var(--muted);
   transition: transform var(--duration-appica) var(--ease-appica-spring);
 }
@@ -14930,9 +14936,6 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .access-pick-grid,
   .compact-form {
     grid-template-columns: 1fr;
-  }
-  .entry-form-disclosure > summary {
-    grid-template-columns: 18px minmax(0, 1fr) 16px;
   }
   .entry-form-disclosure-summary { display: none; }
   .entry-access-add {
