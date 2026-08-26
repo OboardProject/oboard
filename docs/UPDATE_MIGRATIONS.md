@@ -57,6 +57,7 @@
 | `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
 | `controller-db-20260822-subscription-output-filters` | Controller | SQLite schema | `dev-e8a8239c3cd79` | 待发布 | 生效中 | - |
 | `controller-db-20260824-anytls-padding-presets` | Controller | SQLite seed / data backfill | `dev-8e5b40cc790e` | 待发布 | 生效中 | - |
+| `controller-db-20260827-anytls-padding-snapshots` | Controller | SQLite config metadata backfill | `dev-de87e92e171b` | 待发布 | 生效中 | - |
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
@@ -103,6 +104,26 @@
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含带 TFO 的内置预设，且恢复入口不得导入旧内置模板；当前种子与校验保留。
 - **移除状态：** 生效中。
 
+### controller-db-20260827-anytls-padding-snapshots
+
+- **引入日期：** 2026-08-27
+- **引入提交：** `OboardProject/oboard@de87e92e171bc900e735213f91f894f49c6b0274`
+- **引入版本：** `dev-de87e92e171b`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/application`、`internal/core`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite config metadata backfill
+- **原因：** AnyTLS 新建入口需要在 Controller 创建事务中选择 `balanced_v1` / `light_v1` 并固化一次性 `preset` 或 `tuned` 快照；既有手工 `padding_scheme` 需要被识别为 `custom`，才能阻止普通入口编辑、重启和重新投影意外改写，同时允许管理员通过显式操作更换或重新生成。
+- **源状态：** 既有 AnyTLS 入口可能在 `config_json.padding_scheme` 保存有效手工方案，但没有 `_oboard_padding` 元数据；也可能完全没有 `padding_scheme`。旧的未发布节点预设中第二套方案为“大包填充”。
+- **目标状态：** 有有效 `padding_scheme` 且没有元数据的入口保留原方案并补 `_oboard_padding.mode=custom`、`generation=1`、创建时间和规范化 SHA-256 指纹；没有方案的入口保持不变。新建入口由 Application Service 默认生成 `balanced_v1 + auto_tune=true` 快照；显式 `inbounds.padding.update` 支持 `replace_preset`、`regenerate`、`set_custom`。旧的未编辑“大包填充”内置节点预设原位改为当前 `light_v1` 内容。
+- **实现位置：** `oboard/internal/store/anytls_padding_migration.go`、`store.go`、`node_presets.go`；`oboard/internal/application/anytls_padding.go`；`oboard/internal/core/anytls_padding.go`；`oboard/internal/controller/server.go`、`inbound_automation.go`；`oboard/internal/capability/catalog.go`；`oboard/web/src/main.tsx`、`style.css`、`components/NodePresetsPanel.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时扫描 `protocol='anytls'`、包含 `padding_scheme` 且缺少 `_oboard_padding` 的入口；只对能通过现有严格校验器的非空方案执行事务内元数据回填。节点预设迁移只匹配旧版内置大包 JSON。
+- **数据影响：** 不新增或改变任何既有入口的 `padding_scheme`；只在同一 `config_json` 增加 Controller 专用元数据。缺少方案、方案无效、已经带元数据的入口不写入。节点预设更新不回填已创建入口。
+- **重复执行：** 入口扫描以 `_oboard_padding` 缺失为条件，成功后不再匹配；节点预设以旧 JSON 精确匹配，成功后不再匹配；重复打开数据库保持已保存方案、指纹和 generation 不变。
+- **失败行为：** 查询、随机源、校验、指纹或事务写入失败会终止创建或阻止 Controller 打开数据库；不会静默回退到固定方案。迁移事务失败时不提交部分入口元数据。
+- **回归测试：** `TestExistingAnyTLSPaddingMigrationMarksCustomWithoutChangingScheme` 覆盖有效旧方案、缺失方案、幂等与重启；`TestAnyTLSPaddingRESTCreatePersistsAndExplicitlyRegenerates`、`TestAnyTLSPaddingAutomationCreateAndOperationShareApplicationPath` 覆盖 REST、Automation/MCP、模板合并、普通更新保持、显式 generation、数据面投影与订阅隔离；`internal/core/anytls_padding_test.go` 覆盖结构、边界、成本、指纹、复制、加密随机失败和三种模式。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库与所有可恢复备份都必须已给既有 AnyTLS 方案补齐 `_oboard_padding`，恢复入口不得再导入无元数据的方案；当前创建初始化、显式操作、投影隔离和核心测试永久保留，仅可移除旧状态回填扫描。
+- **移除状态：** 生效中。
+
 ### controller-db-20260824-anytls-padding-presets
 
 - **引入日期：** 2026-08-24
@@ -113,13 +134,13 @@
 - **类别：** SQLite seed / data backfill
 - **原因：** 原 `anytls-basic` 内置预设只启用 TLS，因而使用 sing-anytls 的上游默认填充；当前模型要求提供两套明确、可编辑且都不同于上游默认值的 OBoard 填充预设，并在入口保存前校验规则。
 - **源状态：** `node_presets` 只有 `kind='anytls-basic'` 的 TLS-only 内置行（`config_json={"tls":{"enabled":true}}`），没有 `anytls-large-padding`；未编辑的种子行保留初始 `updated_at=2026-01-01T00:00:00Z`。
-- **目标状态：** 未编辑的旧 `anytls-basic` 行原位改为“AnyTLS 均衡填充”并写入均衡规则；幂等新增“AnyTLS 大包填充”行。两个预设都使用服务端 inbound `padding_scheme`，Controller 不把该字段写入客户端订阅或 AnyTLS outbound。
+- **目标状态：** 未编辑的旧 `anytls-basic` 行原位改为“AnyTLS 均衡填充”并写入 `balanced_v1` 规则；幂等新增第二套内置行，当前内容为 `light_v1` 轻量填充。两个预设都只用于服务端 inbound `padding_scheme`，Controller 不把该字段写入客户端订阅或 AnyTLS outbound。
 - **实现位置：** `oboard/internal/store/node_presets.go`、`store.go`；`oboard/internal/core/anytls_padding.go`、`protocols.go`、`subscription_formats.go`；`oboard/web/src/main.tsx`、`components/NodePresetsPanel.tsx`。
 - **更新脚本：** 无专用脚本。Controller 打开 SQLite 时先按内置 `kind` 补种缺失行，再运行填充预设回填。
-- **数据影响：** 只改写仍保持原始种子时间和 TLS-only 配置的 `anytls-basic` 内置行；已编辑的内置行和自定义预设不改写。既有入口已保存的 `config_json` 不回填，后续新建或重新套用预设的入口使用新方案。
+- **数据影响：** 只改写仍保持原始种子时间和 TLS-only 配置的 `anytls-basic` 内置行，以及精确匹配未发布旧“大包填充”JSON 的第二套内置行；已编辑的内置行和自定义预设不改写。既有入口已保存的 `padding_scheme` 不由本迁移回填或替换。
 - **重复执行：** 按 `kind+builtin` 判断缺失种子；旧行只有在原始时间与旧 JSON 同时匹配时回填，首次成功后不再匹配。重复打开不会新增同 kind 的内置行或覆盖编辑后的预设。
 - **失败行为：** 查询、补种、名称冲突检查或更新失败会阻止 Controller 打开数据库；不会留下只更新一部分入口配置的状态，因为迁移不改写入口。
-- **回归测试：** `TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin` 从真实旧 `node_presets` 表和 TLS-only 内置行打开数据库，验证原位回填、第二套预设补种、无重复 kind 和重复打开幂等；`TestNodePresetsSeededAndProtected`、`TestNormalizeNodePresetRejectsInvalidAnyTLSPadding` 覆盖当前种子与校验。
+- **回归测试：** `TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin` 从真实旧 `node_presets` 表、TLS-only 均衡行和旧大包行打开数据库，验证原位回填为当前均衡/轻量内容、无重复 kind 和重复打开幂等；`TestNodePresetsSeededAndProtected`、`TestNormalizeNodePresetRejectsInvalidAnyTLSPadding` 覆盖当前种子与校验。
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份都必须已包含两套 AnyTLS 预设，且不再可能导入初始时间戳的 TLS-only `anytls-basic` 行；当前种子与校验测试继续保留。
 - **移除状态：** 生效中。
 
