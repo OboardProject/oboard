@@ -37,6 +37,28 @@ function bytesToBase64URL(value: ArrayBuffer | ArrayBufferView | null) {
   return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+export function passkeyErrorMessage(error: unknown, fallback = '通行密钥验证失败') {
+  const err = error as { name?: string; message?: string } | undefined
+  const name = String(err?.name || '')
+  const message = String(err?.message || error || '').trim()
+  if (
+    name === 'NotAllowedError' ||
+    name === 'AbortError' ||
+    /timed out or was not allowed/i.test(message) ||
+    /sctn-privacy-considerations/i.test(message)
+  ) {
+    return '未完成通行密钥验证'
+  }
+  if (name === 'NotSupportedError' || name === 'SecurityError') {
+    return '当前浏览器或访问方式不支持通行密钥'
+  }
+  if (!message) return fallback
+  if (/webauthn|publickeycredential|authenticator/i.test(message) && !/[\u4e00-\u9fff]/.test(message)) {
+    return fallback
+  }
+  return message
+}
+
 async function getPasskeyCredential(options: any) {
   if (!window.isSecureContext || !('PublicKeyCredential' in window) || !navigator.credentials) {
     throw new Error('当前浏览器或访问方式不支持通行密钥')
@@ -119,7 +141,7 @@ export function StepUpAuth({ request, purpose, resourceType, resourceId, title, 
       })
       onComplete(result.step_up_token)
     } catch (item: any) {
-      setError(item?.message || '通行密钥验证失败')
+      setError(passkeyErrorMessage(item, '通行密钥验证失败'))
     } finally {
       setBusy('')
     }
@@ -128,19 +150,19 @@ export function StepUpAuth({ request, purpose, resourceType, resourceId, title, 
   return (
     <Dialog isOpen onClose={onCancel} title={title} size="sm">
       <p className="text-pretty text-sm text-muted-foreground">{warning}</p>
-      {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
+      {error ? <p className="mt-3 min-w-0 text-pretty break-words text-sm text-destructive" role="alert">{error}</p> : null}
       <form className="mt-4 flex flex-col gap-3" onSubmit={event => void finishPassword(event)}>
         <FormField label="管理员密码">
           <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required />
         </FormField>
-        <div className="dialog-actions">
+        <div className="step-up-actions">
           <button type="button" className="ghost" onClick={onCancel} disabled={Boolean(busy)}>取消</button>
           {challenge?.passkey_available ? (
-            <button type="button" className="ghost" onClick={() => void finishPasskey()} disabled={Boolean(busy)}>
+            <button type="button" className="ghost" onClick={() => void finishPasskey()} disabled={Boolean(busy)} aria-busy={busy === 'passkey'}>
               <Fingerprint size={15} aria-hidden="true" />使用通行密钥
             </button>
           ) : null}
-          <button type="submit" disabled={Boolean(busy) || !password}>{busy ? '验证中…' : '确认'}</button>
+          <button type="submit" disabled={Boolean(busy) || !password}>{busy === 'password' ? '验证中…' : '确认'}</button>
         </div>
       </form>
     </Dialog>

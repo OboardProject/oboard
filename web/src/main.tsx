@@ -1671,6 +1671,7 @@ function localizeErrorMessage(message: unknown) {
   if (raw.startsWith('config_json.tls.reality.short_id:') || raw.startsWith('reality.short_id:')) return 'Reality Short ID 必须是 2 到 16 位偶数长度的十六进制字符串。'
   if (raw.startsWith('subscription plan(s) are still applying a change:')) return '相关订阅套餐正在应用变更，完成后再删除'
   if (raw.startsWith('plan version is still applying; retry after it settles:')) return '相关订阅套餐正在应用变更，完成后再删除'
+  if (/timed out or was not allowed/i.test(raw) || /sctn-privacy-considerations/i.test(raw)) return '未完成通行密钥验证'
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
 }
 

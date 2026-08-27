@@ -6824,6 +6824,21 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   flex-wrap: wrap;
 }
 
+.step-up-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.step-up-actions > button {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+
 .dialog-actions > button,
 .dialog-actions button {
   white-space: nowrap;
@@ -19738,6 +19753,15 @@ button.ui-btn-ghost:hover {
     font-size: 12px;
     white-space: nowrap;
     word-break: keep-all;
+  }
+
+  .step-up-actions {
+    gap: 6px;
+  }
+
+  .step-up-actions > button {
+    padding-inline: 8px;
+    font-size: 12px;
   }
 }
 /* Server DNS settings */
