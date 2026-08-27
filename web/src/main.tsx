@@ -74,7 +74,7 @@ import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } fr
 import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
-import { telegramBindingInstruction } from './telegram-binding'
+import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-binding'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
@@ -19990,9 +19990,15 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const createTelegramBindingCode = async (channel: NotificationChannel) => {
     try {
       const result = await client.request('/telegram/binding-code', { method: 'POST', body: JSON.stringify({ channel_id: channel.id }) })
+      const command = telegramBindingCommand(channel.id, result)
       await dialogs.alert({
         title: '绑定 Telegram',
-        message: telegramBindingInstruction(channel.id, result),
+        message: (
+          <div className="telegram-binding-alert">
+            <p>{TELEGRAM_BINDING_PROMPT}</p>
+            <CommandCopyBlock value={command} buttonText="复制命令" language="telegram" />
+          </div>
+        ),
       })
     } catch (error: any) {
       await dialogs.alert({ title: '生成失败', message: localizeErrorMessage(error?.message || error) })

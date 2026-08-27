@@ -6805,6 +6805,16 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   line-height: 1.5;
   white-space: pre-line;
 }
+.telegram-binding-alert {
+  display: grid;
+  gap: 10px;
+}
+.telegram-binding-alert p {
+  margin: 0;
+}
+.dialog-host-compact:has(.telegram-binding-alert) {
+  width: min(420px, 100%);
+}
 .dialog-host-compact .dialog-host-body {
   margin: 0;
   padding: 0;
