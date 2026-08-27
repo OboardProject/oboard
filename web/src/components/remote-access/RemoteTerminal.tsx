@@ -328,30 +328,30 @@ export function RemoteTerminal({
               <DropdownContent align="right" className="remote-terminal-menu">
                 <DropdownItem onClick={() => reconnect()}>
                   <RefreshCw size={14} className="remote-terminal-menu-icon" />
-                  重新连接
+                  <span>重新连接</span>
                 </DropdownItem>
                 {showLoginActions ? (
                   <DropdownItem onClick={() => reconnect('minimal')} aria-label="最小环境打开">
                     <ShieldAlert size={14} className="remote-terminal-menu-icon" />
-                    以最小环境打开
+                    <span>以最小环境打开</span>
                   </DropdownItem>
                 ) : null}
                 <DropdownItem onClick={clearScreen}>
                   <Eraser size={14} className="remote-terminal-menu-icon" />
-                  清屏
+                  <span>清屏</span>
                 </DropdownItem>
                 <DropdownItem onClick={() => void copySelection()}>
                   <Copy size={14} className="remote-terminal-menu-icon" />
-                  复制选中内容
+                  <span>复制选中内容</span>
                 </DropdownItem>
                 <DropdownItem onClick={() => void pasteClipboard()}>
                   <ClipboardPaste size={14} className="remote-terminal-menu-icon" />
-                  粘贴到终端
+                  <span>粘贴到终端</span>
                 </DropdownItem>
                 {info ? (
                   <DropdownItem onClick={() => setInfoOpen(current => !current)}>
                     <Info size={14} className="remote-terminal-menu-icon" />
-                    {infoOpen ? '隐藏终端信息' : '显示终端信息'}
+                    <span>{infoOpen ? '隐藏终端信息' : '显示终端信息'}</span>
                   </DropdownItem>
                 ) : null}
               </DropdownContent>

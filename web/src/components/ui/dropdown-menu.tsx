@@ -91,7 +91,7 @@ export function DropdownItem({
         }
       }}
       disabled={disabled}
-      className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-all duration-150 disabled:pointer-events-none disabled:opacity-50 min-h-0 border-none shadow-none text-foreground bg-transparent ${className}`}
+      className={`dropdown-item flex w-full items-center justify-start rounded-lg px-2.5 py-1.5 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-all duration-150 disabled:pointer-events-none disabled:opacity-50 min-h-0 border-none shadow-none text-foreground bg-transparent ${className}`}
       {...props}
     >
       {children}

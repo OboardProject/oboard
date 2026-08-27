@@ -10771,14 +10771,61 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   opacity: 0.6;
 }
 
+.dropdown-menu-content button,
+.dropdown-item {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  width: 100% !important;
+  min-height: 32px !important;
+  height: 32px !important;
+  padding: 0 10px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  border-radius: var(--radius-sm, 6px) !important;
+  color: var(--foreground) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  gap: 9px !important;
+  cursor: pointer !important;
+  transition: background-color 0.12s ease, color 0.12s ease !important;
+  line-height: 1 !important;
+}
+
+.dropdown-menu-content button:hover,
+.dropdown-item:hover {
+  background: var(--surface-2, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--foreground) !important;
+}
+
+.dropdown-menu-content button:active,
+.dropdown-item:active {
+  transform: none !important;
+}
+
 .remote-terminal-menu {
-  width: 196px;
+  width: auto;
+  min-width: 172px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 10px;
 }
 
 .remote-terminal-menu-icon {
-  margin-right: 8px;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  min-height: 15px;
   flex-shrink: 0;
-  opacity: 0.75;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  opacity: 0.85;
 }
 
 .remote-terminal-banner {
