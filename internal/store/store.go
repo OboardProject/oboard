@@ -537,6 +537,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_step_up_challenges_expiry on step_up_challenges(expires_at)`,
 		`create table if not exists consumed_step_up_tokens (token_hash text primary key, expires_at text not null)`,
 		`create index if not exists idx_consumed_step_up_tokens_expiry on consumed_step_up_tokens(expires_at)`,
+		`create table if not exists traffic_counter_streams (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, counter_source text not null, stream_id text not null, counter_epoch text not null, period_key text not null, inbound_id integer not null default 0, path_id integer not null default 0, accepted_upload_bytes integer not null default 0, accepted_download_bytes integer not null default 0, status text not null default 'healthy', last_error text not null default '', agent_instance_id text not null default '', first_seen_at text not null, last_seen_at text not null, updated_at text not null, unique(server_id,counter_source,stream_id,counter_epoch,period_key))`,
+		`create index if not exists idx_traffic_counter_streams_lookup on traffic_counter_streams(server_id,user_id,period_key,last_seen_at)`,
+		`create table if not exists traffic_reconciliation_events (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, source text not null default '', stream_id text not null default '', counter_epoch text not null default '', period_key text not null default '', kind text not null, detail text not null default '', created_at text not null, resolved_at text)`,
+		`create index if not exists idx_traffic_reconciliation_open on traffic_reconciliation_events(user_id,server_id,created_at desc)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -556,6 +560,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateHY2Presets(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateTrafficLedgerV2(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateRoutingCacheRevisionTriggers(ctx); err != nil {
@@ -6267,13 +6274,20 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 			_, _ = conn.ExecContext(context.Background(), `rollback`)
 		}
 	}()
-	ts := now()
-	if _, err := conn.ExecContext(ctx, `insert into traffic_leases(server_id,user_id,period_key,lease_bytes,consumed_bytes,updated_at) values(?,?,?,0,0,?) on conflict(server_id,user_id,period_key) do nothing`, serverID, userID, periodKey, ts); err != nil {
+	nowTime := time.Now().UTC()
+	ts := nowTime.Format(time.RFC3339Nano)
+	validUntil := nowTime.Add(24 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := conn.ExecContext(ctx, `insert into traffic_leases(server_id,user_id,period_key,lease_bytes,consumed_bytes,lease_revision,state,issued_at,last_synced_at,valid_until,updated_at) values(?,?,?,0,0,1,'active',?,?,?,?) on conflict(server_id,user_id,period_key) do nothing`, serverID, userID, periodKey, ts, ts, validUntil, ts); err != nil {
 		return TrafficLeaseAllocation{}, err
 	}
 	var currentLease, currentConsumed, otherUnconsumed int64
-	if err := conn.QueryRowContext(ctx, `select lease_bytes, consumed_bytes from traffic_leases where server_id=? and user_id=? and period_key=?`, serverID, userID, periodKey).Scan(&currentLease, &currentConsumed); err != nil {
+	var currentState string
+	var currentValidUntil sql.NullString
+	if err := conn.QueryRowContext(ctx, `select lease_bytes, consumed_bytes, coalesce(nullif(state,''),'active'), valid_until from traffic_leases where server_id=? and user_id=? and period_key=?`, serverID, userID, periodKey).Scan(&currentLease, &currentConsumed, &currentState, &currentValidUntil); err != nil {
 		return TrafficLeaseAllocation{}, err
+	}
+	if currentState == "expired_unsettled" || currentState == "released" {
+		currentState = "active"
 	}
 	var durableUsed int64
 	if err := conn.QueryRowContext(ctx, `select upload_bytes+download_bytes from traffic_periods where user_id=? and period_key=?`, userID, periodKey).Scan(&durableUsed); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -6281,7 +6295,7 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 	} else if err == nil && durableUsed > usedBytes {
 		usedBytes = durableUsed
 	}
-	if err := conn.QueryRowContext(ctx, `select coalesce(sum(case when lease_bytes>consumed_bytes then lease_bytes-consumed_bytes else 0 end),0) from traffic_leases where server_id<>? and user_id=? and period_key=?`, serverID, userID, periodKey).Scan(&otherUnconsumed); err != nil {
+	if err := conn.QueryRowContext(ctx, `select coalesce(sum(case when coalesce(nullif(state,''),'active') in ('active','expired_unsettled') and lease_bytes>consumed_bytes then lease_bytes-consumed_bytes else 0 end),0) from traffic_leases where server_id<>? and user_id=? and period_key=?`, serverID, userID, periodKey).Scan(&otherUnconsumed); err != nil {
 		return TrafficLeaseAllocation{}, err
 	}
 	currentRemaining := currentLease - currentConsumed
@@ -6300,6 +6314,9 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 	if chunk < 64<<20 {
 		chunk = 64 << 20
 	}
+	if chunk > 2<<30 {
+		chunk = 2 << 30
+	}
 	if chunk > limitBytes {
 		chunk = limitBytes
 	}
@@ -6313,9 +6330,11 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 		}
 		currentLease += grant
 		currentRemaining += grant
-		if _, err := conn.ExecContext(ctx, `update traffic_leases set lease_bytes=?, updated_at=? where server_id=? and user_id=? and period_key=?`, currentLease, ts, serverID, userID, periodKey); err != nil {
+		if _, err := conn.ExecContext(ctx, `update traffic_leases set lease_bytes=?, state=?, lease_revision=lease_revision+1, last_synced_at=?, valid_until=?, updated_at=? where server_id=? and user_id=? and period_key=?`, currentLease, currentState, ts, validUntil, ts, serverID, userID, periodKey); err != nil {
 			return TrafficLeaseAllocation{}, err
 		}
+	} else if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, last_synced_at=?, valid_until=?, updated_at=? where server_id=? and user_id=? and period_key=?`, currentState, ts, validUntil, ts, serverID, userID, periodKey); err != nil {
+		return TrafficLeaseAllocation{}, err
 	}
 	if _, err := conn.ExecContext(ctx, `commit`); err != nil {
 		return TrafficLeaseAllocation{}, err

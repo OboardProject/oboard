@@ -64,22 +64,26 @@ export function DropdownContent({ children, align = "right", className = "", ...
   )
 }
 
-export function DropdownItem({
-  children,
-  onClick,
-  className = "",
-  disabled = false
-}: {
+export interface DropdownItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: React.ReactNode
   onClick?: () => void
   className?: string
   disabled?: boolean
-}) {
+}
+
+export function DropdownItem({
+  children,
+  onClick,
+  className = "",
+  disabled = false,
+  ...props
+}: DropdownItemProps) {
   const context = React.useContext(DropdownContext)
   if (!context) throw new Error("DropdownItem must be used within Dropdown")
 
   return (
     <button
+      type="button"
       onClick={() => {
         if (!disabled && onClick) {
           onClick()
@@ -88,6 +92,7 @@ export function DropdownItem({
       }}
       disabled={disabled}
       className={`flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-all duration-150 disabled:pointer-events-none disabled:opacity-50 min-h-0 border-none shadow-none text-foreground bg-transparent ${className}`}
+      {...props}
     >
       {children}
     </button>

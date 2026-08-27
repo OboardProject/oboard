@@ -112,6 +112,9 @@ describe('RemoteTerminal', () => {
     expect(interrupt?.textContent).toBe('Ctrl+C')
     expect(interrupt?.classList.contains('icon-button')).toBe(false)
     expect(interrupt?.classList.contains('remote-terminal-shortcut')).toBe(true)
+    const closeDot = document.querySelector<HTMLButtonElement>('button.remote-terminal-close-dot')
+    expect(closeDot).not.toBeNull()
+    expect(closeDot?.querySelector('.macos-dot')).not.toBeNull()
   })
 
   it('waits for agent ready before showing connected', async () => {
@@ -181,6 +184,9 @@ describe('RemoteTerminal', () => {
       info: { username: 'root', uid: 0, gid: 0, home: '/root', shell: '/bin/bash', mode: 'login', cwd: '/root', term: 'xterm-256color' },
     }))
     expect(document.querySelector('.remote-terminal-identity')?.textContent).toBe('root · /bin/bash · Login')
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="终端菜单"]')?.click()
+    })
     expect(document.querySelector('button[aria-label="最小环境打开"]')).not.toBeNull()
   })
 

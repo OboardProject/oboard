@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { Copy, ClipboardPaste, Info, Maximize2, Minimize2, MoreHorizontal, RefreshCw, ShieldAlert, Trash2, X } from 'lucide-react'
+import { ClipboardPaste, Copy, Eraser, Info, Maximize2, Minimize2, MoreHorizontal, RefreshCw, ShieldAlert, X } from 'lucide-react'
 import { MotionDialogPanel } from '../ui/motion'
 import { Dropdown, DropdownContent, DropdownItem, DropdownTrigger } from '../ui/dropdown-menu'
 import { StepUpAuth } from './StepUpAuth'
@@ -309,39 +309,61 @@ export function RemoteTerminal({
       <MotionDialogPanel onCancel={() => void closeSession()} className={`remote-terminal-dialog${fullscreen ? ' remote-terminal-fullscreen' : ''}`}>
         <header className="dialog-head">
           <div className="remote-terminal-title">
-            <h2>远程终端 · {serverName}</h2>
-            {identity ? <p className="remote-terminal-identity">{identity}</p> : null}
-            <p className="muted">{status}</p>
+            <div className="remote-terminal-heading">
+              <h2>远程终端 · {serverName}</h2>
+            </div>
+            <div className="remote-terminal-meta">
+              {identity ? <span className="remote-terminal-identity">{identity}</span> : null}
+              {identity ? <span className="remote-terminal-dot">·</span> : null}
+              <span className="muted">{status}</span>
+            </div>
           </div>
           <div className="dialog-head-actions">
-            <button type="button" className="ghost icon-button" onClick={() => void copySelection()} aria-label="复制" title="复制"><Copy size={15} /></button>
-            <button type="button" className="ghost icon-button" onClick={() => void pasteClipboard()} aria-label="粘贴" title="粘贴"><ClipboardPaste size={15} /></button>
             <button type="button" className="ghost remote-terminal-shortcut" onClick={sendInterrupt} aria-label="发送 Ctrl+C" title="发送 Ctrl+C">Ctrl+C</button>
-            <button type="button" className="ghost icon-button" onClick={clearScreen} aria-label="清屏" title="清屏"><Trash2 size={15} /></button>
-            <button type="button" className="ghost icon-button" onClick={() => reconnect()} aria-label="重连" title="重连"><RefreshCw size={15} /></button>
-            {showLoginActions ? (
-              <button type="button" className="ghost icon-button" onClick={() => reconnect('minimal')} aria-label="最小环境打开" title="最小环境打开"><ShieldAlert size={15} /></button>
-            ) : null}
-            {info ? (
-              <button type="button" className="ghost icon-button" onClick={() => setInfoOpen(current => !current)} aria-label="终端信息" title="终端信息"><Info size={15} /></button>
-            ) : null}
+            <button type="button" className="ghost icon-button" onClick={() => reconnect()} aria-label="重连" title="重新连接"><RefreshCw size={14} /></button>
             <Dropdown>
               <DropdownTrigger>
-                <button type="button" className="ghost icon-button" aria-label="终端菜单" title="终端菜单"><MoreHorizontal size={15} /></button>
+                <button type="button" className="ghost icon-button" aria-label="终端菜单" title="更多操作"><MoreHorizontal size={14} /></button>
               </DropdownTrigger>
               <DropdownContent align="right" className="remote-terminal-menu">
-                <DropdownItem onClick={() => reconnect()}>重新连接</DropdownItem>
-                {showLoginActions ? <DropdownItem onClick={() => reconnect('minimal')}>最小环境打开</DropdownItem> : null}
-                <DropdownItem onClick={clearScreen}>清屏</DropdownItem>
-                <DropdownItem onClick={() => void copySelection()}>复制</DropdownItem>
-                <DropdownItem onClick={() => void pasteClipboard()}>粘贴</DropdownItem>
-                {info ? <DropdownItem onClick={() => setInfoOpen(true)}>终端信息</DropdownItem> : null}
+                <DropdownItem onClick={() => reconnect()}>
+                  <RefreshCw size={14} className="remote-terminal-menu-icon" />
+                  重新连接
+                </DropdownItem>
+                {showLoginActions ? (
+                  <DropdownItem onClick={() => reconnect('minimal')} aria-label="最小环境打开">
+                    <ShieldAlert size={14} className="remote-terminal-menu-icon" />
+                    以最小环境打开
+                  </DropdownItem>
+                ) : null}
+                <DropdownItem onClick={clearScreen}>
+                  <Eraser size={14} className="remote-terminal-menu-icon" />
+                  清屏
+                </DropdownItem>
+                <DropdownItem onClick={() => void copySelection()}>
+                  <Copy size={14} className="remote-terminal-menu-icon" />
+                  复制选中内容
+                </DropdownItem>
+                <DropdownItem onClick={() => void pasteClipboard()}>
+                  <ClipboardPaste size={14} className="remote-terminal-menu-icon" />
+                  粘贴到终端
+                </DropdownItem>
+                {info ? (
+                  <DropdownItem onClick={() => setInfoOpen(current => !current)}>
+                    <Info size={14} className="remote-terminal-menu-icon" />
+                    {infoOpen ? '隐藏终端信息' : '显示终端信息'}
+                  </DropdownItem>
+                ) : null}
               </DropdownContent>
             </Dropdown>
             <button type="button" className="ghost icon-button" onClick={() => setFullscreen(current => !current)} aria-label={fullscreen ? '退出全屏' : '全屏'} title={fullscreen ? '退出全屏' : '全屏'}>
-              {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </button>
-            <button type="button" className="ghost icon-button" onClick={() => void closeSession()} aria-label="关闭" title="关闭"><X size={15} /></button>
+            <button type="button" className="remote-terminal-close-dot" onClick={() => void closeSession()} aria-label="关闭" title="关闭">
+              <span className="macos-dot macos-dot-close">
+                <X size={8} strokeWidth={2.6} />
+              </span>
+            </button>
           </div>
         </header>
         <div className="dialog-body remote-terminal-body">
