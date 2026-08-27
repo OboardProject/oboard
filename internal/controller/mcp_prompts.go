@@ -191,7 +191,7 @@ Server hint:
 
 %s
 
-Intents: `+"`dns_policy.manage`"+`, `+"`dns_record.manage`"+`, `+"`port_forward.manage`"+`, `+"`tunnel.manage`"+`, `+"`host_ops.manage`"+` (MTU detection). Follow needs_input or choose_candidate with the continuation_id and commit only the returned prepared_id after confirmation. Follow the Workflow until terminal.
+Intents: `+"`dns_policy.manage`"+`, `+"`dns_record.manage`"+`, `+"`port_forward.manage`"+`, `+"`tunnel.manage`"+`, `+"`host_ops.manage`"+` (MTU detection), and inbound TLS create via `+"`inbound.create`"+`. For AnyTLS/HY2/VLESS TLS, pass dns_domain; Controller issues the managed certificate during deployment. Do not wait for a ready certificate or send the operator to the panel. Follow needs_input or choose_candidate with the continuation_id and commit only the returned prepared_id after confirmation. Follow the Workflow until terminal.
 
 Topology changes (port forwards, tunnels) carry risk 3 and require approval. Read `+"`oboard://dns-lists`"+`, `+"`oboard://port-forwards`"+`, or `+"`oboard://tunnels`"+` to confirm IDs before planning.`, args["goal"], args["server_hint"])
 			},

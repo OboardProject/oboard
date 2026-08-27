@@ -389,6 +389,8 @@ func defaultDescriptors() []Descriptor {
 		description := "创建受验证和审批保护的管理变更"
 		if domain.name == "servers.onboard" {
 			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue"
+		} else if domain.name == "inbounds.create" {
+			description = "创建入口。TLS 入口提交服务器、协议/kind、端口和 dns_domain 即可；certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请"
 		} else if domain.name == "inbounds.padding.update" {
 			description = "显式更换、重新生成或自定义 AnyTLS PaddingScheme；会改变流量形态并需要重新部署"
 		}
@@ -701,17 +703,17 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"advertise_port":        map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同"},
 			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
 			"external_ip":           map[string]any{"type": "string", "maxLength": 255},
-			"dns_sync_enabled":      boolValue,
-			"dns_credential_id":     nullableInteger(),
-			"dns_domain":            map[string]any{"type": "string", "maxLength": 253},
+			"dns_sync_enabled":      map[string]any{"type": "boolean", "description": "true 时由主控写入解析。创建入口时连同域名一起提交即可，不必先有 DNS 记录或现成证书"},
+			"dns_credential_id":     map[string]any{"type": []string{"integer", "null"}, "description": "DNS 凭据。dns_sync 或托管证书自动签发时需要；覆盖该域名的唯一凭据可由 Fast Path 自动选择"},
+			"dns_domain":            map[string]any{"type": "string", "maxLength": 253, "description": "入口解析域名。托管证书若未填 certificate_domain，主控用此域名作为 SNI"},
 			"dns_proxy_enabled":     boolValue,
 			"dns_record_types":      map[string]any{"type": "string", "enum": []string{"auto", "a", "aaaa", "both"}},
 			"ddns_enabled":          boolValue,
 			"ddns_interval_seconds": map[string]any{"type": "integer", "minimum": 300, "maximum": 86400},
 			"tls":                   boolValue,
-			"certificate_mode":      map[string]any{"type": "string", "enum": []string{"external", "auto", "exact", "wildcard", "explicit"}},
-			"certificate_id":        nullableInteger(),
-			"certificate_domain":    map[string]any{"type": "string", "maxLength": 253},
+			"certificate_mode":      map[string]any{"type": "string", "enum": []string{"external", "auto", "exact", "wildcard", "explicit"}, "description": "TLS 入口默认 auto。auto/exact/wildcard 由主控在部署时匹配或申请证书，创建不要求证书已就绪；explicit 才需要 certificate_id；Reality 必须 external"},
+			"certificate_id":        map[string]any{"type": []string{"integer", "null"}, "description": "仅 certificate_mode=explicit 时需要；auto 不要填，也不要为了绕过签发去改 external"},
+			"certificate_domain":    map[string]any{"type": "string", "maxLength": 253, "description": "SNI 域名，可省略并跟随 dns_domain。托管模式必须最终是有效域名，但不需要证书已经签发完成"},
 			"config_json":           map[string]any{"type": "string", "maxLength": 65536},
 			"reality":               realityInput,
 			"rotate_reality_key":    boolValue,
@@ -728,15 +730,16 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//   hysteria2: kind hy2-tls is standard TLS; hy2-salamander adds
 		//     per-inbound Salamander obfs. Bandwidth is per-inbound
 		//     (default 1000/500) and is not stored in node presets.
-		//   hysteria2/anytls: config_json must include "tls":{"enabled":true}
-		//     and the certificate is bound through certificate_id/mode.
+		//   hysteria2/anytls: pass dns_domain; certificate_mode=auto lets
+		//     Controller issue or match the certificate during deployment.
+		//     Create does not wait for a ready certificate.
 		//   shadowsocks 2022: method + password (generated when omitted).
 		//   mieru: transport/multiplexing defaults are filled automatically.
 		//   socks: authenticated SOCKS5 using each authorized user's credentials.
 		//   snell: single-PSK protocol; version 4/6 with optional
 		//     obfs_mode/obfs_host (v4) or mode (v6), reusable via
 		//     config_json.snell_profile_id.
-		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS certificate kinds use certificate fields; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
+		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, vless-tls-vision, and vless-ws default to certificate_mode=auto: pass dns_domain (and dns_sync_enabled plus a covering dns_credential_id when DNS records should be written); omit certificate_domain to follow dns_domain; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},
@@ -748,10 +751,17 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			inboundFields := closedObject(inboundProperties, "server_id", "name", "kind", "port")
 			input := schemaObject(map[string]any{"inbound": inboundFields}, "inbound")
 			input = withSchemaDescription(input, inboundGuidance)
-			input = withSchemaExamples(input, []any{map[string]any{"inbound": map[string]any{
-				"server_id": 1, "name": "VLESS Reality", "kind": "vless-reality", "port": 443,
-				"reality": map[string]any{"handshake_server": "gateway.icloud.com", "handshake_port": 443}, "enabled": true,
-			}}})
+			input = withSchemaExamples(input, []any{
+				map[string]any{"inbound": map[string]any{
+					"server_id": 1, "name": "VLESS Reality", "kind": "vless-reality", "port": 443,
+					"reality": map[string]any{"handshake_server": "gateway.icloud.com", "handshake_port": 443}, "enabled": true,
+				}},
+				map[string]any{"inbound": map[string]any{
+					"server_id": 1, "name": "OC AnyTLS", "kind": "anytls-basic", "port": 443,
+					"dns_sync_enabled": true, "dns_credential_id": 1, "dns_domain": "oc.example.com",
+					"certificate_mode": "auto", "enabled": true,
+				}},
+			})
 			return input, simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
 		}
 		delete(inboundProperties, "anytls_padding")

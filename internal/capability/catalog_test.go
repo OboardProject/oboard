@@ -160,8 +160,14 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 	if !strings.Contains(description, "kind=vless-reality") || !strings.Contains(description, "reality.handshake_server") || !strings.Contains(description, "Controller generates") || !strings.Contains(description, "caller-supplied Reality private/public keys are rejected") {
 		t.Fatalf("inbounds.create schema lacks protocol guidance: %q", description)
 	}
+	if !strings.Contains(description, "certificate_mode=auto") || !strings.Contains(description, "must not wait for a ready certificate") || !strings.Contains(description, "must not send the operator to the panel") {
+		t.Fatalf("inbounds.create schema lacks managed-certificate guidance: %q", description)
+	}
+	if !strings.Contains(descriptor.Description, "创建不等待证书就绪") {
+		t.Fatalf("inbounds.create description lacks async certificate guidance: %q", descriptor.Description)
+	}
 	raw := string(descriptor.InputSchema)
-	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"anytls_padding"`, `"balanced_v1"`, `"light_v1"`, `"examples"`, `"gateway.icloud.com"`} {
+	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"anytls_padding"`, `"balanced_v1"`, `"light_v1"`, `"examples"`, `"gateway.icloud.com"`, `"anytls-basic"`, `"oc.example.com"`, `"dns_domain"`, `"certificate_mode"`} {
 		if !strings.Contains(raw, fragment) {
 			t.Fatalf("inbounds.create schema lacks %s: %s", fragment, raw)
 		}

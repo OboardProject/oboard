@@ -201,6 +201,25 @@ func TestInboundCreateCapabilityAppliesThroughChangeset(t *testing.T) {
 	}
 }
 
+func TestInboundCreateManagedCertificateAcceptsDNSDomainWithoutReadyCertificate(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	user := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	node := &model.Server{Name: "OC", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	input := json.RawMessage(`{"inbound":{"server_id":1,"name":"OC HY2","kind":"hy2-tls","listen_ip":"0.0.0.0","port":443,"dns_domain":"oc.example.com","certificate_mode":"auto","enabled":true}}`)
+	if _, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "inbounds.create", Input: input}}}); err != nil {
+		t.Fatalf("managed certificate create should accept dns_domain without a ready certificate: %v", err)
+	}
+}
+
 func TestProxyPathEditCapabilitiesApplyThroughChangesets(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
