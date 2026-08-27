@@ -62,7 +62,7 @@
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
-| `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | 待提交 | 待发布 | 生效中 | - |
+| `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
@@ -577,8 +577,8 @@
 ### controller-db-20260828-traffic-ledger-v2
 
 - **引入日期：** 2026-08-28
-- **引入提交：** 待 Controller 仓库提交后回填
-- **引入版本：** 待提交
+- **引入提交：** `OboardProject/oboard@5fedab310ae87ed7a6d4270daa353a21899bf549`
+- **引入版本：** `dev-5fedab310ae8`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web；Agent `internal/agent`；kernel `kernel/oboard-sb`
 - **类别：** SQLite schema / wire protocol
