@@ -186,7 +186,13 @@ function auditTitle(log: AuditLogRow, actor: string, target: { type: string; lab
   if (action === 'node_incident_action_failed') return copy(`${actor} 的节点故障处置失败`)
   if (action === 'node_publication_isolate') return copy(`${actor} 隔离了故障节点的发布`)
   if (action === 'node_publication_restore') return copy(`${actor} 恢复了故障节点的发布`)
-  return copy(`${actor}${auditActionVerb(action)}${target.label}`)
+  if (action === 'install' && log.target === 'controller_update') return copy(`${actor} 安装了主控版本 ${String(log.detail || '').trim() || target.label}`)
+  if (action === 'check' && log.target === 'controller_update') return copy(`${actor} 检查了主控更新`)
+  if (action === 'channel' && log.target === 'controller_update') return copy(`${actor} 切换主控更新通道为 ${String(log.detail || '').trim() || target.label}`)
+  if (action === 'cancel' && log.target === 'controller_update') return copy(`${actor} 取消了主控更新`)
+  if (action === 'update' && log.target === 'agent') return copy(`${actor} 更新了 ${target.label} 的 Agent`)
+  if (action === 'uninstall' && log.target === 'agent') return copy(`${actor} 卸载了 ${target.label} 的 Agent`)
+  return copy(`${actor} ${auditActionVerb(action)} ${target.label}`)
 }
 
 function auditActorLabel(log: AuditLogRow, data: any) {
@@ -206,6 +212,8 @@ function auditTargetInfo(log: AuditLogRow, data: any) {
   const type = auditTargetTypeLabel(target)
   if (target === 'settings') return { type, label: '面板设置' }
   if (target === 'deployment') return { type, label: detail && !looksRaw(detail) ? `配置版本 ${detail}` : '配置下发' }
+  if (target === 'controller_update') return { type, label: detail && !looksRaw(detail) ? detail : '主控' }
+  if (target === 'agent') return { type, label: auditServerLabel(numberFromString(detail), data) }
   if (target === 'user' && detail && !numberFromString(detail) && !looksRaw(detail)) return { type, label: detail }
   if (target === 'server' && detail && !numberFromString(detail) && !looksRaw(detail)) return { type, label: detail }
   if (target === 'inbound-user') return { type, label: auditInboundUserLabel(detail, data) }
@@ -264,6 +272,9 @@ export function auditActionLabel(action: string) {
     create: '创建', update: '更新', delete: '删除',
     grant: '授权', revoke: '撤销', rotate: '轮换', enable: '开启', disable: '停用', renew: '续期',
     apply: '下发', dismiss: '忽略', diagnose: '诊断', detect: '检测',
+    install: '安装', uninstall: '卸载', check: '检查', channel: '切换通道', cancel: '取消',
+    inspect: '查看', refresh: '刷新', probe: '探测', collect_logs: '采集日志', batch: '批量操作',
+    suspend: '暂停', resume: '恢复', place: '调整', ordering: '排序',
     notify: '通知', notify_failed: '通知失败', notification_broadcast: '群发通知', agent_enroll: '接入',
     oauth_token_refreshed: '刷新令牌', oauth_token_issued: '签发令牌', oauth_token_denied: '拒绝令牌',
     oauth_token_revoked: '撤销令牌', oauth_authorization_granted: '授权应用', oauth_authorization_denied: '拒绝授权',
@@ -279,6 +290,9 @@ function auditActionVerb(action: string) {
     create: '创建了', update: '更新了', delete: '删除了',
     grant: '授权了', revoke: '撤销了', rotate: '轮换了', renew: '续期了',
     apply: '下发了', dismiss: '忽略了', diagnose: '诊断了', detect: '检测了',
+    install: '安装了', uninstall: '卸载了', check: '检查了', channel: '切换了', cancel: '取消了',
+    inspect: '查看了', refresh: '刷新了', probe: '探测了', collect_logs: '采集了',
+    suspend: '暂停了', resume: '恢复了', place: '调整了', ordering: '排序了',
     notify: '通知了', notify_failed: '通知失败：',
     bootstrap: '初始化了', auto_admin: '初始化了', login: '登录了', login_totp: '登录了', login_passkey: '登录了',
     logout: '退出了', register: '注册了', change_password: '修改了', enable: '开启了', disable: '停用了',
@@ -289,26 +303,32 @@ function auditActionVerb(action: string) {
 }
 
 function auditActionTone(action: string): AuditTone {
-  if (['delete', 'notify_failed', 'oauth_token_denied', 'oauth_authorization_denied', 'oauth_refresh_reuse', 'node_incident_action_failed'].includes(action)) return 'danger'
-  if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke', 'disable', 'oauth_token_revoked', 'node_publication_isolate'].includes(action)) return 'warning'
+  if (['delete', 'notify_failed', 'oauth_token_denied', 'oauth_authorization_denied', 'oauth_refresh_reuse', 'node_incident_action_failed', 'uninstall', 'suspend'].includes(action)) return 'danger'
+  if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke', 'disable', 'oauth_token_revoked', 'node_publication_isolate', 'check', 'channel', 'cancel', 'inspect', 'refresh', 'probe', 'collect_logs', 'ordering', 'place'].includes(action)) return 'warning'
   if ([
     'create', 'grant', 'bootstrap', 'auto_admin', 'login', 'login_totp', 'login_passkey', 'logout', 'enable', 'agent_enroll', 'notify',
     'oauth_token_issued', 'oauth_token_refreshed', 'oauth_authorization_granted', 'oauth_client_created',
     'node_incident_resolved', 'node_incident_action_succeeded', 'node_publication_restore', 'register', 'renew',
+    'install', 'resume',
   ].includes(action)) return 'success'
   return 'neutral'
 }
 
 function auditTargetTypeLabel(target: string) {
   const labels: Record<string, string> = {
-    settings: '设置', user: '用户', server: '服务器', 'agent-config': 'Agent 设置',
+    settings: '设置', user: '用户', server: '服务器', agent: 'Agent', 'agent-config': 'Agent 设置',
     mtu: 'MTU', 'enroll-token': 'Agent 命令', inbound: '入口节点', 'inbound-user': '入口用户',
     'user-group': '用户组', 'user-group-member': '用户组成员', 'inbound-access': '入口权限',
-    routing_rule: '分流规则', notification_channel: '通知渠道', port_forward: '端口转发',
+    routing_rule: '分流规则', routing_rules: '分流规则', routing_rule_set: '规则集',
+    notification_channel: '通知渠道', port_forward: '端口转发',
     tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅令牌', 'subscription-age': 'Age 订阅',
     'subscription-custom-path': '自定义订阅路径', 'subscription-custom-path-policy': '自定义路径权限',
+    'subscription-plan': '订阅计划', 'subscription-profile': '订阅配置', 'subscription-assignment': '订阅分配',
+    'user-device': '用户设备', 'user-device-subscription': '设备订阅', 'user-node-exception': '节点可见性例外',
+    'proxy-path': '代理链路', 'proxy-path-step': '链路节点', 'proxy-path-egress': '链路出口',
+    'server-network-interfaces': '网卡信息', 'server-logs': '服务器日志', server_dns_policy: 'DNS 策略',
     totp: '双重认证', 'totp-recovery-codes': '恢复码', passkey: '通行密钥',
-    'subscription-profile': '订阅配置', 'subscription-assignment': '订阅分配',
+    controller_update: '主控更新',
     oauth_grant: 'OAuth 授权', oauth_client: 'OAuth 应用', oauth_token: 'OAuth 令牌',
     node_incident: '节点故障', node_incident_action: '节点处置', notification_broadcast: '群发通知',
   }

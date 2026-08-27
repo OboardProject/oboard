@@ -73,6 +73,35 @@ describe('audit log copy', () => {
     expect(item.detail).toBe('中断 16 分 51 秒')
   })
 
+  it('formats controller update install with correct spacing', () => {
+    const item = describeAuditLog({
+      id: 9,
+      actor_id: 10,
+      action: 'install',
+      target: 'controller_update',
+      detail: 'dev:dev-a710134a52e7',
+      ip: '172.71.81.43',
+      created_at: '2026-08-28T03:52:00Z',
+    }, { users: [{ id: 10, username: 'sherry' }] })
+    expect(item.actionLabel).toBe('安装')
+    expect(item.actor).toBe('用户 sherry')
+    expect(item.title).toBe('用户 sherry 安装了主控版本 dev:dev-a710134a52e7')
+    expect(item.targetLabel).toBe('dev:dev-a710134a52e7')
+  })
+
+  it('keeps spacing between English actor and fallback action verbs', () => {
+    const item = describeAuditLog({
+      id: 10,
+      actor_id: 10,
+      action: 'custom_inspect',
+      target: 'custom_target',
+      detail: 'sample-payload',
+      ip: '127.0.0.1',
+      created_at: '2026-08-28T03:52:00Z',
+    }, { users: [{ id: 10, username: 'sherry' }] })
+    expect(item.title).toBe('用户 sherry custom inspect 了 sample-payload')
+  })
+
   it('keeps existing login copy', () => {
     const item = describeAuditLog({
       id: 8,
