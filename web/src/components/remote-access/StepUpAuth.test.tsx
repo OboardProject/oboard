@@ -57,6 +57,51 @@ describe('StepUpAuth', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
+  it('automatically prompts for an available passkey when requested', async () => {
+    getCredential.mockResolvedValue({
+      id: 'credential-1',
+      rawId: new Uint8Array([1]).buffer,
+      type: 'public-key',
+      authenticatorAttachment: 'platform',
+      getClientExtensionResults: () => ({}),
+      response: {
+        clientDataJSON: new Uint8Array([2]).buffer,
+        authenticatorData: new Uint8Array([3]).buffer,
+        signature: new Uint8Array([4]).buffer,
+        userHandle: null,
+      },
+    })
+    const onComplete = vi.fn()
+    const request = vi.fn(async (path: string) => {
+      if (path === '/auth/step-up/begin') return challenge
+      if (path === '/auth/step-up/passkey/finish') return { step_up_token: 'step-up-token' }
+      throw new Error(`unexpected ${path}`)
+    })
+
+    await act(async () => {
+      root.render(
+        <StepUpAuth
+          request={request}
+          purpose="remote_terminal"
+          resourceType="server"
+          resourceId={1}
+          autoStartPasskey
+          title="打开远程终端"
+          warning="确认后即可打开这台服务器的 WebSSH。"
+          onComplete={onComplete}
+          onCancel={() => undefined}
+        />,
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith('step-up-token'))
+    })
+
+    expect(getCredential).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('/auth/step-up/passkey/finish', expect.objectContaining({ method: 'POST' }))
+  })
+
   it('keeps the confirm label stable while a passkey prompt is open', async () => {
     let release: ((value: never) => void) | undefined
     getCredential.mockReturnValue(new Promise<never>((_resolve, reject) => {

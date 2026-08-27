@@ -294,6 +294,7 @@ export function RemoteTerminal({
           purpose="remote_terminal"
           resourceType="server"
           resourceId={serverId}
+          autoStartPasskey
           title="打开远程终端"
           warning="确认后即可打开这台服务器的 WebSSH。"
           onComplete={token => { void connect(token) }}

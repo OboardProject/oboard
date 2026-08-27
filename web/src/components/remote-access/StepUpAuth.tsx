@@ -10,6 +10,7 @@ type StepUpAuthProps = {
   purpose: string
   resourceType: string
   resourceId: string | number
+  autoStartPasskey?: boolean
   title: string
   warning: string
   onComplete: (token: string) => void
@@ -86,11 +87,12 @@ async function getPasskeyCredential(options: any) {
   }
 }
 
-export function StepUpAuth({ request, purpose, resourceType, resourceId, title, warning, onComplete, onCancel }: StepUpAuthProps) {
+export function StepUpAuth({ request, purpose, resourceType, resourceId, autoStartPasskey = false, title, warning, onComplete, onCancel }: StepUpAuthProps) {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [challenge, setChallenge] = useState<any>(null)
+  const autoPasskeyAttempted = React.useRef(false)
 
   const begin = async () => {
     if (busy) return
@@ -146,6 +148,12 @@ export function StepUpAuth({ request, purpose, resourceType, resourceId, title, 
       setBusy('')
     }
   }
+
+  React.useEffect(() => {
+    if (!autoStartPasskey || autoPasskeyAttempted.current || busy || !challenge?.passkey_available || !challenge.passkey) return
+    autoPasskeyAttempted.current = true
+    void finishPasskey()
+  }, [autoStartPasskey, busy, challenge])
 
   return (
     <Dialog isOpen onClose={onCancel} title={title} size="sm">
