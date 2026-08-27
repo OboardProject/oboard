@@ -1,13 +1,13 @@
 package controller
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13828,6 +13828,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 					inFlightTimer = nil
 					inFlightTimeout = nil
 				}
+			}
+			if envelope.Type == "interactive_ready" || envelope.Type == "interactive_failed" {
+				s.handleInteractiveAgentStatus(server.ID, received.message)
 			}
 			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
 			if acceptedLatencyReportID != "" {

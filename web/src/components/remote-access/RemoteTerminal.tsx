@@ -14,11 +14,25 @@ const closedReasonLabels: Record<string, string> = {
   user_close: '已关闭',
   oversized_frame: '数据过大，连接已断开',
   slow_consumer: '发送过慢，连接已断开',
+  pty_start_failed: '节点无法启动终端',
+  interactive_url_failed: '节点终端地址无效',
+  websocket_dial_failed: '节点无法连接终端通道',
+  session_limit: '节点终端数量已达上限',
+  prepare_timeout: '等待节点启动超时',
+  prepare_invalid: '终端会话无效',
+  agent_local_gate_denied: '节点本地安全锁拒绝终端',
+  controller_close: '会话已关闭',
+  controller_disconnect: '节点连接已断开',
 }
 
-function terminalStatusLabel(value: string) {
-  const trimmed = value.trim()
-  return closedReasonLabels[trimmed] || trimmed
+const waitingStatuses = new Set(['正在连接', '正在等待节点', '已连接'])
+
+function terminalStatusLabel(reason: string, detail?: string) {
+  const trimmed = reason.trim()
+  const label = closedReasonLabels[trimmed] || trimmed
+  const extra = String(detail || '').trim()
+  if (!extra || extra === label) return label
+  return `${label}：${extra.slice(0, 200)}`
 }
 
 export function RemoteTerminal({
@@ -45,6 +59,7 @@ export function RemoteTerminal({
   const resizeTimer = useRef<number>(0)
   const connectGen = useRef(0)
   const openedRef = useRef(false)
+  const readyRef = useRef(false)
   const [termReady, setTermReady] = useState(false)
   const [stepUp, setStepUp] = useState(passwordConfirmationRequired)
   const [fullscreen, setFullscreen] = useState(false)
@@ -89,6 +104,7 @@ export function RemoteTerminal({
     setStepUp(false)
     setStatus('正在连接')
     openedRef.current = false
+    readyRef.current = false
     try {
       const term = termRef.current
       const cols = term?.cols || 120
@@ -112,8 +128,7 @@ export function RemoteTerminal({
       socket.onopen = () => {
         if (gen !== connectGen.current) return
         openedRef.current = true
-        setStatus('已连接')
-        fitAndResize()
+        setStatus('正在等待节点')
       }
       socket.onmessage = event => {
         if (gen !== connectGen.current) return
@@ -121,12 +136,13 @@ export function RemoteTerminal({
           try {
             const message = JSON.parse(event.data)
             if (message.type === 'ready') {
+              readyRef.current = true
               setStatus('已连接')
               fitAndResize()
               return
             }
             if (message.type === 'closed' || message.type === 'error') {
-              setStatus(terminalStatusLabel(String(message.reason || message.type)))
+              setStatus(terminalStatusLabel(String(message.reason || message.type), message.detail))
             }
           } catch {
             termRef.current?.write(event.data)
@@ -139,8 +155,10 @@ export function RemoteTerminal({
       socket.onclose = () => {
         if (gen !== connectGen.current) return
         setStatus(current => {
-          if (current !== '正在连接' && current !== '已连接') return current
-          return openedRef.current ? '已断开' : '连接失败'
+          if (!waitingStatuses.has(current)) return current
+          if (readyRef.current) return '已断开'
+          if (openedRef.current) return '节点未就绪'
+          return '连接失败'
         })
       }
       dataDisposableRef.current?.dispose()

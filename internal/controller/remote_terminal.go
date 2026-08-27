@@ -25,22 +25,27 @@ const (
 	terminalMaxRows          = 150
 )
 
+var terminalPrepareTimeout = 20 * time.Second
+
 type terminalSession struct {
-	ID         string
-	ServerID   int64
-	UserID     int64
-	Nonce      string
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-	Ticket     string
-	TicketUsed bool
-	Cols       int
-	Rows       int
-	PrepareExp string
-	browser    *websocket.Conn
-	agent      *websocket.Conn
-	relaying   bool
-	mu         sync.Mutex
+	ID           string
+	ServerID     int64
+	UserID       int64
+	Nonce        string
+	ExpiresAt    time.Time
+	CreatedAt    time.Time
+	Ticket       string
+	TicketUsed   bool
+	Cols         int
+	Rows         int
+	PrepareExp   string
+	browser      *websocket.Conn
+	agent        *websocket.Conn
+	relaying     bool
+	agentReady   bool
+	closed       bool
+	prepareTimer *time.Timer
+	mu           sync.Mutex
 }
 
 type terminalSessionHub struct {
@@ -207,6 +212,11 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		failCode(w, "agent_offline", "agent control channel is unavailable", http.StatusConflict)
 		return
 	}
+	session.mu.Lock()
+	session.prepareTimer = time.AfterFunc(terminalPrepareTimeout, func() {
+		s.failTerminalSession(sessionID, serverID, "prepare_timeout", "")
+	})
+	session.mu.Unlock()
 	http.SetCookie(w, s.terminalTicketCookie(r, serverID, ticket, 120))
 	s.recordRemoteAccessAudit(r, model.RemoteAccessAuditEvent{
 		EventType: model.RemoteAccessAuditTerminalOpen, ActorType: "user", ActorUserID: &user.ID,
@@ -267,15 +277,101 @@ func (s *Server) closeTerminalSession(w http.ResponseWriter, r *http.Request, se
 }
 
 func (session *terminalSession) close(reason string) {
+	session.notifyAndClose("closed", reason, "")
+}
+
+func (session *terminalSession) fail(reason, detail string) {
+	session.notifyAndClose("error", reason, detail)
+}
+
+func (session *terminalSession) notifyAndClose(msgType, reason, detail string) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	if session.closed {
+		return
+	}
+	session.closed = true
+	if session.prepareTimer != nil {
+		session.prepareTimer.Stop()
+		session.prepareTimer = nil
+	}
+	payload := map[string]any{"type": msgType, "reason": reason}
+	if detail != "" {
+		payload["detail"] = detail
+	}
 	if session.browser != nil {
-		_ = session.browser.WriteJSON(map[string]any{"type": "closed", "reason": reason})
+		_ = session.browser.WriteJSON(payload)
 		_ = session.browser.Close()
 	}
 	if session.agent != nil {
 		_ = session.agent.WriteJSON(map[string]any{"type": "close"})
 		_ = session.agent.Close()
+	}
+}
+
+func (session *terminalSession) markAgentConnected() {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.prepareTimer != nil {
+		session.prepareTimer.Stop()
+		session.prepareTimer = nil
+	}
+}
+
+func (s *Server) failTerminalSession(sessionID string, serverID int64, reason, detail string) {
+	s.terminalHub.mu.Lock()
+	session := s.terminalHub.sessions[sessionID]
+	if session == nil || session.ServerID != serverID {
+		s.terminalHub.mu.Unlock()
+		return
+	}
+	delete(s.terminalHub.sessions, sessionID)
+	s.terminalHub.mu.Unlock()
+	session.fail(reason, detail)
+	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID, "ts": time.Now().UTC()})
+}
+
+func (s *Server) markTerminalReady(sessionID string, serverID int64) {
+	s.terminalHub.mu.Lock()
+	session := s.terminalHub.sessions[sessionID]
+	s.terminalHub.mu.Unlock()
+	if session == nil || session.ServerID != serverID {
+		return
+	}
+	session.mu.Lock()
+	session.agentReady = true
+	if session.prepareTimer != nil {
+		session.prepareTimer.Stop()
+		session.prepareTimer = nil
+	}
+	session.mu.Unlock()
+}
+
+func (s *Server) handleInteractiveAgentStatus(serverID int64, msg map[string]json.RawMessage) {
+	var msgType, sessionID, reason, detail string
+	if raw, ok := msg["type"]; ok {
+		_ = json.Unmarshal(raw, &msgType)
+	}
+	if raw, ok := msg["session_id"]; ok {
+		_ = json.Unmarshal(raw, &sessionID)
+	}
+	if raw, ok := msg["reason"]; ok {
+		_ = json.Unmarshal(raw, &reason)
+	}
+	if raw, ok := msg["detail"]; ok {
+		_ = json.Unmarshal(raw, &detail)
+	}
+	if sessionID == "" {
+		return
+	}
+	switch msgType {
+	case "interactive_ready":
+		s.markTerminalReady(sessionID, serverID)
+	case "interactive_failed":
+		if reason == "" {
+			reason = "interactive_failed"
+		}
+		s.failTerminalSession(sessionID, serverID, reason, detail)
 	}
 }
 
@@ -351,6 +447,7 @@ func (s *Server) agentInteractive(w http.ResponseWriter, r *http.Request) {
 	session.mu.Lock()
 	session.agent = conn
 	session.mu.Unlock()
+	session.markAgentConnected()
 	s.relayTerminal(session)
 }
 
