@@ -23,6 +23,31 @@ func userAutomationPrincipal(t *testing.T, db *store.Store, userID int64) applic
 	return application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
 }
 
+func TestOperatorAutomationProtectsAdministratorAccounts(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	operator := &model.User{Username: "operator", PasswordHash: "unused", Role: model.RoleOperator, Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "unused"}
+	for _, user := range []*model.User{admin, operator} {
+		if err := db.CreateUser(ctx, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	principal := application.HumanPrincipal(*operator, model.RoleOperator, netip.MustParseAddr("127.0.0.1"))
+
+	if _, _, err := server.userCreateAutomationCandidate(ctx, principal, json.RawMessage(`{"user":{"username":"member","role":"viewer"}}`)); err != nil {
+		t.Fatalf("operator could not create an ordinary user: %v", err)
+	}
+	if _, _, err := server.userCreateAutomationCandidate(ctx, principal, json.RawMessage(`{"user":{"username":"blocked","role":"admin"}}`)); err == nil {
+		t.Fatal("operator unexpectedly created an administrator candidate")
+	}
+	update, _ := json.Marshal(map[string]any{"user_id": admin.ID, "changes": map[string]any{"nickname": "blocked"}})
+	if _, _, err := server.userUpdateAutomationCandidate(ctx, principal, update); err == nil {
+		t.Fatal("operator unexpectedly updated an administrator candidate")
+	}
+}
+
 func applyAutomationChangeset(t *testing.T, server *Server, principal application.Principal, idempotencyKey string, operations ...automation.OperationRequest) {
 	t.Helper()
 	ctx := context.Background()

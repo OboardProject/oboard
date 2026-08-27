@@ -286,6 +286,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/poll-events", s.auth(s.uiPollEvents, model.RoleNone))
 	mux.HandleFunc("/api/v1/dashboard/summary", s.auth(s.dashboard, model.RoleOperator))
 	mux.HandleFunc("/api/v1/settings/base-path/retry", s.auth(s.settingsBasePathRetry, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/settings/base-path/force", s.auth(s.settingsBasePathForce, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/settings/base-path/revoke", s.auth(s.settingsBasePathRevoke, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/settings", s.auth(s.settings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-relays", s.auth(s.subscriptionRelays, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-relays/", s.auth(s.subscriptionRelaySubroutes, model.RoleAdmin))
@@ -3367,7 +3369,60 @@ func currentSessionToken(r *http.Request) string {
 	return token
 }
 
+var errAdministratorAccountManagedByOperator = errors.New("操作员不能创建、编辑或删除管理员账号")
+
+func (s *Server) requireUserMutationAccess(ctx context.Context, actorRole model.Role, userID int64) error {
+	if model.CanManageAdministratorAccounts(actorRole) || userID <= 0 {
+		return nil
+	}
+	user, err := s.store.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	effectiveRole, err := s.store.EffectiveUserRole(ctx, *user)
+	if err != nil {
+		return err
+	}
+	if effectiveRole == model.RoleAdmin {
+		return errAdministratorAccountManagedByOperator
+	}
+	return nil
+}
+
+func (s *Server) requireUserMutationsAccess(ctx context.Context, actorRole model.Role, userIDs []int64) error {
+	for _, userID := range uniquePositiveIDs(userIDs) {
+		if err := s.requireUserMutationAccess(ctx, actorRole, userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireAssignedRoleAccess(actorRole, assignedRole model.Role) error {
+	if assignedRole == model.RoleAdmin && !model.CanManageAdministratorAccounts(actorRole) {
+		return errAdministratorAccountManagedByOperator
+	}
+	return nil
+}
+
+func (s *Server) requireUserGroupMutationAccess(ctx context.Context, actorRole model.Role, groupID int64) error {
+	if model.CanManageAdministratorAccounts(actorRole) || groupID <= 0 {
+		return nil
+	}
+	group, err := s.store.GetUserGroup(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if group.Role == model.RoleAdmin || group.SystemKey == store.UserGroupSystemAdmins {
+		return errAdministratorAccountManagedByOperator
+	}
+	return nil
+}
+
 func roleAllows(got, min model.Role) bool {
+	if min == model.RoleAdmin {
+		return model.HasManagementAccess(got)
+	}
 	rank := map[model.Role]int{model.RoleNone: 0, model.RoleViewer: 1, model.RoleOperator: 2, model.RoleAdmin: 3}
 	return rank[got] >= rank[min]
 }
@@ -5937,6 +5992,12 @@ func (s *Server) ensureInboundListenAvailable(ctx context.Context, v model.Inbou
 func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/user-groups/")
 	parts := pathParts(r.URL.Path, "/api/v1/user-groups/")
+	if r.Method != http.MethodGet && id > 0 {
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), id); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
+	}
 	if len(parts) == 2 && parts[1] == "subscription-custom-path-policy" {
 		s.userGroupSubscriptionCustomPathPolicy(w, r, id)
 		return
@@ -5964,6 +6025,10 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v.SystemKey = ""
+		if err := requireAssignedRoleAccess(currentRole(r), v.Role); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if err := validateUserGroup(&v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5984,6 +6049,10 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), id); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		v := *current
 		if !decode(w, r, &v) {
 			return
@@ -5991,6 +6060,10 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 		v.ID = id
 		mergeUserGroupPatch(&v, current)
 		v.SystemKey = current.SystemKey
+		if err := requireAssignedRoleAccess(currentRole(r), v.Role); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if current.SystemKey == store.UserGroupSystemAdmins {
 			v.Role = model.RoleAdmin
 			v.Enabled = true
@@ -6013,6 +6086,10 @@ func (s *Server) userGroups(w http.ResponseWriter, r *http.Request) {
 		current, err := s.store.GetUserGroup(r.Context(), id)
 		if err != nil {
 			fail(w, err, 404)
+			return
+		}
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), id); err != nil {
+			fail(w, err, http.StatusForbidden)
 			return
 		}
 		if current.SystemKey != "" {
@@ -6058,6 +6135,14 @@ func (s *Server) userGroupMembers(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &v) {
 			return
 		}
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), v.GroupID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), v.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if err := s.validateUserGroupMember(r.Context(), v); err != nil {
 			fail(w, err, 400)
 			return
@@ -6078,11 +6163,27 @@ func (s *Server) userGroupMembers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), current.GroupID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), current.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		v := *current
 		if !decode(w, r, &v) {
 			return
 		}
 		v.ID = id
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), v.GroupID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), v.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if protected, err := s.protectedAdminMembership(r.Context(), *current); err != nil {
 			fail(w, err, 500)
 			return
@@ -6107,6 +6208,14 @@ func (s *Server) userGroupMembers(w http.ResponseWriter, r *http.Request) {
 		current, err := s.store.GetUserGroupMember(r.Context(), id)
 		if err != nil {
 			fail(w, err, 404)
+			return
+		}
+		if err := s.requireUserGroupMutationAccess(r.Context(), currentRole(r), current.GroupID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), current.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
 			return
 		}
 		if protected, err := s.protectedAdminMembership(r.Context(), *current); err != nil {
@@ -10429,6 +10538,16 @@ func redactWARPConfigJSON(raw string) string {
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	id := idFromPath(r.URL.Path, "/api/v1/users/")
 	parts := pathParts(r.URL.Path, "/api/v1/users/")
+	if r.Method != http.MethodGet && id > 0 {
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), id); err != nil {
+			status := http.StatusForbidden
+			if !errors.Is(err, errAdministratorAccountManagedByOperator) {
+				status = http.StatusInternalServerError
+			}
+			fail(w, err, status)
+			return
+		}
+	}
 	if len(parts) >= 2 && parts[1] == "devices" {
 		s.userDevices(w, r, id, parts[2:])
 		return
@@ -10501,9 +10620,14 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		if u.Role == "" {
 			u.Role = model.RoleViewer
 		}
+		if err := requireAssignedRoleAccess(currentRole(r), u.Role); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if u.Status == "" {
 			u.Status = "active"
 		}
+		generatedPassword := ""
 		if req.Password == "" {
 			password, err := security.RandomToken(12)
 			if err != nil {
@@ -10511,6 +10635,7 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			req.Password = password
+			generatedPassword = password
 		} else if len(req.Password) < 8 {
 			fail(w, errors.New("password must be at least 8 characters"), 400)
 			return
@@ -10547,6 +10672,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.CreateUser(r.Context(), &u); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "unique") {
+				fail(w, errors.New("用户名已被占用"), http.StatusConflict)
+				return
+			}
 			fail(w, err, 500)
 			return
 		}
@@ -10560,7 +10689,11 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		write(w, 201, map[string]any{"user": u})
+		resp := map[string]any{"user": u}
+		if generatedPassword != "" {
+			resp["generated_password"] = generatedPassword
+		}
+		write(w, 201, resp)
 	case http.MethodPatch:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
@@ -10587,6 +10720,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		u := req.User
 		u.ID = id
 		mergeUserPatch(&u, current)
+		if err := requireAssignedRoleAccess(currentRole(r), u.Role); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if protected {
 			u.Role = model.RoleAdmin
 			u.Status = "active"

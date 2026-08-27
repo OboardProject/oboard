@@ -75,6 +75,7 @@ import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-t
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import { telegramBindingInstruction } from './telegram-binding'
+import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
@@ -1449,7 +1450,7 @@ const navGroups = [
   { label: '', tabs: ['dashboard', 'servers', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
 ]
 
-const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 1, admin: 2 }
+const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 2, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   servers: 'operator', 'proxy-paths': 'operator',
@@ -1461,7 +1462,7 @@ const tabMinimumRole: Record<string, Role> = {
 const preloadTabsByRole: Record<Role, string[]> = {
 	none: ['dashboard', 'nodes', 'account'],
 	viewer: ['dashboard', 'nodes', 'account', 'notifications'],
-  operator: ['nodes', 'servers', 'proxy-paths', 'tasks', 'audit', 'mtu'],
+  operator: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
   admin: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
 }
 
@@ -1606,6 +1607,10 @@ const errorMessages: Record<string, string> = {
   'missing or malformed jwt': '登录状态已失效，请重新登录',
   'current password is incorrect': '当前密码不正确',
   'new password must be at least 8 characters': '新密码至少需要 8 位',
+  'password must be at least 8 characters': '密码至少需要 8 个字符',
+  'username required': '请输入用户名',
+  '用户名已被占用': '用户名已被占用',
+  'username is outside the authorized user boundary': '用户名超出授权范围',
   'rate limit exceeded': '操作过于频繁，请稍后再试',
   forbidden: '权限不足，无法执行该操作',
   'method not allowed': '请求方法不允许',
@@ -2784,7 +2789,7 @@ export function App() {
         <div className={`app${!isMobile && isSidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
           <TopToast toast={toast} onClose={id => setToast(current => current?.id === id ? null : current)} />
           <DialogHost dialog={dialog} onClose={() => setDialog(null)} />
-          {currentRole === 'admin' && <ControllerUpdatePrompt
+          {hasManagementAccess(currentRole) && <ControllerUpdatePrompt
             key={token}
             client={client}
             tab={tab}
@@ -3278,9 +3283,9 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'outbounds') return <Outbounds data={data} client={client} load={load} />
   if (tab === 'routing') return <RoutingRules data={data} client={client} load={load} />
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
-  if (tab === 'users') return <UserManagement data={data} client={client} load={load} />
+  if (tab === 'users') return <UserManagement data={data} client={client} load={load} notify={notify} />
   if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
-  if (tab === 'nodes') return <NodeWorkspacePage data={data} client={client} load={load} notify={notify} legacySubscriptions={sessionUser?.role === 'admin' ? <Subscriptions data={data} client={client} load={load} notify={notify} /> : <MySubscriptions data={data} client={client} load={load} notify={notify} />} />
+  if (tab === 'nodes') return <NodeWorkspacePage data={data} client={client} load={load} notify={notify} legacySubscriptions={hasManagementAccess(sessionUser?.role) ? <Subscriptions data={data} client={client} load={load} notify={notify} /> : <MySubscriptions data={data} client={client} load={load} notify={notify} />} />
   if (tab === 'node-order-templates') return <NodeAssignmentsPage data={data} client={client} load={load} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />
@@ -6008,7 +6013,7 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
   const [subscriptionDetail, setSubscriptionDetail] = useState<SubscriptionAuditUserDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const detailTriggerRef = useRef<HTMLElement | null>(null)
-  const isAdmin = data.session?.role === 'admin' || data.current_user?.role === 'admin'
+  const isAdmin = hasManagementAccess(data.session?.role || data.current_user?.role)
 
   useEffect(() => {
     let cancelled = false
@@ -7569,7 +7574,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
             <Plus size={15} />
             <span>添加服务器</span>
           </button>
-          {role === 'admin' && (
+          {hasManagementAccess(role) && (
             <>
               <button
                 type="button"
@@ -7660,7 +7665,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
       <AlertTriangle size={18} />
       <div><strong>尚未配置主控公开地址</strong><span>Agent 安装和更新需要可访问的 HTTPS 地址。请先前往系统设置的基础设置填写并保存。</span></div>
-      {role === 'admin' ? <button type="button" onClick={() => goTab('settings')}>前往设置</button> : <span className="controller-url-warning-role">请联系管理员配置</span>}
+      {hasManagementAccess(role) ? <button type="button" onClick={() => goTab('settings')}>前往设置</button> : <span className="controller-url-warning-role">请联系管理员配置</span>}
     </div>}
     {loading && !servers.length
       ? <CardSkeleton />
@@ -8379,7 +8384,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           </FormField>}
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
           <div className="form-section-title">远程控制</div>
-          <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={role === 'admin'} />
+          <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={hasManagementAccess(role)} />
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
@@ -8765,7 +8770,7 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
   ]
 
   const visibleGroups = groups
-    .map(g => ({ ...g, items: g.items.filter(item => !item.admin || role === 'admin') }))
+    .map(g => ({ ...g, items: g.items.filter(item => !item.admin || hasManagementAccess(role)) }))
     .filter(g => g.items.length > 0)
 
   const totalVisibleItems = visibleGroups.reduce((acc, g) => acc + g.items.length, 0)
@@ -14803,7 +14808,7 @@ function AnyTLSPaddingSection({ mode, draft, update, data, client, onUpdated }: 
   const [replacementAutoTune, setReplacementAutoTune] = useState(snapshot.metadata?.mode !== 'preset')
   const [customText, setCustomText] = useState(snapshot.scheme.join('\n'))
   const [busy, setBusy] = useState(false)
-  const isAdmin = data.current_user?.role === 'admin' || data.session?.role === 'admin'
+  const isAdmin = hasManagementAccess(data.current_user?.role || data.session?.role)
 
   useEffect(() => {
     setCustomText(snapshot.scheme.join('\n'))
@@ -17321,7 +17326,7 @@ function ExternalOutbounds({ data, client, load }: any) {
 }
 
 function defaultUserDraft(): UserDraft {
-  return { username: 'user1', nickname: '', password: 'change-me-123', role: 'viewer', status: 'active', speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1, speed_limit_mode: 'inherit', traffic_limit_mode: 'inherit' }
+  return { username: '', nickname: '', password: '', role: 'viewer', status: 'active', speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'monthly', traffic_reset_day: 1, speed_limit_mode: 'inherit', traffic_limit_mode: 'inherit' }
 }
 
 function userToDraft(user: User): UserDraft {
@@ -17342,6 +17347,69 @@ function userDraftPayload(draft: UserDraft, includePassword: boolean) {
     traffic_reset_day: draft.traffic_limit_mode === 'custom' ? Number(draft.traffic_reset_day || 1) : 1,
     ...(includePassword ? { password: draft.password || '' } : {}),
   }
+}
+
+function validateUsername(username: string): string | null {
+  const trimmed = username.trim()
+  if (!trimmed) return '请输入用户名'
+  if (trimmed.length < 3 || trimmed.length > 32) return '用户名需为 3-32 个字符'
+  if (!/^[a-zA-Z0-9_.-]+$/.test(trimmed)) return '只能包含字母、数字、下划线、连字符和点'
+  if (trimmed.startsWith('__oboard_')) return '该用户名不可用'
+  return null
+}
+
+function evaluatePasswordStrength(password: string): { score: number; label: string; color: string; percent: number } {
+  if (!password) return { score: 0, label: '未填写', color: 'var(--border-color)', percent: 0 }
+  if (password.length < 8) return { score: 1, label: '过短', color: '#ef4444', percent: 25 }
+  let score = 0
+  if (password.length >= 8) score += 1
+  if (password.length >= 12) score += 1
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1
+  if (/\d/.test(password)) score += 1
+  if (/[^a-zA-Z0-9]/.test(password)) score += 1
+  if (password.length >= 16 && score >= 4) score += 1
+  score = Math.min(score, 4)
+  const map: Record<number, { label: string; color: string; percent: number }> = {
+    0: { label: '弱', color: '#ef4444', percent: 25 },
+    1: { label: '弱', color: '#ef4444', percent: 25 },
+    2: { label: '一般', color: '#f59e0b', percent: 50 },
+    3: { label: '良好', color: '#eab308', percent: 75 },
+    4: { label: '强', color: '#22c55e', percent: 100 },
+  }
+  const mapped = map[score] || map[0]
+  return { score, ...mapped }
+}
+
+function generateRandomPassword(length = 16): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const lower = 'abcdefghijkmnpqrstuvwxyz'
+  const digits = '23456789'
+  const symbols = '!@#$%_-'
+  const all = upper + lower + digits + symbols
+  const array = new Uint32Array(length)
+  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(array)
+  } else {
+    for (let i = 0; i < length; i++) array[i] = Math.floor(Math.random() * 0xffffffff)
+  }
+  let pwd = ''
+  // ensure at least one of each category when length >= 12
+  if (length >= 12) {
+    pwd += upper[array[0] % upper.length]
+    pwd += lower[array[1] % lower.length]
+    pwd += digits[array[2] % digits.length]
+    pwd += symbols[array[3] % symbols.length]
+    for (let i = 4; i < length; i++) pwd += all[array[i] % all.length]
+    // shuffle
+    const arr = pwd.split('')
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = array[i] % (i + 1)
+      ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    }
+    return arr.join('')
+  }
+  for (let i = 0; i < length; i++) pwd += all[array[i] % all.length]
+  return pwd
 }
 
 type UserScopeKey = 'all' | 'ungrouped' | number
@@ -17802,8 +17870,10 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
   );
 }
 
-function UserManagement({ data, client, load }: any) {
+function UserManagement({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
+  const actorRole: Role = data.session?.role || data.current_user?.role || 'viewer'
+  const canManageAdministrators = canManageAdministratorAccounts(actorRole)
   const [draft, setDraft] = useState<UserDraft>(() => defaultUserDraft())
   const [editUser, setEditUser] = useState<User | null>(null)
   const [editDraft, setEditDraft] = useState<UserDraft>(() => defaultUserDraft())
@@ -17817,15 +17887,89 @@ function UserManagement({ data, client, load }: any) {
   const [selectedScope, setSelectedScope] = useState<UserScopeKey>('all')
   const [passwordUser, setPasswordUser] = useState<User | null>(null)
   const [planUser, setPlanUser] = useState<User | null>(null)
+  const [createErrors, setCreateErrors] = useState<{ username?: string; password?: string }>({})
+  const [createSubmitting, setCreateSubmitting] = useState(false)
   const planDialogUserRef = useRef<User | null>(null)
   if (planUser) planDialogUserRef.current = planUser
   const planDialogUser = planDialogUserRef.current
-  const createUser = async () => {
-    await client.request('/users', { method: 'POST', body: JSON.stringify(userDraftPayload(draft, true)) })
+  const handleCloseCreate = () => {
     setCreateOpen(false)
+    setCreateErrors({})
+    setCreateSubmitting(false)
+  }
+  const handleDraftChange: React.Dispatch<React.SetStateAction<UserDraft>> = (value) => {
+    setDraft(value as any)
+    if (createErrors.username || createErrors.password) {
+      // Clear server errors on edit, keep local validation in dialog
+      setCreateErrors({})
+    }
+  }
+  const openCreateUser = () => {
     setDraft(defaultUserDraft())
+    setCreateErrors({})
+    setCreateOpen(true)
+  }
+  const createUser = async () => {
+    if (!canManageAdministrators && draft.role === 'admin') return
+    const usernameErr = validateUsername(draft.username)
+    const passwordErr = draft.password && draft.password.length > 0 && draft.password.length < 8 ? '密码至少需要 8 个字符' : null
+    const nicknameErr = draft.nickname.length > 40 ? '昵称不能超过 40 个字符' : null
+    if (usernameErr || passwordErr || nicknameErr) {
+      const errs: { username?: string; password?: string } = {}
+      if (usernameErr) errs.username = usernameErr
+      if (passwordErr) errs.password = passwordErr
+      setCreateErrors(errs)
+      if (notify) notify(usernameErr || passwordErr || nicknameErr || '请检查输入', 'error')
+      else await dialogs.alert({ title: '无法创建用户', message: usernameErr || passwordErr || nicknameErr || '请检查输入' })
+      return
+    }
+    setCreateSubmitting(true)
+    setCreateErrors({})
+    const originalPassword = (draft.password || '').trim()
+    const isAutoGenerated = originalPassword === ''
+    try {
+      const result: any = await client.request('/users', { method: 'POST', body: JSON.stringify(userDraftPayload(draft, true)) })
+      const generated: string | undefined = result?.generated_password || result?.generatedPassword
+      const finalPassword = isAutoGenerated && generated ? generated : ''
+      handleCloseCreate()
+      setDraft(defaultUserDraft())
+      if (isAutoGenerated && finalPassword) {
+        await dialogs.alert({
+          title: '用户已创建',
+          message: (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <p className="muted" style={{ margin: 0 }}>用户 <strong>{draft.username.trim()}</strong> 已创建，随机密码仅显示一次，请立即复制并妥善保存。</p>
+              <CopyBlock value={finalPassword} />
+              <small style={{ color: 'var(--text-muted)' }}>关闭后将无法再次查看，可在用户列表中重置密码。</small>
+            </div>
+          ),
+        })
+        // try clipboard auto-copy
+        try { await copyText(finalPassword); if (notify) notify('随机密码已复制到剪贴板', 'success') } catch {}
+      } else {
+        if (notify) notify(`用户 ${draft.username.trim()} 已创建`, 'success')
+      }
+    } catch (error: any) {
+      const raw = String(error?.message || error || '')
+      const localized = localizeErrorMessage(raw)
+      const lower = raw.toLowerCase() + ' ' + localized.toLowerCase()
+      const errs: { username?: string; password?: string } = {}
+      if (lower.includes('用户名已被占用') || lower.includes('username') && lower.includes('unique') || lower.includes('already exists') || error?.status === 409) {
+        errs.username = '用户名已被占用'
+      } else if (lower.includes('password') || lower.includes('密码')) {
+        errs.password = localized
+      }
+      if (errs.username || errs.password) {
+        setCreateErrors(errs)
+      }
+      if (notify) notify(localized, 'error')
+      else await dialogs.alert({ title: '创建失败', message: localized })
+    } finally {
+      setCreateSubmitting(false)
+    }
   }
   const openEditUser = (user: User) => {
+    if (!canManageAdministrators && effectiveUserRole(user, data.user_groups || [], data.user_group_members || []) === 'admin') return
     setEditUser(user)
     setEditDraft(userToDraft(user))
   }
@@ -17849,6 +17993,7 @@ function UserManagement({ data, client, load }: any) {
     await dialogs.alert({ title: '密码已修改', message: '用户密码已更新。' })
   }
   const createGroup = async () => {
+    if (!canManageAdministrators && groupDraft.role === 'admin') return
     await client.request('/user-groups', { method: 'POST', body: JSON.stringify(groupDraft) })
     setGroupCreateOpen(false)
     setGroupDraft(defaultUserGroupDraft())
@@ -17858,6 +18003,7 @@ function UserManagement({ data, client, load }: any) {
     setGroupCreateOpen(true)
   }
   const openEditGroup = (group: UserGroup) => {
+    if (!canManageAdministrators && group.role === 'admin') return
     setEditingGroup(group)
     setGroupEditDraft(groupToDraft(group))
   }
@@ -17885,6 +18031,7 @@ function UserManagement({ data, client, load }: any) {
   const groups: UserGroup[] = data.user_groups || []
   const members: UserGroupMember[] = data.user_group_members || []
   const selectedGroup = typeof selectedScope === 'number' ? groups.find(group => group.id === selectedScope) || null : null
+  const selectedGroupProtected = Boolean(selectedGroup && selectedGroup.role === 'admin' && !canManageAdministrators)
   const scope: UserScopeKey = typeof selectedScope === 'number' && !selectedGroup ? 'all' : selectedScope
   const showGroupsColumn = scope === 'all'
   const visibleUsers = users.filter(usr => {
@@ -17920,12 +18067,13 @@ function UserManagement({ data, client, load }: any) {
         <p className="muted">{scopeDescription}</p>
       </div>
       <div className="section-actions">
-        {selectedGroup && <>
+        {selectedGroupProtected && <span className="muted" title="操作员不能编辑管理员组或其成员">管理员组仅管理员可操作</span>}
+        {selectedGroup && !selectedGroupProtected && <>
           <button className="ghost" onClick={() => setManagingGroupID(selectedGroup.id)}><UsersIcon size={15} />管理成员</button>
           <button className="ghost icon-button" onClick={() => openEditGroup(selectedGroup)} title="编辑分组" aria-label={`编辑 ${selectedGroup.name}`}><Edit3 /></button>
           {!selectedGroup.system_key && <button className="ghost icon-button danger-text" onClick={() => void deleteGroup(selectedGroup)} title="删除分组" aria-label={`删除 ${selectedGroup.name}`}><Trash2 /></button>}
         </>}
-        <button onClick={() => setCreateOpen(true)}>添加用户</button>
+        <button onClick={openCreateUser}>添加用户</button>
       </div>
     </div>
     
@@ -17954,6 +18102,8 @@ function UserManagement({ data, client, load }: any) {
           </thead>
           <tbody>
             {visibleUsers.map((usr: User) => {
+              const administratorAccount = effectiveUserRole(usr, groups, members) === 'admin'
+              const canManageUser = canManageAdministrators || !administratorAccount
               const limits = effectiveUserLimits(data, usr);
               const isSuspended = usr.status === 'suspended';
               const isQuotaExceeded = usr.traffic_quota_state === 'quota_exceeded';
@@ -18030,7 +18180,7 @@ function UserManagement({ data, client, load }: any) {
                     </div>
                   </td>
                   <td className="user-col-actions" style={{ textAlign: 'right' }}>
-                    <div className="user-row-actions">
+                    {canManageUser ? <div className="user-row-actions">
                       <button 
                         onClick={() => setPlanUser(usr)}
                         className="btn-custom btn-secondary user-row-icon-button" 
@@ -18056,7 +18206,7 @@ function UserManagement({ data, client, load }: any) {
                         onPassword={setPasswordUser}
                         onDelete={(u: any) => remove(client, `/users/${u.id}`, load, dialogs, u)}
                       />
-                    </div>
+                    </div> : <span className="muted" title="操作员不能编辑或删除管理员账号">仅管理员可操作</span>}
                   </td>
                 </tr>
               )
@@ -18066,15 +18216,15 @@ function UserManagement({ data, client, load }: any) {
       </div>
     </div> : <div className="empty small user-scope-empty-main">
       <p>{emptyCopy}</p>
-      {selectedGroup ? <button onClick={() => setManagingGroupID(selectedGroup.id)}><UserPlus size={15} />管理成员</button> : scope === 'all' ? <button onClick={() => setCreateOpen(true)}>添加用户</button> : null}
+      {selectedGroup && !selectedGroupProtected ? <button onClick={() => setManagingGroupID(selectedGroup.id)}><UserPlus size={15} />管理成员</button> : scope === 'all' ? <button onClick={openCreateUser}>添加用户</button> : null}
     </div>}
     </div>
     </div>
-    <AnimatePresence>{createOpen && <UserCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createUser} />}</AnimatePresence>
-    <AnimatePresence>{editUser && <UserEditDialog user={editUser} draft={editDraft} setDraft={setEditDraft} onCancel={() => setEditUser(null)} onSubmit={updateUser} />}</AnimatePresence>
-    <AnimatePresence>{groupCreateOpen && <UserGroupCreateDialog draft={groupDraft} setDraft={setGroupDraft} onCancel={() => setGroupCreateOpen(false)} onSubmit={createGroup} />}</AnimatePresence>
-    <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
-    <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
+    <AnimatePresence>{createOpen && <UserCreateDialog draft={draft} setDraft={handleDraftChange} canAssignAdmin={canManageAdministrators} onCancel={handleCloseCreate} onSubmit={createUser} usernameError={createErrors.username} passwordError={createErrors.password} submitting={createSubmitting} />}</AnimatePresence>
+    <AnimatePresence>{editUser && <UserEditDialog user={editUser} draft={editDraft} setDraft={setEditDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setEditUser(null)} onSubmit={updateUser} />}</AnimatePresence>
+    <AnimatePresence>{groupCreateOpen && <UserGroupCreateDialog draft={groupDraft} setDraft={setGroupDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setGroupCreateOpen(false)} onSubmit={createGroup} />}</AnimatePresence>
+    <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
+    <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} canManageAdministrators={canManageAdministrators} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
     {planDialogUser && <UserPlanDialog key={planDialogUser.id} isOpen={Boolean(planUser)} user={planDialogUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planDialogUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}
   </Panel>
@@ -18118,11 +18268,11 @@ function UserScopeNav({ users, groups, members, scope, onSelect, onCreateGroup }
   </nav>
 }
 
-function UserGroupMembersDialog({ groupID, data, selectedUserID, onSelectUser, onAddMember, onDeleteMember, onCancel }: { groupID: number; data: any; selectedUserID: number; onSelectUser: (userID: number) => void; onAddMember: () => Promise<void>; onDeleteMember: (member: UserGroupMember) => Promise<void>; onCancel: () => void }) {
+function UserGroupMembersDialog({ groupID, data, canManageAdministrators, selectedUserID, onSelectUser, onAddMember, onDeleteMember, onCancel }: { groupID: number; data: any; canManageAdministrators: boolean; selectedUserID: number; onSelectUser: (userID: number) => void; onAddMember: () => Promise<void>; onDeleteMember: (member: UserGroupMember) => Promise<void>; onCancel: () => void }) {
   const group = (data.user_groups || []).find((item: UserGroup) => item.id === groupID)
   const members: UserGroupMember[] = (data.user_group_members || []).filter((member: UserGroupMember) => member.group_id === groupID && member.enabled !== false)
   const used = new Set(members.map(member => member.user_id))
-  const availableUsers: User[] = (data.users || []).filter((user: User) => !used.has(user.id))
+  const availableUsers: User[] = (data.users || []).filter((user: User) => !used.has(user.id) && (canManageAdministrators || effectiveUserRole(user, data.user_groups || [], data.user_group_members || []) !== 'admin'))
   return <MotionDialogPanel onCancel={onCancel} className="user-group-members-dialog user-form-dialog">
     <header className="dialog-head">
       <div><h2 id="user-group-members-title">管理成员</h2><p className="muted">用户组：{group?.name || `#${groupID}`}</p></div>
@@ -18144,7 +18294,7 @@ function UserGroupMembersDialog({ groupID, data, selectedUserID, onSelectUser, o
           return <div className="user-group-member-row" key={member.id}>
             <div className="user-group-member-avatar">{username.slice(0, 1).toUpperCase()}</div>
             <div><strong>{username}</strong><span>{labelValue(user?.status || 'unknown')}</span></div>
-            {!(group?.system_key === 'administrators' && user?.protected) && <button className="ghost icon-button danger-text" onClick={() => onDeleteMember(member)} title={`移除 ${username}`} aria-label={`移除 ${username}`}><X size={15} /></button>}
+            {!(group?.system_key === 'administrators' && user?.protected) && (canManageAdministrators || !user || effectiveUserRole(user, data.user_groups || [], data.user_group_members || []) !== 'admin') && <button className="ghost icon-button danger-text" onClick={() => onDeleteMember(member)} title={`移除 ${username}`} aria-label={`移除 ${username}`}><X size={15} /></button>}
           </div>
         }) : <div className="empty small">该分组还没有成员。</div>}
       </div>
@@ -18245,23 +18395,59 @@ function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number
   </>
 }
 
-function UserBaseFields({ draft, setDraft, includePassword }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; includePassword?: boolean }) {
+function UserBaseFields({ draft, setDraft, includePassword, canAssignAdmin, usernameError, passwordError, showPassword, onToggleShowPassword, onGenerateRandom }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; includePassword?: boolean; canAssignAdmin: boolean; usernameError?: string; passwordError?: string; showPassword?: boolean; onToggleShowPassword?: () => void; onGenerateRandom?: () => void }) {
+  const usernameValidation = draft.username ? validateUsername(draft.username) : null
+  const displayUsernameError = usernameError || (draft.username ? usernameValidation : null)
+  const nicknameError = draft.nickname && draft.nickname.length > 40 ? '昵称不能超过 40 个字符' : undefined
+  const pwd = draft.password || ''
+  const strength = includePassword ? evaluatePasswordStrength(pwd) : null
+  const displayPasswordError = passwordError || (pwd && pwd.length > 0 && pwd.length < 8 ? '密码至少需要 8 个字符' : null)
   return <>
-    <FormField label="用户名" required hint="用于登录面板。">
-      <input value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} placeholder="user1" />
+    <FormField label="用户名" required hint="用于登录面板，3-32 字符，仅字母/数字/下划线/连字符/点。">
+      <div className="field-with-error">
+        <input value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} placeholder="例如：zhangsan" autoComplete="off" aria-invalid={Boolean(displayUsernameError)} style={displayUsernameError ? { borderColor: '#ef4444' } : undefined} />
+        {displayUsernameError && <small className="field-error" style={{ color: '#ef4444', fontSize: 12, marginTop: 4, display: 'block' }}>{displayUsernameError}</small>}
+      </div>
     </FormField>
     <FormField label="昵称" hint="用于面板显示。">
-      <input value={draft.nickname} onChange={e => setDraft({ ...draft, nickname: e.target.value })} placeholder="可选" maxLength={40} />
+      <div className="field-with-error">
+        <input value={draft.nickname} onChange={e => setDraft({ ...draft, nickname: e.target.value })} placeholder="可选" maxLength={40} aria-invalid={Boolean(nicknameError)} style={nicknameError ? { borderColor: '#ef4444' } : undefined} />
+        {nicknameError && <small className="field-error" style={{ color: '#ef4444', fontSize: 12, marginTop: 4, display: 'block' }}>{nicknameError}</small>}
+      </div>
     </FormField>
-    {includePassword && <FormField label="初始密码" required hint="创建后可修改。">
-      <input value={draft.password || ''} onChange={e => setDraft({ ...draft, password: e.target.value })} placeholder="change-me-123" type="password" autoComplete="new-password" />
+    {includePassword && <FormField label="初始密码" hint={pwd ? '至少 8 位，建议含大小写、数字和符号；留空将自动生成。' : '留空将自动生成 16 位随机密码，创建后仅显示一次，请及时复制。'}>
+      <div className="field-with-error">
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <input value={pwd} onChange={e => setDraft({ ...draft, password: e.target.value })} placeholder="留空自动生成" type={showPassword ? 'text' : 'password'} autoComplete="new-password" aria-invalid={Boolean(displayPasswordError)} style={displayPasswordError ? { borderColor: '#ef4444', paddingRight: 36 } : { paddingRight: 36 }} />
+            <button type="button" onClick={onToggleShowPassword} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏' : '显示'} style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex', alignItems: 'center' }}>
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
+          <button type="button" className="ghost" onClick={onGenerateRandom} title="生成随机强密码" style={{ whiteSpace: 'nowrap', padding: '6px 10px', fontSize: 12 }}>随机生成</button>
+        </div>
+        {pwd && strength && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ height: 4, background: 'var(--border-color)', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{ width: `${strength.percent}%`, height: '100%', background: strength.color, transition: 'width 0.3s, background 0.3s' }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+              <small style={{ color: strength.color, fontSize: 11, fontWeight: 600 }}>{strength.label}</small>
+              <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{pwd.length} 位</small>
+            </div>
+            {pwd.length > 0 && pwd.length < 12 && <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block', marginTop: 2 }}>建议 12 位以上且包含大小写、数字和符号</small>}
+          </div>
+        )}
+        {displayPasswordError && <small className="field-error" style={{ color: '#ef4444', fontSize: 12, marginTop: 4, display: 'block' }}>{displayPasswordError}</small>}
+        {!pwd && !displayPasswordError && <small style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 4, display: 'block' }}>将自动生成随机密码并在创建成功后弹窗展示</small>}
+      </div>
     </FormField>}
     <FormField label="角色">
       <Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}>
         <option value="none">无权限</option>
         <option value="viewer">只读</option>
         <option value="operator">操作员</option>
-        <option value="admin">管理员</option>
+        {canAssignAdmin && <option value="admin">管理员</option>}
       </Select>
     </FormField>
     <FormField label="状态">
@@ -18274,22 +18460,32 @@ function UserBaseFields({ draft, setDraft, includePassword }: { draft: UserDraft
   </>
 }
 
-function UserCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function UserCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit, usernameError, passwordError, submitting }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void>; usernameError?: string; passwordError?: string; submitting?: boolean }) {
+  const [showPassword, setShowPassword] = useState(false)
+  const handleGenerate = () => {
+    const pwd = generateRandomPassword(16)
+    setDraft({ ...draft, password: pwd })
+    setShowPassword(true)
+  }
+  const usernameInvalid = !!validateUsername(draft.username)
+  const passwordInvalid = draft.password ? draft.password.length < 8 : false
+  const nicknameInvalid = draft.nickname.length > 40
+  const canSubmit = !submitting && !usernameInvalid && !passwordInvalid && !nicknameInvalid && draft.username.trim().length > 0
   return <MotionDialogPanel onCancel={onCancel} className="user-create-dialog user-form-dialog">
       <header className="dialog-head">
-        <div><h2 id="user-create-title">添加用户</h2><p className="muted">创建登录账号和订阅凭据。</p></div>
+        <div><h2 id="user-create-title">添加用户</h2><p className="muted">创建登录账号和订阅凭据。{draft.password ? '' : '留空密码将自动生成随机密码。'}</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
         <div className="form user-create-form user-form">
-          <UserBaseFields draft={draft} setDraft={setDraft} includePassword />
+          <UserBaseFields draft={draft} setDraft={setDraft} includePassword canAssignAdmin={canAssignAdmin} usernameError={usernameError} passwordError={passwordError} showPassword={showPassword} onToggleShowPassword={() => setShowPassword(v => !v)} onGenerateRandom={handleGenerate} />
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit}>创建</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={onCancel} disabled={!!submitting}>取消</button><button onClick={() => void onSubmit()} disabled={!canSubmit} title={!draft.username.trim() ? '请先填写用户名' : usernameInvalid ? '请修正用户名' : passwordInvalid ? '密码至少需要 8 位' : undefined} style={{ opacity: canSubmit ? 1 : 0.5 }}>{submitting ? '创建中…' : '创建'}</button></footer>
   </MotionDialogPanel>
 }
 
-function UserEditDialog({ user, draft, setDraft, onCancel, onSubmit }: { user: User; draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function UserEditDialog({ user, draft, setDraft, canAssignAdmin, onCancel, onSubmit }: { user: User; draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
   return <MotionDialogPanel onCancel={onCancel} className="user-create-dialog user-form-dialog">
       <header className="dialog-head">
         <div><h2 id="user-edit-title">编辑用户</h2><p className="muted">用户：{user.username}</p></div>
@@ -18297,40 +18493,40 @@ function UserEditDialog({ user, draft, setDraft, onCancel, onSubmit }: { user: U
       </header>
       <div className="dialog-body">
         <div className="form user-create-form user-form">
-          <UserBaseFields draft={draft} setDraft={setDraft} />
+          <UserBaseFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} />
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit}>保存</button></footer>
   </MotionDialogPanel>
 }
 
-function UserGroupFields({ draft, setDraft }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>> }) {
+function UserGroupFields({ draft, setDraft, canAssignAdmin }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; canAssignAdmin: boolean }) {
   return <div className="form user-group-form">
     <FormField label="分组名称" required><input autoFocus value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="例如：高级用户" /></FormField>
-    <FormField label="后台权限" hint="成员继承该组权限。"><Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}><option value="viewer">普通用户</option><option value="operator">操作员</option><option value="admin">管理员</option></Select></FormField>
+    <FormField label="后台权限" hint="成员继承该组权限。"><Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}><option value="viewer">普通用户</option><option value="operator">操作员</option>{canAssignAdmin && <option value="admin">管理员</option>}</Select></FormField>
     <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => setDraft({ ...draft, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">停用</option></Select></FormField>
     <FormField className="user-group-description-field" label="备注"><input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="可选" /></FormField>
   </div>
 }
 
-function UserGroupCreateDialog({ draft, setDraft, onCancel, onSubmit }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function UserGroupCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
   return <MotionDialogPanel onCancel={onCancel} className="user-group-dialog user-form-dialog">
       <header className="dialog-head">
         <div><h2 id="user-group-create-title">新建用户组</h2><p className="muted">设置成员共用的后台权限。</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} /></div>
+      <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></div>
       <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit} disabled={!draft.name.trim()}>创建分组</button></footer>
   </MotionDialogPanel>
 }
 
-function UserGroupEditDialog({ group, draft, setDraft, onCancel, onSubmit }: { group: UserGroup; draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function UserGroupEditDialog({ group, draft, setDraft, canAssignAdmin, onCancel, onSubmit }: { group: UserGroup; draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
   return <MotionDialogPanel onCancel={onCancel} className="user-group-dialog user-form-dialog">
       <header className="dialog-head">
         <div><h2 id="user-group-edit-title">编辑用户组</h2><p className="muted">用户组：{group.name}</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} /></div>
+      <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></div>
       <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit} disabled={!draft.name.trim()}>保存</button></footer>
   </MotionDialogPanel>
 }
@@ -19543,7 +19739,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
   const telegramBindings: TelegramBinding[] = data.telegram_bindings || []
   const users: User[] = data.users || []
   const announcements: NotificationAnnouncement[] = data.notification_announcements || []
-  const isAdmin = sessionUser?.role === 'admin'
+  const isAdmin = hasManagementAccess(sessionUser?.role)
   const eventOptions: NotificationEventDefinition[] = data.notification_config?.events || fallbackNotificationEventOptions.filter(option => isAdmin || ['traffic_quota_exceeded', 'user_risk_detected', 'admin_announcement'].includes(option.value))
   const defaultTemplates: Record<string, NotificationTemplate> = data.notification_config?.templates || fallbackNotificationTemplates
   const ownerUserID = Number(sessionUser?.id || data.current_user?.id || 0)

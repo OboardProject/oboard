@@ -18,13 +18,14 @@ import (
 
 // registerUserAutomationOperations wires the users, user groups, user group
 // members, user devices, and session-revocation capabilities of the MCP
-// automation layer. All of them are admin-only and mirror the panel's 用户与分组
-// behavior including protected bootstrap-admin guards.
+// automation layer. Operators share this management surface, while
+// administrator-account and administrator-group mutations remain restricted
+// to admins.
 
 func (s *Server) registerUserAutomationOperations() {
 	// ---- users.create ----
 	s.automation.RegisterValidator("users.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		user, err := s.userCreateAutomationCandidate(ctx, principal, input)
+		user, _, err := s.userCreateAutomationCandidate(ctx, principal, input)
 		if err != nil {
 			return nil, err
 		}
@@ -34,11 +35,14 @@ func (s *Server) registerUserAutomationOperations() {
 		return map[string]string{}, nil
 	})
 	s.automation.Register("users.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		user, err := s.userCreateAutomationCandidate(ctx, principal, input)
+		user, generatedPassword, err := s.userCreateAutomationCandidate(ctx, principal, input)
 		if err != nil {
 			return nil, err
 		}
 		if err := s.store.CreateUser(ctx, &user); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "unique") {
+				return nil, errors.New("用户名已被占用")
+			}
 			return nil, err
 		}
 		if user.Role != model.RoleNone {
@@ -50,7 +54,11 @@ func (s *Server) registerUserAutomationOperations() {
 				return nil, err
 			}
 		}
-		return map[string]any{"user": automationUserView(user)}, nil
+		result := map[string]any{"user": automationUserView(user)}
+		if generatedPassword != "" {
+			result["generated_password"] = generatedPassword
+		}
+		return result, nil
 	})
 
 	// ---- users.update ----
@@ -352,10 +360,10 @@ type userCreateAutomationInput struct {
 	} `json:"user"`
 }
 
-func (s *Server) userCreateAutomationCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (model.User, error) {
+func (s *Server) userCreateAutomationCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (model.User, string, error) {
 	var request userCreateAutomationInput
 	if err := strictAutomationInput(input, &request); err != nil {
-		return model.User{}, err
+		return model.User{}, "", err
 	}
 	u := model.User{
 		Username:                  strings.TrimSpace(request.User.Username),
@@ -372,51 +380,56 @@ func (s *Server) userCreateAutomationCandidate(ctx context.Context, principal ap
 		SubscriptionBurnAfterRead: request.User.SubscriptionBurnAfterRead,
 	}
 	if u.Username == "" {
-		return model.User{}, errors.New("username required")
+		return model.User{}, "", errors.New("username required")
 	}
 	if u.Role == "" {
 		u.Role = model.RoleViewer
+	}
+	if err := requireAssignedRoleAccess(principal.Role, u.Role); err != nil {
+		return model.User{}, "", err
 	}
 	if u.Status == "" {
 		u.Status = "active"
 	}
 	password := strings.TrimSpace(request.User.Password)
+	generatedPassword := ""
 	if password == "" {
 		generated, err := security.RandomToken(12)
 		if err != nil {
-			return model.User{}, err
+			return model.User{}, "", err
 		}
 		password = generated
+		generatedPassword = generated
 	} else if len(password) < 8 {
-		return model.User{}, errors.New("password must be at least 8 characters")
+		return model.User{}, "", errors.New("password must be at least 8 characters")
 	}
 	pass, err := security.HashPassword(password)
 	if err != nil {
-		return model.User{}, err
+		return model.User{}, "", err
 	}
 	u.PasswordHash = pass
 	if u.ProxyUUID == "" {
 		u.ProxyUUID, err = security.RandomUUID()
 		if err != nil {
-			return model.User{}, err
+			return model.User{}, "", err
 		}
 	}
 	if u.ProxyPassword == "" {
 		u.ProxyPassword, err = security.RandomToken(18)
 		if err != nil {
-			return model.User{}, err
+			return model.User{}, "", err
 		}
 	}
 	if u.SubscriptionToken == "" {
 		u.SubscriptionToken, err = security.RandomToken(24)
 		if err != nil {
-			return model.User{}, err
+			return model.User{}, "", err
 		}
 	}
 	if err := validateUser(&u); err != nil {
-		return model.User{}, err
+		return model.User{}, "", err
 	}
-	return u, nil
+	return u, generatedPassword, nil
 }
 
 func (s *Server) userAutomationRevision(ctx context.Context, input json.RawMessage) (map[string]string, error) {
@@ -463,6 +476,9 @@ func (s *Server) userUpdateAutomationCandidate(ctx context.Context, principal ap
 	}
 	current, err := s.store.GetUser(ctx, request.UserID)
 	if err != nil {
+		return model.User{}, nil, err
+	}
+	if err := s.requireUserMutationAccess(ctx, principal.Role, request.UserID); err != nil {
 		return model.User{}, nil, err
 	}
 	protected, err := s.store.IsBootstrapAdmin(ctx, request.UserID)
@@ -587,6 +603,9 @@ func (s *Server) userUpdateAutomationCandidate(ctx context.Context, principal ap
 		u.Role = model.RoleAdmin
 		u.Status = "active"
 	}
+	if err := requireAssignedRoleAccess(principal.Role, u.Role); err != nil {
+		return model.User{}, nil, err
+	}
 	u.ID = request.UserID
 	if err := validateUser(&u); err != nil {
 		return model.User{}, nil, err
@@ -620,6 +639,9 @@ func (s *Server) userDeleteAutomationCandidate(ctx context.Context, principal ap
 	if err != nil {
 		return model.User{}, err
 	}
+	if err := s.requireUserMutationAccess(ctx, principal.Role, request.UserID); err != nil {
+		return model.User{}, err
+	}
 	return *user, nil
 }
 
@@ -635,6 +657,9 @@ func (s *Server) userSessionRevokeCandidate(ctx context.Context, principal appli
 	}
 	user, err := s.store.GetUser(ctx, request.UserID)
 	if err != nil {
+		return model.User{}, err
+	}
+	if err := s.requireUserMutationAccess(ctx, principal.Role, request.UserID); err != nil {
 		return model.User{}, err
 	}
 	return *user, nil
@@ -661,6 +686,9 @@ func (s *Server) userGroupCreateAutomationCandidate(ctx context.Context, princip
 		Role:                         model.Role(request.UserGroup.Role),
 		Enabled:                      request.UserGroup.Enabled,
 		SubscriptionCustomPathPolicy: model.SubscriptionCustomPathPolicy(request.UserGroup.SubscriptionCustomPathPolicy),
+	}
+	if err := requireAssignedRoleAccess(principal.Role, v.Role); err != nil {
+		return model.UserGroup{}, err
 	}
 	if err := validateUserGroup(&v); err != nil {
 		return model.UserGroup{}, err
@@ -692,6 +720,9 @@ func (s *Server) userGroupUpdateAutomationCandidate(ctx context.Context, princip
 	}
 	current, err := s.store.GetUserGroup(ctx, request.GroupID)
 	if err != nil {
+		return model.UserGroup{}, nil, err
+	}
+	if err := s.requireUserGroupMutationAccess(ctx, principal.Role, request.GroupID); err != nil {
 		return model.UserGroup{}, nil, err
 	}
 	v := *current
@@ -740,6 +771,9 @@ func (s *Server) userGroupUpdateAutomationCandidate(ctx context.Context, princip
 		v.Role = model.RoleAdmin
 		v.Enabled = true
 	}
+	if err := requireAssignedRoleAccess(principal.Role, v.Role); err != nil {
+		return model.UserGroup{}, nil, err
+	}
 	if err := validateUserGroup(&v); err != nil {
 		return model.UserGroup{}, nil, err
 	}
@@ -759,6 +793,9 @@ func (s *Server) userGroupDeleteAutomationCandidate(ctx context.Context, princip
 	}
 	current, err := s.store.GetUserGroup(ctx, request.GroupID)
 	if err != nil {
+		return model.UserGroup{}, err
+	}
+	if err := s.requireUserGroupMutationAccess(ctx, principal.Role, request.GroupID); err != nil {
 		return model.UserGroup{}, err
 	}
 	if current.SystemKey != "" {
@@ -785,6 +822,12 @@ func (s *Server) userGroupMemberSetCandidate(ctx context.Context, principal appl
 		return model.UserGroupMember{}, errors.New("user is outside the authorized user boundary")
 	}
 	member := model.UserGroupMember{GroupID: request.GroupID, UserID: request.UserID, Enabled: request.Enabled}
+	if err := s.requireUserGroupMutationAccess(ctx, principal.Role, request.GroupID); err != nil {
+		return model.UserGroupMember{}, err
+	}
+	if err := s.requireUserMutationAccess(ctx, principal.Role, request.UserID); err != nil {
+		return model.UserGroupMember{}, err
+	}
 	if err := s.validateUserGroupMember(ctx, member); err != nil {
 		return model.UserGroupMember{}, err
 	}
@@ -815,6 +858,9 @@ func (s *Server) userDeviceBaseCandidate(ctx context.Context, principal applicat
 	}
 	if !principal.AllowsInt64("user_ids", request.UserID) {
 		return request, model.UserDevice{}, errors.New("user is outside the authorized user boundary")
+	}
+	if err := s.requireUserMutationAccess(ctx, principal.Role, request.UserID); err != nil {
+		return request, model.UserDevice{}, err
 	}
 	device, err := s.store.GetUserDevice(ctx, request.UserID, request.DeviceID)
 	if err != nil {
