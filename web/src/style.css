@@ -10898,7 +10898,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.remote-terminal-close-dot {
+.remote-terminal-close-dot,
+.remote-terminal-close-dot:hover,
+.remote-terminal-close-dot:active,
+.remote-terminal-close-dot:focus {
   width: 28px;
   height: 28px;
   min-width: 28px;
@@ -10908,21 +10911,24 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
   border-radius: 50%;
   cursor: pointer;
   outline: none;
+  transform: none !important;
   transition: opacity 0.15s ease;
 }
 
 .remote-terminal-close-dot:focus-visible {
-  box-shadow: 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.5));
+  box-shadow: 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.5)) !important;
 }
 
 .remote-terminal-close-dot .macos-dot {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background-color: #ff5f56;
   border: 0.5px solid rgba(0, 0, 0, 0.2);
@@ -10936,6 +10942,11 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .remote-terminal-close-dot:hover .macos-dot {
   background-color: #ff3b30;
   transform: scale(1.08);
+}
+
+.remote-terminal-close-dot:active .macos-dot {
+  background-color: #bf3833;
+  transform: scale(0.95);
 }
 
 .remote-terminal-close-dot .macos-dot svg {
