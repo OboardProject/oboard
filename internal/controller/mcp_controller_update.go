@@ -20,6 +20,8 @@ type controllerUpdateAutomationInput struct {
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
 	switch capabilityName {
+	case "traffic.get_user_ledger", "traffic.get_server_sync_state", "traffic.list_reconciliation_issues":
+		return s.queryTrafficLedgerCapability(ctx, principal, capabilityName, input)
 	case "servers.metrics.read":
 		var request struct {
 			ServerID    int64 `json:"server_id"`

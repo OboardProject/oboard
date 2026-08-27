@@ -407,7 +407,7 @@ func TestTrafficRuntimePoliciesIncludeUnlimitedUsers(t *testing.T) {
 	}
 }
 
-func TestTrafficRuntimePoliciesDoNotEnforceEmptyRemainingLease(t *testing.T) {
+func TestTrafficRuntimePoliciesEnforceZeroLeaseOnLegacyKernel(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -440,8 +440,47 @@ func TestTrafficRuntimePoliciesDoNotEnforceEmptyRemainingLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondPolicy := secondPolicies[user.ID]
-	if secondPolicy.LeaseEnforced || secondPolicy.LeaseBytes != 0 || secondPolicy.QuotaState != "active" {
-		t.Fatalf("starved server lease = %#v, want an active quota without a zero-lease tripwire", secondPolicy)
+	if !secondPolicy.LeaseEnforced || secondPolicy.LeaseBytes != 0 || secondPolicy.QuotaState != "quota_exceeded" {
+		t.Fatalf("starved server lease = %#v, want enforced zero lease that rejects new billable traffic", secondPolicy)
+	}
+}
+
+func TestTrafficRuntimePoliciesKeepActiveQuotaWithZeroLeaseOnLedgerV2(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	first := &model.Server{Name: "lease-v2-a", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline, KernelCapabilities: []string{"traffic_ledger_v2"}}
+	second := &model.Server{Name: "lease-v2-b", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline, KernelCapabilities: []string{"traffic_ledger_v2"}}
+	if err := db.CreateServer(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateServer(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateServer(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateServer(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{Username: "bob", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "lease-user-v2", ProxyPassword: "password", SubscriptionToken: "lease-subscription-v2", TrafficLimitBytes: 100}
+	if err := db.CreateUser(ctx, &user); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.trafficRuntimePolicies(ctx, first.ID, []model.User{user}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	secondPolicies, err := srv.trafficRuntimePolicies(ctx, second.ID, []model.User{user}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPolicy := secondPolicies[user.ID]
+	if !secondPolicy.LeaseEnforced || secondPolicy.LeaseBytes != 0 || secondPolicy.QuotaState != "active" {
+		t.Fatalf("v2 starved server lease = %#v, want active quota with enforced zero lease", secondPolicy)
 	}
 }
 

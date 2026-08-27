@@ -6268,6 +6268,9 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 	if _, err := conn.ExecContext(ctx, `begin immediate`); err != nil {
 		return TrafficLeaseAllocation{}, err
 	}
+	if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, updated_at=? where coalesce(nullif(state,''),'active')=? and valid_until<>'' and valid_until<?`, trafficLeaseExpiredUnsettled, now(), trafficLeaseActive, now()); err != nil {
+		return TrafficLeaseAllocation{}, err
+	}
 	committed := false
 	defer func() {
 		if !committed {

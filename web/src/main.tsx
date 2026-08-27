@@ -17957,6 +17957,7 @@ function UserManagement({ data, client, load, notify }: any) {
   const [selectedScope, setSelectedScope] = useState<UserScopeKey>('all')
   const [passwordUser, setPasswordUser] = useState<User | null>(null)
   const [planUser, setPlanUser] = useState<User | null>(null)
+  const [ledgerUser, setLedgerUser] = useState<User | null>(null)
   const [createErrors, setCreateErrors] = useState<{ username?: string; password?: string }>({})
   const [createSubmitting, setCreateSubmitting] = useState(false)
   const planDialogUserRef = useRef<User | null>(null)
@@ -18241,6 +18242,7 @@ function UserManagement({ data, client, load, notify }: any) {
                           <div className={usagePercent > 90 ? 'is-danger' : usagePercent > 70 ? 'is-warning' : ''} style={{ width: `${Math.min(100, usagePercent)}%` }} />
                         </div>
                       )}
+                      <button type="button" className="btn-custom btn-secondary" style={{ fontSize: 12, marginTop: 6 }} onClick={() => setLedgerUser(usr)}>查看明细</button>
                     </div>
                   </td>
                   <td className="user-col-subscription" data-label="订阅凭证">
@@ -18296,6 +18298,7 @@ function UserManagement({ data, client, load, notify }: any) {
     <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
     <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} canManageAdministrators={canManageAdministrators} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
+    <AnimatePresence>{ledgerUser && <UserTrafficLedgerDialog user={ledgerUser} client={client} onCancel={() => setLedgerUser(null)} />}</AnimatePresence>
     {planDialogUser && <UserPlanDialog key={planDialogUser.id} isOpen={Boolean(planUser)} user={planDialogUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planDialogUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}
   </Panel>
 }
@@ -18336,6 +18339,77 @@ function UserScopeNav({ users, groups, members, scope, onSelect, onCreateGroup }
       <button type="button" className="user-scope-create" onClick={onCreateGroup}><Plus size={15} />新建分组</button>
     </div>
   </nav>
+}
+
+function UserTrafficLedgerDialog({ user, client, onCancel }: { user: User; client: ReturnType<typeof api>; onCancel: () => void }) {
+  const [ledger, setLedger] = useState<any>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const loadLedger = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await client.request(`/users/${user.id}/traffic-ledger`) as { traffic_ledger?: any }
+      setLedger(result.traffic_ledger || result)
+    } catch (err: any) {
+      setError(localizeErrorMessage(err?.message || err) || '无法加载流量账本')
+    } finally {
+      setBusy(false)
+    }
+  }
+  useEffect(() => { void loadLedger() }, [user.id])
+  const reconcile = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await client.request('/traffic-ledger/reconcile', { method: 'POST', body: JSON.stringify({ user_id: user.id }) }) as { traffic_ledger?: any }
+      if (result.traffic_ledger) setLedger(result.traffic_ledger)
+      else await loadLedger()
+    } catch (err: any) {
+      setError(localizeErrorMessage(err?.message || err) || '重新同步失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const period = ledger?.period || {}
+  const remaining = Number(period.limit_bytes || 0) > 0 ? Math.max(0, Number(period.limit_bytes || 0) - Number(period.used_bytes || 0)) : 0
+  const syncTone = (status: string) => {
+    if (['counter_regression', 'checkpoint_gap', 'checkpoint_overlap', 'epoch_conflict', 'state_corrupt'].includes(status)) return 'var(--color-danger)'
+    if (['stale', 'recovering'].includes(status)) return 'var(--color-warning)'
+    return 'var(--text-secondary)'
+  }
+  return <MotionDialogPanel onCancel={onCancel} className="user-form-dialog">
+    <header className="dialog-head">
+      <div>
+        <h2 id="user-traffic-ledger-title">流量账本</h2>
+        <p className="muted">{user.username} 的当期确认用量、Lease 与对账状态</p>
+      </div>
+      <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      {error ? <p className="muted" style={{ color: 'var(--color-danger)' }}>{error}</p> : null}
+      <div className="form-section-title">本期</div>
+      <p>已用 {formatBytes(Number(period.used_bytes || 0))} · 上传 {formatBytes(Number(period.upload_bytes || 0))} · 下载 {formatBytes(Number(period.download_bytes || 0))}</p>
+      <p>限额 {Number(period.limit_bytes || 0) > 0 ? formatBytes(Number(period.limit_bytes || 0)) : '不限量'}{Number(period.limit_bytes || 0) > 0 ? ` · 剩余 ${formatBytes(remaining)}` : ''}</p>
+      <div className="form-section-title" style={{ marginTop: 16 }}>服务器</div>
+      {(ledger?.servers || []).length ? (ledger.servers as any[]).map(server => (
+        <div key={server.server_id} style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: 'var(--bg-control)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <strong>{server.server_name || `服务器 ${server.server_id}`}</strong>
+            <span style={{ color: syncTone(String(server.sync?.status || '')) }}>{server.sync?.status || 'healthy'}</span>
+          </div>
+          <p className="muted">已确认 {formatBytes(Number((server.streams || []).reduce((sum: number, stream: any) => sum + Number(stream.accepted_upload_bytes || 0) + Number(stream.accepted_download_bytes || 0), 0)))}</p>
+          <p className="muted">Lease {formatBytes(Number(server.lease?.granted_bytes || 0))} · 已消费 {formatBytes(Number(server.lease?.consumed_bytes || 0))} · 剩余 {formatBytes(Number(server.lease?.remaining_bytes || 0))}</p>
+          <p className="muted">最后同步 {server.sync?.last_seen_at ? formatDate(server.sync.last_seen_at) : '尚未同步'}</p>
+          {['counter_regression', 'checkpoint_gap', 'checkpoint_overlap', 'epoch_conflict', 'state_corrupt'].includes(String(server.sync?.status || '')) ? <p style={{ color: 'var(--color-danger)' }}>需要对账</p> : null}
+        </div>
+      )) : <p className="muted">{busy ? '正在加载…' : '还没有服务器同步记录'}</p>}
+    </div>
+    <footer className="dialog-actions">
+      <button type="button" className="btn-custom btn-secondary" onClick={() => void reconcile()} disabled={busy}>重新同步</button>
+      <button type="button" onClick={onCancel}>关闭</button>
+    </footer>
+  </MotionDialogPanel>
 }
 
 function UserGroupMembersDialog({ groupID, data, canManageAdministrators, selectedUserID, onSelectUser, onAddMember, onDeleteMember, onCancel }: { groupID: number; data: any; canManageAdministrators: boolean; selectedUserID: number; onSelectUser: (userID: number) => void; onAddMember: () => Promise<void>; onDeleteMember: (member: UserGroupMember) => Promise<void>; onCancel: () => void }) {

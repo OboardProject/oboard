@@ -2528,16 +2528,148 @@ type TrafficPeriod struct {
 }
 
 type TrafficReport struct {
-	ReportID  string    `json:"report_id"`
-	ServerID  int64     `json:"server_id"`
-	UserID    int64     `json:"user_id"`
-	InboundID *int64    `json:"inbound_id,omitempty"`
-	PathID    *int64    `json:"path_id,omitempty"`
-	PeriodKey string    `json:"period_key"`
-	Upload    int64     `json:"upload_bytes"`
-	Download  int64     `json:"download_bytes"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at"`
+	ReportID         string    `json:"report_id"`
+	ServerID         int64     `json:"server_id"`
+	UserID           int64     `json:"user_id"`
+	InboundID        *int64    `json:"inbound_id,omitempty"`
+	PathID           *int64    `json:"path_id,omitempty"`
+	PeriodKey        string    `json:"period_key"`
+	Upload           int64     `json:"upload_bytes"`
+	Download         int64     `json:"download_bytes"`
+	StartedAt        time.Time `json:"started_at"`
+	EndedAt          time.Time `json:"ended_at"`
+	ProtocolVersion  int       `json:"protocol_version,omitempty"`
+	CounterSource    string    `json:"counter_source,omitempty"`
+	StreamID         string    `json:"stream_id,omitempty"`
+	CounterEpoch     string    `json:"counter_epoch,omitempty"`
+	FromUploadBytes  int64     `json:"from_upload_bytes,omitempty"`
+	ToUploadBytes    int64     `json:"to_upload_bytes,omitempty"`
+	FromDownloadBytes int64    `json:"from_download_bytes,omitempty"`
+	ToDownloadBytes  int64     `json:"to_download_bytes,omitempty"`
+	AcceptStatus     string    `json:"accept_status,omitempty"`
+}
+
+type TrafficCounterStream struct {
+	ID                    int64     `json:"id"`
+	ServerID              int64     `json:"server_id"`
+	UserID                int64     `json:"user_id"`
+	CounterSource         string    `json:"counter_source"`
+	StreamID              string    `json:"stream_id"`
+	CounterEpoch          string    `json:"counter_epoch"`
+	PeriodKey             string    `json:"period_key"`
+	InboundID             int64     `json:"inbound_id,omitempty"`
+	PathID                int64     `json:"path_id,omitempty"`
+	AcceptedUploadBytes   int64     `json:"accepted_upload_bytes"`
+	AcceptedDownloadBytes int64     `json:"accepted_download_bytes"`
+	Status                string    `json:"status"`
+	LastError             string    `json:"last_error,omitempty"`
+	AgentInstanceID       string    `json:"agent_instance_id,omitempty"`
+	FirstSeenAt           time.Time `json:"first_seen_at"`
+	LastSeenAt            time.Time `json:"last_seen_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type TrafficLease struct {
+	ID             int64      `json:"id"`
+	ServerID       int64      `json:"server_id"`
+	UserID         int64      `json:"user_id"`
+	PeriodKey      string     `json:"period_key"`
+	LeaseBytes     int64      `json:"lease_bytes"`
+	ConsumedBytes  int64      `json:"consumed_bytes"`
+	LeaseRevision  int64      `json:"lease_revision"`
+	State          string     `json:"state"`
+	IssuedAt       time.Time  `json:"issued_at"`
+	LastSyncedAt   time.Time  `json:"last_synced_at"`
+	ValidUntil     *time.Time `json:"valid_until,omitempty"`
+	ReleasedAt     *time.Time `json:"released_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type TrafficReconciliationEvent struct {
+	ID            int64      `json:"id"`
+	ServerID      int64      `json:"server_id"`
+	UserID        int64      `json:"user_id"`
+	Source        string     `json:"source"`
+	StreamID      string     `json:"stream_id"`
+	CounterEpoch  string     `json:"counter_epoch"`
+	PeriodKey     string     `json:"period_key"`
+	Kind          string     `json:"kind"`
+	Detail        string     `json:"detail"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
+}
+
+type TrafficStreamObservation struct {
+	Source            string `json:"source"`
+	StreamID          string `json:"stream_id"`
+	CounterEpoch      string `json:"counter_epoch"`
+	PeriodKey         string `json:"period_key"`
+	UserID            int64  `json:"user_id"`
+	InboundID         int64  `json:"inbound_id,omitempty"`
+	PathID            int64  `json:"path_id,omitempty"`
+	CurrentUpload     int64  `json:"current_upload_bytes"`
+	CurrentDownload   int64  `json:"current_download_bytes"`
+	Status            string `json:"status,omitempty"`
+}
+
+type TrafficStreamCheckpoint struct {
+	Source           string `json:"source"`
+	StreamID         string `json:"stream_id"`
+	CounterEpoch     string `json:"counter_epoch"`
+	PeriodKey        string `json:"period_key"`
+	AcceptedUpload   int64  `json:"accepted_upload_bytes"`
+	AcceptedDownload int64  `json:"accepted_download_bytes"`
+	Status           string `json:"status"`
+	LastError        string `json:"last_error,omitempty"`
+}
+
+type TrafficAcceptedReport struct {
+	ReportID         string `json:"report_id"`
+	Status           string `json:"status"`
+	StreamID         string `json:"stream_id,omitempty"`
+	CounterEpoch     string `json:"counter_epoch,omitempty"`
+	PeriodKey        string `json:"period_key,omitempty"`
+	AcceptedUpload   int64  `json:"accepted_upload_bytes"`
+	AcceptedDownload int64  `json:"accepted_download_bytes"`
+}
+
+type TrafficLedgerView struct {
+	UserID int64                  `json:"user_id"`
+	Period TrafficLedgerPeriod    `json:"period"`
+	Servers []TrafficLedgerServer `json:"servers"`
+	Issues []TrafficReconciliationEvent `json:"issues,omitempty"`
+}
+
+type TrafficLedgerPeriod struct {
+	Key           string `json:"key"`
+	UploadBytes   int64  `json:"upload_bytes"`
+	DownloadBytes int64  `json:"download_bytes"`
+	UsedBytes     int64  `json:"used_bytes"`
+	LimitBytes    int64  `json:"limit_bytes"`
+	State         string `json:"state"`
+}
+
+type TrafficLedgerServer struct {
+	ServerID   int64                   `json:"server_id"`
+	ServerName string                  `json:"server_name,omitempty"`
+	Lease      TrafficLedgerLease      `json:"lease"`
+	Sync       TrafficLedgerSync       `json:"sync"`
+	Streams    []TrafficCounterStream  `json:"streams"`
+}
+
+type TrafficLedgerLease struct {
+	LeaseID        int64  `json:"lease_id,omitempty"`
+	Revision       int64  `json:"revision"`
+	GrantedBytes   int64  `json:"granted_bytes"`
+	ConsumedBytes  int64  `json:"consumed_bytes"`
+	RemainingBytes int64  `json:"remaining_bytes"`
+	State          string `json:"state"`
+}
+
+type TrafficLedgerSync struct {
+	Status     string    `json:"status"`
+	LastSeenAt time.Time `json:"last_seen_at,omitempty"`
+	LastError  string    `json:"last_error,omitempty"`
 }
 
 type ConnectionAuditReport struct {

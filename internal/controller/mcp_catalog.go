@@ -38,6 +38,8 @@ MCP inherits the current human user's live RBAC role. OAuth scopes and stored gr
 
 OBoard MCP never provides arbitrary SSH access. Shell execution is available only through ` + "`server_exec_shell`" + ` after an explicit privileged grant. OBoard MCP never provides raw Agent task injection, raw REST calls, secret export, administrator deletion, validation bypass, destructive-operation bypass, or risk-4 auto-approval.
 
+User traffic accounting is diagnosed with ` + "`traffic.get_user_ledger`" + `, ` + "`traffic.get_server_sync_state`" + `, and ` + "`traffic.list_reconciliation_issues`" + `. These tools explain confirmed usage, server leases, and reconciliation status. Never rewrite traffic totals, delete traffic reports, or force checkpoints.
+
 Never request, reveal, persist, repeat, or log passwords, private keys, access tokens, refresh tokens, enrollment tokens, or other credentials. One-time onboarding actions are sensitive. Present one-time material only through the designated external-action flow and do not retain it after use.
 
 Use a stable idempotency key for every state-changing request. On a revision conflict, refresh the affected resources and re-plan. Never overwrite newer state.

@@ -339,6 +339,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/warp-profiles/", s.auth(s.warpProfiles, model.RoleOperator))
 	mux.HandleFunc("/api/v1/users", s.auth(s.users, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/users/", s.auth(s.users, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/traffic-ledger", s.auth(s.trafficLedger, model.RoleViewer))
+	mux.HandleFunc("/api/v1/traffic-ledger/reconcile", s.auth(s.trafficLedgerReconcile, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-node-scopes/preview", s.auth(s.assignableNodeScopePreview, model.RoleOperator))
@@ -6269,6 +6271,7 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		tz = "Asia/Shanghai"
 	}
 	policies := map[int64]model.TrafficRuntimePolicy{}
+	host, _ := s.store.GetServer(ctx, serverID)
 	for _, user := range users {
 		if user.ID <= 0 || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 			continue
@@ -6293,7 +6296,10 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		if err != nil {
 			return nil, err
 		}
-		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0 && lease.RemainingBytes > 0, PeriodKey: periodKey, PeriodStart: start.UTC().Format(time.RFC3339Nano), PeriodEnd: end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
+		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: periodKey, PeriodStart: start.UTC().Format(time.RFC3339Nano), PeriodEnd: end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
+		if limit.TrafficLimitBytes > 0 && lease.RemainingBytes == 0 && !serverSupportsTrafficLedgerV2(host) {
+			policy.QuotaState = "quota_exceeded"
+		}
 		if !limit.TrafficResetAnchor.IsZero() {
 			policy.ResetAnchor = limit.TrafficResetAnchor.UTC().Format(time.RFC3339Nano)
 		}
@@ -6302,7 +6308,6 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		}
 		policies[user.ID] = policy
 	}
-	_ = serverID
 	return policies, nil
 }
 
@@ -10560,6 +10565,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		s.userSubscriptionToken(w, r, id, parts[2])
 		return
 	}
+	if len(parts) == 2 && parts[1] == "traffic-ledger" {
+		s.userTrafficLedger(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "subscription-age" {
 		s.userSubscriptionAge(w, r, id)
 		return
@@ -14553,22 +14562,12 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 	}
 	settings, _ := s.store.ListSettings(r.Context())
 	loc := trafficLocation(settings)
-	type trafficItem struct {
-		ReportID  string `json:"report_id"`
-		UserID    int64  `json:"user_id"`
-		InboundID *int64 `json:"inbound_id"`
-		PathID    *int64 `json:"path_id"`
-		PeriodKey string `json:"period_key"`
-		Upload    int64  `json:"upload_bytes"`
-		Download  int64  `json:"download_bytes"`
-		StartedAt string `json:"started_at"`
-		EndedAt   string `json:"ended_at"`
-	}
-	var req struct {
-		PeriodKey string        `json:"period_key"`
-		Items     []trafficItem `json:"items"`
-	}
+	var req agentTrafficReportEnvelope
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.ProtocolVersion == 2 {
+		s.handleAgentTrafficLedgerV2(w, r, server, req)
 		return
 	}
 	if len(req.Items) > 500 {

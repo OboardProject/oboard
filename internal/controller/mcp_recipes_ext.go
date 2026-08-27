@@ -15,6 +15,26 @@ import (
 // produces one immutable prepared operation so clients can call without
 // reconstructing capability plans.
 
+func (s *Server) prepareUserTrafficLedgerRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	userID := int64(taskIntParam(input.Params, "user_id"))
+	if userID <= 0 {
+		userID = taskResourceRefID(input, "user")
+	}
+	if userID <= 0 {
+		return recipeNeedInput("user.traffic.ledger", "user_id", "需要指定要查看流量账本的用户 ID"), nil
+	}
+	if !principal.AllowsInt64("user_ids", userID) {
+		return nil, errors.New("authorized user not found")
+	}
+	serverID := int64(taskIntParam(input.Params, "server_id"))
+	periodKey := taskStringParam(input.Params, "period_key")
+	view, err := s.store.GetTrafficLedger(ctx, userID, serverID, periodKey)
+	if err != nil {
+		return nil, err
+	}
+	return &mcpPreparedRecipe{Status: "query_ready", Intent: "user.traffic.ledger", DirectResult: view, Summary: map[string]any{"user_id": userID, "action": "read_traffic_ledger"}, Verification: map[string]any{}, Fallback: []string{"oboard_capability_traffic_get_user_ledger", "oboard_capability_traffic_get_server_sync_state", "oboard_capability_traffic_list_reconciliation_issues"}}, nil
+}
+
 func recipeTargetServer(ctx context.Context, s *Server, principal application.Principal, input mcpTaskInput) (int64, *mcpPreparedRecipe, error) {
 	if value := taskIntParam(input.Params, "server_id"); value > 0 {
 		return int64(value), nil, nil

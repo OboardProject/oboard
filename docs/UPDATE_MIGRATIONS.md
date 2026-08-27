@@ -62,6 +62,7 @@
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
+| `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | 待提交 | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
@@ -572,6 +573,26 @@
   不得再导入缺少规则目标路径或同步组的 schema。所有受支持 Controller 必须仅按当前模型生成规则
   专属路径，并保证同步组不传播放置点动作和拓扑。
 - **移除状态：** 生效中。
+
+### controller-db-20260828-traffic-ledger-v2
+
+- **引入日期：** 2026-08-28
+- **引入提交：** 待 Controller 仓库提交后回填
+- **引入版本：** 待提交
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web；Agent `internal/agent`；kernel `kernel/oboard-sb`
+- **类别：** SQLite schema / wire protocol
+- **原因：** 把流量从客户端 delta 上报升级为 checkpoint range 账本，修复同 epoch 计数倒退误计、损坏 `traffic-state.json` 静默清空、以及 `lease=0` 未强制配额的 P0。
+- **源状态：** `traffic_reports` 只有 delta 字段；无 `traffic_counter_streams` / `traffic_reconciliation_events`；`traffic_leases` 无 revision/state/TTL；Controller 仅在 `RemainingBytes>0` 时设置 `lease_enforced`；Agent JSON 解析失败当作空状态。
+- **目标状态：** `traffic_reports` 增加 `protocol_version` 与 range 字段（旧行保持 `1`，无历史 checkpoint 回填）；新增 stream checkpoint 与对账事件表；有限额度用户始终 `lease_enforced=true`，`lease=0` 以 baseline 封顶；V1 `items` 仍可上报。Agent `traffic-state.json` schema_version=2，损坏则 `state_corrupt` 并对 Controller 对账。
+- **实现位置：** `internal/store/traffic.go`、`store.go`；`internal/controller/traffic.go`、`server.go`；`internal/capability/catalog_traffic_ledger.go`；`web/src/main.tsx`。
+- **更新脚本：** Controller 打开 SQLite 时 `migrateTrafficLedgerV2` 幂等补列建表。
+- **数据影响：** 不删除 `traffic_reports` / `traffic_periods`，不重算 `users.traffic_used_bytes`。离线 Agent 未消费 Lease 保持 reserved。
+- **重复执行：** `ensureColumn` 与 `create table/index if not exists`。
+- **失败行为：** 列或表创建失败会阻止 Controller 打开数据库。checkpoint gap/overlap 拒绝入账。
+- **回归测试：** `TestTrafficLedgerV2MigratesFromPreviousSchema`、`TestTrafficLedgerV2IsIdempotentAfterLostACK`、`TestTrafficLedgerV2SameRangeDifferentReportIDIsCovered`、`TestTrafficRuntimePoliciesEnforceZeroLeaseOnLegacyKernel`
+- **移除条件：** 最老直接升级版本与可恢复备份均已包含 V2 列和表，且恢复入口拒绝缺少 stream 表的备份。
+- **移除状态：** 生效中
 
 ## 新登记模板
 

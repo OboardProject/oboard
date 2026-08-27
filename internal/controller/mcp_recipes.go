@@ -42,6 +42,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 	return []mcpRecipe{
 		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "reissue enrollment", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器", "重签发", "重新签发", "重签发接入令牌"}, Verbs: []string{"add", "create", "onboard", "enroll", "reissue", "新增", "添加", "接入", "重签发", "重新签发"}, Nouns: []string{"server", "agent", "服务器", "节点服务器", "接入令牌"}, Prepare: s.prepareServerOnboardRecipe},
 		{ID: "user.manage", Version: mcpRecipeVersion, Aliases: []string{"user.manage", "manage user", "create user", "update user", "delete user", "用户管理", "新建用户", "创建用户", "修改用户", "删除用户"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "disable", "enable", "吊销", "创建", "新建", "添加", "修改", "删除", "停用", "启用"}, Nouns: []string{"user", "account", "用户", "账号", "账户"}, Prepare: s.prepareUserManageRecipe},
+		{ID: "user.traffic.ledger", Version: mcpRecipeVersion, Aliases: []string{"user.traffic.ledger", "traffic ledger", "user traffic ledger", "流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账"}, Verbs: []string{"view", "read", "query", "show", "check", "diagnose", "查看", "查询", "读取", "检查", "对账"}, Nouns: []string{"traffic ledger", "user traffic", "reconciliation", "流量账本", "用户流量", "对账"}, Prepare: s.prepareUserTrafficLedgerRecipe},
 		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
 		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
 		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "delete server", "修改服务器", "服务器设置", "删除服务器"}, Verbs: []string{"update", "change", "set", "modify", "delete", "remove", "修改", "设置", "调整", "开启", "关闭", "删除"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
@@ -183,6 +184,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		recipeID string
 		tokens   []string
 	}{
+		{"user.traffic.ledger", []string{"流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账", "traffic ledger", "user traffic ledger"}},
 		{"routing_rule_set.manage", []string{"分流规则集", "路由规则集", "远程规则集", "routing rule set", "routing ruleset", "rule set", "规则集"}},
 		{"routing.manage", []string{"分流", "routing rule", "routing rules", "路由规则"}},
 		{"external_outbound.import", []string{"导入节点", "import node", "导入第三方节点"}},

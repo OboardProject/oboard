@@ -435,6 +435,7 @@ func defaultDescriptors() []Descriptor {
 		})
 	}
 	descriptors = append(descriptors, usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, trafficLedgerDescriptors(positiveID, stringValue)...)
 	descriptors = append(descriptors, trafficDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, externalOutboundDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, networkDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
