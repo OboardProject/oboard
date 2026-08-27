@@ -170,6 +170,12 @@ import {
   taskStatusSummary,
   type TaskGroup,
 } from './task-groups'
+import {
+  describeAuditLog,
+  formatAuditTimeRange,
+  groupConsecutiveAuditLogs,
+  type AuditLogRow,
+} from './audit-logs'
 
 import {
   failedDNSBulkServerIDs,
@@ -318,7 +324,6 @@ type RoutingRuleCatalogItem = { name: string; path: string; url: string; format:
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
-type AuditTone = 'success' | 'warning' | 'danger' | 'neutral'
 type AuditRiskLevel = 'normal' | 'watch' | 'alert' | 'high' | 'critical' | 'confirmed'
 type GeoDatabaseStatus = { available: boolean; provider: string; version?: string; revision?: string; error?: string }
 type AuditThreshold = { soft: number; hard: number }
@@ -6876,40 +6881,74 @@ function subscriptionAuditOutcomeLabel(value: string) {
 function AuditLogs({ data, loading, embedded = false }: any) {
   const dialogs = useDialogs()
   const rows: AuditLog[] = data.audit_logs || []
-  const showRaw = (log: AuditLog) => dialogs.alert({
-    title: `技术详情 #${log.id}`,
+  const groups = useMemo(
+    () => groupConsecutiveAuditLogs(rows.map((log: AuditLogRow) => describeAuditLog(log, data))),
+    [rows, data],
+  )
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const showRaw = (log: AuditLog, title: string) => dialogs.alert({
+    title: title || '原始记录',
     message: <div className="raw-log-copy"><CopyBlock value={JSON.stringify(log, null, 2)} /></div>,
   })
   const content = <>
     <div className="audit-log-intro">
       <div>
         <strong>管理操作记录</strong>
-        <span>记录登录、安全设置和配置变更，便于追溯谁在何时从哪里执行了操作。</span>
+        <span>登录、安全和配置变更会按时间排列。连续同类操作会合在一起，原始信息放在详情里。</span>
       </div>
       <span className="status-pill">最多 100 条</span>
     </div>
     {loading && !rows.length ? <TableSkeleton /> : !rows.length ? <p className="muted">暂无数据</p> : <MotionList className="audit-timeline">
-      {rows.map(log => {
-        const item = describeAuditLog(log, data)
-        return <MotionCard tag="article" hoverEffect={false} className={`audit-card ${item.tone}`} key={log.id}>
+      {groups.map(group => {
+        const latest = group.logs[0]
+        const oldest = group.logs[group.logs.length - 1]
+        const open = Boolean(expanded[group.id])
+        const showTarget = group.targetLabel && !group.title.includes(group.targetLabel)
+        const timeLabel = group.logs.length === 1
+          ? formatTableTime(String(latest.log.created_at || ''))
+          : formatAuditTimeRange(String(oldest.log.created_at || ''), String(latest.log.created_at || ''), formatTableTime)
+        return <MotionCard tag="article" hoverEffect={false} className={`audit-card ${group.tone}`} key={group.id}>
           <div className="audit-line-dot" aria-hidden="true" />
           <div className="audit-card-content">
             <div className="audit-card-head">
               <div>
                 <div className="audit-title">
-                  <span className={`badge ${item.tone}`}>{item.actionLabel}</span>
-                  <strong>{item.title}</strong>
+                  <span className={`badge ${group.tone}`}>{group.actionLabel}</span>
+                  <strong>{group.title}</strong>
+                  {group.logs.length > 1 ? <span className="audit-count">{group.logs.length} 次</span> : null}
                 </div>
                 <div className="audit-meta">
-                  <span><small>时间</small>{formatTableTime(String(log.created_at || ''))}</span>
-                  <span><small>操作者</small>{item.actor}</span>
-                  <span><small>来源 IP</small>{item.ip}</span>
-                  <span><small>操作对象</small>{item.targetType} · {item.targetLabel}</span>
-                  {item.detail && <span><small>变更内容</small>{item.detail}</span>}
+                  <span><small>时间</small>{timeLabel}</span>
+                  <span><small>操作者</small>{group.actor}</span>
+                  <span><small>来源 IP</small>{group.ip}</span>
+                  {showTarget ? <span><small>对象</small>{group.targetLabel}</span> : null}
+                  {group.detail ? <span><small>说明</small>{group.detail}</span> : null}
                 </div>
               </div>
-              <button className="ghost" onClick={() => showRaw(log)}>技术详情</button>
+              <div className="audit-card-actions">
+                {group.logs.length > 1 ? (
+                  <button type="button" className="ghost" aria-expanded={open} aria-label={open ? '收起连续操作' : `展开 ${group.logs.length} 次连续操作`} onClick={() => setExpanded(current => ({ ...current, [group.id]: !current[group.id] }))}>
+                    {open ? '收起' : `展开 ${group.logs.length} 次`}
+                    <ChevronRight size={14} className={open ? 'audit-chevron open' : 'audit-chevron'} aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button type="button" className="ghost" onClick={() => showRaw(latest.log, group.title)}>原始记录</button>
+                )}
+              </div>
             </div>
+            {open && group.logs.length > 1 ? (
+              <ul className="audit-group-items">
+                {group.logs.map(item => (
+                  <li key={item.log.id} className="audit-group-item">
+                    <div>
+                      <strong>{formatTableTime(String(item.log.created_at || ''))}</strong>
+                      <span>{item.ip}{item.detail ? ` · ${item.detail}` : ''}</span>
+                    </div>
+                    <button type="button" className="ghost" onClick={() => showRaw(item.log, item.title)}>原始记录</button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         </MotionCard>
       })}
@@ -21423,245 +21462,9 @@ function userLimitSummary(data: any, user: User) {
   return `${limits.source} · ${formatSpeedLimit(limits.speed)} · ${formatTrafficLimit(limits.traffic)}`
 }
 
-function describeAuditLog(log: AuditLog, data: any) {
-  const action = String(log.action || '')
-  const target = String(log.target || '')
-  const actor = auditActorLabel(log, data)
-  const actionLabel = auditActionLabel(action)
-  const targetInfo = auditTargetInfo(log, data)
-  const detail = auditDetailText(log, targetInfo.label)
-  const tone = auditActionTone(action)
-  return {
-    title: auditTitle(log, actor, targetInfo),
-    actionLabel,
-    actor,
-    targetType: targetInfo.type,
-    targetLabel: targetInfo.label || auditTargetTypeLabel(target),
-    detail,
-    tone,
-    ip: auditIPLabel(log.ip),
-  }
-}
-
-function auditTitle(log: AuditLog, actor: string, target: { type: string; label: string }) {
-  const action = String(log.action || '')
-  const detail = String(log.detail || '').trim()
-  if (action === 'login') return `${actor} 登录成功`
-  if (action === 'login_totp') return `${actor} 通过双重认证登录成功`
-  if (action === 'login_passkey') return `${actor} 使用通行密钥登录成功`
-  if (action === 'logout') return `${actor} 退出了登录`
-  if (action === 'bootstrap') return `${actor} 创建了首个管理员`
-  if (action === 'auto_admin') return '系统自动创建了管理员账户'
-  if (action === 'change_password') return `${actor} 修改了登录密码`
-  if (action === 'enable' && log.target === 'totp') return `${actor} 开启了双重认证`
-  if (action === 'disable' && log.target === 'totp') return `${actor} 停用了双重认证`
-  if (action === 'rotate' && log.target === 'totp-recovery-codes') return `${actor} 生成了新的双重认证恢复码`
-  if (action === 'create' && log.target === 'passkey') return `${actor} 添加了通行密钥`
-  if (action === 'delete' && log.target === 'passkey') return `${actor} 移除了通行密钥`
-  if (action === 'agent_enroll') return `Agent 接入了服务器 ${target.label}`
-  if (action === 'notify') return `系统发送了通知：${target.label}`
-  if (action === 'notify_failed') return `通知发送失败：${target.label}`
-  if (action === 'apply' && log.target === 'deployment') return `${actor} 下发了配置版本 ${detail || target.label}`
-  if (action === 'dismiss' && log.target === 'deployment') return `${actor} 忽略了配置版本 ${detail || target.label} 的失败提醒`
-  if (action === 'grant' && log.target === 'inbound-user') return `${actor} 授权了 ${target.label}`
-  if (action === 'grant' && log.target === 'user-group-member') return `${actor} 加入了 ${target.label}`
-  if (action === 'revoke' && log.target === 'user-group-member') return `${actor} 移除了 ${target.label}`
-  if (action === 'revoke' && log.target === 'inbound-user') return `${actor} 撤销了 ${target.label}`
-  if (action === 'grant' && log.target === 'inbound-access') return `${actor} 新增了入口权限：${target.label}`
-  if (action === 'revoke' && log.target === 'inbound-access') return `${actor} 撤销了入口权限：${target.label}`
-  if (action === 'update' && log.target === 'agent-config') return `${actor} 更新了 ${target.label} 的 Agent 设置`
-  if (action === 'diagnose') return `${actor} 创建了 ${target.label} 的诊断任务`
-  if (action === 'detect' && log.target === 'mtu') return `${actor} 发起了 ${target.label} 的 MTU 检测`
-  if (action === 'create' && log.target === 'enroll-token') return `${actor} 生成了 ${target.label} 的 Agent 安装令牌`
-  if (action === 'rotate' && log.target === 'subscription-token') return `${actor} 轮换了 ${target.label} 的订阅令牌`
-  if (action === 'revoke' && log.target === 'subscription-token') return `${actor} 吊销了 ${target.label} 的订阅令牌`
-  if (action === 'update' && log.target === 'subscription-age') return `${actor} 更新了 ${target.label} 的 Age 订阅设置`
-  return `${actor}${auditActionVerb(action)}${target.label}`
-}
-
-function auditActorLabel(log: AuditLog, data: any) {
-  if (log.actor_id) {
-    const user = findByID<User>(data.users, log.actor_id)
-    return user?.username ? `用户 ${user.username}` : `用户 #${log.actor_id}`
-  }
-  if (log.action === 'agent_enroll') return 'Agent'
-  if (String(log.ip || '').toLowerCase() === 'controller') return '系统'
-  return '系统'
-}
-
-function auditTargetInfo(log: AuditLog, data: any) {
-  const target = String(log.target || '')
-  const detail = String(log.detail || '').trim()
-  const type = auditTargetTypeLabel(target)
-  if (target === 'settings') return { type, label: '面板设置' }
-  if (target === 'deployment') return { type, label: detail ? `配置版本 ${detail}` : '配置下发' }
-  if (target === 'user' && detail && !numberFromString(detail)) return { type, label: detail }
-  if (target === 'server' && detail && !numberFromString(detail)) return { type, label: detail }
-  if (target === 'inbound-user') return { type, label: auditInboundUserLabel(detail, data) }
-  if (target === 'user-group-member') return { type, label: auditGroupMemberLabel(detail, data) }
-  if (target === 'inbound-access') return { type, label: auditInboundAccessLabel(detail, data) }
-  if (target === 'notification_channel') return { type, label: auditNotificationLabel(detail, data) }
-  if (target === 'agent-config' || target === 'mtu' || target === 'enroll-token') return { type, label: auditServerLabel(numberFromString(detail), data) }
-  if (target === 'subscription-token' || target === 'subscription-age') return { type, label: auditUserLabel(numberFromString(detail), data) }
-  if (target === 'totp' || target === 'totp-recovery-codes') return { type, label: auditUserLabel(numberFromString(detail), data) }
-  const id = numberFromString(detail)
-  const row = id ? auditResourceByTarget(target, id, data) : null
-  if (row) return { type, label: resourceLabel(row, `${type} #${id}`) }
-  if (id) return { type, label: `${type} #${id}` }
-  return { type, label: detail || type }
-}
-
-function auditDetailText(log: AuditLog, targetLabel: string) {
-  const detail = String(log.detail || '').trim()
-  if (!detail) return ''
-  if (log.target === 'settings') return detail.split(',').map(x => humanLabel(x.trim())).filter(Boolean).join('、')
-  if (log.target === 'notification_channel') {
-    const event = detail.split(':').slice(1).join(':')
-    return event ? auditEventLabel(event) : ''
-  }
-  if (targetLabel && (detail === targetLabel || targetLabel.includes(`#${detail}`))) return ''
-  if (/^\d+$/.test(detail) || /^\d+:\d+$/.test(detail)) return ''
-  return detail
-}
-
-function auditActionLabel(action: string) {
-  const labels: Record<string, string> = {
-    bootstrap: '初始化', auto_admin: '初始化', login: '登录', login_totp: '双重认证登录', login_passkey: '通行密钥登录', logout: '退出', change_password: '改密',
-    create: '创建', update: '更新', delete: '删除',
-    grant: '授权', revoke: '撤销', rotate: '轮换', enable: '开启', disable: '停用',
-    apply: '下发', dismiss: '忽略', diagnose: '诊断', detect: '检测',
-    notify: '通知', notify_failed: '通知失败', agent_enroll: 'Agent',
-  }
-  return labels[action] || labelValue(action)
-}
-
-function auditActionVerb(action: string) {
-  const verbs: Record<string, string> = {
-    create: '创建了', update: '更新了', delete: '删除了',
-    grant: '授权了', revoke: '撤销了', rotate: '轮换了',
-    apply: '下发了', dismiss: '忽略了', diagnose: '诊断了', detect: '检测了',
-    notify: '通知了', notify_failed: '通知失败：',
-    bootstrap: '初始化了', auto_admin: '初始化了', login: '登录了', login_totp: '登录了', login_passkey: '登录了', logout: '退出了', change_password: '修改了', enable: '开启了', disable: '停用了',
-  }
-  return verbs[action] || `${auditActionLabel(action)}了`
-}
-
-function auditActionTone(action: string): AuditTone {
-  if (['delete', 'notify_failed'].includes(action)) return 'danger'
-  if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke', 'disable'].includes(action)) return 'warning'
-  if (['create', 'grant', 'bootstrap', 'auto_admin', 'login', 'login_totp', 'login_passkey', 'logout', 'enable', 'agent_enroll', 'notify'].includes(action)) return 'success'
-  return 'neutral'
-}
-
-function auditTargetTypeLabel(target: string) {
-  const labels: Record<string, string> = {
-    settings: '设置', user: '用户', server: '服务器', 'agent-config': 'Agent 设置',
-    mtu: 'MTU', 'enroll-token': 'Agent 命令', inbound: '入口节点', 'inbound-user': '入口用户',
-    'user-group': '用户组', 'user-group-member': '用户组成员', 'inbound-access': '入口权限',
-    routing_rule: '分流规则', notification_channel: '通知渠道', port_forward: '端口转发',
-    tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅令牌', 'subscription-age': 'Age 订阅', 'subscription-custom-path': '自定义订阅路径', 'subscription-custom-path-policy': '自定义路径权限',
-    totp: '双重认证', 'totp-recovery-codes': '恢复码', passkey: '通行密钥',
-    'subscription-profile': '订阅配置', 'subscription-assignment': '订阅分配',
-  }
-  return labels[target] || humanLabel(target)
-}
-
-function auditResourceByTarget(target: string, id: number, data: any) {
-  const collections: Record<string, string> = {
-    server: 'servers', inbound: 'inbounds', outbound: 'outbounds', user: 'users',
-    'user-group': 'user_groups', routing_rule: 'routing_rules', notification_channel: 'notification_channels',
-    port_forward: 'port_forwards', tunnel: 'tunnels', 'subscription-profile': 'subscription_profiles',
-    'subscription-assignment': 'subscription_assignments', 'inbound-access': 'inbound_access_grants',
-  }
-  return findByID(data[collections[target]], id)
-}
-
-function auditInboundUserLabel(detail: string, data: any) {
-  const [inboundID, userID] = numericPair(detail)
-  if (inboundID && userID) return `${auditUserLabel(userID, data)} 使用 ${auditInboundLabel(inboundID, data)}`
-  const id = numberFromString(detail)
-  const row = id ? findByID<InboundUser>(data.inbound_users, id) : null
-  if (row) return `${auditUserLabel(row.user_id, data)} 使用 ${auditInboundLabel(row.inbound_id, data)}`
-  return id ? `入口用户授权 #${id}` : detail || '入口用户授权'
-}
-
-function auditGroupMemberLabel(detail: string, data: any) {
-  const [groupID, userID] = numericPair(detail)
-  if (groupID && userID) return `${auditUserLabel(userID, data)} 到 ${auditGroupLabel(groupID, data)}`
-  const id = numberFromString(detail)
-  const row = id ? findByID<UserGroupMember>(data.user_group_members, id) : null
-  if (row) return `${auditUserLabel(row.user_id, data)} 从 ${auditGroupLabel(row.group_id, data)}`
-  return id ? `用户组成员 #${id}` : detail || '用户组成员'
-}
-
-function auditInboundAccessLabel(detail: string, data: any) {
-  const id = numberFromString(detail)
-  const grant = id ? findByID<InboundAccessGrant>(data.inbound_access_grants, id) : null
-  if (!grant) return id ? `入口权限 #${id}` : detail || '入口权限'
-  const subject = grant.subject_type === 'group' ? auditGroupLabel(grant.subject_id, data) : auditUserLabel(grant.subject_id, data)
-  if (grant.scope_type === 'global') return `${subject} 使用全部入口`
-  if (grant.scope_type === 'server') return `${subject} 使用 ${auditServerLabel(grant.server_id, data)} 的全部入口`
-  return `${subject} 使用 ${auditInboundLabel(grant.inbound_id, data)}`
-}
-
-function auditNotificationLabel(detail: string, data: any) {
-  const [idText, eventText = ''] = detail.split(':')
-  const id = numberFromString(idText)
-  const channel = id ? resourceLabel(findByID<NotificationChannel>(data.notification_channels, id), `通知渠道 #${id}`) : '通知渠道'
-  const event = auditEventLabel(eventText)
-  return event ? `${channel} · ${event}` : channel
-}
-
-function auditEventLabel(event: string) {
-  const labels: Record<string, string> = {
-    server_offline: '服务器离线',
-    server_recovered: '服务器恢复',
-  }
-  return labels[event] || event
-}
-
-function auditServerLabel(id: number | undefined, data: any) {
-  if (!id) return '服务器'
-  return resourceLabel(findByID<Server>(data.servers, id), `服务器 #${id}`)
-}
-
-function auditUserLabel(id: number | undefined, data: any) {
-  if (!id) return '用户'
-  return resourceLabel(findByID<User>(data.users, id), `用户 #${id}`)
-}
-
-function auditInboundLabel(id: number | undefined, data: any) {
-  if (!id) return '入口'
-  return resourceLabel(findByID<Inbound>(data.inbounds, id), `入口 #${id}`)
-}
-
-function auditGroupLabel(id: number | undefined, data: any) {
-  if (!id) return '用户组'
-  return resourceLabel(findByID<UserGroup>(data.user_groups, id), `用户组 #${id}`)
-}
-
 function findByID<T extends { id: number }>(rows: T[] | undefined, id?: number) {
   if (!id || !Array.isArray(rows)) return undefined
   return rows.find(x => Number(x.id) === Number(id))
-}
-
-function numericPair(value: string) {
-  const match = String(value || '').match(/^(\d+):(\d+)$/)
-  return match ? [Number(match[1]), Number(match[2])] : [undefined, undefined]
-}
-
-function numberFromString(value: string | number | undefined) {
-  const text = String(value ?? '').trim()
-  return /^\d+$/.test(text) ? Number(text) : undefined
-}
-
-function auditIPLabel(value: string) {
-  const raw = String(value || '').trim()
-  if (!raw) return '—'
-  if (raw === 'controller') return '系统内部'
-  if (raw.startsWith('[')) return raw.slice(1, raw.indexOf(']') > 0 ? raw.indexOf(']') : undefined)
-  const ipv4Port = raw.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/)
-  return ipv4Port ? ipv4Port[1] : raw
 }
 
 function resourceLabel(row: any, fallback: string) {
