@@ -12158,6 +12158,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .dialog-body .form-field-meta {
   gap: 2px;
   padding-top: 0;
+  min-height: 24px;
+  overflow: visible;
 }
 
 .dialog-body .form-field-control {
@@ -13665,9 +13667,12 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .user-create-dialog.user-form-dialog {
+  width: min(820px, calc(100vw - 28px));
+}
+
+.user-create-form {
   container-name: user-create;
   container-type: inline-size;
-  width: min(820px, calc(100vw - 28px));
 }
 
 .user-form {
@@ -13687,6 +13692,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   gap: 12px;
   min-width: 0;
   align-content: start;
+  overflow: visible;
 }
 
 .user-form-columns {
@@ -21287,6 +21293,10 @@ button.ui-btn-ghost:hover {
 }
 
 /* Tooltip Z-Index & Overflow Layering Fixes */
+.form-field-help {
+  overflow: visible !important;
+}
+
 .form-field-help-popover {
   left: -8px !important;
   z-index: 99999 !important;
@@ -21301,6 +21311,31 @@ button.ui-btn-ghost:hover {
 .form-field-help:hover > .form-field-help-popover.popover-bottom,
 .form-field-help:focus-visible > .form-field-help-popover.popover-bottom {
   transform: translateY(0) !important;
+}
+
+/* Dialogs clip upward tooltips against the header. Open them into the field. */
+.dialog-body .form-field-help {
+  position: static !important;
+  margin: 0;
+}
+
+.dialog-body .form-field-help-popover,
+.dialog-body .form-field-help-popover.popover-bottom {
+  top: calc(100% + 6px) !important;
+  bottom: auto !important;
+  transform: scale(0.96) translateY(-3px) !important;
+}
+
+.dialog-body .form-field-help:hover > .form-field-help-popover,
+.dialog-body .form-field-help:focus-visible > .form-field-help-popover,
+.dialog-body .form-field-help:hover > .form-field-help-popover.popover-bottom,
+.dialog-body .form-field-help:focus-visible > .form-field-help-popover.popover-bottom {
+  transform: scale(1) translateY(0) !important;
+}
+
+.dialog-body .form-field-meta:has(.form-field-help:hover),
+.dialog-body .form-field-meta:has(.form-field-help:focus-visible) {
+  z-index: 6;
 }
 
 .dialog {
