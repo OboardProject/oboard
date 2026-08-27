@@ -103,7 +103,7 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		var request struct {
 			Filter notificationBroadcastFilter `json:"filter"`
 		}
-		if err := strictAutomationInput(input, &request); err != nil || principal.UserID == nil || principal.Role != model.RoleAdmin {
+		if err := strictAutomationInput(input, &request); err != nil || principal.UserID == nil || !model.HasManagementAccess(principal.Role) {
 			return nil, errors.New("administrator broadcast filter is required")
 		}
 		preview, err := s.resolveNotificationBroadcastRecipients(ctx, *principal.UserID, request.Filter)

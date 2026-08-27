@@ -33,8 +33,8 @@ func (s *Service) PrepareInboundCreate(ctx context.Context, inbound *model.Inbou
 }
 
 func (s *Service) UpdateAnyTLSPadding(ctx context.Context, principal Principal, inboundID int64, operation core.AnyTLSPaddingOperation) (*model.Inbound, error) {
-	if principal.Role != model.RoleAdmin {
-		return nil, errors.New("administrator role required")
+	if !model.HasManagementAccess(principal.Role) {
+		return nil, errors.New("management role required")
 	}
 	inbound, err := s.store.GetInbound(ctx, inboundID)
 	if err != nil {

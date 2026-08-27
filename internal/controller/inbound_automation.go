@@ -210,8 +210,8 @@ func (s *Server) decodeInboundPaddingUpdateOperation(ctx context.Context, princi
 	if err := strictAutomationInput(input, &request); err != nil {
 		return request, nil, err
 	}
-	if principal.Role != model.RoleAdmin {
-		return request, nil, errors.New("administrator role required")
+	if !model.HasManagementAccess(principal.Role) {
+		return request, nil, errors.New("management role required")
 	}
 	if request.InboundID <= 0 {
 		return request, nil, errors.New("inbound_id must be a positive integer")

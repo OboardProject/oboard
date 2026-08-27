@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNodePresetCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
+func TestNodePresetCapabilitiesAreManagementOnlyAndExecutable(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{"node_presets.list", "node_presets.create", "node_presets.update", "node_presets.delete"} {
 		descriptor, ok := catalog.Get(name)
@@ -13,7 +13,7 @@ func TestNodePresetCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
 			t.Fatalf("%s is not exposed through MCP: %#v", name, descriptor)
 		}
 		if descriptor.RBACPermission != "admin.settings" {
-			t.Fatalf("%s is not admin-only: %#v", name, descriptor)
+			t.Fatalf("%s is not management-only: %#v", name, descriptor)
 		}
 		if name != "node_presets.list" && (!descriptor.Executable || descriptor.ReadOnly) {
 			t.Fatalf("%s must be an executable write capability: %#v", name, descriptor)

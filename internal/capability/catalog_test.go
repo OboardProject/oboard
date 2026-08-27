@@ -29,7 +29,7 @@ func TestListMCPFiltersCapabilitiesNotExposedToMCP(t *testing.T) {
 	}
 }
 
-func TestSubscriptionPlanCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
+func TestSubscriptionPlanCapabilitiesAreManagementOnlyAndExecutable(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{"subscription_plans.list", "subscription_plans.get", "subscription_plans.nodes.update"} {
 		descriptor, ok := catalog.Get(name)
@@ -37,7 +37,7 @@ func TestSubscriptionPlanCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
 			t.Fatalf("%s is not exposed through MCP: %#v", name, descriptor)
 		}
 		if descriptor.RBACPermission != "admin.settings" {
-			t.Fatalf("%s is not admin-only: %#v", name, descriptor)
+			t.Fatalf("%s is not management-only: %#v", name, descriptor)
 		}
 	}
 	write, _ := catalog.Get("subscription_plans.nodes.update")
@@ -45,8 +45,8 @@ func TestSubscriptionPlanCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
 		t.Fatalf("unsafe subscription plan node capability metadata: %#v", write)
 	}
 	operator := application.Principal{AccessLevel: mcpauth.AccessOperate, Role: model.RoleOperator, Scopes: []string{"*"}}
-	if _, allowed := catalog.Authorize(operator, write.Name); allowed {
-		t.Fatal("operator unexpectedly received the admin-only subscription plan node capability")
+	if _, allowed := catalog.Authorize(operator, write.Name); !allowed {
+		t.Fatal("operator did not receive the subscription plan node capability")
 	}
 	admin := application.Principal{AccessLevel: mcpauth.AccessOperate, Role: model.RoleAdmin, Scopes: []string{"*"}}
 	if _, allowed := catalog.Authorize(admin, write.Name); !allowed {

@@ -72,15 +72,13 @@ func NewCatalog() *Catalog {
 			item.RBACPermission = item.Name
 		}
 		c.items[item.Name] = item
-		c.rbac.Register(item.RBACPermission, authorization.PermissionSpec{ReadOnly: item.ReadOnly, AdminOnly: item.AdminOnly()})
+		c.rbac.Register(item.RBACPermission, authorization.PermissionSpec{ReadOnly: item.ReadOnly, ManagementOnly: item.ManagementOnly()})
 	}
 	return c
 }
 
-// AdminOnly reports whether the capability is reserved for administrators.
-// Destructive topology changes remain available to operators, but always use
-// their explicit confirmation schema and the normal Changeset approval flow.
-func (d Descriptor) AdminOnly() bool { return d.RBACPermission == "admin.settings" }
+// ManagementOnly reports whether the capability is hidden from viewers.
+func (d Descriptor) ManagementOnly() bool { return d.RBACPermission == "admin.settings" }
 
 // RBAC returns the shared role-based permission service. The Controller wires
 // the same instance into the unified MCP evaluator.
@@ -455,8 +453,9 @@ func defaultDescriptors() []Descriptor {
 }
 
 // usersAccessDescriptors builds the users and access-control capability set.
-// All user, group, member, device, and session capabilities are admin-only and
-// follow the same boundary rules as the panel's 用户与分组 tab.
+// User, group, member, device, and session capabilities are available to both
+// management roles and follow the same administrator-account boundary as the
+// panel's 用户与分组 tab.
 func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positiveID map[string]any, stringValue, boolValue map[string]any, nullableString, nullableInteger func() map[string]any) []Descriptor {
 	adminWrite := func(name, description string, input, output json.RawMessage, risk int, destructive bool) Descriptor {
 		return Descriptor{

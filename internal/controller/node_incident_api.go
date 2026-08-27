@@ -338,7 +338,7 @@ func (s *Server) nodeIncidentImpactPreview(ctx context.Context, event model.Node
 
 func (s *Server) apiV1NotificationBroadcasts(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
-	if principal.Role != model.RoleAdmin || principal.UserID == nil || !principal.Interactive {
+	if !model.HasManagementAccess(principal.Role) || principal.UserID == nil || !principal.Interactive {
 		v2Error(w, r, http.StatusForbidden, "capability_denied", "管理员广播需要当前管理员账户")
 		return
 	}
@@ -493,7 +493,7 @@ func (s *Server) apiV1TelegramBindings(w http.ResponseWriter, r *http.Request) {
 			v2Error(w, r, http.StatusBadRequest, "invalid_binding", "绑定 ID 无效")
 			return
 		}
-		allowAny := principal.Role == model.RoleAdmin
+		allowAny := model.HasManagementAccess(principal.Role)
 		if err := s.store.DeleteTelegramBindingByID(r.Context(), id, *principal.UserID, allowAny); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				v2Error(w, r, http.StatusNotFound, "not_found", "Telegram 绑定不存在")

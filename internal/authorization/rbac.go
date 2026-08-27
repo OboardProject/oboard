@@ -13,8 +13,9 @@ type PermissionSpec struct {
 	// ReadOnly permissions are available to Viewers (read, analyze, plan,
 	// validate). Writes are never granted to Viewers.
 	ReadOnly bool
-	// AdminOnly permissions are reserved for administrators.
-	AdminOnly bool
+	// ManagementOnly keeps the capability unavailable to viewers. Both
+	// administrators and operators are management roles.
+	ManagementOnly bool
 }
 
 // RBAC is the single role-based permission service. It replaces the static
@@ -53,12 +54,10 @@ func (r *RBAC) Allows(role model.Role, permission string) bool {
 		return false
 	}
 	switch role {
-	case model.RoleAdmin:
+	case model.RoleAdmin, model.RoleOperator:
 		return true
-	case model.RoleOperator:
-		return !spec.AdminOnly
 	case model.RoleViewer:
-		return spec.ReadOnly
+		return spec.ReadOnly && !spec.ManagementOnly
 	default:
 		return false
 	}

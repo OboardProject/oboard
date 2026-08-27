@@ -1071,6 +1071,10 @@ func (s *Server) userNodeExceptionsBatch(w http.ResponseWriter, r *http.Request)
 			"runtime_authorization_mode": s.authorizationMode(r.Context()),
 		})
 	case "apply":
+		if err := s.requireUserMutationsAccess(r.Context(), currentRole(r), req.UserIDs); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if len(outcome.Created)+len(outcome.Updated) == 0 {
 			write(w, 200, map[string]any{
 				"created": 0, "updated": 0, "skipped": len(outcome.Skipped),

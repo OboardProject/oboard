@@ -8,6 +8,7 @@ import { Switch } from '../components/ui/switch'
 import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../components/node-assignment/NodeScopeMenu'
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
 import { X, MoreHorizontal, Pencil, Info, Settings, Search, SlidersHorizontal, RotateCcw } from 'lucide-react'
+import { hasManagementAccess } from '../permissions'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -170,7 +171,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
 
   const servers = data.servers || []
   const plans = data.subscription_plans || []
-  const isAdmin = data.session?.role === 'admin'
+  const isAdmin = hasManagementAccess(data.session?.role)
   const regionCodes = Array.from(new Set(servers.flatMap((s: any) => [s.region_code, s.detected_region_code]).filter((x: any) => Boolean(x)))) as string[]
 
   const ensureUsers = async () => {

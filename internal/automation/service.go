@@ -265,8 +265,8 @@ func (s *Service) Approve(ctx context.Context, principal application.Principal, 
 	if item.Status != model.ChangesetAwaitingApproval || item.PlanHash == "" {
 		return nil, errors.New("changeset is not awaiting approval")
 	}
-	if item.RiskClass >= 4 && principal.Role != model.RoleAdmin {
-		return nil, errors.New("risk class 4 changes require an administrator")
+	if item.RiskClass >= 4 && !model.HasManagementAccess(principal.Role) {
+		return nil, errors.New("risk class 4 changes require a management role")
 	}
 	approvalID, err := prefixedID("apr")
 	if err != nil {
@@ -388,7 +388,7 @@ func (s *Service) GetOperation(ctx context.Context, principal application.Princi
 }
 
 func (s *Service) List(ctx context.Context, principal application.Principal, limit int) ([]model.AutomationChangeset, error) {
-	if principal.Interactive && principal.Role == model.RoleAdmin {
+	if principal.Interactive && model.HasManagementAccess(principal.Role) {
 		return s.store.ListAutomationChangesets(ctx, "", limit)
 	}
 	return s.store.ListAutomationChangesets(ctx, principal.ID, limit)
@@ -472,7 +472,7 @@ func (s *Service) StartWorkflow(ctx context.Context, principal application.Princ
 
 func (s *Service) GetWorkflow(ctx context.Context, principal application.Principal, id string) (*model.AutomationWorkflow, error) {
 	item, err := s.store.GetAutomationWorkflow(ctx, strings.TrimSpace(id))
-	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && model.HasManagementAccess(principal.Role)) {
 		return nil, sql.ErrNoRows
 	}
 	return s.synchronizeWorkflow(ctx, item)
@@ -605,7 +605,7 @@ func workflowHasAffectedResource(raw json.RawMessage, resourceType string, id in
 
 func (s *Service) RequireWorkflowExternalAction(ctx context.Context, principal application.Principal, id string, changeset *model.AutomationChangeset) (*model.AutomationWorkflow, error) {
 	item, err := s.store.GetAutomationWorkflow(ctx, strings.TrimSpace(id))
-	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && model.HasManagementAccess(principal.Role)) {
 		return nil, sql.ErrNoRows
 	}
 	if changeset == nil || changeset.ID != item.ChangesetID || changeset.Status != model.ChangesetSucceeded || len(item.Steps) == 0 {
@@ -871,7 +871,7 @@ func (s *Service) authorizedChangeset(ctx context.Context, principal application
 	if err != nil {
 		return nil, err
 	}
-	if item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+	if item.PrincipalID != principal.ID && !(principal.Interactive && model.HasManagementAccess(principal.Role)) {
 		return nil, sql.ErrNoRows
 	}
 	return item, nil

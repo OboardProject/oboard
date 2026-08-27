@@ -89,7 +89,7 @@ func (s *Server) validateNotificationBroadcastOperation(ctx context.Context, pri
 	if err := strictAutomationInput(input, &request); err != nil {
 		return request, notificationBroadcastPreview{}, "", err
 	}
-	if principal.Role != model.RoleAdmin || principal.UserID == nil {
+	if !model.HasManagementAccess(principal.Role) || principal.UserID == nil {
 		return request, notificationBroadcastPreview{}, "", errors.New("notification broadcast requires an administrator")
 	}
 	request.Title = strings.TrimSpace(request.Title)

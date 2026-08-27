@@ -2,6 +2,7 @@ import * as React from 'react'
 import { ArrowDown, ArrowUp, Check, CloudDownload, Copy, Eye, Layers3, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { useDialogs } from '../components/ui/dialog-context'
 import { NodeAssignmentsPage } from './NodeAssignmentsPage'
+import { hasManagementAccess } from '../permissions'
 
 type Client = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 type Group = { id: number; kind: 'oboard' | 'remote' | 'manual'; system_key?: string; name: string; node_count: number }
@@ -14,7 +15,7 @@ type Workspace = { subject: { id: number; username: string; nickname?: string };
 const formats = ['mihomo', 'sing-box', 'sing-box-mieru', 'mieru', 'clash-meta', 'stash', 'shadowrocket', 'surge', 'surge-mac', 'loon', 'egern', 'surfboard', 'qx', 'v2ray', 'v2ray-uri', 'clash']
 
 export function NodeWorkspacePage({ data, client, load, notify, legacySubscriptions }: { data: any; client: Client; load: () => Promise<void>; notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void; legacySubscriptions?: React.ReactNode }) {
-  const isAdmin = data.session?.role === 'admin'
+  const isAdmin = hasManagementAccess(data.session?.role)
   const [mode, setMode] = React.useState<'global' | 'user'>(isAdmin ? 'global' : 'user')
   const [userID, setUserID] = React.useState<number>(data.current_user?.id || data.account_user?.id || 0)
   const [tab, setTab] = React.useState<'library' | 'groups' | 'outputs'>('library')

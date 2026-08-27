@@ -473,7 +473,7 @@ func (s *Server) apiV1Changeset(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if r.Method == http.MethodGet && action == "" {
 		item, err := s.automation.Get(r.Context(), id)
-		if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && principal.Role == model.RoleAdmin) {
+		if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && model.HasManagementAccess(principal.Role)) {
 			v2HandleError(w, r, sql.ErrNoRows)
 			return
 		}

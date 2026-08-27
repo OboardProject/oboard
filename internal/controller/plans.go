@@ -1715,6 +1715,10 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("user_ids required"), 400)
 		return
 	}
+	if err := s.requireUserMutationsAccess(r.Context(), currentRole(r), req.UserIDs); err != nil {
+		fail(w, err, http.StatusForbidden)
+		return
+	}
 	startsAt, err := s.parseAssignmentTime(req.StartsAt)
 	if err != nil {
 		fail(w, err, 400)
@@ -1858,6 +1862,10 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &v) {
 			return
 		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), v.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if err := s.validateUserNodeException(r.Context(), &v, 0); err != nil {
 			fail(w, err, 400)
 			return
@@ -1913,11 +1921,19 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 			fail(w, sql.ErrNoRows, 404)
 			return
 		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), current.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		v := *current
 		if !decode(w, r, &v) {
 			return
 		}
 		v.ID = id
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), v.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 		if err := s.validateUserNodeException(r.Context(), &v, id); err != nil {
 			fail(w, err, 400)
 			return
@@ -1964,6 +1980,10 @@ func (s *Server) userNodeExceptions(w http.ResponseWriter, r *http.Request) {
 		}
 		if current == nil {
 			fail(w, sql.ErrNoRows, 404)
+			return
+		}
+		if err := s.requireUserMutationAccess(r.Context(), currentRole(r), current.UserID); err != nil {
+			fail(w, err, http.StatusForbidden)
 			return
 		}
 		data, err := s.store.FullRoutingConfigData(r.Context())

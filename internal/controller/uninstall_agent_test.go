@@ -61,7 +61,7 @@ func TestServerAgentUninstallQueuesTaskAndReusesActive(t *testing.T) {
 	}
 }
 
-func TestServerAgentUninstallRejectsUnenrolledOfflineAndOperator(t *testing.T) {
+func TestServerAgentUninstallRejectsUnenrolledAndOfflineButAllowsOperator(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestServerAgentUninstallRejectsUnenrolledOfflineAndOperator(t *testing.T) {
 
 	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(unenrolled.ID)+"/agent-uninstall", adminToken, map[string]any{}, http.StatusBadRequest)
 	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(offline.ID)+"/agent-uninstall", adminToken, map[string]any{}, http.StatusConflict)
-	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(online.ID)+"/agent-uninstall", operatorToken, map[string]any{}, http.StatusForbidden)
+	request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(online.ID)+"/agent-uninstall", operatorToken, map[string]any{}, http.StatusAccepted)
 }
 
 func TestAgentUninstallSuccessDeletesServerAndFailureKeepsIt(t *testing.T) {

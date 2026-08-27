@@ -17,6 +17,18 @@ const (
 	RoleNone Role = "none"
 )
 
+// HasManagementAccess reports whether a human role may use the complete
+// Controller management surface. Operators intentionally share the system
+// management authority of administrators; only administrator-account
+// lifecycle changes remain reserved for RoleAdmin.
+func HasManagementAccess(role Role) bool {
+	return role == RoleAdmin || role == RoleOperator
+}
+
+func CanManageAdministratorAccounts(role Role) bool {
+	return role == RoleAdmin
+}
+
 type Protocol string
 
 const (

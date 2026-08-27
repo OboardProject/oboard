@@ -100,7 +100,7 @@ func TestSubscriptionPullAuditKeepsGeographyAdvisory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-access/resume", operatorToken, map[string]any{}, http.StatusForbidden)
+	request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-access/resume", operatorToken, map[string]any{}, http.StatusOK)
 	request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-access/resume", adminToken, map[string]any{}, http.StatusOK)
 	if got := fetch(subscriptionToken, "208.67.222.222", "sing-box/1.12"); got.Code != http.StatusOK {
 		t.Fatalf("resumed pull status=%d body=%s", got.Code, got.Body.String())

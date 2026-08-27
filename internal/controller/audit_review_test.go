@@ -12,7 +12,7 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
+func TestAuditAIReviewsAreAvailableToManagementRolesAndIdempotent(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "audit-review-controller.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestAuditAIReviewsAreAdminOnlyAndIdempotent(t *testing.T) {
 	operatorLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-operator-password"}, http.StatusOK)
 	operatorToken := operatorLogin["token"].(string)
 
-	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews", operatorToken, nil, http.StatusForbidden)
+	request(t, handler, http.MethodGet, "/api/v1/ui/audit/ai-reviews", operatorToken, nil, http.StatusOK)
 	page := request(t, handler, http.MethodGet, "/api/v1/ui/page-data?page=audit", adminToken, nil, http.StatusOK)
 	if _, ok := page["users"]; !ok {
 		t.Fatal("admin audit page omitted selectable users")

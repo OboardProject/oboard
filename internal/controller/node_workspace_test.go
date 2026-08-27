@@ -232,8 +232,8 @@ func TestNodeWorkspaceAutomationPreservesEnabledAndEnforcesPerspective(t *testin
 	}
 	operator := application.Principal{ID: "operator", UserID: &first.ID, Role: model.RoleOperator}
 	otherInput, _ := json.Marshal(map[string]any{"user_id": second.ID})
-	if _, err := server.queryManagementCapability(t.Context(), operator, "node_groups.list", otherInput); err == nil {
-		t.Fatal("operator unexpectedly accessed another user's node groups")
+	if _, err := server.queryManagementCapability(t.Context(), operator, "node_groups.list", otherInput); err != nil {
+		t.Fatalf("operator user perspective failed: %v", err)
 	}
 	admin := application.Principal{ID: "admin", Role: model.RoleAdmin}
 	if _, err := server.queryManagementCapability(t.Context(), admin, "node_groups.list", otherInput); err != nil {

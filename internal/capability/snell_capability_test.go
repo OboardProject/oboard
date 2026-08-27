@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSnellProfileCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
+func TestSnellProfileCapabilitiesAreManagementOnlyAndExecutable(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{"snell_profiles.list", "snell_profiles.create", "snell_profiles.update", "snell_profiles.delete"} {
 		descriptor, ok := catalog.Get(name)
@@ -13,7 +13,7 @@ func TestSnellProfileCapabilitiesAreAdminOnlyAndExecutable(t *testing.T) {
 			t.Fatalf("%s is not exposed through MCP: %#v", name, descriptor)
 		}
 		if descriptor.RBACPermission != "admin.settings" {
-			t.Fatalf("%s is not admin-only: %#v", name, descriptor)
+			t.Fatalf("%s is not management-only: %#v", name, descriptor)
 		}
 		if name != "snell_profiles.list" && (!descriptor.Executable || descriptor.ReadOnly) {
 			t.Fatalf("%s must be an executable write capability: %#v", name, descriptor)

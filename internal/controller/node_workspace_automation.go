@@ -80,7 +80,7 @@ func (s *Server) nodeWorkspacePrincipalUser(ctx context.Context, principal appli
 	if userID <= 0 || !principal.AllowsInt64("user_ids", userID) {
 		return nil, errors.New("authorized user_id is required")
 	}
-	if principal.Role != model.RoleAdmin && (principal.UserID == nil || *principal.UserID != userID) {
+	if !model.HasManagementAccess(principal.Role) && (principal.UserID == nil || *principal.UserID != userID) {
 		return nil, errors.New("only administrators may manage another user's nodes")
 	}
 	user, err := s.store.GetUser(ctx, userID)

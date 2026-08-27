@@ -577,7 +577,7 @@ func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {
 	operatorLogin := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "operator", "password": "long-user-password"}, http.StatusOK)
 	operatorToken := operatorLogin["token"].(string)
 
-	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns", operatorToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns", operatorToken, nil, http.StatusOK)
 	dnsPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns", adminToken, nil, http.StatusOK)
 	for _, key := range []string{"dns_lists", "server_dns_policies", "dns_benchmarks"} {
 		if _, ok := dnsPage[key]; !ok {
@@ -588,7 +588,7 @@ func TestDNSPagesKeepResolverAndDomainRecordsSeparate(t *testing.T) {
 		t.Fatalf("DNS settings page unexpectedly included domain account data: %#v", dnsPage)
 	}
 
-	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns-records", operatorToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns-records", operatorToken, nil, http.StatusOK)
 	recordsPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=dns-records", adminToken, nil, http.StatusOK)
 	for _, key := range []string{"dns_credentials", "inbounds", "servers"} {
 		if _, ok := recordsPage[key]; !ok {
@@ -686,7 +686,7 @@ func TestBuiltinGroupsAndGroupAdminRole(t *testing.T) {
 	}
 }
 
-func TestAgentHostOperationsRequireAdminButOperatorCanProbeForward(t *testing.T) {
+func TestAgentHostOperationsAllowOperator(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -716,7 +716,18 @@ func TestAgentHostOperationsRequireAdminButOperatorCanProbeForward(t *testing.T)
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/logs",
 		"/api/v1/ui/servers/" + itoa(sourceID) + "/enroll-token",
 	} {
-		request(t, h, http.MethodPost, endpoint, operatorToken, map[string]any{}, http.StatusForbidden)
+		data, err := json.Marshal(map[string]any{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(data))
+		req.Header.Set("content-type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+operatorToken)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, req)
+		if response.Code == http.StatusForbidden || response.Code == http.StatusUnauthorized {
+			t.Fatalf("operator was denied %s: status=%d body=%s", endpoint, response.Code, response.Body.String())
+		}
 	}
 	probe := request(t, h, http.MethodPost, "/api/v1/ui/port-forwards/"+itoa(forwardID)+"/probe", operatorToken, map[string]any{}, http.StatusAccepted)
 	if probe["task"].(map[string]any)["type"] != "probe_port_forwards" {
@@ -1042,7 +1053,7 @@ func TestPasswordChangeRevokesSession(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "brand-new-password"}, http.StatusOK)
 }
 
-func TestOperatorTaskPayloadScrubsSecrets(t *testing.T) {
+func TestOperatorTaskPayloadMatchesAdministratorAccess(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1066,18 +1077,16 @@ func TestOperatorTaskPayloadScrubsSecrets(t *testing.T) {
 	}
 	out := request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks/"+itoa(task.ID), opToken, nil, http.StatusOK)
 	got := out["task"].(map[string]any)
-	if got["nonce"] != "<redacted>" {
-		t.Fatalf("operator should not see nonce: %#v", got)
+	if got["nonce"] != "nonce-secret" {
+		t.Fatalf("operator did not receive administrator task access: %#v", got)
 	}
 	payload := fmt.Sprint(got["payload_json"])
 	result := fmt.Sprint(got["result_json"])
-	payloadRedacted := strings.Contains(payload, "<redacted>") || strings.Contains(payload, "\\u003credacted\\u003e")
-	resultRedacted := strings.Contains(result, "<redacted>") || strings.Contains(result, "\\u003credacted\\u003e")
-	if strings.Contains(payload, "abc") || !payloadRedacted {
-		t.Fatalf("operator payload not scrubbed: %s", payload)
+	if !strings.Contains(payload, "abc") {
+		t.Fatalf("operator task payload differs from administrator access: %s", payload)
 	}
-	if strings.Contains(result, "secret-token") || !resultRedacted {
-		t.Fatalf("operator result not scrubbed: %s", result)
+	if !strings.Contains(result, "secret-token") {
+		t.Fatalf("operator task result differs from administrator access: %s", result)
 	}
 	adminOut := request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks/"+itoa(task.ID), adminToken, nil, http.StatusOK)
 	adminTask := adminOut["task"].(map[string]any)
@@ -1142,7 +1151,7 @@ func TestDiagnosticRoutesRequireOperator(t *testing.T) {
 		request(t, h, http.MethodGet, path, operatorToken, nil, http.StatusOK)
 	}
 
-	// The audit trail records admin activity and must stay admin-only.
+	// The audit trail is part of the shared management surface.
 	request(t, h, http.MethodGet, "/api/v1/ui/audit-logs", viewerToken, nil, http.StatusForbidden)
-	request(t, h, http.MethodGet, "/api/v1/ui/audit-logs", operatorToken, nil, http.StatusForbidden)
+	request(t, h, http.MethodGet, "/api/v1/ui/audit-logs", operatorToken, nil, http.StatusOK)
 }
