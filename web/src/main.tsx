@@ -74,6 +74,7 @@ import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } fr
 import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-target-options'
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
+import { telegramBindingInstruction } from './telegram-binding'
 import './style.css'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
@@ -19554,7 +19555,7 @@ function Notifications({ data, client, load, notify, sessionUser }: any) {
       const result = await client.request('/telegram/binding-code', { method: 'POST', body: JSON.stringify({ channel_id: channel.id }) })
       await dialogs.alert({
         title: '绑定 Telegram',
-        message: `请在 10 分钟内向 OBoard Bot 发送：\n/bind ${channel.id} ${String(result.code || '')}`,
+        message: telegramBindingInstruction(channel.id, result),
       })
     } catch (error: any) {
       await dialogs.alert({ title: '生成失败', message: localizeErrorMessage(error?.message || error) })
