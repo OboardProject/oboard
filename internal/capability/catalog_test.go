@@ -142,6 +142,13 @@ func TestDefaultCatalogExposesServerLifecycle(t *testing.T) {
 	if deleteCap.MinimumAccess != "operate" || deleteCap.ApprovalPolicy != "required" {
 		t.Fatalf("servers.delete authorization=%#v", deleteCap)
 	}
+	resetTraffic, ok := catalog.Get("servers.reset_traffic")
+	if !ok || !resetTraffic.Executable || resetTraffic.ReadOnly || resetTraffic.Destructive || resetTraffic.RiskClass != 1 {
+		t.Fatalf("servers.reset_traffic=%#v ok=%v", resetTraffic, ok)
+	}
+	if resetTraffic.MinimumAccess != "operate" || resetTraffic.ApprovalPolicy != "required" || !strings.Contains(resetTraffic.Description, "已用流量清零") {
+		t.Fatalf("servers.reset_traffic contract=%#v", resetTraffic)
+	}
 }
 
 // TestInboundSchemaCarriesProtocolGuidance verifies that callers can select a

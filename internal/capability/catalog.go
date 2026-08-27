@@ -370,6 +370,7 @@ func defaultDescriptors() []Descriptor {
 		{"servers.onboard", "servers:onboard", 2, true, DataInternal, nil},
 		{"servers.update", "servers:write", 2, true, DataInternal, nil},
 		{"servers.extend_expiry", "servers:write", 1, true, DataInternal, nil},
+		{"servers.reset_traffic", "servers:write", 1, true, DataInternal, nil},
 		{"subscriptions.resume", "subscriptions:resume", 2, true, DataInternal, nil},
 		{"subscriptions.custom_paths.set_alias", "subscriptions:manage", 2, true, DataSensitive, []string{"alias"}},
 		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
@@ -391,6 +392,8 @@ func defaultDescriptors() []Descriptor {
 			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue"
 		} else if domain.name == "inbounds.create" {
 			description = "创建入口。TLS 入口提交服务器、协议/kind、端口和 dns_domain 即可；certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请"
+		} else if domain.name == "servers.reset_traffic" {
+			description = "将指定服务器当前周期已用流量清零；不影响限额、重置日、用户流量账本，也不触发部署。后续 Agent 上报会重新累计"
 		} else if domain.name == "inbounds.padding.update" {
 			description = "显式更换、重新生成或自定义 AnyTLS PaddingScheme；会改变流量形态并需要重新部署"
 		}
@@ -596,7 +599,7 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return serverRefsFromIDs
 	case "servers.onboard":
 		return serverOnboardRefs
-	case "servers.update", "servers.extend_expiry", "servers.enrollment.issue", "servers.delete":
+	case "servers.update", "servers.extend_expiry", "servers.reset_traffic", "servers.enrollment.issue", "servers.delete":
 		return serverUpdateRefs
 	case "subscription_plans.nodes.update":
 		return subscriptionPlanNodesUpdateRefs
@@ -684,6 +687,15 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		return schemaObject(map[string]any{"server_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "server_id", "confirm"), simpleOutput(map[string]any{"deleted": boolValue, "server_id": positiveID}), "server_ids"
 	case "servers.extend_expiry":
 		return schemaObject(map[string]any{"server_id": positiveID, "days": map[string]any{"type": "integer", "minimum": 1, "maximum": 3650}}, "server_id", "days"), simpleOutput(map[string]any{"server_id": positiveID, "expires_at": stringValue, "days": map[string]any{"type": "integer"}}), "server_ids"
+	case "servers.reset_traffic":
+		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
+			"server_id":              positiveID,
+			"traffic_used_bytes":     map[string]any{"type": "integer", "minimum": 0},
+			"traffic_upload_bytes":   map[string]any{"type": "integer", "minimum": 0},
+			"traffic_download_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"traffic_period_start":   stringValue,
+			"traffic_period_end":     stringValue,
+		}), "server_ids"
 	case "deployments.apply":
 		return schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids"), simpleOutput(map[string]any{"deployment": closedObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "server_ids": idArray(0, 100), "status": stringValue})}), "server_ids"
 	case "inbounds.create", "inbounds.update":

@@ -45,7 +45,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "user.traffic.ledger", Version: mcpRecipeVersion, Aliases: []string{"user.traffic.ledger", "traffic ledger", "user traffic ledger", "流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账"}, Verbs: []string{"view", "read", "query", "show", "check", "diagnose", "查看", "查询", "读取", "检查", "对账"}, Nouns: []string{"traffic ledger", "user traffic", "reconciliation", "流量账本", "用户流量", "对账"}, Prepare: s.prepareUserTrafficLedgerRecipe},
 		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
 		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
-		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "delete server", "修改服务器", "服务器设置", "删除服务器"}, Verbs: []string{"update", "change", "set", "modify", "delete", "remove", "修改", "设置", "调整", "开启", "关闭", "删除"}, Nouns: []string{"server", "服务器", "节点"}, Prepare: s.prepareServerManageRecipe},
+		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "delete server", "修改服务器", "服务器设置", "删除服务器", "清零已用流量", "已用流量清零", "清零服务器流量"}, Verbs: []string{"update", "change", "set", "modify", "delete", "remove", "reset", "clear", "修改", "设置", "调整", "开启", "关闭", "删除", "清零", "重置"}, Nouns: []string{"server", "服务器", "节点", "已用流量", "used traffic"}, Prepare: s.prepareServerManageRecipe},
 		{ID: "server.metrics.query", Version: mcpRecipeVersion, Aliases: []string{"server.metrics.query", "server query", "server metrics", "服务器指标", "看流量", "查看流量", "查询流量", "连接数", "延迟", "负载"}, Verbs: []string{"view", "read", "query", "show", "check", "查看", "看", "查询", "读取", "检查"}, Nouns: []string{"server metrics", "server traffic", "traffic", "latency", "connection count", "resource metrics", "指标", "流量", "延迟", "连接数", "负载", "资源"}, Prepare: s.prepareServerMetricsQueryRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
@@ -185,6 +185,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		tokens   []string
 	}{
 		{"user.traffic.ledger", []string{"流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账", "traffic ledger", "user traffic ledger"}},
+		{"server.manage", []string{"清零已用流量", "已用流量清零", "清零服务器流量", "清零这台服务器的流量", "重置服务器已用流量", "清零流量", "reset used traffic", "reset server traffic", "zero used traffic", "clear used traffic", "clear server traffic"}},
 		{"routing_rule_set.manage", []string{"分流规则集", "路由规则集", "远程规则集", "routing rule set", "routing ruleset", "rule set", "规则集"}},
 		{"routing.manage", []string{"分流", "routing rule", "routing rules", "路由规则"}},
 		{"external_outbound.import", []string{"导入节点", "import node", "导入第三方节点"}},
@@ -247,7 +248,7 @@ func hasServerManageParams(params map[string]any) bool {
 		"offline_notify_enabled", "server.offline_notify_enabled", "offline_after_seconds", "server.offline_after_seconds", "expires_at", "server.expires_at", "clear_expires_at", "server.clear_expires_at",
 		"auto_renew_enabled", "server.auto_renew_enabled", "renewal_cycle", "server.renewal_cycle", "expiry_notify_enabled", "server.expiry_notify_enabled",
 		"latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_regions", "latency_probe_max_targets",
-		"delete", "confirm",
+		"delete", "confirm", "reset_traffic",
 	} {
 		if _, ok := params[key]; ok {
 			return true
@@ -452,6 +453,13 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 		}
 		operation := mcpOperationRef{Capability: "servers.delete", Input: map[string]any{"server_id": resolved.Value.ID, "confirm": true}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "delete_server", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "server_absent"}}}, nil
+	}
+	if serverTrafficResetRequested(input) {
+		if containsAnyFold(input.Goal, "用户流量", "user traffic", "用户账本", "流量账本") {
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "reset_traffic", "type": "boolean", "reason": "用户流量账本不能改写。若要清零服务器当前周期面板统计，请确认目标服务器并设置 reset_traffic=true"}}}, nil
+		}
+		operation := mcpOperationRef{Capability: "servers.reset_traffic", Input: map[string]any{"server_id": resolved.Value.ID}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "reset_server_traffic", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 	}
 	changes := map[string]any{}
 	if nested, ok := input.Params["changes"].(map[string]any); ok {
@@ -1033,6 +1041,18 @@ func containsAnyFold(value string, values ...string) bool {
 		}
 	}
 	return false
+}
+
+func serverTrafficResetRequested(input mcpTaskInput) bool {
+	if taskBoolParam(input.Params, false, "reset_traffic") {
+		return true
+	}
+	return containsAnyFold(input.Goal,
+		"清零已用流量", "已用流量清零", "清零服务器流量", "清零这台服务器的流量",
+		"重置服务器已用流量", "清零流量",
+		"reset used traffic", "reset server traffic", "zero used traffic",
+		"clear used traffic", "clear server traffic",
+	)
 }
 func inferredIPStack(goal string) string {
 	switch {

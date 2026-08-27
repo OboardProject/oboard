@@ -718,6 +718,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerServerLifecycleOperations()
 	s.registerServerUpdateOperation()
 	s.registerServerExpiryOperation()
+	s.registerServerTrafficResetOperation()
 	s.registerInboundAutomationOperations()
 	s.registerProxyPathAutomationOperations()
 	s.registerSubscriptionPlanAutomationOperations()

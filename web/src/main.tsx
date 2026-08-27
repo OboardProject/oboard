@@ -7428,6 +7428,26 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       await dialogs.alert({ title: '延长到期失败', message: localizeErrorMessage(error?.message || error) })
     }
   }
+  const resetServerTraffic = async (server: Server) => {
+    const used = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
+    const ok = await dialogs.confirm({
+      title: '清零已用流量？',
+      message: `${server.name || `服务器 #${server.id}`} 当前周期已用 ${formatBytes(used)} 将归零。只影响这台服务器的面板统计，不影响限额、重置日和用户流量。清零后新上报的流量会重新累计。`,
+      confirmText: '清零',
+    })
+    if (!ok) return
+    try {
+      const result = await client.request(`/servers/${server.id}/reset-traffic`, { method: 'POST', body: '{}' }) as { server?: Server }
+      if (result.server?.id) {
+        setServers(current => upsertServerSnapshot(current, result.server as Server))
+        setDetailServer(current => current?.id === server.id ? result.server as Server : current)
+      }
+      revalidateServers()
+      notify?.(`${server.name || '服务器'} 已用流量已清零`, 'success')
+    } catch (error: any) {
+      await dialogs.alert({ title: '清零已用流量失败', message: localizeErrorMessage(error?.message || error) })
+    }
+  }
   const enableAutomaticTimeCorrection = async (server: Server) => {
     try {
       const result = await client.request(`/servers/${server.id}`, { method: 'PATCH', body: JSON.stringify({ ...server, time_correction_mode: 'auto' }) }) as { server?: Server; time_check_error?: string }
@@ -7594,6 +7614,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
     else if (type === 'edit') setEditServer(s)
     else if (type === 'extend-expiry') setExtendServer(s)
+    else if (type === 'reset-traffic') void resetServerTraffic(s)
     else if (type === 'mtu') setMtuServer(s)
     else if (type === 'dns') setDNSServer(s)
     else if (type === 'agent-config') setAgentConfigServer(s)
@@ -7767,7 +7788,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
-    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} role={role} onResetTraffic={() => void resetServerTraffic(detailServer)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     {terminalServer ? <RemoteTerminal serverId={terminalServer.id} serverName={terminalServer.name || `server-${terminalServer.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${terminalServer.id}/terminal/ws/${sessionId}`)} passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)} onClose={() => setTerminalServer(null)} /> : null}
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
@@ -8430,9 +8451,17 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
             <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
           </FormField>
-          <FormField label="已用流量" hint="当前周期已产生的流量，默认为 0，创建时可填入已用的一半等初始值。">
+          <FormField label="已用流量" hint="当前周期已产生的流量。保存后写入；也可在操作菜单中立即清零，不必改其他设置。">
             <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
           </FormField>
+          {Number(draft.traffic_used_bytes || 0) > 0 && (
+            <div className="form-extra-row">
+              <button type="button" className="ghost" onClick={() => update({ traffic_used_bytes: 0 })}>
+                <RotateCcw size={14} /> 清零已用流量
+              </button>
+              <span>将表单中的已用流量改为 0，保存后生效。</span>
+            </div>
+          )}
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
@@ -8838,6 +8867,7 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
       items: [
         { label: '基础设置', type: 'edit', icon: SlidersHorizontal },
         { label: '延长到期', type: 'extend-expiry', icon: CalendarDays, admin: true },
+        { label: '清零已用流量', type: 'reset-traffic', icon: RotateCcw, admin: true },
         { label: 'DNS 设置', type: 'dns', icon: Globe },
         { label: 'MTU 设置', type: 'mtu', icon: Gauge },
         { label: 'Agent 设置', type: 'agent-config', icon: Sliders, admin: true },
@@ -10415,7 +10445,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   </MotionDialogPanel>
 }
 
-function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () => void }) {
+function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }: { server: Server; role?: Role; onResetTraffic?: () => void; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const connectivityLabel = !server.latency_probe_enabled
     ? '未启用检测'
@@ -10512,6 +10542,14 @@ function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () =
             return <div className="server-traffic-quota-track" style={{ marginTop: 10, height: 6 }} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}><div className={`server-traffic-quota-fill ${tone}`} style={{ width: `${pct}%` }} /></div>
           })()}
           <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>未配置统计周期与日期时，默认按自然月统计，周期为每月 1 日 00:00 至下月 1 日 00:00。</p>
+          {onResetTraffic && hasManagementAccess(role) && (
+            <div className="form-extra-row" style={{ marginTop: 10 }}>
+              <button type="button" className="ghost" onClick={onResetTraffic}>
+                <RotateCcw size={14} /> 清零已用流量
+              </button>
+              <span>只清当前周期面板统计，不影响限额和用户流量。</span>
+            </div>
+          )}
         </section>
 
         <section className="server-detail-section">

@@ -16,6 +16,7 @@ func TestNewRecipeRouting(t *testing.T) {
 		params     map[string]any
 	}{
 		{name: "user traffic ledger", goal: "为什么 Alice 流量看起来不对", want: "user.traffic.ledger", params: map[string]any{"user_id": 7}},
+		{name: "reset server traffic", goal: "清零已用流量", want: "server.manage", refs: []string{"server:1"}},
 		{name: "outbound en", goal: "create outbound on server 1", want: "outbound.manage", params: map[string]any{"server_id": 1}},
 		{name: "routing rule set zh", goal: "创建分流规则集", want: "routing_rule_set.manage", params: map[string]any{"name": "广告域名", "url": "https://rules.example/ads.json", "format": "singbox_source"}},
 		{name: "routing rule set en", goal: "refresh routing rule set", want: "routing_rule_set.manage", params: map[string]any{"routing_rule_set_id": 1}},

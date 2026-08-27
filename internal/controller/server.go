@@ -3845,6 +3845,10 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.extendServerExpiryHandler(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "reset-traffic" {
+		s.resetServerTrafficHandler(w, r, id)
+		return
+	}
 	if r.Method == http.MethodGet {
 		srv, err := s.store.GetServer(r.Context(), id)
 		if err != nil {
