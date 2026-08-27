@@ -99,6 +99,10 @@ func (s *Server) validateServerUpdateOperation(ctx context.Context, principal ap
 	}
 	next := *current
 	changed := applyServerUpdateChanges(&next, request.Changes)
+	if request.Changes.TrafficResetMode == nil && request.Changes.TrafficResetDay != nil && next.TrafficResetMode != model.TrafficResetMonthDay {
+		next.TrafficResetMode = model.TrafficResetMonthDay
+		changed = append(changed, "traffic_reset_mode")
+	}
 	// Auto-derive server traffic reset when the caller leaves traffic_reset_mode/day
 	// unspecified but updates billing dates. Priority: service_start_at > expires_at.
 	if request.Changes.TrafficResetMode == nil && request.Changes.TrafficResetDay == nil {

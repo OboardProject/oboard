@@ -122,6 +122,47 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 	}
 }
 
+func TestMCPServerUpdateResetDaySelectsMonthlyDayMode(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111114", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetBootstrapAdmin(ctx, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	server := &model.Server{
+		Name:             "mcp-reset-day",
+		ListenIP:         "0.0.0.0",
+		PortRangeStart:   12000,
+		PortRangeEnd:     13000,
+		TrafficResetMode: model.TrafficResetMonthly,
+		TrafficResetDay:  1,
+	}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+
+	update, _ := json.Marshal(map[string]any{
+		"server_id": server.ID,
+		"changes": map[string]any{
+			"traffic_reset_day": 27,
+		},
+	})
+	applyAutomationChangeset(t, srv, principal, "set-reset-day", automation.OperationRequest{Capability: "servers.update", Input: update})
+
+	updated, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.TrafficResetMode != model.TrafficResetMonthDay || updated.TrafficResetDay != 27 {
+		t.Fatalf("stored traffic reset = %s/%d, want %s/27", updated.TrafficResetMode, updated.TrafficResetDay, model.TrafficResetMonthDay)
+	}
+}
+
 func assertStoredServerSettings(t *testing.T, server model.Server, portStart, portEnd, internalStart, internalEnd int, expiresAt time.Time, cycle model.ServerRenewalCycle, autoRenew, expiryNotify bool) {
 	t.Helper()
 	if server.PortRangeStart != portStart || server.PortRangeEnd != portEnd || server.InternalPortRangeStart != internalStart || server.InternalPortRangeEnd != internalEnd {
