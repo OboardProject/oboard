@@ -13664,15 +13664,188 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   width: min(560px, calc(100vw - 28px));
 }
 
+.user-create-dialog.user-form-dialog {
+  container-name: user-create;
+  container-type: inline-size;
+  width: min(820px, calc(100vw - 28px));
+}
+
 .user-form {
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 0;
 }
 
+.user-create-form.user-form {
+  gap: 0;
+}
+
+.user-form-columns,
+.user-form-identity,
+.user-form-options {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  align-content: start;
+}
+
+.user-form-columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container user-create (min-width: 640px) {
+  .user-form-columns {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px 28px;
+    align-items: start;
+  }
+
+  .user-form-options {
+    padding-left: 24px;
+    border-left: 1px solid var(--border);
+  }
+}
+
+.user-form-options .ui-segmented-select {
+  width: 100%;
+  display: grid;
+}
+
+.user-form-options .ui-segmented-select button {
+  padding-inline: 8px;
+}
+
 .user-form .form-field:has(input[type="password"]),
 .user-form .form-field:has(input[type="number"]) {
   min-width: 0;
+}
+
+.user-form .form-field-control {
+  overflow: visible;
+}
+
+.user-form .field-with-error {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.user-form .field-with-error > input[aria-invalid="true"],
+.user-form .user-password-input > input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.user-form .field-error {
+  position: absolute;
+  left: 8px;
+  top: auto;
+  bottom: 0;
+  z-index: 3;
+  max-width: calc(100% - 16px);
+  margin: 0;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
+  border-radius: 6px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-sm);
+  color: var(--danger);
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transform: translateY(50%);
+}
+
+.user-password-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.user-password-input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.user-password-input > input {
+  width: 100%;
+  padding-right: 36px;
+}
+
+.user-password-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  z-index: 1;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.user-password-toggle:hover,
+.user-password-toggle:focus-visible {
+  color: var(--text-strong);
+  background: transparent;
+  box-shadow: none;
+  transform: translateY(-50%);
+}
+
+.user-password-generate {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.user-password-strength {
+  display: grid;
+  gap: 4px;
+}
+
+.user-password-strength-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border-color);
+}
+
+.user-password-strength-bar > div {
+  height: 100%;
+  transition: width 0.3s, background 0.3s;
+}
+
+.user-password-strength-meta {
+  display: flex;
+  justify-content: space-between;
+}
+
+.user-password-strength-meta small,
+.user-password-strength-hint,
+.user-password-auto-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.user-password-strength-hint,
+.user-password-auto-hint {
+  font-weight: 500;
 }
 
 .user-management-main .section-actions button,

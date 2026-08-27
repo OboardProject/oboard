@@ -18381,10 +18381,15 @@ function UserPasswordDialog({ user, onCancel, onSubmit }: { user: User; onCancel
   </MotionDialogPanel>
 }
 
+function UserFieldError({ message }: { message?: string | null }) {
+  if (!message) return null
+  return <small className="field-error" role="alert" title={message}>{message}</small>
+}
+
 function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>> }) {
   return <>
     <FormField label="限速策略" hint="个人设置优先于套餐。">
-      <Select variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && Number(draft.speed_limit_mbps) <= 0 ? 10 : draft.speed_limit_mbps }) }}>
+      <Select className="full-width" variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && Number(draft.speed_limit_mbps) <= 0 ? 10 : draft.speed_limit_mbps }) }}>
         <option value="inherit">跟随套餐</option>
         <option value="unlimited">不限速</option>
         <option value="custom">自定义</option>
@@ -18407,7 +18412,7 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
       </div>
     </FormField>}
     <FormField label="流量策略" hint="个人设置优先于套餐。">
-      <Select variant="segmented" value={draft.traffic_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, traffic_limit_mode: mode, traffic_limit_bytes: mode === 'custom' && draft.traffic_limit_bytes <= 0 ? 1073741824 : draft.traffic_limit_bytes }) }}>
+      <Select className="full-width" variant="segmented" value={draft.traffic_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, traffic_limit_mode: mode, traffic_limit_bytes: mode === 'custom' && draft.traffic_limit_bytes <= 0 ? 1073741824 : draft.traffic_limit_bytes }) }}>
         <option value="inherit">跟随套餐</option>
         <option value="unlimited">不限量</option>
         <option value="custom">自定义</option>
@@ -18426,7 +18431,7 @@ function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number
   const effectiveMode = mode || 'monthly'
   return <>
     <FormField label="流量重置" hint="统计周期与日期未填写时，默认按自然月统计。自然月模式下重置日不生效。">
-      <Select variant="segmented" value={effectiveMode} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
+      <Select className="full-width" variant="segmented" value={effectiveMode} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
         <option value="monthly">自然月</option>
         <option value="month_day">每月指定日</option>
       </Select>
@@ -18458,62 +18463,64 @@ function UserBaseFields({ draft, setDraft, includePassword, canAssignAdmin, user
   const pwd = draft.password || ''
   const strength = includePassword ? evaluatePasswordStrength(pwd) : null
   const displayPasswordError = passwordError || (pwd && pwd.length > 0 && pwd.length < 8 ? '密码至少需要 8 个字符' : null)
-  return <>
-    <FormField label="用户名" required hint="用于登录面板，3-32 字符，仅字母/数字/下划线/连字符/点。">
-      <div className="field-with-error">
-        <input value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} placeholder="例如：zhangsan" autoComplete="off" aria-invalid={Boolean(displayUsernameError)} style={displayUsernameError ? { borderColor: '#ef4444' } : undefined} />
-        {displayUsernameError && <small className="field-error" style={{ color: '#ef4444', fontSize: 12, marginTop: 4, display: 'block' }}>{displayUsernameError}</small>}
-      </div>
-    </FormField>
-    <FormField label="昵称" hint="用于面板显示。">
-      <div className="field-with-error">
-        <input value={draft.nickname} onChange={e => setDraft({ ...draft, nickname: e.target.value })} placeholder="可选" maxLength={40} aria-invalid={Boolean(nicknameError)} style={nicknameError ? { borderColor: '#ef4444' } : undefined} />
-        {nicknameError && <small className="field-error" style={{ color: '#ef4444', fontSize: 12, marginTop: 4, display: 'block' }}>{nicknameError}</small>}
-      </div>
-    </FormField>
-    {includePassword && <FormField label="初始密码" hint={pwd ? '至少 8 位，建议含大小写、数字和符号；留空将自动生成。' : '留空将自动生成 16 位随机密码，创建后仅显示一次，请及时复制。'}>
-      <div className="field-with-error">
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <input value={pwd} onChange={e => setDraft({ ...draft, password: e.target.value })} placeholder="留空自动生成" type={showPassword ? 'text' : 'password'} autoComplete="new-password" aria-invalid={Boolean(displayPasswordError)} style={displayPasswordError ? { borderColor: '#ef4444', paddingRight: 36 } : { paddingRight: 36 }} />
-            <button type="button" onClick={onToggleShowPassword} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏' : '显示'} style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4, display: 'flex', alignItems: 'center' }}>
+  return <div className="user-form-columns">
+    <div className="user-form-identity">
+      <FormField label="用户名" required hint="用于登录面板，3-32 字符，仅字母/数字/下划线/连字符/点。">
+        <div className="field-with-error">
+          <input value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} placeholder="例如：zhangsan" autoComplete="off" aria-invalid={Boolean(displayUsernameError)} />
+          <UserFieldError message={displayUsernameError} />
+        </div>
+      </FormField>
+      <FormField label="昵称" hint="用于面板显示。">
+        <div className="field-with-error">
+          <input value={draft.nickname} onChange={e => setDraft({ ...draft, nickname: e.target.value })} placeholder="可选" maxLength={40} aria-invalid={Boolean(nicknameError)} />
+          <UserFieldError message={nicknameError} />
+        </div>
+      </FormField>
+      {includePassword && <FormField label="初始密码" hint={pwd ? '至少 8 位，建议含大小写、数字和符号；留空将自动生成。' : '留空将自动生成 16 位随机密码，创建后仅显示一次，请及时复制。'}>
+        <div className="user-password-row">
+          <div className="user-password-input field-with-error">
+            <input value={pwd} onChange={e => setDraft({ ...draft, password: e.target.value })} placeholder="留空自动生成" type={showPassword ? 'text' : 'password'} autoComplete="new-password" aria-invalid={Boolean(displayPasswordError)} />
+            <button type="button" onClick={onToggleShowPassword} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏' : '显示'} className="user-password-toggle">
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
+            <UserFieldError message={displayPasswordError} />
           </div>
-          <button type="button" className="ghost" onClick={onGenerateRandom} title="生成随机强密码" style={{ whiteSpace: 'nowrap', padding: '6px 10px', fontSize: 12 }}>随机生成</button>
+          <button type="button" className="ghost user-password-generate" onClick={onGenerateRandom} title="生成随机强密码">随机生成</button>
         </div>
         {pwd && strength && (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ height: 4, background: 'var(--border-color)', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ width: `${strength.percent}%`, height: '100%', background: strength.color, transition: 'width 0.3s, background 0.3s' }} />
+          <div className="user-password-strength">
+            <div className="user-password-strength-bar">
+              <div style={{ width: `${strength.percent}%`, background: strength.color }} />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-              <small style={{ color: strength.color, fontSize: 11, fontWeight: 600 }}>{strength.label}</small>
-              <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{pwd.length} 位</small>
+            <div className="user-password-strength-meta">
+              <small style={{ color: strength.color }}>{strength.label}</small>
+              <small>{pwd.length} 位</small>
             </div>
-            {pwd.length > 0 && pwd.length < 12 && <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block', marginTop: 2 }}>建议 12 位以上且包含大小写、数字和符号</small>}
+            {pwd.length > 0 && pwd.length < 12 && <small className="user-password-strength-hint">建议 12 位以上且包含大小写、数字和符号</small>}
           </div>
         )}
-        {displayPasswordError && <small className="field-error" style={{ color: '#ef4444', fontSize: 12, marginTop: 4, display: 'block' }}>{displayPasswordError}</small>}
-        {!pwd && !displayPasswordError && <small style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 4, display: 'block' }}>将自动生成随机密码并在创建成功后弹窗展示</small>}
-      </div>
-    </FormField>}
-    <FormField label="角色">
-      <Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}>
-        <option value="none">无权限</option>
-        <option value="viewer">只读</option>
-        <option value="operator">操作员</option>
-        {canAssignAdmin && <option value="admin">管理员</option>}
-      </Select>
-    </FormField>
-    <FormField label="状态">
-      <Select variant="segmented" value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value })}>
-        <option value="active">活跃</option>
-        <option value="disabled">禁用</option>
-      </Select>
-    </FormField>
-    <UserLimitFields draft={draft} setDraft={setDraft} />
-  </>
+        {!pwd && !displayPasswordError && <small className="user-password-auto-hint">将自动生成随机密码并在创建成功后弹窗展示</small>}
+      </FormField>}
+    </div>
+    <div className="user-form-options">
+      <FormField label="角色">
+        <Select className="full-width" variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}>
+          <option value="none">无权限</option>
+          <option value="viewer">只读</option>
+          <option value="operator">操作员</option>
+          {canAssignAdmin && <option value="admin">管理员</option>}
+        </Select>
+      </FormField>
+      <FormField label="状态">
+        <Select className="full-width" variant="segmented" value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value })}>
+          <option value="active">活跃</option>
+          <option value="disabled">禁用</option>
+        </Select>
+      </FormField>
+      <UserLimitFields draft={draft} setDraft={setDraft} />
+    </div>
+  </div>
 }
 
 function UserCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit, usernameError, passwordError, submitting }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void>; usernameError?: string; passwordError?: string; submitting?: boolean }) {
