@@ -7143,8 +7143,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
   const [serverRegionFilter, setServerRegionFilter] = useState('all')
   const [filterExpanded, setFilterExpanded] = useState(false)
-  const [serverActionOpen, setServerActionOpen] = useState(false)
-  const serverActionRef = useRef<HTMLDivElement>(null)
   const [listPreferences, setListPreferences] = useState<ServerListPreferences>(loadServerListPreferences)
   const [draggedServerID, setDraggedServerID] = useState<number | null>(null)
   const [dragOverServerID, setDragOverServerID] = useState<number | null>(null)
@@ -7160,17 +7158,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [deleteServerDraft, setDeleteServerDraft] = useState<Server | null>(null)
   const [deleteServerBusy, setDeleteServerBusy] = useState(false)
   const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
-
-  useEffect(() => {
-    if (!serverActionOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (serverActionRef.current && !serverActionRef.current.contains(e.target as globalThis.Node)) {
-        setServerActionOpen(false)
-      }
-    }
-    document.addEventListener('click', onDocClick)
-    return () => document.removeEventListener('click', onDocClick)
-  }, [serverActionOpen])
 
   useEffect(() => {
     setServers(((data.servers || []) as Server[]).filter(server => !pendingDeleteServerIDsRef.current.has(server.id)))
@@ -7621,7 +7608,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
         </div>
       </div>
       <div className="section-actions">
-        <div className="server-action-group" ref={serverActionRef}>
+        <div className="server-action-group">
           <button
             type="button"
             className="server-add-button"
@@ -7630,37 +7617,21 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
             <Plus size={15} />
             <span>添加服务器</span>
           </button>
-          {hasManagementAccess(role) && (
-            <>
-              <button
-                type="button"
-                className={`server-action-trigger ${serverActionOpen ? 'active' : ''}`}
-                onClick={(e) => { e.stopPropagation(); setServerActionOpen(v => !v) }}
-                aria-label="更多操作"
-                aria-haspopup="menu"
-                aria-expanded={serverActionOpen}
-                title="更多操作"
-              >
-                <ChevronDown size={14} />
-              </button>
-              {serverActionOpen && (
-                <div className="server-action-popover" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={!enrolledCount}
-                    onClick={() => { setServerActionOpen(false); void updateAllAgents() }}
-                    title={enrolledCount ? `为 ${enrolledCount} 台已接入 Agent 创建更新任务` : '没有已接入的 Agent'}
-                  >
-                    <ArrowUpCircle size={15} />
-                    <span>一键更新 Agent</span>
-                    {enrolledCount > 0 && <span className="server-action-popover-badge">{enrolledCount}</span>}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
         </div>
+        {hasManagementAccess(role) && (
+          <button
+            type="button"
+            className="ghost server-update-agents-button"
+            disabled={!enrolledCount}
+            onClick={() => void updateAllAgents()}
+            aria-label={enrolledCount ? `一键更新 ${enrolledCount} 台 Agent` : '一键更新 Agent'}
+            title={enrolledCount ? `为 ${enrolledCount} 台已接入 Agent 创建更新任务` : '没有已接入的 Agent'}
+          >
+            <ArrowUpCircle size={15} />
+            <span className="server-update-agents-label">一键更新 Agent</span>
+            {enrolledCount > 0 && <span className="server-update-agents-badge">{enrolledCount}</span>}
+          </button>
+        )}
         <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
           <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
           <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>

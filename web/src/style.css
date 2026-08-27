@@ -1415,85 +1415,30 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   background: color-mix(in srgb, var(--primary-2) 80%, black 10%);
 }
 
-.server-action-group .server-action-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
+.server-update-agents-button {
+  position: relative;
+  flex: 0 0 auto;
+  gap: 6px;
   min-height: var(--control-height);
-  padding: 0;
-  background: transparent;
-  color: var(--primary-contrast);
-  border: none;
-  border-left: 1px solid color-mix(in srgb, var(--primary-contrast) 20%, transparent);
-  border-radius: 0 var(--radius-full) var(--radius-full) 0;
-  cursor: pointer;
-  transition: background 0.15s ease;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
-.server-action-group .server-action-trigger:hover,
-.server-action-group .server-action-trigger.active {
-  background: color-mix(in srgb, var(--primary-2) 80%, black 10%);
-}
-
-.server-action-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 120;
-  min-width: 180px;
-  padding: 6px;
-  background: var(--surface-solid);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  animation: server-popover-in 0.14s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes server-popover-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.server-action-popover button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  min-height: 32px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--text-strong);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s ease;
-}
-
-.server-action-popover button:hover:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.server-action-popover button:disabled {
-  color: var(--muted);
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.server-action-popover-badge {
-  margin-left: auto;
-  font-size: 11px;
+.server-update-agents-label {
   font-weight: 600;
-  padding: 1px 6px;
+}
+
+.server-update-agents-badge {
+  min-width: 18px;
+  padding: 0 6px;
   border-radius: var(--radius-full);
   background: var(--surface-3);
   color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  text-align: center;
 }
 
 .server-filter-toggle-btn {
@@ -10646,6 +10591,27 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .server-management-panel .server-action-group .server-add-button {
     flex: 1 1 auto;
     justify-content: center;
+  }
+  .server-management-panel .server-update-agents-button {
+    flex: 0 0 auto;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+  .server-management-panel .server-update-agents-label {
+    display: none;
+  }
+  .server-management-panel .server-update-agents-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    line-height: 16px;
+    font-size: 10px;
   }
   .server-management-panel .view-mode-toggle {
     flex: 0 0 auto;
