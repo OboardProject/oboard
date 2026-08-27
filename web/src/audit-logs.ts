@@ -459,7 +459,7 @@ function humanField(key: string) {
   return readableAction(key)
 }
 
-function findByID<T extends { id: number }>(rows: T[] | undefined, id?: number) {
+function findByID(rows: any[] | undefined, id?: number): any {
   if (!id || !Array.isArray(rows)) return undefined
   return rows.find(item => Number(item.id) === Number(id))
 }
