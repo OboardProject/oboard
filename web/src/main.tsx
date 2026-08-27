@@ -1510,6 +1510,7 @@ const pathTabs: Record<string, string> = Object.entries(tabPaths).reduce((acc, [
 }, { '/': 'dashboard' } as Record<string, string>)
 pathTabs['/node-order-templates'] = 'nodes'
 pathTabs['/subscriptions'] = 'nodes'
+// Keep in sync with internal/controller/ui_routes.go knownUIPagePaths.
 
 function tabFromPath(pathname: string) {
   const path = stripAppBasePath(pathname).replace(/\/+$/, '') || '/'

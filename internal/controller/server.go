@@ -14876,6 +14876,10 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, candidateAbs)
 		return
 	}
+	if !isKnownUIPagePath(r.URL.Path) {
+		writeNotFoundJSON(w)
+		return
+	}
 	index := filepath.Join(root, "index.html")
 	if !pathContained(root, index) {
 		http.NotFound(w, r)

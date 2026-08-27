@@ -68,6 +68,44 @@ func TestStaticAssetsUseImmutableCache(t *testing.T) {
 	}
 }
 
+func TestUnknownPanelPathsReturnNotFoundWithoutBasePath(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	staticDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(staticDir, "index.html"), []byte(`<!doctype html><html><head><base href="/" /></head><body>panel</body></html>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestServer(db, "test-secret", staticDir).Handler()
+
+	for _, path := range []string{"/not-a-real-page", "/login", "/admin", "/dashboard/extra", "/servers/1"} {
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d; want 404; body=%s", path, response.Code, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), `"code":"not_found"`) {
+			t.Errorf("GET %s body = %s; want not_found JSON", path, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "panel") {
+			t.Errorf("GET %s unexpectedly served the panel: %s", path, response.Body.String())
+		}
+	}
+
+	for _, path := range []string{"/", "/dashboard", "/dashboard/", "/servers", "/subscriptions"} {
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Errorf("GET %s status = %d; want 200; body=%s", path, response.Code, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), "panel") {
+			t.Errorf("GET %s did not serve the panel: %s", path, response.Body.String())
+		}
+	}
+}
+
 func TestServerDNSCanBeSavedTestedAndDeployedOnDemand(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -292,6 +330,7 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 		"/assets/app.js", "/install/agent.sh", "/downloads/release-manifest.json",
 		"/hidden-panel-other/healthz", "/hidden-panel//healthz",
 		"/hidden-panel/downloads", "/hidden-panel/api/v1/subscriptions",
+		"/hidden-panel/not-a-real-page",
 	} {
 		response := httptest.NewRecorder()
 		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
