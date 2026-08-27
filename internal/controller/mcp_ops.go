@@ -59,12 +59,13 @@ func (s *Server) registerTaskTriggerOperations() {
 		if err != nil {
 			return nil, err
 		}
+		alwaysDomain := s.subscriptionAlwaysUseDomainHost(ctx)
 		targets := []model.DiagnosticTarget{}
 		for _, inbound := range inbounds {
 			if inbound.ServerID != server.ID || !inbound.Enabled {
 				continue
 			}
-			host := core.ResolveEntryAddress(inbound, *server)
+			host := core.ResolveEntryAddressHost(inbound, *server, alwaysDomain)
 			if strings.TrimSpace(host) == "" {
 				continue
 			}

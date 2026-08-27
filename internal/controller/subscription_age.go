@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,10 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const settingSubscriptionAgePolicy = "subscription_age_policy"
+const (
+	settingSubscriptionAgePolicy           = "subscription_age_policy"
+	settingSubscriptionAlwaysUseDomainHost = "subscription_always_use_domain_host"
+)
 
 var (
 	errSubscriptionAgeKeyRequired = errors.New("age public key is required")
@@ -27,6 +31,14 @@ func normalizeSubscriptionAgePolicy(value string) string {
 		return "required"
 	}
 	return "optional"
+}
+
+func (s *Server) subscriptionAlwaysUseDomainHost(ctx context.Context) bool {
+	items, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return false
+	}
+	return settingBool(items, settingSubscriptionAlwaysUseDomainHost, false)
 }
 
 func subscriptionAgeCapableFormat(format model.SubscriptionFormat) bool {

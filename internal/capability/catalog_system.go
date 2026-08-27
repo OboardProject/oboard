@@ -138,11 +138,12 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		adminRead("tool_audits.list", "列出自动化工具调用审计", schemaObject(map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 500}}), schemaObject(map[string]any{"audits": arrayOf(toolAudit), "count": map[string]any{"type": "integer"}}, "audits")),
 		{Name: "certificates.list", Description: "列出全部 TLS 证书及其状态", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(certificate)), RequiredScopes: []string{"certificates:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "notification_channels.list", Description: "列出通知频道（不含频道密钥）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(notificationChannel)), RequiredScopes: []string{"notifications:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
-		adminWrite("settings.update", "修改主控全局设置；subscription_relay_url 仅能设为已接入中继的公开地址或空字符串", schemaObject(map[string]any{"changes": closedObject(map[string]any{
+		adminWrite("settings.update", "修改主控全局设置；subscription_relay_url 仅能设为已接入中继的公开地址或空字符串；subscription_always_use_domain_host 控制订阅 Host 是否始终使用解析域名", schemaObject(map[string]any{"changes": closedObject(map[string]any{
 			"audit_enabled": boolValue, "subscription_audit_enabled": boolValue, "connection_audit_enabled": boolValue,
 			"audit_action":     map[string]any{"type": "string", "enum": []string{"restrict", "warn"}},
 			"traffic_timezone": stringValue, "traffic_enforcement_mode": map[string]any{"type": "string", "enum": []string{"reject_new", "disconnect_and_reject"}},
 			"subscription_age_policy":                map[string]any{"type": "string", "enum": []string{"optional", "required"}},
+			"subscription_always_use_domain_host":    map[string]any{"type": "boolean", "description": "默认 false。false 时静态单栈入口的订阅 Host 用公网 IP，TLS SNI 仍用证书域名；解析类型为 A+AAAA 的双栈、DDNS、自定义域名目标仍用解析域名。true 时所有已同步 DNS 的入口都以域名为 Host。适用于全部协议。"},
 			"subscription_relay_url":                 map[string]any{"type": "string", "maxLength": 2048},
 			"subscription_controller_direct_enabled": boolValue,
 			"subscription_custom_path_mode":          map[string]any{"type": "string", "enum": []string{"disabled", "selective", "enabled"}},

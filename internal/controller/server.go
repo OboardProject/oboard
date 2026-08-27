@@ -849,6 +849,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			CertificateAutoIssueCA                    *string            `json:"certificate_auto_issue_acme_ca"`
 			CertificateAutoIssueEAB                   *int64             `json:"certificate_auto_issue_google_eab_credential_id"`
 			SubscriptionAgePolicy                     *string            `json:"subscription_age_policy"`
+			SubscriptionAlwaysUseDomainHost           *bool              `json:"subscription_always_use_domain_host"`
 			SubscriptionCustomPathMode                *string            `json:"subscription_custom_path_mode"`
 			AuditPolicy                               *model.AuditPolicy `json:"audit_policy"`
 			AuditEnabled                              *bool              `json:"audit_enabled"`
@@ -1032,6 +1033,13 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, settingSubscriptionAgePolicy)
+		}
+		if req.SubscriptionAlwaysUseDomainHost != nil {
+			if err := s.store.SetSetting(r.Context(), settingSubscriptionAlwaysUseDomainHost, strconv.FormatBool(*req.SubscriptionAlwaysUseDomainHost)); err != nil {
+				fail(w, err, 500)
+				return
+			}
+			changed = append(changed, settingSubscriptionAlwaysUseDomainHost)
 		}
 		if req.SubscriptionCustomPathMode != nil {
 			mode := model.SubscriptionCustomPathMode(strings.ToLower(strings.TrimSpace(*req.SubscriptionCustomPathMode)))
@@ -1407,7 +1415,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[updateWindowEnabledSetting] = false
@@ -1428,6 +1436,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[updateWindowStartHourSetting] = updateWindowHour(items, updateWindowStartHourSetting, updateWindowDefaultStartHour)
 	out[updateWindowEndHourSetting] = updateWindowHour(items, updateWindowEndHourSetting, updateWindowDefaultEndHour)
 	out[settingSubscriptionControllerDirectEnabled] = settingBool(items, settingSubscriptionControllerDirectEnabled, false)
+	out[settingSubscriptionAlwaysUseDomainHost] = settingBool(items, settingSubscriptionAlwaysUseDomainHost, false)
 	if leadDays, err := parseExpiryNotifyLeadDays(items[settingServerExpiryNotifyLeadDays]); err == nil {
 		out[settingServerExpiryNotifyLeadDays] = leadDays
 	}
@@ -4755,12 +4764,13 @@ func (s *Server) serverDiagnose(w http.ResponseWriter, r *http.Request, id int64
 		fail(w, err, 500)
 		return
 	}
+	alwaysDomain := s.subscriptionAlwaysUseDomainHost(r.Context())
 	targets := []model.DiagnosticTarget{}
 	for _, inbound := range inbounds {
 		if inbound.ServerID != server.ID || !inbound.Enabled {
 			continue
 		}
-		host := core.ResolveEntryAddress(inbound, *server)
+		host := core.ResolveEntryAddressHost(inbound, *server, alwaysDomain)
 		if strings.TrimSpace(host) == "" {
 			continue
 		}
@@ -12435,7 +12445,7 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		if !inbound.Enabled || inbound.ServerID != server.ID || inbound.Protocol != model.ProtocolSSH {
 			continue
 		}
-		address := core.ResolveEntryAddress(inbound, server)
+		address := core.ResolveDNSPreferredEntryAddress(inbound, server)
 		if strings.TrimSpace(address) == "" {
 			return model.SSHInboundPlan{}, fmt.Errorf("SSH 入口 %s 缺少可用的连接地址", inbound.Name)
 		}
@@ -13548,6 +13558,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		NodeOrderPositions:     orderPositions,
 		GlobalNodeNames:        globalNodeNames,
 		PlanNodeNames:          planNodeNames,
+		AlwaysUseDomainHost:    settingBool(settings, settingSubscriptionAlwaysUseDomainHost, false),
 	}
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy

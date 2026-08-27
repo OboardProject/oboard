@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -201,5 +202,22 @@ func TestSubscriptionAgeAPIOptionalRequiredAndHeaderModes(t *testing.T) {
 	}
 	if got := fetch(oneTimeToken, "?format=mihomo", ""); got.Code != http.StatusNotFound {
 		t.Fatalf("burned age subscription remained valid: status=%d body=%s", got.Code, got.Body.String())
+	}
+}
+
+func TestSubscriptionAlwaysUseDomainHostDefaultsOff(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "host-setting.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := newTestServer(db, "test-secret", "")
+	settings := server.publicSettings(context.Background(), map[string]string{})
+	if settings[settingSubscriptionAlwaysUseDomainHost] != false {
+		t.Fatalf("default always-use-domain host = %#v", settings[settingSubscriptionAlwaysUseDomainHost])
+	}
+	settings = server.publicSettings(context.Background(), map[string]string{settingSubscriptionAlwaysUseDomainHost: "true"})
+	if settings[settingSubscriptionAlwaysUseDomainHost] != true {
+		t.Fatalf("enabled always-use-domain host = %#v", settings[settingSubscriptionAlwaysUseDomainHost])
 	}
 }

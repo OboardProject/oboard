@@ -2929,10 +2929,7 @@ func validateReachableServerAddress(source, target model.Server, address string)
 	return address, nil
 }
 
-func ResolveEntryAddress(inbound model.Inbound, server model.Server) string {
-	if inbound.DNSSyncEnabled && strings.TrimSpace(inbound.DNSDomain) != "" {
-		return strings.TrimSpace(inbound.DNSDomain)
-	}
+func ResolveLiteralEntryAddress(inbound model.Inbound, server model.Server) string {
 	mode := inbound.EntryIPMode
 	if mode == "" || mode == model.EntryIPModeAuto {
 		mode = server.EntryIPMode
@@ -2949,6 +2946,57 @@ func ResolveEntryAddress(inbound model.Inbound, server model.Server) string {
 		return strings.TrimSpace(server.EntryAddress)
 	}
 	return ResolveServerEntryAddress(server)
+}
+
+// ResolveDNSPreferredEntryAddress returns the managed DNS name when sync is on.
+// Agent-side identities that must not rebuild when the client Host policy
+// changes (restricted SSH inbound plans) use this instead of the subscription host.
+func ResolveDNSPreferredEntryAddress(inbound model.Inbound, server model.Server) string {
+	if inbound.DNSSyncEnabled && strings.TrimSpace(inbound.DNSDomain) != "" {
+		return strings.TrimSpace(inbound.DNSDomain)
+	}
+	return ResolveLiteralEntryAddress(inbound, server)
+}
+
+func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alwaysUseDomain bool) bool {
+	domain := strings.TrimSpace(inbound.DNSDomain)
+	if !inbound.DNSSyncEnabled || domain == "" {
+		return false
+	}
+	if alwaysUseDomain || inbound.DDNSEnabled {
+		return true
+	}
+	literal := ResolveLiteralEntryAddress(inbound, server)
+	switch AddressFamily(literal) {
+	case "domain", "":
+		return true
+	}
+	switch inbound.EntryIPMode {
+	case model.EntryIPModeIPv4, model.EntryIPModeIPv6, model.EntryIPModeCustom:
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(inbound.DNSRecordTypes), "both") {
+		return strings.TrimSpace(server.PublicIPv4) != "" && ServerEntryIPv6(server) != ""
+	}
+	return false
+}
+
+// ResolveEntryAddressHost is the client-facing subscription Host.
+// TLS SNI stays the certificate/DNS domain. Static single-stack inbounds
+// may advertise a public IP to skip a client lookup; dual-stack (A+AAAA),
+// DDNS, custom domain targets, and alwaysUseDomain keep the managed name.
+func ResolveEntryAddressHost(inbound model.Inbound, server model.Server, alwaysUseDomain bool) string {
+	if inboundClientHostUsesDomain(inbound, server, alwaysUseDomain) {
+		return strings.TrimSpace(inbound.DNSDomain)
+	}
+	if literal := ResolveLiteralEntryAddress(inbound, server); literal != "" {
+		return literal
+	}
+	return strings.TrimSpace(inbound.DNSDomain)
+}
+
+func ResolveEntryAddress(inbound model.Inbound, server model.Server) string {
+	return ResolveEntryAddressHost(inbound, server, false)
 }
 
 func ResolveServerEntryAddress(server model.Server) string {

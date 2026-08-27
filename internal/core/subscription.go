@@ -33,6 +33,9 @@ type SubscriptionOptions struct {
 	GlobalNodeNames    map[string]*string
 	PlanNodeNames      map[string]*string
 	Render             SubscriptionRenderOptions
+	// AlwaysUseDomainHost forces the subscription server/host field to the
+	// managed DNS domain even for static single-stack inbounds.
+	AlwaysUseDomainHost bool
 }
 
 type SubscriptionNode struct {
@@ -129,7 +132,7 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 		if !ok {
 			continue
 		}
-		server.EntryAddress = ResolveEntryAddress(inbound, server)
+		server.EntryAddress = ResolveEntryAddressHost(inbound, server, opts.AlwaysUseDomainHost)
 		if strings.TrimSpace(server.EntryAddress) == "" {
 			continue
 		}

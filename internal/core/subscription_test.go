@@ -392,6 +392,87 @@ func TestSubscriptionEntryAddressOverride(t *testing.T) {
 	}
 }
 
+func TestResolveEntryAddressHostUsesIPForStaticSingleStack(t *testing.T) {
+	ipv4 := model.Server{ID: 1, Name: "v4", PublicIPv4: "203.0.113.10"}
+	dual := model.Server{ID: 2, Name: "dual", PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::10"}
+	domain := "entry.example.com"
+	for _, tc := range []struct {
+		name    string
+		inbound model.Inbound
+		server  model.Server
+		always  bool
+		want    string
+	}{
+		{
+			name:    "static ipv4 a records",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", EntryIPMode: model.EntryIPModeAuto},
+			server:  ipv4,
+			want:    "203.0.113.10",
+		},
+		{
+			name:    "static ipv6 aaaa records",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "aaaa", EntryIPMode: model.EntryIPModeIPv6},
+			server:  dual,
+			want:    "2001:db8::10",
+		},
+		{
+			name:    "dual stack both records",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "both", EntryIPMode: model.EntryIPModeAuto},
+			server:  dual,
+			want:    domain,
+		},
+		{
+			name:    "dual stack a records stay ipv4",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", EntryIPMode: model.EntryIPModeAuto},
+			server:  dual,
+			want:    "203.0.113.10",
+		},
+		{
+			name:    "ddns uses domain",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", DDNSEnabled: true, EntryIPMode: model.EntryIPModeAuto},
+			server:  ipv4,
+			want:    domain,
+		},
+		{
+			name:    "always use domain",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", EntryIPMode: model.EntryIPModeAuto},
+			server:  ipv4,
+			always:  true,
+			want:    domain,
+		},
+		{
+			name:    "custom domain target keeps managed name",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, EntryIPMode: model.EntryIPModeCustom, ExternalIP: "origin.example.net"},
+			server:  dual,
+			want:    domain,
+		},
+		{
+			name:    "custom ipv4 stays ip",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "a", EntryIPMode: model.EntryIPModeCustom, ExternalIP: "198.51.100.8"},
+			server:  dual,
+			want:    "198.51.100.8",
+		},
+		{
+			name:    "ipv4 mode on dual stack",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "both", EntryIPMode: model.EntryIPModeIPv4},
+			server:  dual,
+			want:    "203.0.113.10",
+		},
+		{
+			name:    "dns disabled uses ip",
+			inbound: model.Inbound{DNSDomain: domain, EntryIPMode: model.EntryIPModeAuto},
+			server:  ipv4,
+			want:    "203.0.113.10",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ResolveEntryAddressHost(tc.inbound, tc.server, tc.always); got != tc.want {
+				t.Fatalf("ResolveEntryAddressHost = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) {
 	user := model.User{ID: 7, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	servers := []model.Server{{ID: 20, Name: "香港", PublicIPv4: "203.0.113.20"}, {ID: 10, Name: "香港", PublicIPv4: "203.0.113.10"}, {ID: 30, Name: "东京", PublicIPv4: "203.0.113.30"}}
@@ -530,6 +611,44 @@ func TestManagedCertificateDomainOverridesSubscriptionSNI(t *testing.T) {
 			}
 			if !strings.Contains(uri, "sni=entry.example.net") || strings.Contains(uri, "sni=example.com") {
 				t.Fatalf("subscription URI has wrong SNI: %s", uri)
+			}
+		})
+	}
+}
+
+func TestSubscriptionHostUsesIPWhileTLSUsesCertificateDomain(t *testing.T) {
+	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	server := model.Server{ID: 1, Name: "hk", PublicIPv4: "203.0.113.10"}
+	for _, test := range []struct {
+		name     string
+		protocol model.Protocol
+		config   string
+	}{
+		{name: "anytls", protocol: model.ProtocolAnyTLS, config: `{"tls":{"enabled":true,"server_name":"example.com"}}`},
+		{name: "hy2", protocol: model.ProtocolHY2, config: `{"tls":{"enabled":true,"server_name":"example.com"}}`},
+		{name: "vless", protocol: model.ProtocolVLESS, config: `{"tls":{"enabled":true,"server_name":"example.com"}}`},
+		{name: "shadowsocks", protocol: model.ProtocolSS, config: `{"method":"aes-128-gcm"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inbound := model.Inbound{
+				ID: 1, ServerID: 1, Name: test.name, Protocol: test.protocol, ListenIP: "0.0.0.0", Port: 443,
+				DNSSyncEnabled: true, DNSDomain: "entry.example.net", DNSRecordTypes: "a",
+				CertificateMode: model.CertificateModeAuto, CertificateDomain: "entry.example.net",
+				ConfigJSON: test.config, Enabled: true,
+			}
+			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if nodes[0].Raw["server"] != "203.0.113.10" {
+				t.Fatalf("subscription host = %#v, want public IPv4", nodes[0].Raw["server"])
+			}
+			if test.protocol == model.ProtocolSS {
+				return
+			}
+			tls, ok := nodes[0].Raw["tls"].(map[string]any)
+			if !ok || tls["server_name"] != "entry.example.net" {
+				t.Fatalf("subscription TLS SNI = %#v", nodes[0].Raw["tls"])
 			}
 		})
 	}

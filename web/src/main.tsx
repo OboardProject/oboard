@@ -3805,6 +3805,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const [basePath, setBasePath] = useState(currentBasePath)
   const [trustedProxyCIDRs, setTrustedProxyCIDRs] = useState<string>(configuredTrustedProxyCIDRs.join('\n'))
   const [subscriptionAgePolicy, setSubscriptionAgePolicy] = useState<'optional' | 'required'>(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional')
+  const [subscriptionAlwaysUseDomainHost, setSubscriptionAlwaysUseDomainHost] = useState(settingEnabled(data.settings?.subscription_always_use_domain_host, false))
   const [controllerLogMaxMB, setControllerLogMaxMB] = useState(Number(data.settings?.controller_log_max_mb || 32))
   const [controllerLogBackups, setControllerLogBackups] = useState(Number(data.settings?.controller_log_backups || 5))
   const [notificationOfflineAfter, setNotificationOfflineAfter] = useState(Number(data.settings?.notification_server_offline_after_seconds || 120))
@@ -3823,6 +3824,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   useEffect(() => { setTrustedProxyCIDRs(configuredTrustedProxyCIDRs.join('\n')) }, [data.settings?.trusted_proxy_cidrs])
   usePausedInterval(() => { void load('settings', { background: true }) }, 3000, migration.active && realtimeStatus === 'fallback')
   useEffect(() => { setSubscriptionAgePolicy(data.settings?.subscription_age_policy === 'required' ? 'required' : 'optional') }, [data.settings?.subscription_age_policy])
+  useEffect(() => { setSubscriptionAlwaysUseDomainHost(settingEnabled(data.settings?.subscription_always_use_domain_host, false)) }, [data.settings?.subscription_always_use_domain_host])
   useEffect(() => {
     setNotificationOfflineAfter(Number(data.settings?.notification_server_offline_after_seconds || 120))
     setNotificationOnlineAfter(Number(data.settings?.notification_server_online_after_seconds || 300))
@@ -3982,6 +3984,12 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_age_policy: targetPolicy }) })
     }, '订阅加密策略已保存')
   }
+  const saveSubscriptionAlwaysUseDomainHost = async (nextValue: boolean) => {
+    setSubscriptionAlwaysUseDomainHost(nextValue)
+    await runSave('subscription-host', async () => {
+      await client.request('/settings', { method: 'POST', body: JSON.stringify({ subscription_always_use_domain_host: nextValue }) })
+    }, nextValue ? '已改为始终使用域名作为 Host' : '静态单栈入口将使用 IP 作为 Host')
+  }
   const saveControllerLogs = async () => {
     await runSave('controller-logs', async () => {
       await client.request('/settings', { method: 'POST', body: JSON.stringify({ controller_log_max_mb: controllerLogMaxMB, controller_log_backups: controllerLogBackups }) })
@@ -4003,7 +4011,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
     { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
-    { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密和独立订阅入口。' },
+    { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密、入口 Host 和独立订阅入口。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
     { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
     { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
@@ -4142,6 +4150,16 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </Select>
           </SettingsRow>
           <div className="subscription-security-note"><Shield size={18} /><div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div></div>
+        </SettingsGroup>
+        <SettingsGroup title="订阅入口 Host" description="客户端连接地址。TLS 的 SNI 始终使用证书域名，与 Host 是否填 IP 无关。">
+          <SettingsSwitchRow
+            label="始终使用域名填写 Host"
+            description="默认关闭。关闭时，静态单栈入口的订阅 Host 使用公网 IP，少一次解析；双栈（A+AAAA）、动态 DNS 和自定义域名目标仍用解析域名。开启后，所有已同步 DNS 的入口都以域名为 Host。适用于全部协议。"
+            checked={subscriptionAlwaysUseDomainHost}
+            onChange={checked => void saveSubscriptionAlwaysUseDomainHost(checked)}
+            disabled={saving === 'subscription-host'}
+            ariaLabel="始终使用域名填写 Host"
+          />
         </SettingsGroup>
       </section><SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
       {activeSection === 'notifications' && <section id="settings-panel-notifications" role="tabpanel" className="settings-card">
@@ -10561,10 +10579,23 @@ function sshShareURI(host: string, port: number, username: string, password: str
   const endpoint = formatHostPort(host, port)
   return `ssh://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${endpoint}`
 }
+function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?: string; entry_ip_mode?: EntryIPMode; external_ip?: string; dns_record_types?: string; ddns_enabled?: boolean }, server: Server | undefined, alwaysUseDomain = false) {
+  const domain = String(entry.dns_domain || '').trim()
+  const literal = entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
+  if (!entry.dns_sync_enabled || !domain) return literal
+  if (alwaysUseDomain || entry.ddns_enabled) return domain
+  const host = String(literal || '').trim().replace(/^\[|\]$/g, '')
+  const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+  const isIPv6 = Boolean(host) && host.includes(':') && !isIPv4
+  if (!isIPv4 && !isIPv6) return domain
+  if (entry.entry_ip_mode === 'ipv4' || entry.entry_ip_mode === 'ipv6' || entry.entry_ip_mode === 'custom') return literal || domain
+  const records = String(entry.dns_record_types || 'auto').toLowerCase()
+  if (records === 'both' && server?.public_ipv4 && (server.public_ipv6 || server.interface_ipv6)) return domain
+  return literal || domain
+}
 function inboundEntryAddress(data: any, entry: Inbound) {
-	if (entry.dns_sync_enabled && entry.dns_domain) return entry.dns_domain
   const server = (data.servers || []).find((s: Server) => s.id === entry.server_id)
-  return entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
+  return inboundClientEntryHost(entry, server, settingEnabled(data.settings?.subscription_always_use_domain_host, false))
 }
 
 type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport'
@@ -14971,7 +15002,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     : draft.dns_domain === selectedDNSZoneName ? '' : String(draft.dns_domain || '')
   const certificateRequired = presetRequiresCertificate(presetID)
   const entryMode = (draft.entry_ip_mode || 'auto') as EntryIPMode
-  const entryAddress = draft.dns_sync_enabled && draft.dns_domain ? draft.dns_domain : entryAddressByMode(server, entryMode, draft.external_ip || '')
+  const entryAddress = inboundClientEntryHost(draft, server, settingEnabled(data.settings?.subscription_always_use_domain_host, false))
   const suggestedSNI = (certificate: Certificate | null | undefined = selectedCertificate, dnsDomain = String(draft.dns_domain || ''), externalIP = String(draft.external_ip || '')) => {
     const entryDomains = [dnsDomain, isDomainLike(externalIP) ? externalIP : ''].filter(Boolean)
     if (!certificate) return dnsDomain
@@ -15125,7 +15156,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。自动模式跟随服务器检测结果。" placement="bottom">
                 <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
               </FormField>
-              <FormField label="当前入口地址" hint={`订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`} placement="bottom">
+              <FormField label="当前入口地址" hint={draft.dns_sync_enabled && draft.dns_domain ? `订阅 Host；TLS 的 SNI 仍用证书域名。${natEnabled ? '对外端口' : '监听端口'}对客户端生效，Agent 本机仍监听 ${Number(draft.port) || 0}。` : `订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`} placement="bottom">
                 <input readOnly value={entryAddress ? formatHostPort(entryAddress, displayPort) : '待 Agent 检测或填写自定义地址'} />
               </FormField>
               {entryMode === 'custom' && <FormField label="自定义入口地址" required full hint="可填写域名、IPv4 或 IPv6。">
@@ -15137,7 +15168,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               title="DNS 解析"
               hint="下发前把当前入口地址写入所选域名；开启定时更新后按间隔刷新。"
               summary={draft.dns_sync_enabled ? (draft.dns_domain || '已开启') : '未开启'}
-              defaultOpen={Boolean(draft.dns_sync_enabled)}
+              defaultOpen={Boolean(draft.dns_sync_enabled) || protocol === 'anytls'}
               tone={draft.dns_sync_enabled ? 'accent' : 'default'}
             >
               <div className="switch-setting-row">
