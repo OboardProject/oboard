@@ -3757,7 +3757,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'remote-access' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3916,10 +3916,9 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     }, '通知提醒设置已保存')
   }
   const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
-    { key: 'connection', label: '基础设置', icon: LinkIcon, description: '面板地址、路径和受信代理。' },
+    { key: 'connection', label: '基础设置', icon: LinkIcon, description: '连接、代理和远程控制。' },
     { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
     { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' },
-    { key: 'remote-access', label: '远程访问', icon: Terminal, description: 'Web 远程终端和 MCP 主机执行，默认全部关闭。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
     { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密和独立订阅入口。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
@@ -4027,6 +4026,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             {!reverseProxyStatus.direct_tls && reverseProxyStatus.peer_trusted && !reverseProxyStatus.https && <p className="trusted-proxy-warning">请让反向代理覆盖发送 <code>X-Forwarded-Proto</code>。</p>}
           </div>
         </SettingsGroup>
+        <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />
       </section>}
       {activeSection === 'registration' && <section id="settings-panel-registration" role="tabpanel" className="settings-card">
         <SettingsGroup title="公开注册" description="控制登录页注册入口与新用户的初始权限。">
@@ -4041,7 +4041,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         </SettingsGroup>
       </section>}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} />}
-      {activeSection === 'remote-access' && <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
@@ -7651,7 +7650,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
-    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} client={client} notify={notify} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} client={client} notify={notify} passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}
@@ -10295,7 +10294,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   </MotionDialogPanel>
 }
 
-function ServerDetailDialog({ server, client, notify, onClose }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; onClose: () => void }) {
+function ServerDetailDialog({ server, client, notify, passwordConfirmationRequired, onClose }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; passwordConfirmationRequired: boolean; onClose: () => void }) {
   const [terminalOpen, setTerminalOpen] = useState(false)
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const connectivityLabel = !server.latency_probe_enabled
@@ -10424,7 +10423,7 @@ function ServerDetailDialog({ server, client, notify, onClose }: { server: Serve
       </div>
       <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
     </MotionDialogPanel>
-    {terminalOpen ? <RemoteTerminal serverId={server.id} serverName={server.name || `server-${server.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${server.id}/terminal/ws/${sessionId}`)} onClose={() => setTerminalOpen(false)} /> : null}
+    {terminalOpen ? <RemoteTerminal serverId={server.id} serverName={server.name || `server-${server.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${server.id}/terminal/ws/${sessionId}`)} passwordConfirmationRequired={passwordConfirmationRequired} onClose={() => setTerminalOpen(false)} /> : null}
     </>
   )
 }

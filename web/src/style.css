@@ -22299,6 +22299,128 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .settings-shell .ui-segmented-select button { min-width: max-content; }
 .settings-shell .ui-segmented-select.full-width button { min-width: 0; }
 
+.remote-access-server-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.remote-access-server-dialog {
+  width: min(860px, calc(100vw - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
+}
+
+.remote-access-server-body {
+  display: grid;
+  gap: 12px;
+  min-height: 220px;
+  overflow: auto;
+}
+
+.remote-access-server-loading,
+.remote-access-server-empty {
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+}
+
+.remote-access-server-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.remote-access-server-empty p { margin: 0; }
+
+.remote-access-bulk-bar {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.remote-access-bulk-bar label,
+.remote-access-bulk-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.remote-access-bulk-bar label {
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.remote-access-bulk-bar > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.remote-access-bulk-bar button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.remote-access-server-list {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.remote-access-server-row {
+  display: grid;
+  grid-template-columns: 20px minmax(180px, 1fr) 92px 92px;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 8px 12px;
+}
+
+.remote-access-server-row + .remote-access-server-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.remote-access-server-row > .ui-switch { justify-self: center; }
+
+.remote-access-server-row-head {
+  min-height: 36px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.remote-access-server-row-head span:nth-child(n + 3) { text-align: center; }
+
+.remote-access-server-name {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.remote-access-server-name strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-access-server-name span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .settings-shell { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .settings-sidebar { position: static; display: block; }
@@ -22353,6 +22475,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .settings-disclosure-summary { display: none; }
   .ui-segmented-select { max-width: 100%; min-width: 0; width: max-content; }
   .ui-segmented-select button { min-width: 0; padding-inline: 12px; white-space: normal; }
+  .remote-access-bulk-bar { grid-template-columns: auto minmax(0, 1fr); }
+  .remote-access-bulk-bar > div { grid-column: 1 / -1; flex-wrap: wrap; }
+  .remote-access-server-row { grid-template-columns: 20px minmax(100px, 1fr) 68px 68px; gap: 8px; padding-inline: 10px; }
+  .remote-access-server-row-head { font-size: 10px; }
 }
 
 /* Agent Settings Layout */

@@ -17,7 +17,7 @@ func (s *Store) GetServerRemoteAccessPolicy(ctx context.Context, serverID int64)
 	var created, updated string
 	err := s.db.QueryRowContext(ctx, `select server_id,remote_terminal_enabled,mcp_remote_operations_enabled,mcp_structured_exec_enabled,mcp_raw_shell_enabled,created_at,updated_at from server_remote_access_policies where server_id=?`, serverID).Scan(&item.ServerID, &terminal, &operations, &exec, &shell, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
-		return model.ServerRemoteAccessPolicy{ServerID: serverID}, nil
+		return model.ServerRemoteAccessPolicy{ServerID: serverID, RemoteTerminalEnabled: true}, nil
 	}
 	if err != nil {
 		return model.ServerRemoteAccessPolicy{}, err

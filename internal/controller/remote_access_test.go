@@ -36,6 +36,40 @@ func TestStepUpTokenCannotBeReusedOrCrossPurpose(t *testing.T) {
 	}
 }
 
+func TestNormalizeRemoteAccessSwitchesEnforcesMCPDependency(t *testing.T) {
+	on, off := true, false
+	remote, mcp, err := normalizeRemoteAccessSwitches(nil, &on, nil, nil)
+	if err != nil || remote == nil || !*remote || mcp == nil || !*mcp {
+		t.Fatalf("enabling MCP must enable remote control: remote=%v mcp=%v err=%v", remote, mcp, err)
+	}
+	remote, mcp, err = normalizeRemoteAccessSwitches(&off, nil, nil, nil)
+	if err != nil || remote == nil || *remote || mcp == nil || *mcp {
+		t.Fatalf("disabling remote control must disable MCP: remote=%v mcp=%v err=%v", remote, mcp, err)
+	}
+	if _, _, err := normalizeRemoteAccessSwitches(&off, &on, &on, &on); err == nil {
+		t.Fatal("an inconsistent remote-off MCP-on request must be rejected")
+	}
+	if _, _, err := normalizeRemoteAccessSwitches(&on, &on, &off, &on); err == nil {
+		t.Fatal("split MCP control values must be rejected")
+	}
+}
+
+func TestRemoteAccessDefaults(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "remote-defaults.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := newTestServer(db, "test-secret", "")
+	settings := server.publicSettings(context.Background(), map[string]string{})
+	if settings[settingRemoteTerminalEnabled] != true || settings[settingRemoteTerminalPasswordConfirmationEnabled] != true {
+		t.Fatalf("remote control and password confirmation must default on: %#v", settings)
+	}
+	if settings[settingMCPRemoteOperationsEnabled] != false {
+		t.Fatalf("MCP control must default off: %#v", settings)
+	}
+}
+
 func TestPrivilegedGrantElevation(t *testing.T) {
 	next := model.MCPPrivilegedGrant{Capabilities: []string{model.PrivilegeRemoteExec}}
 	if !privilegedGrantElevates(nil, next) {

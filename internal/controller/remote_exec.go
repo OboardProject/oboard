@@ -97,6 +97,21 @@ func (s *Server) assertRemoteExecAllowedHTTP(ctx context.Context, server *model.
 	if err != nil {
 		return err
 	}
+	if !settingBool(settings, settingRemoteTerminalEnabled, true) {
+		return codedError("remote_access_global_disabled", "remote control is globally disabled")
+	}
+	if !policy.RemoteTerminalEnabled {
+		return codedError("remote_access_server_disabled", "remote control is disabled on the server")
+	}
+	globalMCPEnabled := settingBool(settings, settingMCPRemoteOperationsEnabled, false) &&
+		settingBool(settings, settingMCPStructuredExecEnabled, false) &&
+		settingBool(settings, settingMCPRawShellEnabled, false)
+	if !globalMCPEnabled {
+		return codedError("remote_access_global_disabled", "MCP control is globally disabled")
+	}
+	if !policy.MCPRemoteOperationsEnabled || !policy.MCPStructuredExecEnabled || !policy.MCPRawShellEnabled {
+		return codedError("remote_access_server_disabled", "MCP control is disabled on the server")
+	}
 	enabled := false
 	switch privilege {
 	case model.PrivilegeRemoteOperations:

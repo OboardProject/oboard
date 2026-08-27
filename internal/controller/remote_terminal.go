@@ -127,9 +127,11 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := s.consumeStepUp(r, req.StepUpToken, model.StepUpPurposeRemoteTerminal, "server", serverIDString(serverID)); err != nil {
-		fail(w, err, http.StatusForbidden)
-		return
+	if settingBool(s.runtimeSettings(r.Context()), settingRemoteTerminalPasswordConfirmationEnabled, true) {
+		if err := s.consumeStepUp(r, req.StepUpToken, model.StepUpPurposeRemoteTerminal, "server", serverIDString(serverID)); err != nil {
+			fail(w, err, http.StatusForbidden)
+			return
+		}
 	}
 	server, err := s.store.GetServer(r.Context(), serverID)
 	if err != nil {
@@ -360,7 +362,9 @@ func (s *Server) relayTerminal(session *terminalSession) {
 				return
 			}
 			if mt == websocket.TextMessage && toAgent {
-				var msg struct{ Type string `json:"type"` }
+				var msg struct {
+					Type string `json:"type"`
+				}
 				if json.Unmarshal(data, &msg) != nil || (msg.Type != "resize" && msg.Type != "close" && msg.Type != "ping") {
 					continue
 				}

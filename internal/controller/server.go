@@ -816,51 +816,57 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"settings": s.publicSettings(r.Context(), items), "reverse_proxy_status": s.reverseProxyStatus(r)})
 	case http.MethodPost, http.MethodPatch:
 		var req struct {
-			ControllerURL                 *string            `json:"controller_url"`
-			SubscriptionRelayURL          *string            `json:"subscription_relay_url"`
-			SubscriptionControllerDirect  *bool              `json:"subscription_controller_direct_enabled"`
-			BasePath                      *string            `json:"base_path"`
-			CertificateAutoMatch          *bool              `json:"certificate_auto_match_enabled"`
-			CertificatePreference         *string            `json:"certificate_default_preference"`
-			CertificateAutoIssueCA        *string            `json:"certificate_auto_issue_acme_ca"`
-			CertificateAutoIssueEAB       *int64             `json:"certificate_auto_issue_google_eab_credential_id"`
-			SubscriptionAgePolicy         *string            `json:"subscription_age_policy"`
-			SubscriptionCustomPathMode    *string            `json:"subscription_custom_path_mode"`
-			AuditPolicy                   *model.AuditPolicy `json:"audit_policy"`
-			AuditEnabled                  *bool              `json:"audit_enabled"`
-			SubscriptionAuditEnabled      *bool              `json:"subscription_audit_enabled"`
-			ConnectionAuditEnabled        *bool              `json:"connection_audit_enabled"`
-			AuditAction                   *string            `json:"audit_action"`
-			TrafficTimezone               *string            `json:"traffic_timezone"`
-			TrafficEnforcementMode        *string            `json:"traffic_enforcement_mode"`
-			ControllerLogMaxMB            *int               `json:"controller_log_max_mb"`
-			ControllerLogBackups          *int               `json:"controller_log_backups"`
-			ControllerAutoUpdate          *bool              `json:"controller_auto_update_enabled"`
-			ControllerAutoUpdateInterval  *int               `json:"controller_auto_update_interval_hours"`
-			AgentAutoUpdate               *bool              `json:"agent_auto_update_enabled"`
-			SubscriptionRelayAutoUpdate   *bool              `json:"subscription_relay_auto_update_enabled"`
-			UpdateWindowEnabled           *bool              `json:"update_window_enabled"`
-			UpdateWindowStartHour         *int               `json:"update_window_start_hour"`
-			UpdateWindowEndHour           *int               `json:"update_window_end_hour"`
-			ServerDefaultMTUMode          *string            `json:"server_default_mtu_mode"`
-			ServerDefaultBBREnabled       *bool              `json:"server_default_bbr_enabled"`
-			ServerDefaultTimeCorrection   *string            `json:"server_default_time_correction_mode"`
-			ServerMonitoringRetentionDays *int               `json:"server_monitoring_retention_days"`
-			TimeCheckNTPServers           []string           `json:"time_check_ntp_servers"`
-			TrustedProxyCIDRs             *[]string          `json:"trusted_proxy_cidrs"`
-			NotificationOfflineAfter      *int               `json:"notification_server_offline_after_seconds"`
-			NotificationOnlineAfter       *int               `json:"notification_server_online_after_seconds"`
-			NotificationMergeOffline      *bool              `json:"notification_server_merge_offline"`
-			ServerExpiryNotifyLeadDays    *[]int             `json:"server_expiry_notify_lead_days"`
-			ServerExpiryNotifyTime        *string            `json:"server_expiry_notify_time"`
-			RegistrationEnabled           *bool              `json:"registration_enabled"`
-			RegistrationDefaultGroupID    *int64             `json:"registration_default_group_id"`
-			RemoteTerminalEnabled         *bool              `json:"remote_terminal_enabled"`
-			MCPRemoteOperationsEnabled    *bool              `json:"mcp_remote_operations_enabled"`
-			MCPStructuredExecEnabled      *bool              `json:"mcp_structured_exec_enabled"`
-			MCPRawShellEnabled            *bool              `json:"mcp_raw_shell_enabled"`
+			ControllerURL                             *string            `json:"controller_url"`
+			SubscriptionRelayURL                      *string            `json:"subscription_relay_url"`
+			SubscriptionControllerDirect              *bool              `json:"subscription_controller_direct_enabled"`
+			BasePath                                  *string            `json:"base_path"`
+			CertificateAutoMatch                      *bool              `json:"certificate_auto_match_enabled"`
+			CertificatePreference                     *string            `json:"certificate_default_preference"`
+			CertificateAutoIssueCA                    *string            `json:"certificate_auto_issue_acme_ca"`
+			CertificateAutoIssueEAB                   *int64             `json:"certificate_auto_issue_google_eab_credential_id"`
+			SubscriptionAgePolicy                     *string            `json:"subscription_age_policy"`
+			SubscriptionCustomPathMode                *string            `json:"subscription_custom_path_mode"`
+			AuditPolicy                               *model.AuditPolicy `json:"audit_policy"`
+			AuditEnabled                              *bool              `json:"audit_enabled"`
+			SubscriptionAuditEnabled                  *bool              `json:"subscription_audit_enabled"`
+			ConnectionAuditEnabled                    *bool              `json:"connection_audit_enabled"`
+			AuditAction                               *string            `json:"audit_action"`
+			TrafficTimezone                           *string            `json:"traffic_timezone"`
+			TrafficEnforcementMode                    *string            `json:"traffic_enforcement_mode"`
+			ControllerLogMaxMB                        *int               `json:"controller_log_max_mb"`
+			ControllerLogBackups                      *int               `json:"controller_log_backups"`
+			ControllerAutoUpdate                      *bool              `json:"controller_auto_update_enabled"`
+			ControllerAutoUpdateInterval              *int               `json:"controller_auto_update_interval_hours"`
+			AgentAutoUpdate                           *bool              `json:"agent_auto_update_enabled"`
+			SubscriptionRelayAutoUpdate               *bool              `json:"subscription_relay_auto_update_enabled"`
+			UpdateWindowEnabled                       *bool              `json:"update_window_enabled"`
+			UpdateWindowStartHour                     *int               `json:"update_window_start_hour"`
+			UpdateWindowEndHour                       *int               `json:"update_window_end_hour"`
+			ServerDefaultMTUMode                      *string            `json:"server_default_mtu_mode"`
+			ServerDefaultBBREnabled                   *bool              `json:"server_default_bbr_enabled"`
+			ServerDefaultTimeCorrection               *string            `json:"server_default_time_correction_mode"`
+			ServerMonitoringRetentionDays             *int               `json:"server_monitoring_retention_days"`
+			TimeCheckNTPServers                       []string           `json:"time_check_ntp_servers"`
+			TrustedProxyCIDRs                         *[]string          `json:"trusted_proxy_cidrs"`
+			NotificationOfflineAfter                  *int               `json:"notification_server_offline_after_seconds"`
+			NotificationOnlineAfter                   *int               `json:"notification_server_online_after_seconds"`
+			NotificationMergeOffline                  *bool              `json:"notification_server_merge_offline"`
+			ServerExpiryNotifyLeadDays                *[]int             `json:"server_expiry_notify_lead_days"`
+			ServerExpiryNotifyTime                    *string            `json:"server_expiry_notify_time"`
+			RegistrationEnabled                       *bool              `json:"registration_enabled"`
+			RegistrationDefaultGroupID                *int64             `json:"registration_default_group_id"`
+			RemoteTerminalEnabled                     *bool              `json:"remote_terminal_enabled"`
+			RemoteTerminalPasswordConfirmationEnabled *bool              `json:"remote_terminal_password_confirmation_enabled"`
+			MCPRemoteOperationsEnabled                *bool              `json:"mcp_remote_operations_enabled"`
+			MCPStructuredExecEnabled                  *bool              `json:"mcp_structured_exec_enabled"`
+			MCPRawShellEnabled                        *bool              `json:"mcp_raw_shell_enabled"`
 		}
 		if !decode(w, r, &req) {
+			return
+		}
+		remoteEnabled, mcpEnabled, err := normalizeRemoteAccessSwitches(req.RemoteTerminalEnabled, req.MCPRemoteOperationsEnabled, req.MCPStructuredExecEnabled, req.MCPRawShellEnabled)
+		if err != nil {
+			fail(w, err, http.StatusBadRequest)
 			return
 		}
 		var normalizedTrustedProxyCIDRs []string
@@ -1339,10 +1345,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			value *bool
 			key   string
 		}{
-			{req.RemoteTerminalEnabled, settingRemoteTerminalEnabled},
-			{req.MCPRemoteOperationsEnabled, settingMCPRemoteOperationsEnabled},
-			{req.MCPStructuredExecEnabled, settingMCPStructuredExecEnabled},
-			{req.MCPRawShellEnabled, settingMCPRawShellEnabled},
+			{remoteEnabled, settingRemoteTerminalEnabled},
+			{req.RemoteTerminalPasswordConfirmationEnabled, settingRemoteTerminalPasswordConfirmationEnabled},
+			{mcpEnabled, settingMCPRemoteOperationsEnabled},
+			{mcpEnabled, settingMCPStructuredExecEnabled},
+			{mcpEnabled, settingMCPRawShellEnabled},
 		} {
 			if item.value == nil {
 				continue
@@ -1376,7 +1383,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: false, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[updateWindowEnabledSetting] = false
@@ -1443,7 +1450,8 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 		}
 	}
 	out["base_path"] = s.currentBasePath()
-	out[settingRemoteTerminalEnabled] = settingBool(items, settingRemoteTerminalEnabled, false)
+	out[settingRemoteTerminalEnabled] = settingBool(items, settingRemoteTerminalEnabled, true)
+	out[settingRemoteTerminalPasswordConfirmationEnabled] = settingBool(items, settingRemoteTerminalPasswordConfirmationEnabled, true)
 	out[settingMCPRemoteOperationsEnabled] = settingBool(items, settingMCPRemoteOperationsEnabled, false)
 	out[settingMCPStructuredExecEnabled] = settingBool(items, settingMCPStructuredExecEnabled, false)
 	out[settingMCPRawShellEnabled] = settingBool(items, settingMCPRawShellEnabled, false)

@@ -12,24 +12,25 @@ import (
 )
 
 const (
-	settingRemoteTerminalEnabled       = "remote_terminal_enabled"
-	settingMCPRemoteOperationsEnabled  = "mcp_remote_operations_enabled"
-	settingMCPStructuredExecEnabled    = "mcp_structured_exec_enabled"
-	settingMCPRawShellEnabled          = "mcp_raw_shell_enabled"
+	settingRemoteTerminalEnabled                     = "remote_terminal_enabled"
+	settingRemoteTerminalPasswordConfirmationEnabled = "remote_terminal_password_confirmation_enabled"
+	settingMCPRemoteOperationsEnabled                = "mcp_remote_operations_enabled"
+	settingMCPStructuredExecEnabled                  = "mcp_structured_exec_enabled"
+	settingMCPRawShellEnabled                        = "mcp_raw_shell_enabled"
 )
 
 type remoteAccessView struct {
-	Global RemoteAccessGlobalPolicy     `json:"global"`
-	Server model.ServerRemoteAccessPolicy `json:"server"`
+	Global    RemoteAccessGlobalPolicy       `json:"global"`
+	Server    model.ServerRemoteAccessPolicy `json:"server"`
 	Effective struct {
 		RemoteTerminal      bool `json:"remote_terminal"`
 		MCPRemoteOperations bool `json:"mcp_remote_operations"`
 		MCPStructuredExec   bool `json:"mcp_structured_exec"`
 		MCPRawShell         bool `json:"mcp_raw_shell"`
 	} `json:"effective"`
-	Agent model.ServerRemoteAccessStatus `json:"agent"`
-	Reasons []string `json:"unavailable_reasons,omitempty"`
-	ActiveTerminals int `json:"active_terminals"`
+	Agent           model.ServerRemoteAccessStatus `json:"agent"`
+	Reasons         []string                       `json:"unavailable_reasons,omitempty"`
+	ActiveTerminals int                            `json:"active_terminals"`
 }
 
 type RemoteAccessGlobalPolicy struct {
@@ -42,7 +43,7 @@ type RemoteAccessGlobalPolicy struct {
 func (s *Server) globalRemoteAccessPolicy(r *http.Request) RemoteAccessGlobalPolicy {
 	settings := s.runtimeSettings(r.Context())
 	return RemoteAccessGlobalPolicy{
-		RemoteTerminalEnabled:      settingBool(settings, settingRemoteTerminalEnabled, false),
+		RemoteTerminalEnabled:      settingBool(settings, settingRemoteTerminalEnabled, true),
 		MCPRemoteOperationsEnabled: settingBool(settings, settingMCPRemoteOperationsEnabled, false),
 		MCPStructuredExecEnabled:   settingBool(settings, settingMCPStructuredExecEnabled, false),
 		MCPRawShellEnabled:         settingBool(settings, settingMCPRawShellEnabled, false),
@@ -77,22 +78,23 @@ func (s *Server) serverRemoteAccess(w http.ResponseWriter, r *http.Request, serv
 		if !decode(w, r, &req) {
 			return
 		}
+		remoteEnabled, mcpEnabled, err := normalizeRemoteAccessSwitches(req.RemoteTerminalEnabled, req.MCPRemoteOperationsEnabled, req.MCPStructuredExecEnabled, req.MCPRawShellEnabled)
+		if err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
 		policy, err := s.store.GetServerRemoteAccessPolicy(r.Context(), serverID)
 		if err != nil {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		if req.RemoteTerminalEnabled != nil {
-			policy.RemoteTerminalEnabled = *req.RemoteTerminalEnabled
+		if remoteEnabled != nil {
+			policy.RemoteTerminalEnabled = *remoteEnabled
 		}
-		if req.MCPRemoteOperationsEnabled != nil {
-			policy.MCPRemoteOperationsEnabled = *req.MCPRemoteOperationsEnabled
-		}
-		if req.MCPStructuredExecEnabled != nil {
-			policy.MCPStructuredExecEnabled = *req.MCPStructuredExecEnabled
-		}
-		if req.MCPRawShellEnabled != nil {
-			policy.MCPRawShellEnabled = *req.MCPRawShellEnabled
+		if mcpEnabled != nil {
+			policy.MCPRemoteOperationsEnabled = *mcpEnabled
+			policy.MCPStructuredExecEnabled = *mcpEnabled
+			policy.MCPRawShellEnabled = *mcpEnabled
 		}
 		policy.ServerID = serverID
 		saved, err := s.store.UpsertServerRemoteAccessPolicy(r.Context(), policy)
@@ -124,9 +126,12 @@ func (s *Server) remoteAccessView(r *http.Request, server *model.Server) (remote
 	global := s.globalRemoteAccessPolicy(r)
 	view := remoteAccessView{Global: global, Server: policy, Agent: status, ActiveTerminals: s.terminalHub.countForServer(server.ID)}
 	view.Effective.RemoteTerminal = global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled
-	view.Effective.MCPRemoteOperations = global.MCPRemoteOperationsEnabled && policy.MCPRemoteOperationsEnabled
-	view.Effective.MCPStructuredExec = global.MCPStructuredExecEnabled && policy.MCPStructuredExecEnabled
-	view.Effective.MCPRawShell = global.MCPRawShellEnabled && policy.MCPRawShellEnabled
+	mcpEnabled := view.Effective.RemoteTerminal &&
+		global.MCPRemoteOperationsEnabled && global.MCPStructuredExecEnabled && global.MCPRawShellEnabled &&
+		policy.MCPRemoteOperationsEnabled && policy.MCPStructuredExecEnabled && policy.MCPRawShellEnabled
+	view.Effective.MCPRemoteOperations = mcpEnabled
+	view.Effective.MCPStructuredExec = mcpEnabled
+	view.Effective.MCPRawShell = mcpEnabled
 	view.Reasons = s.remoteAccessUnavailableReasons(server, view, "remote_terminal")
 	return view, nil
 }
@@ -172,6 +177,18 @@ func (s *Server) assertRemoteExecAllowed(r *http.Request, server *model.Server, 
 	policy, err := s.store.GetServerRemoteAccessPolicy(r.Context(), server.ID)
 	if err != nil {
 		return err
+	}
+	if !global.RemoteTerminalEnabled {
+		return codedError("remote_access_global_disabled", "remote control is globally disabled")
+	}
+	if !policy.RemoteTerminalEnabled {
+		return codedError("remote_access_server_disabled", "remote control is disabled on this server")
+	}
+	if !global.MCPRemoteOperationsEnabled || !global.MCPStructuredExecEnabled || !global.MCPRawShellEnabled {
+		return codedError("remote_access_global_disabled", "MCP control is globally disabled")
+	}
+	if !policy.MCPRemoteOperationsEnabled || !policy.MCPStructuredExecEnabled || !policy.MCPRawShellEnabled {
+		return codedError("remote_access_server_disabled", "MCP control is disabled on this server")
 	}
 	status, err := s.store.GetServerRemoteAccessStatus(r.Context(), server.ID)
 	if err != nil {
@@ -223,6 +240,32 @@ func (s *Server) assertRemoteExecAllowed(r *http.Request, server *model.Server, 
 		}
 	}
 	return nil
+}
+
+func normalizeRemoteAccessSwitches(remote, operations, exec, shell *bool) (*bool, *bool, error) {
+	var mcp *bool
+	for _, value := range []*bool{operations, exec, shell} {
+		if value == nil {
+			continue
+		}
+		if mcp != nil && *mcp != *value {
+			return nil, nil, errors.New("MCP control fields must use the same value")
+		}
+		copy := *value
+		mcp = &copy
+	}
+	if remote != nil && !*remote {
+		if mcp != nil && *mcp {
+			return nil, nil, errors.New("MCP control requires remote control")
+		}
+		value := false
+		mcp = &value
+	}
+	if mcp != nil && *mcp {
+		value := true
+		remote = &value
+	}
+	return remote, mcp, nil
 }
 
 func (s *Server) recordRemoteAccessAudit(r *http.Request, event model.RemoteAccessAuditEvent) {

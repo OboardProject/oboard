@@ -13,12 +13,14 @@ export function RemoteTerminal({
   serverName,
   client,
   websocketURL,
+  passwordConfirmationRequired,
   onClose,
 }: {
   serverId: number
   serverName: string
   client: { request: RequestFn }
   websocketURL: (sessionId: string) => string
+  passwordConfirmationRequired: boolean
   onClose: () => void
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -27,9 +29,10 @@ export function RemoteTerminal({
   const socketRef = useRef<WebSocket | null>(null)
   const sessionRef = useRef('')
   const resizeTimer = useRef<number>(0)
-  const [stepUp, setStepUp] = useState(true)
+  const autoConnectStarted = useRef(false)
+  const [stepUp, setStepUp] = useState(passwordConfirmationRequired)
   const [fullscreen, setFullscreen] = useState(false)
-  const [status, setStatus] = useState('等待认证')
+  const [status, setStatus] = useState(passwordConfirmationRequired ? '等待认证' : '正在连接')
 
   const sendResize = () => {
     const term = termRef.current
@@ -75,6 +78,12 @@ export function RemoteTerminal({
       })
     }
   }
+
+  useEffect(() => {
+    if (passwordConfirmationRequired || autoConnectStarted.current) return
+    autoConnectStarted.current = true
+    void connect('')
+  }, [passwordConfirmationRequired])
 
   useEffect(() => {
     if (!hostRef.current || termRef.current) return
@@ -130,8 +139,12 @@ export function RemoteTerminal({
 
   const reconnect = () => {
     socketRef.current?.close()
-    setStepUp(true)
-    setStatus('等待认证')
+    if (passwordConfirmationRequired) {
+      setStepUp(true)
+      setStatus('等待认证')
+      return
+    }
+    void connect('')
   }
 
   const closeSession = async () => {
@@ -177,7 +190,7 @@ export function RemoteTerminal({
           resourceType="server"
           resourceId={serverId}
           title="打开远程终端"
-          warning="打开后，当前管理员可以在这台服务器上通过 Agent 使用交互式终端。已打开的终端不会再次要求认证。"
+          warning="确认后即可打开这台服务器的 WebSSH。"
           onComplete={token => { void connect(token) }}
           onCancel={onClose}
         />
