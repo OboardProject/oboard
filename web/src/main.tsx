@@ -90,7 +90,7 @@ import {
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
-  ArrowUpCircle, SlidersHorizontal, Unlink, GitBranch, Save
+  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -7036,6 +7036,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [mtuServer, setMtuServer] = useState<Server | null>(null)
   const [dnsServer, setDNSServer] = useState<Server | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
+  const [terminalServer, setTerminalServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [view, setViewState] = useState<'grid' | 'list'>(() => {
@@ -7456,6 +7457,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'details') setDetailServer(s)
+    else if (type === 'terminal') setTerminalServer(s)
     else if (type === 'resource-details') setConnectivityServer({ server: s })
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
@@ -7648,9 +7650,10 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
 		  ? <MotionList className="server-grid">{visibleServers.map(renderServerCard)}</MotionList>
       : <MotionList className="server-list">{visibleServers.map(renderServerCard)}</MotionList>}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
-    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
+    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
-    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} client={client} notify={notify} passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    {terminalServer ? <RemoteTerminal serverId={terminalServer.id} serverName={terminalServer.name || `server-${terminalServer.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${terminalServer.id}/terminal/ws/${sessionId}`)} passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)} onClose={() => setTerminalServer(null)} /> : null}
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}
@@ -8207,7 +8210,7 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
+function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
@@ -8353,6 +8356,8 @@ function ServerEditDialog({ server, onCancel, onSubmit, servers, connectionAudit
             />
           </FormField>}
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
+          <div className="form-section-title">远程控制</div>
+          <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={role === 'admin'} />
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
@@ -8707,6 +8712,7 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
       title: '监控与运维',
       items: [
         { label: '详细信息', type: 'details', icon: Info },
+        { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
         { label: '运行日志', type: 'logs', icon: FileText, admin: true },
         { label: '网络诊断', type: 'diagnose', icon: Activity, admin: true },
         { label: '任务记录', type: 'tasks', icon: ClipboardList },
@@ -10294,8 +10300,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
   </MotionDialogPanel>
 }
 
-function ServerDetailDialog({ server, client, notify, passwordConfirmationRequired, onClose }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; passwordConfirmationRequired: boolean; onClose: () => void }) {
-  const [terminalOpen, setTerminalOpen] = useState(false)
+function ServerDetailDialog({ server, onClose }: { server: Server; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const connectivityLabel = !server.latency_probe_enabled
     ? '未启用检测'
@@ -10304,7 +10309,6 @@ function ServerDetailDialog({ server, client, notify, passwordConfirmationRequir
       : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测'
 
   return (
-    <>
     <MotionDialogPanel onCancel={onClose} className="server-detail-dialog">
       <header className="dialog-head server-detail-head">
         <div className="server-detail-title">
@@ -10415,16 +10419,9 @@ function ServerDetailDialog({ server, client, notify, passwordConfirmationRequir
           {server.time_check_error && <div className="server-time-alert limitation"><div><strong>时间检测未完整生效</strong><span>{server.time_check_error}</span></div></div>}
           {server.time_logical_active && (server.time_unsupported_paths || []).length > 0 && <div className="server-time-alert limitation"><div><strong>部分路径无法完整使用逻辑时间</strong><span>{(server.time_unsupported_paths || []).join('、')}</span></div></div>}
         </section>
-
-        <section className="server-detail-section">
-          <div className="server-detail-section-head"><Terminal size={15} /><h3>远程访问</h3></div>
-          <RemoteAccessStatus serverId={server.id} client={client} notify={notify} onOpenTerminal={() => setTerminalOpen(true)} />
-        </section>
       </div>
       <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
     </MotionDialogPanel>
-    {terminalOpen ? <RemoteTerminal serverId={server.id} serverName={server.name || `server-${server.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${server.id}/terminal/ws/${sessionId}`)} passwordConfirmationRequired={passwordConfirmationRequired} onClose={() => setTerminalOpen(false)} /> : null}
-    </>
   )
 }
 
