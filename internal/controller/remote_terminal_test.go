@@ -287,6 +287,180 @@ func TestInteractiveReadyCancelsPrepareTimeout(t *testing.T) {
 	}
 }
 
+func TestCreateTerminalSessionLoginEnvProtocol(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "terminal-login.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	defer app.Close()
+	httpServer := httptest.NewServer(app.Handler())
+	defer httpServer.Close()
+
+	token, _, _ := realtimeLogin(t, httpServer.URL)
+	ctx := context.Background()
+	node := &model.Server{
+		Name: "GL-U", AgentID: "agent-gl-u", AgentTokenHash: security.HashSecret("agent-token"),
+		ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline,
+	}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertServerRemoteAccessStatus(ctx, node.ID, model.RemoteAccessReport{
+		Capabilities: []string{model.RemoteAccessCapabilityTerminal, model.RemoteAccessCapabilityTerminalLoginEnv},
+		LocalMode:    model.RemoteAccessModeStandard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	falseValue := false
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue})
+	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
+	settingsReq.Header.Set("Content-Type", "application/json")
+	settingsReq.Header.Set("Authorization", "Bearer "+token)
+	settingsRes, err := httpServer.Client().Do(settingsReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsRes.Body.Close()
+
+	live := make(chan any, 4)
+	app.registerAgentLive(node.ID, live)
+	defer app.unregisterAgentLive(node.ID, live)
+
+	rejectBody, _ := json.Marshal(map[string]any{"cols": 80, "rows": 24, "shell": "/bin/bash"})
+	rejectReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/servers/"+itoa(node.ID)+"/terminal/sessions", bytes.NewReader(rejectBody))
+	rejectReq.Header.Set("Content-Type", "application/json")
+	rejectReq.Header.Set("Authorization", "Bearer "+token)
+	rejectRes, err := httpServer.Client().Do(rejectReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectRes.Body.Close()
+	if rejectRes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("shell override status = %d", rejectRes.StatusCode)
+	}
+
+	badMode, _ := json.Marshal(map[string]any{"cols": 80, "rows": 24, "mode": "ssh"})
+	badReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/servers/"+itoa(node.ID)+"/terminal/sessions", bytes.NewReader(badMode))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.Header.Set("Authorization", "Bearer "+token)
+	badRes, err := httpServer.Client().Do(badReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badRes.Body.Close()
+	if badRes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid mode status = %d", badRes.StatusCode)
+	}
+
+	createBody, _ := json.Marshal(map[string]any{"cols": 80, "rows": 24, "mode": "minimal"})
+	createReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/servers/"+itoa(node.ID)+"/terminal/sessions", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createRes, err := httpServer.Client().Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer createRes.Body.Close()
+	if createRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s", createRes.StatusCode, readBody(t, createRes))
+	}
+	var created map[string]any
+	if err := json.NewDecoder(createRes.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created["mode"] != "minimal" || created["login_env"] != true {
+		t.Fatalf("create = %#v", created)
+	}
+	select {
+	case prepare := <-live:
+		payload, _ := prepare.(map[string]any)
+		if payload["mode"] != "minimal" {
+			t.Fatalf("prepare = %#v", payload)
+		}
+		if _, ok := payload["shell"]; ok {
+			t.Fatal("prepare must not include shell")
+		}
+		if _, ok := payload["env"]; ok {
+			t.Fatal("prepare must not include env")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing interactive_prepare")
+	}
+}
+
+func TestCreateTerminalSessionOmitsModeForOldAgents(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "terminal-old.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	defer app.Close()
+	httpServer := httptest.NewServer(app.Handler())
+	defer httpServer.Close()
+
+	token, _, _ := realtimeLogin(t, httpServer.URL)
+	ctx := context.Background()
+	node := &model.Server{
+		Name: "GL-U", AgentID: "agent-gl-u", AgentTokenHash: security.HashSecret("agent-token"),
+		ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline,
+	}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertServerRemoteAccessStatus(ctx, node.ID, model.RemoteAccessReport{
+		Capabilities: []string{model.RemoteAccessCapabilityTerminal},
+		LocalMode:    model.RemoteAccessModeStandard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	falseValue := false
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue})
+	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
+	settingsReq.Header.Set("Content-Type", "application/json")
+	settingsReq.Header.Set("Authorization", "Bearer "+token)
+	settingsRes, err := httpServer.Client().Do(settingsReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsRes.Body.Close()
+
+	live := make(chan any, 4)
+	app.registerAgentLive(node.ID, live)
+	defer app.unregisterAgentLive(node.ID, live)
+
+	createBody, _ := json.Marshal(map[string]any{"cols": 80, "rows": 24, "mode": "login"})
+	createReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/servers/"+itoa(node.ID)+"/terminal/sessions", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createRes, err := httpServer.Client().Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer createRes.Body.Close()
+	if createRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", createRes.StatusCode)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(createRes.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	if created["login_env"] != false {
+		t.Fatalf("old agent login_env = %#v", created["login_env"])
+	}
+	select {
+	case prepare := <-live:
+		payload, _ := prepare.(map[string]any)
+		if _, ok := payload["mode"]; ok {
+			t.Fatalf("old agent prepare included mode: %#v", payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing interactive_prepare")
+	}
+}
+
 func startTerminalSession(t *testing.T) (*Server, *httptest.Server, string, *http.Cookie, *model.Server, chan any, string, *http.Cookie, func()) {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "terminal.sqlite"))

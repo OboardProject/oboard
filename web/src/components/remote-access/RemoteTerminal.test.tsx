@@ -159,4 +159,49 @@ describe('RemoteTerminal', () => {
     act(() => FakeTerminalSocket.instances[0].close())
     expect(document.querySelector('.muted')?.textContent).toBe('节点无法启动终端：fork/exec /bin/bash: operation not permitted')
   })
+
+  it('sends login mode and shows session identity from agent ready info', async () => {
+    const request = vi.fn().mockResolvedValue({ session_id: 'sess-3', login_env: true, mode: 'login' })
+    act(() => root.render(
+      <RemoteTerminal
+        serverId={1}
+        serverName="GL-U"
+        client={{ request }}
+        websocketURL={() => 'ws://example.test/terminal'}
+        passwordConfirmationRequired={false}
+        onClose={() => undefined}
+      />,
+    ))
+    await flush()
+    await flush()
+    expect(JSON.parse(String(request.mock.calls[0][1].body)).mode).toBe('login')
+    act(() => FakeTerminalSocket.instances[0].open())
+    act(() => FakeTerminalSocket.instances[0].emitJSON({
+      type: 'ready',
+      info: { username: 'root', uid: 0, gid: 0, home: '/root', shell: '/bin/bash', mode: 'login', cwd: '/root', term: 'xterm-256color' },
+    }))
+    expect(document.querySelector('.remote-terminal-identity')?.textContent).toBe('root · /bin/bash · Login')
+    expect(document.querySelector('button[aria-label="最小环境打开"]')).not.toBeNull()
+  })
+
+  it('offers a minimal environment reopen after the shell exits', async () => {
+    const request = vi.fn().mockResolvedValue({ session_id: 'sess-4', login_env: true, mode: 'login' })
+    act(() => root.render(
+      <RemoteTerminal
+        serverId={1}
+        serverName="GL-U"
+        client={{ request }}
+        websocketURL={() => 'ws://example.test/terminal'}
+        passwordConfirmationRequired={false}
+        onClose={() => undefined}
+      />,
+    ))
+    await flush()
+    await flush()
+    act(() => FakeTerminalSocket.instances[0].open())
+    act(() => FakeTerminalSocket.instances[0].emitJSON({ type: 'ready', info: { username: 'root', shell: '/bin/bash', mode: 'login' } }))
+    act(() => FakeTerminalSocket.instances[0].emitJSON({ type: 'closed', reason: 'shell_exited' }))
+    expect(document.querySelector('.muted')?.textContent).toBe('Shell 已退出')
+    expect(document.querySelector('.remote-terminal-banner')?.textContent).toContain('以最小环境打开')
+  })
 })

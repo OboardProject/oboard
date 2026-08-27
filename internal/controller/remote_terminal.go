@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,8 @@ type terminalSession struct {
 	TicketUsed   bool
 	Cols         int
 	Rows         int
+	Mode         string
+	LoginEnv     bool
 	PrepareExp   string
 	browser      *websocket.Conn
 	agent        *websocket.Conn
@@ -127,11 +130,27 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	var req struct {
-		StepUpToken string `json:"step_up_token"`
-		Cols        int    `json:"cols"`
-		Rows        int    `json:"rows"`
+		StepUpToken string          `json:"step_up_token"`
+		Cols        int             `json:"cols"`
+		Rows        int             `json:"rows"`
+		Mode        string          `json:"mode"`
+		Shell       string          `json:"shell"`
+		Command     string          `json:"command"`
+		Env         json.RawMessage `json:"env"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Shell) != "" || strings.TrimSpace(req.Command) != "" || (len(req.Env) > 0 && string(req.Env) != "null") {
+		failCode(w, "terminal_request_invalid", "terminal request cannot select shell, command, or environment", http.StatusBadRequest)
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "login"
+	}
+	if mode != "login" && mode != "minimal" {
+		failCode(w, "terminal_mode_invalid", "terminal mode must be login or minimal", http.StatusBadRequest)
 		return
 	}
 	if settingBool(s.runtimeSettings(r.Context()), settingRemoteTerminalPasswordConfirmationEnabled, true) {
@@ -184,11 +203,12 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
+	loginEnv := slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityTerminalLoginEnv)
 	now := time.Now().UTC()
 	expires := now.Add(security.InteractivePrepareTTL)
 	session := &terminalSession{
 		ID: sessionID, ServerID: serverID, UserID: user.ID, Nonce: nonce, ExpiresAt: now.Add(terminalAbsoluteLifetime),
-		CreatedAt: now, Ticket: ticket, Cols: cols, Rows: rows, PrepareExp: expires.Format(time.RFC3339Nano),
+		CreatedAt: now, Ticket: ticket, Cols: cols, Rows: rows, Mode: mode, LoginEnv: loginEnv, PrepareExp: expires.Format(time.RFC3339Nano),
 	}
 	s.terminalHub.mu.Lock()
 	s.terminalHub.sessions[sessionID] = session
@@ -204,6 +224,9 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		"issued_at": envelope.IssuedAt, "expires_at": envelope.ExpiresAt, "kind": "terminal",
 		"cols": cols, "rows": rows, "signature": security.SignInteractiveEnvelope(server.AgentTokenHash, envelope),
 		"ts": now,
+	}
+	if loginEnv {
+		payload["mode"] = mode
 	}
 	if !s.sendAgentControl(serverID, payload) {
 		s.terminalHub.mu.Lock()
@@ -222,7 +245,9 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		EventType: model.RemoteAccessAuditTerminalOpen, ActorType: "user", ActorUserID: &user.ID,
 		ServerID: &serverID, SessionID: sessionID, Result: "opened", Capability: "remote_terminal",
 	})
-	write(w, http.StatusCreated, map[string]any{"session_id": sessionID, "expires_at": session.ExpiresAt})
+	write(w, http.StatusCreated, map[string]any{
+		"session_id": sessionID, "expires_at": session.ExpiresAt, "mode": mode, "login_env": loginEnv,
+	})
 }
 
 func (s *Server) terminalCookiePath(r *http.Request, serverID int64) string {

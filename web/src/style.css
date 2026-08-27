@@ -10736,6 +10736,60 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   white-space: nowrap;
 }
 
+.remote-terminal-identity {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.remote-terminal-menu {
+  width: 188px;
+}
+
+.remote-terminal-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--warning, #d97706) 12%, transparent);
+  color: var(--foreground);
+  font-size: 12.5px;
+}
+
+.remote-terminal-info {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--popover, #0b1220) 92%, transparent);
+}
+
+.remote-terminal-info dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+  margin: 0;
+}
+
+.remote-terminal-info div {
+  min-width: 0;
+}
+
+.remote-terminal-info dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.remote-terminal-info dd {
+  margin: 0;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .remote-terminal-dialog .dialog-head-actions {
   flex-wrap: wrap;
   max-width: 100%;

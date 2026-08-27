@@ -1639,12 +1639,16 @@ const errorMessages: Record<string, string> = {
   'origin is not allowed': '来源地址不被允许',
   'terminal ticket missing': '终端凭证缺失，请重试连接',
   'terminal ticket is invalid': '终端凭证无效，请重试连接',
+  'terminal request cannot select shell, command, or environment': '远程终端不能指定 Shell、命令或环境变量',
+  'terminal mode must be login or minimal': '终端模式只能是登录环境或最小环境',
   remote_access_global_disabled: '远程控制已在全局关闭',
   remote_access_server_disabled: '此服务器已关闭远程控制',
   agent_offline: '节点离线，无法打开远程终端',
   agent_upgrade_required: '节点 Agent 版本过低，请先更新后再使用远程终端',
   agent_local_gate_denied: '节点本机安全策略拒绝了远程终端',
   terminal_limit_exceeded: '远程终端数量已达上限',
+  terminal_request_invalid: '远程终端不能指定 Shell、命令或环境变量',
+  terminal_mode_invalid: '终端模式只能是登录环境或最小环境',
   origin_denied: '来源地址不被允许',
   terminal_auth_expired: '终端认证已失效，请重试连接'
 }

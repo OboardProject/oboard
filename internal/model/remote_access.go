@@ -12,9 +12,10 @@ const (
 
 	ApprovalPolicyPrivilegedGrant = "privileged_grant"
 
-	RemoteAccessCapabilityTerminal  = "remote_terminal_v1"
-	RemoteAccessCapabilityExec      = "remote_exec_v1"
-	RemoteAccessCapabilityLocalGate = "remote_access_local_gate_v1"
+	RemoteAccessCapabilityTerminal         = "remote_terminal_v1"
+	RemoteAccessCapabilityTerminalLoginEnv = "terminal_login_env_v1"
+	RemoteAccessCapabilityExec             = "remote_exec_v1"
+	RemoteAccessCapabilityLocalGate        = "remote_access_local_gate_v1"
 
 	RemoteExecOriginMCP   = "mcp"
 	RemoteExecOriginPanel = "panel"
@@ -36,30 +37,30 @@ const (
 	StepUpPurposeGrantMCPOperations = "grant_mcp_operations"
 	StepUpPurposePrivilegedGrant    = "privileged_grant"
 
-	RemoteAccessAuditTerminalOpen             = "terminal_open"
-	RemoteAccessAuditTerminalClose            = "terminal_close"
-	RemoteAccessAuditTerminalDenied           = "terminal_denied"
-	RemoteAccessAuditMCPRemoteOperation       = "mcp_remote_operation"
-	RemoteAccessAuditMCPExec                  = "mcp_exec"
-	RemoteAccessAuditMCPShell                 = "mcp_shell"
-	RemoteAccessAuditMCPExecDenied            = "mcp_exec_denied"
-	RemoteAccessAuditPrivilegedGrantCreated   = "privileged_grant_created"
-	RemoteAccessAuditPrivilegedGrantUpdated   = "privileged_grant_updated"
-	RemoteAccessAuditPrivilegedGrantRevoked   = "privileged_grant_revoked"
-	RemoteAccessAuditAgentLocalGateDenied     = "agent_local_gate_denied"
+	RemoteAccessAuditTerminalOpen           = "terminal_open"
+	RemoteAccessAuditTerminalClose          = "terminal_close"
+	RemoteAccessAuditTerminalDenied         = "terminal_denied"
+	RemoteAccessAuditMCPRemoteOperation     = "mcp_remote_operation"
+	RemoteAccessAuditMCPExec                = "mcp_exec"
+	RemoteAccessAuditMCPShell               = "mcp_shell"
+	RemoteAccessAuditMCPExecDenied          = "mcp_exec_denied"
+	RemoteAccessAuditPrivilegedGrantCreated = "privileged_grant_created"
+	RemoteAccessAuditPrivilegedGrantUpdated = "privileged_grant_updated"
+	RemoteAccessAuditPrivilegedGrantRevoked = "privileged_grant_revoked"
+	RemoteAccessAuditAgentLocalGateDenied   = "agent_local_gate_denied"
 )
 
 type RemoteAccessReport struct {
-	Capabilities []string              `json:"capabilities,omitempty"`
-	LocalMode    string                `json:"local_mode,omitempty"`
+	Capabilities []string               `json:"capabilities,omitempty"`
+	LocalMode    string                 `json:"local_mode,omitempty"`
 	LocalAllow   RemoteAccessLocalAllow `json:"local_allow,omitempty"`
 }
 
 type RemoteAccessLocalAllow struct {
-	RemoteTerminal        bool `json:"remote_terminal"`
-	MCPRemoteOperations   bool `json:"mcp_remote_operations"`
-	MCPStructuredExec     bool `json:"mcp_structured_exec"`
-	MCPRawShell           bool `json:"mcp_raw_shell"`
+	RemoteTerminal      bool `json:"remote_terminal"`
+	MCPRemoteOperations bool `json:"mcp_remote_operations"`
+	MCPStructuredExec   bool `json:"mcp_structured_exec"`
+	MCPRawShell         bool `json:"mcp_raw_shell"`
 }
 
 type ServerRemoteAccessPolicy struct {
@@ -73,11 +74,11 @@ type ServerRemoteAccessPolicy struct {
 }
 
 type ServerRemoteAccessStatus struct {
-	ServerID         int64                  `json:"server_id"`
-	Capabilities     []string               `json:"capabilities"`
-	LocalMode        string                 `json:"local_mode"`
-	LocalAllow       RemoteAccessLocalAllow `json:"local_allow"`
-	UpdatedAt        time.Time              `json:"updated_at"`
+	ServerID     int64                  `json:"server_id"`
+	Capabilities []string               `json:"capabilities"`
+	LocalMode    string                 `json:"local_mode"`
+	LocalAllow   RemoteAccessLocalAllow `json:"local_allow"`
+	UpdatedAt    time.Time              `json:"updated_at"`
 }
 
 type MCPPrivilegedGrant struct {
@@ -116,22 +117,22 @@ func (g MCPPrivilegedGrant) HasCapability(name string) bool {
 }
 
 type RemoteAccessAuditEvent struct {
-	ID            int64          `json:"id"`
-	EventType     string         `json:"event_type"`
-	ActorType     string         `json:"actor_type"`
-	ActorUserID   *int64         `json:"actor_user_id,omitempty"`
-	OAuthClientID string         `json:"oauth_client_id,omitempty"`
-	OAuthGrantID  string         `json:"oauth_grant_id,omitempty"`
-	ServerID      *int64         `json:"server_id,omitempty"`
-	SessionID     string         `json:"session_id,omitempty"`
-	RequestID     string         `json:"request_id,omitempty"`
-	Capability    string         `json:"capability,omitempty"`
-	Result        string         `json:"result"`
-	StartedAt     time.Time      `json:"started_at"`
-	EndedAt       *time.Time     `json:"ended_at,omitempty"`
-	DurationMS    int64          `json:"duration_ms,omitempty"`
-	SourceIP      string         `json:"source_ip,omitempty"`
-	MetadataJSON  []byte         `json:"metadata_json,omitempty"`
+	ID            int64      `json:"id"`
+	EventType     string     `json:"event_type"`
+	ActorType     string     `json:"actor_type"`
+	ActorUserID   *int64     `json:"actor_user_id,omitempty"`
+	OAuthClientID string     `json:"oauth_client_id,omitempty"`
+	OAuthGrantID  string     `json:"oauth_grant_id,omitempty"`
+	ServerID      *int64     `json:"server_id,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
+	RequestID     string     `json:"request_id,omitempty"`
+	Capability    string     `json:"capability,omitempty"`
+	Result        string     `json:"result"`
+	StartedAt     time.Time  `json:"started_at"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	DurationMS    int64      `json:"duration_ms,omitempty"`
+	SourceIP      string     `json:"source_ip,omitempty"`
+	MetadataJSON  []byte     `json:"metadata_json,omitempty"`
 }
 
 type RemoteExecCommand struct {
@@ -148,29 +149,29 @@ type RemoteExecLimits struct {
 }
 
 type RemoteExecTaskPayload struct {
-	RequestID  string            `json:"request_id"`
-	Origin     string            `json:"origin"`
-	Privilege  string            `json:"privilege"`
-	ActorRef   string            `json:"actor_ref,omitempty"`
-	GrantID    int64             `json:"grant_id,omitempty"`
-	ServerID   int64             `json:"server_id"`
-	IssuedAt   time.Time         `json:"issued_at"`
-	ExpiresAt  time.Time         `json:"expires_at"`
-	Command    RemoteExecCommand `json:"command"`
-	Limits     RemoteExecLimits  `json:"limits"`
+	RequestID string            `json:"request_id"`
+	Origin    string            `json:"origin"`
+	Privilege string            `json:"privilege"`
+	ActorRef  string            `json:"actor_ref,omitempty"`
+	GrantID   int64             `json:"grant_id,omitempty"`
+	ServerID  int64             `json:"server_id"`
+	IssuedAt  time.Time         `json:"issued_at"`
+	ExpiresAt time.Time         `json:"expires_at"`
+	Command   RemoteExecCommand `json:"command"`
+	Limits    RemoteExecLimits  `json:"limits"`
 }
 
 type RemoteOperationTaskPayload struct {
-	RequestID  string            `json:"request_id"`
-	Origin     string            `json:"origin"`
-	Kind       string            `json:"kind"`
-	ActorRef   string            `json:"actor_ref,omitempty"`
-	GrantID    int64             `json:"grant_id,omitempty"`
-	ServerID   int64             `json:"server_id"`
-	IssuedAt   time.Time         `json:"issued_at"`
-	ExpiresAt  time.Time         `json:"expires_at"`
-	Service    string            `json:"service,omitempty"`
-	Lines      int               `json:"lines,omitempty"`
+	RequestID string    `json:"request_id"`
+	Origin    string    `json:"origin"`
+	Kind      string    `json:"kind"`
+	ActorRef  string    `json:"actor_ref,omitempty"`
+	GrantID   int64     `json:"grant_id,omitempty"`
+	ServerID  int64     `json:"server_id"`
+	IssuedAt  time.Time `json:"issued_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Service   string    `json:"service,omitempty"`
+	Lines     int       `json:"lines,omitempty"`
 }
 
 type RemoteExecResultMeta struct {
@@ -212,20 +213,21 @@ type InteractivePrepareEnvelope struct {
 	Kind             string `json:"kind"`
 	Cols             int    `json:"cols"`
 	Rows             int    `json:"rows"`
+	Mode             string `json:"mode,omitempty"`
 	Signature        string `json:"signature,omitempty"`
 }
 
 type StepUpChallenge struct {
-	ID                  string    `json:"id"`
-	UserID              int64     `json:"user_id"`
-	SessionID           string    `json:"session_id"`
-	SessionVersion      int64     `json:"session_version"`
-	Purpose             string    `json:"purpose"`
-	ResourceType        string    `json:"resource_type"`
-	ResourceID          string    `json:"resource_id"`
-	Nonce               string    `json:"nonce"`
-	WebAuthnSessionJSON []byte    `json:"-"`
+	ID                  string     `json:"id"`
+	UserID              int64      `json:"user_id"`
+	SessionID           string     `json:"session_id"`
+	SessionVersion      int64      `json:"session_version"`
+	Purpose             string     `json:"purpose"`
+	ResourceType        string     `json:"resource_type"`
+	ResourceID          string     `json:"resource_id"`
+	Nonce               string     `json:"nonce"`
+	WebAuthnSessionJSON []byte     `json:"-"`
 	ConsumedAt          *time.Time `json:"consumed_at,omitempty"`
-	ExpiresAt           time.Time `json:"expires_at"`
-	CreatedAt           time.Time `json:"created_at"`
+	ExpiresAt           time.Time  `json:"expires_at"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
