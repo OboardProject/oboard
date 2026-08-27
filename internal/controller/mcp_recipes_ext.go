@@ -674,8 +674,22 @@ func (s *Server) prepareCertificateRecipe(ctx context.Context, principal applica
 	return &mcpPreparedRecipe{Status: "ready", Intent: "certificate.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "issue_certificate", "certificate_id": certificateID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "certificate_issuance_accepted"}}}, nil
 }
 
-// prepareSettingsRecipe updates global settings.
+// prepareSettingsRecipe updates global settings or controls an active
+// Controller base-path migration.
 func (s *Server) prepareSettingsRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	goal := strings.ToLower(input.Goal)
+	if containsAnyFold(goal, "强制完成迁移", "强制迁移", "force migrate", "force base path") || (containsAnyFold(goal, "强制完成", "force complete") && containsAnyFold(goal, "路径", "base path", "迁移")) {
+		operation := mcpOperationRef{Capability: "settings.base_path.force", Input: map[string]any{"confirm": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "settings.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "force_base_path_migration"}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "settings"}}}, nil
+	}
+	if containsAnyFold(goal, "撤销迁移", "撤销面板路径", "revoke base path", "rollback base path") || (containsAnyFold(goal, "撤销", "revoke") && containsAnyFold(goal, "路径", "base path", "迁移")) {
+		operation := mcpOperationRef{Capability: "settings.base_path.revoke", Input: map[string]any{"confirm": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "settings.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "revoke_base_path_migration"}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "settings"}}}, nil
+	}
+	if containsAnyFold(goal, "重试失败", "重试 agent", "retry base path") || (containsAnyFold(goal, "重试", "retry") && containsAnyFold(goal, "路径", "base path", "迁移")) {
+		operation := mcpOperationRef{Capability: "settings.base_path.retry", Input: map[string]any{}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "settings.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "retry_base_path_migration"}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "settings"}}}, nil
+	}
 	changes := map[string]any{}
 	if nested, ok := input.Params["changes"].(map[string]any); ok {
 		changes = nested

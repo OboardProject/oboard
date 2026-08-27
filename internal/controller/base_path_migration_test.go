@@ -283,3 +283,114 @@ func TestBasePathMigrationToRootRetiresOldPrefix(t *testing.T) {
 	restarted := New(db, "test-secret", app.staticDir, "/ignored", nil)
 	basePathRequest(t, restarted.Handler(), "/old/settings", http.StatusNotFound, "")
 }
+
+func TestBasePathMigrationSkipsUnenrolledAndForceCompletesOffline(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	unenrolled := &model.Server{Name: "plain", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	offline := &model.Server{Name: "offline", AgentID: "agent-offline", AgentTokenHash: security.HashSecret("offline-token"), ListenIP: "0.0.0.0", PortRangeStart: 11000, PortRangeEnd: 11010, Status: model.ServerOffline}
+	for _, server := range []*model.Server{unenrolled, offline} {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SetSetting(ctx, "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
+	}
+	app := New(db, "test-secret", basePathTestStaticDir(t), "", nil)
+	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/ui/settings", nil), "/private"); err != nil || !migrated {
+		t.Fatalf("start migration = %v, %v", migrated, err)
+	}
+	progress, err := app.basePathMigrationProgress(ctx)
+	if err != nil || progress.Total != 1 || progress.Failed != 1 || progress.Skipped < 1 || !progress.CanForce || !progress.CanRevoke {
+		t.Fatalf("progress with unenrolled and offline = %#v, %v", progress, err)
+	}
+	handler := app.Handler()
+	basePathRequest(t, handler, "/healthz", http.StatusOK, `"ok":true`)
+	basePathRequest(t, handler, "/private/healthz", http.StatusOK, `"ok":true`)
+	if _, err := app.forceBasePathMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if app.basePathState().MigrationVersion != 0 {
+		t.Fatal("force complete left the migration active")
+	}
+	basePathRequest(t, handler, "/healthz", http.StatusNotFound, "")
+	basePathRequest(t, handler, "/private/healthz", http.StatusOK, `"ok":true`)
+}
+
+func TestBasePathMigrationRevokeSkipsUnreachableAndWaitsForUpdatedOffline(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	online := &model.Server{Name: "online", AgentID: "agent-online", AgentTokenHash: security.HashSecret("online-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	offline := &model.Server{Name: "offline", AgentID: "agent-offline", AgentTokenHash: security.HashSecret("offline-token"), ListenIP: "0.0.0.0", PortRangeStart: 11000, PortRangeEnd: 11010, Status: model.ServerOffline}
+	for _, server := range []*model.Server{online, offline} {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SetSetting(ctx, "controller_url", "http://localhost"); err != nil {
+		t.Fatal(err)
+	}
+	app := New(db, "test-secret", basePathTestStaticDir(t), "", nil)
+	handler := app.Handler()
+	if _, migrated, err := app.startBasePathMigration(ctx, httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/ui/settings", nil), "/private"); err != nil || !migrated {
+		t.Fatalf("start migration = %v, %v", migrated, err)
+	}
+	tasks, err := db.ListTasksByConfigVersion(ctx, app.basePathState().MigrationVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := latestMigrationTasks(tasks)
+	onlineTask, ok := latest[online.ID]
+	if !ok {
+		t.Fatal("missing online migration task")
+	}
+	if err := db.CompleteTask(ctx, onlineTask.ID, "succeeded", `{"message":"updated"}`); err != nil {
+		t.Fatal(err)
+	}
+	online.Status = model.ServerOffline
+	if err := db.UpdateServer(ctx, online); err != nil {
+		t.Fatal(err)
+	}
+
+	redirect, progress, err := app.revokeBasePathMigration(ctx)
+	if err != nil || redirect != "/settings" || progress.Direction != basePathMigrationDirectionRollback || progress.CanRevoke {
+		t.Fatalf("revoke = redirect %q progress %#v err %v", redirect, progress, err)
+	}
+	if progress.Total != 1 || progress.Failed != 1 || !progress.CanForce {
+		t.Fatalf("revoke should wait only for the previously updated offline agent: %#v", progress)
+	}
+	basePathRequest(t, handler, "/healthz", http.StatusOK, `"ok":true`)
+	basePathRequest(t, handler, "/private/healthz", http.StatusOK, `"ok":true`)
+
+	online.Status = model.ServerOnline
+	if err := db.UpdateServer(ctx, online); err != nil {
+		t.Fatal(err)
+	}
+	app.retryBasePathMigrationForServer(ctx, online.ID)
+	tasks, err = db.ListTasksByConfigVersion(ctx, app.basePathState().MigrationVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback := latestMigrationTasks(tasks)[online.ID]
+	if rollback.Status != "pending" {
+		t.Fatalf("recovered agent was not retried: %#v", rollback)
+	}
+	if err := db.CompleteTask(ctx, rollback.ID, "succeeded", `{"message":"rolled back"}`); err != nil {
+		t.Fatal(err)
+	}
+	app.maybeFinalizeBasePathMigration(ctx)
+	basePathRequest(t, handler, "/private/healthz", http.StatusNotFound, "")
+	basePathRequest(t, handler, "/healthz", http.StatusOK, `"ok":true`)
+	if app.basePathState().Current != "" {
+		t.Fatalf("revoked current path = %q", app.basePathState().Current)
+	}
+}

@@ -30,6 +30,19 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			RBACPermission: "admin.settings", ResolveResourceRefs: noRefs,
 		}
 	}
+	basePathMigrationAgent := closedObject(map[string]any{
+		"server_id": positiveID, "server_name": stringValue, "task_id": map[string]any{"type": "integer"},
+		"status": stringValue, "error": stringValue,
+	})
+	basePathMigration := closedObject(map[string]any{
+		"active": boolValue, "direction": stringValue, "current_path": stringValue, "previous_path": stringValue,
+		"config_version": map[string]any{"type": "integer"}, "started_at": stringValue,
+		"total": map[string]any{"type": "integer"}, "succeeded": map[string]any{"type": "integer"},
+		"pending": map[string]any{"type": "integer"}, "running": map[string]any{"type": "integer"},
+		"failed": map[string]any{"type": "integer"}, "removed": map[string]any{"type": "integer"},
+		"skipped": map[string]any{"type": "integer"}, "percentage": map[string]any{"type": "integer"},
+		"can_revoke": boolValue, "can_force": boolValue, "agents": arrayOf(basePathMigrationAgent),
+	})
 	certificate := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "name": stringValue, "primary_domain": stringValue,
 		"wildcard": boolValue, "challenge_type": stringValue, "status": stringValue,
@@ -149,6 +162,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"update_window_start_hour": map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
 			"update_window_end_hour":   map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
 		})}, "changes"), schemaObject(map[string]any{"changed_fields": stringArray(1, 32)}, "changed_fields"), 2, false),
+		adminWrite("settings.base_path.retry", "重试面板路径迁移中失败或未创建的 Agent 同步；未接入服务器保持跳过", schemaObject(nil), schemaObject(map[string]any{"migration": basePathMigration}, "migration"), 2, false),
+		adminWrite("settings.base_path.force", "强制结束当前面板路径迁移或撤销，忽略仍离线、超时或未更新的 Agent", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), schemaObject(map[string]any{"migration": basePathMigration, "finalized": boolValue}, "migration", "finalized"), 3, true),
+		adminWrite("settings.base_path.revoke", "撤销进行中的面板路径迁移，把已更新到新路径的 Agent 改回旧地址；未接入或从未收到新地址的服务器会跳过", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), schemaObject(map[string]any{"redirect_path": stringValue, "migration": basePathMigration}, "redirect_path", "migration"), 3, true),
 		adminWrite("telegram_bot.update", "修改统一 Telegram Bot；Bot Token 只写入加密存储，不返回明文", schemaObject(map[string]any{
 			"enabled": boolValue, "bot_token": map[string]any{"type": "string", "maxLength": 256},
 		}, "enabled"), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot"), 3, false),

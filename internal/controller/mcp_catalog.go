@@ -44,7 +44,9 @@ Use a stable idempotency key for every state-changing request. On a revision con
 
 When a Workflow reports failed, read its error message first. For access_change (套餐发布) workflows the step is retryable: call ` + "`oboard_retry_workflow_step`" + ` with the workflow and step ids to resume the release from its durable failure point (for example after a transient database-busy error), then follow the Workflow until terminal. Only retry an explicitly retryable step; never re-submit a new Changeset to work around a failed one.
 
-Keep the requested blast radius as small as possible. Explain required approvals, external actions, unresolved assumptions, rollback considerations, and recovery actions.`
+Keep the requested blast radius as small as possible. Explain required approvals, external actions, unresolved assumptions, rollback considerations, and recovery actions.
+
+Panel path changes keep both prefixes until enrolled Agents update. Unenrolled servers are skipped. Offline Agents can be retried, force-completed, or revoked; revoke only rolls back Agents that already received the new controller URL.`
 
 var (
 	mcpSingletonMu sync.Mutex

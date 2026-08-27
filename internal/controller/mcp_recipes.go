@@ -62,7 +62,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "controller_update.manage", Version: mcpRecipeVersion, Aliases: []string{"controller_update.manage", "controller update", "controller update channel", "主控更新", "主控升级", "主控更新通道"}, Verbs: []string{"check", "set", "switch", "install", "update", "cancel", "检查", "切换", "安装", "更新", "升级", "取消"}, Nouns: []string{"controller update", "controller channel", "主控更新", "主控升级", "更新通道"}, Prepare: s.prepareControllerUpdateRecipe},
 		{ID: "notification.manage", Version: mcpRecipeVersion, Aliases: []string{"notification.manage", "notification channel", "通知频道", "通知设置"}, Verbs: []string{"create", "add", "update", "change", "delete", "test", "创建", "新增", "添加", "修改", "删除", "测试", "发布"}, Nouns: []string{"notification", "通知", "频道", "公告"}, Prepare: s.prepareNotificationRecipe},
 		{ID: "certificate.manage", Version: mcpRecipeVersion, Aliases: []string{"certificate.manage", "certificate", "证书", "ssl 证书", "tls 证书"}, Verbs: []string{"issue", "renew", "delete", "签发", "续期", "删除", "申请"}, Nouns: []string{"certificate", "证书"}, Prepare: s.prepareCertificateRecipe},
-		{ID: "settings.manage", Version: mcpRecipeVersion, Aliases: []string{"settings.manage", "global settings", "全局设置", "面板设置"}, Verbs: []string{"update", "change", "set", "修改", "设置", "开启", "关闭"}, Nouns: []string{"global settings", "全局设置", "面板设置", "审计开关"}, Prepare: s.prepareSettingsRecipe},
+		{ID: "settings.manage", Version: mcpRecipeVersion, Aliases: []string{"settings.manage", "global settings", "全局设置", "面板设置", "面板路径"}, Verbs: []string{"update", "change", "set", "retry", "revoke", "force", "修改", "设置", "开启", "关闭", "重试", "撤销", "强制"}, Nouns: []string{"global settings", "全局设置", "面板设置", "审计开关", "面板路径", "base path"}, Prepare: s.prepareSettingsRecipe},
 	}
 }
 
@@ -192,7 +192,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		{"tunnel.manage", []string{"隧道", "tunnel"}},
 		{"certificate.manage", []string{"证书", "certificate"}},
 		{"notification.manage", []string{"通知频道", "notification channel", "公告"}},
-		{"settings.manage", []string{"全局设置", "global settings", "面板设置"}},
+		{"settings.manage", []string{"全局设置", "global settings", "面板设置", "面板路径", "base path"}},
 		{"controller_update.manage", []string{"主控更新", "主控升级", "主控更新通道", "controller update", "controller channel"}},
 		{"host_ops.manage", []string{"诊断", "diagnose", "日志", "logs", "升级 agent", "卸载 agent", "uninstall agent", "拉取", "网卡", "网络接口", "network interface"}},
 		{"outbound.manage", []string{"出口", "outbound"}},

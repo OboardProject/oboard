@@ -9866,6 +9866,13 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: var(--danger);
 }
 
+.base-path-migration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-self: start;
+}
+
 .base-path-retry { justify-self: start; }
 
 @media (max-width: 620px) {

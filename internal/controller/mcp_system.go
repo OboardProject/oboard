@@ -357,6 +357,83 @@ func (s *Server) registerSettingsOperations() {
 		}
 		return map[string]any{"changed_fields": changed}, nil
 	})
+	s.registerBasePathMigrationOperations()
+}
+
+func (s *Server) registerBasePathMigrationOperations() {
+	type confirmInput struct {
+		Confirm bool `json:"confirm,omitempty"`
+	}
+	register := func(name string, requireConfirm bool, run func(context.Context) (string, basePathMigrationProgress, error)) {
+		candidate := func(ctx context.Context, input json.RawMessage) (basePathMigrationProgress, error) {
+			if requireConfirm {
+				var request confirmInput
+				if err := strictAutomationInput(input, &request); err != nil {
+					return basePathMigrationProgress{}, err
+				}
+				if !request.Confirm {
+					return basePathMigrationProgress{}, errors.New("confirm=true is required")
+				}
+			} else if len(strings.TrimSpace(string(input))) > 0 && strings.TrimSpace(string(input)) != "{}" && strings.TrimSpace(string(input)) != "null" {
+				var request struct{}
+				if err := strictAutomationInput(input, &request); err != nil {
+					return basePathMigrationProgress{}, err
+				}
+			}
+			progress, err := s.basePathMigrationProgress(ctx)
+			if err != nil {
+				return progress, err
+			}
+			if !progress.Active {
+				return progress, errors.New("no Controller base path migration is in progress")
+			}
+			if name == "settings.base_path.revoke" && progress.Direction == basePathMigrationDirectionRollback {
+				return progress, errors.New("面板路径迁移已在撤销中")
+			}
+			return progress, nil
+		}
+		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+			progress, err := candidate(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"migration": progress}, nil
+		})
+		s.automation.RegisterRevisionResolver(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+			if _, err := candidate(ctx, input); err != nil {
+				return nil, err
+			}
+			return map[string]string{}, nil
+		})
+		s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+			if _, err := candidate(ctx, input); err != nil {
+				return nil, err
+			}
+			redirect, progress, err := run(ctx)
+			if err != nil {
+				return nil, err
+			}
+			out := map[string]any{"migration": progress}
+			if strings.TrimSpace(redirect) != "" {
+				out["redirect_path"] = redirect
+			}
+			if name == "settings.base_path.force" {
+				out["finalized"] = !progress.Active
+			}
+			return out, nil
+		})
+	}
+	register("settings.base_path.retry", false, func(ctx context.Context) (string, basePathMigrationProgress, error) {
+		progress, err := s.retryBasePathMigration(ctx)
+		return "", progress, err
+	})
+	register("settings.base_path.force", true, func(ctx context.Context) (string, basePathMigrationProgress, error) {
+		progress, err := s.forceBasePathMigration(ctx)
+		return "", progress, err
+	})
+	register("settings.base_path.revoke", true, func(ctx context.Context) (string, basePathMigrationProgress, error) {
+		return s.revokeBasePathMigration(ctx)
+	})
 }
 
 func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMessage, apply bool) ([]string, error) {

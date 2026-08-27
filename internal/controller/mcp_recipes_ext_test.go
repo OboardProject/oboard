@@ -33,6 +33,7 @@ func TestNewRecipeRouting(t *testing.T) {
 		{name: "notification", goal: "创建一个通知频道", want: "notification.manage", params: map[string]any{"notification_channel": map[string]any{"name": "tg", "type": "telegram"}}},
 		{name: "certificate", goal: "签发证书", want: "certificate.manage", params: map[string]any{"certificate_id": 3}},
 		{name: "settings", goal: "修改全局设置", want: "settings.manage", params: map[string]any{"audit_enabled": false}},
+		{name: "base path", goal: "强制完成面板路径迁移", want: "settings.manage"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -80,6 +81,29 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 			}
 			if test.confirm && operation.Input["confirm"] != true {
 				t.Fatalf("confirmation missing: %#v", operation.Input)
+			}
+		})
+	}
+}
+
+func TestSettingsBasePathRecipes(t *testing.T) {
+	server := &Server{}
+	tests := []struct {
+		goal, capability string
+		confirm          bool
+	}{
+		{goal: "强制完成面板路径迁移", capability: "settings.base_path.force", confirm: true},
+		{goal: "撤销面板路径迁移", capability: "settings.base_path.revoke", confirm: true},
+		{goal: "重试失败的面板路径 Agent", capability: "settings.base_path.retry"},
+	}
+	for _, test := range tests {
+		t.Run(test.capability, func(t *testing.T) {
+			prepared, err := server.prepareSettingsRecipe(t.Context(), application.Principal{}, mcpTaskInput{Goal: test.goal})
+			if err != nil || prepared.Status != "ready" || len(prepared.Operations) != 1 || prepared.Operations[0].Capability != test.capability {
+				t.Fatalf("prepared=%#v err=%v", prepared, err)
+			}
+			if test.confirm && prepared.Operations[0].Input["confirm"] != true {
+				t.Fatalf("confirmation missing: %#v", prepared.Operations[0].Input)
 			}
 		})
 	}

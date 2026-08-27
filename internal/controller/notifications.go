@@ -403,6 +403,7 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 		log.Printf("cancel offline notice for server %d: %v", serverID, err)
 	}
 	s.queueDeploymentAfterReconnect(ctx, serverID)
+	s.retryBasePathMigrationForServer(ctx, serverID)
 	server, err := s.store.GetServer(ctx, serverID)
 	if err != nil {
 		return

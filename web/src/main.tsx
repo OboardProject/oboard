@@ -3892,6 +3892,53 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       setSaving('')
     }
   }
+  const forceBasePathMigration = async () => {
+    if (saving || !migration.active || !migration.can_force) return
+    const rollingBack = migration.direction === 'rollback'
+    const confirmed = await dialogs.confirm({
+      title: rollingBack ? '强制完成撤销？' : '强制完成迁移？',
+      message: rollingBack
+        ? `仍使用新路径的 Agent 将无法再连接，需要重新安装或接入。未接入和仍使用旧路径的服务器会被跳过。`
+        : `未更新的 Agent 将无法再通过旧路径连接，需要重新安装或接入。离线、超时和未接入的服务器会被跳过。`,
+      confirmText: rollingBack ? '强制完成撤销' : '强制完成迁移',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setSaving('base-path-force')
+    try {
+      await client.request('/settings/base-path/force', { method: 'POST', body: '{}' })
+      await load('settings', { background: true })
+      notify?.(rollingBack ? '面板路径撤销已强制完成' : '面板路径迁移已强制完成', 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSaving('')
+    }
+  }
+  const revokeBasePathMigration = async () => {
+    if (saving || !migration.active || !migration.can_revoke) return
+    const confirmed = await dialogs.confirm({
+      title: '撤销面板路径迁移？',
+      message: `路径将退回 ${migration.previous_path || '/'}。已更新到新路径的 Agent 会被改回旧地址；未接入或从未收到新地址的服务器会跳过。迁移期间在线、撤销时离线的 Agent 会在重新上线后自动回退。`,
+      confirmText: '撤销迁移',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setSaving('base-path-revoke')
+    try {
+      const result = await client.request('/settings/base-path/revoke', { method: 'POST', body: '{}' }) as { redirect_path?: string }
+      notify?.('面板路径迁移已开始撤销', 'success')
+      if (result.redirect_path) {
+        window.location.assign(result.redirect_path)
+        return
+      }
+      await load('settings', { background: true })
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setSaving('')
+    }
+  }
   const trustedProxyCIDRValues = trustedProxyCIDRs.split(/[\n,]/).map(value => value.trim()).filter(Boolean)
   const saveTrustedProxies = async () => {
     await runSave('trusted-proxies', async () => {
@@ -3918,7 +3965,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           ? { label: '上游未受信', tone: 'danger' }
           : { label: '未检测到代理', tone: 'warning' }
   const migrationStatusLabel = (status: string) => ({
-    pending: '等待中', running: '更新中', succeeded: '已更新', failed: '失败', removed: '已移除',
+    pending: '等待中', running: '更新中', succeeded: '已更新', failed: '失败', removed: '已移除', skipped: '已跳过',
   } as Record<string, string>)[status] || status
   const saveSubscriptionAgePolicy = async (nextPolicy?: 'optional' | 'required') => {
     const targetPolicy = nextPolicy ?? subscriptionAgePolicy
@@ -3991,7 +4038,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
         </div>
         </SettingsGroup>
-        <SettingsGroup title="面板路径" description={`当前路径：${currentBasePath || '/'}`} actions={<span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? '迁移中' : '已生效'}</span>}>
+        <SettingsGroup title="面板路径" description={`当前路径：${currentBasePath || '/'}`} actions={<span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? (migration.direction === 'rollback' ? '撤销中' : '迁移中') : '已生效'}</span>}>
           <div className="base-path-settings">
             <div className="form settings-form single-field">
               <FormField label="路径前缀" hint="以 / 开头；留空表示根路径。">
@@ -4005,9 +4052,9 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </div>
             {migration.active && <div className="base-path-migration" aria-live="polite">
               <div className="base-path-route-row">
-                <span><small>旧路径</small><code>{migration.previous_path || '/'}</code></span>
+                <span><small>{migration.direction === 'rollback' ? '将离开' : '旧路径'}</small><code>{migration.previous_path || '/'}</code></span>
                 <ArrowLeftRight size={16} />
-                <span><small>新路径</small><code>{migration.current_path || '/'}</code></span>
+                <span><small>{migration.direction === 'rollback' ? '退回' : '新路径'}</small><code>{migration.current_path || '/'}</code></span>
               </div>
               <div className="base-path-progress-head">
                 <strong>{Number(migration.percentage || 0)}%</strong>
@@ -4020,16 +4067,25 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
                 <span><strong>{Number(migration.pending || 0)}</strong>等待</span>
                 <span><strong>{Number(migration.running || 0)}</strong>更新中</span>
                 <span><strong>{Number(migration.failed || 0)}</strong>失败</span>
+                <span><strong>{Number(migration.skipped || 0)}</strong>已跳过</span>
               </div>
               <div className="base-path-agent-list">
                 {(migration.agents || []).map((agent: any) => <div className="base-path-agent-row" key={agent.server_id}>
                   <div><strong>{agent.server_name || `Agent ${agent.server_id}`}</strong>{agent.error && <small title={agent.error}>{agent.error}</small>}</div>
-                  <span className={`status-pill ${agent.status === 'succeeded' || agent.status === 'removed' ? 'ok' : agent.status === 'failed' ? 'danger' : 'warning'}`}>{migrationStatusLabel(agent.status)}</span>
+                  <span className={`status-pill ${agent.status === 'succeeded' || agent.status === 'removed' || agent.status === 'skipped' ? 'ok' : agent.status === 'failed' ? 'danger' : 'warning'}`}>{migrationStatusLabel(agent.status)}</span>
                 </div>)}
               </div>
-              {Number(migration.failed || 0) > 0 && <button className="ghost base-path-retry" onClick={retryBasePathMigration} disabled={Boolean(saving)}>
-                <RefreshCw size={14} className={saving === 'base-path-retry' ? 'spin' : ''} />{saving === 'base-path-retry' ? '重试中...' : '重试失败 Agent'}
-              </button>}
+              <div className="base-path-migration-actions">
+                {Number(migration.failed || 0) > 0 && <button className="ghost" onClick={retryBasePathMigration} disabled={Boolean(saving)}>
+                  <RefreshCw size={14} className={saving === 'base-path-retry' ? 'spin' : ''} />{saving === 'base-path-retry' ? '重试中...' : '重试失败 Agent'}
+                </button>}
+                {migration.can_force && <button className="ghost" onClick={forceBasePathMigration} disabled={Boolean(saving)}>
+                  {saving === 'base-path-force' ? '处理中...' : (migration.direction === 'rollback' ? '强制完成撤销' : '强制完成迁移')}
+                </button>}
+                {migration.can_revoke && <button className="ghost danger-ghost" onClick={revokeBasePathMigration} disabled={Boolean(saving)}>
+                  <RotateCcw size={14} />{saving === 'base-path-revoke' ? '撤销中...' : '撤销迁移'}
+                </button>}
+              </div>
             </div>}
           </div>
         </SettingsGroup>
