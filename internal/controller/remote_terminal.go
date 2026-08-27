@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ type terminalSession struct {
 	PrepareExp string
 	browser    *websocket.Conn
 	agent      *websocket.Conn
+	relaying   bool
 	mu         sync.Mutex
 }
 
@@ -205,11 +207,7 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		failCode(w, "agent_offline", "agent control channel is unavailable", http.StatusConflict)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: terminalCookieName, Value: ticket, Path: s.terminalCookiePath(r, serverID),
-		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
-		MaxAge: 120,
-	})
+	http.SetCookie(w, s.terminalTicketCookie(r, serverID, ticket, 120))
 	s.recordRemoteAccessAudit(r, model.RemoteAccessAuditEvent{
 		EventType: model.RemoteAccessAuditTerminalOpen, ActorType: "user", ActorUserID: &user.ID,
 		ServerID: &serverID, SessionID: sessionID, Result: "opened", Capability: "remote_terminal",
@@ -220,6 +218,17 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 func (s *Server) terminalCookiePath(r *http.Request, serverID int64) string {
 	prefix := strings.TrimRight(s.currentBasePath(), "/")
 	return prefix + "/api/v1/ui/servers/" + strconv.FormatInt(serverID, 10) + "/terminal/"
+}
+
+func (s *Server) terminalTicketCookie(r *http.Request, serverID int64, value string, maxAge int) *http.Cookie {
+	cookie := &http.Cookie{
+		Name: terminalCookieName, Value: value, Path: s.terminalCookiePath(r, serverID),
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: requestUsesHTTPS(r), MaxAge: maxAge,
+	}
+	if maxAge < 0 {
+		cookie.Expires = time.Unix(1, 0).UTC()
+	}
+	return cookie
 }
 
 func (s *Server) listTerminalSessions(w http.ResponseWriter, r *http.Request, serverID int64) {
@@ -272,11 +281,13 @@ func (session *terminalSession) close(reason string) {
 
 func (s *Server) browserTerminalWS(w http.ResponseWriter, r *http.Request, serverID int64, sessionID string) {
 	if r.Header.Get("Origin") == "" || !s.originAllowed(r, r.Header.Get("Origin")) {
+		log.Printf("terminal websocket denied server=%d session=%s reason=origin_denied origin=%s host=%s", serverID, sessionID, r.Header.Get("Origin"), r.Host)
 		failCode(w, "origin_denied", "origin is not allowed", http.StatusForbidden)
 		return
 	}
 	cookie, err := r.Cookie(terminalCookieName)
 	if err != nil || cookie.Value == "" {
+		log.Printf("terminal websocket denied server=%d session=%s reason=ticket_missing", serverID, sessionID)
 		failCode(w, "terminal_auth_expired", "terminal ticket missing", http.StatusUnauthorized)
 		return
 	}
@@ -284,12 +295,13 @@ func (s *Server) browserTerminalWS(w http.ResponseWriter, r *http.Request, serve
 	session := s.terminalHub.sessions[sessionID]
 	if session == nil || session.ServerID != serverID || session.TicketUsed || session.Ticket != cookie.Value {
 		s.terminalHub.mu.Unlock()
+		log.Printf("terminal websocket denied server=%d session=%s reason=ticket_invalid", serverID, sessionID)
 		failCode(w, "terminal_auth_expired", "terminal ticket is invalid", http.StatusUnauthorized)
 		return
 	}
 	session.TicketUsed = true
 	s.terminalHub.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: terminalCookieName, Value: "", Path: s.terminalCookiePath(r, serverID), MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, s.terminalTicketCookie(r, serverID, "", -1))
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(req *http.Request) bool {
 			origin := req.Header.Get("Origin")
@@ -346,10 +358,12 @@ func (s *Server) relayTerminal(session *terminalSession) {
 	session.mu.Lock()
 	browser := session.browser
 	agent := session.agent
-	session.mu.Unlock()
-	if browser == nil || agent == nil {
+	if browser == nil || agent == nil || session.relaying {
+		session.mu.Unlock()
 		return
 	}
+	session.relaying = true
+	session.mu.Unlock()
 	copy := func(src, dst *websocket.Conn, toAgent bool) {
 		for {
 			mt, data, err := src.ReadMessage()

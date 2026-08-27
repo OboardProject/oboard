@@ -8,6 +8,19 @@ import { StepUpAuth } from './StepUpAuth'
 
 type RequestFn = (path: string, init?: RequestInit) => Promise<any>
 
+const closedReasonLabels: Record<string, string> = {
+  peer_closed: '对端已关闭',
+  agent_cleanup: '节点已结束会话',
+  user_close: '已关闭',
+  oversized_frame: '数据过大，连接已断开',
+  slow_consumer: '发送过慢，连接已断开',
+}
+
+function terminalStatusLabel(value: string) {
+  const trimmed = value.trim()
+  return closedReasonLabels[trimmed] || trimmed
+}
+
 export function RemoteTerminal({
   serverId,
   serverName,
@@ -27,66 +40,132 @@ export function RemoteTerminal({
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
+  const dataDisposableRef = useRef<{ dispose: () => void } | null>(null)
   const sessionRef = useRef('')
   const resizeTimer = useRef<number>(0)
-  const autoConnectStarted = useRef(false)
+  const connectGen = useRef(0)
+  const openedRef = useRef(false)
+  const [termReady, setTermReady] = useState(false)
   const [stepUp, setStepUp] = useState(passwordConfirmationRequired)
   const [fullscreen, setFullscreen] = useState(false)
   const [status, setStatus] = useState(passwordConfirmationRequired ? '等待认证' : '正在连接')
 
-  const sendResize = () => {
+  const fitAndResize = () => {
+    fitRef.current?.fit()
     const term = termRef.current
     const socket = socketRef.current
     if (!term || !socket || socket.readyState !== WebSocket.OPEN) return
     socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
   }
 
+  const detachSocket = () => {
+    dataDisposableRef.current?.dispose()
+    dataDisposableRef.current = null
+    const socket = socketRef.current
+    socketRef.current = null
+    if (!socket) return
+    socket.onopen = null
+    socket.onmessage = null
+    socket.onclose = null
+    socket.onerror = null
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close()
+  }
+
+  const closeControllerSession = async (sessionId: string) => {
+    if (!sessionId) return
+    try {
+      await client.request(`/servers/${serverId}/terminal/sessions/${sessionId}`, { method: 'DELETE' })
+    } catch {
+      // session may already be gone
+    }
+  }
+
   const connect = async (stepUpToken: string) => {
+    const gen = ++connectGen.current
+    const previousSession = sessionRef.current
+    sessionRef.current = ''
+    detachSocket()
+    if (previousSession) void closeControllerSession(previousSession)
     setStepUp(false)
     setStatus('正在连接')
-    const term = termRef.current
-    const cols = term?.cols || 120
-    const rows = term?.rows || 32
-    const created = await client.request(`/servers/${serverId}/terminal/sessions`, {
-      method: 'POST',
-      body: JSON.stringify({ step_up_token: stepUpToken, cols, rows }),
-    }) as { session_id: string }
-    sessionRef.current = created.session_id
-    const socket = new WebSocket(websocketURL(created.session_id))
-    socket.binaryType = 'arraybuffer'
-    socketRef.current = socket
-    socket.onopen = () => setStatus('已连接')
-    socket.onmessage = event => {
-      if (typeof event.data === 'string') {
-        try {
-          const message = JSON.parse(event.data)
-          if (message.type === 'closed' || message.type === 'error') {
-            setStatus(message.reason || message.type)
-          }
-        } catch {
-          termRef.current?.write(event.data)
-        }
+    openedRef.current = false
+    try {
+      const term = termRef.current
+      const cols = term?.cols || 120
+      const rows = term?.rows || 32
+      const created = await client.request(`/servers/${serverId}/terminal/sessions`, {
+        method: 'POST',
+        body: JSON.stringify({ step_up_token: stepUpToken, cols, rows }),
+      }) as { session_id?: string }
+      if (gen !== connectGen.current) {
+        if (created?.session_id) void closeControllerSession(created.session_id)
         return
       }
-      const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data
-      termRef.current?.write(bytes)
-    }
-    socket.onclose = () => setStatus('已断开')
-    if (term) {
-      term.onData(data => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data))
-      })
+      if (!created?.session_id) {
+        setStatus('创建会话失败')
+        return
+      }
+      sessionRef.current = created.session_id
+      const socket = new WebSocket(websocketURL(created.session_id))
+      socket.binaryType = 'arraybuffer'
+      socketRef.current = socket
+      socket.onopen = () => {
+        if (gen !== connectGen.current) return
+        openedRef.current = true
+        setStatus('已连接')
+        fitAndResize()
+      }
+      socket.onmessage = event => {
+        if (gen !== connectGen.current) return
+        if (typeof event.data === 'string') {
+          try {
+            const message = JSON.parse(event.data)
+            if (message.type === 'ready') {
+              setStatus('已连接')
+              fitAndResize()
+              return
+            }
+            if (message.type === 'closed' || message.type === 'error') {
+              setStatus(terminalStatusLabel(String(message.reason || message.type)))
+            }
+          } catch {
+            termRef.current?.write(event.data)
+          }
+          return
+        }
+        const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data
+        termRef.current?.write(bytes)
+      }
+      socket.onclose = () => {
+        if (gen !== connectGen.current) return
+        setStatus(current => {
+          if (current !== '正在连接' && current !== '已连接') return current
+          return openedRef.current ? '已断开' : '连接失败'
+        })
+      }
+      dataDisposableRef.current?.dispose()
+      if (term) {
+        dataDisposableRef.current = term.onData(data => {
+          if (socket.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data))
+        })
+      }
+    } catch (error: any) {
+      if (gen !== connectGen.current) return
+      setStatus(String(error?.message || error || '连接失败'))
     }
   }
 
   useEffect(() => {
-    if (passwordConfirmationRequired || autoConnectStarted.current) return
-    autoConnectStarted.current = true
+    if (passwordConfirmationRequired || !termReady) return
     void connect('')
-  }, [passwordConfirmationRequired])
+    return () => {
+      connectGen.current += 1
+    }
+  }, [passwordConfirmationRequired, termReady])
 
   useEffect(() => {
     if (!hostRef.current || termRef.current) return
+    const host = hostRef.current
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
@@ -96,26 +175,36 @@ export function RemoteTerminal({
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.open(hostRef.current)
-    fit.fit()
+    term.open(host)
     termRef.current = term
     fitRef.current = fit
-    const onResize = () => {
+    const scheduleFit = () => {
       window.clearTimeout(resizeTimer.current)
-      resizeTimer.current = window.setTimeout(() => {
-        fit.fit()
-        sendResize()
-      }, 100)
+      resizeTimer.current = window.setTimeout(() => fitAndResize(), 50)
     }
-    window.addEventListener('resize', onResize)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleFit)
+    observer?.observe(host)
+    window.addEventListener('resize', scheduleFit)
+    scheduleFit()
+    setTermReady(true)
     return () => {
-      window.removeEventListener('resize', onResize)
+      observer?.disconnect()
+      window.removeEventListener('resize', scheduleFit)
       window.clearTimeout(resizeTimer.current)
-      socketRef.current?.close()
+      dataDisposableRef.current?.dispose()
+      dataDisposableRef.current = null
+      detachSocket()
       term.dispose()
       termRef.current = null
+      fitRef.current = null
+      setTermReady(false)
     }
   }, [])
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => fitAndResize())
+    return () => window.cancelAnimationFrame(frame)
+  }, [fullscreen])
 
   const copySelection = async () => {
     const text = termRef.current?.getSelection() || ''
@@ -138,8 +227,9 @@ export function RemoteTerminal({
   const clearScreen = () => termRef.current?.clear()
 
   const reconnect = () => {
-    socketRef.current?.close()
     if (passwordConfirmationRequired) {
+      connectGen.current += 1
+      detachSocket()
       setStepUp(true)
       setStatus('等待认证')
       return
@@ -148,29 +238,26 @@ export function RemoteTerminal({
   }
 
   const closeSession = async () => {
-    if (sessionRef.current) {
-      try {
-        await client.request(`/servers/${serverId}/terminal/sessions/${sessionRef.current}`, { method: 'DELETE' })
-      } catch {
-        // session may already be gone
-      }
-    }
-    socketRef.current?.close()
+    connectGen.current += 1
+    const sessionId = sessionRef.current
+    sessionRef.current = ''
+    detachSocket()
+    await closeControllerSession(sessionId)
     onClose()
   }
 
   return (
     <>
-      <MotionDialogPanel onCancel={() => void closeSession()} className={`server-detail-dialog${fullscreen ? ' remote-terminal-fullscreen' : ''}`}>
+      <MotionDialogPanel onCancel={() => void closeSession()} className={`remote-terminal-dialog${fullscreen ? ' remote-terminal-fullscreen' : ''}`}>
         <header className="dialog-head">
-          <div>
+          <div className="remote-terminal-title">
             <h2>远程终端 · {serverName}</h2>
             <p className="muted">{status}</p>
           </div>
           <div className="dialog-head-actions">
             <button type="button" className="ghost icon-button" onClick={() => void copySelection()} aria-label="复制" title="复制"><Copy size={15} /></button>
             <button type="button" className="ghost icon-button" onClick={() => void pasteClipboard()} aria-label="粘贴" title="粘贴"><ClipboardPaste size={15} /></button>
-            <button type="button" className="ghost icon-button" onClick={sendInterrupt} aria-label="发送 Ctrl+C" title="Ctrl+C">Ctrl+C</button>
+            <button type="button" className="ghost remote-terminal-shortcut" onClick={sendInterrupt} aria-label="发送 Ctrl+C" title="发送 Ctrl+C">Ctrl+C</button>
             <button type="button" className="ghost icon-button" onClick={clearScreen} aria-label="清屏" title="清屏"><Trash2 size={15} /></button>
             <button type="button" className="ghost icon-button" onClick={reconnect} aria-label="重连" title="重连"><RefreshCw size={15} /></button>
             <button type="button" className="ghost icon-button" onClick={() => setFullscreen(current => !current)} aria-label={fullscreen ? '退出全屏' : '全屏'} title={fullscreen ? '退出全屏' : '全屏'}>
@@ -179,8 +266,8 @@ export function RemoteTerminal({
             <button type="button" className="ghost icon-button" onClick={() => void closeSession()} aria-label="关闭" title="关闭"><X size={15} /></button>
           </div>
         </header>
-        <div className="dialog-body" style={{ padding: 0 }}>
-          <div ref={hostRef} style={{ height: fullscreen ? 'min(80dvh, 720px)' : '420px', width: '100%' }} />
+        <div className="dialog-body remote-terminal-body">
+          <div ref={hostRef} className="remote-terminal-host" />
         </div>
       </MotionDialogPanel>
       {stepUp ? (

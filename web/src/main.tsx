@@ -1626,7 +1626,21 @@ const errorMessages: Record<string, string> = {
   '该账号无法使用通行密钥': '该账号尚未添加通行密钥，或当前环境不支持',
   '通行密钥验证失败': '通行密钥验证失败，请重试',
   '通行密钥登录请求已失效': '通行密钥登录已超时，请重试',
-  '用户名或密码错误': '用户名或密码错误'
+  '用户名或密码错误': '用户名或密码错误',
+  'remote terminal is unavailable': '远程终端当前不可用',
+  'agent control channel is unavailable': '节点控制通道不可用，请确认 Agent 在线',
+  'too many active terminals': '远程终端数量已达上限',
+  'origin is not allowed': '来源地址不被允许',
+  'terminal ticket missing': '终端凭证缺失，请重试连接',
+  'terminal ticket is invalid': '终端凭证无效，请重试连接',
+  remote_access_global_disabled: '远程控制已在全局关闭',
+  remote_access_server_disabled: '此服务器已关闭远程控制',
+  agent_offline: '节点离线，无法打开远程终端',
+  agent_upgrade_required: '节点 Agent 版本过低，请先更新后再使用远程终端',
+  agent_local_gate_denied: '节点本机安全策略拒绝了远程终端',
+  terminal_limit_exceeded: '远程终端数量已达上限',
+  origin_denied: '来源地址不被允许',
+  terminal_auth_expired: '终端认证已失效，请重试连接'
 }
 
 const systemErrorMarkers: Array<[string, string]> = [
@@ -1661,8 +1675,13 @@ function localizeErrorMessage(message: unknown) {
 }
 
 function apiErrorMessage(data: any, res: Response) {
+  const code = typeof data?.code === 'string' ? data.code.trim() : ''
+  if (code) {
+    const localized = localizeErrorMessage(code)
+    if (localized !== code) return localized
+  }
   const detail = typeof data?.message === 'string' ? data.message.trim() : ''
-  if (detail) return detail
+  if (detail) return localizeErrorMessage(detail)
   return localizeErrorMessage(data?.error || res.statusText)
 }
 

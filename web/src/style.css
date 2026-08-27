@@ -6767,6 +6767,14 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   letter-spacing: 0;
 }
 
+.dialog-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
 .dialog-close {
   width: 34px;
   min-width: 34px;
@@ -10709,6 +10717,77 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .server-detail-dialog {
   width: min(760px, 100%);
   max-height: min(90vh, 860px);
+}
+
+.dialog.remote-terminal-dialog {
+  width: min(1200px, calc(100vw - 32px));
+  height: min(860px, calc(100dvh - 40px));
+  max-height: min(860px, calc(100dvh - 40px));
+}
+
+.dialog.remote-terminal-dialog.remote-terminal-fullscreen {
+  width: calc(100vw - 16px);
+  height: calc(100dvh - 16px);
+  max-height: calc(100dvh - 16px);
+}
+
+.remote-terminal-dialog .dialog-head {
+  align-items: center;
+  gap: 12px;
+}
+
+.remote-terminal-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.remote-terminal-title h2,
+.remote-terminal-title p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-terminal-dialog .dialog-head-actions {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.remote-terminal-shortcut {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.remote-terminal-body {
+  padding: 0 !important;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.remote-terminal-host {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #0b1220;
+}
+
+.remote-terminal-host .xterm {
+  height: 100%;
+  padding: 10px 12px;
+}
+
+.remote-terminal-host .xterm-viewport {
+  overflow-y: auto !important;
 }
 
 .server-time-detail-dialog {
@@ -19552,6 +19631,13 @@ button.ui-btn-ghost:hover {
   .dialog {
     max-height: calc(100dvh - 8px);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .dialog.remote-terminal-dialog,
+  .dialog.remote-terminal-dialog.remote-terminal-fullscreen {
+    width: 100%;
+    height: calc(100dvh - 8px);
+    max-height: calc(100dvh - 8px);
   }
 
   .dialog-head {
