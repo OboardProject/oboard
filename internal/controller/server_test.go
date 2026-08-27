@@ -407,6 +407,44 @@ func TestTrafficRuntimePoliciesIncludeUnlimitedUsers(t *testing.T) {
 	}
 }
 
+func TestTrafficRuntimePoliciesDoNotEnforceEmptyRemainingLease(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	first := &model.Server{Name: "lease-edge-a", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	second := &model.Server{Name: "lease-edge-b", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateServer(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "lease-user", ProxyPassword: "password", SubscriptionToken: "lease-subscription", TrafficLimitBytes: 100}
+	if err := db.CreateUser(ctx, &user); err != nil {
+		t.Fatal(err)
+	}
+	firstPolicies, err := srv.trafficRuntimePolicies(ctx, first.ID, []model.User{user}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPolicy := firstPolicies[user.ID]
+	if !firstPolicy.LeaseEnforced || firstPolicy.LeaseBytes != 100 || firstPolicy.QuotaState != "active" {
+		t.Fatalf("first server lease = %#v, want a positive enforced remaining lease", firstPolicy)
+	}
+	secondPolicies, err := srv.trafficRuntimePolicies(ctx, second.ID, []model.User{user}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPolicy := secondPolicies[user.ID]
+	if secondPolicy.LeaseEnforced || secondPolicy.LeaseBytes != 0 || secondPolicy.QuotaState != "active" {
+		t.Fatalf("starved server lease = %#v, want an active quota without a zero-lease tripwire", secondPolicy)
+	}
+}
+
 func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
