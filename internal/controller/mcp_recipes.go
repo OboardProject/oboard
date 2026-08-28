@@ -49,6 +49,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "server.metrics.query", Version: mcpRecipeVersion, Aliases: []string{"server.metrics.query", "server query", "server metrics", "服务器指标", "看流量", "查看流量", "查询流量", "连接数", "延迟", "负载"}, Verbs: []string{"view", "read", "query", "show", "check", "查看", "看", "查询", "读取", "检查"}, Nouns: []string{"server metrics", "server traffic", "traffic", "latency", "connection count", "resource metrics", "指标", "流量", "延迟", "连接数", "负载", "资源"}, Prepare: s.prepareServerMetricsQueryRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
+		{ID: "subscription_plan.delete", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.delete", "delete subscription plan", "删除套餐", "删除订阅套餐"}, Verbs: []string{"delete", "remove", "删除"}, Nouns: []string{"subscription plan", "套餐", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanDeleteRecipe},
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},
 		{ID: "deployment.apply", Version: mcpRecipeVersion, Aliases: []string{"deployment.apply", "deploy all", "apply deployment", "部署全部", "部署所有", "下发修改", "重新应用配置"}, Verbs: []string{"deploy", "apply", "redeploy", "部署", "下发", "应用"}, Nouns: []string{"deployment", "configuration", "changes", "部署", "配置", "修改"}, Prepare: s.prepareDeploymentRecipe},
 		{ID: "outbound.manage", Version: mcpRecipeVersion, Aliases: []string{"outbound.manage", "manage outbound", "出口管理", "服务器出口"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"outbound", "出口", "下一跳"}, Prepare: s.prepareOutboundRecipe},
@@ -79,6 +80,10 @@ func (s *Server) mcpRecipeByID(id string) (mcpRecipe, bool) {
 func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef, bool) {
 	if input.Intent != "" {
 		recipe, ok := s.mcpRecipeByID(input.Intent)
+		return recipe, nil, ok
+	}
+	if isSubscriptionPlanDeleteGoal(input.Goal) {
+		recipe, ok := s.mcpRecipeByID("subscription_plan.delete")
 		return recipe, nil, ok
 	}
 	if recipe, ok := s.matchDistinctiveRecipeGoal(input.Goal); ok {
@@ -264,6 +269,13 @@ func hasSubscriptionPlanParams(params map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func isSubscriptionPlanDeleteGoal(goal string) bool {
+	if containsAnyFold(goal, "节点", "node", "nodes") {
+		return false
+	}
+	return containsAnyFold(goal, "删除套餐", "删除订阅套餐", "delete subscription plan", "remove subscription plan")
 }
 
 func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {

@@ -633,3 +633,136 @@ func TestAgentHealthReportDetectsAppliedVersionDrift(t *testing.T) {
 		t.Fatalf("drift did not create pending reconciliation = %#v, err=%v", state, err)
 	}
 }
+
+func TestSemanticNoopPreservesHealthReportConvergence(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "noop-node", AgentID: "noop-agent", AgentTokenHash: security.HashSecret("noop-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "in1", Protocol: "vless", Port: 8443, ConfigJSON: `{}`}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
+	revision, err := db.ConfigurationRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileConfiguration(ctx)
+	task, err := db.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
+	if err != nil || task == nil {
+		t.Fatalf("expected apply_deployment task, got err=%v", err)
+	}
+	if err := db.SetTaskStateForTest(ctx, task.ID, "succeeded", task.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkConfigurationSyncResult(ctx, server.ID, task.ConfigVersion, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	expectedDigest := configurationTaskPayloadDigest(*task)
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "synced" {
+		t.Fatalf("state after task success = %#v, err=%v", state, err)
+	}
+
+	// Trigger a new configuration revision (e.g. an unrelated server is added or modified)
+	if _, err := db.MarkConfigurationSyncPending(ctx, revision+1, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileConfiguration(ctx)
+	state, err = db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "synced" || state.SyncStrategy != "semantic_noop" {
+		t.Fatalf("state after semantic noop = %#v, err=%v", state, err)
+	}
+	if state.WantedDigest != expectedDigest {
+		t.Fatalf("wanted_digest after semantic noop = %q, want %q", state.WantedDigest, expectedDigest)
+	}
+
+	// Agent reports regular health with its active version and digest
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(model.HealthReport{
+		Status:               model.ServerOnline,
+		AppliedConfigVersion: task.ConfigVersion,
+		AppliedConfigDigest:  expectedDigest,
+		Timestamp:            time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.processAgentSocketMessage(ctx, stored, map[string]json.RawMessage{"health_report": raw}, "192.0.2.10")
+
+	// State must stay synced and not drift back to pending
+	state, err = db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "synced" {
+		t.Fatalf("health report reopened sync loop = %#v, err=%v", state, err)
+	}
+}
+
+func TestLegacySemanticNoopDigestConvergesAndRepairs(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "legacy-noop-node", AgentID: "legacy-noop-agent", AgentTokenHash: security.HashSecret("legacy-noop-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "in1", Protocol: "vless", Port: 8443, ConfigJSON: `{}`}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
+	srv.reconcileConfiguration(ctx)
+	task, err := db.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
+	if err != nil || task == nil {
+		t.Fatalf("expected task, got err=%v", err)
+	}
+	if err := db.SetTaskStateForTest(ctx, task.ID, "succeeded", task.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkConfigurationSyncResult(ctx, server.ID, task.ConfigVersion, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	expectedDigest := configurationTaskPayloadDigest(*task)
+
+	// Simulate legacy state where wanted_digest was written as semantic_noop:10
+	if err := db.MarkConfigurationSyncNoop(ctx, server.ID, 10, "semantic_noop:10"); err != nil {
+		t.Fatal(err)
+	}
+
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(model.HealthReport{
+		Status:               model.ServerOnline,
+		AppliedConfigVersion: task.ConfigVersion,
+		AppliedConfigDigest:  expectedDigest,
+		Timestamp:            time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.processAgentSocketMessage(ctx, stored, map[string]json.RawMessage{"health_report": raw}, "192.0.2.10")
+
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "synced" {
+		t.Fatalf("legacy semantic noop caused drift = %#v, err=%v", state, err)
+	}
+	if state.WantedDigest != expectedDigest {
+		t.Fatalf("legacy semantic noop was not repaired = %q, want %q", state.WantedDigest, expectedDigest)
+	}
+}

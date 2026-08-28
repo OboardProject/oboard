@@ -431,6 +431,15 @@ func defaultDescriptors() []Descriptor {
 		MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings",
 		ResolveResourceRefs: subscriptionPlanNodesUpdateRefs,
 	})
+	deletePlanInput, deletePlanOutput, _ := executableSchemas("subscription_plans.delete")
+	descriptors = append(descriptors, Descriptor{
+		Name: "subscription_plans.delete", Description: "删除订阅套餐；绑定用户只移除套餐、账号保留，授权经访问变更流程收回",
+		InputSchema: deletePlanInput, OutputSchema: deletePlanOutput, RequiredScopes: []string{"subscription_plans:write"},
+		ResourceTypes: []string{"subscription_plan"}, ResourceEvaluator: "subscription_plan_ids", RiskClass: 3,
+		ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, Destructive: true,
+		MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings",
+		ResolveResourceRefs: subscriptionPlanDeleteRefs,
+	})
 	for _, name := range []string{"inbounds.delete", "proxy_paths.delete", "proxy_path_steps.truncate"} {
 		input, output, evaluator := executableSchemas(name)
 		descriptors = append(descriptors, Descriptor{
@@ -605,6 +614,8 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return serverUpdateRefs
 	case "subscription_plans.nodes.update":
 		return subscriptionPlanNodesUpdateRefs
+	case "subscription_plans.delete":
+		return subscriptionPlanDeleteRefs
 	default:
 		return noRefs
 	}
@@ -639,6 +650,11 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 				"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue,
 				"queued_tasks": map[string]any{"type": "integer", "minimum": 0},
 			}), "subscription_plan_ids"
+	case "subscription_plans.delete":
+		return schemaObject(map[string]any{"plan_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "plan_id", "confirm"), simpleOutput(map[string]any{
+			"deleted": boolValue, "plan_id": positiveID, "unbound_user_count": map[string]any{"type": "integer", "minimum": 0},
+			"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue,
+		}), "subscription_plan_ids"
 	case "servers.onboard":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
 		probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")

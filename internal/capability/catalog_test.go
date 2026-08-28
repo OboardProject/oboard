@@ -31,7 +31,7 @@ func TestListMCPFiltersCapabilitiesNotExposedToMCP(t *testing.T) {
 
 func TestSubscriptionPlanCapabilitiesAreManagementOnlyAndExecutable(t *testing.T) {
 	catalog := NewCatalog()
-	for _, name := range []string{"subscription_plans.list", "subscription_plans.get", "subscription_plans.nodes.update"} {
+	for _, name := range []string{"subscription_plans.list", "subscription_plans.get", "subscription_plans.nodes.update", "subscription_plans.delete"} {
 		descriptor, ok := catalog.Get(name)
 		if !ok || !descriptor.MCPEnabled {
 			t.Fatalf("%s is not exposed through MCP: %#v", name, descriptor)
@@ -44,13 +44,23 @@ func TestSubscriptionPlanCapabilitiesAreManagementOnlyAndExecutable(t *testing.T
 	if !write.Executable || write.ReadOnly || write.ApprovalPolicy != "required" || write.MinimumAccess != mcpauth.AccessOperate {
 		t.Fatalf("unsafe subscription plan node capability metadata: %#v", write)
 	}
+	del, _ := catalog.Get("subscription_plans.delete")
+	if !del.Executable || !del.Destructive || del.ReadOnly || del.ApprovalPolicy != "required" || del.MinimumAccess != mcpauth.AccessOperate {
+		t.Fatalf("unsafe subscription plan delete capability metadata: %#v", del)
+	}
 	operator := application.Principal{AccessLevel: mcpauth.AccessOperate, Role: model.RoleOperator, Scopes: []string{"*"}}
 	if _, allowed := catalog.Authorize(operator, write.Name); !allowed {
 		t.Fatal("operator did not receive the subscription plan node capability")
 	}
+	if _, allowed := catalog.Authorize(operator, del.Name); !allowed {
+		t.Fatal("operator did not receive the subscription plan delete capability")
+	}
 	admin := application.Principal{AccessLevel: mcpauth.AccessOperate, Role: model.RoleAdmin, Scopes: []string{"*"}}
 	if _, allowed := catalog.Authorize(admin, write.Name); !allowed {
 		t.Fatal("admin did not receive the subscription plan node capability")
+	}
+	if _, allowed := catalog.Authorize(admin, del.Name); !allowed {
+		t.Fatal("admin did not receive the subscription plan delete capability")
 	}
 }
 

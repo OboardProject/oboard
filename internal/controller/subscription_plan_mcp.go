@@ -159,6 +159,39 @@ func subscriptionPlanMCPResourceRef(item model.SubscriptionPlan) MCPResourceRef 
 	return MCPResourceRef{Type: "subscription_plan", ID: item.ID, Name: item.Name, Ref: "subscription_plan:" + strconv.FormatInt(item.ID, 10), Label: item.Name}
 }
 
+func (s *Server) prepareSubscriptionPlanDeleteRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	planTarget := firstTaskRef(input, "subscription_plan", "subscription_plan", "target_plan", "plan", "plan_id")
+	planResolution, err := s.resolveSubscriptionPlanRef(ctx, principal, planTarget)
+	if err != nil && planTarget != "" {
+		return nil, err
+	}
+	if planTarget == "" {
+		planResolution, err = s.inferSubscriptionPlanFromGoal(ctx, principal, input.Goal)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+	}
+	if planResolution.Value == nil {
+		if len(planResolution.Candidates) > 0 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "subscription_plan.delete", Field: "subscription_plan", Candidates: planResolution.Candidates}, nil
+		}
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "subscription_plan.delete", Questions: []map[string]any{{"field": "subscription_plan", "type": "resource_ref", "reason": "需要指定要删除的订阅套餐"}}}, nil
+	}
+	members, err := s.store.ListEnabledUserPlanBindingsForPlan(ctx, planResolution.Value.ID)
+	if err != nil {
+		return nil, err
+	}
+	operation := mcpOperationRef{Capability: "subscription_plans.delete", Input: map[string]any{"plan_id": planResolution.Value.ID, "confirm": true}}
+	return &mcpPreparedRecipe{
+		Status: "ready", Intent: "subscription_plan.delete", Operations: []mcpOperationRef{operation},
+		Summary: map[string]any{
+			"action": "delete_subscription_plan", "subscription_plan": planResolution.Value.Label,
+			"unbound_user_count": len(members), "users_retained": true,
+		},
+		Verification: map[string]any{"after_commit": []string{"workflow_terminal"}},
+	}, nil
+}
+
 func (s *Server) resolveProxyPathRef(ctx context.Context, principal application.Principal, value string) (mcpResourceResolution, error) {
 	_, target, err := splitMCPResourceRef(value, "proxy_path")
 	if err != nil {

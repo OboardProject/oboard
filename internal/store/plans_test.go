@@ -977,13 +977,44 @@ func TestUserPlanBindingOneActivePerUser(t *testing.T) {
 		t.Fatalf("expected no active binding, got err=%v", err)
 	}
 
-	// Deleting a plan cascades its bindings.
+	// Deleting a plan unbinds remaining users and cascades binding rows.
 	if err := s.DeleteSubscriptionPlan(ctx, p1.ID); err != nil {
 		t.Fatal(err)
 	}
 	members, _ = s.ListUserPlanBindingsForPlan(ctx, p1.ID)
 	if len(members) != 0 {
 		t.Fatalf("bindings must cascade-delete with the plan")
+	}
+}
+
+func TestDeleteSubscriptionPlanUnbindsUsersWithoutDeletingThem(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	createPlanTestUser(t, s, 1, "alice")
+	createPlanTestUser(t, s, 2, "bob")
+	plan := &model.SubscriptionPlan{Name: "to-delete", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetUserPlanBindings(ctx, []model.UserPlanBinding{
+		{UserID: 1, PlanID: plan.ID},
+		{UserID: 2, PlanID: plan.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSubscriptionPlan(ctx, plan.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSubscriptionPlan(ctx, plan.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected plan to be gone, got err=%v", err)
+	}
+	for _, userID := range []int64{1, 2} {
+		if _, err := s.GetActiveUserPlanBinding(ctx, userID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("user %d still has a plan binding: %v", userID, err)
+		}
+		if _, err := s.GetUser(ctx, userID); err != nil {
+			t.Fatalf("user %d must remain after plan delete: %v", userID, err)
+		}
 	}
 }
 

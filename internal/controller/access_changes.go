@@ -650,6 +650,10 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 		if err := s.store.SetSubscriptionPlanEnabled(ctx, change.SourcePlanID, false); err != nil {
 			return err
 		}
+	case model.AccessChangePlanDelete:
+		if err := s.store.ClearUserPlanBindingsForPlan(ctx, change.SourcePlanID); err != nil {
+			return err
+		}
 	case model.AccessChangeUserBindings:
 		if err := s.store.SetUserPlanBindingsActiveForUsers(ctx, payload.UserIDs); err != nil {
 			return err
@@ -839,6 +843,12 @@ func (s *Server) reconcileAccessChanges(ctx context.Context) {
 			}
 			if !done {
 				continue
+			}
+			if change.ChangeType == model.AccessChangePlanDelete && change.SourcePlanID != 0 {
+				if err := s.store.DetachAndDeleteSubscriptionPlan(ctx, change.SourcePlanID, change.ID); err != nil {
+					s.markAccessChangeFailed(ctx, &change, err.Error())
+					continue
+				}
 			}
 			if err := s.store.UpdateAccessChangeStatus(ctx, change.ID, []model.AccessChangeStatus{model.AccessChangeFinalizing}, model.AccessChangeFinalized, ""); err != nil {
 				log.Printf("access change finalize status: %v", err)
@@ -1208,6 +1218,52 @@ func (s *Server) planDisable(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	auditReq(s, r, "disable", "access-change", fmt.Sprintf("plan=%d change=%d", id, change.ID))
 	write(w, 200, map[string]any{"disabled": false, "access_change_id": change.ID, "access_change_status": change.Status, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+}
+
+// createPlanDeleteChange materializes delete projections: prepare keeps the
+// current grants, activation unbinds users from the plan, and finalize prunes
+// credentials then physically deletes the plan. Bound users keep their
+// accounts and become planless.
+func (s *Server) createPlanDeleteChange(ctx context.Context, r *http.Request, actorID *int64, plan *model.SubscriptionPlan, affectedUsers int) (*model.AccessChange, error) {
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	bindings, err := s.store.ListEffectiveUserPlanBindings(ctx, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	exceptions, err := s.store.ListUserNodeExceptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	oldSnap := s.snapshotFromConfig(data, bindings, data.ActivePlanNodes, exceptions, now)
+	newSnap := s.planSnapshotDisabled(data, plan, bindings, exceptions, now)
+	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
+	activeNodes, err := s.store.ListActivePlanNodes(ctx, plan.ID)
+	if err != nil {
+		return nil, err
+	}
+	keys := map[string]bool{}
+	for _, pn := range activeNodes {
+		keys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
+	}
+	serverOnline := make(map[int64]bool, len(data.Servers))
+	for _, server := range data.Servers {
+		serverOnline[server.ID] = server.Status == model.ServerOnline
+	}
+	servers, _, _ := core.AffectedAuthServers(keys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
+	return s.createAccessChange(ctx, r, accessChangeDraft{
+		changeType:         model.AccessChangePlanDelete,
+		sourcePlanID:       plan.ID,
+		affectedUserCount:  affectedUsers,
+		activateAt:         &now,
+		prepareProjection:  prepare,
+		finalizeProjection: newSnap.Projection(),
+		serverIDs:          servers,
+		createdBy:          actorID,
+	})
 }
 
 // createUserBindingChange materializes the two-phase projections for a user

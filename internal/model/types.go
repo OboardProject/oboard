@@ -808,6 +808,7 @@ const (
 	AccessChangePlanPublish  AccessChangeType = "plan_publish"
 	AccessChangePlanRestore  AccessChangeType = "plan_restore"
 	AccessChangePlanDisable  AccessChangeType = "plan_disable"
+	AccessChangePlanDelete   AccessChangeType = "plan_delete"
 	AccessChangeUserBindings AccessChangeType = "user_bindings"
 	AccessChangeExceptions   AccessChangeType = "exceptions"
 )

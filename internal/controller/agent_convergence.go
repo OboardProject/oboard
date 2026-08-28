@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -30,8 +31,22 @@ func (s *Server) reconcileAgentAppliedState(ctx context.Context, serverID int64,
 		s.signalConfigurationReconcile()
 		return
 	}
-	matches := state.LastConfigVersion > 0 && state.LastConfigVersion == health.AppliedConfigVersion &&
-		health.AppliedConfigDigest != "" && state.WantedDigest == health.AppliedConfigDigest
+	matches := false
+	if state.LastConfigVersion == 0 && health.AppliedConfigVersion == 0 {
+		matches = true
+	} else if state.LastConfigVersion > 0 && state.LastConfigVersion == health.AppliedConfigVersion && health.AppliedConfigDigest != "" {
+		if state.WantedDigest == health.AppliedConfigDigest {
+			matches = true
+		} else if isSemanticDigest(state.WantedDigest) || state.SyncStrategy == "semantic_noop" {
+			expected := s.serverExpectedPayloadDigest(ctx, serverID, state.LastConfigVersion)
+			if expected == "" || expected == health.AppliedConfigDigest {
+				matches = true
+				if expected == health.AppliedConfigDigest {
+					_ = s.store.UpdateConfigurationSyncWantedDigest(ctx, serverID, health.AppliedConfigDigest)
+				}
+			}
+		}
+	}
 	if matches {
 		if state.State == "queued" || state.State == "running" {
 			_ = s.store.MarkConfigurationSyncResult(ctx, serverID, health.AppliedConfigVersion, true, "")
@@ -50,6 +65,11 @@ func (s *Server) reconcileAgentAppliedState(ctx context.Context, serverID int64,
 	default:
 		s.signalConfigurationReconcile()
 	}
+}
+
+func isSemanticDigest(digest string) bool {
+	digest = strings.TrimSpace(digest)
+	return strings.HasPrefix(digest, "semantic_noop:") || strings.HasPrefix(digest, "routing:")
 }
 
 func (s *Server) markAgentConfigurationDrift(ctx context.Context, serverID int64) {

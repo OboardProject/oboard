@@ -98,6 +98,27 @@ func (s *Server) registerSubscriptionPlanAutomationOperations() {
 		}
 		return s.applySubscriptionPlanNodesUpdate(ctx, principal, request)
 	})
+	s.automation.RegisterValidator("subscription_plans.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		plan, unbound, err := s.subscriptionPlanDeleteCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"plan_id": plan.ID, "plan_name": plan.Name, "unbound_user_count": unbound}, nil
+	})
+	s.automation.RegisterRevisionResolver("subscription_plans.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		plan, _, err := s.subscriptionPlanDeleteCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"subscription_plan:" + strconv.FormatInt(plan.ID, 10): strconv.FormatInt(plan.LockVersion, 10)}, nil
+	})
+	s.automation.Register("subscription_plans.delete", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		plan, _, err := s.subscriptionPlanDeleteCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return s.deleteSubscriptionPlan(ctx, plan.ID, principal.UserID, nil)
+	})
 }
 
 const revisionTimeFormat = "2006-01-02T15:04:05.999999999Z07:00"
@@ -300,4 +321,29 @@ func (s *Server) authorizeSubscriptionPlanNode(ctx context.Context, principal ap
 		return errors.New("invalid node_type")
 	}
 	return nil
+}
+
+func (s *Server) subscriptionPlanDeleteCandidate(ctx context.Context, principal application.Principal, input json.RawMessage) (*model.SubscriptionPlan, int, error) {
+	var request struct {
+		PlanID  int64 `json:"plan_id"`
+		Confirm bool  `json:"confirm"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil {
+		return nil, 0, err
+	}
+	if request.PlanID <= 0 || !request.Confirm {
+		return nil, 0, errors.New("plan_id and confirm=true are required")
+	}
+	if !principal.AllowsInt64("subscription_plan_ids", request.PlanID) {
+		return nil, 0, errors.New("subscription plan is outside the authorized resource boundary")
+	}
+	plan, err := s.store.GetSubscriptionPlan(ctx, request.PlanID)
+	if err != nil {
+		return nil, 0, err
+	}
+	members, err := s.store.ListEnabledUserPlanBindingsForPlan(ctx, plan.ID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return plan, len(members), nil
 }

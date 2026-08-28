@@ -118,6 +118,7 @@ const changeTypeLabels: Record<string, string> = {
   plan_publish: '套餐发布',
   plan_restore: '版本回滚',
   plan_disable: '套餐停用',
+  plan_delete: '套餐删除',
   user_bindings: '用户换绑',
   exceptions: '节点例外',
 }
@@ -264,6 +265,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [orderingOpen, setOrderingOpen] = React.useState(false)
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [deleteBusy, setDeleteBusy] = React.useState(false)
   const [createDraft, setCreateDraft] = React.useState({ name: '', description: '', enabled: true, speed_limit_mbps: 0, traffic_limit_bytes: 0, traffic_reset_mode: 'anniversary_month', traffic_reset_day: 1 })
   const [createNodes, setCreateNodes] = React.useState<PlanNode[]>([])
   const [editOpen, setEditOpen] = React.useState(false)
@@ -654,6 +657,29 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     }
   }
 
+  const deletePlan = async () => {
+    if (!selectedID) return
+    setDeleteBusy(true)
+    setMessage('')
+    try {
+      const res = await client.request<{ deleted?: boolean; access_change_id?: number; unbound_user_count?: number }>(`/subscription-plans/${selectedID}`, { method: 'DELETE' })
+      setDeleteOpen(false)
+      if (res.access_change_id) {
+        await loadChanges()
+        notify?.(`已开始删除，正在为 ${res.unbound_user_count || 0} 个用户移除套餐（变更 #${res.access_change_id}）`, 'success')
+      } else {
+        notify?.('套餐已删除', 'success')
+      }
+      closeDetail()
+      await refreshPlans()
+      await load()
+    } catch (e: any) {
+      setMessage('删除失败：' + (e?.message || String(e)))
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
   const clonePlan = async () => {
     setMessage('')
     try {
@@ -932,6 +958,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History size={14} /> 版本历史</Button>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
                   {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
+                  <Button variant="destructive" size="sm" disabled={applying} onClick={() => setDeleteOpen(true)}><Trash2 size={14} /> 删除</Button>
                 </div>
               </div>
 
@@ -1203,6 +1230,22 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
             <Button disabled={!createDraft.name.trim()} type="submit" form="create-plan-form">创建套餐</Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog isOpen={deleteOpen} onClose={() => { if (!deleteBusy) setDeleteOpen(false) }} title={`删除套餐：${plan?.name || ''}`} size="sm">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <p style={{ margin: 0 }}>确认删除套餐「{plan?.name}」？绑定该套餐的用户只会移除套餐，用户本身不会被删除。</p>
+          <p className="muted" style={{ margin: 0 }}>
+            {detail?.member_count > 0
+              ? `当前有 ${detail.member_count} 个绑定用户。删除后这些用户将变为无套餐，节点授权会按变更流程收回。`
+              : '当前没有绑定用户，套餐会立即删除。'}
+          </p>
+          {message && message.includes('删除失败') && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{message}</p>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleteOpen(false)}>取消</Button>
+            <Button variant="destructive" busy={deleteBusy} onClick={() => void deletePlan()}>删除套餐</Button>
           </div>
         </div>
       </Dialog>

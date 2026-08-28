@@ -428,7 +428,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	}
 	changedIDs, unchanged := s.automaticProjectionChanges(ctx, claimed)
 	for _, state := range unchanged {
-		digest := fmt.Sprintf("semantic_noop:%d", state.WantedRevision)
+		digest := s.serverExpectedPayloadDigest(ctx, state.ServerID, state.LastConfigVersion)
 		if err := s.store.MarkConfigurationSyncNoop(ctx, state.ServerID, state.WantedRevision, digest); err != nil {
 			logConfigurationError("mark semantic noop", err)
 			continue
@@ -667,6 +667,17 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 func configurationTaskPayloadDigest(task model.AgentTask) string {
 	payload := append(append([]byte(task.Type), 0), []byte(task.PayloadJSON)...)
 	return fmt.Sprintf("%x", sha256.Sum256(payload))
+}
+
+func (s *Server) serverExpectedPayloadDigest(ctx context.Context, serverID, lastConfigVersion int64) string {
+	if s.store == nil || serverID <= 0 || lastConfigVersion <= 0 {
+		return ""
+	}
+	lastTask, err := s.store.LastSuccessfulTaskByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment)
+	if err != nil || lastTask == nil {
+		return ""
+	}
+	return configurationTaskPayloadDigest(*lastTask)
 }
 
 func (s *Server) recordConfigurationTaskResult(ctx context.Context, task model.AgentTask, status, resultJSON string) {

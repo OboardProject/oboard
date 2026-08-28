@@ -236,20 +236,72 @@ func (s *Store) UpdatePlanDraftLimits(ctx context.Context, id, expectedRevision 
 	return draftID, nil
 }
 
-// DeleteSubscriptionPlan physically removes the plan. Callers must first ensure
-// there are no effective bindings (active or pending, not yet expired); the
-// foreign-key cascade then removes revisions, revision nodes and bindings
-// together. Expired bindings never block archival.
+// DeleteSubscriptionPlan unbinds every enabled user from the plan, then
+// physically removes it. Users themselves are left in place; the foreign-key
+// cascade drops revisions, revision nodes, and remaining binding rows.
 func (s *Store) DeleteSubscriptionPlan(ctx context.Context, id int64) error {
-	var bound int
-	if err := s.db.QueryRowContext(ctx, `select count(*) from user_plan_bindings where plan_id=? and enabled=1 and status in ('active','pending') and (expires_at is null or expires_at > ?)`, id, now()).Scan(&bound); err != nil {
+	return s.deleteSubscriptionPlanTx(ctx, id, 0)
+}
+
+// DetachAndDeleteSubscriptionPlan is the access-change finalize helper: it
+// unbinds users, detaches this change from the plan so the row survives the
+// cascade, then deletes the plan.
+func (s *Store) DetachAndDeleteSubscriptionPlan(ctx context.Context, planID, changeID int64) error {
+	return s.deleteSubscriptionPlanTx(ctx, planID, changeID)
+}
+
+func (s *Store) deleteSubscriptionPlanTx(ctx context.Context, planID, changeID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	if bound > 0 {
-		return errors.New("subscription plan still has enabled user bindings; disable and migrate users before deleting")
+	defer tx.Rollback()
+	ts := now()
+	if _, err := tx.ExecContext(ctx, `update user_plan_bindings set enabled=0,updated_at=? where plan_id=? and enabled=1`, ts, planID); err != nil {
+		return err
 	}
-	_, err := s.db.ExecContext(ctx, `delete from subscription_plans where id=?`, id)
+	if changeID > 0 {
+		if _, err := tx.ExecContext(ctx, `update access_changes set source_plan_id=null,updated_at=? where id=?`, ts, changeID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `delete from subscription_plans where id=?`, planID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ClearUserPlanBindingsForPlan disables every enabled binding of the plan
+// without deleting user records. Pending and active rows are both cleared so
+// the snapshot stops granting the plan immediately.
+func (s *Store) ClearUserPlanBindingsForPlan(ctx context.Context, planID int64) error {
+	_, err := s.db.ExecContext(ctx, `update user_plan_bindings set enabled=0,updated_at=? where plan_id=? and enabled=1`, now(), planID)
 	return err
+}
+
+// ListEnabledUserPlanBindingsForPlan returns active and pending enabled
+// bindings for one plan, including not-yet-expired rows.
+func (s *Store) ListEnabledUserPlanBindingsForPlan(ctx context.Context, planID int64) ([]model.UserPlanBinding, error) {
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where plan_id=? and enabled=1 and status in ('active','pending') and (expires_at is null or expires_at > ?) order by user_id`, planID, now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserPlanBindings(rows)
+}
+
+// HasOpenAccessChangeForPlan reports whether a prepare/activate/finalize
+// access change still references this plan.
+func (s *Store) HasOpenAccessChangeForPlan(ctx context.Context, planID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `select count(*) from access_changes where source_plan_id=? and status in ('preparing','activating','finalizing')`, planID).Scan(&n)
+	return n > 0, err
+}
+
+func (s *Store) HasPendingUserPlanBindingsForPlan(ctx context.Context, planID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `select count(*) from user_plan_bindings where plan_id=? and enabled=1 and status='pending'`, planID).Scan(&n)
+	return n > 0, err
 }
 
 // CloneSubscriptionPlan copies the active revision (limits and nodes) into a

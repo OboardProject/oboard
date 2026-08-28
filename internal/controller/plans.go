@@ -753,22 +753,73 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 	write(w, 200, out)
 }
 
+var errPlanChangeInFlight = errors.New("subscription plan(s) are still applying a change: retry after it settles")
+
 func (s *Server) subscriptionPlanDelete(w http.ResponseWriter, r *http.Request, id int64) {
-	members, err := s.store.ListUserPlanBindingsForPlan(r.Context(), id)
+	out, err := s.deleteSubscriptionPlan(r.Context(), id, requestActorID(r), r)
 	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	if len(members) > 0 {
-		fail(w, fmt.Errorf("subscription plan has %d bound users; disable and migrate them before deletion", len(members)), http.StatusConflict)
-		return
-	}
-	if err := s.store.DeleteSubscriptionPlan(r.Context(), id); err != nil {
-		fail(w, err, 500)
+		fail(w, err, planDeleteStatus(err))
 		return
 	}
 	auditReq(s, r, "delete", "subscription-plan", fmt.Sprint(id))
-	write(w, 200, map[string]any{"deleted": true})
+	out["runtime_authorization_mode"] = s.authorizationMode(r.Context())
+	write(w, 200, out)
+}
+
+func planDeleteStatus(err error) int {
+	if errors.Is(err, sql.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, errPlanChangeInFlight) {
+		return http.StatusConflict
+	}
+	return planWriteStatus(err)
+}
+
+// deleteSubscriptionPlan removes a plan. Bound users keep their accounts and
+// only lose the plan assignment. When anyone still holds an enabled binding,
+// an access change unbinds them and prunes credentials before the plan row
+// is deleted.
+func (s *Server) deleteSubscriptionPlan(ctx context.Context, id int64, actorID *int64, r *http.Request) (map[string]any, error) {
+	plan, err := s.store.GetSubscriptionPlan(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	open, err := s.store.HasOpenAccessChangeForPlan(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if open {
+		return nil, errPlanChangeInFlight
+	}
+	pending, err := s.store.HasPendingUserPlanBindingsForPlan(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if pending {
+		return nil, errPlanChangeInFlight
+	}
+	members, err := s.store.ListEnabledUserPlanBindingsForPlan(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(members) == 0 {
+		if err := s.store.DeleteSubscriptionPlan(ctx, id); err != nil {
+			return nil, err
+		}
+		return map[string]any{"deleted": true, "plan_id": id, "unbound_user_count": 0, "access_change_id": int64(0), "access_change_status": ""}, nil
+	}
+	change, err := s.createPlanDeleteChange(ctx, r, actorID, plan, len(members))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"deleted":              false,
+		"plan_id":              id,
+		"unbound_user_count":   len(members),
+		"access_change_id":     change.ID,
+		"access_change_status": change.Status,
+	}, nil
 }
 
 func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Request, id int64, parts []string) {

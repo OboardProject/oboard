@@ -12,6 +12,10 @@ func subscriptionPlanRefFromID(ctx context.Context, input any) ([]mcpauth.Resour
 	return refsFromSingleID(ctx, input, "id", "subscription_plan")
 }
 
+func subscriptionPlanDeleteRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromSingleID(ctx, input, "plan_id", "subscription_plan")
+}
+
 func subscriptionPlanNodesUpdateRefs(_ context.Context, input any) ([]mcpauth.ResourceRef, error) {
 	object, err := canonicalMap(input)
 	if err != nil {

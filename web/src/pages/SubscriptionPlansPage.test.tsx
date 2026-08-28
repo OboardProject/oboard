@@ -86,6 +86,51 @@ describe('SubscriptionPlansPage', () => {
     expect(document.body.textContent).toContain('alice')
   })
 
+  it('deletes a plan after confirming that bound users only lose the plan', async () => {
+    const boundPlan = { ...plan, member_count: 2 }
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/subscription-plans') return { subscription_plans: [boundPlan] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1') return {
+        subscription_plan: boundPlan,
+        latest_nodes: [],
+        revisions: [{ id: 1, revision: 1, version_no: 1, status: 'current', speed_limit_mbps: 100, traffic_limit_bytes: 1073741824, traffic_reset_mode: 'monthly', traffic_reset_day: 1, created_at: '2026-08-11T00:00:00Z' }],
+        member_count: 2,
+      }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [], policy: { mode: 'exit_region' } }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      if (path === '/subscription-plans/1' && init?.method === 'DELETE') return { deleted: false, access_change_id: 44, unbound_user_count: 2 }
+      throw new Error(`unexpected request: ${path} ${init?.method || 'GET'}`)
+    })
+    const notify = vi.fn()
+    const load = vi.fn().mockResolvedValue(undefined)
+
+    await act(async () => {
+      root.render(<SubscriptionPlansPage data={{ subscription_plans: [boundPlan] }} client={{ request }} load={load} notify={notify} />)
+    })
+    await flushEffects()
+
+    const editButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')
+    act(() => editButton?.click())
+    await flushEffects()
+
+    const deleteButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('删除'))
+    expect(deleteButton).toBeTruthy()
+    act(() => deleteButton?.click())
+    await flushEffects()
+
+    expect(document.body.textContent).toContain('绑定该套餐的用户只会移除套餐')
+    expect(document.body.textContent).toContain('当前有 2 个绑定用户')
+    const confirmButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === '删除套餐')
+    expect(confirmButton).toBeTruthy()
+    act(() => confirmButton?.click())
+    await flushEffects()
+
+    expect(request).toHaveBeenCalledWith('/subscription-plans/1', { method: 'DELETE' })
+    expect(notify).toHaveBeenCalledWith('已开始删除，正在为 2 个用户移除套餐（变更 #44）', 'success')
+  })
+
   it('drops stale node references before saving a normally added node', async () => {
     const latestNodes = [
       { node_type: 'inbound', node_id: 24, display_group: '', source_type: 'explicit' },

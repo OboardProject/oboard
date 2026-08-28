@@ -175,6 +175,15 @@ func (s *Store) MarkConfigurationSyncNoop(ctx context.Context, serverID int64, r
 	return err
 }
 
+func (s *Store) UpdateConfigurationSyncWantedDigest(ctx context.Context, serverID int64, digest string) error {
+	if serverID <= 0 {
+		return fmt.Errorf("server id must be positive")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set wanted_digest=?,updated_at=? where server_id=? and state='synced'`, strings.TrimSpace(digest), now, serverID)
+	return err
+}
+
 func (s *Store) RecoverConfigurationSyncStates(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',next_retry_at=null,updated_at=? where state in ('preparing','queued') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running'))`, time.Now().UTC().Format(time.RFC3339Nano))
 	return err

@@ -515,7 +515,7 @@ func (s *Server) submitPreparedOperations(ctx context.Context, principal applica
 			kind = "server_onboarding"
 		} else if operation.Capability == "deployments.apply" {
 			kind = "deployment"
-		} else if operation.Capability == "subscription_plans.nodes.update" {
+		} else if operation.Capability == "subscription_plans.nodes.update" || operation.Capability == "subscription_plans.delete" {
 			kind = "access_change"
 		}
 	}
