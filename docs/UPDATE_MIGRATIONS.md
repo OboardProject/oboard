@@ -43,7 +43,7 @@
 
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
-| `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-pending` | 待发布 | 生效中 | - |
+| `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-4d9ba516be1d` | 待发布 | 生效中 | - |
 | `controller-db-20260812-connectivity-probe-target` | Controller | SQLite schema | `dev-26cd0a1013d1` | 待发布 | 生效中 | - |
 | `controller-db-20260812-latency-probes` | Controller | SQLite schema | `dev-490892a0ae99` | 待发布 | 生效中 | - |
 | `controller-db-20260813-unified-latency-probes` | Controller | SQLite schema / data backfill | `dev-0bb8ff77a4e9` | 待发布 | 生效中 | - |
@@ -70,8 +70,8 @@
 ### controller-db-20260828-update-fleet
 
 - **引入日期：** 2026-08-28
-- **引入提交：** 待本任务提交后回填
-- **引入版本：** `dev-pending`
+- **引入提交：** `OboardProject/oboard@4d9ba516be1d7fa7908a75142c7b52d3e7c3e5dc`
+- **引入版本：** `dev-4d9ba516be1d`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、Web；Agent 重连仅本地退避
 - **类别：** SQLite schema / data backfill
