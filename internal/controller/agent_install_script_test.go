@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,40 @@ import (
 
 	"github.com/OboardProject/oboard/internal/store"
 )
+
+func TestAgentSelfUpdateRepairsEmptyCoreIdentity(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is unavailable")
+	}
+	script := testAgentSelfUpdateScript(t)
+	start := strings.Index(script, `if [ -f "$CONFIG_PATH" ]; then`)
+	end := strings.Index(script, "\nrestart_agent_delayed()")
+	if start < 0 || end <= start {
+		t.Fatal("self-update config repair block is missing")
+	}
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"core_binary":"","core_service":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shell := testPOSIXShell(t)
+	cmd := exec.Command(shell, "-c", script[start:end])
+	cmd.Env = append(os.Environ(), "CONFIG_PATH="+configPath, "INSTALL_DIR=/opt/oboard", "TARGET_DEV=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-update config repair failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["core_binary"] != "/opt/oboard/oboard-sb" || config["core_service"] != "oboard-sb" {
+		t.Fatalf("empty core identity was not repaired: %#v", config)
+	}
+}
 
 func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 	script := testAgentInstallScript(t)
@@ -26,6 +61,8 @@ func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 		"[2/4] 下载 Agent 组件",
 		"[3/4] 校验并安装组件",
 		"[4/4] 注册并启动 Agent 服务",
+		`-core-binary "$INSTALL_DIR/oboard-sb"`,
+		"-core-service oboard-sb",
 		"详细日志：$INSTALL_LOG",
 		"管理 Agent：$management_command",
 	} {

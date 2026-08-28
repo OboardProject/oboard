@@ -1888,7 +1888,7 @@ func TestAgentSelfUpdateScriptSupportsPOSIXShellAndDeferredAckRestart(t *testing
 		t.Fatalf("self update script status = %d", rr.Code)
 	}
 	script := rr.Body.String()
-	for _, want := range []string{"#!/bin/sh", "OBOARD_AGENT_RESTART:-delayed", `AGENT_RESTART" = none`, "sleep 60", `data["time_sync_command"] = "auto"`, "verify_manifest_with_openssl", "command -v install", "coreutils", "OBOARD_AGENT_INSTALL_ENV", "configured_agent_install_dir", "normalize_install_dir", `data.setdefault("core_binary", install_dir + "/oboard-sb")`, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`, "OBoard Agent 自更新完成", "$management_command check"} {
+	for _, want := range []string{"#!/bin/sh", "OBOARD_AGENT_RESTART:-delayed", `AGENT_RESTART" = none`, "sleep 60", `data["time_sync_command"] = "auto"`, "verify_manifest_with_openssl", "command -v install", "coreutils", "OBOARD_AGENT_INSTALL_ENV", "configured_agent_install_dir", "normalize_install_dir", `if not data.get("core_binary")`, `data["core_binary"] = install_dir + "/oboard-sb"`, `if not data.get("core_service")`, `data["core_service"] = "oboard-sb"`, `ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"`, "OBoard Agent 自更新完成", "$management_command check"} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("self update script missing %q", want)
 		}

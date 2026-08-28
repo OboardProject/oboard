@@ -16707,8 +16707,10 @@ data["reload_command"] = "auto"
 data["restart_command"] = "auto"
 data["time_sync_command"] = "auto"
 data.setdefault("time_correction_mode", "auto")
-data.setdefault("core_binary", install_dir + "/oboard-sb")
-data.setdefault("core_service", "oboard-sb")
+if not data.get("core_binary"):
+    data["core_binary"] = install_dir + "/oboard-sb"
+if not data.get("core_service"):
+    data["core_service"] = "oboard-sb"
 data.setdefault("update_repo", "OboardProject/oboard-agent")
 target_dev = str(__import__("os").environ.get("TARGET_DEV", "")).lower() in ("true", "1", "yes")
 if "update_source" not in data:
