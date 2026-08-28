@@ -1641,6 +1641,16 @@ func TestServerMonitoringPolicyAndHealthSanitization(t *testing.T) {
 	if time.Since(report.Timestamp) > 5*time.Second {
 		t.Fatalf("timestamp was not normalized: %s", report.Timestamp)
 	}
+	report = model.HealthReport{CPUCores: -3}
+	sanitizeServerHealthReport(&report)
+	if report.CPUCores != 0 {
+		t.Fatalf("negative cpu_cores = %d, want 0", report.CPUCores)
+	}
+	report = model.HealthReport{CPUCores: 9000}
+	sanitizeServerHealthReport(&report)
+	if report.CPUCores != 4096 {
+		t.Fatalf("cpu_cores was not capped: %d", report.CPUCores)
+	}
 }
 
 func TestValidateServerListenMode(t *testing.T) {

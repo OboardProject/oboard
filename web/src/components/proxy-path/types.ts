@@ -48,6 +48,7 @@ export type Server = {
   package_manager: string
   arch: string
   cpu: string
+  cpu_cores?: number
   cpu_usage_percent: number
   memory_used_bytes: number
   memory_total_bytes: number

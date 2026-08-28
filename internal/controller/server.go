@@ -13846,6 +13846,9 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 		server.SingBoxVersion = req.Health.SingBoxVersion
 		server.KernelCapabilities = normalizeKernelCapabilities(req.Health.KernelCapabilities)
 		server.CPU = req.Health.CPU
+		if req.Health.CPUCores > 0 {
+			server.CPUCores = req.Health.CPUCores
+		}
 		server.MemoryBytes = req.Health.MemoryBytes
 		server.CPUUsagePercent = req.Health.CPUUsagePercent
 		server.MemoryUsedBytes = req.Health.MemoryUsedBytes
@@ -14296,6 +14299,17 @@ func sanitizeServerHealthReport(report *model.HealthReport) {
 	report.RegionCode = normalizeControllerRegionCode(report.RegionCode)
 	report.KernelCapabilities = normalizeKernelCapabilities(report.KernelCapabilities)
 	normalizeReportedTCPFastOpen(report)
+	normalizeReportedCPUCores(report)
+}
+
+func normalizeReportedCPUCores(report *model.HealthReport) {
+	if report.CPUCores < 0 {
+		report.CPUCores = 0
+	}
+	const maxCPUCores = 4096
+	if report.CPUCores > maxCPUCores {
+		report.CPUCores = maxCPUCores
+	}
 }
 
 // normalizeReportedTCPFastOpen keeps the raw net.ipv4.tcp_fastopen bitmask as
@@ -14355,6 +14369,7 @@ func applyHealthReportToServer(server *model.Server, result store.HealthApplyRes
 	server.Arch = current.Arch
 	server.Kernel = current.Kernel
 	server.CPU = current.CPU
+	server.CPUCores = current.CPUCores
 	server.MemoryBytes = current.MemoryBytes
 	server.CPUUsagePercent = result.Curr.CPUUsagePercent
 	server.MemoryUsedBytes = result.Curr.MemoryUsedBytes

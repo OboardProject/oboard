@@ -204,6 +204,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		{"controller_update.manage", []string{"主控更新", "主控升级", "主控更新通道", "controller update", "controller channel"}},
 		{"host_ops.manage", []string{"诊断", "diagnose", "日志", "logs", "升级 agent", "卸载 agent", "uninstall agent", "拉取", "网卡", "网络接口", "network interface"}},
 		{"outbound.manage", []string{"出口", "outbound"}},
+		{"subscription_plan.nodes.manage", []string{"套餐节点", "订阅套餐节点", "plan node", "plan nodes"}},
 	}
 	type scored struct {
 		recipe mcpRecipe

@@ -32,7 +32,7 @@ func (s *Server) reconcileAgentAppliedState(ctx context.Context, serverID int64,
 		return
 	}
 	matches := false
-	if state.LastConfigVersion == 0 && health.AppliedConfigVersion == 0 {
+	if state.State == "synced" && state.LastConfigVersion == 0 && health.AppliedConfigVersion == 0 && (state.WantedDigest == "" || isSemanticDigest(state.WantedDigest) || state.SyncStrategy == "semantic_noop") {
 		matches = true
 	} else if state.LastConfigVersion > 0 && state.LastConfigVersion == health.AppliedConfigVersion && health.AppliedConfigDigest != "" {
 		if state.WantedDigest == health.AppliedConfigDigest {

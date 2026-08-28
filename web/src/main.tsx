@@ -1601,7 +1601,7 @@ const fieldLabels: Record<string, string> = {
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
   ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ',
-  os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
+  os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
   limit_policy: '限速策略', effective_speed_limit: '实际限速', effective_traffic_limit: '实际流量额度',
@@ -7357,11 +7357,14 @@ function enrolledDaysLabel(server: Server, now = new Date()) {
   return `${days}天`
 }
 
+function cpuModelLabel(server: Server) {
+  return String(server.cpu || '').trim()
+}
+
 function cpuCoresLabel(server: Server) {
-  const value = String(server.cpu || '').trim()
-  const match = value.match(/(\d+)\s*(?:核|cores?|v?cpus?)/i)
-  if (match) return `${match[1]}核`
-  return value || '—'
+  const cores = Math.trunc(Number(server.cpu_cores))
+  if (!Number.isFinite(cores) || cores <= 0) return '—'
+  return `${cores}核`
 }
 
 function cardExpiryLabel(server: Server, now = new Date()) {
@@ -7466,7 +7469,7 @@ function ServerDisplayTagsEditor({ tags, onChange }: { tags: { text: string; ton
   )
 }
 
-function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = '' }: { icon: React.ReactNode; label: string; value: string; percent: number; sub: string; fill?: string; tone?: string }) {
+function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = '', title }: { icon: React.ReactNode; label: string; value: string; percent: number; sub: string; fill?: string; tone?: string; title?: string }) {
   return (
     <div className="server-metric-row">
       {icon}
@@ -7475,7 +7478,7 @@ function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = 
         <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
           <div className={`server-metric-fill ${fill} ${tone || metricTone(percent)}`} style={{ width: `${Math.max(percent, percent > 0 ? 2 : 0)}%` }} />
         </div>
-        <span className="server-metric-sub">{sub}</span>
+        <span className="server-metric-sub" title={title || undefined}>{sub}</span>
       </div>
     </div>
   )
@@ -10114,7 +10117,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         </div>
       </div>
       <div className="server-metric-list">
-        <ServerMetricCell icon={<Cpu size={15} aria-hidden="true" />} label="CPU" value={na ? 'N/A' : Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(2)}%` : '—'} percent={na ? 0 : cpuPercent} sub={na ? 'N/A' : cpuCoresLabel(server)} />
+        <ServerMetricCell icon={<Cpu size={15} aria-hidden="true" />} label="CPU" value={na ? 'N/A' : Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(2)}%` : '—'} percent={na ? 0 : cpuPercent} sub={na ? 'N/A' : cpuCoresLabel(server)} title={na ? undefined : cpuModelLabel(server)} />
         <ServerMetricCell icon={<MemoryStick size={15} aria-hidden="true" />} label="内存" value={na ? 'N/A' : server.memory_total_bytes ? `${memPercent.toFixed(2)}%` : '—'} percent={na ? 0 : memPercent} sub={na ? 'N/A' : serverMemoryLabel(server)} fill="memory" />
         <ServerMetricCell icon={<HardDrive size={15} aria-hidden="true" />} label="磁盘" value={na ? 'N/A' : server.disk_total_bytes ? `${diskPercent.toFixed(1)}%` : '—'} percent={na ? 0 : diskPercent} sub={na ? 'N/A' : server.disk_total_bytes ? `${formatBytes(server.disk_bytes || 0)} / ${formatBytes(server.disk_total_bytes)}` : '—'} fill="disk" />
         <ServerMetricCell icon={<ArrowDownUp size={15} aria-hidden="true" />} label="月度" value={trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)} percent={na ? 0 : trafficPercent} sub={trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'} fill="traffic" tone={trafficQuotaTone} />
@@ -10927,6 +10930,7 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
             <ServerDetailItem label="服务管理器" value={server.service_manager || '—'} />
             <ServerDetailItem label="包管理器" value={server.package_manager || '—'} />
             <ServerDetailItem label="CPU" value={server.cpu || '—'} />
+            <ServerDetailItem label="CPU 核心" value={cpuCoresLabel(server)} />
           </dl>
         </section>
 

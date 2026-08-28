@@ -43,6 +43,7 @@
 
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
+| `controller-db-20260829-server-cpu-cores` | Controller | SQLite schema / wire protocol | `dev-pending` | 待发布 | 生效中 | - |
 | `controller-db-20260828-remove-vless-tls-vision` | Controller | SQLite seed / data backfill | `dev-fa658a2d2473` | 待发布 | 生效中 | - |
 | `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-4d9ba516be1d` | 待发布 | 生效中 | - |
 | `controller-db-20260812-connectivity-probe-target` | Controller | SQLite schema | `dev-26cd0a1013d1` | 待发布 | 生效中 | - |
@@ -67,6 +68,26 @@
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260829-server-cpu-cores
+
+- **引入日期：** 2026-08-29
+- **引入提交：** pending
+- **引入版本：** `dev-pending`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、Agent `internal/agent`、`internal/model`、Web
+- **类别：** SQLite schema / wire protocol
+- **原因：** 服务器卡片 CPU 副标题需要逻辑核心数；此前 Web 从 `cpu` 型号字符串里猜核数，会把 `E3-12xx v2` 这类型号当成核数。
+- **源状态：** `servers` 没有 `cpu_cores` 列；Agent `HealthReport` 没有 `cpu_cores`。
+- **目标状态：** `servers.cpu_cores integer not null default 0`；健康报告/入网携带独立的 `cpu_cores`（逻辑 CPU 数）。`cpu` 只保存型号。省略或 `0` 保留上次值。
+- **实现位置：** `internal/store/store.go`（`create table` 与 `ensureColumn`）、`health_report.go`、`internal/controller/server.go`、`realtime.go`、Web `src/main.tsx`
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等补列。
+- **数据影响：** 既有服务器核数为 0，直到新 Agent 上报；不改写 `cpu` 型号。
+- **重复执行：** `ensureColumn`；重复打开不改写已有核数。
+- **失败行为：** 补列失败会阻止打开数据库。
+- **回归测试：** `TestServerCPUCoresMigrateFromPreviousSchema`、`TestApplyHealthReportPersistsCPUCoresWithoutParsingModel`、`TestCPUCountFromCPUInfoDoesNotParseModelName`
+- **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema；入网/心跳路径不再出现无 `cpu_cores` 的 Agent。
+- **移除状态：** 生效中。
 
 ### controller-db-20260828-remove-vless-tls-vision
 

@@ -91,6 +91,7 @@ describe('SubscriptionPlansPage', () => {
     const request = vi.fn(async (path: string, init?: RequestInit) => {
       if (path === '/subscription-plans') return { subscription_plans: [boundPlan] }
       if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1' && init?.method === 'DELETE') return { deleted: false, access_change_id: 44, unbound_user_count: 2 }
       if (path === '/subscription-plans/1') return {
         subscription_plan: boundPlan,
         latest_nodes: [],
@@ -100,7 +101,6 @@ describe('SubscriptionPlansPage', () => {
       if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 200 }
       if (path === '/subscription-plans/1/ordering') return { nodes: [], policy: { mode: 'exit_region' } }
       if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
-      if (path === '/subscription-plans/1' && init?.method === 'DELETE') return { deleted: false, access_change_id: 44, unbound_user_count: 2 }
       throw new Error(`unexpected request: ${path} ${init?.method || 'GET'}`)
     })
     const notify = vi.fn()

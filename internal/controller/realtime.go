@@ -429,6 +429,7 @@ func healthRealtimePatch(result store.HealthApplyResult) realtimeServerPatch {
 	set("arch", previous.Arch != current.Arch, current.Arch)
 	set("kernel", previous.Kernel != current.Kernel, current.Kernel)
 	set("cpu", previous.CPU != current.CPU, current.CPU)
+	set("cpu_cores", previous.CPUCores != current.CPUCores, current.CPUCores)
 	set("memory_bytes", previous.MemoryBytes != current.MemoryBytes, current.MemoryBytes)
 	set("cpu_usage_percent", previous.CPUUsagePercent != current.CPUUsagePercent, current.CPUUsagePercent)
 	set("memory_used_bytes", previous.MemoryUsedBytes != current.MemoryUsedBytes, current.MemoryUsedBytes)

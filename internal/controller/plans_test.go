@@ -264,3 +264,48 @@ func TestPlanModeAccessChangeFlow(t *testing.T) {
 		t.Fatalf("deny change status = %#v", change)
 	}
 }
+
+func TestDeleteSubscriptionPlanUnbindsUsersAndKeepsAccounts(t *testing.T) {
+	h, srv, token := setupPlansAPITestServer(t)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "s1", "entry_ip_mode": "custom", "entry_address": "203.0.113.1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(server["id"].(float64))
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": int64(inbound["id"].(float64)), "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	user := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "alice", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	userID := int64(user["id"].(float64))
+	created := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{
+		"name": "to-delete", "enabled": true, "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": int64(path["id"].(float64))}},
+	}, http.StatusCreated)
+	planID := int64(created["subscription_plan"].(map[string]any)["id"].(float64))
+	applied := request(t, h, http.MethodPost, "/api/v1/ui/users/plan-assignment/apply", token, map[string]any{"user_ids": []int64{userID}, "plan_id": planID}, http.StatusOK)
+	driveAccessChange(t, srv, token, int64(applied["access_change_id"].(float64)))
+
+	deleted := request(t, h, http.MethodDelete, "/api/v1/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)
+	if deleted["deleted"] == true {
+		t.Fatalf("bound plan must go through access change: %#v", deleted)
+	}
+	changeID := int64(deleted["access_change_id"].(float64))
+	if int(deleted["unbound_user_count"].(float64)) != 1 {
+		t.Fatalf("unbound_user_count = %#v", deleted["unbound_user_count"])
+	}
+	change := driveAccessChange(t, srv, token, changeID)
+	if change["status"] != "finalized" {
+		t.Fatalf("delete change status = %#v", change)
+	}
+	request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusNotFound)
+	kept := request(t, h, http.MethodGet, "/api/v1/ui/users/"+itoa(userID), token, nil, http.StatusOK)["user"].(map[string]any)
+	if kept["username"] != "alice" {
+		t.Fatalf("user was deleted with the plan: %#v", kept)
+	}
+	userNodes := request(t, h, http.MethodGet, "/api/v1/ui/users/"+itoa(userID)+"/nodes", token, nil, http.StatusOK)
+	if len(userNodes["nodes"].([]any)) != 0 {
+		t.Fatalf("user still has plan nodes after plan delete: %#v", userNodes["nodes"])
+	}
+
+	empty := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "empty", "enabled": true}, http.StatusCreated)
+	emptyID := int64(empty["subscription_plan"].(map[string]any)["id"].(float64))
+	immediate := request(t, h, http.MethodDelete, "/api/v1/ui/subscription-plans/"+itoa(emptyID), token, nil, http.StatusOK)
+	if immediate["deleted"] != true {
+		t.Fatalf("empty plan should delete immediately: %#v", immediate)
+	}
+}

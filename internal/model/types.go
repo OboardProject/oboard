@@ -962,6 +962,7 @@ type Server struct {
 	Arch                        string               `json:"arch"`
 	Kernel                      string               `json:"kernel"`
 	CPU                         string               `json:"cpu"`
+	CPUCores                    int                  `json:"cpu_cores"`
 	MemoryBytes                 uint64               `json:"memory_bytes"`
 	CPUUsagePercent             float64              `json:"cpu_usage_percent"`
 	MemoryUsedBytes             uint64               `json:"memory_used_bytes"`
@@ -3191,6 +3192,7 @@ type HealthReport struct {
 	Arch                      string       `json:"arch"`
 	Kernel                    string       `json:"kernel"`
 	CPU                       string       `json:"cpu"`
+	CPUCores                  int          `json:"cpu_cores,omitempty"`
 	MemoryBytes               uint64       `json:"memory_bytes"`
 	CPUUsagePercent           float64      `json:"cpu_usage_percent"`
 	MemoryUsedBytes           uint64       `json:"memory_used_bytes"`

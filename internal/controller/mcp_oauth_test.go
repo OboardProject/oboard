@@ -984,7 +984,7 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 
 func TestMCPServerInstructionsStatic(t *testing.T) {
 	instructions := mcpServerInstructions
-	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate"} {
+	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate", "subscription_plan.delete"} {
 		if !strings.Contains(instructions, fragment) {
 			t.Fatalf("instructions missing %q", fragment)
 		}

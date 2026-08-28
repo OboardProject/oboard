@@ -230,3 +230,48 @@ func TestHealthReportCoalescesUnchangedRuntime(t *testing.T) {
 	}
 }
 
+func TestApplyHealthReportPersistsCPUCoresWithoutParsingModel(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "cores", AgentID: "agent-cores", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerUnknown}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	first := healthReportFixture(server.AgentID, at)
+	first.CPU = "Intel Xeon E3-12xx v2 (Ivy Bridge, IBRS)"
+	first.CPUCores = 4
+	applied, err := s.ApplyHealthReport(ctx, server.ID, first, healthReportWindow(at))
+	if err != nil || applied.Coalesced {
+		t.Fatalf("first cores report coalesced=%t err=%v", applied.Coalesced, err)
+	}
+	stored, err := s.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CPU != first.CPU || stored.CPUCores != 4 {
+		t.Fatalf("cpu=%q cores=%d, want model plus 4 cores", stored.CPU, stored.CPUCores)
+	}
+	omitted := healthReportFixture(server.AgentID, at.Add(time.Minute))
+	omitted.CPU = first.CPU
+	omitted.CPUCores = 0
+	kept, err := s.ApplyHealthReport(ctx, server.ID, omitted, healthReportWindow(at.Add(time.Minute)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Curr.CPUCores != 4 {
+		t.Fatalf("omitted cpu_cores cleared last value: %d", kept.Curr.CPUCores)
+	}
+	stored, err = s.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CPUCores != 4 {
+		t.Fatalf("stored cpu_cores = %d after omitted report, want 4", stored.CPUCores)
+	}
+}
+

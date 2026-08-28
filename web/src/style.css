@@ -2508,20 +2508,6 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   color: var(--muted);
 }
 
-.server-health-ring {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 2px var(--surface-solid);
-}
-
-.server-health-ring.ok { color: #22c55e; }
-.server-health-ring.fair { color: #f59e0b; }
-.server-health-ring.poor { color: #ef4444; }
-.server-health-ring.off { color: #94a3b8; }
-
 .server-stack-badge {
   flex: 0 0 auto;
   display: inline-flex;

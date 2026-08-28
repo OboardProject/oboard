@@ -31,6 +31,7 @@ type ServerRuntimeState struct {
 	Arch                  string
 	Kernel                string
 	CPU                   string
+	CPUCores              int
 	MemoryBytes           uint64
 	CPUUsagePercent       float64
 	MemoryUsedBytes       uint64
@@ -106,7 +107,7 @@ func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report mo
 	var prev ServerRuntimeState
 	var kernelCapabilitiesJSON string
 	var lastSeen sql.NullString
-	if err := tx.QueryRowContext(ctx, `select status,public_ipv4,public_ipv6,interface_ipv6,detected_region_code,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,kernel_capabilities_json,coalesce(tcp_fastopen_state,''),coalesce(tcp_fastopen_value,0),last_seen_at from servers where id=?`, serverID).Scan(&oldStatus, &prev.PublicIPv4, &prev.PublicIPv6, &prev.InterfaceIPv6, &prev.DetectedRegionCode, &prev.OS, &prev.DistroID, &prev.DistroVersion, &prev.DistroName, &prev.Libc, &prev.ServiceManager, &prev.PackageManager, &prev.Arch, &prev.Kernel, &prev.CPU, &prev.MemoryBytes, &prev.CPUUsagePercent, &prev.MemoryUsedBytes, &prev.MemoryTotalBytes, &prev.AgentMemoryBytes, &prev.DiskBytes, &prev.DiskTotalBytes, &prev.TCPConnectionCount, &prev.UDPConnectionCount, &prev.ProcessCount, &prev.AgentVersion, &prev.AgentBuild, &prev.SingBoxVersion, &kernelCapabilitiesJSON, &prev.TCPFastOpenState, &prev.TCPFastOpenValue, &lastSeen); err != nil {
+	if err := tx.QueryRowContext(ctx, `select status,public_ipv4,public_ipv6,interface_ipv6,detected_region_code,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,coalesce(cpu_cores,0),memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,kernel_capabilities_json,coalesce(tcp_fastopen_state,''),coalesce(tcp_fastopen_value,0),last_seen_at from servers where id=?`, serverID).Scan(&oldStatus, &prev.PublicIPv4, &prev.PublicIPv6, &prev.InterfaceIPv6, &prev.DetectedRegionCode, &prev.OS, &prev.DistroID, &prev.DistroVersion, &prev.DistroName, &prev.Libc, &prev.ServiceManager, &prev.PackageManager, &prev.Arch, &prev.Kernel, &prev.CPU, &prev.CPUCores, &prev.MemoryBytes, &prev.CPUUsagePercent, &prev.MemoryUsedBytes, &prev.MemoryTotalBytes, &prev.AgentMemoryBytes, &prev.DiskBytes, &prev.DiskTotalBytes, &prev.TCPConnectionCount, &prev.UDPConnectionCount, &prev.ProcessCount, &prev.AgentVersion, &prev.AgentBuild, &prev.SingBoxVersion, &kernelCapabilitiesJSON, &prev.TCPFastOpenState, &prev.TCPFastOpenValue, &lastSeen); err != nil {
 		return HealthApplyResult{}, err
 	}
 	prev.ServerID = serverID
@@ -138,6 +139,9 @@ func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report mo
 	curr.Arch = report.Arch
 	curr.Kernel = report.Kernel
 	curr.CPU = report.CPU
+	if report.CPUCores > 0 {
+		curr.CPUCores = report.CPUCores
+	}
 	curr.MemoryBytes = report.MemoryBytes
 	curr.CPUUsagePercent = report.CPUUsagePercent
 	curr.MemoryUsedBytes = report.MemoryUsedBytes
@@ -162,8 +166,8 @@ func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report mo
 
 	coalesced := shouldCoalesceHealthRuntime(prev, curr, seenAt)
 	if !coalesced {
-		res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
-			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, report.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
+		res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,cpu_cores=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
+			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, curr.CPUCores, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, report.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
 		if err != nil {
 			return HealthApplyResult{}, err
 		}
@@ -211,6 +215,9 @@ func healthRuntimeCriticalChanged(prev, curr ServerRuntimeState) bool {
 		return true
 	}
 	if prev.TCPFastOpenState != curr.TCPFastOpenState || prev.TCPFastOpenValue != curr.TCPFastOpenValue {
+		return true
+	}
+	if prev.CPU != curr.CPU || prev.CPUCores != curr.CPUCores {
 		return true
 	}
 	if len(prev.KernelCapabilities) != len(curr.KernelCapabilities) {
