@@ -646,6 +646,7 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 		if err := s.store.ActivatePlanVersionGuarded(ctx, change.SourcePlanID, change.ExpectedActiveRevisionID, change.CandidateRevisionID, change.ID, migrations); err != nil {
 			return err
 		}
+		s.signalPlanReconcile(change.SourcePlanID)
 	case model.AccessChangePlanDisable:
 		if err := s.store.SetSubscriptionPlanEnabled(ctx, change.SourcePlanID, false); err != nil {
 			return err
@@ -852,6 +853,8 @@ func (s *Server) reconcileAccessChanges(ctx context.Context) {
 			}
 			if err := s.store.UpdateAccessChangeStatus(ctx, change.ID, []model.AccessChangeStatus{model.AccessChangeFinalizing}, model.AccessChangeFinalized, ""); err != nil {
 				log.Printf("access change finalize status: %v", err)
+			} else if change.SourcePlanID != 0 {
+				s.signalPlanReconcile(change.SourcePlanID)
 			}
 		}
 	}
@@ -971,6 +974,16 @@ func (s *Server) accessChangeCancel(w http.ResponseWriter, r *http.Request, id i
 	if err := s.store.MarkAccessChangeCancelled(r.Context(), id); err != nil {
 		fail(w, err, http.StatusConflict)
 		return
+	}
+	if change.SourcePlanID != 0 && change.CandidateRevisionID != 0 {
+		plan, err := s.store.GetSubscriptionPlan(r.Context(), change.SourcePlanID)
+		if err == nil && plan.PendingRevisionID == change.CandidateRevisionID {
+			_, _ = s.store.SetPendingIfEmpty(r.Context(), plan.ID, 0) // clear by direct update
+			// Use raw exec to clear pending (SetPendingIfEmpty only sets when empty, so we need direct)
+			_, _ = s.store.ClearPendingRevision(r.Context(), plan.ID, change.CandidateRevisionID)
+		}
+		_ = s.store.SetPlanReconcileIdle(r.Context(), change.SourcePlanID)
+		s.signalPlanReconcile(change.SourcePlanID)
 	}
 	s.wakeAccessWorkers()
 	auditReq(s, r, "cancel", "access-change", fmt.Sprint(id))

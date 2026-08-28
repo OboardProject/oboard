@@ -427,7 +427,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
       {loading && <p className="muted">正在加载排序状态...</p>}
       {applying && (
         <p style={{ color: 'var(--color-warning)', margin: 0 }}>
-          有套餐版本正在应用，应用完成前不能保存新的排序版本。
+          有版本正在同步，仍可继续编辑排序，保存后会自动收敛到最新版本。
         </p>
       )}
 
@@ -604,8 +604,8 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
 
           <div className="section-toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
             <Button variant="outline" size="sm" busy={previewing} onClick={() => void runPreview()}><RefreshCw size={14} /> 预览排序</Button>
-            <Button size="sm" busy={busy} onClick={() => void saveOrdering()} disabled={applying}><Save size={14} /> 保存为新版本</Button>
-            {applying && <span className="muted">有版本正在应用，暂不能保存</span>}
+            <Button size="sm" busy={busy} onClick={() => void saveOrdering()}><Save size={14} /> 保存为新版本</Button>
+            {applying && <span className="muted">正在同步，可继续保存</span>}
           </div>
         </>
       )}

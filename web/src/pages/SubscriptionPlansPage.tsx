@@ -280,6 +280,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [nodeApplyBusy, setNodeApplyBusy] = React.useState(false)
   const [orderBusy, setOrderBusy] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
+  const planMutationQueueRef = React.useRef(Promise.resolve())
+  const [nodeSaveStatus, setNodeSaveStatus] = React.useState<'idle'|'saving'|'saved'|'error'>('idle')
   const [changes, setChanges] = React.useState<AccessChange[]>([])
   const [message, setMessage] = React.useState('')
   const [viewRevision, setViewRevision] = React.useState<any>(null)
@@ -320,25 +322,28 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setDetailError('')
     setDetailLoading(true)
     try {
-      const [res, catalog, ordering] = await Promise.all([
+      const [res, ordering] = await Promise.all([
         client.request<any>(`/subscription-plans/${id}`),
-        loadAssignableNodeCatalog(client),
         client.request<OrderingState>(`/subscription-plans/${id}/ordering`).catch(() => null),
       ])
       const names: Record<string, string> = {}
-      const catalogByKey = new Map<string, CatalogNode>()
-      for (const n of catalog) {
-        names[`${n.type}:${n.id}`] = n.effective_global_name || n.name
-        catalogByKey.set(`${n.type}:${n.id}`, n)
+      // Prefer enriched nodes from new API to avoid full catalog download
+      const enriched = res.enriched_latest_nodes || res.enriched_nodes || []
+      const enrichedByKey = new Map<string, any>()
+      for (const n of enriched) {
+        const key = n.key || `${n.node_type}:${n.node_id}`
+        enrichedByKey.set(key, n)
+        names[key] = n.effective_global_name || n.name || key
       }
+      // Fallback: if no enriched, use latest_nodes directly
+      const sourceNodes = enriched.length > 0 ? enriched : (res.latest_nodes || [])
       setNodeNames(names)
       setDetail(res)
       setWorkingSettings(res.subscription_plan)
-      const nextNodes = (res.latest_nodes || []).flatMap((n: any) => {
-        const key = `${n.node_type}:${n.node_id}`
-        const catalogNode = catalogByKey.get(key)
-        if (!catalogNode) return []
-        const globalName = catalogNode.effective_global_name || catalogNode.name
+      const nextNodes = (sourceNodes || []).flatMap((n: any) => {
+        const key = n.key || `${n.node_type}:${n.node_id}`
+        if (!n.node_type || !n.node_id) return []
+        const globalName = n.effective_global_name || n.name || n.global_name || key
         return [{
           node_type: n.node_type,
           node_id: n.node_id,
@@ -346,15 +351,17 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           display_name_override: n.display_name_override ?? null,
           name: n.display_name_override || globalName,
           global_name: globalName,
-          source_name: catalogNode.source_name || globalName,
-          exit_region: catalogNode.exit_region,
-          entry_server_name: catalogNode.entry_server_name,
-          entry_protocol: catalogNode.entry_protocol,
+          source_name: n.source_name || globalName,
+          exit_region: n.exit_region,
+          entry_server_name: n.entry_server_name,
+          entry_protocol: n.entry_protocol,
           source_type: n.source_type || 'explicit',
           source_rule_id: n.source_rule_id,
+          runtime_state: n.runtime_state || 'ready',
         }]
       })
-      setWorkingNodes(sortPlanNodesByOrder(nextNodes, (ordering?.nodes || []).map((node: any) => String(node.key || ''))))
+      const orderKeys = (ordering?.nodes || []).map((node: any) => String(node.key || ''))
+      setWorkingNodes(sortPlanNodesByOrder(nextNodes, orderKeys))
     } catch (e: any) {
       setDetailError(e?.message || String(e))
     } finally {
@@ -445,10 +452,124 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       })
       return
     }
+    const currentPlan = detail?.subscription_plan as Plan | undefined
+    if (!currentPlan) {
+      setWorkingNodes(list => {
+        const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
+        return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
+      })
+      return
+    }
+    let nextNodes: PlanNode[] = []
     setWorkingNodes(list => {
       const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
-      return exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
+      nextNodes = exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
+      return nextNodes
     })
+    // Optimistic immediate save via mutation queue
+    setNodeSaveStatus('saving')
+    const task = async () => {
+      try {
+        const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
+        const res = await client.request<{ no_change?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
+          method: 'POST',
+          body: JSON.stringify({
+            op: 'replace',
+            nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
+            base_revision_id: freshPlan.latest_revision_id,
+            expected_lock_version: freshPlan.lock_version,
+            change_summary: '调整套餐节点集合',
+          }),
+        })
+        if (!res.no_change) {
+          setNodeSaveStatus('saved')
+          await refreshPlans()
+          const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
+          setDetail(freshDetail)
+        } else {
+          setNodeSaveStatus('saved')
+        }
+        setTimeout(() => setNodeSaveStatus('idle'), 2000)
+      } catch (e: any) {
+        const msg = e?.message || String(e)
+        if (msg.includes('409') || msg.includes('conflict')) {
+          try {
+            const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
+            await client.request(`/subscription-plans/${selectedID}/nodes/apply`, {
+              method: 'POST',
+              body: JSON.stringify({
+                op: 'replace',
+                nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
+                base_revision_id: freshPlan.latest_revision_id,
+                expected_lock_version: freshPlan.lock_version,
+                change_summary: '调整套餐节点集合',
+              }),
+            })
+            setNodeSaveStatus('saved')
+            await refreshPlans()
+            const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
+            setDetail(freshDetail)
+            setTimeout(() => setNodeSaveStatus('idle'), 2000)
+            return
+          } catch {}
+        }
+        setNodeSaveStatus('error')
+        setMessage('自动保存失败：' + msg)
+        await loadDetail(selectedID)
+      }
+    }
+    planMutationQueueRef.current = planMutationQueueRef.current.then(task).catch(() => {})
+  }
+
+  const enqueueNodeListSave = (nextNodes: PlanNode[]) => {
+    setNodeSaveStatus('saving')
+    const task = async () => {
+      try {
+        const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
+        await client.request(`/subscription-plans/${selectedID}/nodes/apply`, {
+          method: 'POST',
+          body: JSON.stringify({
+            op: 'replace',
+            nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
+            base_revision_id: freshPlan.latest_revision_id,
+            expected_lock_version: freshPlan.lock_version,
+            change_summary: '调整套餐节点集合',
+          }),
+        })
+        setNodeSaveStatus('saved')
+        await refreshPlans()
+        const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
+        setDetail(freshDetail)
+        setTimeout(() => setNodeSaveStatus('idle'), 2000)
+      } catch (e: any) {
+        const msg = e?.message || String(e)
+        if (msg.includes('409') || msg.includes('conflict')) {
+          try {
+            const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
+            await client.request(`/subscription-plans/${selectedID}/nodes/apply`, {
+              method: 'POST',
+              body: JSON.stringify({
+                op: 'replace',
+                nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
+                base_revision_id: freshPlan.latest_revision_id,
+                expected_lock_version: freshPlan.lock_version,
+                change_summary: '调整套餐节点集合',
+              }),
+            })
+            setNodeSaveStatus('saved')
+            await refreshPlans()
+            const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
+            setDetail(freshDetail)
+            setTimeout(() => setNodeSaveStatus('idle'), 2000)
+            return
+          } catch {}
+        }
+        setNodeSaveStatus('error')
+        setMessage('自动保存失败：' + msg)
+        await loadDetail(selectedID)
+      }
+    }
+    planMutationQueueRef.current = planMutationQueueRef.current.then(task).catch(() => {})
   }
 
   const createPlan = async () => {
@@ -496,37 +617,61 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   }
 
   const applyNodeChange = async () => {
-    if (!detail) return
+    if (!detail || !plan) return
     setNodeApplyBusy(true)
     setMessage('')
     try {
-      const preview = await client.request<NodeChangePreview>(`/subscription-plans/${selectedID}/nodes/preview`, {
-        method: 'POST',
-        body: JSON.stringify({ op: 'replace', nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })) }),
-      })
-      const res = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
+      const res = await client.request<{ access_change_id?: number; no_change?: boolean; reconcile_queued?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
         method: 'POST',
         body: JSON.stringify({
           op: 'replace',
           nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })),
-          base_revision_id: preview.base_revision_id,
-          expected_lock_version: preview.expected_lock_version,
+          base_revision_id: plan.latest_revision_id,
+          expected_lock_version: plan.lock_version,
           change_summary: '调整套餐节点集合',
         }),
       })
       if (res.no_change) {
         notify?.('节点集合没有变化，未创建新版本', 'warning')
       } else if (res.access_change_id) {
-        notify?.(`已保存为新版本，正在应用变更 #${res.access_change_id}`, 'success')
+        notify?.(`已保存，正在同步 #${res.access_change_id}`, 'success')
+      } else if (res.reconcile_queued) {
+        notify?.('已保存，等待后台同步', 'success')
       } else {
-        notify?.('已保存为新版本', 'success')
+        notify?.('已保存', 'success')
       }
       await loadDetail(selectedID)
       await refreshPlans()
       await loadChanges()
     } catch (e: any) {
       const err = e?.message || String(e)
-      setMessage(err.includes('conflict') || err.includes('409') ? '保存失败：套餐已发生变化（冲突），请重新加载后重试' : '保存失败：' + err)
+      if (err.includes('conflict') || err.includes('409')) {
+        // Auto-rebase once: reload latest and retry
+        try {
+          await loadDetail(selectedID)
+          const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
+          const retry = await client.request<{ access_change_id?: number; no_change?: boolean; reconcile_queued?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
+            method: 'POST',
+            body: JSON.stringify({
+              op: 'replace',
+              nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })),
+              base_revision_id: freshPlan.latest_revision_id,
+              expected_lock_version: freshPlan.lock_version,
+              change_summary: '调整套餐节点集合',
+            }),
+          })
+          if (retry.no_change) notify?.('节点集合没有变化', 'warning')
+          else notify?.('已保存（自动重试）', 'success')
+          await loadDetail(selectedID)
+          await refreshPlans()
+          await loadChanges()
+          return
+        } catch (retryErr: any) {
+          setMessage('保存失败：' + (retryErr?.message || String(retryErr)))
+          return
+        }
+      }
+      setMessage('保存失败：' + err)
     } finally {
       setNodeApplyBusy(false)
     }
@@ -545,7 +690,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
   const saveDraggedOrder = async (event: DragEndEvent) => {
     const { active, over } = event
-    if (!over || active.id === over.id || membershipChanged || orderBusy) return
+    if (!over || active.id === over.id || orderBusy) return
     const oldIndex = workingNodes.findIndex(node => nodeKey(node) === planNodeKeyFromSortableId(String(active.id)))
     const newIndex = workingNodes.findIndex(node => nodeKey(node) === planNodeKeyFromSortableId(String(over.id)))
     if (oldIndex < 0 || newIndex < 0) return
@@ -974,7 +1119,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                       <Button variant="outline" size="sm" onClick={() => void cancelChange(failedPendingChange.id)}>放弃失败变更</Button>
                     </div>
                   </div>
-                ) : applying ? <p style={{ color: 'var(--color-warning)', margin: 0 }}>有套餐版本正在应用，应用完成前不能保存新的节点版本。</p> : null}
+                ) : applying ? <p style={{ color: 'var(--color-warning)', margin: 0 }}>已保存，正在同步到服务器… 可继续编辑，系统会自动收敛到最新版本。</p> : null}
                 <PlanMembershipRulesPanel plan={plan} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
                 <div className="section-toolbar">
                   <div>
@@ -991,7 +1136,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         <SlidersHorizontal size={14} /> {orderingOpen ? '收起排序规则' : '排序规则'}
                       </Button>
                     )}
-                    <Button size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }} disabled={applying}>
+                    <Button size="sm" onClick={() => { setPickerPlanMode('nodes'); setPickerOpen(true); setPickerQuery(''); setPickerResults([]); setMessage(''); void runPickerSearch('') }}>
                       <Plus size={14} /> 添加节点
                     </Button>
                   </div>
@@ -1025,7 +1170,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         const isCustomName = hasOverride
 
                         return (
-                          <SortablePlanNodeRow key={key} node={n} disabled={membershipChanged || applying || orderBusy}>
+                          <SortablePlanNodeRow key={key} node={n} disabled={orderBusy}>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <strong style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-strong)' }}>
@@ -1073,6 +1218,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                 onChange={e => {
                                   setWorkingNodes(list => list.map(x => nodeKey(x) === key ? { ...x, display_group: e.target.value } : x))
                                 }}
+                                onBlur={() => enqueueNodeListSave(workingNodes)}
                                 placeholder="展示分组（可选）"
                                 style={{ maxWidth: 160, height: 30, fontSize: 12 }}
                               />
@@ -1112,7 +1258,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                 onPointerDown={isolateSortableAction}
                                 onClick={() => {
                                   if (n.source_type === 'rule') { void excludeRuleNode(n); return }
-                                  setWorkingNodes(list => list.filter(x => nodeKey(x) !== key))
+                                  const next = workingNodes.filter(x => nodeKey(x) !== key)
+                                  setWorkingNodes(next)
+                                  enqueueNodeListSave(next)
                                 }}
                                 title="移出套餐"
                                 aria-label={`移除 ${n.name || key}`}
@@ -1134,8 +1282,14 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 </div>
 
                 <div className="plan-node-save-row">
-                  <span className="muted">{membershipChanged ? '有未保存的节点变更' : orderBusy ? '正在保存节点顺序...' : '拖拽左侧手柄可直接调整订阅顺序'}</span>
-                  <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={applying || !membershipChanged}>
+                  <span className="muted">{
+                    nodeSaveStatus === 'saving' ? '保存中…' :
+                    nodeSaveStatus === 'saved' ? '✓ 已保存' :
+                    nodeSaveStatus === 'error' ? '保存失败' :
+                    orderBusy ? '正在保存节点顺序...' :
+                    membershipChanged ? '有未保存的节点变更' : '✓ 已保存 · 拖拽可直接调整顺序'
+                  }</span>
+                  <Button size="sm" busy={nodeApplyBusy} onClick={() => void applyNodeChange()} disabled={nodeApplyBusy}>
                     <Save size={14} /> 保存节点变更
                   </Button>
                 </div>

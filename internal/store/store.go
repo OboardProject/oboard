@@ -378,7 +378,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', exit_region_mode text not null default 'auto', exit_region_code text not null default '', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, pool text not null default 'public', listen_ip text not null default '', network text not null default 'tcp_udp', generation integer not null default 1, ordinal integer not null default 0, port integer not null, state text not null default 'active', policy_revision integer not null default 0, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id,generation,ordinal))`,
-		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', underlay_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists snell_profiles (id integer primary key autoincrement, name text not null unique, version integer not null default 4, psk text not null default '', obfs_mode text not null default 'none', obfs_host text not null default '', mode text not null default 'default', reuse integer not null default 0, tcp_fast_open integer not null default 1, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_snell_profiles_name on snell_profiles(name)`,
@@ -452,6 +452,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_outputs (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, is_default integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists subscription_output_groups (output_id integer not null references subscription_outputs(id) on delete cascade, group_id integer not null references node_groups(id) on delete cascade, position integer not null, primary key(output_id,group_id), unique(output_id,position))`,
 		`create table if not exists subscription_plan_rule_reconcile_states (plan_id integer primary key references subscription_plans(id) on delete cascade, catalog_digest text not null default '', desired_digest text not null default '', status text not null default 'idle', last_error text not null default '', last_reconciled_at text, updated_at text not null)`,
+		`create table if not exists subscription_plan_reconcile_states (plan_id integer primary key references subscription_plans(id) on delete cascade, applying_revision_id integer references subscription_plan_revisions(id) on delete set null, status text not null default 'idle', last_access_change_id integer references access_changes(id) on delete set null, blocked_reason text not null default '', blocked_json text not null default '{}', attempt_count integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists assignable_node_metadata (node_type text not null, node_id integer not null, display_name_override text, lock_version integer not null default 1, created_by integer references users(id) on delete set null, updated_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, primary key(node_type,node_id))`,
 		`create table if not exists node_order_templates (id integer primary key autoincrement, name text not null unique, description text not null default '', enabled integer not null default 1, revision integer not null default 1, policy_json text not null, created_by integer references users(id) on delete set null, updated_by integer references users(id) on delete set null, created_at text not null, updated_at text not null)`,
 		`create table if not exists user_plan_bindings (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, plan_id integer not null references subscription_plans(id) on delete cascade, enabled integer not null default 1, status text not null default 'active', starts_at text, expires_at text, traffic_reset_anchor_at text, assigned_by integer references users(id) on delete set null, created_at text not null, updated_at text not null, deployed_at text, expiry_synced_at text)`,
@@ -823,6 +824,18 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureColumn(ctx, "servers", "cpu_cores", `alter table servers add column cpu_cores integer not null default 0`); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "warp_profiles", "underlay_json", `alter table warp_profiles add column underlay_json text not null default '{}'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "network_inventory_json", `alter table servers add column network_inventory_json text not null default ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "network_inventory_hash", `alter table servers add column network_inventory_hash text not null default ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "servers", "network_inventory_updated_at", `alter table servers add column network_inventory_updated_at text`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "servers", "internal_port_range_start", `alter table servers add column internal_port_range_start integer not null default 30000`); err != nil {
 		return err
 	}
@@ -1034,6 +1047,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migratePlanVersionPointers(ctx); err != nil {
+		return err
+	}
+	if err := s.MigratePlanReconcileStates(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateUserNodeExceptionLifecycle(ctx); err != nil {
@@ -4495,7 +4511,10 @@ func (s *Store) CreateWARPProfile(ctx context.Context, v *model.WARPProfile) err
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into warp_profiles(server_id,name,status,config_json,mtu,dns_strategy,last_requested_at,error,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Status, v.ConfigJSON, v.MTU, v.DNSStrategy, nilTime(v.LastRequestedAt), v.Error, boolInt(v.Enabled), ts, ts)
+	if v.UnderlayJSON == "" {
+		v.UnderlayJSON = "{}"
+	}
+	res, err := s.db.ExecContext(ctx, `insert into warp_profiles(server_id,name,status,config_json,underlay_json,mtu,dns_strategy,last_requested_at,error,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Name, v.Status, v.ConfigJSON, v.UnderlayJSON, v.MTU, v.DNSStrategy, nilTime(v.LastRequestedAt), v.Error, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -4504,12 +4523,15 @@ func (s *Store) CreateWARPProfile(ctx context.Context, v *model.WARPProfile) err
 }
 
 func (s *Store) UpdateWARPProfile(ctx context.Context, v *model.WARPProfile) error {
-	_, err := s.db.ExecContext(ctx, `update warp_profiles set server_id=?,name=?,status=?,config_json=?,mtu=?,dns_strategy=?,last_requested_at=?,error=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Status, v.ConfigJSON, v.MTU, v.DNSStrategy, nilTime(v.LastRequestedAt), v.Error, boolInt(v.Enabled), now(), v.ID)
+	if v.UnderlayJSON == "" {
+		v.UnderlayJSON = "{}"
+	}
+	_, err := s.db.ExecContext(ctx, `update warp_profiles set server_id=?,name=?,status=?,config_json=?,underlay_json=?,mtu=?,dns_strategy=?,last_requested_at=?,error=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Name, v.Status, v.ConfigJSON, v.UnderlayJSON, v.MTU, v.DNSStrategy, nilTime(v.LastRequestedAt), v.Error, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListWARPProfiles(ctx context.Context) ([]model.WARPProfile, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,name,status,config_json,mtu,dns_strategy,last_requested_at,error,enabled,created_at,updated_at from warp_profiles order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,name,status,config_json,coalesce(underlay_json,'{}'),mtu,dns_strategy,last_requested_at,error,enabled,created_at,updated_at from warp_profiles order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -4520,7 +4542,7 @@ func (s *Store) ListWARPProfiles(ctx context.Context) ([]model.WARPProfile, erro
 		var last sql.NullString
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ServerID, &v.Name, &v.Status, &v.ConfigJSON, &v.MTU, &v.DNSStrategy, &last, &v.Error, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.ServerID, &v.Name, &v.Status, &v.ConfigJSON, &v.UnderlayJSON, &v.MTU, &v.DNSStrategy, &last, &v.Error, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if last.Valid {

@@ -195,6 +195,9 @@ type Server struct {
 	// authorization lifecycle workers; the database remains the recovery
 	// fallback for both.
 	accessWorkersWake chan struct{}
+	// planReconcileWake coalesces hints for the durable subscription-plan
+	// reconciler. SQLite plan state remains authoritative.
+	planReconcileWake chan struct{}
 	nodeRefreshSem    chan struct{}
 	nodeRefreshMu     sync.Mutex
 
@@ -232,7 +235,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.agentLive = map[int64]chan any{}
 	s.remoteExecHub = newRemoteExecResultHub()
@@ -12225,6 +12228,9 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 				plan := model.WARPRequestPlan{Version: version, ServerID: server.ID, ProfileID: profile.ID, OutboundTag: core.WARPOutboundTag(profile.ID), IPStack: effectiveStack, MTU: warpRequestMTU(profile), DNSStrategy: string(effectiveStack)}
 				if plan.DNSStrategy == string(model.IPStackAuto) || plan.DNSStrategy == string(model.IPStackDualStack) {
 					plan.DNSStrategy = "auto"
+				}
+				if underlay, err := core.ValidateDialConstraint(profile.UnderlayJSON); err == nil && underlay.Mode != core.DialConstraintModeAuto {
+					plan.Underlay = &model.DialConstraint{Mode: underlay.Mode, InterfaceName: underlay.InterfaceName, SourceAddress: underlay.SourceAddress, Family: underlay.Family}
 				}
 				warpRequests = append(warpRequests, plan)
 			}

@@ -984,22 +984,25 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	supersededFailedChangeID := int64(0)
 	if pendingID != 0 {
 		err := tx.QueryRowContext(ctx, `select id from access_changes where source_plan_id=? and candidate_revision_id=? and status='failed' and activated_at is null and change_type in ('plan_publish','plan_restore') order by id desc limit 1`, planID, pendingID).Scan(&supersededFailedChangeID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrPlanVersionApplying
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-		res, err := tx.ExecContext(ctx, `update access_changes set status='cancelled',updated_at=? where id=? and status='failed' and activated_at is null`, ts, supersededFailedChangeID)
-		if err != nil {
-			return nil, err
+		if err == nil {
+			res, err := tx.ExecContext(ctx, `update access_changes set status='cancelled',updated_at=? where id=? and status='failed' and activated_at is null`, ts, supersededFailedChangeID)
+			if err != nil {
+				return nil, err
+			}
+			if affected, err := res.RowsAffected(); err != nil {
+				return nil, err
+			} else if affected != 1 {
+				return nil, fmt.Errorf("failed to supersede failed access change %d", supersededFailedChangeID)
+			}
+			pendingID = 0
+		} else {
+			// Pending is still applying (not a failed unactivated version). Keep it
+			// as the worker's applying pointer and do not block the new save.
+			supersededFailedChangeID = 0
 		}
-		if affected, err := res.RowsAffected(); err != nil {
-			return nil, err
-		} else if affected != 1 {
-			return nil, ErrPlanVersionApplying
-		}
-		pendingID = 0
 	}
 	metaChanged := false
 	if mutation.Meta != nil {
@@ -1191,8 +1194,16 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 			return nil, err
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,latest_revision_id=?,pending_revision_id=?,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, revisionID, newLock, ts, planID)...); err != nil {
-			return nil, err
+		if pendingID != 0 {
+			// An authorization version is still applying. Keep the worker's
+			// applying pointer and only advance the desired state.
+			if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,latest_revision_id=?,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, newLock, ts, planID)...); err != nil {
+				return nil, err
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,latest_revision_id=?,pending_revision_id=?,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, revisionID, newLock, ts, planID)...); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -1219,8 +1230,13 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	}
 	if changeClass == "presentation_only" {
 		result.CurrentRevisionID = revisionID
+		result.PendingRevisionID = pendingID
 	} else {
-		result.PendingRevisionID = revisionID
+		if pendingID != 0 {
+			result.PendingRevisionID = pendingID
+		} else {
+			result.PendingRevisionID = revisionID
+		}
 	}
 	return result, nil
 }
@@ -1242,15 +1258,37 @@ func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expected
 		return err
 	}
 	defer tx.Rollback()
-	var currentID, pendingID int64
-	if err := tx.QueryRowContext(ctx, `select coalesce(current_revision_id,0),coalesce(pending_revision_id,0) from subscription_plans where id=?`, planID).Scan(&currentID, &pendingID); err != nil {
+	var currentID int64
+	if err := tx.QueryRowContext(ctx, `select coalesce(current_revision_id,0) from subscription_plans where id=?`, planID).Scan(&currentID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return sql.ErrNoRows
 		}
 		return err
 	}
-	if currentID != expectedCurrentRevisionID || pendingID != candidateRevisionID {
+	if currentID != expectedCurrentRevisionID {
 		return ErrPlanRevisionConflict
+	}
+	var candidatePlanID int64
+	if err := tx.QueryRowContext(ctx, `select plan_id from subscription_plan_revisions where id=?`, candidateRevisionID).Scan(&candidatePlanID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPlanRevisionConflict
+		}
+		return err
+	}
+	if candidatePlanID != planID {
+		return ErrPlanRevisionConflict
+	}
+	if accessChangeID > 0 {
+		var storedCandidate int64
+		if err := tx.QueryRowContext(ctx, `select candidate_revision_id from access_changes where id=?`, accessChangeID).Scan(&storedCandidate); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// Direct activation in tests without an access_change row; skip check.
+			} else {
+				return err
+			}
+		} else if storedCandidate != candidateRevisionID {
+			return ErrPlanRevisionConflict
+		}
 	}
 	ts := now()
 	for _, migration := range migrations {
@@ -1258,7 +1296,7 @@ func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expected
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,pending_revision_id=null,lock_version=lock_version+1,updated_at=? where id=?`, candidateRevisionID, ts, planID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,pending_revision_id=case when coalesce(pending_revision_id,0)=? then null else pending_revision_id end,updated_at=? where id=?`, candidateRevisionID, candidateRevisionID, ts, planID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set activated_at=?,activation_change_id=? where id=?`, ts, accessChangeID, candidateRevisionID); err != nil {

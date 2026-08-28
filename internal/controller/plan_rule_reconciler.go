@@ -72,7 +72,10 @@ func (s *Server) reconcilePlanRules(ctx context.Context) {
 }
 
 func (s *Server) reconcileOnePlanRules(ctx context.Context, plan *model.SubscriptionPlan, catalog []core.AssignableNode, catalogDigest string) {
-	if plan.LatestRevisionID == 0 || plan.PendingRevisionID != 0 {
+	if plan.LatestRevisionID == 0 {
+		return
+	}
+	if hasOpen, _ := s.store.HasOpenPlanAccessChange(ctx, plan.ID); hasOpen {
 		return
 	}
 	rules, exclusions, err := s.store.ListPlanRevisionMembershipPolicy(ctx, plan.LatestRevisionID)

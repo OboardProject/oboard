@@ -600,6 +600,18 @@ type PlanRuleReconcileState struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
+type PlanReconcileState struct {
+	PlanID              int64      `json:"plan_id"`
+	ApplyingRevisionID  *int64     `json:"applying_revision_id,omitempty"`
+	Status              string     `json:"status"`
+	LastAccessChangeID  *int64     `json:"last_access_change_id,omitempty"`
+	BlockedReason       string     `json:"blocked_reason,omitempty"`
+	BlockedJSON         string     `json:"blocked_json,omitempty"`
+	AttemptCount        int        `json:"attempt_count"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
 // SubscriptionNodeOrderMode controls how a plan revision's nodes are ordered in
 // every rendered subscription format. The order is presentation metadata owned
 // by the revision snapshot: it is copied into drafts, cloned, restored and
@@ -1606,6 +1618,7 @@ type WARPProfile struct {
 	Name            string     `json:"name"`
 	Status          WARPStatus `json:"status"`
 	ConfigJSON      string     `json:"config_json"`
+	UnderlayJSON    string     `json:"underlay_json"`
 	MTU             int        `json:"mtu"`
 	DNSStrategy     string     `json:"dns_strategy"`
 	LastRequestedAt *time.Time `json:"last_requested_at,omitempty"`
@@ -1718,13 +1731,24 @@ type DNSBenchmarkPlan struct {
 }
 
 type WARPRequestPlan struct {
-	Version     int64   `json:"version"`
-	ServerID    int64   `json:"server_id"`
-	ProfileID   int64   `json:"profile_id"`
-	OutboundTag string  `json:"outbound_tag"`
-	IPStack     IPStack `json:"ip_stack"`
-	MTU         int     `json:"mtu"`
-	DNSStrategy string  `json:"dns_strategy"`
+	Version     int64           `json:"version"`
+	ServerID    int64           `json:"server_id"`
+	ProfileID   int64           `json:"profile_id"`
+	OutboundTag string          `json:"outbound_tag"`
+	IPStack     IPStack         `json:"ip_stack"`
+	MTU         int             `json:"mtu"`
+	DNSStrategy string          `json:"dns_strategy"`
+	Underlay    *DialConstraint `json:"underlay,omitempty"`
+}
+
+// DialConstraint describes the host network binding for the socket that
+// actually opens the connection (the Physical Dial Owner). See
+// internal/core/dial_constraints.go for validation and application.
+type DialConstraint struct {
+	Mode          string `json:"mode"`
+	InterfaceName string `json:"interface_name,omitempty"`
+	SourceAddress string `json:"source_address,omitempty"`
+	Family        string `json:"family,omitempty"`
 }
 
 type WARPConfigReport struct {
@@ -2003,6 +2027,19 @@ type NetworkInterfaceInfo struct {
 	Running   bool     `json:"running"`
 	Loopback  bool     `json:"loopback"`
 	Addresses []string `json:"addresses"`
+}
+
+type NetworkInterfaceInventory struct {
+	Interfaces []NetworkInterfaceInfo `json:"interfaces"`
+	Hash       string                 `json:"hash,omitempty"`
+	CollectedAt *time.Time            `json:"collected_at,omitempty"`
+}
+
+type WARPUnderlay struct {
+	Mode          string `json:"mode"`
+	InterfaceName string `json:"interface_name,omitempty"`
+	SourceAddress string `json:"source_address,omitempty"`
+	Family        string `json:"family,omitempty"`
 }
 
 type DeploymentFailureDismissal struct {
@@ -3219,10 +3256,11 @@ type HealthReport struct {
 	ConnectivityLatencyMS     int64        `json:"-"`
 	ConnectivityCheckedAt     time.Time    `json:"-"`
 	ConnectivityError         string       `json:"-"`
-	Timestamp                 time.Time    `json:"timestamp"`
-	AppliedConfigVersion      int64              `json:"applied_config_version,omitempty"`
-	AppliedConfigDigest       string             `json:"applied_config_digest,omitempty"`
-	RemoteAccess              RemoteAccessReport `json:"remote_access,omitempty"`
+	Timestamp                 time.Time                `json:"timestamp"`
+	AppliedConfigVersion      int64                  `json:"applied_config_version,omitempty"`
+	AppliedConfigDigest       string                 `json:"applied_config_digest,omitempty"`
+	RemoteAccess              RemoteAccessReport     `json:"remote_access,omitempty"`
+	NetworkInventory          *NetworkInterfaceInventory `json:"network_inventory,omitempty"`
 }
 
 type MetricReport struct {

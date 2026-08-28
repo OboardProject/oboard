@@ -44,8 +44,12 @@
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
 | `controller-db-20260829-server-cpu-cores` | Controller | SQLite schema / wire protocol | `dev-0fc17b734fa3` | 待发布 | 生效中 | - |
+| `controller-db-20260829-server-display-tags` | Controller | SQLite schema | `dev-5e3028465dda` | 待发布 | 生效中 | - |
+| `controller-db-20260829-subscription-client-templates` | Controller | SQLite schema | `dev-57aafe877b1c` | 待发布 | 生效中 | - |
+| `controller-db-20260828-traffic-policy-revision-triggers` | Controller | SQLite schema / trigger rebuild | `dev-57aafe877b1c` | 待发布 | 生效中 | - |
 | `controller-db-20260828-remove-vless-tls-vision` | Controller | SQLite seed / data backfill | `dev-fa658a2d2473` | 待发布 | 生效中 | - |
 | `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-4d9ba516be1d` | 待发布 | 生效中 | - |
+| `controller-db-20260825-port-forward-external-target` | Controller | SQLite schema | `dev-e2a63295bcfc` | 待发布 | 生效中 | - |
 | `controller-db-20260812-connectivity-probe-target` | Controller | SQLite schema | `dev-26cd0a1013d1` | 待发布 | 生效中 | - |
 | `controller-db-20260812-latency-probes` | Controller | SQLite schema | `dev-490892a0ae99` | 待发布 | 生效中 | - |
 | `controller-db-20260813-unified-latency-probes` | Controller | SQLite schema / data backfill | `dev-0bb8ff77a4e9` | 待发布 | 生效中 | - |
@@ -60,14 +64,37 @@
 | `controller-db-20260822-server-expiry` | Controller | SQLite schema | `dev-49c99f6415e7` | 待发布 | 生效中 | - |
 | `controller-db-20260822-subscription-output-filters` | Controller | SQLite schema | `dev-e8a8239c3cd79` | 待发布 | 生效中 | - |
 | `controller-db-20260824-anytls-padding-presets` | Controller | SQLite seed / data backfill | `dev-8e5b40cc790e` | 待发布 | 生效中 | - |
-| `controller-db-20260827-anytls-padding-snapshots` | Controller | SQLite config metadata backfill | `dev-de87e92e171b` | 待发布 | 生效中 | - |
 | `controller-db-20260823-node-presets` | Controller | SQLite schema / seed | `dev-936aac8ad0f2` | 待发布 | 生效中 | - |
 | `controller-db-20260825-server-traffic-quota` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
+| `controller-db-20260825-transport-tfo-capability` | Controller | SQLite schema | `dev-05b18611eabf` | 待发布 | 生效中 | - |
+| `controller-db-20260831-server-service-start-and-traffic-reset` | Controller | SQLite schema | `dev-1584fa60fd17` | 待发布 | 生效中 | - |
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
+| `controller-db-20260826-hy2-salamander-presets` | Controller | SQLite seed / data backfill | `dev-c8f4a4dd07dd` | 待发布 | 生效中 | - |
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
+| `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260829-plan-reconcile
+
+- **引入日期：** 2026-08-29
+- **引入提交：** `OboardProject/oboard@a994c031245a`（待发布前以开发通道计）
+- **引入版本：** `dev-a994c031245a`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/model`、Web
+- **类别：** SQLite schema / runtime
+- **原因：** 套餐系统需从“pending 互斥锁”改为“控制面即时保存、数据面异步收敛”。原 `pending_revision_id` 既是最新保存又是编辑锁，导致后台部署期间无法连续保存、拖拽排序被阻塞、全量目录加载过重。需彻底分离 Desired（latest）/ Applied（current）/ Reconciling（后台协调）三态。
+- **源状态：** `subscription_plans.pending_revision_id` 非空时 `CreatePlanVersion` 直接返回 `ErrPlanVersionApplying`，前端据此禁用编辑与排序；`ActivatePlanVersionGuarded` 要求 `pending==candidate` 且递增 `lock_version`，导致后台激活与前台编辑产生虚假 409；无独立协调表，保存即同步创建 `access_change`，快速编辑产生部署风暴；详情页为拿节点名而全量拉取 `assignable-nodes`。
+- **目标状态：** 新增 `subscription_plan_reconcile_states(plan_id PK, applying_revision_id, status, last_access_change_id, blocked_reason, blocked_json, attempt_count, created_at, updated_at)`；`pending_revision_id` 重定义为后台正在处理的版本，不再作为编辑锁；`CreatePlanVersion` 始终基于 `latest_revision_id` 创建新不可变版本，`latest` 可领先 `current` 任意多个版本，后台通过 `PlanReconciler` 追最新（`Current → Latest`，中间版本仅保留历史）；`ActivatePlanVersionGuarded` 仅校验 `current==expected` 且 candidate 归属 plan，不再校验 `pending`，不再递增 `lock_version`（`lock_version` 仅由管理员/MCP 编辑递增）；取消 `access_change` 不回滚 `latest`；详情页直接返回富化节点与 `current/latest/reconcile_state`，前端通过 `usePlanMutationQueue` 乐观更新、请求串行、409 自动 rebase 一次。
+- **实现位置：** `oboard/internal/store/store.go`（建表、迁移 `MigratePlanReconcileStates`）、`oboard/internal/store/plans.go`（`CreatePlanVersion` 去锁、`ActivatePlanVersionGuarded` 去锁与去 `lock_version`）、`oboard/internal/store/plan_reconcile.go`（`subscription_plan_reconcile_states` CRUD）、`oboard/internal/model/types.go`（`PlanReconcileState`）、`oboard/internal/controller/plan_reconciler.go`（新增 `StartSubscriptionPlanReconciler`、`signalPlanReconcile`、`reconcileOnePlan`）、`oboard/internal/controller/plans.go`/`plan_membership_rules.go`/`access_changes.go`（保存后仅 `signalPlanReconcile`，有空闲时才立即创建 `plan_publish`，否则由协调器合并）、`oboard/cmd/controller/main.go`（启动协调器）、`oboard/web/src/pages/SubscriptionPlansPage.tsx`（去 `applying` 禁用、去 `membershipChanged` 拖拽阻塞、详情不拉全目录、拖拽与增删即时保存、409 重试）、`oboard/web/src/components/node-ordering/PlanNodeOrderingPanel.tsx`（去 `applying` 禁用）、`oboard/web/src/hooks/usePlanMutationQueue.ts`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时 `create table if not exists` 并执行 `MigratePlanReconcileStates`：将既有 `pending_revision_id` 迁移为 `reconcile_states.applying_revision_id` 与状态（`preparing/activating/finalizing/failed/queued` 取自 `access_changes`）。
+- **数据影响：** 新增协调表，历史 `pending` 保留为 `applying` 指针；不删除历史版本，不改写 `lock_version` 历史；`current` 仅通过安全 `prepare/activate/finalize` 推进，未部署节点不进入用户订阅。
+- **重复执行：** `create table if not exists` 与 `MigratePlanReconcileStates` 按 `plan_id` 幂等；重复打开不覆盖已迁移状态；`CreatePlanVersion` 对 `failed` 的旧 `pending` 自动 `cancelled` 并清 `pending`，对 `active` 的 `pending` 保留原指针仅更新 `latest`。
+- **失败行为：** 建表或迁移失败阻止打开数据库；协调器失败记 `failed` 状态，等待下一次保存或 `recovery` 扫描（1 秒）重试；`Activate` 冲突返回 `ErrPlanRevisionConflict` 由协调器重试。
+- **回归测试：** `TestSubscriptionPlanCRUDAndNodeVersions`（连续保存、激活不 bump 锁、自动追最新）、`TestPlanVersionActivationConflictKeepsCurrent`（`pending` 不再校验）、`TestPlanVersionChangeClassification`（排序不再被 `pending` 阻塞）、`TestFailedPendingPlanVersionIsSupersededByNextSave` / `TestSavingSameFailedPlanVersionQueuesFreshDeployment`（`failed` 自动 supersede）、`SubscriptionPlansPage.test.tsx`（详情不拉全目录、即时保存、拖拽可继续）。
+- **移除条件：** 最老支持数据库与所有可恢复备份已包含 `subscription_plan_reconcile_states` 且 `pending_revision_id` 不再承担编辑锁语义；恢复入口不得导入缺少该表的旧库；`ErrPlanVersionApplying` 对普通 `CreatePlanVersion` 的使用已完全移除。
+- **移除状态：** 生效中
 
 ### controller-db-20260829-server-cpu-cores
 
@@ -80,13 +107,73 @@
 - **原因：** 服务器卡片 CPU 副标题需要逻辑核心数；此前 Web 从 `cpu` 型号字符串里猜核数，会把 `E3-12xx v2` 这类型号当成核数。
 - **源状态：** `servers` 没有 `cpu_cores` 列；Agent `HealthReport` 没有 `cpu_cores`。
 - **目标状态：** `servers.cpu_cores integer not null default 0`；健康报告/入网携带独立的 `cpu_cores`（逻辑 CPU 数）。`cpu` 只保存型号。省略或 `0` 保留上次值。
-- **实现位置：** `internal/store/store.go`（`create table` 与 `ensureColumn`）、`health_report.go`、`internal/controller/server.go`、`realtime.go`、Web `src/main.tsx`
+- **实现位置：** `oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`health_report.go`、`oboard/internal/controller/server.go`、`realtime.go`、`oboard-agent/internal/agent/probe.go`、`agent.go`
 - **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等补列。
 - **数据影响：** 既有服务器核数为 0，直到新 Agent 上报；不改写 `cpu` 型号。
 - **重复执行：** `ensureColumn`；重复打开不改写已有核数。
 - **失败行为：** 补列失败会阻止打开数据库。
 - **回归测试：** `TestServerCPUCoresMigrateFromPreviousSchema`、`TestApplyHealthReportPersistsCPUCoresWithoutParsingModel`、`TestCPUCountFromCPUInfoDoesNotParseModelName`
 - **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema；入网/心跳路径不再出现无 `cpu_cores` 的 Agent。
+- **移除状态：** 生效中。
+
+### controller-db-20260829-server-display-tags
+
+- **引入日期：** 2026-08-29
+- **引入提交：** `OboardProject/oboard@5e3028465dda0c8050c03542e242f9c01c1a79a0`
+- **引入版本：** `dev-5e3028465dda`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、`internal/capability`、`internal/application`、Web
+- **类别：** SQLite schema
+- **原因：** 服务器卡片底部标签改为用户自行设置，不再用 IP 栈/监控方式等系统标志冒充标签。
+- **源状态：** `servers` 没有 `display_tags_json` 列。
+- **目标状态：** `servers.display_tags_json text not null default '[]'`，存最多 8 个 `{text,tone}` 标签；缺列的旧库补列后为空数组。
+- **实现位置：** `oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`oboard/internal/model/server_display_tags.go`、`oboard/internal/controller/server.go`、`server_update_operation.go`、`oboard/internal/capability/catalog.go`
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等补列。
+- **数据影响：** 既有服务器标签为空；不改写其他服务器字段。
+- **重复执行：** `ensureColumn`；重复打开不改写已有 JSON。
+- **失败行为：** 补列失败会阻止打开数据库。
+- **回归测试：** `TestServerDisplayTagsMigrateFromPreviousSchema`、`TestNormalizeServerDisplayTags`、`TestMCPServerDisplayTagsRoundTripAndPatchOmit`
+- **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema。
+- **移除状态：** 生效中。
+
+### controller-db-20260829-subscription-client-templates
+
+- **引入日期：** 2026-08-29
+- **引入提交：** `OboardProject/oboard@57aafe877b1cb080a320f43d0718ed796e898171`
+- **引入版本：** `dev-57aafe877b1c`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite schema
+- **原因：** 每个公开订阅客户端需要可编辑完整配置外壳；审计需要区分请求 format 与解析后 format，以及 `format=auto` 是否发生 UA 识别。内置模板不写入数据库。
+- **源状态：** 无 `subscription_client_templates` 表；`subscription_pull_audits` 无 `requested_format` / `auto_detected` 列。
+- **目标状态：** 存在 `subscription_client_templates(format PK, content, revision, base_builtin_digest, updated_by, updated_at)`；审计表有 `requested_format`（默认空）和 `auto_detected`（默认 0）。无行表示使用嵌入 builtin；Reset 删除覆盖行。
+- **实现位置：** `oboard/internal/store/store.go`（`create table`、`ensureColumn`）、`oboard/internal/store/subscription_templates.go`、`oboard/internal/store/subscription_audit.go`
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等建表并补列。
+- **数据影响：** 不灌入 builtin 模板；不改写既有审计行的 `format`（解析后目标）。新列默认空/0。
+- **重复执行：** `create table if not exists` 与 `ensureColumn`；重复打开不改写已有覆盖或审计值。
+- **失败行为：** 建表或补列失败会阻止打开数据库。
+- **回归测试：** `TestSubscriptionTemplateAndAuditColumnsMigrateFromPreviousSchema`、`TestSubscriptionClientTemplatesStartAsBuiltin`、`TestSubscriptionClientTemplatePutResetAndConflict`
+- **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该表与两列；恢复入口不得导入缺少它们的 schema。当前 builtin 无行语义测试继续保留。
+- **移除状态：** 生效中。
+
+### controller-db-20260828-traffic-policy-revision-triggers
+
+- **引入日期：** 2026-08-28
+- **引入提交：** `OboardProject/oboard@57aafe877b1cb080a320f43d0718ed796e898171`
+- **引入版本：** `dev-57aafe877b1c`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`；Agent `internal/agent`
+- **类别：** SQLite schema、trigger rebuild、wire protocol
+- **原因：** 流量 ledger 更新 `users.traffic_used_bytes` 曾通过无条件 `routing_rev_users_update` 使 routing snapshot 失效，并与完整 JSON 比较一起把 runtime policy 放大成 `apply_deployment`。历史库使用 `CREATE TRIGGER IF NOT EXISTS`，同名错误 trigger 不会被替换。
+- **源状态：** `routing_rev_users_update` / `config_rev_users_update` 可能是无条件 UPDATE；缺少 `traffic_policy_revision` 表；`configuration_sync_states` 缺少 `trigger_reason` / `sync_strategy`。
+- **目标状态：** 启动时 DROP 全部 `routing_rev_%` / `config_rev_%` 后按当前代码重建；`users` 不再安装 `config_rev_users_*`；`routing_rev_users_update` 仅在身份/授权字段变化时推进 routing cache；新增独立 `traffic_policy_revision`；流量用量不再使 routing cache 或 `configuration_revision` 增长。
+- **实现位置：** `oboard/internal/store/routing_revision.go`、`traffic.go`、`configuration_sync.go`、`store.go`；`oboard/internal/controller/config_comparison.go`、`traffic_policy.go`、`configuration_reconciler.go`；Agent `apply_traffic_policy`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等 DROP+CREATE 触发器并建表扩列。
+- **数据影响：** 不改写业务流量计数；不回退已增长的 `configuration_revision`。启动时可将仅 runtime policy 不同的 pending `apply_deployment` 标为 superseded。
+- **重复执行：** DROP IF EXISTS + CREATE 可重复；`traffic_policy_revision` 使用 `insert or ignore`。
+- **失败行为：** 触发器安装失败阻止打开数据库。
+- **回归测试：** `TestLegacyUnconditionalRevisionTriggersAreReplacedOnMigrate`、`TestCommitTrafficLedgerDoesNotAdvanceConfigurationOrRoutingRevision`、`TestTrafficReportsDoNotTriggerConfigurationDeployment`。
+- **移除条件：** 最老支持数据库和所有可恢复备份必须已包含当前 trigger 定义和 `traffic_policy_revision` 表。
 - **移除状态：** 生效中。
 
 ### controller-db-20260828-remove-vless-tls-vision
@@ -100,7 +187,7 @@
 - **原因：** 内置入口/节点预设不再提供「VLESS TLS Vision」（TCP + TLS + Vision，需要证书）。VLESS 证书 TLS 入口只保留 WebSocket；Reality Vision 与无 TLS 的 TCP 不受影响。
 - **源状态：** `node_presets` 存在 `kind='vless-tls-vision'` 的内置或自定义行；入口 `config_json` 可能引用其 `node_preset_id`；MCP/REST `kind` 枚举与面板创建列表包含该 kind。
 - **目标状态：** 种子、kind 枚举、MCP schema 与创建选择器不再包含 `vless-tls-vision`；打开数据库时删除该 kind 的预设行，并从入口 `config_json` 去掉对应 `node_preset_id`；既有 VLESS+TLS+Vision 入口的 `flow`/`tls` 保持不变，GET 不再推断该 kind。
-- **实现位置：** `internal/store/node_presets.go`（`migrateRemoveVLESSTLSVisionPreset`）、`store.go`；`internal/controller/inbound_kind.go`、`mcp_recipes.go`、`mcp_catalog.go`、`mcp_resources.go`、`mcp_prompts.go`；`internal/capability/catalog.go`、`catalog_network.go`；`web/src/main.tsx`、`web/src/components/NodePresetsPanel.tsx`。
+- **实现位置：** `oboard/internal/store/node_presets.go`（`migrateRemoveVLESSTLSVisionPreset`）、`store.go`；`oboard/internal/controller/inbound_kind.go`、`mcp_recipes.go`、`mcp_catalog.go`、`mcp_resources.go`、`mcp_prompts.go`；`oboard/internal/capability/catalog.go`、`catalog_network.go`；`oboard/web/src/main.tsx`、`web/src/components/NodePresetsPanel.tsx`。
 - **更新脚本：** 无专用脚本。Controller 打开 SQLite 时在补种内置预设之后删除该 kind。
 - **数据影响：** 删除 `kind='vless-tls-vision'` 的预设行；剥离引用这些行的入口 `node_preset_id`；不改写 `flow`、TLS 或证书字段。新建入口无法再选择该 kind；创建/PATCH 提交 `kind=vless-tls-vision` 被拒绝。
 - **重复执行：** 无匹配行时立即返回；剥离与删除按 kind/id 判断。重复打开不会改写已剥离的入口 JSON。
@@ -129,24 +216,44 @@
 - **移除条件：** 产品声明并实施最老可直接升级版本，且该版本已包含本 schema；备份恢复拒绝更老 schema
 - **移除状态：** 生效中
 
-### controller-db-20260825-server-traffic-quota
+### controller-db-20260825-port-forward-external-target
+
+- **引入日期：** 2026-08-25
+- **引入提交：** `OboardProject/oboard@e2a63295bcfc715da4c2bf8739fd69c84d5d56c8`
+- **引入版本：** `dev-e2a63295bcfc`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/core`、`internal/controller`、Web
+- **类别：** SQLite schema
+- **原因：** 独立端口转发需要支持不依赖受管目标服务器的任意 IP/域名与端口；受管服务器只在需要自动解析地址和纳入拓扑影响范围时选择。
+- **源状态：** `port_forwards.target_server_id` 为 `NOT NULL` 外键；REST、MCP、拓扑校验和 Web 创建表单都要求选择另一台受管服务器，只有一台服务器时无法创建独立转发。
+- **目标状态：** `port_forwards.target_server_id` 为可空外键。未选择目标服务器时 `target_address` 必填，部署和探测只使用解析后的 `target_address:target_port`，拓扑与授权范围仅包含入口服务器；选择目标服务器时继续支持留空地址自动解析。
+- **实现位置：** `oboard/internal/store/store.go`、`internal/model/types.go`、`internal/core/forwards.go`、`internal/core/topology.go`、`internal/controller/server.go`、`internal/controller/mcp_network.go`、`internal/capability/catalog_forwards.go`；`oboard/web/src/components/proxy-path/TrafficForwardingDialog.tsx`、`web/src/main.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时检测 `pragma_table_info('port_forwards')`；仅当 `target_server_id` 仍为 `NOT NULL` 时在事务内重建表并恢复索引。
+- **数据影响：** 原有转发行及其目标服务器外键原样保留；新模型允许该字段保存为 `NULL`。不改写监听地址、端口、探测设置或转发后端。
+- **重复执行：** 新表的 `target_server_id` 已可空时迁移直接返回；重复打开或显式 `Migrate` 不重建表、不改写既有行。
+- **失败行为：** 表创建、数据复制、旧表删除、重命名或索引恢复任一步失败都会回滚事务并阻止 Controller 打开数据库，不留下半迁移表。
+- **回归测试：** `TestPortForwardTargetServerBecomesNullable` 从真实旧 `NOT NULL` 表和既有受管转发行启动，验证数据保留、可空约束、外部目标读写和重复迁移；Core、REST、MCP capability 与 Web 测试覆盖外部目标计划、拓扑忽略、授权、表单默认值和条件必填。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份都必须已包含可空 `target_server_id`，且恢复入口不得再次导入旧 `NOT NULL` 表。
+- **移除状态：** 生效中。
+
+### controller-db-20260825-transport-tfo-capability
 
 - **引入日期：** 2026-08-25
 - **引入提交：** `OboardProject/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
 - **引入版本：** `dev-05b18611eabf`
 - **首次稳定版：** 待发布
-- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
+- **所有者：** Controller `internal/store`、`internal/controller`、Agent `internal/agent`
 - **类别：** SQLite schema
-- **原因：** 服务器统计需要按重置周期配置并展示周期流量限额，用于运维侧的容量规划与阈值提醒；限额仅用于展示与计算使用率，不阻断现有连接或改变部署。
-- **源状态：** `server_telemetry` 没有 `traffic_limit_bytes` 列，服务器卡片仅展示实时速率和本周期已用总量，无法配置限额或显示使用率。
-- **目标状态：** `server_telemetry` 存在 `traffic_limit_bytes integer not null default 0`（0 表示不限量）；Controller 在创建/更新时校验 `>=0` 并持久化，MCP `servers.get/list` 输出包含该字段；Web 在服务器创建/编辑弹窗中提供“周期流量限额”输入，并在卡片、列表与详情中展示 `已用 / 限额 · 百分比` 及细进度条，限额为 0 时保持原有总量展示。
-- **实现位置：** `oboard/internal/model/types.go`、`oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`oboard/internal/controller/server.go`、`oboard/internal/capability/catalog.go`、`oboard/internal/application/dto.go`；`oboard/web/src/components/proxy-path/types.ts`、`oboard/web/src/main.tsx`、`oboard/web/src/style.css`。
-- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `ensureColumn` 幂等添加列，默认 0 保持旧行为。
-- **数据影响：** 仅新增带默认值的限额列；不重写已有流量统计或重置周期数据，不改变 Agent 上报或部署。
-- **重复执行：** `ensureColumn` 仅当列缺失时执行 `ALTER TABLE`，重复打开不改写已保存限额。
-- **失败行为：** 列扩展失败会阻止 Controller 打开数据库；限额校验失败返回 400，不写入持久化状态。
-- **回归测试：** 现有 `server` 相关 Store/Controller 套件覆盖读写；新增限额为 0 时保持不限量展示，限额 >0 时卡片展示 `已用/限额` 与进度条语义正确，MCP 输出通过 `servers.get` schema 校验。
-- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `traffic_limit_bytes`，且恢复入口不得导入缺少该列的 `server_telemetry`。
+- **原因：** 传输能力模型把通用 MUX、协议原生复用和 TCP Fast Open 拆开后，Snell 参数预设需要保存 TFO 选项，服务器需要保存 Agent 上报的 `net.ipv4.tcp_fastopen` 位掩码，用于提示监听侧 TFO 是否真正生效。
+- **源状态：** `snell_profiles` 没有 `tcp_fast_open` 列；`servers` 没有 `tcp_fastopen_state` / `tcp_fastopen_value` 列，面板无法区分“配置已开启”和“内核允许”。
+- **目标状态：** `snell_profiles.tcp_fast_open integer not null default 0`；`servers.tcp_fastopen_state text not null default ''` 与 `servers.tcp_fastopen_value integer not null default 0`。空状态表示未上报，Controller 始终按上报的位掩码重算状态。
+- **实现位置：** `oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`snell_profiles.go`、`health_report.go`；`oboard/internal/model/types.go`；`oboard/internal/controller/server.go`、`mcp_snell.go`、`realtime.go`；`oboard-agent/internal/agent/tcp_fastopen.go`、`agent.go`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `ensureColumn` 幂等补列，默认值保持旧行为（TFO 关闭、能力未知）。
+- **数据影响：** 仅新增带默认值的列；不改写已有 Snell 预设、服务器状态或入口配置，不改变 Agent 部署内容。
+- **重复执行：** `ensureColumn` 仅在列缺失时执行 `ALTER TABLE`；重复打开不覆盖已保存的 TFO 选项或最近一次上报的位掩码。缺少该字段的心跳不会清除已知状态。
+- **失败行为：** 补列失败会阻止 Controller 打开数据库；Agent 读取 sysctl 失败按 `unavailable` 上报，不影响心跳。
+- **回归测试：** `TestTCPFastOpenColumnsMigrateFromPreviousSchema` 从真实旧 schema（删除三列后重开）验证补列、默认值、旧行参数保留和读写往返；`TestTCPFastOpenFromFile` 覆盖 Agent 侧位掩码解析。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含这三列。
 - **移除状态：** 生效中。
 
 ### controller-db-20260826-preset-tfo-defaults
@@ -169,24 +276,44 @@
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含带 TFO 的内置预设，且恢复入口不得导入旧内置模板；当前种子与校验保留。
 - **移除状态：** 生效中。
 
-### controller-db-20260827-anytls-padding-snapshots
+### controller-db-20260826-hy2-salamander-presets
 
-- **引入日期：** 2026-08-27
-- **引入提交：** `OboardProject/oboard@de87e92e171bc900e735213f91f894f49c6b0274`
-- **引入版本：** `dev-de87e92e171b`
+- **引入日期：** 2026-08-26
+- **引入提交：** `OboardProject/oboard@c8f4a4dd07dd51e7247abb3ed001eba7b75b2731`
+- **引入版本：** `dev-c8f4a4dd07dd`
 - **首次稳定版：** 待发布
-- **所有者：** Controller `internal/store`、`internal/application`、`internal/core`、`internal/controller`、`internal/capability`、Web
-- **类别：** SQLite config metadata backfill
-- **原因：** AnyTLS 新建入口需要在 Controller 创建事务中选择 `balanced_v1` / `light_v1` 并固化一次性 `preset` 或 `tuned` 快照；既有手工 `padding_scheme` 需要被识别为 `custom`，才能阻止普通入口编辑、重启和重新投影意外改写，同时允许管理员通过显式操作更换或重新生成。
-- **源状态：** 既有 AnyTLS 入口可能在 `config_json.padding_scheme` 保存有效手工方案，但没有 `_oboard_padding` 元数据；也可能完全没有 `padding_scheme`。旧的未发布节点预设中第二套方案为“大包填充”。
-- **目标状态：** 有有效 `padding_scheme` 且没有元数据的入口保留原方案并补 `_oboard_padding.mode=custom`、`generation=1`、创建时间和规范化 SHA-256 指纹；没有方案的入口保持不变。新建入口由 Application Service 默认生成 `balanced_v1 + auto_tune=true` 快照；显式 `inbounds.padding.update` 支持 `replace_preset`、`regenerate`、`set_custom`。旧的未编辑“大包填充”内置节点预设原位改为当前 `light_v1` 内容。
-- **实现位置：** `oboard/internal/store/anytls_padding_migration.go`、`store.go`、`node_presets.go`；`oboard/internal/application/anytls_padding.go`；`oboard/internal/core/anytls_padding.go`；`oboard/internal/controller/server.go`、`inbound_automation.go`；`oboard/internal/capability/catalog.go`；`oboard/web/src/main.tsx`、`style.css`、`components/NodePresetsPanel.tsx`。
-- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时扫描 `protocol='anytls'`、包含 `padding_scheme` 且缺少 `_oboard_padding` 的入口；只对能通过现有严格校验器的非空方案执行事务内元数据回填。节点预设迁移只匹配旧版内置大包 JSON。
-- **数据影响：** 不新增或改变任何既有入口的 `padding_scheme`；只在同一 `config_json` 增加 Controller 专用元数据。缺少方案、方案无效、已经带元数据的入口不写入。节点预设更新不回填已创建入口。
-- **重复执行：** 入口扫描以 `_oboard_padding` 缺失为条件，成功后不再匹配；节点预设以旧 JSON 精确匹配，成功后不再匹配；重复打开数据库保持已保存方案、指纹和 generation 不变。
-- **失败行为：** 查询、随机源、校验、指纹或事务写入失败会终止创建或阻止 Controller 打开数据库；不会静默回退到固定方案。迁移事务失败时不提交部分入口元数据。
-- **回归测试：** `TestExistingAnyTLSPaddingMigrationMarksCustomWithoutChangingScheme` 覆盖有效旧方案、缺失方案、幂等与重启；`TestAnyTLSPaddingRESTCreatePersistsAndExplicitlyRegenerates`、`TestAnyTLSPaddingAutomationCreateAndOperationShareApplicationPath` 覆盖 REST、Automation/MCP、模板合并、普通更新保持、显式 generation、数据面投影与订阅隔离；`internal/core/anytls_padding_test.go` 覆盖结构、边界、成本、指纹、复制、加密随机失败和三种模式。
-- **移除条件：** 在通用删除门槛之外，最老支持数据库与所有可恢复备份都必须已给既有 AnyTLS 方案补齐 `_oboard_padding`，恢复入口不得再导入无元数据的方案；当前创建初始化、显式操作、投影隔离和核心测试永久保留，仅可移除旧状态回填扫描。
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite seed / data backfill
+- **原因：** HY2 需要标准 TLS 与 Salamander 两套入口形态；带宽属于入口而不是预设；Salamander 混淆密码必须按入口随机生成，不得写入节点预设。
+- **源状态：** `node_presets` 只有 `kind='hy2-tls'` 的内置行，名称「Hysteria2」，`config_json` 含 `"up_mbps":100,"down_mbps":100`，没有 `hy2-salamander`；未编辑的种子行保留初始 `updated_at=2026-01-01T00:00:00Z`。
+- **目标状态：** 未编辑的旧 `hy2-tls` 行原位改为「Hysteria2 标准」并去掉带宽字段；幂等新增「Hysteria2 Salamander」行，模板只含 `obfs.type=salamander`；所有 HY2 预设在规范化时剥离 `up_mbps`/`down_mbps` 与 `obfs.password`。新建入口默认上 1000 / 下 500，Salamander 密码由 Controller 在每个入口生成。
+- **实现位置：** `oboard/internal/store/node_presets.go`（种子、`migrateHY2Presets`、`normalizeNodePresetConfig`）、`store.go`；`oboard/internal/controller/inbound_kind.go`、`server.go`、`mcp_recipes.go`；`oboard/internal/core/protocols.go`；`oboard/internal/capability/catalog.go`、`catalog_network.go`；`oboard/web/src/components/NodePresetsPanel.tsx`、`web/src/main.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时先按内置 `kind` 补种缺失行，再回填未编辑的旧 `hy2-tls`，最后剥离全部 HY2 预设中的带宽与 Salamander 密码。
+- **数据影响：** 只改写仍保持原始种子时间且仍为旧带宽 JSON 的 `hy2-tls` 内置行名称/备注/模板；其余 HY2 预设仅删除带宽和混淆密码键。既有入口已保存的 `config_json` 不回填带宽或 Salamander。
+- **重复执行：** 按 `kind+builtin` 判断缺失种子；旧行只有在原始时间与旧 JSON 同时匹配时回填；带宽/密码剥离按 JSON 键存在判断。重复打开不会新增同 kind 的内置行或覆盖编辑后的预设名称。
+- **失败行为：** 查询、补种、名称冲突检查或更新失败会阻止 Controller 打开数据库；迁移不改写入口。
+- **回归测试：** `TestHY2PresetsMigrateFromLegacyBuiltin` 从真实旧 `node_presets` 表和带带宽的内置行打开数据库，验证原位回填、Salamander 预设补种、无重复 kind 和重复打开幂等；`TestNormalizeNodePresetStripsHY2BandwidthAndSecrets`、`TestApplyInboundKindHY2Defaults`、`TestHY2SalamanderObfsValidation` 覆盖当前种子、入口默认值与校验。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份都必须已包含两套 HY2 预设且内置模板不再含带宽或 Salamander 密码；当前种子与校验测试继续保留。
+- **移除状态：** 生效中。
+
+### controller-db-20260825-server-traffic-quota
+
+- **引入日期：** 2026-08-25
+- **引入提交：** `OboardProject/oboard@05b18611eabf86c103e9359534e73e49cc6a2d6a`
+- **引入版本：** `dev-05b18611eabf`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite schema
+- **原因：** 服务器统计需要按重置周期配置并展示周期流量限额，用于运维侧的容量规划与阈值提醒；限额仅用于展示与计算使用率，不阻断现有连接或改变部署。
+- **源状态：** `server_telemetry` 没有 `traffic_limit_bytes` 列，服务器卡片仅展示实时速率和本周期已用总量，无法配置限额或显示使用率。
+- **目标状态：** `server_telemetry` 存在 `traffic_limit_bytes integer not null default 0`（0 表示不限量）；Controller 在创建/更新时校验 `>=0` 并持久化，MCP `servers.get/list` 输出包含该字段；Web 在服务器创建/编辑弹窗中提供“周期流量限额”输入，并在卡片、列表与详情中展示 `已用 / 限额 · 百分比` 及细进度条，限额为 0 时保持原有总量展示。
+- **实现位置：** `oboard/internal/model/types.go`、`oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`oboard/internal/controller/server.go`、`oboard/internal/capability/catalog.go`、`oboard/internal/application/dto.go`；`oboard/web/src/components/proxy-path/types.ts`、`oboard/web/src/main.tsx`、`oboard/web/src/style.css`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `ensureColumn` 幂等添加列，默认 0 保持旧行为。
+- **数据影响：** 仅新增带默认值的限额列；不重写已有流量统计或重置周期数据，不改变 Agent 上报或部署。
+- **重复执行：** `ensureColumn` 仅当列缺失时执行 `ALTER TABLE`，重复打开不改写已保存限额。
+- **失败行为：** 列扩展失败会阻止 Controller 打开数据库；限额校验失败返回 400，不写入持久化状态。
+- **回归测试：** 现有 `server` 相关 Store/Controller 套件覆盖读写；新增限额为 0 时保持不限量展示，限额 >0 时卡片展示 `已用/限额` 与进度条语义正确，MCP 输出通过 `servers.get` schema 校验。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `traffic_limit_bytes`，且恢复入口不得导入缺少该列的 `server_telemetry`。
 - **移除状态：** 生效中。
 
 ### controller-db-20260824-anytls-padding-presets
@@ -199,13 +326,13 @@
 - **类别：** SQLite seed / data backfill
 - **原因：** 原 `anytls-basic` 内置预设只启用 TLS，因而使用 sing-anytls 的上游默认填充；当前模型要求提供两套明确、可编辑且都不同于上游默认值的 OBoard 填充预设，并在入口保存前校验规则。
 - **源状态：** `node_presets` 只有 `kind='anytls-basic'` 的 TLS-only 内置行（`config_json={"tls":{"enabled":true}}`），没有 `anytls-large-padding`；未编辑的种子行保留初始 `updated_at=2026-01-01T00:00:00Z`。
-- **目标状态：** 未编辑的旧 `anytls-basic` 行原位改为“AnyTLS 均衡填充”并写入 `balanced_v1` 规则；幂等新增第二套内置行，当前内容为 `light_v1` 轻量填充。两个预设都只用于服务端 inbound `padding_scheme`，Controller 不把该字段写入客户端订阅或 AnyTLS outbound。
+- **目标状态：** 未编辑的旧 `anytls-basic` 行原位改为“AnyTLS 均衡填充”并写入均衡规则；幂等新增“AnyTLS 大包填充”行。两个预设都使用服务端 inbound `padding_scheme`，Controller 不把该字段写入客户端订阅或 AnyTLS outbound。
 - **实现位置：** `oboard/internal/store/node_presets.go`、`store.go`；`oboard/internal/core/anytls_padding.go`、`protocols.go`、`subscription_formats.go`；`oboard/web/src/main.tsx`、`components/NodePresetsPanel.tsx`。
 - **更新脚本：** 无专用脚本。Controller 打开 SQLite 时先按内置 `kind` 补种缺失行，再运行填充预设回填。
-- **数据影响：** 只改写仍保持原始种子时间和 TLS-only 配置的 `anytls-basic` 内置行，以及精确匹配未发布旧“大包填充”JSON 的第二套内置行；已编辑的内置行和自定义预设不改写。既有入口已保存的 `padding_scheme` 不由本迁移回填或替换。
+- **数据影响：** 只改写仍保持原始种子时间和 TLS-only 配置的 `anytls-basic` 内置行；已编辑的内置行和自定义预设不改写。既有入口已保存的 `config_json` 不回填，后续新建或重新套用预设的入口使用新方案。
 - **重复执行：** 按 `kind+builtin` 判断缺失种子；旧行只有在原始时间与旧 JSON 同时匹配时回填，首次成功后不再匹配。重复打开不会新增同 kind 的内置行或覆盖编辑后的预设。
 - **失败行为：** 查询、补种、名称冲突检查或更新失败会阻止 Controller 打开数据库；不会留下只更新一部分入口配置的状态，因为迁移不改写入口。
-- **回归测试：** `TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin` 从真实旧 `node_presets` 表、TLS-only 均衡行和旧大包行打开数据库，验证原位回填为当前均衡/轻量内容、无重复 kind 和重复打开幂等；`TestNodePresetsSeededAndProtected`、`TestNormalizeNodePresetRejectsInvalidAnyTLSPadding` 覆盖当前种子与校验。
+- **回归测试：** `TestAnyTLSPaddingPresetsMigrateFromLegacyBuiltin` 从真实旧 `node_presets` 表和 TLS-only 内置行打开数据库，验证原位回填、第二套预设补种、无重复 kind 和重复打开幂等；`TestNodePresetsSeededAndProtected`、`TestNormalizeNodePresetRejectsInvalidAnyTLSPadding` 覆盖当前种子与校验。
 - **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份都必须已包含两套 AnyTLS 预设，且不再可能导入初始时间戳的 TLS-only `anytls-basic` 行；当前种子与校验测试继续保留。
 - **移除状态：** 生效中。
 
@@ -637,31 +764,6 @@
   专属路径，并保证同步组不传播放置点动作和拓扑。
 - **移除状态：** 生效中。
 
-### controller-db-20260828-traffic-ledger-v2
-
-- **引入日期：** 2026-08-28
-- **引入提交：** `OboardProject/oboard@5fedab310ae87ed7a6d4270daa353a21899bf549`
-- **引入版本：** `dev-5fedab310ae8`
-- **首次稳定版：** 待发布
-- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web；Agent `internal/agent`；kernel `kernel/oboard-sb`
-- **类别：** SQLite schema / wire protocol
-- **原因：** 把流量从客户端 delta 上报升级为 checkpoint range 账本，修复同 epoch 计数倒退误计、损坏 `traffic-state.json` 静默清空、以及 `lease=0` 未强制配额的 P0。
-- **源状态：** `traffic_reports` 只有 delta 字段；无 `traffic_counter_streams` / `traffic_reconciliation_events`；`traffic_leases` 无 revision/state/TTL；Controller 仅在 `RemainingBytes>0` 时设置 `lease_enforced`；Agent JSON 解析失败当作空状态。
-- **目标状态：** `traffic_reports` 增加 range 字段（历史 delta 行保持 `protocol_version=1` 且 `stream_id` 为空，无历史 checkpoint 回填）；新增 stream checkpoint 与对账事件表；有限额度用户始终 `lease_enforced=true`，`lease=0` 以 baseline 封顶。`POST /api/v1/agent/traffic-reports` 只接受 checkpoint ranges + streams，拒绝 delta `items` 与并行 `protocol_version`。唯一索引 `idx_traffic_reports_range` 在 `stream_id <> ''` 上成立。Kernel 能力名为 `traffic_ledger`。Agent `traffic-state.json` schema_version=2，损坏则 `state_corrupt` 并对 Controller 对账。
-- **实现位置：** `internal/store/traffic.go`、`store.go`；`internal/controller/traffic.go`、`server.go`；`internal/capability/catalog_traffic_ledger.go`；`web/src/main.tsx`；Agent `internal/agent/traffic.go`；kernel `cmd/oboard-sb/main.go`。
-- **更新脚本：** Controller 打开 SQLite 时 `migrateTrafficLedgerV2` 幂等补列建表，并 `drop index if exists idx_traffic_reports_v2_range` 后建立 `idx_traffic_reports_range`。
-- **数据影响：** 不删除 `traffic_reports` / `traffic_periods`，不重算 `users.traffic_used_bytes`。离线 Agent 未消费 Lease 保持 reserved。
-- **重复执行：** `ensureColumn` 与 `create table/index if not exists` / `drop index if exists`。
-- **失败行为：** 列或表创建失败会阻止 Controller 打开数据库。checkpoint gap/overlap 拒绝入账。
-- **回归测试：** `TestTrafficLedgerV2MigratesFromPreviousSchema`、`TestTrafficLedgerCoversHistoricalProtocolVersionTwoRows`、`TestTrafficLedgerV2IsIdempotentAfterLostACK`、`TestTrafficLedgerV2SameRangeDifferentReportIDIsCovered`、`TestAgentTrafficRejectsDeltaItems`、`TestTrafficRuntimePoliciesEnforceZeroLeaseWithoutExceedingGlobalQuota`
-- **移除条件：** 最老直接升级版本与可恢复备份均已包含 range 列、stream 表和 `idx_traffic_reports_range`；恢复入口拒绝缺少 stream 表的备份。
-- **移除状态：** 生效中
-
-## 新登记模板
-
-复制以下条目到“生效中的迁移”，并在“登记摘要”增加一行：
-
-```markdown
 ### controller-db-20260827-remote-access
 
 - **引入日期：** 2026-08-27
@@ -673,7 +775,7 @@
 - **原因：** Remote Terminal 与 MCP 主机执行需要独立的全局/服务器策略、Privileged Grant、Step-up 挑战和仅元数据审计，且升级后必须保持全部关闭。
 - **源状态：** 不存在 `server_remote_access_policies`、`server_remote_access_status`、`mcp_privileged_grants`、`remote_access_audit`、`step_up_challenges`、`consumed_step_up_tokens`。
 - **目标状态：** 上述表以 `create table if not exists` 存在；策略布尔列默认 0；`mcp_privileged_grants.oauth_grant_id` 唯一并随 OAuth Grant 级联；终端会话不进 SQLite。
-- **实现位置：** `internal/store/store.go`、`internal/store/remote_access.go`
+- **实现位置：** `oboard/internal/store/store.go`、`oboard/internal/store/remote_access.go`
 - **更新脚本：** 进程启动 `Open()` 执行
 - **数据影响：** 仅新增表，不改现有业务行
 - **重复执行：** `create table if not exists`，幂等
@@ -682,6 +784,52 @@
 - **移除条件：** 最老直接升级版本与可恢复备份均已包含这些表，且恢复入口拒绝缺少它们的 schema
 - **移除状态：** 生效中
 
+### controller-db-20260831-server-service-start-and-traffic-reset
+
+
+- **引入日期：** 2026-08-31
+- **引入提交：** `OboardProject/oboard@1584fa60fd17`
+- **引入版本：** `dev-1584fa60fd17`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web `oboard/web/src/main.tsx`
+- **类别：** SQLite schema
+- **原因：** 服务器流量统计需与计费周期对齐，重置日应随起租日/到期日自动推导，避免运维手动填错导致当月统计错位。流量为服务器侧月度统计，与套餐/用户流量独立，分钟精度无意义，仅保留日精度。
+- **源状态：** `server_telemetry` 没有 `service_start_at` 列；`traffic_reset_mode/day` 默认为 `monthly/1`，创建时若用户提供 `2025-07-05~2026-07-09` 的账期且未显式指定重置日，仍为 1 日重置，与起租日不一致。
+- **目标状态：** `server_telemetry` 存在 `service_start_at text`（可空，ISO8601），创建/更新时若 `traffic_reset_mode/day` 均未显式指定，则按 `service_start_at`(优先)或 `expires_at` 的日(按 `traffic_timezone` 所在时区)推导 `traffic_reset_mode=month_day` 与 `traffic_reset_day=anchor日`；已显式指定则永不覆盖。季付仍为每月同日重置。Web 在到期与续期区新增“计费开始日”输入并自动预览推导结果，MCP `servers.onboard/update` 同步支持`service_start_at` 与自动推导语义。
+- **实现位置：** `oboard/internal/model/types.go`、`oboard/internal/store/store.go`（`create table` 与 `ensureColumn`、读写）、`oboard/internal/controller/server.go`（`deriveServerTrafficReset`、`servers` POST/PATCH）、`oboard/internal/controller/api_v1.go`（`applyServerOnboardingDefaults`）、`oboard/internal/controller/server_update_operation.go`（`servers.update` 自动化）、`oboard/internal/capability/catalog.go`（`servers.onboard/update` schema 描述）；`oboard/web/src/main.tsx`、`oboard/web/src/server-expiry.ts`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时通过 `ensureColumn` 幂等补列，默认空保持旧行为（无起租日时按到期日推导，无任何锚点时保持 `monthly/1`）。
+- **数据影响：** 仅新增可空列；不重写已有流量统计或重置周期数据，不改变 Agent 上报或部署。已存在服务器保持原 `traffic_reset` 值，首次编辑账期且未显式指定重置日时才按新锚点自动更新。
+- **重复执行：** `ensureColumn` 仅当列缺失时执行 `ALTER TABLE`；推导仅在创建或账期变更且重置日未显式指定时触发，重复打开不改写已显式指定的重置日。
+- **失败行为：** 列扩展失败会阻止 Controller 打开数据库；重置日推导失败回落为 `monthly/1`，不阻断创建/更新，校验仍执行。
+- **回归测试：** `go vet`、`tsc` 与 `vite build` 通过；新增手动验证：`service_start_at=2025-07-05, expires_at=2026-07-09` -> `month_day/5`；仅 `expires_at=2026-07-09` -> `month_day/9`；显式 `traffic_reset_day=15` 保持 15 不被覆盖。Store 迁移由 `ensureColumn` 覆盖，重复启动幂等。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份必须已包含 `service_start_at`，且恢复入口不得导入缺少该列的 `server_telemetry`；所有受支持 Controller 版本必须实现相同的起租日起租优先推导语义。
+- **移除状态：** 生效中。
+
+### controller-db-20260828-traffic-ledger-v2
+
+- **引入日期：** 2026-08-28
+- **引入提交：** `OboardProject/oboard@5fedab310ae87ed7a6d4270daa353a21899bf549`
+- **引入版本：** `dev-5fedab310ae8`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web；Agent `internal/agent`；kernel `kernel/oboard-sb`
+- **类别：** SQLite schema / wire protocol
+- **原因：** 把流量从客户端 delta 上报升级为 checkpoint range 账本，修复同 epoch 计数倒退误计、损坏 `traffic-state.json` 静默清空、以及 `lease=0` 未强制配额的 P0。
+- **源状态：** `traffic_reports` 只有 delta 字段；无 `traffic_counter_streams` / `traffic_reconciliation_events`；`traffic_leases` 无 revision/state/TTL；Controller 仅在 `RemainingBytes>0` 时设置 `lease_enforced`；Agent JSON 解析失败当作空状态。
+- **目标状态：** `traffic_reports` 增加 range 字段（历史 delta 行保持 `protocol_version=1` 且 `stream_id` 为空，无历史 checkpoint 回填）；新增 stream checkpoint 与对账事件表；有限额度用户始终 `lease_enforced=true`，`lease=0` 以 baseline 封顶。`POST /api/v1/agent/traffic-reports` 只接受 checkpoint ranges + streams，拒绝 delta `items` 与并行 `protocol_version`。唯一索引 `idx_traffic_reports_range` 在 `stream_id <> ''` 上成立。Kernel 能力名为 `traffic_ledger`。Agent `traffic-state.json` schema_version=2，损坏则 `state_corrupt` 并对 Controller 对账。
+- **实现位置：** `oboard/internal/store/traffic.go`、`store.go`；`oboard/internal/controller/traffic.go`、`server.go`；`oboard/internal/capability/catalog_traffic_ledger.go`；`oboard/web/src/main.tsx`；`oboard-agent/internal/agent/traffic.go`、`ssh_inbounds.go`；`oboard-agent/kernel/oboard-sb/cmd/oboard-sb/main.go`。
+- **更新脚本：** Controller 打开 SQLite 时 `migrateTrafficLedgerV2` 幂等补列建表，并 `drop index if exists idx_traffic_reports_v2_range` 后建立 `idx_traffic_reports_range`。Agent 首次读到无 epoch 的旧 `traffic-state.json` 把 leftover pending 转成 range 后写 schema_version=2。
+- **数据影响：** 不删除 `traffic_reports` / `traffic_periods`，不重算 `users.traffic_used_bytes`。离线 Agent 未消费 Lease 保持 reserved（`expired_unsettled` 不回收）。
+- **重复执行：** `ensureColumn` 与 `create table/index if not exists` / `drop index if exists`；重复打开不改写已有行。
+- **失败行为：** 列或表创建失败会阻止 Controller 打开数据库。checkpoint gap/overlap 拒绝入账并记对账事件，不静默裁剪。
+- **回归测试：** `TestTrafficLedgerV2MigratesFromPreviousSchema`、`TestTrafficLedgerCoversHistoricalProtocolVersionTwoRows`、`TestTrafficLedgerV2IsIdempotentAfterLostACK`、`TestTrafficLedgerV2SameRangeDifferentReportIDIsCovered`、`TestAgentTrafficRejectsDeltaItems`、`TestTrafficRuntimePoliciesEnforceZeroLeaseWithoutExceedingGlobalQuota`
+- **移除条件：** 最老直接升级版本与可恢复备份均已包含 range 列、stream 表和 `idx_traffic_reports_range`；恢复入口拒绝缺少 stream 表的备份。
+- **移除状态：** 生效中
+
+## 新登记模板
+
+复制以下条目到“生效中的迁移”，并在“登记摘要”增加一行：
+
+```markdown
 ### <component>-<category>-<YYYYMMDD>-<short-name>
 
 - **引入日期：** YYYY-MM-DD

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -591,10 +592,75 @@ func (s *Server) subscriptionPlanDetail(w http.ResponseWriter, r *http.Request, 
 		fail(w, err, 500)
 		return
 	}
+	// Enrich nodes with catalog info so the UI does not need to fetch the entire assignable catalog
+	var enrichedActive, enrichedLatest []map[string]any
+	if data, err := s.loadPlanAssignmentData(r.Context()); err == nil {
+		catalog, _ := core.BuildAssignableNodeCatalog(core.AssignableNodeCatalogInput{
+			Servers: data.config.Servers, Inbounds: data.config.Inbounds, ProxyPaths: data.config.ProxyPaths, ProxyPathSteps: data.config.ProxyPathSteps,
+			EgressResults: data.config.ProxyPathEgressResults, ExternalOutbounds: data.config.ExternalOutbounds, ServerOnline: data.serverOnline, NodeMetadata: data.nodeMetadata,
+		})
+		byKey := map[string]core.AssignableNode{}
+		for _, n := range catalog {
+			byKey[n.Key] = n
+		}
+		enrich := func(nodes []model.SubscriptionPlanNode) []map[string]any {
+			out := make([]map[string]any, 0, len(nodes))
+			for _, pn := range nodes {
+				key := core.NodeKeyOf(pn.NodeType, pn.NodeID)
+				if _, ok := byKey[key]; !ok {
+					// Not assignable (deleted); drop from subscription preview but keep in history
+					continue
+				}
+				n := byKey[key]
+				m := map[string]any{"node_type": pn.NodeType, "node_id": pn.NodeID, "display_group": pn.DisplayGroup, "source_type": pn.SourceType, "source_rule_id": pn.SourceRuleID, "sort_position": pn.SortPosition, "display_name_override": pn.DisplayNameOverride, "key": key}
+				m["name"] = n.Name
+				m["effective_global_name"] = n.EffectiveGlobalName
+				m["source_name"] = n.SourceName
+				m["entry_server_name"] = n.EntryServerName
+				m["entry_protocol"] = string(n.EntryProtocol)
+				m["exit_region"] = n.ExitRegion
+				m["status"] = string(n.Status)
+				m["runtime_state"] = "ready"
+				if n.Status != "active" {
+					m["runtime_state"] = "waiting_resource"
+				}
+				out = append(out, m)
+			}
+			return out
+		}
+		enrichedActive = enrich(activeNodes)
+		enrichedLatest = enrich(latestNodes)
+	} else {
+		enrichedActive = make([]map[string]any, 0, len(activeNodes))
+		for _, pn := range activeNodes {
+			enrichedActive = append(enrichedActive, map[string]any{"node_type": pn.NodeType, "node_id": pn.NodeID, "display_group": pn.DisplayGroup, "key": core.NodeKeyOf(pn.NodeType, pn.NodeID), "runtime_state": "ready"})
+		}
+		enrichedLatest = make([]map[string]any, 0, len(latestNodes))
+		for _, pn := range latestNodes {
+			enrichedLatest = append(enrichedLatest, map[string]any{"node_type": pn.NodeType, "node_id": pn.NodeID, "display_group": pn.DisplayGroup, "key": core.NodeKeyOf(pn.NodeType, pn.NodeID), "runtime_state": "ready"})
+		}
+	}
+	var currentRev, latestRev *model.SubscriptionPlanRevision
+	for i := range revisions {
+		if revisions[i].ID == plan.CurrentRevisionID {
+			v := revisions[i]
+			currentRev = &v
+		}
+		if revisions[i].ID == plan.LatestRevisionID {
+			v := revisions[i]
+			latestRev = &v
+		}
+	}
+	reconcileState, _ := s.store.GetPlanReconcileState(r.Context(), id)
 	write(w, 200, map[string]any{
 		"subscription_plan":          plan,
 		"nodes":                      activeNodes,
 		"latest_nodes":               latestNodes,
+		"enriched_nodes":             enrichedActive,
+		"enriched_latest_nodes":      enrichedLatest,
+		"current_revision":           currentRev,
+		"latest_revision":            latestRev,
+		"reconcile_state":            reconcileState,
 		"revisions":                  revisions,
 		"member_count":               len(members),
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
@@ -725,10 +791,11 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 	}
 	var change *model.AccessChange
 	if !result.NoChange && result.RequiresDeployment {
-		change, err = s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
-		if err != nil {
-			fail(w, err, planWriteStatus(err))
-			return
+		s.signalPlanReconcile(id)
+		if c, err := s.enqueuePlanDeployment(r.Context(), r, plan, result.Revision.ID); err != nil {
+			log.Printf("plan %d enqueue deployment: %v", id, err)
+		} else {
+			change = c
 		}
 	}
 	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
@@ -748,6 +815,9 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 			out["access_change_id"] = change.ID
 			out["access_change_status"] = change.Status
 			out["queued_tasks"] = len(change.Targets)
+		} else {
+			// Deployment is queued asynchronously via reconciler
+			out["reconcile_queued"] = true
 		}
 	}
 	write(w, 200, out)
@@ -1112,14 +1182,18 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 		}
 		out := map[string]any{"restored": !result.NoChange, "no_change": result.NoChange, "revision": result.Revision, "version_no": result.Revision.VersionNo, "latest_revision_id": result.LatestRevisionID, "pending_revision_id": result.PendingRevisionID, "runtime_authorization_mode": s.authorizationMode(r.Context())}
 		if !result.NoChange && result.RequiresDeployment {
-			change, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
-			if err != nil {
-				fail(w, err, planWriteStatus(err))
-				return
+			s.signalPlanReconcile(id)
+			if hasOpen, _ := s.store.HasOpenPlanAccessChange(r.Context(), id); !hasOpen {
+				if c, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID); err == nil {
+					out["access_change_id"] = c.ID
+					out["access_change_status"] = c.Status
+					out["queued_tasks"] = len(c.Targets)
+				} else {
+					out["reconcile_queued"] = true
+				}
+			} else {
+				out["reconcile_queued"] = true
 			}
-			out["access_change_id"] = change.ID
-			out["access_change_status"] = change.Status
-			out["queued_tasks"] = len(change.Targets)
 		}
 		auditReq(s, r, "restore", "subscription-plan", fmt.Sprintf("plan=%d revision=%d", id, revisionID))
 		write(w, 200, out)
@@ -1344,28 +1418,40 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 		})
 		return
 	}
-	change, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
-	if err != nil {
-		fail(w, err, planWriteStatus(err))
-		return
+	s.signalPlanReconcile(id)
+	var change *model.AccessChange
+	if c, err := s.enqueuePlanDeployment(r.Context(), r, plan, result.Revision.ID); err != nil {
+		log.Printf("plan %d enqueue deployment: %v", id, err)
+	} else {
+		change = c
 	}
-	auditReq(s, r, req.Op, "subscription-plan-nodes", fmt.Sprintf("%d:%d change=%d", id, len(nodes), change.ID))
+	auditReq(s, r, req.Op, "subscription-plan-nodes", fmt.Sprintf("%d:%d change=%v", id, len(nodes), func() any {
+		if change != nil {
+			return change.ID
+		}
+		return "queued"
+	}()))
 	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	write(w, 200, map[string]any{
+	out := map[string]any{
 		"subscription_plan":          updated,
 		"revision":                   result.Revision,
 		"version_no":                 result.Revision.VersionNo,
 		"latest_revision_id":         result.LatestRevisionID,
 		"pending_revision_id":        result.PendingRevisionID,
-		"access_change_id":           change.ID,
-		"access_change_status":       change.Status,
-		"queued_tasks":               len(change.Targets),
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
-	})
+	}
+	if change != nil {
+		out["access_change_id"] = change.ID
+		out["access_change_status"] = change.Status
+		out["queued_tasks"] = len(change.Targets)
+	} else {
+		out["reconcile_queued"] = true
+	}
+	write(w, 200, out)
 }
 
 // computePlanNodesChange previews one node edit against the latest saved

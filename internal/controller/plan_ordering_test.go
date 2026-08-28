@@ -572,15 +572,6 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 	}
 	hash := preview["preview_hash"].(string)
 
-	// An ordering save while a version is pending is rejected; after the
-	// pending version finalizes, reusing the old preview hash conflicts.
-	currentLock := int64(plan["lock_version"].(float64))
-	conflict := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
-		"expected_lock_version": currentLock, "policy": orderingPolicy("manual", "entry", nil), "manual_node_order": []string{},
-	}, http.StatusConflict)
-	if conflict["code"] != "plan_version_applying" {
-		t.Fatalf("concurrent ordering save = %#v", conflict)
-	}
 	terminal := driveAccessChange(t, srv, token, changeID)
 	if terminal["status"] != "finalized" {
 		t.Fatalf("node change = %#v", terminal)

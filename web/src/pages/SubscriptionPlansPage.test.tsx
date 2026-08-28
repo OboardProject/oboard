@@ -149,11 +149,14 @@ describe('SubscriptionPlansPage', () => {
       if (path === '/subscription-plans/1') return {
         subscription_plan: { ...plan, node_count: 3 },
         latest_nodes: latestNodes,
+        enriched_latest_nodes: [
+          { node_type: 'inbound', node_id: 24, display_group: '', source_type: 'explicit', key: 'inbound:24', name: 'NB TYO', effective_global_name: 'NB TYO', entry_server_name: 'NB TYO', exit_region: 'JP' },
+        ],
         revisions: [{ id: 1, revision: 1, version_no: 1, status: 'current', speed_limit_mbps: 100, traffic_limit_bytes: 1073741824, traffic_reset_mode: 'monthly', traffic_reset_day: 1, created_at: '2026-08-11T00:00:00Z' }],
         member_count: 0,
       }
       if (path.startsWith('/assignable-nodes?')) return { nodes: catalogNodes, total: catalogNodes.length, page: 1, page_size: 200 }
-      if (path === '/subscription-plans/1/ordering') return { nodes: [{ key: 'inbound:24' }, { key: 'inbound:30' }, { key: 'proxy_path:1' }], policy: { mode: 'exit_region' } }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [{ key: 'inbound:24' }], policy: { mode: 'exit_region' } }
       if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
       if (path === '/subscription-plans/1/nodes/preview') {
         const body = JSON.parse(String(init?.body || '{}'))
@@ -194,12 +197,13 @@ describe('SubscriptionPlansPage', () => {
     act(() => saveButton?.click())
     await flushEffects()
 
-    expect(previewBodies).toHaveLength(1)
-    expect(previewBodies[0].nodes).toEqual([
+    expect(previewBodies).toHaveLength(0)
+    expect(applyBodies.length).toBeGreaterThanOrEqual(1)
+    const lastApply = applyBodies[applyBodies.length - 1]
+    expect(lastApply.nodes).toEqual([
       { node_type: 'inbound', node_id: 24, display_group: '' },
       { node_type: 'proxy_path', node_id: 11, display_group: '' },
     ])
-    expect(applyBodies).toHaveLength(1)
   })
 
   it('shows a failed node change without blocking further edits', async () => {
@@ -269,6 +273,11 @@ describe('SubscriptionPlansPage', () => {
       if (path === '/subscription-plans/1') return {
         subscription_plan: { ...plan, node_count: 3 },
         latest_nodes: latestNodes,
+        enriched_latest_nodes: [
+          { node_type: 'inbound', node_id: 31, key: 'inbound:31', name: '沪日｜SSH', effective_global_name: '沪日｜SSH', entry_server_name: '沪日', entry_protocol: 'ssh', exit_region: 'JP' },
+          { node_type: 'proxy_path', node_id: 1, key: 'proxy_path:1', name: '9929', effective_global_name: '9929', entry_server_name: '9929', entry_protocol: 'vless', exit_region: 'DE' },
+          { node_type: 'proxy_path', node_id: 2, key: 'proxy_path:2', name: '沪日｜HY2', effective_global_name: '沪日｜HY2', entry_server_name: '沪日', entry_protocol: 'hysteria2', exit_region: 'JP' },
+        ],
         revisions: [{ id: 1, revision: 1, version_no: 1, status: 'current', speed_limit_mbps: 100, traffic_limit_bytes: 1073741824, traffic_reset_mode: 'monthly', traffic_reset_day: 1, created_at: '2026-08-11T00:00:00Z' }],
         member_count: 0,
       }

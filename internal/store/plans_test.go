@@ -123,21 +123,38 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 		t.Fatalf("stale base err = %v, want ErrPlanRevisionConflict", err)
 	}
 
-	// A second save while a version is pending is rejected.
-	if _, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+	// A second save while a version is pending succeeds and keeps the applying pointer.
+	speed := 200
+	second, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
 		ExpectedLockVersion: plan.LockVersion,
-		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 9}}},
-	}); !errors.Is(err, ErrPlanVersionApplying) {
-		t.Fatalf("concurrent save err = %v, want ErrPlanVersionApplying", err)
+		Settings:            &PlanSettingsMutation{SpeedLimitMbps: &speed},
+		ChangeKind:          model.PlanChangeKindSettings,
+	})
+	if err != nil {
+		t.Fatalf("concurrent save err = %v", err)
 	}
-
-	// Activation advances the current pointer and clears pending.
+	if second.PendingRevisionID != created.Revision.ID || second.LatestRevisionID == created.Revision.ID || second.LockVersion != 3 {
+		t.Fatalf("concurrent save result = %#v", second)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if plan.PendingRevisionID != created.Revision.ID || plan.LatestRevisionID != second.Revision.ID || plan.LockVersion != 3 {
+		t.Fatalf("plan after concurrent save = %#v", plan)
+	}
+	// Activation advances the current pointer, clears the applying revision and does not bump lock_version.
 	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, created.Revision.ID, 7, nil); err != nil {
 		t.Fatal(err)
 	}
 	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
 	if plan.CurrentRevisionID != created.Revision.ID || plan.PendingRevisionID != 0 || plan.LockVersion != 3 {
 		t.Fatalf("plan after activation = %#v", plan)
+	}
+	// The second desired revision is still pending deployment via reconciler.
+	if err := s.ActivatePlanVersionGuarded(ctx, plan.ID, plan.CurrentRevisionID, second.Revision.ID, 7, nil); err != nil {
+		t.Fatal(err)
+	}
+	plan, _ = s.GetSubscriptionPlan(ctx, plan.ID)
+	if plan.CurrentRevisionID != second.Revision.ID || plan.PendingRevisionID != 0 || plan.LockVersion != 3 {
+		t.Fatalf("plan after second activation = %#v", plan)
 	}
 	activeNodes, _ = s.ListActivePlanNodes(ctx, plan.ID)
 	if len(activeNodes) != 3 {
@@ -147,7 +164,7 @@ func TestSubscriptionPlanCRUDAndNodeVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(revisions) != 2 || revisions[0].VersionNo != 2 || revisions[0].ActivationChangeID == nil || *revisions[0].ActivationChangeID != 7 {
+	if len(revisions) != 3 || revisions[0].VersionNo != 3 || revisions[0].ActivationChangeID == nil || *revisions[0].ActivationChangeID != 7 {
 		t.Fatalf("revisions = %#v", revisions)
 	}
 

@@ -252,15 +252,24 @@ func (s *Server) planMembershipRulesVersionCreate(w http.ResponseWriter, r *http
 		write(w, 200, response)
 		return
 	}
-	plan.PendingRevisionID = result.PendingRevisionID
-	change, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID)
-	if err != nil {
-		fail(w, err, planWriteStatus(err))
-		return
+	s.signalPlanReconcile(planID)
+	var change *model.AccessChange
+	if hasOpen, _ := s.store.HasOpenPlanAccessChange(r.Context(), planID); !hasOpen {
+		fresh, _ := s.store.GetSubscriptionPlan(r.Context(), planID)
+		if fresh != nil {
+			plan.PendingRevisionID = result.PendingRevisionID
+			if c, err := s.createPlanPublishChange(r.Context(), r, plan, result.Revision.ID); err == nil {
+				change = c
+			}
+		}
 	}
-	response["access_change_id"] = change.ID
-	response["access_change_status"] = change.Status
-	response["queued_tasks"] = len(change.Targets)
+	if change != nil {
+		response["access_change_id"] = change.ID
+		response["access_change_status"] = change.Status
+		response["queued_tasks"] = len(change.Targets)
+	} else {
+		response["reconcile_queued"] = true
+	}
 	auditReq(s, r, "membership_rules.update", "subscription-plan", fmt.Sprintf("plan=%d version=%d", planID, result.Revision.ID))
 	write(w, 200, response)
 }
