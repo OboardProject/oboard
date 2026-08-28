@@ -22,6 +22,36 @@ export function controllerUpdateDisplayPhase(status: { status?: string; operatio
   return status?.status || ''
 }
 
+const FLOW_BASE: Record<string, number> = {
+  starting: 6,
+  checking: 10,
+  downloading: 22,
+  preflight: 32,
+  backing_up: 34,
+  ready: 74,
+  installing: 78,
+  restarting: 88,
+  verifying: 96,
+  cancelling: 40,
+}
+
+export function controllerUpdateFlowPercent(phase: string, backupPercent?: number): number {
+  if (phase === 'complete' || phase === 'installed') return 100
+  if (phase === 'backing_up') {
+    const backup = Math.max(0, Math.min(100, backupPercent || 0))
+    return Math.max(34, Math.min(72, 34 + backup * 0.38))
+  }
+  const base = FLOW_BASE[phase]
+  if (typeof base === 'number') return base
+  return 8
+}
+
+export function monotonicPercent(previous: number, next: number): number {
+  const value = Math.max(0, Math.min(100, Math.round(next)))
+  if (value < previous) return previous
+  return value
+}
+
 export function isControllerUpdateFailedStatus(status: string | undefined | null, lastError?: string | null): boolean {
   return status === 'failed' || status === 'unavailable' || (status === 'cancelled' && Boolean(lastError))
 }

@@ -8545,14 +8545,21 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   height: 6px;
   overflow: hidden;
   background: var(--surface-2);
+  border-radius: 999px;
 }
 
 .controller-update-install-progress span {
   display: block;
-  width: 36%;
+  width: 100%;
   height: 100%;
+  transform: scaleX(0.04);
+  transform-origin: left center;
   background: var(--text-secondary);
-  animation: controller-update-progress 1.4s ease-in-out infinite;
+  transition: transform 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .controller-update-install-progress span { transition: none; }
 }
 
 .controller-update-install-result.success > svg {
@@ -8567,9 +8574,56 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: var(--text-secondary);
 }
 
-@keyframes controller-update-progress {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(280%); }
+@media (max-width: 640px) {
+  .dialog.controller-update-install-dialog {
+    width: calc(100vw - 16px);
+    max-height: 100dvh;
+  }
+  .dialog.controller-update-install-dialog .dialog-head {
+    padding: 10px 12px;
+  }
+  .dialog.controller-update-install-dialog .dialog-head h2 { font-size: 16px; }
+  .dialog.controller-update-install-dialog .controller-update-install-body {
+    gap: 8px;
+    padding: 8px 12px 10px;
+    overflow: hidden !important;
+  }
+  .dialog.controller-update-install-dialog .controller-update-install-state p,
+  .dialog.controller-update-install-dialog .controller-update-install-notice.compact,
+  .dialog.controller-update-install-dialog .controller-update-install-advice {
+    display: none;
+  }
+  .dialog.controller-update-install-dialog .controller-update-install-lead p,
+  .dialog.controller-update-install-dialog .controller-update-install-notice span {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .controller-update-stages {
+    grid-template-columns: 1fr 1fr;
+    column-gap: 8px;
+  }
+  .controller-update-stage {
+    padding: 7px 0;
+    align-items: center;
+  }
+  .controller-update-stage small { display: none; }
+  .controller-update-stage strong { font-size: 12px; }
+  .controller-update-stage > span {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+  }
+  .dialog.controller-update-install-dialog .dialog-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+  .dialog.controller-update-install-dialog .dialog-actions > button:only-child {
+    grid-column: 1 / -1;
+  }
 }
 
 .controller-backup-card { gap: 18px; }

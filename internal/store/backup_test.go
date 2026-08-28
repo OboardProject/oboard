@@ -186,6 +186,21 @@ func TestBackupDoesNotUseVacuumInto(t *testing.T) {
 	}
 }
 
+func TestClampBackupPercentNeverGoesBackwards(t *testing.T) {
+	if got := clampBackupPercent(40, 100, 80, false); got != 40 {
+		t.Fatalf("clamped decreasing remaining = %v, want 40", got)
+	}
+	if got := clampBackupPercent(10, 100, 50, false); got != 50 {
+		t.Fatalf("forward percent = %v, want 50", got)
+	}
+	if got := clampBackupPercent(99, 100, 0, false); got != 99 {
+		t.Fatalf("almost done stays below 100 = %v", got)
+	}
+	if got := clampBackupPercent(40, 100, 0, true); got != 100 {
+		t.Fatalf("done percent = %v, want 100", got)
+	}
+}
+
 func TestBackupAllowsConcurrentWrites(t *testing.T) {
 	root := t.TempDir()
 	db, err := Open(filepath.Join(root, "source.sqlite"))

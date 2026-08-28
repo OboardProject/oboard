@@ -802,18 +802,14 @@ func (s *Server) createControllerBackup(ctx context.Context) (string, error) {
 	s.cleanupZeroByteControllerUpdateBackupFiles()
 	name := "oboard-before-update-" + time.Now().UTC().Format("20060102T150405.000000000Z") + ".sqlite"
 	path := filepath.Join(dir, name)
-	started := time.Now()
-	run, _ := s.store.GetActiveControllerUpdateRun(ctx)
+	lastPublish := time.Time{}
 	err := s.store.Backup(ctx, path, store.BackupOptions{
 		Progress: func(progress store.BackupProgress) {
 			s.controllerUpdateProgress.Store(progress)
-			if run != nil {
-				s.persistControllerUpdateProgress(run, progress)
-			}
 			now := time.Now()
-			if now.Sub(started) >= 250*time.Millisecond {
+			if lastPublish.IsZero() || now.Sub(lastPublish) >= 250*time.Millisecond {
 				s.publishRealtime("controller_update")
-				started = now
+				lastPublish = now
 			}
 		},
 	})

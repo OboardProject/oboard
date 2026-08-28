@@ -166,24 +166,6 @@ func (s *Server) preflightControllerUpdate(ctx context.Context, run *store.Contr
 	return nil
 }
 
-func (s *Server) persistControllerUpdateProgress(run *store.ControllerUpdateRun, progress store.BackupProgress) {
-	if run == nil || run.ID <= 0 {
-		return
-	}
-	s.controllerUpdateProgress.Store(progress)
-	now := time.Now().UnixMilli()
-	prev := s.controllerUpdateProgressAt.Load()
-	if prev != 0 && now-prev < 1000 {
-		return
-	}
-	s.controllerUpdateProgressAt.Store(now)
-	run.BackupTotalPages = progress.TotalPages
-	run.BackupRemainingPages = progress.RemainingPages
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = s.store.UpdateControllerUpdateRun(ctx, run)
-}
-
 func (s *Server) failControllerUpdateRun(ctx context.Context, run *store.ControllerUpdateRun, message string) {
 	if run == nil {
 		return

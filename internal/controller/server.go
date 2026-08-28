@@ -149,7 +149,6 @@ type Server struct {
 	controllerUpdateCancelMu      sync.Mutex
 	controllerUpdateAbort         context.CancelFunc
 	controllerUpdateProgress      atomic.Value
-	controllerUpdateProgressAt    atomic.Int64
 	agentUpdates                  *agentUpdateCoordinator
 	controllerActivityMu          sync.Mutex
 	controllerActiveRequests      int

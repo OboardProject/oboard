@@ -64,6 +64,7 @@ func (s *Store) Backup(ctx context.Context, destination string, options BackupOp
 	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	_, _ = s.db.ExecContext(ctx, `pragma wal_checkpoint(truncate)`)
 	pagesPerStep := options.PagesPerStep
 	if pagesPerStep <= 0 {
 		pagesPerStep = defaultBackupPagesPerStep
@@ -143,10 +144,7 @@ func runOnlineBackup(ctx context.Context, backuper sqliteBackuper, destination s
 		if completed < 0 {
 			completed = 0
 		}
-		percent := 0.0
-		if total > 0 {
-			percent = (float64(completed) / float64(total)) * 100
-		}
+		percent := clampBackupPercent(lastPercent, total, remaining, !more)
 		now := time.Now()
 		shouldReport := lastProgressAt.IsZero() || now.Sub(lastProgressAt) >= backupProgressMinInterval || percent-lastPercent >= backupProgressMinPercentDelta || !more
 		if shouldReport && progress != nil {
@@ -195,6 +193,33 @@ func runOnlineBackup(ctx context.Context, backuper sqliteBackuper, destination s
 		return fmt.Errorf("fsync SQLite backup: %w", err)
 	}
 	return nil
+}
+
+// clampBackupPercent never reports a lower value while backup is still running.
+// Concurrent writers can raise PageCount/Remaining and would otherwise make the
+// UI bounce backwards. 100% is reserved for SQLITE_DONE.
+func clampBackupPercent(previous float64, total, remaining int, done bool) float64 {
+	if done {
+		return 100
+	}
+	percent := 0.0
+	if total > 0 {
+		completed := total - remaining
+		if completed < 0 {
+			completed = 0
+		}
+		percent = (float64(completed) / float64(total)) * 100
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 99 {
+		percent = 99
+	}
+	if previous > percent {
+		return previous
+	}
+	return percent
 }
 
 func fsyncPath(path string) error {

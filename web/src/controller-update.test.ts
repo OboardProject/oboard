@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   CONTROLLER_UPDATE_PENDING_MESSAGE,
   controllerUpdateDisplayPhase,
+  controllerUpdateFlowPercent,
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
   isControllerUpdateInProgressStatus,
+  monotonicPercent,
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
 
@@ -90,6 +92,17 @@ describe('controller update pending toast', () => {
   it('prefers the orchestration phase over updater status', () => {
     expect(controllerUpdateDisplayPhase({ status: 'ready', operation: { active: true, phase: 'backing_up' } })).toBe('backing_up')
     expect(controllerUpdateDisplayPhase({ status: 'available', operation: { active: false, phase: 'idle' } })).toBe('available')
+  })
+
+  it('maps install phases onto a forward-only flow bar', () => {
+    expect(controllerUpdateFlowPercent('checking')).toBe(10)
+    expect(controllerUpdateFlowPercent('backing_up', 0)).toBe(34)
+    expect(controllerUpdateFlowPercent('backing_up', 50)).toBe(53)
+    expect(controllerUpdateFlowPercent('backing_up', 100)).toBe(72)
+    expect(controllerUpdateFlowPercent('installing')).toBe(78)
+    expect(controllerUpdateFlowPercent('complete')).toBe(100)
+    expect(monotonicPercent(40, 12)).toBe(40)
+    expect(monotonicPercent(40, 61)).toBe(61)
   })
 
   it('distinguishes failed background cancellation from a requested cancellation', () => {
