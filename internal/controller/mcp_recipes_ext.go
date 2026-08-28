@@ -601,7 +601,11 @@ func (s *Server) prepareControllerUpdateRecipe(_ context.Context, _ application.
 		operation = mcpOperationRef{Capability: "controller_update.set_channel", Input: map[string]any{"channel": channel}}
 		action = "set_controller_update_channel"
 	case containsAnyFold(goal, "安装", "升级", "更新主控", "install", "update controller"):
-		operation = mcpOperationRef{Capability: "controller_update.install", Input: map[string]any{"confirm": true}}
+		installInput := map[string]any{"confirm": true}
+		if taskBoolParam(input.Params, false, "skip_backup") || containsAnyFold(goal, "跳过备份", "skip backup") {
+			installInput["skip_backup"] = true
+		}
+		operation = mcpOperationRef{Capability: "controller_update.install", Input: installInput}
 		action = "install_controller_update"
 	case containsAnyFold(goal, "检查", "check"):
 		operation = mcpOperationRef{Capability: "controller_update.check", Input: map[string]any{}}

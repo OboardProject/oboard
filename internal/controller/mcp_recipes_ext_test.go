@@ -64,10 +64,12 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 		name, goal, capability string
 		params                 map[string]any
 		confirm                bool
+		skipBackup             bool
 	}{
 		{name: "check", goal: "检查主控更新", capability: "controller_update.check"},
 		{name: "channel", goal: "切换主控更新通道", capability: "controller_update.set_channel", params: map[string]any{"channel": "stable"}},
 		{name: "install", goal: "安装主控更新", capability: "controller_update.install", confirm: true},
+		{name: "install-skip-backup", goal: "跳过备份安装主控更新", capability: "controller_update.install", confirm: true, skipBackup: true},
 		{name: "cancel", goal: "取消主控更新", capability: "controller_update.cancel", confirm: true},
 	}
 	for _, test := range tests {
@@ -82,6 +84,9 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 			}
 			if test.confirm && operation.Input["confirm"] != true {
 				t.Fatalf("confirmation missing: %#v", operation.Input)
+			}
+			if got, _ := operation.Input["skip_backup"].(bool); got != test.skipBackup {
+				t.Fatalf("skip_backup=%v want %v input=%#v", got, test.skipBackup, operation.Input)
 			}
 		})
 	}

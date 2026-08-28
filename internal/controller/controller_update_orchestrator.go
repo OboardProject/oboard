@@ -134,9 +134,15 @@ func (s *Server) cancelControllerUpdateContext() {
 	}
 }
 
-func (s *Server) preflightControllerUpdate(ctx context.Context, run *store.ControllerUpdateRun, backupDir string) error {
+func (s *Server) preflightControllerUpdate(ctx context.Context, run *store.ControllerUpdateRun, backupDir string, skipBackup bool) error {
 	if run == nil {
 		return errors.New("update run is required")
+	}
+	if strings.TrimSpace(run.TargetBuild) == "" {
+		return errors.New("目标构建尚未确定")
+	}
+	if skipBackup {
+		return nil
 	}
 	pageCount, pageSize, _, err := s.store.DatabasePageStats(ctx)
 	if err != nil {
@@ -158,9 +164,6 @@ func (s *Server) preflightControllerUpdate(ctx context.Context, run *store.Contr
 	need := store.RequiredBackupFreeBytes(dbSize)
 	if free < need {
 		return fmt.Errorf("磁盘空间不足：需要至少 %d 字节，当前可用 %d 字节", need, free)
-	}
-	if strings.TrimSpace(run.TargetBuild) == "" {
-		return errors.New("目标构建尚未确定")
 	}
 	run.BackupSizeBytes = dbSize
 	return nil

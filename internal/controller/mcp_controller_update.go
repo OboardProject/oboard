@@ -14,8 +14,9 @@ import (
 )
 
 type controllerUpdateAutomationInput struct {
-	Channel string `json:"channel,omitempty"`
-	Confirm bool   `json:"confirm,omitempty"`
+	Channel    string `json:"channel,omitempty"`
+	Confirm    bool   `json:"confirm,omitempty"`
+	SkipBackup bool   `json:"skip_backup,omitempty"`
 }
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
@@ -222,7 +223,7 @@ func (s *Server) registerControllerUpdateOperations() {
 					err = controllerUpdateOperationError("切换更新通道失败", status, err)
 				}
 			case "controller_update.install":
-				status, accepted, err = s.beginManualControllerUpdate(ctx)
+				status, accepted, err = s.beginManualControllerUpdate(ctx, request.SkipBackup)
 			case "controller_update.cancel":
 				status, err = s.controllerUpdater.Cancel(ctx)
 				if err != nil {
@@ -249,15 +250,22 @@ func (s *Server) controllerUpdateAutomationCandidate(ctx context.Context, capabi
 	request.Channel = strings.ToLower(strings.TrimSpace(request.Channel))
 	switch capabilityName {
 	case "controller_update.check":
-		if request.Channel != "" || request.Confirm {
+		if request.Channel != "" || request.Confirm || request.SkipBackup {
 			return request, controllerupdate.Status{}, errors.New("controller update check does not accept parameters")
 		}
 	case "controller_update.set_channel":
 		if request.Channel != "stable" && request.Channel != "dev" {
 			return request, controllerupdate.Status{}, errors.New("channel must be stable or dev")
 		}
-	case "controller_update.install", "controller_update.cancel":
+		if request.SkipBackup {
+			return request, controllerupdate.Status{}, errors.New("channel switch does not accept skip_backup")
+		}
+	case "controller_update.install":
 		if !request.Confirm || request.Channel != "" {
+			return request, controllerupdate.Status{}, errors.New("confirm=true is required")
+		}
+	case "controller_update.cancel":
+		if !request.Confirm || request.Channel != "" || request.SkipBackup {
 			return request, controllerupdate.Status{}, errors.New("confirm=true is required")
 		}
 	default:

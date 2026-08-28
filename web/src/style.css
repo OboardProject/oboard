@@ -8621,7 +8621,8 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
     gap: 8px;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   }
-  .dialog.controller-update-install-dialog .dialog-actions > button:only-child {
+  .dialog.controller-update-install-dialog .dialog-actions > button:only-child,
+  .dialog.controller-update-install-dialog .dialog-actions > button:last-child:nth-child(n + 3) {
     grid-column: 1 / -1;
   }
 }

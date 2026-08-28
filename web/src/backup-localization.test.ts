@@ -50,4 +50,11 @@ describe('backup and update localization', () => {
     expect(main).toContain('点击选择，或将 .obk 文件拖到此处')
     expect(main).toContain("inputType: 'password'")
   })
+
+  it('offers skip-backup on the controller update confirm dialog', () => {
+    expect(main).toContain('跳过备份更新')
+    expect(main).toContain('备份并更新')
+    expect(main).toContain('body: JSON.stringify({ skip_backup: Boolean(skipBackup) })')
+    expect(main).toContain('没有其他可用备份时，不建议跳过备份。')
+  })
 })

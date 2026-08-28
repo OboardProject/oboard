@@ -293,7 +293,7 @@ func TestControllerUpdateBusyReturnsImmediately(t *testing.T) {
 	defer app.controllerUpdateRunMu.Unlock()
 
 	startedAt := time.Now()
-	status, accepted, err := app.beginManualControllerUpdate(t.Context())
+	status, accepted, err := app.beginManualControllerUpdate(t.Context(), false)
 	if !errors.Is(err, errControllerUpdateBusy) {
 		t.Fatalf("busy update error = %v, want %v", err, errControllerUpdateBusy)
 	}
@@ -408,6 +408,101 @@ func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
 	}
 	if strings.TrimSpace(settings[controllerBackupSetting]) == "" {
 		t.Fatal("background update did not record its database backup")
+	}
+}
+
+func TestControllerUpdateInstallSkipBackup(t *testing.T) {
+	root := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "obu-skip-backup-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "updater.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installStarted := make(chan struct{})
+	releaseInstall := make(chan struct{})
+	var releaseInstallOnce sync.Once
+	unblockInstall := func() { releaseInstallOnce.Do(func() { close(releaseInstall) }) }
+	updater := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := controllerupdate.Status{
+			Channel:         "dev",
+			State:           "available",
+			UpdateAvailable: true,
+			Available:       controllerupdate.BuildInfo{Version: "dev-next", Build: "20260828000000"},
+		}
+		switch r.URL.Path {
+		case "/v1/prepare":
+			status.State = "downloading"
+			status.CanCancel = true
+		case "/v1/install":
+			close(installStarted)
+			select {
+			case <-releaseInstall:
+			case <-r.Context().Done():
+				t.Errorf("updater install request was cancelled: %v", r.Context().Err())
+				return
+			}
+			status.State = "installing"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(status)
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- updater.Serve(listener) }()
+	t.Cleanup(func() {
+		unblockInstall()
+		_ = updater.Close()
+		<-serveDone
+	})
+
+	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	app.controllerUpdater = controllerupdate.NewClient(socketPath)
+	blockedBackup := filepath.Join(root, "backups")
+	if err := os.WriteFile(blockedBackup, []byte("not-a-directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.controllerBackupDir = blockedBackup
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ui/controller-update/install", strings.NewReader(`{"skip_backup":true}`))
+	handlerDone := make(chan struct{})
+	go func() {
+		app.controllerUpdateInstall(recorder, request)
+		close(handlerDone)
+	}()
+
+	select {
+	case <-handlerDone:
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("install response=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	case <-time.After(time.Second):
+		unblockInstall()
+		t.Fatal("install API waited for the background updater operation")
+	}
+	select {
+	case <-installStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("skip-backup install did not reach the updater")
+	}
+	unblockInstall()
+	app.controllerUpdateRunMu.Lock()
+	app.controllerUpdateRunMu.Unlock()
+	settings, err := db.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(settings[controllerBackupSetting]) != "" {
+		t.Fatalf("skip_backup still recorded a database backup: %q", settings[controllerBackupSetting])
 	}
 }
 
