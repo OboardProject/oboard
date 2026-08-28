@@ -38,7 +38,7 @@ func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 	sub, err := GenerateSubscriptionWithOptions(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: inboundID, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
-		SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true}},
+		SubscriptionOptions{Format: model.SubscriptionFormatSingBox, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true}},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -167,7 +167,11 @@ func TestSubscriptionAgeAPIOptionalRequiredAndHeaderModes(t *testing.T) {
 	if decrypted := decryptAgeTestPayload(t, required.Body.Bytes(), identity); decrypted != plain.Body.String() {
 		t.Fatalf("required decrypted subscription differs from plain output")
 	}
-	ordinarySingBox := fetch(subscriptionToken, "", "")
+	requiredBare := fetch(subscriptionToken, "", "")
+	if requiredBare.Code != http.StatusOK || requiredBare.Header().Get("Subscription-Encryption") != "age" {
+		t.Fatalf("required age omitted format status=%d headers=%#v", requiredBare.Code, requiredBare.Header())
+	}
+	ordinarySingBox := fetch(subscriptionToken, "?format=sing-box", "")
 	if ordinarySingBox.Code != http.StatusOK || ordinarySingBox.Header().Get("Subscription-Encryption") != "" {
 		t.Fatalf("required policy affected sing-box output: status=%d headers=%#v", ordinarySingBox.Code, ordinarySingBox.Header())
 	}

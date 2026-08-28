@@ -19533,7 +19533,7 @@ function subscriptionURLForToken(token: string, format: SubscriptionFormat, encr
   if (!token) return ''
 	const base = `${appSubscriptionURL()}/api/v1/subscriptions/${token}`
 	const params = new URLSearchParams()
-  if (format !== 'sing-box') params.set('format', format)
+  if (format !== 'mihomo') params.set('format', format)
   if (encrypted) params.set('age', '1')
 	const query = params.toString()
 	return query ? `${base}?${query}` : base
@@ -19547,7 +19547,7 @@ function subscriptionURLForCustomPath(alias: string, format: SubscriptionFormat,
   if (!alias) return ''
   const base = `${appSubscriptionURL()}/s/${alias}`
   const params = new URLSearchParams()
-  if (format !== 'sing-box') params.set('format', format)
+  if (format !== 'mihomo') params.set('format', format)
   if (encrypted) params.set('age', '1')
   const query = params.toString()
   return query ? `${base}?${query}` : base

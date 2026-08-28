@@ -48,7 +48,7 @@ func TestBareSubscriptionURLIgnoresUserAgent(t *testing.T) {
 	req.Header.Set("User-Agent", "Surge iOS/5.8.0")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"type": "direct"`) || strings.Contains(rr.Header().Get("Vary"), "User-Agent") {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "proxies:") || strings.Contains(rr.Header().Get("Vary"), "User-Agent") {
 		t.Fatalf("bare URL status=%d vary=%q body=%s", rr.Code, rr.Header().Get("Vary"), rr.Body.String())
 	}
 }

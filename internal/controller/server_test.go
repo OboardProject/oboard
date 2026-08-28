@@ -1727,8 +1727,8 @@ func TestSubscriptionBurnAfterReadLifecycle(t *testing.T) {
 	rotated := request(t, h, http.MethodPost, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/rotate", adminToken, map[string]any{}, http.StatusOK)
 	persistentToken := rotated["subscription_token"].(string)
 	request(t, h, http.MethodPatch, "/api/v1/ui/users/"+itoa(userID)+"/subscription-token/policy", adminToken, map[string]any{"burn_after_read": false}, http.StatusOK)
-	if got := fetch(persistentToken); got.Code != http.StatusOK || got.Header().Get("X-OBoard-Subscription") != "" || got.Header().Get("Content-Type") != "application/json" || !strings.Contains(got.Body.String(), `"outbounds"`) {
-		t.Fatalf("persistent subscription first fetch status=%d headers=%#v", got.Code, got.Header())
+	if got := fetch(persistentToken); got.Code != http.StatusOK || got.Header().Get("X-OBoard-Subscription") != "" || got.Header().Get("Content-Type") != "text/yaml; charset=utf-8" || !strings.Contains(got.Body.String(), "proxies:") {
+		t.Fatalf("persistent subscription first fetch status=%d headers=%#v body=%s", got.Code, got.Header(), got.Body.String())
 	}
 	if got := fetch(persistentToken); got.Code != http.StatusOK {
 		t.Fatalf("persistent subscription second fetch status=%d body=%s", got.Code, got.Body.String())

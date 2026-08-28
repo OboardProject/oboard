@@ -103,11 +103,11 @@ func ResolveSubscriptionFormat(requested model.SubscriptionFormat, userAgent str
 	raw := strings.TrimSpace(string(requested))
 	match := DetectSubscriptionClient(userAgent)
 	if raw == "" {
-		match.RequestedFormat = model.SubscriptionFormatSingBox
-		match.ResolvedFormat = model.SubscriptionFormatSingBox
+		match.RequestedFormat = model.SubscriptionFormatMihomo
+		match.ResolvedFormat = model.SubscriptionFormatMihomo
 		return SubscriptionFormatResolution{
-			Requested: model.SubscriptionFormatSingBox,
-			Resolved:  model.SubscriptionFormatSingBox,
+			Requested: model.SubscriptionFormatMihomo,
+			Resolved:  model.SubscriptionFormatMihomo,
 			Match:     match,
 		}
 	}

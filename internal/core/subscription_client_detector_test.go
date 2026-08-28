@@ -56,10 +56,16 @@ func TestDetectSubscriptionClientTable(t *testing.T) {
 	}
 }
 
-func TestResolveSubscriptionFormatEmptyStaysSingBox(t *testing.T) {
+func TestResolveSubscriptionFormatEmptyUsesMihomo(t *testing.T) {
 	resolution := ResolveSubscriptionFormat("", "Surge iOS/5.8.0")
-	if resolution.Requested != model.SubscriptionFormatSingBox || resolution.Resolved != model.SubscriptionFormatSingBox || resolution.Auto {
+	if resolution.Requested != model.SubscriptionFormatMihomo || resolution.Resolved != model.SubscriptionFormatMihomo || resolution.Auto {
 		t.Fatalf("bare URL resolution = %#v", resolution)
+	}
+	if got := NormalizeSubscriptionFormatForAPI(""); got != model.SubscriptionFormatMihomo {
+		t.Fatalf("empty normalize = %q", got)
+	}
+	if got := NormalizeSubscriptionFormatForAPI("sing-box"); got != model.SubscriptionFormatSingBox {
+		t.Fatalf("sing-box normalize = %q", got)
 	}
 }
 

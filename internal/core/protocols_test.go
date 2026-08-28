@@ -1643,7 +1643,7 @@ func TestPlaceholderDoesNotEnterSubscription(t *testing.T) {
 		model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"},
 		[]model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
-		SubscriptionOptions{EffectiveNodes: map[string]bool{}},
+		SubscriptionOptions{Format: model.SubscriptionFormatSingBox, EffectiveNodes: map[string]bool{}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1667,14 +1667,14 @@ func TestPlaceholderDoesNotEnterSubscription(t *testing.T) {
 func TestImportedSocksSubscriptionRequiresGrant(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	external := model.ExternalOutbound{ID: 9, Name: "socks-a", Protocol: model.ProtocolSocks, TargetAddress: "socks.example.com", TargetPort: 1080, ConfigJSON: `{"type":"socks","server":"socks.example.com","server_port":1080,"username":"u","password":"p"}`, ExposeToUsers: true, Enabled: true}
-	withoutGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{ExternalOutbounds: []model.ExternalOutbound{external}})
+	withoutGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ExternalOutbounds: []model.ExternalOutbound{external}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(withoutGrant, "socks-a") {
 		t.Fatalf("imported node leaked without grant: %s", withoutGrant)
 	}
-	withGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{ExternalOutbounds: []model.ExternalOutbound{external}, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID): true}})
+	withGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ExternalOutbounds: []model.ExternalOutbound{external}, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID): true}})
 	if err != nil {
 		t.Fatal(err)
 	}

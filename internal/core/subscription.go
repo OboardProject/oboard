@@ -583,7 +583,9 @@ func udpOverTCPEnabled(value any) bool {
 
 func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.SubscriptionFormat {
 	switch strings.ToLower(strings.TrimSpace(string(format))) {
-	case "", "singbox", "sing-box":
+	case "":
+		return model.SubscriptionFormatMihomo
+	case "singbox", "sing-box":
 		return model.SubscriptionFormatSingBox
 	case "auto":
 		return model.SubscriptionFormatAuto
