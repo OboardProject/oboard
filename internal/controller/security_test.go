@@ -820,7 +820,7 @@ func TestAgentTrafficAllowsEmptyPolicySync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/traffic-reports", bytes.NewReader([]byte(`{"items":[]}`)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/traffic-reports", bytes.NewReader([]byte(`{"streams":[],"reports":[]}`)))
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("X-Agent-ID", server.AgentID)
 	req.Header.Set("Authorization", "Bearer agent-token")
@@ -863,7 +863,14 @@ func TestAgentTrafficRequiresLocalInboundAuthorizationAndIsIdempotent(t *testing
 	h := newTestServer(db, "test-secret", "").Handler()
 	report := func(inboundID *int64, reportID string, want int) {
 		t.Helper()
-		body, err := json.Marshal(map[string]any{"items": []map[string]any{{"report_id": reportID, "user_id": user.ID, "inbound_id": inboundID, "upload_bytes": 10, "download_bytes": 20}}})
+		report := map[string]any{
+			"report_id": reportID, "source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1",
+			"user_id": user.ID, "from_upload_bytes": 0, "to_upload_bytes": 10, "from_download_bytes": 0, "to_download_bytes": 20,
+		}
+		if inboundID != nil {
+			report["inbound_id"] = *inboundID
+		}
+		body, err := json.Marshal(map[string]any{"reports": []map[string]any{report}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -932,11 +939,15 @@ func TestAgentTrafficAcceptsOnlyTransparentPathProcessingServer(t *testing.T) {
 	h := newTestServer(db, "test-secret", "").Handler()
 	report := func(agentID, token, reportID string, pathID *int64, want int) map[string]any {
 		t.Helper()
-		item := map[string]any{"report_id": reportID, "user_id": user.ID, "inbound_id": root.ID, "upload_bytes": 10, "download_bytes": 20}
+		item := map[string]any{
+			"report_id": reportID, "source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1",
+			"user_id": user.ID, "inbound_id": root.ID,
+			"from_upload_bytes": 0, "to_upload_bytes": 10, "from_download_bytes": 0, "to_download_bytes": 20,
+		}
 		if pathID != nil {
 			item["path_id"] = *pathID
 		}
-		body, err := json.Marshal(map[string]any{"items": []map[string]any{item}})
+		body, err := json.Marshal(map[string]any{"reports": []map[string]any{item}})
 		if err != nil {
 			t.Fatal(err)
 		}

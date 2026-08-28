@@ -14,30 +14,15 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-const trafficLedgerCapability = "traffic_ledger_v2"
-
 type agentTrafficReportEnvelope struct {
-	ProtocolVersion int    `json:"protocol_version"`
-	AgentInstanceID string `json:"agent_instance_id"`
-	PeriodKey       string `json:"period_key"`
-	Items           []agentTrafficV1Item           `json:"items"`
+	AgentInstanceID string                           `json:"agent_instance_id"`
+	PeriodKey       string                           `json:"period_key"`
+	Items           json.RawMessage                  `json:"items"`
 	Streams         []model.TrafficStreamObservation `json:"streams"`
-	Reports         []agentTrafficV2Item           `json:"reports"`
+	Reports         []agentTrafficRangeItem          `json:"reports"`
 }
 
-type agentTrafficV1Item struct {
-	ReportID  string `json:"report_id"`
-	UserID    int64  `json:"user_id"`
-	InboundID *int64 `json:"inbound_id"`
-	PathID    *int64 `json:"path_id"`
-	PeriodKey string `json:"period_key"`
-	Upload    int64  `json:"upload_bytes"`
-	Download  int64  `json:"download_bytes"`
-	StartedAt string `json:"started_at"`
-	EndedAt   string `json:"ended_at"`
-}
-
-type agentTrafficV2Item struct {
+type agentTrafficRangeItem struct {
 	ReportID     string `json:"report_id"`
 	Source       string `json:"source"`
 	StreamID     string `json:"stream_id"`
@@ -54,7 +39,7 @@ type agentTrafficV2Item struct {
 	EndedAt      string `json:"ended_at"`
 }
 
-func (s *Server) handleAgentTrafficLedgerV2(w http.ResponseWriter, r *http.Request, server *model.Server, req agentTrafficReportEnvelope) {
+func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request, server *model.Server, req agentTrafficReportEnvelope) {
 	if len(req.Streams) > 1000 {
 		fail(w, errors.New("too many traffic streams in one report"), 400)
 		return
@@ -84,10 +69,10 @@ func (s *Server) handleAgentTrafficLedgerV2(w http.ResponseWriter, r *http.Reque
 	periods := map[int64]model.TrafficPeriod{}
 	reports := make([]model.TrafficReport, 0, len(req.Reports))
 	for _, item := range req.Reports {
-		report, period, err := s.validateAgentTrafficV2Item(r, server, item, req.PeriodKey, access, planPolicies, loc)
+		report, period, err := s.validateAgentTrafficRangeItem(r, server, item, req.PeriodKey, access, planPolicies, loc)
 		if err != nil {
 			status := 400
-			if errors.Is(err, errTrafficForbidden) {
+			if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
 				status = 403
 			}
 			fail(w, err, status)
@@ -100,7 +85,7 @@ func (s *Server) handleAgentTrafficLedgerV2(w http.ResponseWriter, r *http.Reque
 	for _, stream := range req.Streams {
 		if err := access.validateStream(stream); err != nil {
 			status := 400
-			if errors.Is(err, errTrafficForbidden) {
+			if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
 				status = 403
 			}
 			fail(w, err, status)
@@ -113,7 +98,7 @@ func (s *Server) handleAgentTrafficLedgerV2(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	result, err := s.store.CommitTrafficLedgerV2(r.Context(), store.TrafficLedgerV2Commit{
+	result, err := s.store.CommitTrafficLedger(r.Context(), store.TrafficLedgerCommit{
 		ServerID: server.ID, AgentInstanceID: strings.TrimSpace(req.AgentInstanceID), Periods: periods, Streams: streams, Reports: reports,
 	})
 	if err != nil {
@@ -138,15 +123,15 @@ func (s *Server) handleAgentTrafficLedgerV2(w http.ResponseWriter, r *http.Reque
 	}
 	write(w, 200, map[string]any{
 		"ok":                  true,
-		"protocol_version":    2,
 		"stream_checkpoints":  result.StreamCheckpoints,
 		"accepted_reports":    result.AcceptedReports,
-		"accepted_report_ids": acceptedV2IDs(result.AcceptedReports),
+		"accepted_report_ids": acceptedReportIDs(result.AcceptedReports),
 		"policies":            policies,
 	})
 }
 
 var errTrafficForbidden = errors.New("inbound does not belong to this agent")
+var errTrafficUnauthorized = errors.New("user is not authorized for this inbound")
 
 type trafficReportAccess struct {
 	server      *model.Server
@@ -208,7 +193,7 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 		resolvedPath = *pathID
 	}
 	if _, ok := a.allowed[trafficAccessPair{inboundID: *inboundID, userID: userID, pathID: resolvedPath}]; !ok {
-		return errors.New("user is not authorized for this inbound")
+		return errTrafficUnauthorized
 	}
 	return nil
 }
@@ -236,7 +221,7 @@ func (a trafficReportAccess) validateStream(stream model.TrafficStreamObservatio
 	return nil
 }
 
-func (s *Server) validateAgentTrafficV2Item(r *http.Request, server *model.Server, item agentTrafficV2Item, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
+func (s *Server) validateAgentTrafficRangeItem(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
 	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
 		return model.TrafficReport{}, model.TrafficPeriod{}, errors.New("traffic report is invalid")
 	}
@@ -261,7 +246,7 @@ func (s *Server) validateAgentTrafficV2Item(r *http.Request, server *model.Serve
 	report := model.TrafficReport{
 		ReportID: item.ReportID, ServerID: server.ID, UserID: item.UserID, InboundID: item.InboundID, PathID: item.PathID,
 		PeriodKey: period.PeriodKey, StartedAt: parseReportTime(item.StartedAt), EndedAt: parseReportTime(item.EndedAt),
-		ProtocolVersion: 2, CounterSource: source, StreamID: item.StreamID, CounterEpoch: item.CounterEpoch,
+		CounterSource: source, StreamID: item.StreamID, CounterEpoch: item.CounterEpoch,
 		FromUploadBytes: item.FromUpload, ToUploadBytes: item.ToUpload, FromDownloadBytes: item.FromDownload, ToDownloadBytes: item.ToDownload,
 	}
 	return report, period, nil
@@ -301,7 +286,7 @@ func (s *Server) trafficPeriodForUser(r *http.Request, userID int64, reportedPer
 	return model.TrafficPeriod{UserID: userID, PeriodKey: periodKey, StartedAt: start, EndsAt: end, Limit: limit.TrafficLimitBytes}, nil
 }
 
-func acceptedV2IDs(items []model.TrafficAcceptedReport) []string {
+func acceptedReportIDs(items []model.TrafficAcceptedReport) []string {
 	out := []string{}
 	for _, item := range items {
 		switch item.Status {
@@ -461,16 +446,4 @@ func (s *Server) queryTrafficLedgerCapability(ctx context.Context, principal app
 	default:
 		return nil, errors.New("unsupported query capability")
 	}
-}
-
-func serverSupportsTrafficLedgerV2(server *model.Server) bool {
-	if server == nil {
-		return false
-	}
-	for _, item := range server.KernelCapabilities {
-		if strings.TrimSpace(item) == trafficLedgerCapability {
-			return true
-		}
-	}
-	return false
 }

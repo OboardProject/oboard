@@ -6285,7 +6285,6 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		tz = "Asia/Shanghai"
 	}
 	policies := map[int64]model.TrafficRuntimePolicy{}
-	host, _ := s.store.GetServer(ctx, serverID)
 	for _, user := range users {
 		if user.ID <= 0 || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 			continue
@@ -6311,9 +6310,6 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 			return nil, err
 		}
 		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: periodKey, PeriodStart: start.UTC().Format(time.RFC3339Nano), PeriodEnd: end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
-		if limit.TrafficLimitBytes > 0 && lease.RemainingBytes == 0 && !serverSupportsTrafficLedgerV2(host) {
-			policy.QuotaState = "quota_exceeded"
-		}
 		if !limit.TrafficResetAnchor.IsZero() {
 			policy.ResetAnchor = limit.TrafficResetAnchor.UTC().Format(time.RFC3339Nano)
 		}
@@ -14575,150 +14571,15 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 	if !s.allowRate(w, r, "agent-traffic:"+server.AgentID, 120, time.Minute) {
 		return
 	}
-	settings, _ := s.store.ListSettings(r.Context())
-	loc := trafficLocation(settings)
 	var req agentTrafficReportEnvelope
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.ProtocolVersion == 2 {
-		s.handleAgentTrafficLedgerV2(w, r, server, req)
+	if len(req.Items) > 0 {
+		fail(w, errors.New("traffic reports must use checkpoint ranges"), 400)
 		return
 	}
-	if len(req.Items) > 500 {
-		fail(w, errors.New("too many traffic items in one report"), 400)
-		return
-	}
-	accepted := []string{}
-	data, err := s.store.FullRoutingConfigData(r.Context())
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	users := data.Users
-	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	planPolicies := snapshot.UserLimitPolicyMap()
-	userByID := map[int64]model.User{}
-	for _, u := range users {
-		userByID[u.ID] = u
-	}
-	inboundByID := map[int64]model.Inbound{}
-	for _, inbound := range data.Inbounds {
-		inboundByID[inbound.ID] = inbound
-	}
-	type accessPair struct{ inboundID, userID, pathID int64 }
-	allowed := map[accessPair]struct{}{}
-	for _, binding := range snapshot.InboundUserBindings() {
-		if binding.Enabled {
-			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
-		}
-	}
-	pathBindings := snapshot.ProxyPathUserBindings()
-	for _, binding := range pathBindings {
-		if binding.Enabled {
-			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
-		}
-	}
-	paths, steps := data.ProxyPaths, data.ProxyPathSteps
-	for _, item := range req.Items {
-		if item.Upload < 0 || item.Download < 0 || item.UserID <= 0 {
-			fail(w, errors.New("traffic report is invalid"), 400)
-			return
-		}
-		if item.InboundID == nil {
-			fail(w, errors.New("traffic report must identify an inbound"), 400)
-			return
-		}
-		inbound, ok := inboundByID[*item.InboundID]
-		if !ok || !inbound.Enabled {
-			fail(w, errors.New("inbound does not belong to this agent"), 403)
-			return
-		}
-		accountingLocation := inbound.ServerID == server.ID
-		if item.PathID != nil {
-			if *item.PathID <= 0 {
-				fail(w, errors.New("traffic report path_id must be positive"), 400)
-				return
-			}
-			accountingLocation = core.IsProxyPathAccountingLocation(server.ID, inbound.ID, *item.PathID, paths, steps, data.Inbounds)
-		} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, paths, steps, data.Inbounds) {
-			fail(w, errors.New("traffic report must identify the transparent proxy path"), 400)
-			return
-		}
-		if !accountingLocation {
-			fail(w, errors.New("inbound does not belong to this agent"), 403)
-			return
-		}
-		u, ok := userByID[item.UserID]
-		if !ok || u.Status != "active" {
-			fail(w, errors.New("user is invalid or inactive"), 400)
-			return
-		}
-		pathID := int64(0)
-		if item.PathID != nil {
-			pathID = *item.PathID
-		}
-		if _, ok := allowed[accessPair{inboundID: *item.InboundID, userID: item.UserID, pathID: pathID}]; !ok {
-			fail(w, errors.New("user is not authorized for this inbound"), 403)
-			return
-		}
-		limit, okLimit := planPolicies[item.UserID]
-		if !okLimit {
-			limit = defaultUserLimitPolicy(u)
-		}
-		reportedPeriodKey := strings.TrimSpace(item.PeriodKey)
-		if reportedPeriodKey == "" {
-			reportedPeriodKey = strings.TrimSpace(req.PeriodKey)
-		}
-		resolvedFromTransition := false
-		if resolved, changed, resolveErr := s.store.ResolveTrafficPeriodKey(r.Context(), item.UserID, reportedPeriodKey); resolveErr != nil {
-			fail(w, resolveErr, 500)
-			return
-		} else if changed {
-			reportedPeriodKey = resolved
-			resolvedFromTransition = true
-		}
-		periodKey := reportedPeriodKey
-		var start, end time.Time
-		if resolvedFromTransition || strings.Contains(reportedPeriodKey, "#migration-") {
-			storedPeriod, periodErr := s.store.GetTrafficPeriod(r.Context(), item.UserID, reportedPeriodKey)
-			if periodErr != nil {
-				fail(w, periodErr, 400)
-				return
-			}
-			start, end = storedPeriod.StartedAt, storedPeriod.EndsAt
-		} else {
-			var windowErr error
-			periodKey, start, end, windowErr = trafficWindowForPeriodKey(time.Now(), reportedPeriodKey, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
-			if windowErr != nil {
-				fail(w, windowErr, 400)
-				return
-			}
-		}
-		started := parseReportTime(item.StartedAt)
-		ended := parseReportTime(item.EndedAt)
-		report := model.TrafficReport{ReportID: item.ReportID, ServerID: server.ID, UserID: item.UserID, InboundID: item.InboundID, PathID: item.PathID, PeriodKey: periodKey, Upload: item.Upload, Download: item.Download, StartedAt: started, EndedAt: ended}
-		ids, err := s.store.AddTrafficReports(r.Context(), []model.TrafficReport{report}, model.TrafficPeriod{UserID: item.UserID, PeriodKey: periodKey, StartedAt: start, EndsAt: end, Limit: limit.TrafficLimitBytes})
-		if err != nil {
-			fail(w, err, 500)
-			return
-		}
-		accepted = append(accepted, ids...)
-		if period, err := s.store.GetTrafficPeriod(r.Context(), item.UserID, periodKey); err == nil {
-			s.notifyTrafficQuotaExceeded(r.Context(), u, period)
-		}
-	}
-	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, paths, steps, data.Inbounds, snapshot.InboundUserBindings(), pathBindings)
-	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, users, accountingUsers, planPolicies)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	write(w, 200, map[string]any{"ok": true, "accepted_report_ids": accepted, "policies": policies})
+	s.handleAgentTrafficLedger(w, r, server, req)
 }
 
 func parseReportTime(raw string) time.Time {

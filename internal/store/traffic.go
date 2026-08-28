@@ -11,25 +11,22 @@ import (
 )
 
 const (
-	trafficLedgerProtocolV1 = 1
-	trafficLedgerProtocolV2 = 2
-
-	trafficAcceptAccepted = "accepted"
-	trafficAcceptDuplicate = "duplicate"
-	trafficAcceptCovered = "covered"
-	trafficAcceptGap = "checkpoint_gap"
-	trafficAcceptOverlap = "checkpoint_overlap"
+	trafficAcceptAccepted      = "accepted"
+	trafficAcceptDuplicate     = "duplicate"
+	trafficAcceptCovered       = "covered"
+	trafficAcceptGap           = "checkpoint_gap"
+	trafficAcceptOverlap       = "checkpoint_overlap"
 	trafficAcceptEpochConflict = "epoch_conflict"
-	trafficAcceptRejected = "rejected"
+	trafficAcceptRejected      = "rejected"
 
-	trafficStreamHealthy = "healthy"
-	trafficStreamStale = "stale"
-	trafficLeaseActive = "active"
-	trafficLeaseReleased = "released"
+	trafficStreamHealthy         = "healthy"
+	trafficStreamStale           = "stale"
+	trafficLeaseActive           = "active"
+	trafficLeaseReleased         = "released"
 	trafficLeaseExpiredUnsettled = "expired_unsettled"
 )
 
-type TrafficLedgerV2Commit struct {
+type TrafficLedgerCommit struct {
 	ServerID        int64
 	AgentInstanceID string
 	Periods         map[int64]model.TrafficPeriod
@@ -37,7 +34,7 @@ type TrafficLedgerV2Commit struct {
 	Reports         []model.TrafficReport
 }
 
-type TrafficLedgerV2Result struct {
+type TrafficLedgerResult struct {
 	StreamCheckpoints []model.TrafficStreamCheckpoint
 	AcceptedReports   []model.TrafficAcceptedReport
 }
@@ -84,7 +81,10 @@ func (s *Store) migrateTrafficLedgerV2(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_traffic_reconciliation_open on traffic_reconciliation_events(user_id,server_id,created_at desc)`); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_traffic_reports_v2_range on traffic_reports(server_id, counter_source, stream_id, counter_epoch, period_key, from_upload_bytes, to_upload_bytes, from_download_bytes, to_download_bytes) where protocol_version=2`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `drop index if exists idx_traffic_reports_v2_range`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_traffic_reports_range on traffic_reports(server_id, counter_source, stream_id, counter_epoch, period_key, from_upload_bytes, to_upload_bytes, from_download_bytes, to_download_bytes) where stream_id <> ''`); err != nil {
 		return err
 	}
 	return nil
@@ -141,8 +141,8 @@ type trafficTx interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func (s *Store) CommitTrafficLedgerV2(ctx context.Context, commit TrafficLedgerV2Commit) (TrafficLedgerV2Result, error) {
-	var result TrafficLedgerV2Result
+func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCommit) (TrafficLedgerResult, error) {
+	var result TrafficLedgerResult
 	if commit.ServerID <= 0 {
 		return result, errors.New("server id is required")
 	}
@@ -184,7 +184,7 @@ func (s *Store) CommitTrafficLedgerV2(ctx context.Context, commit TrafficLedgerV
 	}
 	touchedUsers := map[int64]string{}
 	for _, report := range commit.Reports {
-		accepted, checkpoint, err := commitTrafficReportV2Tx(tx, ctx, commit.ServerID, commit.AgentInstanceID, report, commit.Periods[report.UserID], ts)
+		accepted, checkpoint, err := commitTrafficReportTx(tx, ctx, commit.ServerID, commit.AgentInstanceID, report, commit.Periods[report.UserID], ts)
 		if err != nil {
 			return result, err
 		}
@@ -218,7 +218,7 @@ func (s *Store) CommitTrafficLedgerV2(ctx context.Context, commit TrafficLedgerV
 	return result, nil
 }
 
-func commitTrafficReportV2Tx(tx trafficTx, ctx context.Context, serverID int64, agentInstanceID string, report model.TrafficReport, period model.TrafficPeriod, ts string) (model.TrafficAcceptedReport, model.TrafficStreamCheckpoint, error) {
+func commitTrafficReportTx(tx trafficTx, ctx context.Context, serverID int64, agentInstanceID string, report model.TrafficReport, period model.TrafficPeriod, ts string) (model.TrafficAcceptedReport, model.TrafficStreamCheckpoint, error) {
 	out := model.TrafficAcceptedReport{
 		ReportID: report.ReportID, StreamID: report.StreamID, CounterEpoch: report.CounterEpoch, PeriodKey: report.PeriodKey,
 	}
@@ -247,7 +247,7 @@ func commitTrafficReportV2Tx(tx trafficTx, ctx context.Context, serverID int64, 
 		return out, checkpoint, nil
 	}
 	var coveredID string
-	coverErr := tx.QueryRowContext(ctx, `select report_id from traffic_reports where server_id=? and counter_source=? and stream_id=? and counter_epoch=? and period_key=? and from_upload_bytes=? and to_upload_bytes=? and from_download_bytes=? and to_download_bytes=? and protocol_version=?`, serverID, report.CounterSource, report.StreamID, report.CounterEpoch, report.PeriodKey, report.FromUploadBytes, report.ToUploadBytes, report.FromDownloadBytes, report.ToDownloadBytes, trafficLedgerProtocolV2).Scan(&coveredID)
+	coverErr := tx.QueryRowContext(ctx, `select report_id from traffic_reports where server_id=? and counter_source=? and stream_id=? and counter_epoch=? and period_key=? and from_upload_bytes=? and to_upload_bytes=? and from_download_bytes=? and to_download_bytes=? and stream_id<>''`, serverID, report.CounterSource, report.StreamID, report.CounterEpoch, report.PeriodKey, report.FromUploadBytes, report.ToUploadBytes, report.FromDownloadBytes, report.ToDownloadBytes).Scan(&coveredID)
 	if coverErr != nil && !errors.Is(coverErr, sql.ErrNoRows) {
 		return out, checkpoint, coverErr
 	}
@@ -286,7 +286,7 @@ func commitTrafficReportV2Tx(tx trafficTx, ctx context.Context, serverID int64, 
 	if _, err := tx.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,0,0,?,?,?) on conflict(user_id,period_key) do update set started_at=excluded.started_at,ends_at=excluded.ends_at,traffic_limit_bytes=excluded.traffic_limit_bytes,updated_at=excluded.updated_at`, period.UserID, period.PeriodKey, period.StartedAt.Format(time.RFC3339Nano), period.EndsAt.Format(time.RFC3339Nano), period.Limit, periodState(period.Upload+period.Download, period.Limit), ts); err != nil {
 		return out, checkpoint, err
 	}
-	if _, err := tx.ExecContext(ctx, `insert into traffic_reports(report_id,server_id,user_id,inbound_id,path_id,period_key,upload_bytes,download_bytes,started_at,ended_at,created_at,protocol_version,counter_source,stream_id,counter_epoch,from_upload_bytes,to_upload_bytes,from_download_bytes,to_download_bytes,accept_status) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, report.ReportID, serverID, report.UserID, report.InboundID, report.PathID, report.PeriodKey, deltaUpload, deltaDownload, report.StartedAt.Format(time.RFC3339Nano), report.EndedAt.Format(time.RFC3339Nano), ts, trafficLedgerProtocolV2, report.CounterSource, report.StreamID, report.CounterEpoch, report.FromUploadBytes, report.ToUploadBytes, report.FromDownloadBytes, report.ToDownloadBytes, trafficAcceptAccepted); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into traffic_reports(report_id,server_id,user_id,inbound_id,path_id,period_key,upload_bytes,download_bytes,started_at,ended_at,created_at,protocol_version,counter_source,stream_id,counter_epoch,from_upload_bytes,to_upload_bytes,from_download_bytes,to_download_bytes,accept_status) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, report.ReportID, serverID, report.UserID, report.InboundID, report.PathID, report.PeriodKey, deltaUpload, deltaDownload, report.StartedAt.Format(time.RFC3339Nano), report.EndedAt.Format(time.RFC3339Nano), ts, 1, report.CounterSource, report.StreamID, report.CounterEpoch, report.FromUploadBytes, report.ToUploadBytes, report.FromDownloadBytes, report.ToDownloadBytes, trafficAcceptAccepted); err != nil {
 		if isUniqueConstraint(err) {
 			out.Status = trafficAcceptCovered
 			return out, checkpoint, nil

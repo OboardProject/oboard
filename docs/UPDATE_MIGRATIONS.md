@@ -584,14 +584,14 @@
 - **类别：** SQLite schema / wire protocol
 - **原因：** 把流量从客户端 delta 上报升级为 checkpoint range 账本，修复同 epoch 计数倒退误计、损坏 `traffic-state.json` 静默清空、以及 `lease=0` 未强制配额的 P0。
 - **源状态：** `traffic_reports` 只有 delta 字段；无 `traffic_counter_streams` / `traffic_reconciliation_events`；`traffic_leases` 无 revision/state/TTL；Controller 仅在 `RemainingBytes>0` 时设置 `lease_enforced`；Agent JSON 解析失败当作空状态。
-- **目标状态：** `traffic_reports` 增加 `protocol_version` 与 range 字段（旧行保持 `1`，无历史 checkpoint 回填）；新增 stream checkpoint 与对账事件表；有限额度用户始终 `lease_enforced=true`，`lease=0` 以 baseline 封顶；V1 `items` 仍可上报。Agent `traffic-state.json` schema_version=2，损坏则 `state_corrupt` 并对 Controller 对账。
-- **实现位置：** `internal/store/traffic.go`、`store.go`；`internal/controller/traffic.go`、`server.go`；`internal/capability/catalog_traffic_ledger.go`；`web/src/main.tsx`。
-- **更新脚本：** Controller 打开 SQLite 时 `migrateTrafficLedgerV2` 幂等补列建表。
+- **目标状态：** `traffic_reports` 增加 range 字段（历史 delta 行保持 `protocol_version=1` 且 `stream_id` 为空，无历史 checkpoint 回填）；新增 stream checkpoint 与对账事件表；有限额度用户始终 `lease_enforced=true`，`lease=0` 以 baseline 封顶。`POST /api/v1/agent/traffic-reports` 只接受 checkpoint ranges + streams，拒绝 delta `items` 与并行 `protocol_version`。唯一索引 `idx_traffic_reports_range` 在 `stream_id <> ''` 上成立。Kernel 能力名为 `traffic_ledger`。Agent `traffic-state.json` schema_version=2，损坏则 `state_corrupt` 并对 Controller 对账。
+- **实现位置：** `internal/store/traffic.go`、`store.go`；`internal/controller/traffic.go`、`server.go`；`internal/capability/catalog_traffic_ledger.go`；`web/src/main.tsx`；Agent `internal/agent/traffic.go`；kernel `cmd/oboard-sb/main.go`。
+- **更新脚本：** Controller 打开 SQLite 时 `migrateTrafficLedgerV2` 幂等补列建表，并 `drop index if exists idx_traffic_reports_v2_range` 后建立 `idx_traffic_reports_range`。
 - **数据影响：** 不删除 `traffic_reports` / `traffic_periods`，不重算 `users.traffic_used_bytes`。离线 Agent 未消费 Lease 保持 reserved。
-- **重复执行：** `ensureColumn` 与 `create table/index if not exists`。
+- **重复执行：** `ensureColumn` 与 `create table/index if not exists` / `drop index if exists`。
 - **失败行为：** 列或表创建失败会阻止 Controller 打开数据库。checkpoint gap/overlap 拒绝入账。
-- **回归测试：** `TestTrafficLedgerV2MigratesFromPreviousSchema`、`TestTrafficLedgerV2IsIdempotentAfterLostACK`、`TestTrafficLedgerV2SameRangeDifferentReportIDIsCovered`、`TestTrafficRuntimePoliciesEnforceZeroLeaseOnLegacyKernel`
-- **移除条件：** 最老直接升级版本与可恢复备份均已包含 V2 列和表，且恢复入口拒绝缺少 stream 表的备份。
+- **回归测试：** `TestTrafficLedgerV2MigratesFromPreviousSchema`、`TestTrafficLedgerCoversHistoricalProtocolVersionTwoRows`、`TestTrafficLedgerV2IsIdempotentAfterLostACK`、`TestTrafficLedgerV2SameRangeDifferentReportIDIsCovered`、`TestAgentTrafficRejectsDeltaItems`、`TestTrafficRuntimePoliciesEnforceZeroLeaseWithoutExceedingGlobalQuota`
+- **移除条件：** 最老直接升级版本与可恢复备份均已包含 range 列、stream 表和 `idx_traffic_reports_range`；恢复入口拒绝缺少 stream 表的备份。
 - **移除状态：** 生效中
 
 ## 新登记模板

@@ -90,7 +90,7 @@ func dropStoreTelemetryColumn(t *testing.T, path, column string) {
 }
 
 func agentTrafficRequest(agentID, token string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/traffic-reports", bytes.NewReader([]byte(`{"items":[]}`)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/traffic-reports", bytes.NewReader([]byte(`{"streams":[],"reports":[]}`)))
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("X-Agent-ID", agentID)
 	req.Header.Set("Authorization", "Bearer "+token)

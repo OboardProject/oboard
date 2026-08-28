@@ -15,13 +15,13 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-func TestAgentTrafficLedgerV2LostACKDoesNotDoubleBill(t *testing.T) {
+func TestAgentTrafficLedgerLostACKDoesNotDoubleBill(t *testing.T) {
 	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
 	defer db.Close()
-	body := v2TrafficBody(user.ID, inbound.ID, "tr2-lost", 0, 100, 0, 200)
+	body := ledgerTrafficBody(user.ID, inbound.ID, "tr-lost", 0, 100, 0, 200)
 	first := postAgentTraffic(t, h, server.AgentID, "token-a", body, http.StatusOK)
-	if first["protocol_version"].(float64) != 2 {
-		t.Fatalf("protocol = %#v", first["protocol_version"])
+	if first["protocol_version"] != nil {
+		t.Fatalf("protocol_version should be omitted: %#v", first["protocol_version"])
 	}
 	second := postAgentTraffic(t, h, server.AgentID, "token-a", body, http.StatusOK)
 	reports := second["accepted_reports"].([]any)
@@ -37,15 +37,15 @@ func TestAgentTrafficLedgerV2LostACKDoesNotDoubleBill(t *testing.T) {
 	}
 }
 
-func TestAgentTrafficLedgerV2OverlapAndGapAreNotBilled(t *testing.T) {
+func TestAgentTrafficLedgerOverlapAndGapAreNotBilled(t *testing.T) {
 	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
 	defer db.Close()
-	postAgentTraffic(t, h, server.AgentID, "token-a", v2TrafficBody(user.ID, inbound.ID, "tr2-base", 0, 200, 0, 200), http.StatusOK)
-	overlap := postAgentTraffic(t, h, server.AgentID, "token-a", v2TrafficBody(user.ID, inbound.ID, "tr2-overlap", 150, 300, 150, 300), http.StatusOK)
+	postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(user.ID, inbound.ID, "tr-base", 0, 200, 0, 200), http.StatusOK)
+	overlap := postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(user.ID, inbound.ID, "tr-overlap", 150, 300, 150, 300), http.StatusOK)
 	if overlap["accepted_reports"].([]any)[0].(map[string]any)["status"] != "checkpoint_overlap" {
 		t.Fatalf("overlap = %#v", overlap["accepted_reports"])
 	}
-	gap := postAgentTraffic(t, h, server.AgentID, "token-a", v2TrafficBody(user.ID, inbound.ID, "tr2-gap", 300, 400, 300, 400), http.StatusOK)
+	gap := postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(user.ID, inbound.ID, "tr-gap", 300, 400, 300, 400), http.StatusOK)
 	if gap["accepted_reports"].([]any)[0].(map[string]any)["status"] != "checkpoint_gap" {
 		t.Fatalf("gap = %#v", gap["accepted_reports"])
 	}
@@ -58,7 +58,7 @@ func TestAgentTrafficLedgerV2OverlapAndGapAreNotBilled(t *testing.T) {
 	}
 }
 
-func TestAgentTrafficLedgerV2TransparentPathStillBillsProcessingServer(t *testing.T) {
+func TestAgentTrafficLedgerTransparentPathStillBillsProcessingServer(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -95,9 +95,8 @@ func TestAgentTrafficLedgerV2TransparentPathStillBillsProcessingServer(t *testin
 	}
 	h := newTestServer(db, "test-secret", "").Handler()
 	body := map[string]any{
-		"protocol_version": 2,
 		"reports": []map[string]any{{
-			"report_id": "tr2-path", "source": "core", "stream_id": "ts_path", "counter_epoch": "ce_1",
+			"report_id": "tr-path", "source": "core", "stream_id": "ts_path", "counter_epoch": "ce_1",
 			"user_id": user.ID, "inbound_id": root.ID, "path_id": path.ID,
 			"from_upload_bytes": 0, "to_upload_bytes": 10, "from_download_bytes": 0, "to_download_bytes": 20,
 		}},
@@ -106,15 +105,23 @@ func TestAgentTrafficLedgerV2TransparentPathStillBillsProcessingServer(t *testin
 	postAgentTraffic(t, h, servers[2].AgentID, "token-downstream", body, http.StatusForbidden)
 	ok := postAgentTraffic(t, h, servers[1].AgentID, "token-processing", body, http.StatusOK)
 	if ok["accepted_reports"].([]any)[0].(map[string]any)["status"] != "accepted" {
-		t.Fatalf("processing v2 = %#v", ok)
+		t.Fatalf("processing ledger = %#v", ok)
 	}
 	stored, err := db.GetUser(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stored.TrafficUsedBytes != 30 {
-		t.Fatalf("processing v2 traffic = %d", stored.TrafficUsedBytes)
+		t.Fatalf("processing ledger traffic = %d", stored.TrafficUsedBytes)
 	}
+}
+
+func TestAgentTrafficRejectsDeltaItems(t *testing.T) {
+	db, server, _, _, h := trafficLedgerHTTPFixture(t)
+	defer db.Close()
+	postAgentTraffic(t, h, server.AgentID, "token-a", map[string]any{
+		"items": []map[string]any{{"report_id": "legacy", "user_id": 1, "inbound_id": 1, "upload_bytes": 10, "download_bytes": 20}},
+	}, http.StatusBadRequest)
 }
 
 func TestTrafficLedgerAPIAndReconcile(t *testing.T) {
@@ -162,15 +169,20 @@ func trafficLedgerHTTPFixture(t *testing.T) (*store.Store, *model.Server, *model
 	return db, server, inbound, user, newTestServer(db, "test-secret", "").Handler()
 }
 
-func v2TrafficBody(userID, inboundID int64, reportID string, fromUp, toUp, fromDown, toDown int64) map[string]any {
-	return map[string]any{
-		"protocol_version": 2,
-		"reports": []map[string]any{{
-			"report_id": reportID, "source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1",
-			"user_id": userID, "inbound_id": inboundID,
-			"from_upload_bytes": fromUp, "to_upload_bytes": toUp, "from_download_bytes": fromDown, "to_download_bytes": toDown,
-		}},
+func ledgerTrafficBody(userID, inboundID int64, reportID string, fromUp, toUp, fromDown, toDown int64) map[string]any {
+	return ledgerTrafficBodyWithPath(userID, inboundID, nil, reportID, fromUp, toUp, fromDown, toDown)
+}
+
+func ledgerTrafficBodyWithPath(userID, inboundID int64, pathID *int64, reportID string, fromUp, toUp, fromDown, toDown int64) map[string]any {
+	report := map[string]any{
+		"report_id": reportID, "source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1",
+		"user_id": userID, "inbound_id": inboundID,
+		"from_upload_bytes": fromUp, "to_upload_bytes": toUp, "from_download_bytes": fromDown, "to_download_bytes": toDown,
 	}
+	if pathID != nil {
+		report["path_id"] = *pathID
+	}
+	return map[string]any{"reports": []map[string]any{report}}
 }
 
 func postAgentTraffic(t *testing.T, h http.Handler, agentID, token string, body map[string]any, want int) map[string]any {

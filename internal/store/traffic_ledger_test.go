@@ -16,14 +16,14 @@ func TestTrafficLedgerV2IsIdempotentAfterLostACK(t *testing.T) {
 	defer s.Close()
 	period := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
 	report := v2Report("tr2-lost-ack", server.ID, user.ID, 0, 100, 0, 300)
-	first, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{report}})
+	first, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{report}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.AcceptedReports) != 1 || first.AcceptedReports[0].Status != trafficAcceptAccepted {
 		t.Fatalf("first commit = %#v", first.AcceptedReports)
 	}
-	second, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{report}})
+	second, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{report}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,11 +44,11 @@ func TestTrafficLedgerV2SameRangeDifferentReportIDIsCovered(t *testing.T) {
 	defer s.Close()
 	period := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
 	first := v2Report("tr2-range-a", server.ID, user.ID, 0, 100, 0, 200)
-	if _, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{first}}); err != nil {
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{first}}); err != nil {
 		t.Fatal(err)
 	}
 	second := v2Report("tr2-range-b", server.ID, user.ID, 0, 100, 0, 200)
-	result, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{second}})
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{second}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,17 +68,17 @@ func TestTrafficLedgerV2RejectsOverlapAndGap(t *testing.T) {
 	s, ctx, user, server := openTrafficLedgerFixture(t)
 	defer s.Close()
 	period := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
-	if _, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-base", server.ID, user.ID, 0, 200, 0, 200)}}); err != nil {
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-base", server.ID, user.ID, 0, 200, 0, 200)}}); err != nil {
 		t.Fatal(err)
 	}
-	overlap, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-overlap", server.ID, user.ID, 150, 300, 150, 300)}})
+	overlap, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-overlap", server.ID, user.ID, 150, 300, 150, 300)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if overlap.AcceptedReports[0].Status != trafficAcceptOverlap {
 		t.Fatalf("overlap status = %q", overlap.AcceptedReports[0].Status)
 	}
-	gap, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-gap", server.ID, user.ID, 300, 400, 300, 400)}})
+	gap, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-gap", server.ID, user.ID, 300, 400, 300, 400)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,10 +98,10 @@ func TestTrafficLedgerV2RecoversFromControllerCheckpoint(t *testing.T) {
 	s, ctx, user, server := openTrafficLedgerFixture(t)
 	defer s.Close()
 	period := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
-	if _, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-8g", server.ID, user.ID, 0, 8, 0, 8)}}); err != nil {
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-8g", server.ID, user.ID, 0, 8, 0, 8)}}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{
 		ServerID: server.ID,
 		Streams: []model.TrafficStreamObservation{{
 			Source: "core", StreamID: "ts_core", CounterEpoch: "ce_1", PeriodKey: "2026-08", UserID: user.ID, CurrentUpload: 10, CurrentDownload: 10,
@@ -113,7 +113,7 @@ func TestTrafficLedgerV2RecoversFromControllerCheckpoint(t *testing.T) {
 	if len(result.StreamCheckpoints) != 1 || result.StreamCheckpoints[0].AcceptedUpload != 8 || result.StreamCheckpoints[0].AcceptedDownload != 8 {
 		t.Fatalf("checkpoint = %#v", result.StreamCheckpoints)
 	}
-	follow, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-8-to-10", server.ID, user.ID, 8, 10, 8, 10)}})
+	follow, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-8-to-10", server.ID, user.ID, 8, 10, 8, 10)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,12 +134,12 @@ func TestTrafficLedgerV2NewEpochStartsAtZero(t *testing.T) {
 	defer s.Close()
 	period := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
 	first := v2Report("tr2-e1", server.ID, user.ID, 0, 10, 0, 10)
-	if _, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{first}}); err != nil {
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{first}}); err != nil {
 		t.Fatal(err)
 	}
 	second := v2Report("tr2-e2", server.ID, user.ID, 0, 1, 0, 1)
 	second.CounterEpoch = "ce_2"
-	result, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{second}})
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{second}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,14 +162,14 @@ func TestTrafficLedgerV2PeriodRolloverUsesIndependentEpochs(t *testing.T) {
 	first := v2Report("tr2-aug", server.ID, user.ID, 0, 100, 0, 200)
 	first.PeriodKey = august.PeriodKey
 	first.CounterEpoch = "ce_aug"
-	if _, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: august}, Reports: []model.TrafficReport{first}}); err != nil {
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: august}, Reports: []model.TrafficReport{first}}); err != nil {
 		t.Fatal(err)
 	}
 	september := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-09-01", StartedAt: time.Now().Add(-10 * 24 * time.Hour), EndsAt: time.Now().Add(20 * 24 * time.Hour), Limit: 1 << 30}
 	second := v2Report("tr2-sep", server.ID, user.ID, 0, 40, 0, 60)
 	second.PeriodKey = september.PeriodKey
 	second.CounterEpoch = "ce_sep"
-	result, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: september}, Reports: []model.TrafficReport{second}})
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: september}, Reports: []model.TrafficReport{second}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestTrafficLedgerV2PeriodMigrationInheritsSameEpochCheckpoint(t *testing.T)
 	source := model.TrafficPeriod{UserID: user.ID, PeriodKey: "old-cycle", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
 	first := v2Report("tr2-old", server.ID, user.ID, 0, 100, 0, 100)
 	first.PeriodKey = source.PeriodKey
-	if _, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: source}, Reports: []model.TrafficReport{first}}); err != nil {
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: source}, Reports: []model.TrafficReport{first}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `insert into traffic_period_transitions(user_id,source_period_key,target_period_key,created_at) values(?,?,?,?)`, user.ID, source.PeriodKey, "new-cycle", now()); err != nil {
@@ -207,7 +207,7 @@ func TestTrafficLedgerV2PeriodMigrationInheritsSameEpochCheckpoint(t *testing.T)
 	target := model.TrafficPeriod{UserID: user.ID, PeriodKey: "new-cycle", StartedAt: source.StartedAt, EndsAt: source.EndsAt, Limit: 1 << 30}
 	second := v2Report("tr2-migrated", server.ID, user.ID, 100, 120, 100, 130)
 	second.PeriodKey = target.PeriodKey
-	result, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: target}, Reports: []model.TrafficReport{second}})
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: target}, Reports: []model.TrafficReport{second}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,6 +281,7 @@ func TestTrafficLedgerV2MigratesFromPreviousSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
+		`drop index if exists idx_traffic_reports_range`,
 		`drop index if exists idx_traffic_reports_v2_range`,
 		`drop table if exists traffic_counter_streams`,
 		`drop table if exists traffic_reconciliation_events`,
@@ -326,9 +327,31 @@ func TestTrafficLedgerV2MigratesFromPreviousSchema(t *testing.T) {
 	if protocol != 1 {
 		t.Fatalf("legacy protocol_version = %d", protocol)
 	}
-	result, err := s.CommitTrafficLedgerV2(ctx, TrafficLedgerV2Commit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-after-migrate", server.ID, user.ID, 0, 5, 0, 5)}})
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr2-after-migrate", server.ID, user.ID, 0, 5, 0, 5)}})
 	if err != nil || result.AcceptedReports[0].Status != trafficAcceptAccepted {
 		t.Fatalf("post-migration v2 commit = %#v err=%v", result.AcceptedReports, err)
+	}
+	var indexName string
+	if err := s.db.QueryRowContext(ctx, `select name from sqlite_master where type='index' and name='idx_traffic_reports_range'`).Scan(&indexName); err != nil || indexName != "idx_traffic_reports_range" {
+		t.Fatalf("current range index = %q err=%v", indexName, err)
+	}
+}
+
+func TestTrafficLedgerCoversHistoricalProtocolVersionTwoRows(t *testing.T) {
+	s, ctx, user, server := openTrafficLedgerFixture(t)
+	defer s.Close()
+	period := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08", StartedAt: time.Now().Add(-time.Hour), EndsAt: time.Now().Add(time.Hour), Limit: 1 << 30}
+	first := v2Report("tr-historical", server.ID, user.ID, 0, 40, 0, 60)
+	if _, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{first}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `update traffic_reports set protocol_version=2 where report_id=?`, first.ReportID); err != nil {
+		t.Fatal(err)
+	}
+	retry := v2Report("tr-historical-retry", server.ID, user.ID, 0, 40, 0, 60)
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{retry}})
+	if err != nil || len(result.AcceptedReports) != 1 || result.AcceptedReports[0].Status != trafficAcceptCovered {
+		t.Fatalf("historical protocol_version=2 cover = %#v err=%v", result.AcceptedReports, err)
 	}
 }
 
@@ -412,7 +435,7 @@ func openTrafficLedgerFixture(t *testing.T) (*Store, context.Context, *model.Use
 func v2Report(id string, serverID, userID, fromUp, toUp, fromDown, toDown int64) model.TrafficReport {
 	return model.TrafficReport{
 		ReportID: id, ServerID: serverID, UserID: userID, PeriodKey: "2026-08",
-		ProtocolVersion: 2, CounterSource: "core", StreamID: "ts_core", CounterEpoch: "ce_1",
+		CounterSource: "core", StreamID: "ts_core", CounterEpoch: "ce_1",
 		FromUploadBytes: fromUp, ToUploadBytes: toUp, FromDownloadBytes: fromDown, ToDownloadBytes: toDown,
 		StartedAt: time.Now().Add(-time.Minute), EndedAt: time.Now(),
 	}
