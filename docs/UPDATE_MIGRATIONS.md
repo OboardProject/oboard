@@ -43,7 +43,7 @@
 
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
-| `controller-db-20260829-server-cpu-cores` | Controller | SQLite schema / wire protocol | `dev-pending` | 待发布 | 生效中 | - |
+| `controller-db-20260829-server-cpu-cores` | Controller | SQLite schema / wire protocol | `dev-0fc17b734fa3` | 待发布 | 生效中 | - |
 | `controller-db-20260828-remove-vless-tls-vision` | Controller | SQLite seed / data backfill | `dev-fa658a2d2473` | 待发布 | 生效中 | - |
 | `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-4d9ba516be1d` | 待发布 | 生效中 | - |
 | `controller-db-20260812-connectivity-probe-target` | Controller | SQLite schema | `dev-26cd0a1013d1` | 待发布 | 生效中 | - |
@@ -72,8 +72,8 @@
 ### controller-db-20260829-server-cpu-cores
 
 - **引入日期：** 2026-08-29
-- **引入提交：** pending
-- **引入版本：** `dev-pending`
+- **引入提交：** `OboardProject/oboard@0fc17b734fa3639742066ccbd8f88427bd622a27`（Agent `OboardProject/oboard-agent@f3e0f38677f9875e58fed58d558cfff3de24d1cf`）
+- **引入版本：** `dev-0fc17b734fa3`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、Agent `internal/agent`、`internal/model`、Web
 - **类别：** SQLite schema / wire protocol
