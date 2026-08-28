@@ -113,6 +113,105 @@ printf '1048576 524288'
 	}
 }
 
+func TestAgentDownloadResumesInterruptedTransferAndStopsAfterThreeAttempts(t *testing.T) {
+	for _, installer := range []struct {
+		name   string
+		script string
+	}{{name: "install", script: testAgentInstallScript(t)}, {name: "self-update", script: testAgentSelfUpdateScript(t)}} {
+		t.Run(installer.name, func(t *testing.T) {
+			root := t.TempDir()
+			bin := filepath.Join(root, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			attempts := filepath.Join(root, "attempts")
+			curlLog := filepath.Join(root, "curl.log")
+			writeExecutable(t, filepath.Join(bin, "sleep"), "#!/bin/sh\nexit 0\n")
+			writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+count=0
+[ ! -f "$CURL_ATTEMPTS" ] || count=$(cat "$CURL_ATTEMPTS")
+count=$((count + 1))
+printf '%s\n' "$count" > "$CURL_ATTEMPTS"
+printf '%s\n' "$*" >> "$CURL_LOG"
+destination=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then shift; destination=$1; fi
+  shift
+done
+if [ "$count" -eq 1 ]; then
+  printf partial > "$destination"
+  exit 18
+fi
+printf '%s' '-rest' >> "$destination"
+printf '5 1024'
+`)
+			destination := filepath.Join(root, "agent")
+			harness := strings.Join([]string{
+				"set -eu",
+				extractShellFunction(t, installer.script, "format_download_value"),
+				extractShellFunction(t, installer.script, "download_component"),
+				"download_component Agent https://panel.example/downloads/agent " + shellQuote(destination),
+			}, "\n")
+			cmd := exec.Command(testPOSIXShell(t), "-c", harness)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("resumed download failed: %v\n%s", err, output)
+			}
+			if raw, err := os.ReadFile(attempts); err != nil || strings.TrimSpace(string(raw)) != "2" {
+				t.Fatalf("attempt count = %q, err=%v", raw, err)
+			}
+			if log, err := os.ReadFile(curlLog); err != nil || strings.Count(string(log), "--continue-at -") != 2 {
+				t.Fatalf("curl did not resume both attempts: %q, err=%v", log, err)
+			}
+			if raw, err := os.ReadFile(destination); err != nil || string(raw) != "partial-rest" {
+				t.Fatalf("resumed content = %q, err=%v", raw, err)
+			}
+			for _, path := range []string{attempts, curlLog, destination} {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			}
+			quietHarness := strings.Join([]string{
+				"set -eu",
+				extractShellFunction(t, installer.script, "download_quiet"),
+				"download_quiet https://panel.example/downloads/release-manifest.json " + shellQuote(destination),
+			}, "\n")
+			cmd = exec.Command(testPOSIXShell(t), "-c", quietHarness)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("quiet resumed download failed: %v\n%s", err, output)
+			}
+			if raw, err := os.ReadFile(attempts); err != nil || strings.TrimSpace(string(raw)) != "2" {
+				t.Fatalf("quiet attempt count = %q, err=%v", raw, err)
+			}
+			if raw, err := os.ReadFile(destination); err != nil || string(raw) != "partial-rest" {
+				t.Fatalf("quiet resumed content = %q, err=%v", raw, err)
+			}
+
+			writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+count=0
+[ ! -f "$CURL_ATTEMPTS" ] || count=$(cat "$CURL_ATTEMPTS")
+count=$((count + 1))
+printf '%s\n' "$count" > "$CURL_ATTEMPTS"
+exit 18
+`)
+			for _, path := range []string{attempts, destination} {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			}
+			cmd = exec.Command(testPOSIXShell(t), "-c", harness)
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("three interrupted attempts unexpectedly succeeded:\n%s", output)
+			}
+			if raw, err := os.ReadFile(attempts); err != nil || strings.TrimSpace(string(raw)) != "3" {
+				t.Fatalf("exhausted attempt count = %q, err=%v", raw, err)
+			}
+		})
+	}
+}
+
 func TestAgentInstallScriptRegistersObagPath(t *testing.T) {
 	for _, installer := range []struct {
 		name   string

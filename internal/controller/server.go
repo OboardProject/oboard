@@ -15999,20 +15999,57 @@ download_component() {
   else
     meter=--silent
   fi
-  if ! stats=$(curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
-    --fail --location --show-error --retry 3 --connect-timeout 15 "$meter" \
-    --write-out '%{size_download} %{speed_download}' "$url" -o "$destination"); then
-    echo "下载失败：$label" >&2
-    return 1
+
+  attempt=1
+  while :; do
+    if stats=$(curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
+      --fail --location --show-error --connect-timeout 15 --continue-at - "$meter" \
+      --write-out '%{size_download} %{speed_download}' "$url" -o "$destination"); then
+      break
+    else
+      curl_status=$?
+    fi
+    case "$curl_status" in
+      5|6|7|16|18|28|35|52|55|56|92) ;;
+      *) echo "下载失败：$label" >&2; return 1 ;;
+    esac
+    if [ "$attempt" -ge 3 ]; then
+      echo "下载失败：$label（连续 3 次连接失败）" >&2
+      return 1
+    fi
+    echo "  连接中断，保留已下载内容并重试（$attempt/3）..." >&2
+    sleep "$attempt"
+    attempt=$((attempt + 1))
+  done
+  if [ "$attempt" -gt 1 ]; then
+    size=$(wc -c < "$destination" | tr -d '[:space:]')
+  else
+    size=${stats%% *}
   fi
-  size=${stats%% *}
   speed=${stats#* }
   printf '  完成：%s · %s/s\n' "$(format_download_value "$size")" "$(format_download_value "$speed")"
 }
 
 download_quiet() {
-  curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
-    --fail --silent --show-error --location --retry 3 --connect-timeout 15 "$1" -o "$2"
+  quiet_url=$1
+  quiet_destination=$2
+  quiet_attempt=1
+  while :; do
+    if curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
+      --fail --silent --show-error --location --connect-timeout 15 --continue-at - \
+      "$quiet_url" -o "$quiet_destination"; then
+      return 0
+    else
+      quiet_status=$?
+    fi
+    case "$quiet_status" in
+      5|6|7|16|18|28|35|52|55|56|92) ;;
+      *) return 1 ;;
+    esac
+    [ "$quiet_attempt" -lt 3 ] || return 1
+    sleep "$quiet_attempt"
+    quiet_attempt=$((quiet_attempt + 1))
+  done
 }`
 
 const agentReleaseVerifierShell = `ensure_release_verifier() {
