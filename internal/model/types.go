@@ -1000,6 +1000,7 @@ type Server struct {
 	LatencyProbeMaxTargets      int                  `json:"latency_probe_max_targets"`
 	LatencyProbeResourceVersion string               `json:"latency_probe_resource_version,omitempty"`
 	ConnectionAuditEnabled      bool                 `json:"connection_audit_enabled"`
+	DisplayTags                 []ServerDisplayTag   `json:"display_tags"`
 	OfflineNotifyEnabled        bool                 `json:"offline_notify_enabled"`
 	OfflineAfterSeconds         int                  `json:"offline_after_seconds"`
 	ServiceStartAt              *time.Time           `json:"service_start_at,omitempty"`

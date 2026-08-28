@@ -235,6 +235,7 @@ func defaultDescriptors() []Descriptor {
 	publicPortEnd := map[string]any{"type": "integer", "description": "公网自动托管端口池终点（默认 20000）"}
 	internalPortStart := map[string]any{"type": "integer", "description": "回环内部端口池起点（默认 30000）"}
 	internalPortEnd := map[string]any{"type": "integer", "description": "回环内部端口池终点（默认 59999）"}
+	displayTags := serverDisplayTagsSchema()
 	server := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "name": stringValue, "status": stringValue,
 		"entry_address": stringValue, "entry_ip_mode": stringValue, "region_mode": stringValue,
@@ -261,6 +262,7 @@ func defaultDescriptors() []Descriptor {
 		"latency_probe_regions":          map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")},
 		"latency_probe_max_targets":      map[string]any{"type": "integer"},
 		"latency_probe_resource_version": stringValue,
+		"display_tags":                   displayTags,
 		"time_correction_mode":           stringValue, "time_check_status": stringValue,
 		"last_seen_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
 	})
@@ -655,6 +657,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"monitoring_mode": map[string]any{"type": "string", "enum": []string{"lightweight", "standard"}, "description": "省略时默认 lightweight"},
 			"service_start_at": stringValue, "expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空时自动按 service_start_at(优先)或 expires_at 的日推导(仅日精度),例如 2025-07-05 起租即每月5日重置"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"display_tags": serverDisplayTagsSchema(),
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
@@ -677,6 +680,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 			"service_start_at": stringValue, "clear_service_start_at": boolValue, "expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导；仅设置 traffic_reset_day 时自动使用 month_day"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "单独设置时自动将 traffic_reset_mode 切换为 month_day；为空时可按账期日期推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
+			"display_tags": serverDisplayTagsSchema(),
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":
@@ -850,6 +854,17 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 
 func schemaObject(properties map[string]any, required ...string) json.RawMessage {
 	return rawSchema(closedObject(properties, required...))
+}
+
+func serverDisplayTagsSchema() map[string]any {
+	return map[string]any{
+		"type": "array", "maxItems": 8,
+		"description": "卡片底部由用户设置的标签。创建时省略为空；更新时省略保持现状，传 [] 清空",
+		"items": closedObject(map[string]any{
+			"text": map[string]any{"type": "string", "minLength": 1, "maxLength": 24},
+			"tone": map[string]any{"type": "string", "enum": []string{"blue", "orange", "purple", "green", "gray"}},
+		}, "text"),
+	}
 }
 
 func closedObject(properties map[string]any, required ...string) map[string]any {

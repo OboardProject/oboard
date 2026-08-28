@@ -315,6 +315,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/channel", s.auth(s.controllerUpdateChannel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/force-finish", s.auth(s.controllerUpdateForceFinish, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
 	mux.HandleFunc("/api/v1/agent-updates/status", s.auth(s.agentUpdatesStatus, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/agent-updates/pause", s.auth(s.agentUpdatesPause, model.RoleAdmin))
@@ -4087,6 +4088,9 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("traffic_used_bytes must be >= 0"), 400)
 			return
 		}
+		if v.DisplayTags == nil {
+			v.DisplayTags = current.DisplayTags
+		}
 		v.LatencyProbeEnabled = current.LatencyProbeEnabled
 		v.LatencyProbeMode = current.LatencyProbeMode
 		v.LatencyProbePublicTarget = current.LatencyProbePublicTarget
@@ -5278,6 +5282,10 @@ func validateServer(v *model.Server) error {
 		return err
 	}
 	if err := core.ValidatePortRange(v.PortRangeStart, v.PortRangeEnd); err != nil {
+		return err
+	}
+	v.DisplayTags, err = model.NormalizeServerDisplayTags(v.DisplayTags)
+	if err != nil {
 		return err
 	}
 	return core.ValidatePortRange(v.InternalPortRangeStart, v.InternalPortRangeEnd)

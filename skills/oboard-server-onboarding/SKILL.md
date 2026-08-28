@@ -18,7 +18,7 @@ Use OBoard as the source of truth for enrollment state. External cloud and SSH t
 7. Wait for Node Agent registration, then query the server and verify connectivity, detected addresses, region, architecture, Agent build, kernel build, and capabilities.
 8. Plan topology and deployment separately. Enrollment success is not approval to create listeners or deploy a proxy path.
 
-`servers.update` is a patch. Omitted fields stay unchanged and must not be filled with create defaults.
+`servers.update` is a patch. Omitted fields stay unchanged and must not be filled with create defaults. `display_tags` is an optional card-footer label list; omit it to keep current tags, send `[]` to clear.
 
 ## Stop Conditions
 

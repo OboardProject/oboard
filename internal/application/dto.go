@@ -63,6 +63,7 @@ type ServerDTO struct {
 	LatencyProbeRegions         []model.LatencyProbeRegion `json:"latency_probe_regions,omitempty"`
 	LatencyProbeMaxTargets      int                        `json:"latency_probe_max_targets"`
 	LatencyProbeResourceVersion string                     `json:"latency_probe_resource_version"`
+	DisplayTags                 []model.ServerDisplayTag   `json:"display_tags"`
 	TimeCorrectionMode          model.TimeCorrectionMode   `json:"time_correction_mode"`
 	TimeCheckStatus             string                     `json:"time_check_status"`
 	LastSeenAt                  *time.Time                 `json:"last_seen_at,omitempty"`
@@ -261,6 +262,7 @@ func serverDTO(item model.Server) ServerDTO {
 		LatencyProbeSampleCount: item.LatencyProbeSampleCount, LatencyProbeRegions: item.LatencyProbeRegions,
 		LatencyProbeMaxTargets:      item.LatencyProbeMaxTargets,
 		LatencyProbeResourceVersion: item.LatencyProbeResourceVersion,
+		DisplayTags:                 append([]model.ServerDisplayTag{}, item.DisplayTags...),
 		TimeCorrectionMode:          item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
 		LastSeenAt: item.LastSeenAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}

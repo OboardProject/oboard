@@ -342,7 +342,7 @@ func panelServerFormResource(defaults panelServerFormDefaults) map[string]any {
 			"connection_audit_enabled", "offline_notify_enabled", "expiry_notify_enabled", "issue_enrollment_token",
 		},
 		"tabs": []map[string]any{
-			{"id": "basic", "label": "基础", "fields": []string{"name", "region_mode", "region_code", "entry_ip_mode", "entry_address", "listen_mode", "listen_ip"}},
+			{"id": "basic", "label": "基础", "fields": []string{"name", "region_mode", "region_code", "entry_ip_mode", "entry_address", "listen_mode", "listen_ip", "display_tags"}},
 			{"id": "billing", "label": "到期", "fields": []string{"service_start_at", "expires_at", "auto_renew_enabled", "renewal_cycle", "expiry_notify_enabled", "traffic_reset_mode", "traffic_reset_day", "traffic_limit_bytes", "traffic_used_bytes"}},
 			{"id": "network", "label": "网络", "fields": []string{"ip_stack", "udp_inbound_mode", "bbr_enabled", "port_range_start", "port_range_end", "internal_port_range_start", "internal_port_range_end", "mtu_mode", "mtu_value", "mtu_probe_host", "mtu_probe_port", "mtu_overhead_bytes"}},
 			{"id": "monitor", "label": "监控", "fields": []string{"monitoring_mode", "resource_history_enabled", "latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "connection_audit_enabled", "offline_notify_enabled", "offline_after_seconds"}},
@@ -354,6 +354,7 @@ func panelServerFormResource(defaults panelServerFormDefaults) map[string]any {
 			"Prefer oboard_task intent server.onboard with only the fields the user specified.",
 			"Call oboard_validate_form before a fallback servers.onboard submit so newly added default-on fields are filled instead of JSON false.",
 			"servers.update is a patch: omitted fields stay unchanged and must not be filled with create defaults.",
+			"display_tags are operator-authored card footer labels. Omit on create for none; omit on update to keep current tags; send [] to clear.",
 			"traffic_reset_mode/day are derived from service_start_at then expires_at when omitted.",
 		},
 	}

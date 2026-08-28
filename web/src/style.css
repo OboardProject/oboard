@@ -1805,7 +1805,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
   isolation: isolate;
 }
@@ -2345,7 +2345,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-monitorable .server-list-actions,
 .server-card-monitorable .server-time-issue,
 .server-card-monitorable .server-expiry-badge,
-.server-card-monitorable .server-version-update {
+.server-card-monitorable .server-version-update,
+.server-card-monitorable .server-offline-badge {
   position: relative;
   z-index: 2;
 }
@@ -2502,6 +2503,25 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   white-space: nowrap;
 }
 
+.server-card-open-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.server-health-ring {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--surface-solid);
+}
+
+.server-health-ring.ok { color: #22c55e; }
+.server-health-ring.fair { color: #f59e0b; }
+.server-health-ring.poor { color: #ef4444; }
+.server-health-ring.off { color: #94a3b8; }
+
 .server-stack-badge {
   flex: 0 0 auto;
   display: inline-flex;
@@ -2533,7 +2553,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-metric-list {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
 }
 
 .server-metric-row {
@@ -2563,6 +2584,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-metric-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
 }
@@ -2581,9 +2606,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   transition: width 0.28s ease;
 }
 
-.server-metric-fill.memory { background: #2563eb; }
-.server-metric-fill.disk { background: #8b5cf6; }
-.server-metric-fill.traffic { background: #10b981; }
+.server-metric-fill.memory { background: #8b5cf6; }
+.server-metric-fill.disk { background: #22c55e; }
+.server-metric-fill.traffic { background: #3b82f6; }
 .server-metric-fill.warning { background: #f59e0b; }
 .server-metric-fill.danger { background: #ef4444; }
 
@@ -2623,9 +2648,16 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   font-variant-numeric: tabular-nums;
 }
 
+.server-card-quality-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
 .server-card-quality {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .server-card-quality-head {
@@ -2637,6 +2669,13 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   color: var(--text-secondary);
 }
 
+.server-card-quality-head span,
+.server-card-life-item span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .server-card-quality-head strong {
   color: var(--text-strong);
   font-variant-numeric: tabular-nums;
@@ -2646,12 +2685,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
-  gap: 2px;
-  height: 6px;
+  gap: 1.5px;
+  height: 8px;
 }
 
 .server-quality-seg {
-  border-radius: 99px;
+  border-radius: 1px;
   background: var(--surface-3, rgba(127, 127, 127, 0.16));
 }
 
@@ -2689,13 +2728,77 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-tag {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-secondary);
+  background: color-mix(in srgb, #2563eb 12%, var(--surface-2));
+  color: #2563eb;
   font-size: 11px;
   font-weight: 600;
+}
+
+.server-card-tag.tone-orange {
+  background: color-mix(in srgb, #f59e0b 16%, var(--surface-2));
+  color: #c2410c;
+}
+
+.server-card-tag.tone-purple {
+  background: color-mix(in srgb, #8b5cf6 16%, var(--surface-2));
+  color: #6d28d9;
+}
+
+.server-card-tag.tone-green {
+  background: color-mix(in srgb, #22c55e 16%, var(--surface-2));
+  color: #15803d;
+}
+
+.server-card-tag.tone-gray {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.server-card.is-offline {
+  background:
+    repeating-linear-gradient(-45deg, transparent, transparent 8px, rgba(127, 127, 127, 0.05) 8px, rgba(127, 127, 127, 0.05) 16px),
+    var(--surface-solid);
+}
+
+.server-card.is-offline > *:not(.server-offline-badge):not(.server-monitor-open-overlay) {
+  filter: grayscale(1);
+  opacity: 0.72;
+}
+
+.server-offline-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-solid) 88%, #64748b);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+.server-display-tags-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.server-display-tag-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 36px;
+  gap: 8px;
+  align-items: center;
 }
 
 .region-flag {

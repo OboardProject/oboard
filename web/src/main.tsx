@@ -92,7 +92,8 @@ import {
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
-  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick
+  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick,
+  Clock, Power, WifiOff, Building2, MapPin
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -143,11 +144,13 @@ import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServ
 import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue } from './server-expiry'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import {
+  CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
   controllerUpdateDisplayPhase,
   controllerUpdateFlowPercent,
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
+  isControllerUpdateForceFinishConfirmation,
   isControllerUpdateInProgressStatus,
   isExpectedControllerUpdateDisconnect,
   monotonicPercent,
@@ -4501,7 +4504,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     if (taskExpired) {
       cancelExpectedRef.current = false
       updateInstallExpected(false)
-      setInstallPhase('stopped')
+      setInstallPhase('force_finished')
       setInstallDialogOpen(true)
       return
     }
@@ -4651,6 +4654,60 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setWorking('')
     }
   }
+  const forceFinishInstall = async () => {
+    if (working) return
+    const progressWasOpen = installDialogOpen
+    if (progressWasOpen) setInstallDialogOpen(false)
+    const confirmed = await dialogs.confirm({
+      title: '强制结束更新任务？',
+      message: '这会立即停止面板对任务的状态追踪，不检查当前阶段，也不会回滚已经安装的文件。系统级安装如果已经开始，仍可能自行完成。',
+      confirmText: '继续确认',
+      tone: 'danger',
+    })
+    if (!confirmed) {
+      if (progressWasOpen) setInstallDialogOpen(true)
+      return
+    }
+    const confirmation = await dialogs.prompt({
+      title: '再次确认强制结束',
+      message: `请输入“${CONTROLLER_UPDATE_FORCE_FINISH_PHRASE}”。完成后，当前任务将记为已中断。`,
+      placeholder: CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
+      confirmText: '强制结束任务',
+      tone: 'danger',
+    })
+    if (!isControllerUpdateForceFinishConfirmation(confirmation)) {
+      await dialogs.alert({
+        title: '没有结束更新任务',
+        message: `输入内容与“${CONTROLLER_UPDATE_FORCE_FINISH_PHRASE}”不一致，未执行任何操作。`,
+      })
+      if (progressWasOpen) setInstallDialogOpen(true)
+      return
+    }
+    statusRequestGuardRef.current.invalidate()
+    setWorking('force-finish')
+    try {
+      const result = await client.request('/controller-update/force-finish', {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: CONTROLLER_UPDATE_FORCE_FINISH_PHRASE }),
+      }) as ControllerUpdateStatus
+      statusRequestGuardRef.current.invalidate()
+      setSnapshot(result)
+      cancelExpectedRef.current = false
+      updateInstallExpected(false)
+      setInstallConnectionInterrupted(false)
+      setInstallFailure('')
+      setInstallPhase('stopped')
+      setInstallDialogOpen(true)
+      notify?.('已强制结束更新任务', 'success')
+    } catch (error: any) {
+      statusRequestGuardRef.current.invalidate()
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      if (progressWasOpen) setInstallDialogOpen(true)
+      await refresh(true)
+    } finally {
+      setWorking('')
+    }
+  }
   const saveAutoUpdate = async (enabled: boolean, intervalHours = snapshot.auto_update_interval_hours || 24) => {
     if (working || snapshot.channel === 'pinned') return
     if (enabled && snapshot.channel === 'dev') {
@@ -4742,6 +4799,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     <div className="settings-actions controller-update-actions">
       <button type="button" className="ghost" onClick={() => setAutoUpdateDialogOpen(true)} title="自动更新设置"><Sliders size={14} /><span>自动更新设置</span></button>
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
+      {updateInProgress && <button type="button" className="ghost danger-text" onClick={() => void forceFinishInstall()} disabled={Boolean(working)}><X size={14} aria-hidden="true" />{working === 'force-finish' ? '正在强制结束...' : '强制结束任务'}</button>}
       <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '安装更新'}</button>
     </div>
     <Dialog isOpen={autoUpdateDialogOpen} onClose={() => setAutoUpdateDialogOpen(false)} title="自动更新配置" size="default">
@@ -4830,6 +4888,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       onCancel={() => setInstallDialogOpen(false)}
       onInstall={skipBackup => void install(Boolean(skipBackup))}
       onInterrupt={() => void cancelInstall()}
+      onForceFinish={() => void forceFinishInstall()}
+      forceFinishing={working === 'force-finish'}
       onHide={() => setInstallDialogOpen(false)}
       onReload={() => window.location.reload()}
     />}</AnimatePresence>
@@ -4902,7 +4962,7 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
   </section>
 }
 
-type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'checking' | 'downloading' | 'preflight' | 'backing_up' | 'ready' | 'installing' | 'restarting' | 'verifying' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
+type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'checking' | 'downloading' | 'preflight' | 'backing_up' | 'ready' | 'installing' | 'restarting' | 'verifying' | 'cancelling' | 'cancelled' | 'stopped' | 'force_finished' | 'complete' | 'failed'
 
 function controllerUpdateStageState(phase: ControllerUpdateInstallPhase, id: ControllerUpdateInstallPhase, donePhases: ControllerUpdateInstallPhase[]) {
   if (phase === id) return 'active'
@@ -4910,14 +4970,14 @@ function controllerUpdateStageState(phase: ControllerUpdateInstallPhase, id: Con
   return ''
 }
 
-function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, skipBackup, progressPercent, backupBytes, elapsedLabel, onCancel, onInstall, onInterrupt, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; elapsedLabel?: string; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onHide: () => void; onReload: () => void }) {
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, elapsedLabel, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; elapsedLabel?: string; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
   const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
   const backupShownRef = useRef(0)
   if (phase !== 'backing_up') backupShownRef.current = 0
   const backupShown = phase === 'backing_up' ? monotonicPercent(backupShownRef.current, progressPercent || 0) : 0
   if (phase === 'backing_up') backupShownRef.current = backupShown
   const flowPercent = controllerUpdateFlowPercent(phase, backupShown)
-  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : '正在更新主控'
+  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
   const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
@@ -4947,14 +5007,16 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       </>}
       {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
       {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
+      {phase === 'force_finished' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>面板已停止追踪本次任务</strong><p>已经开始的系统安装不会回滚，仍可能自行完成。请稍后检查当前版本。</p></div></div>}
       {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>Controller 更新成功</strong><p>Agent 版本同步将在后台滚动进行。</p></div></div>}
       {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
     </div>
     <footer className="dialog-actions">
       {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></>}
-      {waiting && <>{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
+      {waiting && <>{onForceFinish && <button type="button" className="ghost danger-text" onClick={onForceFinish} disabled={Boolean(forceFinishing)}><X size={14} aria-hidden="true" />{forceFinishing ? '正在强制结束...' : '强制结束任务'}</button>}{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} aria-hidden="true" />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
       {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
       {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}
+      {phase === 'force_finished' && <button type="button" onClick={onCancel}>关闭</button>}
       {phase === 'complete' && <button type="button" onClick={onReload}>重新加载面板</button>}
       {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
     </footer>
@@ -7254,7 +7316,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',     expiry_notify_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',  expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -7292,12 +7354,131 @@ function enrolledDaysLabel(server: Server, now = new Date()) {
   const created = new Date(raw)
   if (Number.isNaN(created.getTime())) return ''
   const days = Math.max(0, Math.floor((now.getTime() - created.getTime()) / 86400000))
-  return `${days} 天`
+  return `${days}天`
 }
 
 function cpuCoresLabel(server: Server) {
   const value = String(server.cpu || '').trim()
+  const match = value.match(/(\d+)\s*(?:核|cores?|v?cpus?)/i)
+  if (match) return `${match[1]}核`
   return value || '—'
+}
+
+function cardExpiryLabel(server: Server, now = new Date()) {
+  const raw = String(server.expires_at || '').trim()
+  if (!raw) return '未设置'
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return '未设置'
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const expiry = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const days = Math.round((expiry.getTime() - today.getTime()) / 86400000)
+  if (days < 0) return server.auto_renew_enabled ? '续期中' : '已到期'
+  if (days === 0) return '今天'
+  return `${days}天`
+}
+
+function offlineAgoLabel(lastSeen?: string, now = new Date()) {
+  const raw = String(lastSeen || '').trim()
+  if (!raw) return '离线'
+  const then = new Date(raw)
+  if (Number.isNaN(then.getTime())) return '离线'
+  const ms = Math.max(0, now.getTime() - then.getTime())
+  const minutes = Math.floor(ms / 60000)
+  if (minutes < 60) return `${Math.max(1, minutes)}分钟前离线`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours}小时前离线`
+  return `${Math.floor(hours / 24)}天前离线`
+}
+
+function connectivityLossPercent(samples: ServerMetricSample[]) {
+  const probed = samples.filter(sample => sample.connectivity_available === true || sample.connectivity_available === false)
+  if (!probed.length) return null
+  const lost = probed.filter(sample => sample.connectivity_available === false).length
+  return (lost / probed.length) * 100
+}
+
+function qualitySegments(samples: ServerMetricSample[], count = 20) {
+  const window = samples.slice(-count)
+  if (!window.length) return Array.from({ length: count }, () => '')
+  const segs = window.map(sample => {
+    if (sample.connectivity_available === false) return 'poor'
+    const latency = Number(sample.connectivity_latency_ms || 0)
+    if (!sample.connectivity_available || latency <= 0) return ''
+    if (latency < 80) return 'ok'
+    if (latency < 180) return 'fair'
+    return 'poor'
+  })
+  while (segs.length < count) segs.unshift('')
+  return segs
+}
+
+function lossSegments(samples: ServerMetricSample[], count = 20) {
+  const window = samples.slice(-count)
+  if (!window.length) return Array.from({ length: count }, () => '')
+  const segs = window.map(sample => {
+    if (sample.connectivity_available === false) return 'poor'
+    if (sample.connectivity_available === true) return 'ok'
+    return ''
+  })
+  while (segs.length < count) segs.unshift('')
+  return segs
+}
+
+const displayTagTones = [
+  { id: 'blue', label: '蓝' },
+  { id: 'orange', label: '橙' },
+  { id: 'purple', label: '紫' },
+  { id: 'green', label: '绿' },
+  { id: 'gray', label: '灰' },
+] as const
+
+function displayTagIcon(tone?: string) {
+  switch (tone) {
+    case 'orange': return <MapPin size={11} aria-hidden="true" />
+    case 'purple': return <Zap size={11} aria-hidden="true" />
+    case 'green': return <BadgeCheck size={11} aria-hidden="true" />
+    case 'gray': return <Package size={11} aria-hidden="true" />
+    default: return <Building2 size={11} aria-hidden="true" />
+  }
+}
+
+function ServerDisplayTagsEditor({ tags, onChange }: { tags: { text: string; tone?: string }[]; onChange: (tags: { text: string; tone?: string }[]) => void }) {
+  const items = Array.isArray(tags) ? tags : []
+  return (
+    <FormField label="卡片标签" hint="显示在服务器卡片最底部，由你自行填写。最多 8 个，不填则不显示系统标签。" placement="bottom">
+      <div className="server-display-tags-editor">
+        {items.map((tag, index) => (
+          <div key={index} className="server-display-tag-row">
+            <input value={tag.text} maxLength={24} onChange={event => onChange(items.map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item))} placeholder="例如：原生IP / 峰值 500Mbps" />
+            <Select value={tag.tone || 'blue'} onChange={event => onChange(items.map((item, itemIndex) => itemIndex === index ? { ...item, tone: event.target.value } : item))} aria-label="标签颜色">
+              {displayTagTones.map(tone => <option key={tone.id} value={tone.id}>{tone.label}</option>)}
+            </Select>
+            <button type="button" className="ghost icon-button" onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))} aria-label="删除标签"><Trash2 size={14} /></button>
+          </div>
+        ))}
+        {items.length < 8 ? (
+          <button type="button" className="ghost" onClick={() => onChange([...items, { text: '', tone: displayTagTones[Math.min(items.length, displayTagTones.length - 1)].id }])}>
+            <Plus size={14} />添加标签
+          </button>
+        ) : null}
+      </div>
+    </FormField>
+  )
+}
+
+function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = '' }: { icon: React.ReactNode; label: string; value: string; percent: number; sub: string; fill?: string; tone?: string }) {
+  return (
+    <div className="server-metric-row">
+      {icon}
+      <div className="server-metric-copy">
+        <div className="server-metric-head"><span>{label}</span><strong>{value}</strong></div>
+        <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+          <div className={`server-metric-fill ${fill} ${tone || metricTone(percent)}`} style={{ width: `${Math.max(percent, percent > 0 ? 2 : 0)}%` }} />
+        </div>
+        <span className="server-metric-sub">{sub}</span>
+      </div>
+    </div>
+  )
 }
 
 function GridViewIcon() {
@@ -8394,6 +8575,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
+          <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
           </>}
 
           {tab === 'billing' && <>
@@ -8545,6 +8727,7 @@ function serverToDraft(server: Server) {
     renewal_cycle: (server.renewal_cycle || 'monthly') as 'monthly' | 'quarterly',
     auto_renew_enabled: Boolean(server.auto_renew_enabled),
     expiry_notify_enabled: server.expiry_notify_enabled !== false,
+    display_tags: Array.isArray(server.display_tags) ? server.display_tags.map(tag => ({ text: String(tag.text || ''), tone: tag.tone || 'blue' })) : [],
   }
 }
 
@@ -8612,6 +8795,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           ) : null}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
           </>}
           {tab === 'billing' && <>
           <div className="form-section-title">到期与续期</div>
@@ -9865,28 +10049,40 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const diskPercent = resourcePercent(server.disk_bytes, server.disk_total_bytes)
   const stack = serverStackBadge(server)
   const enrolled = enrolledDaysLabel(server)
-  const expiry = serverExpiryStatus(server)
-  const qualitySamples = samples.slice(-12)
-  const qualitySegs = qualitySamples.length
-    ? qualitySamples.map(sample => {
-        if (sample.connectivity_available === false) return 'poor'
-        const latency = Number(sample.connectivity_latency_ms || 0)
-        if (!sample.connectivity_available || latency <= 0) return ''
-        if (latency < 80) return 'ok'
-        if (latency < 180) return 'fair'
-        return 'poor'
-      })
-    : []
+  const expiryLabel = cardExpiryLabel(server)
+  const qualitySegs = qualitySegments(samples)
+  const lossSegs = lossSegments(samples)
+  const lossPercent = connectivityLossPercent(samples)
+  const tags = (server.display_tags || []).filter(tag => String(tag.text || '').trim())
+  const na = !isOnline
+  let healthTone: 'ok' | 'fair' | 'poor' | 'off' = 'off'
+  if (isOnline && server.latency_probe_enabled) {
+    if (server.connectivity_status === 'available') {
+      const ms = Number(server.connectivity_latency_ms || 0)
+      healthTone = ms > 0 && ms < 80 ? 'ok' : ms < 180 ? 'fair' : 'poor'
+    } else if (server.connectivity_status === 'unavailable' || server.connectivity_status === 'offline') {
+      healthTone = 'poor'
+    } else {
+      healthTone = 'fair'
+    }
+  }
 
   return (
-    <MotionCard tag="article" className="server-card server-card-monitorable" hoverEffect={false}>
+    <MotionCard tag="article" className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}`} hoverEffect={false}>
       <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
+      {!isOnline && (
+        <div className="server-offline-badge" aria-hidden="true">
+          <Power size={13} />
+          <span>{offlineAgoLabel(server.last_seen_at)}</span>
+        </div>
+      )}
       <div className="server-card-head">
         <div className="server-card-title">
           <RegionFlag code={serverRegionCode(server)} size={20} />
           <div className="server-card-identity">
             <div className="server-card-name-row">
-              <h3>{server.name || `server-${server.id}`} <span style={{ fontWeight: 500, opacity: 0.55, fontSize: '0.9em' }}>#{server.id}</span></h3>
+              <h3>{server.name || `server-${server.id}`}</h3>
+              <ExternalLink size={13} className="server-card-open-icon" aria-hidden="true" />
               <span className={`server-stack-badge ${stack.tone}`}>{stack.label}</span>
             </div>
           </div>
@@ -9912,89 +10108,71 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <span>时间异常</span>
           </button>}
           {uninstalling && <span className="status-pill warning">卸载中</span>}
+          <span className={`server-health-ring ${healthTone}`} title={server.latency_probe_enabled ? connectivityStatusLabel(server.connectivity_status) : '未配置延迟测试'} aria-hidden="true" />
           <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} />
-		  <ServerActionsDropdown server={server} role={role} onAction={onAction} />
+          <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
       </div>
       <div className="server-metric-list">
-        <div className="server-metric-row">
-          <Cpu size={15} aria-hidden="true" />
-          <div className="server-metric-copy">
-            <div className="server-metric-head"><span>CPU</span><strong>{Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(1)}%` : '—'}</strong></div>
-            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(cpuPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="CPU 使用率">
-              <div className={`server-metric-fill ${metricTone(cpuPercent)}`} style={{ width: `${Math.max(cpuPercent, cpuPercent > 0 ? 2 : 0)}%` }} />
-            </div>
-            <span className="server-metric-sub">{cpuCoresLabel(server)}</span>
-          </div>
-        </div>
-        <div className="server-metric-row">
-          <MemoryStick size={15} aria-hidden="true" />
-          <div className="server-metric-copy">
-            <div className="server-metric-head"><span>内存</span><strong>{server.memory_total_bytes ? `${memPercent.toFixed(0)}%` : '—'}</strong></div>
-            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(memPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="内存使用率">
-              <div className={`server-metric-fill memory ${metricTone(memPercent)}`} style={{ width: `${Math.max(memPercent, memPercent > 0 ? 2 : 0)}%` }} />
-            </div>
-            <span className="server-metric-sub">{serverMemoryLabel(server)}</span>
-          </div>
-        </div>
-        <div className="server-metric-row">
-          <HardDrive size={15} aria-hidden="true" />
-          <div className="server-metric-copy">
-            <div className="server-metric-head"><span>磁盘</span><strong>{server.disk_total_bytes ? `${diskPercent.toFixed(0)}%` : '—'}</strong></div>
-            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(diskPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="磁盘使用率">
-              <div className={`server-metric-fill disk ${metricTone(diskPercent)}`} style={{ width: `${Math.max(diskPercent, diskPercent > 0 ? 2 : 0)}%` }} />
-            </div>
-            <span className="server-metric-sub">{server.disk_total_bytes ? `${formatBytes(server.disk_bytes || 0)} / ${formatBytes(server.disk_total_bytes)}` : '—'}</span>
-          </div>
-        </div>
-        <div className="server-metric-row">
-          <ArrowDownUp size={15} aria-hidden="true" />
-          <div className="server-metric-copy">
-            <div className="server-metric-head"><span>周期流量</span><strong>{trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'}</strong></div>
-            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(trafficPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="周期流量使用率">
-              <div className={`server-metric-fill traffic ${trafficQuotaTone}`} style={{ width: `${trafficLimitBytes > 0 ? Math.max(trafficPercent, trafficPercent > 0 ? 2 : 0) : 0}%` }} />
-            </div>
-            <span className="server-metric-sub">{trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : `${formatBytes(trafficTotalBytes)} / ∞`}</span>
-          </div>
-        </div>
+        <ServerMetricCell icon={<Cpu size={15} aria-hidden="true" />} label="CPU" value={na ? 'N/A' : Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(2)}%` : '—'} percent={na ? 0 : cpuPercent} sub={na ? 'N/A' : cpuCoresLabel(server)} />
+        <ServerMetricCell icon={<MemoryStick size={15} aria-hidden="true" />} label="内存" value={na ? 'N/A' : server.memory_total_bytes ? `${memPercent.toFixed(2)}%` : '—'} percent={na ? 0 : memPercent} sub={na ? 'N/A' : serverMemoryLabel(server)} fill="memory" />
+        <ServerMetricCell icon={<HardDrive size={15} aria-hidden="true" />} label="磁盘" value={na ? 'N/A' : server.disk_total_bytes ? `${diskPercent.toFixed(1)}%` : '—'} percent={na ? 0 : diskPercent} sub={na ? 'N/A' : server.disk_total_bytes ? `${formatBytes(server.disk_bytes || 0)} / ${formatBytes(server.disk_total_bytes)}` : '—'} fill="disk" />
+        <ServerMetricCell icon={<ArrowDownUp size={15} aria-hidden="true" />} label="月度" value={trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)} percent={na ? 0 : trafficPercent} sub={trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'} fill="traffic" tone={trafficQuotaTone} />
       </div>
       <div className="server-card-rates">
         <div className="server-card-rate down">
-          <span><ArrowDown size={13} aria-hidden="true" />{formatByteRate(server.network_download_bps || 0)}</span>
+          <span><ArrowDown size={13} aria-hidden="true" />{na ? '0 Bps' : formatByteRate(server.network_download_bps || 0)}</span>
           <small>{formatBytes(server.traffic_download_bytes || 0)}</small>
         </div>
         <div className="server-card-rate up">
-          <span><ArrowUp size={13} aria-hidden="true" />{formatByteRate(server.network_upload_bps || 0)}</span>
+          <span><ArrowUp size={13} aria-hidden="true" />{na ? '0 Bps' : formatByteRate(server.network_upload_bps || 0)}</span>
           <small>{formatBytes(server.traffic_upload_bytes || 0)}</small>
         </div>
       </div>
-      <div className="server-card-quality">
-        <div className="server-card-quality-head">
-          <span>延迟</span>
-          <strong>{server.latency_probe_enabled ? connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms) : '未配置'}</strong>
+      <div className="server-card-quality-pair">
+        <div className="server-card-quality">
+          <div className="server-card-quality-head">
+            <span><Clock size={12} aria-hidden="true" />延迟</span>
+            <strong>{na || !server.latency_probe_enabled ? '—' : connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
+          </div>
+          <div className="server-quality-bar" aria-hidden="true">
+            {qualitySegs.map((tone, index) => (
+              <span key={index} className={`server-quality-seg ${tone}`} />
+            ))}
+          </div>
         </div>
-        <div className="server-quality-bar" aria-hidden="true">
-          {(qualitySegs.length ? qualitySegs : Array.from({ length: 12 }, () => '')).map((tone, index) => (
-            <span key={index} className={`server-quality-seg ${tone}`} />
-          ))}
+        <div className="server-card-quality">
+          <div className="server-card-quality-head">
+            <span><WifiOff size={12} aria-hidden="true" />丢包率</span>
+            <strong>{na || lossPercent == null ? '—' : `${lossPercent.toFixed(lossPercent >= 10 ? 0 : 1)}%`}</strong>
+          </div>
+          <div className="server-quality-bar" aria-hidden="true">
+            {lossSegs.map((tone, index) => (
+              <span key={`loss-${index}`} className={`server-quality-seg ${tone}`} />
+            ))}
+          </div>
         </div>
       </div>
       <div className="server-card-life">
         <div className="server-card-life-item expiry">
-          <span>到期</span>
-          <strong>{expiry.tone === 'muted' ? '未设置' : expiry.label}</strong>
+          <span><CalendarDays size={12} aria-hidden="true" />到期</span>
+          <strong>{expiryLabel}</strong>
         </div>
         <div className="server-card-life-item uptime">
-          <span>接入</span>
+          <span><RefreshCw size={12} aria-hidden="true" />在线</span>
           <strong>{enrolled || '—'}</strong>
         </div>
       </div>
-      <div className="server-card-tags">
-        <span className="server-card-tag">{labelValue(server.ip_stack || 'auto')}</span>
-        <span className="server-card-tag">{server.monitoring_mode === 'standard' ? '标准监控' : '轻量监控'}</span>
-        {server.resource_history_enabled ? <span className="server-card-tag">负载历史</span> : null}
-        {server.latency_probe_enabled ? <span className="server-card-tag">{server.latency_probe_mode === 'icmp' ? 'ICMP' : 'TCP'} 延迟</span> : null}
-      </div>
+      {tags.length ? (
+        <div className="server-card-tags">
+          {tags.map(tag => (
+            <span key={`${tag.tone}-${tag.text}`} className={`server-card-tag tone-${tag.tone || 'blue'}`}>
+              {displayTagIcon(tag.tone)}
+              {tag.text}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </MotionCard>
   )
 }

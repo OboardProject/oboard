@@ -56,6 +56,7 @@ type serverUpdateChanges struct {
 	TrafficResetDay          *int                        `json:"traffic_reset_day,omitempty"`
 	TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes,omitempty"`
 	TrafficUsedBytes         *int64                      `json:"traffic_used_bytes,omitempty"`
+	DisplayTags              *[]model.ServerDisplayTag   `json:"display_tags,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -205,6 +206,7 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 		next.TrafficUploadBytes = uint64(*changes.TrafficUsedBytes)
 		next.TrafficDownloadBytes = 0
 	})
+	set("display_tags", changes.DisplayTags != nil, func() { next.DisplayTags = *changes.DisplayTags })
 	return changed
 }
 

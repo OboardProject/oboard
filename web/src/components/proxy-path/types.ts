@@ -86,6 +86,7 @@ export type Server = {
   latency_probe_max_targets?: number
   latency_probe_resource_version?: string
   connection_audit_enabled: boolean
+  display_tags?: { text: string; tone?: string }[]
   time_correction_mode: TimeCorrectionMode
   time_check_status: string
   time_offset_ms: number

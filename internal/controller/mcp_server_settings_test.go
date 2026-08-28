@@ -112,13 +112,73 @@ func TestMCPServerSettingsRoundTripThroughChangeset(t *testing.T) {
 	if !ok {
 		t.Fatal("servers.get capability missing")
 	}
-	for _, field := range []string{`"port_range_start"`, `"internal_port_range_start"`, `"expires_at"`, `"renewal_cycle"`} {
+	for _, field := range []string{`"port_range_start"`, `"internal_port_range_start"`, `"expires_at"`, `"renewal_cycle"`, `"display_tags"`} {
 		if !strings.Contains(string(onboardDescriptor.InputSchema), field) {
 			t.Fatalf("servers.onboard input schema missing %s", field)
 		}
 		if !strings.Contains(string(serverDescriptor.OutputSchema), field) {
 			t.Fatalf("servers.get output schema missing %s", field)
 		}
+	}
+}
+
+func TestMCPServerDisplayTagsRoundTripAndPatchOmit(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111115", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetBootstrapAdmin(ctx, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	onboard, _ := json.Marshal(map[string]any{
+		"server": map[string]any{
+			"name": "tag-card",
+			"display_tags": []map[string]any{
+				{"text": "IncuShlii", "tone": "blue"},
+				{"text": "原生IP/住宅IP", "tone": "orange"},
+			},
+		},
+		"issue_enrollment_token": false,
+	})
+	applyAutomationChangeset(t, srv, principal, "onboard-tags", automation.OperationRequest{Capability: "servers.onboard", Input: onboard})
+	servers, err := db.ListServers(ctx)
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("servers=%#v err=%v", servers, err)
+	}
+	if len(servers[0].DisplayTags) != 2 || servers[0].DisplayTags[0].Text != "IncuShlii" || servers[0].DisplayTags[1].Tone != "orange" {
+		t.Fatalf("onboard tags = %#v", servers[0].DisplayTags)
+	}
+	dto, err := srv.application.GetServer(ctx, principal, servers[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCapabilityOutputSchema(t, srv, "servers.get", dto)
+	if len(dto.DisplayTags) != 2 {
+		t.Fatalf("dto tags = %#v", dto.DisplayTags)
+	}
+
+	rename, _ := json.Marshal(map[string]any{"server_id": servers[0].ID, "changes": map[string]any{"name": "tag-card-2"}})
+	applyAutomationChangeset(t, srv, principal, "rename-keep-tags", automation.OperationRequest{Capability: "servers.update", Input: rename})
+	kept, err := db.GetServer(ctx, servers[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Name != "tag-card-2" || len(kept.DisplayTags) != 2 || kept.DisplayTags[0].Text != "IncuShlii" {
+		t.Fatalf("omitted display_tags cleared labels: %#v", kept)
+	}
+
+	clear, _ := json.Marshal(map[string]any{"server_id": servers[0].ID, "changes": map[string]any{"display_tags": []model.ServerDisplayTag{}}})
+	applyAutomationChangeset(t, srv, principal, "clear-tags", automation.OperationRequest{Capability: "servers.update", Input: clear})
+	cleared, err := db.GetServer(ctx, servers[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cleared.DisplayTags) != 0 {
+		t.Fatalf("cleared tags = %#v", cleared.DisplayTags)
 	}
 }
 
