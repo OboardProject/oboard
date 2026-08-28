@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -116,13 +117,34 @@ func (s *Store) UpdateControllerUpdateRun(ctx context.Context, run *ControllerUp
 	} else {
 		finished = nilTime(run.FinishedAt)
 	}
-	_, err := s.db.ExecContext(ctx, `update controller_update_runs set source=?,current_version=?,current_build=?,target_version=?,target_build=?,phase=?,updated_at=?,finished_at=?,backup_path=?,backup_total_pages=?,backup_remaining_pages=?,backup_size_bytes=?,download_duration_ms=?,backup_duration_ms=?,install_duration_ms=?,restart_duration_ms=?,total_duration_ms=?,error=? where id=?`,
+	active := controllerUpdateRunActive(run.Phase)
+	result, err := s.db.ExecContext(ctx, `update controller_update_runs set source=?,current_version=?,current_build=?,target_version=?,target_build=?,phase=?,updated_at=?,finished_at=?,backup_path=?,backup_total_pages=?,backup_remaining_pages=?,backup_size_bytes=?,download_duration_ms=?,backup_duration_ms=?,install_duration_ms=?,restart_duration_ms=?,total_duration_ms=?,error=? where id=? and phase not in ('succeeded','failed','cancelled')`,
 		run.Source, run.CurrentVersion, run.CurrentBuild, run.TargetVersion, run.TargetBuild, run.Phase, ts, finished, run.BackupPath, run.BackupTotalPages, run.BackupRemainingPages, run.BackupSizeBytes, run.DownloadDurationMS, run.BackupDurationMS, run.InstallDurationMS, run.RestartDurationMS, run.TotalDurationMS, run.Error, run.ID)
 	if err != nil {
 		return err
 	}
+	if active {
+		if affected, affectedErr := result.RowsAffected(); affectedErr != nil {
+			return affectedErr
+		} else if affected == 0 {
+			return fmt.Errorf("Controller update run %d is already terminal", run.ID)
+		}
+	}
 	run.UpdatedAt = parseTime(ts)
 	return nil
+}
+
+func (s *Store) ForceFinishActiveControllerUpdateRun(ctx context.Context, reason string) (*ControllerUpdateRun, bool, error) {
+	run, err := s.GetActiveControllerUpdateRun(ctx)
+	if err != nil || run == nil {
+		return run, false, err
+	}
+	run.Phase = ControllerUpdatePhaseCancelled
+	run.Error = strings.TrimSpace(reason)
+	if err := s.UpdateControllerUpdateRun(ctx, run); err != nil {
+		return nil, false, err
+	}
+	return run, true, nil
 }
 
 const controllerUpdateRunSelect = `select id,source,current_version,current_build,target_version,target_build,phase,started_at,updated_at,finished_at,backup_path,backup_total_pages,backup_remaining_pages,backup_size_bytes,download_duration_ms,backup_duration_ms,install_duration_ms,restart_duration_ms,total_duration_ms,error from controller_update_runs`

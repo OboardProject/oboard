@@ -65,6 +65,7 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 		params                 map[string]any
 		confirm                bool
 		skipBackup             bool
+		forceConfirmation      bool
 	}{
 		{name: "check", goal: "检查主控更新", capability: "controller_update.check"},
 		{name: "channel", goal: "切换主控更新通道", capability: "controller_update.set_channel", params: map[string]any{"channel": "stable"}},
@@ -72,6 +73,7 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 		{name: "install-skip-backup", goal: "跳过备份安装主控更新", capability: "controller_update.install", confirm: true, skipBackup: true},
 		{name: "install-with-backup", goal: "备份并安装主控更新", capability: "controller_update.install", confirm: true, skipBackup: false},
 		{name: "cancel", goal: "取消主控更新", capability: "controller_update.cancel", confirm: true},
+		{name: "force-finish", goal: "强制结束主控更新任务", capability: "controller_update.force_finish", forceConfirmation: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -85,6 +87,9 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 			}
 			if test.confirm && operation.Input["confirm"] != true {
 				t.Fatalf("confirmation missing: %#v", operation.Input)
+			}
+			if test.forceConfirmation && operation.Input["confirmation"] != controllerUpdateForceFinishPhrase {
+				t.Fatalf("force confirmation missing: %#v", operation.Input)
 			}
 			if got, _ := operation.Input["skip_backup"].(bool); got != test.skipBackup {
 				t.Fatalf("skip_backup=%v want %v input=%#v", got, test.skipBackup, operation.Input)

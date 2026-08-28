@@ -2,17 +2,26 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CONTROLLER_UPDATE_PENDING_MESSAGE,
+  CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
   controllerUpdateDisplayPhase,
   controllerUpdateFlowPercent,
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
+  isControllerUpdateForceFinishConfirmation,
   isControllerUpdateInProgressStatus,
   monotonicPercent,
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
 
 describe('controller update pending toast', () => {
+
+  it('requires the exact force-finish confirmation phrase', () => {
+    expect(isControllerUpdateForceFinishConfirmation(CONTROLLER_UPDATE_FORCE_FINISH_PHRASE)).toBe(true)
+    expect(isControllerUpdateForceFinishConfirmation(`  ${CONTROLLER_UPDATE_FORCE_FINISH_PHRASE}  `)).toBe(true)
+    expect(isControllerUpdateForceFinishConfirmation('强制结束')).toBe(false)
+    expect(isControllerUpdateForceFinishConfirmation(null)).toBe(false)
+  })
   it('rejects an old cancelled response after a new install request starts', () => {
     const guard = createControllerUpdateRequestGuard()
     const staleRefresh = guard.beginRequest()

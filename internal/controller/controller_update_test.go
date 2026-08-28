@@ -122,10 +122,23 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{"controller_auto_update_enabled": true}, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/install", adminToken, nil, http.StatusConflict)
 	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/cancel", adminToken, nil, http.StatusConflict)
+	staleRun := &store.ControllerUpdateRun{Source: "manual", TargetVersion: "dev-test", TargetBuild: "20260828194806", Phase: store.ControllerUpdatePhaseVerifying}
+	if err := db.CreateControllerUpdateRun(t.Context(), staleRun); err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/force-finish", adminToken, map[string]any{"confirmation": "结束"}, http.StatusBadRequest)
+	forced := request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/force-finish", adminToken, map[string]any{"confirmation": controllerUpdateForceFinishPhrase}, http.StatusOK)
+	if operation, _ := forced["operation"].(map[string]any); operation == nil || operation["active"] != false || operation["phase"] != store.ControllerUpdatePhaseCancelled {
+		t.Fatalf("unexpected force-finished operation: %#v", forced)
+	}
+	if active, err := db.GetActiveControllerUpdateRun(t.Context()); err != nil || active != nil {
+		t.Fatalf("active update after force finish: %#v err=%v", active, err)
+	}
 
 	request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	viewerLogin := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "viewer", "password": "long-user-password"}, http.StatusOK)
 	request(t, handler, http.MethodGet, "/api/v1/ui/controller-update", viewerLogin["token"].(string), nil, http.StatusForbidden)
+	request(t, handler, http.MethodPost, "/api/v1/ui/controller-update/force-finish", viewerLogin["token"].(string), map[string]any{"confirmation": controllerUpdateForceFinishPhrase}, http.StatusForbidden)
 
 	firstBackup, err := app.createControllerBackup(context.Background())
 	if err != nil {
@@ -674,9 +687,17 @@ func TestControllerUpdateCapabilitiesAndPublicView(t *testing.T) {
 	applyAutomationChangeset(t, server, principal, "controller-check", automation.OperationRequest{Capability: "controller_update.check", Input: json.RawMessage(`{}`)})
 	applyAutomationChangeset(t, server, principal, "controller-channel", automation.OperationRequest{Capability: "controller_update.set_channel", Input: json.RawMessage(`{"channel":"dev"}`)})
 	applyAutomationChangeset(t, server, principal, "controller-cancel", automation.OperationRequest{Capability: "controller_update.cancel", Input: json.RawMessage(`{"confirm":true}`)})
+	run := &store.ControllerUpdateRun{Source: "manual", TargetBuild: "20260817000000", Phase: store.ControllerUpdatePhaseVerifying}
+	if err := db.CreateControllerUpdateRun(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	applyAutomationChangeset(t, server, principal, "controller-force-finish", automation.OperationRequest{Capability: "controller_update.force_finish", Input: json.RawMessage(`{"confirmation":"强制结束更新任务"}`)})
+	if active, err := db.GetActiveControllerUpdateRun(t.Context()); err != nil || active != nil {
+		t.Fatalf("active update after automation force finish: %#v err=%v", active, err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if checkCalls != 1 || channelCalls != 1 || cancelCalls != 1 || channel != "dev" {
+	if checkCalls != 1 || channelCalls != 1 || cancelCalls != 2 || channel != "dev" {
 		t.Fatalf("updater calls check=%d channel=%d cancel=%d current_channel=%q", checkCalls, channelCalls, cancelCalls, channel)
 	}
 }

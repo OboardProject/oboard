@@ -33,6 +33,8 @@ const (
 	controllerBackupTargetBuildSetting   = "controller_update_backup_target_build"
 	controllerUpdateErrorSetting         = "controller_update_controller_error"
 	controllerUpdateMaintenanceSetting   = "controller_update_maintenance"
+	controllerUpdateForceFinishPhrase    = "强制结束更新任务"
+	controllerUpdateForceFinishedReason  = "管理员强制结束更新任务"
 	controllerUpdateSchedulerPeriod      = time.Minute
 	controllerUpdatePanelIdlePeriod      = 5 * time.Minute
 	controllerUpdateInstallTimeout       = 20 * time.Minute
@@ -719,6 +721,55 @@ func (s *Server) controllerUpdateCancel(w http.ResponseWriter, r *http.Request) 
 	}
 	auditReq(s, r, "cancel", "controller_update", status.Channel+":"+status.Available.Version)
 	s.writeControllerUpdateStatus(w, r, status)
+}
+
+func (s *Server) controllerUpdateForceFinish(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var request struct {
+		Confirmation string `json:"confirmation"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.Confirmation) != controllerUpdateForceFinishPhrase {
+		fail(w, errors.New("请输入“强制结束更新任务”以确认操作"), http.StatusBadRequest)
+		return
+	}
+	status, changed, err := s.forceFinishControllerUpdate(r.Context())
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	auditReq(s, r, "force_finish", "controller_update", status.Available.Build)
+	s.writeControllerUpdateStatus(w, r, status)
+	if changed {
+		s.publishRealtime("controller_update")
+	}
+}
+
+func (s *Server) forceFinishControllerUpdate(ctx context.Context) (controllerupdate.Status, bool, error) {
+	_, changed, err := s.store.ForceFinishActiveControllerUpdateRun(ctx, controllerUpdateForceFinishedReason)
+	if err != nil {
+		return controllerupdate.Status{}, false, err
+	}
+	if changed {
+		s.cancelControllerUpdateContext()
+		s.cancelPreparedControllerUpdate()
+		s.clearControllerUpdateMaintenance(ctx)
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+	}
+	status, statusErr := s.controllerUpdater.Status(ctx)
+	if statusErr != nil {
+		status = s.fallbackControllerUpdateStatus()
+	}
+	if isActiveControllerUpdateStatus(status.State) {
+		status.State = store.ControllerUpdatePhaseCancelled
+		status.CanCancel = false
+		status.LastError = ""
+	}
+	return status, changed, nil
 }
 
 func (s *Server) startControllerUpdateWatch() {

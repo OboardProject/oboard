@@ -67,6 +67,11 @@ func (s *Server) attachControllerUpdateOperation(ctx context.Context, status *co
 		}
 		if latest.Phase == store.ControllerUpdatePhaseSucceeded || latest.Phase == store.ControllerUpdatePhaseFailed || latest.Phase == store.ControllerUpdatePhaseCancelled {
 			status.Operation = controllerUpdateOperationFromRun(latest, nil, false)
+			if latest.Phase == store.ControllerUpdatePhaseCancelled && latest.Error == controllerUpdateForceFinishedReason && isActiveControllerUpdateStatus(status.State) {
+				status.State = store.ControllerUpdatePhaseCancelled
+				status.CanCancel = false
+				status.LastError = ""
+			}
 		}
 		return
 	}

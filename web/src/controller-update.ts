@@ -1,4 +1,9 @@
 export const CONTROLLER_UPDATE_PENDING_MESSAGE = '正在等待更新完成'
+export const CONTROLLER_UPDATE_FORCE_FINISH_PHRASE = '强制结束更新任务'
+
+export function isControllerUpdateForceFinishConfirmation(value: string | null | undefined): boolean {
+  return String(value || '').trim() === CONTROLLER_UPDATE_FORCE_FINISH_PHRASE
+}
 
 const CONTROLLER_UPDATE_IN_PROGRESS_STATUSES = [
   'checking',

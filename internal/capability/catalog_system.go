@@ -8,6 +8,8 @@ import (
 	"github.com/OboardProject/oboard/internal/mcpauth"
 )
 
+const controllerUpdateForceFinishConfirmation = "强制结束更新任务"
+
 // systemDescriptors builds the system-domain capability set: global settings,
 // backups, certificates, approval policies, service accounts, AI providers,
 // tool-call audits, and notification channels.
@@ -197,6 +199,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"skip_backup": map[string]any{"type": "boolean", "description": "默认 true。true 或省略时跳过更新前数据库备份。false 时先备份。自动更新默认不备份。"},
 		}, "confirm"), controllerUpdateResult, 4, false),
 		adminWrite("controller_update.cancel", "取消当前可中断的主控更新", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), controllerUpdateResult, 2, false),
+		adminWrite("controller_update.force_finish", "不检查当前阶段，强制结束主控更新任务的状态追踪；不会回滚已安装的文件", schemaObject(map[string]any{
+			"confirmation": map[string]any{"type": "string", "const": controllerUpdateForceFinishConfirmation},
+		}, "confirmation"), controllerUpdateResult, 4, true),
 		adminWrite("agent_updates.pause", "暂停 Agent 滚动更新", schemaObject(nil), rawSchema(agentUpdates), 2, false),
 		adminWrite("agent_updates.resume", "恢复 Agent 滚动更新", schemaObject(nil), rawSchema(agentUpdates), 2, false),
 		adminWrite("agent_updates.retry_failed", "重试失败的 Agent 更新并恢复滚动", schemaObject(nil), rawSchema(agentUpdates), 2, false),

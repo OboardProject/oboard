@@ -591,6 +591,9 @@ func (s *Server) prepareControllerUpdateRecipe(_ context.Context, _ application.
 	var operation mcpOperationRef
 	action := ""
 	switch {
+	case containsAnyFold(goal, "强制结束", "force finish", "force stop"):
+		operation = mcpOperationRef{Capability: "controller_update.force_finish", Input: map[string]any{"confirmation": controllerUpdateForceFinishPhrase}}
+		action = "force_finish_controller_update"
 	case containsAnyFold(goal, "取消", "cancel"):
 		operation = mcpOperationRef{Capability: "controller_update.cancel", Input: map[string]any{"confirm": true}}
 		action = "cancel_controller_update"
@@ -615,7 +618,7 @@ func (s *Server) prepareControllerUpdateRecipe(_ context.Context, _ application.
 		operation = mcpOperationRef{Capability: "controller_update.check", Input: map[string]any{}}
 		action = "check_controller_update"
 	default:
-		return recipeNeedInput("controller_update.manage", "operation", "需要指定操作：检查更新、切换通道、安装更新或取消更新"), nil
+		return recipeNeedInput("controller_update.manage", "operation", "需要指定操作：检查更新、切换通道、安装更新、取消更新或强制结束任务"), nil
 	}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "controller_update.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": action}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "controller_update_status"}}}, nil
 }

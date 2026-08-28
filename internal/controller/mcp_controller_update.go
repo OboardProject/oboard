@@ -14,9 +14,10 @@ import (
 )
 
 type controllerUpdateAutomationInput struct {
-	Channel    string `json:"channel,omitempty"`
-	Confirm    bool   `json:"confirm,omitempty"`
-	SkipBackup *bool  `json:"skip_backup,omitempty"`
+	Channel      string `json:"channel,omitempty"`
+	Confirm      bool   `json:"confirm,omitempty"`
+	Confirmation string `json:"confirmation,omitempty"`
+	SkipBackup   *bool  `json:"skip_backup,omitempty"`
 }
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
@@ -188,7 +189,7 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 }
 
 func (s *Server) registerControllerUpdateOperations() {
-	for _, capabilityName := range []string{"controller_update.check", "controller_update.set_channel", "controller_update.install", "controller_update.cancel"} {
+	for _, capabilityName := range []string{"controller_update.check", "controller_update.set_channel", "controller_update.install", "controller_update.cancel", "controller_update.force_finish"} {
 		name := capabilityName
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 			request, status, err := s.controllerUpdateAutomationCandidate(ctx, name, input)
@@ -233,6 +234,8 @@ func (s *Server) registerControllerUpdateOperations() {
 						err = errors.New("当前没有可以中断的更新")
 					}
 				}
+			case "controller_update.force_finish":
+				status, accepted, err = s.forceFinishControllerUpdate(ctx)
 			}
 			if err != nil {
 				return nil, err
@@ -250,29 +253,36 @@ func (s *Server) controllerUpdateAutomationCandidate(ctx context.Context, capabi
 	request.Channel = strings.ToLower(strings.TrimSpace(request.Channel))
 	switch capabilityName {
 	case "controller_update.check":
-		if request.Channel != "" || request.Confirm || request.SkipBackup != nil {
+		if request.Channel != "" || request.Confirm || request.Confirmation != "" || request.SkipBackup != nil {
 			return request, controllerupdate.Status{}, errors.New("controller update check does not accept parameters")
 		}
 	case "controller_update.set_channel":
 		if request.Channel != "stable" && request.Channel != "dev" {
 			return request, controllerupdate.Status{}, errors.New("channel must be stable or dev")
 		}
-		if request.SkipBackup != nil {
+		if request.Confirm || request.Confirmation != "" || request.SkipBackup != nil {
 			return request, controllerupdate.Status{}, errors.New("channel switch does not accept skip_backup")
 		}
 	case "controller_update.install":
-		if !request.Confirm || request.Channel != "" {
+		if !request.Confirm || request.Channel != "" || request.Confirmation != "" {
 			return request, controllerupdate.Status{}, errors.New("confirm=true is required")
 		}
 	case "controller_update.cancel":
-		if !request.Confirm || request.Channel != "" || request.SkipBackup != nil {
+		if !request.Confirm || request.Channel != "" || request.Confirmation != "" || request.SkipBackup != nil {
 			return request, controllerupdate.Status{}, errors.New("confirm=true is required")
+		}
+	case "controller_update.force_finish":
+		if request.Confirmation != controllerUpdateForceFinishPhrase || request.Channel != "" || request.Confirm || request.SkipBackup != nil {
+			return request, controllerupdate.Status{}, errors.New("confirmation must equal 强制结束更新任务")
 		}
 	default:
 		return request, controllerupdate.Status{}, errors.New("unsupported controller update operation")
 	}
 	status, err := s.controllerUpdater.Status(ctx)
 	if err != nil {
+		if capabilityName == "controller_update.force_finish" {
+			return request, s.fallbackControllerUpdateStatus(), nil
+		}
 		return request, status, controllerUpdateOperationError("读取主控更新状态失败", status, err)
 	}
 	if capabilityName == "controller_update.install" {
