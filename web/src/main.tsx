@@ -4737,7 +4737,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     <div className="settings-actions controller-update-actions">
       <button type="button" className="ghost" onClick={() => setAutoUpdateDialogOpen(true)} title="自动更新设置"><Sliders size={14} /><span>自动更新设置</span></button>
       <button type="button" className="ghost" onClick={() => void check()} disabled={Boolean(working) || snapshot.channel === 'pinned' || updateInProgress}><RefreshCw size={14} className={working === 'check' ? 'spin' : ''} />{working === 'check' ? '检查中...' : '检查更新'}</button>
-      <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '备份并安装'}</button>
+      <button type="button" onClick={openInstall} disabled={Boolean(working) || snapshot.channel === 'pinned' || (!snapshot.update_available && !updateInProgress)}><Download size={14} />{working === 'install' ? '准备中...' : updateInProgress ? '查看安装进度' : '安装更新'}</button>
     </div>
     <Dialog isOpen={autoUpdateDialogOpen} onClose={() => setAutoUpdateDialogOpen(false)} title="自动更新配置" size="default">
         <div className="auto-update-dialog-content">
