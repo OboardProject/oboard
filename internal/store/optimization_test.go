@@ -224,8 +224,8 @@ func TestConfigurationRevisionTracksDesiredWritesAndIgnoresOperationalActivity(t
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
 	}
-	if after := read(); after <= baseline {
-		t.Fatalf("user insert did not bump configuration revision (%d -> %d)", baseline, after)
+	if after := read(); after != baseline {
+		t.Fatalf("user insert bumped configuration revision (%d -> %d)", baseline, after)
 	}
 	baseline = read()
 	ruleSet := &model.RoutingRuleSet{Name: "config-revision-rules", URL: "https://example.invalid/rules", Format: model.RoutingRuleSetFormatSingBoxSource, Content: []byte{}, Status: model.RoutingRuleSetStatusPending}

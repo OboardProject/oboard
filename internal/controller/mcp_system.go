@@ -751,6 +751,15 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	if err := s.store.SetSettings(ctx, updates); err != nil {
 		return nil, err
 	}
+	if _, ok := updates["traffic_enforcement_mode"]; ok {
+		if err := s.queueApplyTrafficPolicyForAllAccounting(ctx, "traffic_policy_changed"); err != nil {
+			logConfigurationError("queue traffic policy after settings", err)
+		}
+	} else if _, ok := updates["traffic_timezone"]; ok {
+		if err := s.queueApplyTrafficPolicyForAllAccounting(ctx, "traffic_policy_changed"); err != nil {
+			logConfigurationError("queue traffic policy after settings", err)
+		}
+	}
 	if value, ok := updates[agentAutoUpdateSetting]; ok && value == "true" && s.agentUpdates != nil {
 		s.agentUpdates.Wake()
 	}

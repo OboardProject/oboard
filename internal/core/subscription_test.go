@@ -232,7 +232,7 @@ func TestShadowsocksUoTSubscriptionConfiguresClientOutbound(t *testing.T) {
 		t.Fatalf("UoT version = %#v, want %d", nodes[0].Raw["udp_over_tcp"], shadowsocksUoTVersion)
 	}
 
-	clash, err := renderClashMetaSubscription(nodes)
+	clash, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatMihomo)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +666,7 @@ func TestGenerateClashMetaSubscription(t *testing.T) {
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"server_name":"example.com"}}`, Enabled: true}},
 		SubscriptionOptions{
-			Format:              model.SubscriptionFormatClashMeta,
+			Format:              model.SubscriptionFormatMihomo,
 			EffectiveNodes:      map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
 			EffectiveNodeGroups: map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
 		},
@@ -687,7 +687,7 @@ func TestSubscriptionFormatUsesRequestOption(t *testing.T) {
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
 		SubscriptionOptions{
-			Format:              model.SubscriptionFormatClashMeta,
+			Format:              model.SubscriptionFormatMihomo,
 			EffectiveNodes:      map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true},
 			EffectiveNodeGroups: map[string]string{NodeKeyOf(model.AssignableNodeInbound, 1): "自动选择"},
 		},
@@ -703,7 +703,6 @@ func TestSubscriptionFormatUsesRequestOption(t *testing.T) {
 func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 	for _, format := range []model.SubscriptionFormat{
 		"stash",
-		"clash-meta",
 		"mihomo",
 		"surfboard",
 		"surge",
@@ -713,9 +712,10 @@ func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 		"shadowrocket",
 		"qx",
 		"sing-box",
+		"sing-box-mieru",
 		"v2ray",
 		"v2ray-uri",
-		"clash",
+		"auto",
 	} {
 		if !IsSupportedSubscriptionFormat(format) {
 			t.Fatalf("format %q is not accepted", format)
@@ -724,7 +724,7 @@ func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 }
 
 func TestPlainJSONSubscriptionFormatIsRejected(t *testing.T) {
-	for _, format := range []model.SubscriptionFormat{"plain-json", "plainjson", "plain json", "json"} {
+	for _, format := range []model.SubscriptionFormat{"plain-json", "plainjson", "plain json", "json", "clash", "clash-meta", "mieru"} {
 		if IsSupportedSubscriptionFormat(format) {
 			t.Fatalf("removed format %q is still accepted", format)
 		}

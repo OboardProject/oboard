@@ -40,6 +40,7 @@ type agentTrafficRangeItem struct {
 }
 
 func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request, server *model.Server, req agentTrafficReportEnvelope) {
+	s.trafficReportsReceivedTotal.Add(1)
 	if len(req.Streams) > 1000 {
 		fail(w, errors.New("too many traffic streams in one report"), 400)
 		return
@@ -105,6 +106,14 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		fail(w, err, 500)
 		return
 	}
+	// Traffic reports are accounting + runtime policy reconciliation only.
+	// They must never call NextConfigVersion, MarkConfigurationSyncPending,
+	// markConfigurationRevision, apply_deployment, or apply_core_config.
+	for _, accepted := range result.AcceptedReports {
+		if accepted.Status == "accepted" {
+			s.trafficReportsAcceptedTotal.Add(1)
+		}
+	}
 	for _, accepted := range result.AcceptedReports {
 		if accepted.Status != "accepted" {
 			continue
@@ -121,8 +130,11 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		fail(w, err, 500)
 		return
 	}
+	s.trafficPolicyRuntimeAppliesTotal.Add(1)
+	revision, _ := s.store.TrafficPolicyRevision(r.Context())
 	write(w, 200, map[string]any{
 		"ok":                  true,
+		"policy_revision":     revision,
 		"stream_checkpoints":  result.StreamCheckpoints,
 		"accepted_reports":    result.AcceptedReports,
 		"accepted_report_ids": acceptedReportIDs(result.AcceptedReports),

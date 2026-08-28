@@ -123,7 +123,7 @@ func TestMieruSubscriptionFormatsAreExplicit(t *testing.T) {
 	if !strings.Contains(extended, `"type": "mieru"`) {
 		t.Fatalf("extended sing-box subscription omitted Mieru: %s", extended)
 	}
-	links, err := renderMieruSubscription(nodes)
+	links, err := renderSubscriptionTarget([]SubscriptionNode{nodes[0]}, model.SubscriptionFormatShadowrocket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,12 +156,8 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 	}{
 		{format: model.SubscriptionFormatSingBox},
 		{format: model.SubscriptionFormatSingBoxMieru, wantMieru: true},
-		{format: model.SubscriptionFormatMieru, wantMieru: true},
-		{format: model.SubscriptionFormatClashMeta, wantMieru: true},
 		{format: model.SubscriptionFormatMihomo, wantMieru: true},
 		{format: model.SubscriptionFormatShadowrocket, wantMieru: true},
-		{format: model.SubscriptionFormatClash},
-		{format: model.SubscriptionFormatStash},
 		{format: model.SubscriptionFormatV2RayURI},
 	} {
 		t.Run(string(test.format), func(t *testing.T) {

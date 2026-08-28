@@ -22,6 +22,7 @@ import (
 func (s *Server) registerNetworkAutomationOperations() {
 	s.registerDNSListOperations()
 	s.registerNodePresetOperations()
+	s.registerSubscriptionTemplateOperations()
 	s.registerSnellProfileOperations()
 	s.registerDNSPolicyOperations()
 	s.registerDNSTaskOperations()

@@ -125,6 +125,13 @@ func TestEnsureConfigurationSyncRevisionDoesNotReopenCurrentState(t *testing.T) 
 	if err != nil || state.State != "synced" {
 		t.Fatalf("equal ensure state = %#v err=%v", state, err)
 	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, 10, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "synced" {
+		t.Fatalf("equal pending mark reopened synced state = %#v err=%v", state, err)
+	}
 }
 
 func TestConfigurationSyncRecoveryRequeuesMissingTask(t *testing.T) {

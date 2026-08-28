@@ -471,7 +471,7 @@ func (s *Server) subscriptionOutput(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &request) {
 			return
 		}
-		if !core.IsSupportedSubscriptionFormat(core.NormalizeSubscriptionFormatForAPI(request.Format)) {
+		if !core.IsConcreteSubscriptionFormat(core.NormalizeSubscriptionFormatForAPI(request.Format)) {
 			fail(w, errors.New("unsupported subscription format"), 400)
 			return
 		}

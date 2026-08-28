@@ -1514,6 +1514,26 @@ func TrafficAccountingUsersForServer(serverID int64, paths []model.ProxyPath, st
 	return users
 }
 
+// TrafficAccountingServerIDsForUser returns the servers that own billing and
+// protocol authentication for userID. Downstream shared SS, SSH tunnels, and
+// WARP hops are excluded because they never decrypt the end-user protocol.
+func TrafficAccountingServerIDsForUser(userID int64, servers []model.Server, paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound, bindings []model.InboundUser, pathBindingSets ...[]model.ProxyPathUser) []int64 {
+	if userID <= 0 {
+		return nil
+	}
+	out := make([]int64, 0)
+	for _, server := range servers {
+		if server.ID <= 0 {
+			continue
+		}
+		users := TrafficAccountingUsersForServer(server.ID, paths, steps, inbounds, bindings, pathBindingSets...)
+		if users[userID] {
+			out = append(out, server.ID)
+		}
+	}
+	return out
+}
+
 func IsProxyPathAccountingLocation(serverID, inboundID, pathID int64, paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) bool {
 	var selected model.ProxyPath
 	found := false

@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
@@ -70,10 +71,15 @@ func (s *Server) auditPolicy(ctx context.Context) model.AuditPolicy {
 	return policy
 }
 
-func (s *Server) newSubscriptionPullAudit(r *http.Request, userID int64, format string, profileID *int64, ageEncrypted bool) model.SubscriptionPullAudit {
+func (s *Server) newSubscriptionPullAudit(r *http.Request, userID int64, resolution core.SubscriptionFormatResolution, profileID *int64, ageEncrypted bool) model.SubscriptionPullAudit {
+	client := resolution.Match
+	if client.ClientName == "" {
+		client = core.DetectSubscriptionClient(r.UserAgent())
+	}
 	item := model.SubscriptionPullAudit{
 		UserID: userID, SourceIP: clientIP(r), UserAgent: sanitizeSubscriptionUserAgent(r.UserAgent()),
-		ClientName: subscriptionClientName(r.UserAgent()), Format: strings.TrimSpace(format), ProfileID: profileID,
+		ClientName: client.ClientName, RequestedFormat: string(resolution.Requested), Format: string(resolution.Resolved),
+		AutoDetected: resolution.Auto, ProfileID: profileID,
 		AgeEncrypted: ageEncrypted, RequestedAt: time.Now().UTC(),
 	}
 	if s.geoIP != nil && connectionAuditPublicIP(item.SourceIP) {
@@ -153,42 +159,14 @@ func sanitizeSubscriptionUserAgent(raw string) string {
 }
 
 func subscriptionClientName(raw string) string {
-	lower := strings.ToLower(sanitizeSubscriptionUserAgent(raw))
-	for _, candidate := range []struct {
-		contains string
-		name     string
-	}{
-		{"mihomo", "Mihomo"}, {"clash.meta", "Clash Meta"}, {"clash", "Clash"},
-		{"sing-box", "sing-box"}, {"singbox", "sing-box"}, {"v2rayn", "v2rayN"},
-		{"shadowrocket", "Shadowrocket"}, {"quantumult", "Quantumult X"}, {"surge", "Surge"},
-		{"loon", "Loon"}, {"stash", "Stash"}, {"egern", "Egern"}, {"surfboard", "Surfboard"},
-	} {
-		if strings.Contains(lower, candidate.contains) {
-			return candidate.name
-		}
-	}
-	if lower == "" {
-		return "未知客户端"
-	}
-	product := strings.Fields(lower)[0]
-	if index := strings.IndexByte(product, '/'); index > 0 {
-		product = product[:index]
-	}
-	productRunes := []rune(product)
-	if len(productRunes) > 48 {
-		product = string(productRunes[:48])
-	}
-	if product == "" {
-		return "其他客户端"
-	}
-	return product
+	return core.DetectSubscriptionClient(raw).ClientName
 }
 
-func (s *Server) recordRejectedSubscriptionPull(r *http.Request, userID int64, format string, profileID *int64, ageEncrypted bool, reason string) {
+func (s *Server) recordRejectedSubscriptionPull(r *http.Request, userID int64, resolution core.SubscriptionFormatResolution, profileID *int64, ageEncrypted bool, reason string) {
 	if !s.subscriptionAuditEnabled(r.Context()) {
 		return
 	}
-	event := s.newSubscriptionPullAudit(r, userID, format, profileID, ageEncrypted)
+	event := s.newSubscriptionPullAudit(r, userID, resolution, profileID, ageEncrypted)
 	event.Outcome = "rejected_invalid_request"
 	event.Reason = boundedSubscriptionAuditReason(reason)
 	token := strings.TrimPrefix(r.URL.Path, "/api/v1/subscriptions/")

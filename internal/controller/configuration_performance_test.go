@@ -68,6 +68,7 @@ func TestConfigurationPerformanceSLO(t *testing.T) {
 		db, srv, server, httpServer := newTaskDispatchServer(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		srv.configurationDelay = 25 * time.Millisecond
 		go srv.StartConfigurationReconciler(ctx)
 		socket := connectTestAgent(t, srv, httpServer.URL, server)
 		defer socket.close()

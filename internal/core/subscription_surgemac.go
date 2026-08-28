@@ -48,7 +48,9 @@ type SurgeMacOptions struct {
 // SubscriptionRenderOptions carries target-specific render knobs that do not
 // change the authorized node set.
 type SubscriptionRenderOptions struct {
-	SurgeMac SurgeMacOptions
+	SurgeMac       SurgeMacOptions
+	Template       string
+	TemplateDigest string
 }
 
 func defaultSurgeMacOptions() SurgeMacOptions {
@@ -144,50 +146,7 @@ func validateSurgeMacMihomoExec(value string) error {
 }
 
 func renderSubscriptionTargetWithOptions(nodes []SubscriptionNode, format model.SubscriptionFormat, opts SubscriptionRenderOptions) (string, error) {
-	proxies, err := normalizeSubscriptionNodes(nodes)
-	if err != nil {
-		return "", err
-	}
-	format = normalizeSubscriptionFormat(format)
-	compatible := make([]subscriptionProxy, 0, len(proxies))
-	for _, proxy := range proxies {
-		if subscriptionTargetSupportsWithOptions(format, proxy, opts) {
-			compatible = append(compatible, proxy)
-		}
-	}
-	if format == model.SubscriptionFormatSurgeMac {
-		return renderSurgeMacTarget(compatible, opts.SurgeMac)
-	}
-	return renderSubscriptionTargetFromProxies(compatible, format)
-}
-
-func renderSubscriptionTargetFromProxies(proxies []subscriptionProxy, format model.SubscriptionFormat) (string, error) {
-	switch format {
-	case model.SubscriptionFormatSingBox:
-		return renderSingBoxTarget(proxies)
-	case model.SubscriptionFormatSingBoxMieru:
-		return renderSingBoxTarget(proxies)
-	case model.SubscriptionFormatMieru:
-		return renderMieruTarget(proxies)
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash:
-		return renderClashTarget(proxies, format)
-	case model.SubscriptionFormatShadowrocket:
-		return renderCanonicalURIList(proxies)
-	case model.SubscriptionFormatEgern:
-		return renderProxyListYAML(proxies, format)
-	case model.SubscriptionFormatSurge, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatSurfboard:
-		return renderClientLines(proxies, format)
-	case model.SubscriptionFormatV2RayURI:
-		return renderCanonicalURIList(proxies)
-	case model.SubscriptionFormatV2Ray:
-		list, err := renderCanonicalURIList(proxies)
-		if err != nil {
-			return "", err
-		}
-		return base64.StdEncoding.EncodeToString([]byte(strings.TrimSuffix(list, "\n"))), nil
-	default:
-		return "", fmt.Errorf("unsupported subscription format %q", format)
-	}
+	return renderSubscriptionDocument(nodes, format, opts)
 }
 
 func subscriptionTargetSupportsWithOptions(format model.SubscriptionFormat, proxy subscriptionProxy, opts SubscriptionRenderOptions) bool {
@@ -259,7 +218,7 @@ func renderSurgeMacTarget(proxies []subscriptionProxy, opts SurgeMacOptions) (st
 				usedNames[sanitizeConfName(proxy.Name)] = true
 			}
 		case viaMihomo:
-			clashProxy, err := clashStyleProxyMap(proxy, model.SubscriptionFormatMihomo)
+			clashProxy, err := mihomoStyleProxyMap(proxy, model.SubscriptionFormatMihomo)
 			if err != nil {
 				return "", err
 			}

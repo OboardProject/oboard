@@ -38,6 +38,7 @@ func (s *Server) StartConfigurationReconciler(ctx context.Context) {
 	if err := s.store.RecoverConfigurationSyncStates(ctx); err != nil {
 		logConfigurationError("recover", err)
 	}
+	s.cleanupTrafficStormPendingDeployments(ctx)
 	// The watermark advances in the same SQLite transaction as the domain
 	// mutation. Re-seeding existing servers closes the crash window between
 	// that commit and the asynchronous sync-state write.
@@ -122,7 +123,6 @@ func (s *Server) configurationChangesetApplied(ctx context.Context, item *model.
 func configurationCapability(name string) bool {
 	switch name {
 	case "servers.onboard", "servers.update", "servers.delete", "servers.dns_policy.set",
-		"users.create", "users.update", "users.delete",
 		"user_devices.update", "user_devices.revoke",
 		"subscription_plans.create", "subscription_plans.update", "subscription_plans.delete",
 		"subscription_plans.nodes.update", "user_node_exceptions.create", "user_node_exceptions.update", "user_node_exceptions.delete":
@@ -202,7 +202,7 @@ func configurationMutationPath(path, method string) bool {
 		return len(parts) <= 2 || len(parts) == 2 && parts[1] == "import"
 	case "dns-lists":
 		return len(parts) <= 2 || len(parts) == 3 && parts[2] == "set-default"
-	case "outbounds", "proxy-path-steps", "warp-profiles", "tunnels", "user-groups", "user-group-members", "users":
+	case "outbounds", "proxy-path-steps", "warp-profiles", "tunnels", "user-groups", "user-group-members":
 		return len(parts) <= 2
 	default:
 		return false
@@ -392,6 +392,7 @@ func valueOrZero(value *int64) int64 {
 }
 
 func (s *Server) reconcileConfiguration(ctx context.Context) {
+	s.configurationReconcileTotal.Add(1)
 	states, err := s.store.ListConfigurationSyncStates(ctx, time.Now().UTC())
 	if err != nil || len(states) == 0 {
 		if err != nil {
@@ -411,10 +412,6 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 			latest = append(latest, state)
 		}
 	}
-	selectedServerID := int64(0)
-	if len(latest) == 1 {
-		selectedServerID = latest[0].ServerID
-	}
 	claimed := []store.ConfigurationSyncState{}
 	for _, state := range latest {
 		ok, claimErr := s.store.ClaimConfigurationSync(ctx, state.ServerID, state.WantedRevision)
@@ -429,18 +426,34 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	if len(claimed) == 0 {
 		return
 	}
-	for _, state := range claimed {
-		if err := s.store.SupersedePendingTasksByServerType(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment, "新的期望配置已保存，旧任务已抑制"); err != nil {
+	changedIDs, unchanged := s.automaticProjectionChanges(ctx, claimed)
+	for _, state := range unchanged {
+		digest := fmt.Sprintf("semantic_noop:%d", state.WantedRevision)
+		if err := s.store.MarkConfigurationSyncNoop(ctx, state.ServerID, state.WantedRevision, digest); err != nil {
+			logConfigurationError("mark semantic noop", err)
+			continue
+		}
+		s.configurationSemanticNoopTotal.Add(1)
+	}
+	if len(changedIDs) == 0 {
+		s.publishRealtime("configuration", "deployments", "tasks")
+		return
+	}
+	for serverID := range changedIDs {
+		if err := s.store.SupersedePendingTasksByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment, "新的期望配置已保存，旧任务已抑制"); err != nil {
 			logConfigurationError("supersede stale task", err)
 		}
 	}
-	preparedTasks, version, deployErr := s.deployConfiguration(withAutomaticConfigurationSync(ctx), selectedServerID, true)
+	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, changedIDs, nil)
 	if deployErr != nil {
 		if s.reconcileConfigurationAroundDuplicateDirectPaths(ctx, claimed) {
 			s.publishRealtime("configuration", "deployments", "tasks")
 			return
 		}
 		for _, state := range claimed {
+			if !changedIDs[state.ServerID] {
+				continue
+			}
 			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, deployErr.Error())
 		}
 		s.publishRealtime("configuration", "deployments", "tasks")
@@ -451,6 +464,9 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		tasksByServer[task.ServerID] = task
 	}
 	for _, state := range claimed {
+		if !changedIDs[state.ServerID] {
+			continue
+		}
 		task, ok := tasksByServer[state.ServerID]
 		if !ok {
 			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成")
@@ -461,6 +477,91 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		}
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")
+}
+
+func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store.ConfigurationSyncState) (map[int64]bool, []store.ConfigurationSyncState) {
+	changed := make(map[int64]bool)
+	unchanged := make([]store.ConfigurationSyncState, 0)
+	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		for _, state := range claimed {
+			changed[state.ServerID] = true
+		}
+		return changed, unchanged
+	}
+	forwards, err := s.store.ListPortForwards(ctx)
+	if err != nil {
+		for _, state := range claimed {
+			changed[state.ServerID] = true
+		}
+		return changed, unchanged
+	}
+	tunnels, err := s.store.ListTunnels(ctx)
+	if err != nil {
+		for _, state := range claimed {
+			changed[state.ServerID] = true
+		}
+		return changed, unchanged
+	}
+	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
+	if derived, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger); err == nil {
+		forwards = append(forwards, derived...)
+	}
+	if derived, err := core.DerivedTunnelsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger); err == nil {
+		tunnels = append(tunnels, derived...)
+	}
+	trusted := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
+	for _, state := range claimed {
+		server, ok := serverByID(data.Servers, state.ServerID)
+		if !ok {
+			changed[state.ServerID] = true
+			continue
+		}
+		lastTask, err := s.store.LastSuccessfulTaskByServerType(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment)
+		if err != nil {
+			changed[state.ServerID] = true
+			continue
+		}
+		var payload model.DeploymentTaskPayload
+		if json.Unmarshal([]byte(lastTask.PayloadJSON), &payload) != nil {
+			changed[state.ServerID] = true
+			continue
+		}
+		current, err := s.currentDeploymentProjection(ctx, server, data, forwards, tunnels, ledger)
+		if err != nil {
+			changed[state.ServerID] = true
+			continue
+		}
+		configJSON := payload.Config.Config
+		if lastConfig, cfgErr := s.lastControllerDesiredConfig(ctx, state.ServerID); cfgErr == nil && lastConfig != "" {
+			configJSON = lastConfig
+		}
+		last := lastDeploymentProjection(payload, configJSON, server)
+		if current.topologyEqual(last) {
+			unchanged = append(unchanged, state)
+			continue
+		}
+		changed[state.ServerID] = true
+	}
+	if len(changed) > 0 {
+		for serverID := range trusted {
+			if changed[serverID] {
+				for memberID := range trusted {
+					changed[memberID] = true
+				}
+				break
+			}
+		}
+		filtered := unchanged[:0]
+		for _, state := range unchanged {
+			if changed[state.ServerID] {
+				continue
+			}
+			filtered = append(filtered, state)
+		}
+		unchanged = filtered
+	}
+	return changed, unchanged
 }
 
 func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Context, claimed []store.ConfigurationSyncState) bool {

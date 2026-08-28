@@ -285,8 +285,8 @@ type AuthChallenge struct {
 type SubscriptionFormat string
 
 const (
+	SubscriptionFormatAuto         SubscriptionFormat = "auto"
 	SubscriptionFormatStash        SubscriptionFormat = "stash"
-	SubscriptionFormatClashMeta    SubscriptionFormat = "clash-meta"
 	SubscriptionFormatMihomo       SubscriptionFormat = "mihomo"
 	SubscriptionFormatSurfboard    SubscriptionFormat = "surfboard"
 	SubscriptionFormatSurge        SubscriptionFormat = "surge"
@@ -297,11 +297,25 @@ const (
 	SubscriptionFormatQX           SubscriptionFormat = "qx"
 	SubscriptionFormatSingBox      SubscriptionFormat = "sing-box"
 	SubscriptionFormatSingBoxMieru SubscriptionFormat = "sing-box-mieru"
-	SubscriptionFormatMieru        SubscriptionFormat = "mieru"
 	SubscriptionFormatV2Ray        SubscriptionFormat = "v2ray"
 	SubscriptionFormatV2RayURI     SubscriptionFormat = "v2ray-uri"
-	SubscriptionFormatClash        SubscriptionFormat = "clash"
 )
+
+// SubscriptionClientTemplate is a client configuration shell. Protocol field
+// conversion stays in Controller renderers and must not be stored here.
+type SubscriptionClientTemplate struct {
+	Format            SubscriptionFormat `json:"format"`
+	Label             string             `json:"label"`
+	Content           string             `json:"content"`
+	Source            string             `json:"source"`
+	Revision          int64              `json:"revision"`
+	BuiltinDigest     string             `json:"builtin_digest"`
+	BaseBuiltinDigest string             `json:"base_builtin_digest,omitempty"`
+	BuiltinUpdated    bool               `json:"builtin_updated,omitempty"`
+	Markers           []string           `json:"markers"`
+	UpdatedBy         *int64             `json:"updated_by,omitempty"`
+	UpdatedAt         *time.Time         `json:"updated_at,omitempty"`
+}
 
 // PrivateSubscriptionProtocol is intentionally separate from Protocol. These
 // nodes are rendered by Controller for a user's subscription and never enter
@@ -1957,6 +1971,7 @@ type AgentTask struct {
 const (
 	AgentTaskTypeApplyDeployment       = "apply_deployment"
 	AgentTaskTypeApplyCoreConfig       = "apply_core_config"
+	AgentTaskTypeApplyTrafficPolicy    = "apply_traffic_policy"
 	AgentTaskTypeUpdateAgent           = "update_agent"
 	AgentTaskTypeUninstallAgent        = "uninstall_agent"
 	AgentTaskTypeUpdateAgentConfig     = "update_agent_config"
@@ -1976,6 +1991,8 @@ const (
 	AgentTaskTypeRemoteExec            = "remote_exec"
 	AgentTaskTypeRemoteOperation       = "remote_operation"
 )
+
+const AgentCapabilityTrafficPolicy = "traffic_policy_v1"
 
 type NetworkInterfaceInfo struct {
 	Name      string   `json:"name"`
@@ -2032,12 +2049,19 @@ type ApplyCoreConfigTaskPayload struct {
 	Assets       []ManagedAssetReference `json:"assets,omitempty"`
 }
 
+type ApplyTrafficPolicyTaskPayload struct {
+	PolicyRevision int64                           `json:"policy_revision"`
+	Reason         string                          `json:"reason,omitempty"`
+	Policies       map[string]TrafficRuntimePolicy `json:"policies"`
+}
+
 // DeploymentTaskPayload keeps one user deployment as one Agent task while
 // preserving the individual execution plans needed by the Agent.
 type DeploymentTaskPayload struct {
 	Version              int64                      `json:"version"`
 	Config               ApplyCoreConfigTaskPayload `json:"config"`
 	ConfigChanged        bool                       `json:"config_changed"`
+	TriggerReason        string                     `json:"trigger_reason,omitempty"`
 	WARPRequests         []WARPRequestPlan          `json:"warp_requests,omitempty"`
 	TimeCheck            *TimeCheckPlan             `json:"time_check,omitempty"`
 	PortForwards         PortForwardPlan            `json:"port_forwards"`
@@ -2953,6 +2977,8 @@ type SubscriptionPullAudit struct {
 	UserAgent            string    `json:"user_agent,omitempty"`
 	ClientName           string    `json:"client_name"`
 	Format               string    `json:"format"`
+	RequestedFormat      string    `json:"requested_format,omitempty"`
+	AutoDetected         bool      `json:"auto_detected"`
 	ProfileID            *int64    `json:"profile_id,omitempty"`
 	AgeEncrypted         bool      `json:"age_encrypted"`
 	TokenKind            string    `json:"token_kind"`
@@ -3089,6 +3115,7 @@ type TrafficRuntimePolicy struct {
 	Timezone          string `json:"timezone,omitempty"`
 	QuotaState        string `json:"quota_state,omitempty"`
 	EnforcementMode   string `json:"enforcement_mode,omitempty"`
+	PolicyRevision    int64  `json:"policy_revision,omitempty"`
 }
 
 // Linux exposes TCP Fast Open through the net.ipv4.tcp_fastopen bitmask, where

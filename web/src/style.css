@@ -24149,3 +24149,59 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
     gap: 8px 12px;
   }
 }
+
+.subscription-template-list {
+  display: grid;
+  gap: 8px;
+}
+
+.subscription-template-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.subscription-template-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.subscription-template-row strong {
+  display: block;
+}
+
+.subscription-template-row .muted {
+  font-size: 12px;
+}
+
+.subscription-template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.subscription-template-textarea {
+  min-height: 280px;
+  width: 100%;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.subscription-template-preview {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+}

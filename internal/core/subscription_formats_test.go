@@ -113,14 +113,12 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 	}{
 		{format: model.SubscriptionFormatSingBox, want: `"tcp_fast_open": true`},
 		{format: model.SubscriptionFormatMihomo, want: "tfo: true"},
-		{format: model.SubscriptionFormatClashMeta, want: "tfo: true"},
 		{format: model.SubscriptionFormatStash, want: "tfo: true"},
 		{format: model.SubscriptionFormatEgern, want: "tfo: true"},
 		{format: model.SubscriptionFormatSurge, want: "tfo=true"},
 		{format: model.SubscriptionFormatLoon, want: "fast-open=true"},
 		{format: model.SubscriptionFormatQX, want: "fast-open=true"},
 		{format: model.SubscriptionFormatShadowrocket, want: "tfo=1"},
-		{format: model.SubscriptionFormatClash},
 		{format: model.SubscriptionFormatSurfboard},
 	} {
 		t.Run(string(test.format), func(t *testing.T) {
@@ -233,9 +231,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 	}{
 		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, `"padding_scheme"`, "oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 8, contains: []string{`"type": "mieru"`, `"server_port": 25250`, `"type": "snell"`}, excludes: []string{"padding_scheme", "oboard_group", "must-not-leak"}},
-		{format: model.SubscriptionFormatMieru, proxyCount: 1, contains: []string{"mierus://", "25251-25252", "protocol=TCP"}, excludes: []string{"vless://", "snell"}},
-		{format: model.SubscriptionFormatClashMeta, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
-		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "obfs-password: obfs-pass", "type: mieru", "port-range: 25250-25252", "type: snell", "psk: snell-v4-psk"}, excludes: []string{"snell-v6-psk"}},
+		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru", "type: snell"}},
 		{format: model.SubscriptionFormatShadowrocket, proxyCount: 8, contains: []string{"vless://", "hysteria2://", "mierus://", "snell://", "version=4", "version=6"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
 		{format: model.SubscriptionFormatEgern, proxyCount: 6, contains: []string{"shadowsocks:", "method: chacha20-poly1305", "bandwidth: 100", "user_id:", "snell:", "psk: snell-v4-psk"}, excludes: []string{"mieru:", "snell-v6-psk"}},
@@ -244,7 +240,6 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatSurge, proxyCount: 6, contains: []string{"=hysteria2,", "=anytls,", "download-bandwidth=200", "udp-relay=true", "=snell,", "psk=\"snell-v4-psk\"", "version=4", "obfs=http", "obfs-host=\"bing.com\"", "version=6", "mode=unshaped"}, excludes: []string{"=vless,", "mieru"}},
 		{format: model.SubscriptionFormatSurgeMac, proxyCount: 9, contains: []string{"=hysteria2,", "=snell,", "snell-v6", "=socks5,127.0.0.1,", "=external,", `exec="/usr/local/bin/mihomo"`}, excludes: []string{"=vless,"}},
 		{format: model.SubscriptionFormatSurfboard, proxyCount: 5, contains: []string{"=hysteria2,", "download-bandwidth=200", `SOCKS=socks5,socks.example.com,1080,"alice","socks-pass"`, "=snell,", "snell-v4"}, excludes: []string{"=vless,", "mieru", "snell-v6", "mode=unshaped"}},
-		{format: model.SubscriptionFormatClash, proxyCount: 2, contains: []string{"type: ss", "type: socks5"}, excludes: []string{"type: vless", "type: hysteria2", "type: anytls", "type: mieru", "type: snell"}},
 		{format: model.SubscriptionFormatV2RayURI, proxyCount: 5, contains: []string{"vless://", "hysteria2://", "anytls://", "ss://", "socks://"}, excludes: []string{"mierus://", "snell"}},
 	}
 	for _, test := range tests {
@@ -290,7 +285,6 @@ func TestSSHSubscriptionTargetMappings(t *testing.T) {
 	}
 
 	yamlFormats := []model.SubscriptionFormat{
-		model.SubscriptionFormatClashMeta,
 		model.SubscriptionFormatMihomo,
 		model.SubscriptionFormatStash,
 		model.SubscriptionFormatEgern,
@@ -374,8 +368,6 @@ func TestSSHSubscriptionIsOmittedFromUnsupportedTargets(t *testing.T) {
 	node := sshSubscriptionFixtureNode()
 	formats := []model.SubscriptionFormat{
 		model.SubscriptionFormatSingBoxMieru,
-		model.SubscriptionFormatMieru,
-		model.SubscriptionFormatClash,
 		model.SubscriptionFormatLoon,
 		model.SubscriptionFormatQX,
 		model.SubscriptionFormatSurfboard,
@@ -470,7 +462,6 @@ func TestMieruYAMLPortMapping(t *testing.T) {
 		{name: "disjoint", serverPorts: []string{"25252-25253"}, wantPort: 25250},
 	}
 	formats := []model.SubscriptionFormat{
-		model.SubscriptionFormatClashMeta,
 		model.SubscriptionFormatMihomo,
 	}
 	for _, test := range tests {
@@ -515,7 +506,6 @@ func TestMieruYAMLPortMapping(t *testing.T) {
 
 func TestMieruYAMLDefaultMultiplexingIsOmitted(t *testing.T) {
 	formats := []model.SubscriptionFormat{
-		model.SubscriptionFormatClashMeta,
 		model.SubscriptionFormatMihomo,
 	}
 	for _, format := range formats {
@@ -585,7 +575,7 @@ func TestMieruURIProfileUsesPercentEncodedSpaces(t *testing.T) {
 		"transport": "TCP", "username": "oboard-u7", "password": "mieru-pass",
 	}}
 
-	output, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatMieru)
+	output, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatShadowrocket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,16 +605,10 @@ func TestShadowrocketMieruURIEnablesUserHint(t *testing.T) {
 		t.Fatalf("Shadowrocket Mieru user hint = %q, want true: %s", got, output)
 	}
 
-	official, err := renderSubscriptionTarget([]SubscriptionNode{node}, model.SubscriptionFormatMieru)
-	if err != nil {
+	if shareURL, err := url.Parse(strings.TrimSpace(output)); err != nil {
 		t.Fatal(err)
-	}
-	officialURL, err := url.Parse(strings.TrimSpace(official))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := officialURL.Query()["user-hint-is-mandatory"]; exists {
-		t.Fatalf("official Mieru URI unexpectedly received a Shadowrocket option: %s", official)
+	} else if got := shareURL.Query().Get("user-hint-is-mandatory"); got != "true" {
+		t.Fatalf("Shadowrocket Mieru user hint = %q, want true: %s", got, output)
 	}
 }
 
@@ -712,7 +696,6 @@ func TestSubscriptionTargetEmptyOutputsAreValid(t *testing.T) {
 	mieruOnly := subscriptionFormatFixtureNodes()[5:6]
 	for _, format := range []model.SubscriptionFormat{
 		model.SubscriptionFormatStash,
-		model.SubscriptionFormatClash,
 		model.SubscriptionFormatEgern,
 		model.SubscriptionFormatSurge,
 		model.SubscriptionFormatV2Ray,
@@ -723,10 +706,17 @@ func TestSubscriptionTargetEmptyOutputsAreValid(t *testing.T) {
 			t.Fatalf("%s: %v", format, err)
 		}
 		switch format {
-		case model.SubscriptionFormatStash, model.SubscriptionFormatClash, model.SubscriptionFormatEgern:
+		case model.SubscriptionFormatStash, model.SubscriptionFormatEgern:
 			var parsed map[string]any
 			if err := yaml.Unmarshal([]byte(output), &parsed); err != nil {
 				t.Fatalf("%s invalid YAML: %v\n%s", format, err, output)
+			}
+		case model.SubscriptionFormatSurge:
+			if err := validateRenderedSubscription(format, output); err != nil {
+				t.Fatalf("%s invalid document: %v\n%s", format, err, output)
+			}
+			if strings.Contains(output, "mieru") {
+				t.Fatalf("Surge leaked Mieru:\n%s", output)
 			}
 		default:
 			if output != "" {
@@ -738,10 +728,8 @@ func TestSubscriptionTargetEmptyOutputsAreValid(t *testing.T) {
 
 func TestSubscriptionContentTypesMatchNativeTargets(t *testing.T) {
 	for _, format := range []model.SubscriptionFormat{
-		model.SubscriptionFormatClashMeta,
 		model.SubscriptionFormatMihomo,
 		model.SubscriptionFormatStash,
-		model.SubscriptionFormatClash,
 		model.SubscriptionFormatEgern,
 	} {
 		if got := SubscriptionContentType(format); got != "text/yaml; charset=utf-8" {
@@ -762,9 +750,14 @@ func countRenderedSubscriptionProxies(t *testing.T, format model.SubscriptionFor
 			t.Fatal(err)
 		}
 		return len(parsed.Outbounds) - 1
-	case model.SubscriptionFormatMieru, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatSurfboard, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatV2RayURI:
+	case model.SubscriptionFormatShadowrocket, model.SubscriptionFormatV2RayURI:
+		if strings.TrimSpace(output) == "" {
+			return 0
+		}
 		return len(strings.Split(strings.TrimSpace(output), "\n"))
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatClash, model.SubscriptionFormatEgern:
+	case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatSurfboard, model.SubscriptionFormatLoon, model.SubscriptionFormatQX:
+		return countINISectionLines(output, "[Proxy]")
+	case model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern:
 		var parsed struct {
 			Proxies []map[string]any `yaml:"proxies"`
 		}
@@ -776,4 +769,20 @@ func countRenderedSubscriptionProxies(t *testing.T, format model.SubscriptionFor
 		t.Fatalf("unhandled format %s", format)
 		return 0
 	}
+}
+
+func countINISectionLines(output, section string) int {
+	inSection := false
+	count := 0
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inSection = strings.EqualFold(trimmed, section)
+			continue
+		}
+		if inSection && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			count++
+		}
+	}
+	return count
 }

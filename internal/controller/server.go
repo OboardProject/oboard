@@ -197,7 +197,17 @@ type Server struct {
 	accessWorkersWake chan struct{}
 	nodeRefreshSem    chan struct{}
 	nodeRefreshMu     sync.Mutex
-	nodeRefreshUsers  map[int64]bool
+
+	trafficReportsReceivedTotal      atomic.Uint64
+	trafficReportsAcceptedTotal      atomic.Uint64
+	trafficPolicyUpdatesTotal        atomic.Uint64
+	trafficPolicyRuntimeAppliesTotal atomic.Uint64
+	configurationReconcileTotal      atomic.Uint64
+	configurationSemanticNoopTotal   atomic.Uint64
+	applyDeploymentCreatedTotal      atomic.Uint64
+	applyCoreConfigCreatedTotal      atomic.Uint64
+	applyTrafficPolicyCreatedTotal   atomic.Uint64
+	nodeRefreshUsers                 map[int64]bool
 }
 
 type connectionAuditGeoResolver interface {
@@ -384,6 +394,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/snell-profiles/", s.auth(s.snellProfiles, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/node-presets", s.auth(s.nodePresets, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/node-presets/", s.auth(s.nodePresets, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/subscription-templates", s.auth(s.subscriptionTemplates, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/subscription-templates/", s.auth(s.subscriptionTemplates, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
 	mux.HandleFunc("/api/v1/mtu-detections", s.auth(s.mtuDetections, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards", s.auth(s.portForwards, model.RoleOperator))
@@ -1435,6 +1447,14 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		if len(changed) > 0 {
 			s.invalidateConnectionAuditCache()
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
+			for _, key := range changed {
+				if key == "traffic_enforcement_mode" || key == "traffic_timezone" {
+					if err := s.queueApplyTrafficPolicyForAllAccounting(r.Context(), "traffic_policy_changed"); err != nil {
+						logConfigurationError("queue traffic policy after settings", err)
+					}
+					break
+				}
+			}
 		}
 		items, err := s.store.ListSettings(r.Context())
 		if err != nil {
@@ -4332,7 +4352,7 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 		}
 		server = nil
 	}
-	if reason := agentTaskImmediateFailure(server); reason != "" && !(automaticConfigurationSync(ctx) && (taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig)) {
+	if reason := agentTaskImmediateFailure(server); reason != "" && !(automaticConfigurationSync(ctx) && (taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig)) && taskType != model.AgentTaskTypeApplyTrafficPolicy {
 		result, _ := json.Marshal(map[string]any{
 			"message": reason,
 			"error":   reason,
@@ -6364,6 +6384,12 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 			policy.PreviousPeriodKey = previous
 		}
 		policies[user.ID] = policy
+	}
+	if revision, err := s.store.TrafficPolicyRevision(ctx); err == nil {
+		for userID, policy := range policies {
+			policy.PolicyRevision = int64(revision)
+			policies[userID] = policy
+		}
 	}
 	return policies, nil
 }
@@ -10755,6 +10781,9 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if err := s.queueCoreConfigRefreshForUser(r.Context(), u.ID, "user_created"); err != nil {
+			logConfigurationError("queue core config for user create", err)
+		}
 		resp := map[string]any{"user": u}
 		if generatedPassword != "" {
 			resp["generated_password"] = generatedPassword
@@ -10814,6 +10843,7 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		s.syncUserChange(r.Context(), *current, u)
 		revokeSessions := req.Password != "" ||
 			(current.Status == "active" && u.Status != "active") ||
 			(current.Role != u.Role && roleAllows(current.Role, u.Role))
@@ -10860,10 +10890,17 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		serverIDs, acctErr := s.userAccountingServerIDs(r.Context(), id)
+		if acctErr != nil {
+			logConfigurationError("user accounting servers before delete", acctErr)
+		}
 		err := s.store.Delete(r.Context(), "users", id)
 		if err != nil {
 			fail(w, err, 500)
 			return
+		}
+		if err := s.queueCoreConfigRefreshForServers(r.Context(), serverIDs, "user_deleted"); err != nil {
+			logConfigurationError("queue core config for user delete", err)
 		}
 		auditReq(s, r, "delete", "user", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true})
@@ -12198,10 +12235,14 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		}
 		managedAssets, cfg := generated.Assets, generated.Config
 		configChanged := true
-		if same, err := s.serverConfigUnchanged(ctx, server.ID, cfg); err != nil {
+		if cmp, err := s.compareServerConfigState(ctx, server.ID, cfg); err != nil {
 			return nil, 0, deploymentFail(500, err)
-		} else if same {
+		} else if cmp.DataPlaneEqual {
 			configChanged = false
+		}
+		triggerReason := "manual_deploy"
+		if automaticConfigurationSync(ctx) {
+			triggerReason = "configuration_recovery"
 		}
 
 		forwardPlan, err := core.BuildPortForwardPlan(version, server, servers, forwards)
@@ -12268,6 +12309,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			Version:              version,
 			Config:               model.ApplyCoreConfigTaskPayload{Config: cfg, Assets: managedAssets},
 			ConfigChanged:        configChanged,
+			TriggerReason:        triggerReason,
 			WARPRequests:         warpRequests,
 			TimeCheck:            &timePlan,
 			PortForwards:         forwardPlan,
@@ -12319,6 +12361,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		if err != nil {
 			return nil, 0, deploymentFail(500, err)
 		}
+		s.applyDeploymentCreatedTotal.Add(1)
 		tasks = append(tasks, task)
 		if item.payload.ExternalEgressProbe != nil {
 			for _, target := range item.payload.ExternalEgressProbe.Targets {
@@ -12839,36 +12882,6 @@ func matchingSSHPasswordDeployment(persisted, expected model.SSHPasswordDeployme
 		persisted.PasswordDigest == expected.PasswordDigest
 }
 
-func (s *Server) serverConfigUnchanged(ctx context.Context, serverID int64, cfg string) (bool, error) {
-	last, err := s.store.LastSuccessfulConfigTaskByServer(ctx, serverID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	switch last.Type {
-	case model.AgentTaskTypeApplyDeployment:
-		if effective := effectiveConfigSHA256FromDeploymentResult(last.ResultJSON); effective != "" {
-			digest, err := canonicalConfigSHA256(cfg)
-			if err != nil {
-				return false, err
-			}
-			return digest == effective, nil
-		}
-		var payload model.DeploymentTaskPayload
-		if json.Unmarshal([]byte(last.PayloadJSON), &payload) == nil && strings.TrimSpace(payload.Config.Config) != "" {
-			return payload.Config.Config == cfg, nil
-		}
-	case model.AgentTaskTypeApplyCoreConfig:
-		var payload model.ApplyCoreConfigTaskPayload
-		if json.Unmarshal([]byte(last.PayloadJSON), &payload) == nil && strings.TrimSpace(payload.Config) != "" {
-			return payload.Config == cfg, nil
-		}
-	}
-	return false, nil
-}
-
 func effectiveConfigSHA256FromDeploymentResult(raw string) string {
 	var result struct {
 		Steps []struct {
@@ -13117,7 +13130,7 @@ func (s *Server) generateServerCoreConfigWithLedger(ctx context.Context, server 
 	if ledger == nil {
 		ledger = core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
 	}
-	return s.generateServerCoreConfigInner(ctx, server, data, ledger)
+	return s.generateServerCoreConfigInner(ctx, server, data, ledger, true)
 }
 
 func (s *Server) routingRulesWithInterfaceIPStacks(ctx context.Context, serverID int64, rules []model.RoutingRule) ([]model.RoutingRule, error) {
@@ -13187,7 +13200,7 @@ func networkInterfaceIPStack(networkInterface model.NetworkInterfaceInfo) model.
 	}
 }
 
-func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {
+func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger, includeTrafficRuntime bool) (generatedServerCoreConfig, error) {
 	resolveRoutingProxyPathNames(&data)
 	inbounds, assets, err := s.prepareCertificateInbounds(ctx, data.Inbounds, server.ID)
 	if err != nil {
@@ -13203,10 +13216,18 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
+	if includeTrafficRuntime {
+		if users, listErr := s.store.ListUsers(ctx); listErr == nil && len(users) > 0 {
+			data.Users = users
+		}
+	}
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
-	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, accountingUsers, userPolicies)
-	if err != nil {
-		return generatedServerCoreConfig{}, err
+	var trafficPolicies map[int64]model.TrafficRuntimePolicy
+	if includeTrafficRuntime {
+		trafficPolicies, err = s.trafficRuntimePolicies(ctx, server.ID, data.Users, accountingUsers, userPolicies)
+		if err != nil {
+			return generatedServerCoreConfig{}, err
+		}
 	}
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
@@ -13237,6 +13258,14 @@ func requireReadyWARPForFocusedApply(data store.FullRoutingConfig, serverID int6
 
 func (s *Server) queueCoreConfigRefreshForUserRemoval(ctx context.Context, userID int64, reason string) error {
 	return s.queueCoreConfigRefresh(ctx, userID, reason, nil)
+}
+
+func (s *Server) queueCoreConfigRefreshForUser(ctx context.Context, userID int64, reason string) error {
+	serverIDs, err := s.userAccountingServerIDs(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return s.queueCoreConfigRefreshForServers(ctx, serverIDs, reason)
 }
 
 func (s *Server) queueCoreConfigRefreshForServers(ctx context.Context, serverIDs []int64, reason string) error {
@@ -13309,6 +13338,7 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 		if _, err := s.queueAgentTask(ctx, item.serverID, model.AgentTaskTypeApplyCoreConfig, item.payload, version); err != nil {
 			return err
 		}
+		s.applyCoreConfigCreatedTotal.Add(1)
 	}
 	return nil
 }
@@ -13497,12 +13527,13 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	if device != nil {
 		subscriptionUser = core.UserForDevice(*user, *device)
 	}
-	format := core.NormalizeSubscriptionFormatForAPI(model.SubscriptionFormat(r.URL.Query().Get("format")))
-	if !core.IsSupportedSubscriptionFormat(format) {
-		s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, false, "unsupported subscription format")
+	resolution := core.ResolveSubscriptionFormat(model.SubscriptionFormat(r.URL.Query().Get("format")), r.UserAgent())
+	if !core.IsSupportedSubscriptionFormat(resolution.Requested) {
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, nil, false, "unsupported subscription format")
 		fail(w, fmt.Errorf("unsupported subscription format %q", r.URL.Query().Get("format")), 400)
 		return
 	}
+	format := resolution.Resolved
 	settings, err := s.store.ListSettings(r.Context())
 	if err != nil {
 		fail(w, err, 500)
@@ -13510,7 +13541,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	ageRecipient, ageEncrypted, err := resolveSubscriptionAgeRecipient(r, subscriptionUser, settings[settingSubscriptionAgePolicy], format)
 	if err != nil {
-		s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, false, err.Error())
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, nil, false, err.Error())
 		status := http.StatusBadRequest
 		if errors.Is(err, errSubscriptionAgeKeyRequired) {
 			status = http.StatusPreconditionRequired
@@ -13525,13 +13556,13 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	if rawProfileID := strings.TrimSpace(r.URL.Query().Get("profile_id")); rawProfileID != "" {
 		profileID, parseErr := strconv.ParseInt(rawProfileID, 10, 64)
 		if parseErr != nil || profileID <= 0 {
-			s.recordRejectedSubscriptionPull(r, user.ID, string(format), nil, ageEncrypted, "invalid profile_id")
+			s.recordRejectedSubscriptionPull(r, user.ID, resolution, nil, ageEncrypted, "invalid profile_id")
 			fail(w, errors.New("invalid profile_id"), http.StatusBadRequest)
 			return
 		}
 		subscriptionOutput, err = s.store.GetSubscriptionOutput(r.Context(), user.ID, profileID)
 		if err != nil || !subscriptionOutput.Enabled {
-			s.recordRejectedSubscriptionPull(r, user.ID, string(format), &profileID, ageEncrypted, "subscription profile not found")
+			s.recordRejectedSubscriptionPull(r, user.ID, resolution, &profileID, ageEncrypted, "subscription profile not found")
 			fail(w, errors.New("subscription profile not found"), http.StatusNotFound)
 			return
 		}
@@ -13612,32 +13643,40 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	oboardNodes, err := core.BuildSubscriptionNodes(subscriptionUser, servers, in, opts)
 	if err != nil {
-		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, "subscription generation failed")
 		fail(w, err, 500)
 		return
 	}
 	selectedNodes, err := s.mergeWorkspaceOutputNodes(r.Context(), subscriptionUser, subscriptionOutput, oboardNodes)
 	if err != nil {
-		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription profile generation failed")
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, "subscription profile generation failed")
 		fail(w, err, 500)
 		return
 	}
 	renderOpts, renderOptErr := core.ParseSubscriptionRenderOptions(format, r.URL.Query(), fmt.Sprintf("%d:%d", user.ID, subscriptionOutput.ID))
 	if renderOptErr != nil {
-		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, renderOptErr.Error())
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, renderOptErr.Error())
 		fail(w, renderOptErr, http.StatusBadRequest)
 		return
 	}
-	sub, err := core.RenderSubscriptionNodesWithOptions(selectedNodes, format, renderOpts)
+	templateContent, templateDigest, err := s.store.EffectiveSubscriptionTemplateContent(r.Context(), format)
 	if err != nil {
-		s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, ageEncrypted, "subscription generation failed")
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, "subscription template load failed")
 		fail(w, err, 500)
 		return
 	}
-	revisionDigest := sha256.Sum256([]byte("oboard-subscription-v2\x00" + strconv.FormatInt(subscriptionOutput.ID, 10) + "\x00" + sub + "\x00" + fmt.Sprint(ageRecipient)))
+	renderOpts.Template = templateContent
+	renderOpts.TemplateDigest = templateDigest
+	sub, err := core.RenderSubscriptionNodesWithOptions(selectedNodes, format, renderOpts)
+	if err != nil {
+		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, "subscription generation failed")
+		fail(w, err, 500)
+		return
+	}
+	revisionDigest := sha256.Sum256([]byte("oboard-subscription-v3\x00" + strconv.FormatInt(subscriptionOutput.ID, 10) + "\x00" + string(format) + "\x00" + templateDigest + "\x00" + sub + "\x00" + fmt.Sprint(ageRecipient)))
 	subscriptionRevision := fmt.Sprintf("sub_%x", revisionDigest[:16])
 	etag := fmt.Sprintf("W/\"%s\"", subscriptionRevision)
-	event := s.newSubscriptionPullAudit(r, user.ID, string(format), requestedProfileID, ageEncrypted)
+	event := s.newSubscriptionPullAudit(r, user.ID, resolution, requestedProfileID, ageEncrypted)
 	event.SubscriptionRevision = subscriptionRevision
 	event.RouteID = s.subscriptionAuditRouteID(event)
 	credentialGeneration := "legacy:" + security.HashAPISecret(s.sessionSecret, token)
@@ -13704,6 +13743,9 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("ETag", etag)
+	if resolution.Auto {
+		appendHTTPVary(w.Header(), "User-Agent")
+	}
 	if decision.Burned {
 		w.Header().Set("X-OBoard-Subscription", "burned-after-read")
 	}
@@ -13715,7 +13757,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	if ageEncrypted {
 		body, err = encryptSubscriptionAgeArmor(sub, ageRecipient)
 		if err != nil {
-			s.recordRejectedSubscriptionPull(r, user.ID, string(format), requestedProfileID, true, "subscription encryption failed")
+			s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, true, "subscription encryption failed")
 			fail(w, fmt.Errorf("encrypt subscription with age: %w", err), 500)
 			return
 		}

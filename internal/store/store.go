@@ -286,6 +286,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists app_settings (key text primary key, value text not null, updated_at text not null)`,
 		`create table if not exists routing_cache_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists configuration_revision (id integer primary key check(id=1), revision integer not null default 0)`,
+		`create table if not exists traffic_policy_revision (id integer primary key check(id=1), revision integer not null default 0)`,
+		`insert or ignore into traffic_policy_revision(id,revision) values(1,0)`,
 		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', interval_seconds integer not null default 60, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
 		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
 		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
@@ -348,7 +350,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists subscription_custom_path_user_policies (user_id integer primary key references users(id) on delete cascade, mode text not null, updated_at text not null)`,
 		`create table if not exists subscription_custom_path_group_policies (group_id integer primary key references user_groups(id) on delete cascade, mode text not null, updated_at text not null)`,
 		`create table if not exists subscription_age_keys (user_id integer primary key references users(id) on delete cascade, enabled integer not null default 0, public_key text not null default '', updated_at text not null)`,
-		`create table if not exists subscription_pull_audits (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', representation_id text not null default '', subscription_revision text not null default '', raw_request_weight real not null default 1, logical_pull_weight real not null default 1, logical_fetch_id text not null default '', route_id text not null default '', route_novelty_weight real not null default 0, dedupe_reason text not null default '', conditional_request integer not null default 0, source_ip text not null, source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', user_agent text not null default '', client_name text not null default '', format text not null default '', profile_id integer, age_encrypted integer not null default 0, token_kind text not null default '', outcome text not null, reason text not null default '', risk_eligible integer not null default 0, requested_at text not null, created_at text not null)`,
+		`create table if not exists subscription_client_templates (format text primary key, content text not null, revision integer not null, base_builtin_digest text not null, updated_by integer, updated_at text not null)`,
+		`create table if not exists subscription_pull_audits (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', representation_id text not null default '', subscription_revision text not null default '', raw_request_weight real not null default 1, logical_pull_weight real not null default 1, logical_fetch_id text not null default '', route_id text not null default '', route_novelty_weight real not null default 0, dedupe_reason text not null default '', conditional_request integer not null default 0, source_ip text not null, source_country_code text not null default '', source_country text not null default '', source_province text not null default '', source_city text not null default '', source_isp text not null default '', geo_database_revision text not null default '', user_agent text not null default '', client_name text not null default '', format text not null default '', requested_format text not null default '', auto_detected integer not null default 0, profile_id integer, age_encrypted integer not null default 0, token_kind text not null default '', outcome text not null, reason text not null default '', risk_eligible integer not null default 0, requested_at text not null, created_at text not null)`,
 		`create table if not exists subscription_access_states (user_id integer primary key references users(id) on delete cascade, suspended integer not null default 0, suspended_at text, suspension_reason text not null default '', trigger_audit_id integer references subscription_pull_audits(id) on delete set null, trigger_snapshot_json text not null default '', evaluation_started_at text not null, resumed_at text, resumed_by integer references users(id) on delete set null, updated_at text not null)`,
 		`create table if not exists user_authentication (user_id integer primary key references users(id) on delete cascade, totp_enabled integer not null default 0, totp_secret_encrypted text not null default '', recovery_code_hashes_json text not null default '[]', totp_last_used_step integer not null default -1, webauthn_user_handle text unique, updated_at text not null)`,
 		`create table if not exists passkey_credentials (id integer primary key autoincrement, user_id integer not null references users(id) on delete cascade, name text not null, credential_id text not null unique, credential_json text not null, created_at text not null, last_used_at text)`,
@@ -390,7 +393,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'auto', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, sample_rate real not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists tunnels (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, type text not null, local_address text not null default '', peer_address text not null default '', listen_port integer not null default 0, target_endpoint text not null default '', target_port integer not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists agent_tasks (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, type text not null, payload_json text not null, status text not null, result_json text not null default '{}', config_version integer not null default 0, nonce text not null, created_at text not null, updated_at text not null, completed_at text)`,
-		`create table if not exists configuration_sync_states (server_id integer primary key references servers(id) on delete cascade, wanted_revision integer not null, wanted_digest text not null default '', state text not null check(state in ('pending','preparing','queued','running','synced','failed')), last_config_version integer not null default 0, last_task_id integer not null default 0, retry_count integer not null default 0, next_retry_at text, last_error text not null default '', changed_at text not null, updated_at text not null)`,
+		`create table if not exists configuration_sync_states (server_id integer primary key references servers(id) on delete cascade, wanted_revision integer not null, wanted_digest text not null default '', state text not null check(state in ('pending','preparing','queued','running','synced','failed')), last_config_version integer not null default 0, last_task_id integer not null default 0, retry_count integer not null default 0, next_retry_at text, last_error text not null default '', trigger_reason text not null default '', sync_strategy text not null default '', changed_at text not null, updated_at text not null)`,
 		`create index if not exists idx_configuration_sync_queue on configuration_sync_states(state,next_retry_at,wanted_revision,server_id)`,
 		`create table if not exists proxy_path_egress_results (path_id integer primary key references proxy_paths(id) on delete cascade, external_outbound_id integer not null references external_outbounds(id) on delete cascade, owner_server_id integer not null references servers(id) on delete cascade, topology_fingerprint text not null, config_version integer not null default 0, task_id integer references agent_tasks(id) on delete set null, status text not null default 'pending', last_exit_ip text not null default '', last_region_code text not null default '', geo_database_revision text not null default '', last_error text not null default '', last_attempt_at text, last_success_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists deployment_failure_dismissals (config_version integer primary key, actor_id integer not null, dismissed_at text not null)`,
@@ -575,6 +578,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateTrafficLedgerV2(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateTrafficPolicyRevision(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateRoutingCacheRevisionTriggers(ctx); err != nil {
@@ -789,6 +795,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"route_novelty_weight", `alter table subscription_pull_audits add column route_novelty_weight real not null default 0`},
 		{"dedupe_reason", `alter table subscription_pull_audits add column dedupe_reason text not null default ''`},
 		{"conditional_request", `alter table subscription_pull_audits add column conditional_request integer not null default 0`},
+		{"requested_format", `alter table subscription_pull_audits add column requested_format text not null default ''`},
+		{"auto_detected", `alter table subscription_pull_audits add column auto_detected integer not null default 0`},
 	} {
 		if err := s.ensureColumn(ctx, "subscription_pull_audits", column.name, column.sql); err != nil {
 			return err
@@ -5430,6 +5438,32 @@ func (s *Store) SupersedePendingTasksByServerType(ctx context.Context, serverID 
 	return err
 }
 
+func (s *Store) SupersedePendingTask(ctx context.Context, taskID int64, reason string) error {
+	if taskID <= 0 {
+		return nil
+	}
+	if reason == "" {
+		reason = "已被新的下发取代"
+	}
+	result, _ := json.Marshal(map[string]any{
+		"message": reason,
+		"error":   reason,
+		"skipped": true,
+	})
+	ts := now()
+	_, err := s.db.ExecContext(ctx, `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where id=? and status='pending'`, string(result), ts, ts, taskID)
+	return err
+}
+
+func (s *Store) ListPendingTasksByType(ctx context.Context, taskType string) ([]model.AgentTask, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where type=? and status='pending' order by id`, taskType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 // ServerEverDeployedOrHasState reports whether the server either has a past
 // successful deployment/core-config baseline or currently participates in any
 // deployment-relevant desired state. Automatic pushes after recovery or
@@ -6322,6 +6356,9 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 		currentLease += grant
 		currentRemaining += grant
 		if _, err := conn.ExecContext(ctx, `update traffic_leases set lease_bytes=?, state=?, lease_revision=lease_revision+1, last_synced_at=?, valid_until=?, updated_at=? where server_id=? and user_id=? and period_key=?`, currentLease, currentState, ts, validUntil, ts, serverID, userID, periodKey); err != nil {
+			return TrafficLeaseAllocation{}, err
+		}
+		if err := bumpTrafficPolicyRevisionTx(conn, ctx); err != nil {
 			return TrafficLeaseAllocation{}, err
 		}
 	} else if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, last_synced_at=?, valid_until=?, updated_at=? where server_id=? and user_id=? and period_key=?`, currentState, ts, validUntil, ts, serverID, userID, periodKey); err != nil {

@@ -471,6 +471,8 @@ func realtimeResourcesForTask(taskType string) []string {
 		resources = append(resources, "deployments", "servers", "topology", "probes", "subscriptions", "user_overview")
 	case model.AgentTaskTypeApplyCoreConfig:
 		resources = append(resources, "deployments", "servers", "dns")
+	case model.AgentTaskTypeApplyTrafficPolicy:
+		resources = append(resources, "tasks")
 	case model.AgentTaskTypeUpdateAgent:
 		resources = append(resources, "server_runtime")
 	case model.AgentTaskTypeUninstallAgent:

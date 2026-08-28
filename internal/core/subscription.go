@@ -564,14 +564,6 @@ func renderSingBoxMieruSubscription(nodes []SubscriptionNode) (string, error) {
 	return renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBoxMieru)
 }
 
-func renderMieruSubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSubscriptionTarget(nodes, model.SubscriptionFormatMieru)
-}
-
-func renderClashMetaSubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSubscriptionTarget(nodes, model.SubscriptionFormatClashMeta)
-}
-
 func querySuffix(q url.Values) string {
 	if len(q) == 0 {
 		return ""
@@ -593,20 +585,14 @@ func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.Subscrip
 	switch strings.ToLower(strings.TrimSpace(string(format))) {
 	case "", "singbox", "sing-box":
 		return model.SubscriptionFormatSingBox
+	case "auto":
+		return model.SubscriptionFormatAuto
 	case "sing-box-mieru", "singbox-mieru", "singboxmieru":
 		return model.SubscriptionFormatSingBoxMieru
-	case "mieru", "mierus":
-		return model.SubscriptionFormatMieru
 	case "stash":
 		return model.SubscriptionFormatStash
-	case "clash", "clash-meta", "mihomo":
-		if strings.ToLower(strings.TrimSpace(string(format))) == "clash" {
-			return model.SubscriptionFormatClash
-		}
-		if strings.ToLower(strings.TrimSpace(string(format))) == "mihomo" {
-			return model.SubscriptionFormatMihomo
-		}
-		return model.SubscriptionFormatClashMeta
+	case "mihomo":
+		return model.SubscriptionFormatMihomo
 	case "surfboard":
 		return model.SubscriptionFormatSurfboard
 	case "surge":
@@ -626,7 +612,7 @@ func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.Subscrip
 	case "v2ray-uri", "v2rayuri", "v2ray uri":
 		return model.SubscriptionFormatV2RayURI
 	default:
-		return format
+		return model.SubscriptionFormat(strings.ToLower(strings.TrimSpace(string(format))))
 	}
 }
 
@@ -634,11 +620,10 @@ func NormalizeSubscriptionFormatForAPI(format model.SubscriptionFormat) model.Su
 	return normalizeSubscriptionFormat(format)
 }
 
-func SupportedSubscriptionFormats() []model.SubscriptionFormat {
+func ConcreteSubscriptionFormats() []model.SubscriptionFormat {
 	return []model.SubscriptionFormat{
-		model.SubscriptionFormatStash,
-		model.SubscriptionFormatClashMeta,
 		model.SubscriptionFormatMihomo,
+		model.SubscriptionFormatStash,
 		model.SubscriptionFormatSurfboard,
 		model.SubscriptionFormatSurge,
 		model.SubscriptionFormatSurgeMac,
@@ -648,16 +633,21 @@ func SupportedSubscriptionFormats() []model.SubscriptionFormat {
 		model.SubscriptionFormatQX,
 		model.SubscriptionFormatSingBox,
 		model.SubscriptionFormatSingBoxMieru,
-		model.SubscriptionFormatMieru,
 		model.SubscriptionFormatV2Ray,
 		model.SubscriptionFormatV2RayURI,
-		model.SubscriptionFormatClash,
 	}
 }
 
-func IsSupportedSubscriptionFormat(format model.SubscriptionFormat) bool {
+func SupportedSubscriptionFormats() []model.SubscriptionFormat {
+	return ConcreteSubscriptionFormats()
+}
+
+func IsConcreteSubscriptionFormat(format model.SubscriptionFormat) bool {
 	normalized := normalizeSubscriptionFormat(format)
-	for _, supported := range SupportedSubscriptionFormats() {
+	if normalized == model.SubscriptionFormatAuto {
+		return false
+	}
+	for _, supported := range ConcreteSubscriptionFormats() {
 		if normalized == supported {
 			return true
 		}
@@ -665,14 +655,57 @@ func IsSupportedSubscriptionFormat(format model.SubscriptionFormat) bool {
 	return false
 }
 
+func IsSupportedSubscriptionFormat(format model.SubscriptionFormat) bool {
+	normalized := normalizeSubscriptionFormat(format)
+	if normalized == model.SubscriptionFormatAuto {
+		return true
+	}
+	return IsConcreteSubscriptionFormat(normalized)
+}
+
 func SubscriptionContentType(format model.SubscriptionFormat) string {
 	switch normalizeSubscriptionFormat(format) {
 	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
 		return "application/json"
-	case model.SubscriptionFormatClashMeta, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatClash:
+	case model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern:
 		return "text/yaml; charset=utf-8"
 	default:
 		return "text/plain; charset=utf-8"
+	}
+}
+
+func SubscriptionFormatLabel(format model.SubscriptionFormat) string {
+	switch normalizeSubscriptionFormat(format) {
+	case model.SubscriptionFormatAuto:
+		return "自动识别"
+	case model.SubscriptionFormatMihomo:
+		return "Mihomo"
+	case model.SubscriptionFormatStash:
+		return "Stash"
+	case model.SubscriptionFormatSurfboard:
+		return "Surfboard"
+	case model.SubscriptionFormatSurge:
+		return "Surge"
+	case model.SubscriptionFormatSurgeMac:
+		return "Surge Mac"
+	case model.SubscriptionFormatLoon:
+		return "Loon"
+	case model.SubscriptionFormatEgern:
+		return "Egern"
+	case model.SubscriptionFormatShadowrocket:
+		return "Shadowrocket"
+	case model.SubscriptionFormatQX:
+		return "Quantumult X"
+	case model.SubscriptionFormatSingBox:
+		return "sing-box"
+	case model.SubscriptionFormatSingBoxMieru:
+		return "sing-box + Mieru"
+	case model.SubscriptionFormatV2Ray:
+		return "V2Ray"
+	case model.SubscriptionFormatV2RayURI:
+		return "V2Ray URI"
+	default:
+		return string(format)
 	}
 }
 

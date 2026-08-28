@@ -71,8 +71,8 @@ func TestPrivateProtocolsRenderAndFilterByTarget(t *testing.T) {
 	if err != nil || len(preview.Nodes) != 2 || !strings.Contains(preview.Content, `"type": "trojan"`) || !strings.Contains(preview.Content, `"type": "tuic"`) {
 		t.Fatalf("sing-box preview=%#v err=%v", preview, err)
 	}
-	classic, err := PreviewSubscriptionNodes(nodes, model.SubscriptionFormatClash)
-	if err != nil || len(classic.Nodes) != 0 || classic.FilteredCount != 2 || classic.Content == "" {
+	classic, err := PreviewSubscriptionNodes(nodes, model.SubscriptionFormatLoon)
+	if err != nil || len(classic.Nodes) != 0 || classic.FilteredCount != 2 {
 		t.Fatalf("classic clash preview=%#v err=%v", classic, err)
 	}
 	uri, err := RenderSubscriptionNodes(nodes, model.SubscriptionFormatV2RayURI)

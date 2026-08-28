@@ -638,8 +638,8 @@ func insertSubscriptionPullAudit(ctx context.Context, tx *sql.Tx, event model.Su
 		event.RawRequestWeight = 1
 	}
 	ts := now()
-	res, err := tx.ExecContext(ctx, `insert into subscription_pull_audits(user_id,device_id_hash,representation_id,subscription_revision,raw_request_weight,logical_pull_weight,logical_fetch_id,route_id,route_novelty_weight,dedupe_reason,conditional_request,source_ip,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,user_agent,client_name,format,profile_id,age_encrypted,token_kind,outcome,reason,risk_eligible,requested_at,created_at)
-		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event.UserID, event.DeviceIDHash, event.RepresentationID, event.SubscriptionRevision, event.RawRequestWeight, event.LogicalPullWeight, event.LogicalFetchID, event.RouteID, event.RouteNoveltyWeight, event.DedupeReason, boolInt(event.ConditionalRequest), event.SourceIP, event.SourceCountryCode, event.SourceCountry, event.SourceProvince, event.SourceCity, event.SourceISP, event.GeoDatabaseRevision, event.UserAgent, event.ClientName, event.Format, event.ProfileID, boolInt(event.AgeEncrypted), event.TokenKind, event.Outcome, event.Reason, boolInt(event.RiskEligible), event.RequestedAt.UTC().Format(time.RFC3339Nano), ts)
+	res, err := tx.ExecContext(ctx, `insert into subscription_pull_audits(user_id,device_id_hash,representation_id,subscription_revision,raw_request_weight,logical_pull_weight,logical_fetch_id,route_id,route_novelty_weight,dedupe_reason,conditional_request,source_ip,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,user_agent,client_name,format,requested_format,auto_detected,profile_id,age_encrypted,token_kind,outcome,reason,risk_eligible,requested_at,created_at)
+		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event.UserID, event.DeviceIDHash, event.RepresentationID, event.SubscriptionRevision, event.RawRequestWeight, event.LogicalPullWeight, event.LogicalFetchID, event.RouteID, event.RouteNoveltyWeight, event.DedupeReason, boolInt(event.ConditionalRequest), event.SourceIP, event.SourceCountryCode, event.SourceCountry, event.SourceProvince, event.SourceCity, event.SourceISP, event.GeoDatabaseRevision, event.UserAgent, event.ClientName, event.Format, event.RequestedFormat, boolInt(event.AutoDetected), event.ProfileID, boolInt(event.AgeEncrypted), event.TokenKind, event.Outcome, event.Reason, boolInt(event.RiskEligible), event.RequestedAt.UTC().Format(time.RFC3339Nano), ts)
 	if err != nil {
 		return 0, err
 	}
@@ -1170,7 +1170,7 @@ func (s *Store) subscriptionAuditDimensions(ctx context.Context, query string, a
 }
 
 func (s *Store) listRecentSubscriptionAudits(ctx context.Context, userID int64, since string, limit int) ([]model.SubscriptionPullAudit, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,device_id_hash,representation_id,subscription_revision,raw_request_weight,logical_pull_weight,logical_fetch_id,route_id,route_novelty_weight,dedupe_reason,conditional_request,source_ip,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,user_agent,client_name,format,profile_id,age_encrypted,token_kind,outcome,reason,risk_eligible,requested_at,created_at from subscription_pull_audits where user_id=? and requested_at>=? order by requested_at desc limit ?`, userID, since, limit)
+	rows, err := s.db.QueryContext(ctx, `select id,user_id,device_id_hash,representation_id,subscription_revision,raw_request_weight,logical_pull_weight,logical_fetch_id,route_id,route_novelty_weight,dedupe_reason,conditional_request,source_ip,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,user_agent,client_name,format,requested_format,auto_detected,profile_id,age_encrypted,token_kind,outcome,reason,risk_eligible,requested_at,created_at from subscription_pull_audits where user_id=? and requested_at>=? order by requested_at desc limit ?`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1179,9 +1179,9 @@ func (s *Store) listRecentSubscriptionAudits(ctx context.Context, userID int64, 
 	for rows.Next() {
 		var item model.SubscriptionPullAudit
 		var profileID sql.NullInt64
-		var encrypted, conditional, eligible int
+		var encrypted, conditional, eligible, autoDetected int
 		var requestedAt, createdAt string
-		if err := rows.Scan(&item.ID, &item.UserID, &item.DeviceIDHash, &item.RepresentationID, &item.SubscriptionRevision, &item.RawRequestWeight, &item.LogicalPullWeight, &item.LogicalFetchID, &item.RouteID, &item.RouteNoveltyWeight, &item.DedupeReason, &conditional, &item.SourceIP, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision, &item.UserAgent, &item.ClientName, &item.Format, &profileID, &encrypted, &item.TokenKind, &item.Outcome, &item.Reason, &eligible, &requestedAt, &createdAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.DeviceIDHash, &item.RepresentationID, &item.SubscriptionRevision, &item.RawRequestWeight, &item.LogicalPullWeight, &item.LogicalFetchID, &item.RouteID, &item.RouteNoveltyWeight, &item.DedupeReason, &conditional, &item.SourceIP, &item.SourceCountryCode, &item.SourceCountry, &item.SourceProvince, &item.SourceCity, &item.SourceISP, &item.GeoDatabaseRevision, &item.UserAgent, &item.ClientName, &item.Format, &item.RequestedFormat, &autoDetected, &profileID, &encrypted, &item.TokenKind, &item.Outcome, &item.Reason, &eligible, &requestedAt, &createdAt); err != nil {
 			return nil, err
 		}
 		if profileID.Valid {
@@ -1190,6 +1190,7 @@ func (s *Store) listRecentSubscriptionAudits(ctx context.Context, userID int64, 
 		item.AgeEncrypted = encrypted != 0
 		item.ConditionalRequest = conditional != 0
 		item.RiskEligible = eligible != 0
+		item.AutoDetected = autoDetected != 0
 		item.RequestedAt = parseTime(requestedAt)
 		item.CreatedAt = parseTime(createdAt)
 		out = append(out, item)

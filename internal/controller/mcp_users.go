@@ -54,6 +54,9 @@ func (s *Server) registerUserAutomationOperations() {
 				return nil, err
 			}
 		}
+		if err := s.queueCoreConfigRefreshForUser(ctx, user.ID, "user_created"); err != nil {
+			logConfigurationError("queue core config for user create", err)
+		}
 		result := map[string]any{"user": automationUserView(user)}
 		if generatedPassword != "" {
 			result["generated_password"] = generatedPassword
@@ -88,6 +91,7 @@ func (s *Server) registerUserAutomationOperations() {
 		if err := s.store.UpdateUser(ctx, &user); err != nil {
 			return nil, err
 		}
+		s.syncUserChange(ctx, *current, user)
 		revokeSessions := hasAnyAutomationField(fieldsFromChanged(changed), "password") ||
 			(current.Status == "active" && user.Status != "active") ||
 			(current.Role != user.Role && roleAllows(current.Role, user.Role))
@@ -134,8 +138,15 @@ func (s *Server) registerUserAutomationOperations() {
 		if err := s.store.DeleteNotificationDataForUser(ctx, user.ID); err != nil {
 			return nil, err
 		}
+		serverIDs, acctErr := s.userAccountingServerIDs(ctx, user.ID)
+		if acctErr != nil {
+			return nil, acctErr
+		}
 		if err := s.store.Delete(ctx, "users", user.ID); err != nil {
 			return nil, err
+		}
+		if err := s.queueCoreConfigRefreshForServers(ctx, serverIDs, "user_deleted"); err != nil {
+			logConfigurationError("queue core config for user delete", err)
 		}
 		return map[string]any{"deleted": true, "user_id": user.ID}, nil
 	})

@@ -12,6 +12,7 @@ import (
 	age "github.com/metacubex/age"
 	"github.com/metacubex/age/armor"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
 
@@ -42,12 +43,7 @@ func (s *Server) subscriptionAlwaysUseDomainHost(ctx context.Context) bool {
 }
 
 func subscriptionAgeCapableFormat(format model.SubscriptionFormat) bool {
-	switch format {
-	case model.SubscriptionFormatMihomo, model.SubscriptionFormatClashMeta, model.SubscriptionFormatClash:
-		return true
-	default:
-		return false
-	}
+	return core.NormalizeSubscriptionFormatForAPI(format) == model.SubscriptionFormatMihomo
 }
 
 func subscriptionAgeRequested(r *http.Request) (bool, error) {
@@ -134,4 +130,29 @@ func encryptSubscriptionAgeArmor(plain string, recipient age.Recipient) ([]byte,
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+func appendHTTPVary(header http.Header, values ...string) {
+	existing := []string{}
+	for _, item := range strings.Split(header.Get("Vary"), ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			existing = append(existing, item)
+		}
+	}
+	seen := map[string]bool{}
+	for _, item := range existing {
+		seen[strings.ToLower(item)] = true
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[strings.ToLower(value)] {
+			continue
+		}
+		existing = append(existing, value)
+		seen[strings.ToLower(value)] = true
+	}
+	if len(existing) > 0 {
+		header.Set("Vary", strings.Join(existing, ", "))
+	}
 }

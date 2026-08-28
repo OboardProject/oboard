@@ -204,7 +204,15 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 		}
 	}
 	for userID, periodKey := range touchedUsers {
+		// traffic_used_bytes is a denormalized panel value, not desired-state.
+		// The users UPDATE trigger must ignore this field so configuration_revision
+		// and routing_cache_revision stay still.
 		if _, err := tx.ExecContext(ctx, `update users set traffic_used_bytes=(select coalesce(upload_bytes+download_bytes,0) from traffic_periods where user_id=? and period_key=?), updated_at=? where id=?`, userID, periodKey, ts, userID); err != nil {
+			return result, err
+		}
+	}
+	if len(touchedUsers) > 0 {
+		if err := bumpTrafficPolicyRevisionTx(tx, ctx); err != nil {
 			return result, err
 		}
 	}

@@ -116,6 +116,7 @@ import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatu
 import { RemoteTerminal } from './components/remote-access/RemoteTerminal'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
 import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel'
+import { SubscriptionTemplatesPanel } from './components/SubscriptionTemplatesPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
@@ -354,7 +355,7 @@ type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_sta
 type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical' | 'blackmatrix_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
 type RoutingRuleCatalogItem = { name: string; path: string; url: string; format: RoutingRuleSet['format']; category: string; size: number }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
-type SubscriptionFormat = 'stash' | 'clash-meta' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'mieru' | 'v2ray' | 'v2ray-uri' | 'clash'
+type SubscriptionFormat = 'auto' | 'stash' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'v2ray' | 'v2ray-uri'
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
 type AuditRiskLevel = 'normal' | 'watch' | 'alert' | 'high' | 'critical' | 'confirmed'
 type GeoDatabaseStatus = { available: boolean; provider: string; version?: string; revision?: string; error?: string }
@@ -1443,22 +1444,22 @@ function ExitRegionEditor({
         </div>}
   </div>
 }
-const defaultSubscriptionFormat: SubscriptionFormat = 'mihomo'
+const defaultSubscriptionFormat: SubscriptionFormat = 'auto'
 const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
+  { value: 'auto', label: '自动识别' },
   { value: 'mihomo', label: 'Mihomo' },
-  { value: 'sing-box', label: 'sing-box' },
-  { value: 'mieru', label: 'Mieru' },
   { value: 'stash', label: 'Stash' },
-  { value: 'surfboard', label: 'Surfboard' },
   { value: 'surge', label: 'Surge' },
   { value: 'surge-mac', label: 'Surge Mac' },
   { value: 'loon', label: 'Loon' },
   { value: 'egern', label: 'Egern' },
   { value: 'shadowrocket', label: 'Shadowrocket' },
   { value: 'qx', label: 'Quantumult X' },
+  { value: 'surfboard', label: 'Surfboard' },
+  { value: 'sing-box', label: 'sing-box' },
+  { value: 'sing-box-mieru', label: 'sing-box + Mieru' },
   { value: 'v2ray', label: 'V2Ray' },
   { value: 'v2ray-uri', label: 'V2Ray URI' },
-  { value: 'clash', label: 'Clash' }
 ]
 const tabMeta: Record<string, { label: string; desc: string; group: string }> = {
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
@@ -1656,7 +1657,7 @@ const errorMessages: Record<string, string> = {
   'deployment has no failure': '当前下发没有失败项',
   'age public key is required': '需要先配置 Age 公钥',
   'age encryption is not enabled for this user': '该用户尚未开启 Age 加密',
-  'age encryption is only supported for Mihomo subscriptions': 'Age 加密仅支持 Mihomo、Clash.Meta 和 Clash 格式',
+  'age encryption is only supported for Mihomo subscriptions': 'Age 加密仅支持 Mihomo 格式',
   'do not upload an age secret key; provide the public key': '请填写 Age 公钥，不要上传私钥',
   'subscription_age_policy must be optional or required': '订阅加密策略无效',
   'subscription access is suspended': '订阅拉取已暂停，请先由管理员恢复',
@@ -4179,13 +4180,14 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
-          <SettingsRow label="加密策略" description="仅影响 Mihomo 和 Clash 格式。">
+          <SettingsRow label="加密策略" description="仅影响 Mihomo 格式。">
             <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => { const next = e.target.value as 'optional' | 'required'; setSubscriptionAgePolicy(next); void saveSubscriptionAgePolicy(next) }} disabled={saving === 'subscription-age'} aria-label="Age 加密策略">
               <option value="optional">用户可选</option><option value="required">强制开启</option>
             </Select>
           </SettingsRow>
           <div className="subscription-security-note"><Shield size={18} /><div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div></div>
         </SettingsGroup>
+        <SubscriptionTemplatesPanel client={client} notify={notify} />
         <SettingsGroup title="订阅入口 Host" description="客户端连接地址。TLS 的 SNI 始终使用证书域名，与 Host 是否填 IP 无关。">
           <SettingsSwitchRow
             label="始终使用域名填写 Host"
@@ -19457,8 +19459,9 @@ function Tunnels({ data, client, load }: any) {
 }
 
 const subscriptionClientIcons: Record<string, string> = {
+  auto: clashMetaClientIcon,
   'sing-box': singBoxClientIcon,
-  mieru: singBoxClientIcon,
+  'sing-box-mieru': singBoxClientIcon,
   mihomo: clashMetaClientIcon,
   stash: stashClientIcon,
   surge: surgeClientIcon,
@@ -19470,7 +19473,6 @@ const subscriptionClientIcons: Record<string, string> = {
   egern: egernClientIcon,
   v2ray: v2rayNClientIcon,
   'v2ray-uri': v2rayNClientIcon,
-  clash: clashClassicClientIcon,
 }
 
 let subscriptionClientIconsReady: Promise<void> | null = null
@@ -19507,24 +19509,24 @@ function renderFormatIcon(id: string) {
 }
 
 function isAgeSubscriptionFormat(format: SubscriptionFormat) {
-  return format === 'mihomo' || format === 'clash-meta' || format === 'clash'
+  return format === 'mihomo'
 }
 
 const subscriptionClientFormats: Array<{ id: SubscriptionFormat; name: string; type: string }> = [
+  { id: 'auto', name: '自动识别', type: '按 User-Agent' },
   { id: 'mihomo', name: 'Mihomo', type: 'YAML Config' },
-  { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
-  { id: 'mieru', name: 'Mieru', type: 'mierus URI' },
   { id: 'stash', name: 'Stash', type: 'YAML' },
   { id: 'surge', name: 'Surge', type: 'Conf' },
   { id: 'surge-mac', name: 'Surge Mac', type: 'Conf' },
+  { id: 'loon', name: 'Loon', type: 'Conf' },
+  { id: 'egern', name: 'Egern', type: 'YAML' },
   { id: 'shadowrocket', name: 'Shadowrocket', type: 'URI' },
   { id: 'qx', name: 'Quantumult X', type: 'Conf' },
-  { id: 'loon', name: 'Loon', type: 'Conf' },
   { id: 'surfboard', name: 'Surfboard', type: 'Conf' },
-  { id: 'egern', name: 'Egern', type: 'YAML' },
+  { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
+  { id: 'sing-box-mieru', name: 'sing-box + Mieru', type: 'Extended JSON' },
   { id: 'v2ray', name: 'V2Ray', type: 'Base64 URI' },
   { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
-  { id: 'clash', name: 'Clash', type: 'YAML' },
 ]
 
 function subscriptionURLForToken(token: string, format: SubscriptionFormat, encrypted = false) {

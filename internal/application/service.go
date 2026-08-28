@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -325,6 +326,29 @@ func (s *Service) ListNodePresets(ctx context.Context, principal Principal) ([]m
 	return out, nil
 }
 
+func (s *Service) ListSubscriptionTemplates(ctx context.Context, principal Principal) ([]model.SubscriptionClientTemplate, error) {
+	return s.store.ListSubscriptionClientTemplates(ctx)
+}
+
+func (s *Service) GetSubscriptionTemplate(ctx context.Context, principal Principal, format string) (model.SubscriptionClientTemplate, error) {
+	return s.store.GetSubscriptionClientTemplate(ctx, model.SubscriptionFormat(format))
+}
+
+func (s *Service) ValidateSubscriptionTemplate(ctx context.Context, principal Principal, format, content string) (map[string]any, error) {
+	if err := core.ValidateSubscriptionTemplateWithPreview(model.SubscriptionFormat(format), content); err != nil {
+		return nil, err
+	}
+	return map[string]any{"valid": true}, nil
+}
+
+func (s *Service) PreviewSubscriptionTemplate(ctx context.Context, principal Principal, format, content string) (map[string]any, error) {
+	rendered, err := core.RenderSubscriptionTemplatePreview(model.SubscriptionFormat(format), content)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"format": core.NormalizeSubscriptionFormatForAPI(model.SubscriptionFormat(format)), "content": rendered}, nil
+}
+
 func (s *Service) ListSnellProfiles(ctx context.Context, principal Principal) ([]model.SnellProfile, error) {
 	return s.store.ListSnellProfiles(ctx)
 }
@@ -495,6 +519,34 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.ListWARPProfiles(ctx, principal)
 	case "node_presets.list":
 		return s.ListNodePresets(ctx, principal)
+	case "subscription_templates.list":
+		return s.ListSubscriptionTemplates(ctx, principal)
+	case "subscription_templates.get":
+		var input struct {
+			Format string `json:"format"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil || strings.TrimSpace(input.Format) == "" {
+			return nil, errors.New("format is required")
+		}
+		return s.GetSubscriptionTemplate(ctx, principal, input.Format)
+	case "subscription_templates.validate":
+		var input struct {
+			Format  string `json:"format"`
+			Content string `json:"content"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil {
+			return nil, err
+		}
+		return s.ValidateSubscriptionTemplate(ctx, principal, input.Format, input.Content)
+	case "subscription_templates.preview":
+		var input struct {
+			Format  string `json:"format"`
+			Content string `json:"content"`
+		}
+		if err := strictUnmarshal(arguments, &input); err != nil {
+			return nil, err
+		}
+		return s.PreviewSubscriptionTemplate(ctx, principal, input.Format, input.Content)
 	case "snell_profiles.list":
 		return s.ListSnellProfiles(ctx, principal)
 	case "dns_lists.list":
