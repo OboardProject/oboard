@@ -10884,7 +10884,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     max-width: 100%;
     white-space: nowrap;
   }
-  .deploy-status-pill span {
+  .deploy-status-pill > span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -18352,6 +18352,7 @@ button[aria-busy="true"] {
 }
 
 .deploy-status-pill {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -18361,6 +18362,7 @@ button[aria-busy="true"] {
   font-size: 12.5px;
   font-weight: 600;
   border: 1px solid transparent;
+  overflow: visible;
 }
 .deploy-status-pill.ok { background: var(--success-soft); color: var(--success); }
 .deploy-status-pill.warn { background: var(--warning-soft); color: var(--warning); }
@@ -18392,6 +18394,94 @@ button.deploy-status-pill.details-trigger:active {
 button.deploy-status-pill.details-trigger:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--danger) 40%, transparent);
   outline-offset: 2px;
+}
+
+.deploy-status-pill.has-popover:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  outline-offset: 2px;
+}
+
+.configuration-sync-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: var(--z-popover);
+  display: grid;
+  gap: 8px;
+  width: max-content;
+  min-width: 168px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: min(280px, calc(100vh - 96px));
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  white-space: normal;
+  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.96) translateY(-4px);
+  transform-origin: top right;
+  transition: opacity var(--duration-appica) var(--ease-appica-spring),
+              transform var(--duration-appica) var(--ease-appica-spring),
+              visibility var(--duration-appica) ease;
+}
+
+.configuration-sync-popover::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 10px;
+}
+
+.deploy-status-pill.has-popover:hover .configuration-sync-popover,
+.deploy-status-pill.has-popover:focus-within .configuration-sync-popover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: scale(1) translateY(0);
+}
+
+.configuration-sync-popover strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.configuration-sync-popover ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.configuration-sync-popover li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.configuration-sync-popover li small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .configuration-sync-dialog {

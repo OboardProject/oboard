@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { configurationSyncFailureIssues, configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
+import { configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
 
 describe('configuration sync feedback', () => {
   it('shows local saving feedback synchronously before a response exists', () => {
@@ -35,6 +35,22 @@ describe('configuration sync feedback', () => {
     expect(issues[0].resolution).toContain('删除或停用同一位置的重复直出分支')
     expect(configurationSyncPresentation(rows).label).toBe('配置同步被阻塞 · 1 个问题')
     expect(configurationSyncFailureIssues([{ server_id: 1, state: 'failed', error: '入口 15 已存在相同位置的直接出口分支' }])[0].inboundID).toBe(15)
+  })
+
+  it('lists busy sync rows and labels their in-flight state', () => {
+    const rows = [
+      { server_id: 1, state: 'running' },
+      { server_id: 2, state: 'queued' },
+      { server_id: 3, state: 'synced' },
+      { server_id: 4, state: 'failed' },
+      { server_id: 5, state: 'preparing' },
+      { server_id: 6, state: 'pending' },
+    ]
+    expect(configurationSyncBusyRows(rows).map(item => item.server_id)).toEqual([1, 2, 5, 6])
+    expect(configurationSyncBusyStateLabel('running')).toBe('下发中')
+    expect(configurationSyncBusyStateLabel('queued')).toBe('排队中')
+    expect(configurationSyncBusyStateLabel('preparing')).toBe('准备中')
+    expect(configurationSyncBusyStateLabel('pending')).toBe('等待中')
   })
 
   it('merges desired revision and sync rows without discarding page entities', () => {

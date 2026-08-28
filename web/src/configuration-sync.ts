@@ -74,9 +74,22 @@ export function configurationSyncFailureIssues(rows: ConfigurationSyncRow[]): Co
   })
 }
 
+const configurationSyncBusyStates = ['pending', 'preparing', 'queued', 'running'] as const
+
+export function configurationSyncBusyRows(rows: ConfigurationSyncRow[]) {
+  return rows.filter(item => (configurationSyncBusyStates as readonly string[]).includes(item.state))
+}
+
+export function configurationSyncBusyStateLabel(state: string) {
+  if (state === 'preparing') return '准备中'
+  if (state === 'queued') return '排队中'
+  if (state === 'running') return '下发中'
+  return '等待中'
+}
+
 export function configurationSyncPresentation(rows: ConfigurationSyncRow[], saving = false, retrying = false): ConfigurationSyncPresentation {
   const failed = rows.filter(item => item.state === 'failed')
-  const active = rows.filter(item => ['pending', 'preparing', 'queued', 'running'].includes(item.state))
+  const active = configurationSyncBusyRows(rows)
   const synced = rows.length > 0 && rows.every(item => item.state === 'synced')
   if (saving) return { tone: 'info', label: '正在保存...', retryServerIDs: [], busy: true }
   if (retrying) return { tone: 'info', label: '正在重试同步...', retryServerIDs: failed.map(item => item.server_id), busy: true }

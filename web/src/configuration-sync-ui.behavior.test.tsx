@@ -48,6 +48,45 @@ describe('ConfigurationSyncStatus', () => {
     expect(container.textContent).toContain('正在同步 1 台服务器')
   })
 
+  it('lists currently syncing servers in a hover popover', () => {
+    act(() => root.render(<ConfigurationSyncStatus
+      rows={[
+        { server_id: 1, state: 'running' },
+        { server_id: 2, state: 'queued' },
+        { server_id: 3, state: 'synced' },
+        { server_id: 4, state: 'pending' },
+      ]}
+      servers={[{ id: 1, name: '东京入口' }, { id: 2, name: '香港出口' }, { id: 3, name: '新加坡' }]}
+    />))
+    const pill = container.querySelector('.deploy-status-pill.has-popover') as HTMLElement | null
+    const popover = container.querySelector('[role="tooltip"]') as HTMLElement | null
+    expect(container.textContent).toContain('正在同步 3 台服务器')
+    expect(pill).not.toBeNull()
+    expect(pill?.getAttribute('aria-describedby')).toBe(popover?.id)
+    expect(popover?.textContent).toContain('正在同步的服务器')
+    expect(popover?.textContent).toContain('东京入口')
+    expect(popover?.textContent).toContain('香港出口')
+    expect(popover?.textContent).toContain('服务器 #4')
+    expect(popover?.textContent).toContain('下发中')
+    expect(popover?.textContent).toContain('排队中')
+    expect(popover?.textContent).toContain('等待中')
+    expect(popover?.textContent).not.toContain('新加坡')
+  })
+
+  it('does not attach a syncing-server popover to idle, saving, or failed states', () => {
+    act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'synced' }]} servers={[{ id: 1, name: '东京入口' }]} />))
+    expect(container.querySelector('[role="tooltip"]')).toBeNull()
+    expect(container.textContent).not.toContain('东京入口')
+
+    act(() => root.render(<ConfigurationSyncStatus rows={[]} saving servers={[{ id: 1, name: '东京入口' }]} />))
+    expect(container.querySelector('[role="tooltip"]')).toBeNull()
+    expect(container.textContent).toContain('正在保存...')
+
+    act(() => root.render(<ConfigurationSyncStatus rows={[{ server_id: 1, state: 'failed', error: 'prepare failed' }]} servers={[{ id: 1, name: '东京入口' }]} />))
+    expect(container.querySelector('[role="tooltip"]')).toBeNull()
+    expect(container.querySelector('.deploy-status-pill.has-popover')).toBeNull()
+  })
+
   it('opens deduplicated, actionable failure details without a hover-only tooltip', () => {
     const locateInbound = vi.fn()
     const repeated = '入口 15 的直接出口分支「东京直出」与「备用直出」位于同一位置；请删除或停用其中一条后再同步'

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { AlertTriangle, Check, Info, RefreshCw } from 'lucide-react'
 
 import { Dialog } from './components/ui/dialog'
-import { configurationSyncFailureIssues, configurationSyncPresentation, type ConfigurationSyncRow } from './configuration-sync'
+import { configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, type ConfigurationSyncRow } from './configuration-sync'
 
 type ConfigurationSyncServer = { id: number; name?: string }
 type ConfigurationSyncInbound = { id: number; server_id: number; name?: string; protocol?: string; listen_ip?: string; port?: number }
@@ -19,13 +19,20 @@ type ConfigurationSyncStatusProps = {
   onLocateInbound?: (inboundID: number) => void
 }
 
+function serverDisplayName(serverID: number, names: Map<number, string>) {
+  return names.get(serverID) || `服务器 #${serverID}`
+}
+
 export function ConfigurationSyncStatus({ rows, saving = false, retrying = false, canOperate = true, servers = [], inbounds = [], onRetry, onNavigate, onLocateInbound }: ConfigurationSyncStatusProps) {
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const popoverID = useId()
   const presentation = configurationSyncPresentation(rows, saving, retrying)
   const failed = rows.filter(item => item.state === 'failed')
+  const busyRows = useMemo(() => configurationSyncBusyRows(rows), [rows])
   const issues = useMemo(() => configurationSyncFailureIssues(failed), [rows])
   const serverNames = useMemo(() => new Map(servers.map(server => [Number(server.id), String(server.name || '').trim()])), [servers])
   const inboundByID = useMemo(() => new Map(inbounds.map(inbound => [Number(inbound.id), inbound])), [inbounds])
+  const showBusyPopover = failed.length === 0 && busyRows.length > 0
   useEffect(() => {
     if (failed.length === 0) setDetailsOpen(false)
   }, [failed.length])
@@ -81,7 +88,7 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
                   <div className="configuration-sync-resolution"><strong>处理方法</strong><span>{resolution}</span></div>
                   <details>
                     <summary>查看本轮被阻塞的同步任务</summary>
-                    <ul>{issue.serverIDs.map(serverID => <li key={serverID}>{serverNames.get(serverID) || `服务器 #${serverID}`}</li>)}</ul>
+                    <ul>{issue.serverIDs.map(serverID => <li key={serverID}>{serverDisplayName(serverID, serverNames)}</li>)}</ul>
                   </details>
                   {issue.rawError && <details><summary>查看原始错误</summary><code>{issue.rawError}</code></details>}
                   {issue.inboundID && onLocateInbound
@@ -103,9 +110,27 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
     )
   }
   return (
-    <div className={`deploy-status-pill ${saving || presentation.busy ? 'info' : presentation.tone === 'ok' ? 'ok' : 'warn'}`} aria-live="polite">
+    <div
+      className={`deploy-status-pill ${saving || presentation.busy ? 'info' : presentation.tone === 'ok' ? 'ok' : 'warn'}${showBusyPopover ? ' has-popover' : ''}`}
+      aria-live="polite"
+      aria-describedby={showBusyPopover ? popoverID : undefined}
+      tabIndex={showBusyPopover ? 0 : undefined}
+    >
       {saving || presentation.busy ? <RefreshCw size={15} className="spin" aria-hidden="true" /> : presentation.tone === 'ok' ? <Check size={16} aria-hidden="true" /> : <Info size={16} aria-hidden="true" />}
       <span>{presentation.label}</span>
+      {showBusyPopover && (
+        <div id={popoverID} role="tooltip" className="configuration-sync-popover">
+          <strong>正在同步的服务器</strong>
+          <ul>
+            {busyRows.map(item => (
+              <li key={item.server_id}>
+                {serverDisplayName(item.server_id, serverNames)}
+                <small>{configurationSyncBusyStateLabel(item.state)}</small>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
