@@ -68,8 +68,9 @@ func TestHostOpsAndControllerUpdateRecipes(t *testing.T) {
 	}{
 		{name: "check", goal: "检查主控更新", capability: "controller_update.check"},
 		{name: "channel", goal: "切换主控更新通道", capability: "controller_update.set_channel", params: map[string]any{"channel": "stable"}},
-		{name: "install", goal: "安装主控更新", capability: "controller_update.install", confirm: true},
+		{name: "install", goal: "安装主控更新", capability: "controller_update.install", confirm: true, skipBackup: true},
 		{name: "install-skip-backup", goal: "跳过备份安装主控更新", capability: "controller_update.install", confirm: true, skipBackup: true},
+		{name: "install-with-backup", goal: "备份并安装主控更新", capability: "controller_update.install", confirm: true, skipBackup: false},
 		{name: "cancel", goal: "取消主控更新", capability: "controller_update.cancel", confirm: true},
 	}
 	for _, test := range tests {

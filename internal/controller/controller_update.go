@@ -300,7 +300,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 	if strings.TrimSpace(run.TargetBuild) == "" {
 		run.TargetBuild = status.Available.Build
 	}
-	s.applyPreparedControllerUpdate(ctx, status, prepared, run, false)
+	s.applyPreparedControllerUpdate(ctx, status, prepared, run, true)
 }
 
 func (s *Server) cancelPreparedControllerUpdate() {
@@ -476,7 +476,7 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var request struct {
-		SkipBackup bool `json:"skip_backup"`
+		SkipBackup *bool `json:"skip_backup"`
 	}
 	if strings.TrimSpace(string(body)) != "" {
 		if err := json.Unmarshal(body, &request); err != nil {
@@ -484,7 +484,7 @@ func (s *Server) controllerUpdateInstall(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	status, _, err := s.beginManualControllerUpdate(r.Context(), request.SkipBackup)
+	status, _, err := s.beginManualControllerUpdate(r.Context(), controllerUpdateSkipBackup(request.SkipBackup))
 	if err != nil {
 		switch {
 		case errors.Is(err, errControllerUpdaterUnavailable):
@@ -505,6 +505,10 @@ var (
 	errControllerUpdatePinned       = errors.New("固定版本不能在面板内更新，请先按提示切换更新通道")
 	errControllerUpdateBusy         = errors.New("已有主控更新操作正在进行，请稍后查看更新状态")
 )
+
+func controllerUpdateSkipBackup(value *bool) bool {
+	return value == nil || *value
+}
 
 func (s *Server) beginManualControllerUpdate(ctx context.Context, skipBackup bool) (controllerupdate.Status, bool, error) {
 	if !s.controllerUpdateRunMu.TryLock() {

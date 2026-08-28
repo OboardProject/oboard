@@ -192,9 +192,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		}, "enabled"), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot"), 3, false),
 		adminWrite("controller_update.check", "检查主控更新通道是否有可用版本", schemaObject(nil), controllerUpdateResult, 1, false),
 		adminWrite("controller_update.set_channel", "切换主控更新通道并刷新可用版本", schemaObject(map[string]any{"channel": map[string]any{"type": "string", "enum": []string{"stable", "dev"}}}, "channel"), controllerUpdateResult, 3, false),
-		adminWrite("controller_update.install", "接受主控更新请求；下载和安装在后台继续。默认先备份数据库；skip_backup=true 时跳过更新前备份", schemaObject(map[string]any{
+		adminWrite("controller_update.install", "接受主控更新请求；下载和安装在后台继续。默认跳过更新前备份；skip_backup=false 时先备份数据库。自动更新同样默认不备份", schemaObject(map[string]any{
 			"confirm":     map[string]any{"type": "boolean", "const": true},
-			"skip_backup": map[string]any{"type": "boolean", "description": "默认 false。true 时跳过更新前数据库备份。自动更新仍会备份。"},
+			"skip_backup": map[string]any{"type": "boolean", "description": "默认 true。true 或省略时跳过更新前数据库备份。false 时先备份。自动更新默认不备份。"},
 		}, "confirm"), controllerUpdateResult, 4, false),
 		adminWrite("controller_update.cancel", "取消当前可中断的主控更新", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), controllerUpdateResult, 2, false),
 		adminWrite("agent_updates.pause", "暂停 Agent 滚动更新", schemaObject(nil), rawSchema(agentUpdates), 2, false),

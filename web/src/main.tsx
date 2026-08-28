@@ -4272,7 +4272,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   const [failure, setFailure] = useState('')
   const [connectionInterrupted, setConnectionInterrupted] = useState(false)
   const [working, setWorking] = useState(false)
-  const [skipBackup, setSkipBackup] = useState(false)
+  const [skipBackup, setSkipBackup] = useState(true)
   const targetBuildRef = useRef('')
   const installRequestPendingRef = useRef(false)
   const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
@@ -4351,7 +4351,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
 
   usePausedInterval(() => { void refresh() }, 3000, (working || ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)) && realtimeStatus === 'fallback')
 
-  const install = async (skipBackup = false) => {
+  const install = async (skipBackup = true) => {
     if (working || !snapshot?.update_available) return
     statusRequestGuardRef.current.invalidate()
     targetBuildRef.current = snapshot.available?.build || ''
@@ -4399,10 +4399,10 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
         <div className="controller-update-prompt-icon"><Download size={18} /></div>
         <div className="controller-update-prompt-copy">
           <strong>发现主控新版本 {snapshot?.available?.version || ''}</strong>
-          <span>确认后会先备份数据，再安装并自动重启主控。</span>
+          <span>确认后会安装并自动重启主控。默认不备份数据库。</span>
         </div>
         <button type="button" className="ghost controller-update-prompt-later" aria-label="稍后提醒" title="稍后提醒" onClick={() => setDismissed(true)}><X size={15} /><span>稍后</span></button>
-        <button type="button" onClick={() => { setSkipBackup(false); setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
+        <button type="button" onClick={() => { setSkipBackup(true); setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
       </m.aside>}
     </AnimatePresence>
     <AnimatePresence>{dialogOpen && snapshot && <ControllerUpdateInstallDialog
@@ -4450,7 +4450,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const [installPhase, setInstallPhase] = useState<ControllerUpdateInstallPhase>('confirm')
   const [installConnectionInterrupted, setInstallConnectionInterrupted] = useState(false)
   const [installFailure, setInstallFailure] = useState('')
-  const [installSkipBackup, setInstallSkipBackup] = useState(false)
+  const [installSkipBackup, setInstallSkipBackup] = useState(true)
   const shouldReduceMotion = useReducedMotion()
   const installExpectedRef = useRef(false)
   const cancelExpectedRef = useRef(false)
@@ -4590,11 +4590,11 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
     setInstallFailure('')
     setInstallConnectionInterrupted(false)
-    setInstallSkipBackup(false)
+    setInstallSkipBackup(true)
     setInstallPhase('confirm')
     setInstallDialogOpen(true)
   }
-  const install = async (skipBackup = false) => {
+  const install = async (skipBackup = true) => {
     if (working || snapshot.channel === 'pinned' || !snapshot.update_available) return
     statusRequestGuardRef.current.invalidate()
     installTargetBuildRef.current = snapshot.available?.build || ''
@@ -4745,7 +4745,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
             <div className="auto-update-section-head">
               <div>
                 <strong>主控自动更新</strong>
-                <p>按设定的时间间隔自动检查并下发主控更新</p>
+                <p>按设定的时间间隔自动检查并下发主控更新，默认不备份数据库</p>
               </div>
               <Switch checked={snapshot.auto_update_enabled} disabled={Boolean(working) || snapshot.status === 'unavailable' || updateInProgress} onChange={checked => void saveAutoUpdate(checked)} ariaLabel="启用定时自动更新" />
             </div>
@@ -4915,16 +4915,16 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
-  const backupSkipped = Boolean(skipBackup)
+  const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
   const backupStageDone = ['ready', 'installing', 'restarting', 'verifying'].includes(phase)
   const backupStageLabel = backupSkipped ? (backupStageDone ? '已跳过' : '将跳过') : (phase === 'backing_up' ? `${backupShown}%` : '等待准备完成')
   return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog">
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
       {phase === 'confirm' && <>
-        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先检查并下载更新，默认再备份数据库、安装新版本并重新启动主控。主控更新成功后，Agent 版本同步会在后台滚动进行。</p></div></div>
+        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先检查并下载更新，默认跳过备份后安装新版本并重新启动主控。主控更新成功后，Agent 版本同步会在后台滚动进行。</p></div></div>
         <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
-        <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，不建议跳过备份。</p>
+        <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，建议选择备份并更新。</p>
       </>}
       {waiting && <>
         <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><p>{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</p></div></div>
@@ -4946,7 +4946,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
     </div>
     <footer className="dialog-actions">
-      {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(true)}>跳过备份更新</button><button type="button" onClick={() => onInstall()}>备份并更新</button></>}
+      {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></>}
       {waiting && <>{canCancel && <button type="button" className="ghost danger-text" onClick={onInterrupt} disabled={cancelling}><X size={14} />{cancelling ? '正在中断...' : '中断更新'}</button>}<button type="button" className="ghost" onClick={onHide}>在后台继续</button></>}
       {phase === 'cancelled' && <button type="button" onClick={onCancel}>关闭</button>}
       {phase === 'stopped' && <button type="button" onClick={onCancel}>关闭</button>}

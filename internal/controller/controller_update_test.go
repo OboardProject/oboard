@@ -287,6 +287,19 @@ func TestFallbackControllerUpdateStatus(t *testing.T) {
 	}
 }
 
+func TestControllerUpdateSkipBackupDefault(t *testing.T) {
+	if !controllerUpdateSkipBackup(nil) {
+		t.Fatal("omitted skip_backup should skip backup")
+	}
+	skip, keep := true, false
+	if !controllerUpdateSkipBackup(&skip) {
+		t.Fatal("skip_backup=true should skip backup")
+	}
+	if controllerUpdateSkipBackup(&keep) {
+		t.Fatal("skip_backup=false should create a backup")
+	}
+}
+
 func TestControllerUpdateBusyReturnsImmediately(t *testing.T) {
 	app := &Server{}
 	app.controllerUpdateRunMu.Lock()
@@ -377,7 +390,7 @@ func TestControllerUpdateInstallContinuesAfterRequestDisconnect(t *testing.T) {
 
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/ui/controller-update/install", nil).WithContext(requestCtx)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ui/controller-update/install", strings.NewReader(`{"skip_backup":false}`)).WithContext(requestCtx)
 	handlerDone := make(chan struct{})
 	go func() {
 		app.controllerUpdateInstall(recorder, request)
@@ -473,7 +486,7 @@ func TestControllerUpdateInstallSkipBackup(t *testing.T) {
 	app.controllerBackupDir = blockedBackup
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/ui/controller-update/install", strings.NewReader(`{"skip_backup":true}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/ui/controller-update/install", nil)
 	handlerDone := make(chan struct{})
 	go func() {
 		app.controllerUpdateInstall(recorder, request)
@@ -503,6 +516,93 @@ func TestControllerUpdateInstallSkipBackup(t *testing.T) {
 	}
 	if strings.TrimSpace(settings[controllerBackupSetting]) != "" {
 		t.Fatalf("skip_backup still recorded a database backup: %q", settings[controllerBackupSetting])
+	}
+}
+
+func TestScheduledControllerUpdateSkipsBackup(t *testing.T) {
+	root := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "obu-auto-skip-backup-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "updater.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installStarted := make(chan struct{})
+	releaseInstall := make(chan struct{})
+	var releaseInstallOnce sync.Once
+	unblockInstall := func() { releaseInstallOnce.Do(func() { close(releaseInstall) }) }
+	status := controllerupdate.Status{
+		Channel:         "dev",
+		State:           "available",
+		UpdateAvailable: true,
+		Available:       controllerupdate.BuildInfo{Version: "dev-next", Build: "20260828000001"},
+	}
+	updater := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := status
+		switch r.URL.Path {
+		case "/v1/prepare":
+			reply.State = "downloading"
+			reply.CanCancel = true
+		case "/v1/install":
+			close(installStarted)
+			select {
+			case <-releaseInstall:
+			case <-r.Context().Done():
+				t.Errorf("updater install request was cancelled: %v", r.Context().Err())
+				return
+			}
+			reply.State = "installing"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(reply)
+	})}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- updater.Serve(listener) }()
+	t.Cleanup(func() {
+		unblockInstall()
+		_ = updater.Close()
+		<-serveDone
+	})
+
+	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	app.controllerUpdater = controllerupdate.NewClient(socketPath)
+	blockedBackup := filepath.Join(root, "backups")
+	if err := os.WriteFile(blockedBackup, []byte("not-a-directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app.controllerBackupDir = blockedBackup
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		app.installScheduledControllerUpdate(context.Background(), status)
+	}()
+	select {
+	case <-installStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("automatic update did not reach the updater")
+	}
+	unblockInstall()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("automatic update did not finish after install")
+	}
+	settings, err := db.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(settings[controllerBackupSetting]) != "" {
+		t.Fatalf("automatic update recorded a database backup: %q", settings[controllerBackupSetting])
 	}
 }
 
