@@ -123,6 +123,9 @@ type Server struct {
 	controllerUpdateMaintenance   atomic.Bool
 	periodicLogMu                 sync.Mutex
 	periodicLogNext               map[string]time.Time
+	controllerNTPMu               sync.RWMutex
+	controllerNTPState            controllerNTPState
+	controllerNTPQuery            controllerNTPQueryFunc
 	connectionAuditNotificationMu sync.Mutex
 	connectionAuditActionMu       sync.Mutex
 	connectionAuditCacheMu        sync.Mutex
@@ -219,7 +222,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.agentLive = map[int64]chan any{}
 	s.remoteExecHub = newRemoteExecResultHub()
@@ -13895,14 +13898,17 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	if !auditEnabled {
 		_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 	}
-	hello := map[string]any{"type": "hello", "ts": time.Now().UTC(), "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+	hello := map[string]any{"type": "hello", "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
 	for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 		hello[key] = value
 	}
 	if plan, err := latencyProbePlanForServer(r.Context(), *server); err == nil {
 		hello["latency_probe_plan"] = plan
 	}
-	_ = conn.WriteJSON(hello)
+	writeAgentJSON := func(payload any) error {
+		return conn.WriteJSON(s.withControllerTime(payload))
+	}
+	_ = writeAgentJSON(hello)
 	type agentSocketRead struct {
 		message map[string]json.RawMessage
 		err     error
@@ -13980,7 +13986,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		}
 		inFlightTimer = time.NewTimer(taskTimeout)
 		inFlightTimeout = inFlightTimer.C
-		if err := conn.WriteJSON(map[string]any{"type": "task_request", "ts": time.Now().UTC(), "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}); err != nil {
+		if err := writeAgentJSON(map[string]any{"type": "task_request", "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}); err != nil {
 			// The socket is broken; the read side observes the failure and
 			// the deferred requeue returns the task to the queue.
 			return
@@ -14027,12 +14033,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			}
 			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
 			if acceptedLatencyReportID != "" {
-				if err := conn.WriteJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID, "ts": time.Now().UTC()}); err != nil {
+				if err := writeAgentJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID}); err != nil {
 					return
 				}
 			}
 			if acceptedMetricReportID != "" {
-				if err := conn.WriteJSON(map[string]any{"type": "metric_report_ack", "report_id": acceptedMetricReportID, "ts": time.Now().UTC()}); err != nil {
+				if err := writeAgentJSON(map[string]any{"type": "metric_report_ack", "report_id": acceptedMetricReportID}); err != nil {
 					return
 				}
 			}
@@ -14043,7 +14049,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		case <-notifyCh:
 			claimTask()
 		case payload := <-controlCh:
-			if err := conn.WriteJSON(payload); err != nil {
+			if err := writeAgentJSON(payload); err != nil {
 				return
 			}
 		case <-heartbeatTimer.C:
@@ -14055,14 +14061,14 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if !auditEnabled {
 				_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
 			}
-			heartbeat := map[string]any{"type": "heartbeat", "ts": time.Now().UTC(), "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+			heartbeat := map[string]any{"type": "heartbeat", "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
 			for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 				heartbeat[key] = value
 			}
 			if plan, planErr := latencyProbePlanForServer(r.Context(), *server); planErr == nil {
 				heartbeat["latency_probe_plan"] = plan
 			}
-			if err := conn.WriteJSON(heartbeat); err != nil {
+			if err := writeAgentJSON(heartbeat); err != nil {
 				return
 			}
 			heartbeatTimer.Reset(heartbeatInterval)

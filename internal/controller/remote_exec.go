@@ -54,7 +54,7 @@ func (s *Server) waitRemoteExec(ctx context.Context, principal mcpauth.GrantPrin
 	requestID := remoteExecRequestID(task)
 	result, ok := s.remoteExecHub.Wait(requestID, timeout)
 	if !ok {
-		_ = s.sendAgentControl(server.ID, map[string]any{"type": "remote_exec_cancel", "request_id": requestID, "ts": time.Now().UTC()})
+		_ = s.sendAgentControl(server.ID, map[string]any{"type": "remote_exec_cancel", "request_id": requestID})
 		return nil, codedError("remote_exec_timeout", "remote execution timed out waiting for the agent")
 	}
 	out := map[string]any{

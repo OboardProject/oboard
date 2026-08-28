@@ -163,6 +163,7 @@ func (s *Server) StartMonitor(ctx context.Context) {
 		interval time.Duration
 		run      func(context.Context)
 	}{
+		{0, controllerNTPRefreshPeriod, s.refreshControllerTime},
 		{0, 30 * time.Second, s.expireTimedOutTasks},
 		{200 * time.Millisecond, 30 * time.Second, s.checkOffline},
 		{400 * time.Millisecond, 30 * time.Second, s.maybeFinalizeBasePathMigration},

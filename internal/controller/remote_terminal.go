@@ -223,7 +223,6 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		"server_id": serverID, "session_id": sessionID, "nonce": nonce,
 		"issued_at": envelope.IssuedAt, "expires_at": envelope.ExpiresAt, "kind": "terminal",
 		"cols": cols, "rows": rows, "signature": security.SignInteractiveEnvelope(server.AgentTokenHash, envelope),
-		"ts": now,
 	}
 	if loginEnv {
 		payload["mode"] = mode
@@ -297,7 +296,7 @@ func (s *Server) closeTerminalSession(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	session.close("user_close")
-	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID, "ts": time.Now().UTC()})
+	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID})
 	write(w, http.StatusOK, map[string]any{"closed": true})
 }
 
@@ -353,7 +352,7 @@ func (s *Server) failTerminalSession(sessionID string, serverID int64, reason, d
 	delete(s.terminalHub.sessions, sessionID)
 	s.terminalHub.mu.Unlock()
 	session.fail(reason, detail)
-	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID, "ts": time.Now().UTC()})
+	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID})
 }
 
 func (s *Server) markTerminalReady(sessionID string, serverID int64) {
