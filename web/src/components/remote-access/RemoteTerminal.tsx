@@ -220,7 +220,14 @@ export function RemoteTerminal({
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
-      theme: { background: '#0b1220', foreground: '#e5eefc' },
+      theme: {
+        background: '#0b1220',
+        foreground: '#e5eefc',
+        cursor: '#e5eefc',
+        cursorAccent: '#0b1220',
+        selectionBackground: '#386ea8',
+        selectionInactiveBackground: '#243044',
+      },
       allowProposedApi: false,
     })
     const fit = new FitAddon()

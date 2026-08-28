@@ -11025,11 +11025,13 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .remote-terminal-body {
+  --remote-terminal-bg: #0b1220;
   padding: 0 !important;
   overflow: hidden !important;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--remote-terminal-bg);
 }
 
 .remote-terminal-host {
@@ -11037,12 +11039,21 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #0b1220;
+  background: var(--remote-terminal-bg);
 }
 
 .remote-terminal-host .xterm {
+  width: 100%;
   height: 100%;
   padding: 10px 12px;
+  box-sizing: border-box;
+  background-color: var(--remote-terminal-bg) !important;
+}
+
+.remote-terminal-host .xterm-viewport,
+.remote-terminal-host .xterm-screen,
+.remote-terminal-host .xterm-scrollable-element {
+  background-color: var(--remote-terminal-bg) !important;
 }
 
 .remote-terminal-host .xterm-viewport {
