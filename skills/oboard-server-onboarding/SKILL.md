@@ -9,16 +9,17 @@ Use OBoard as the source of truth for enrollment state. External cloud and SSH t
 
 ## Workflow
 
-1. Call `oboard_list_capabilities`. Stop if inventory read, server planning, or onboarding capabilities are absent.
-2. Call `oboard_query` with `inventory.read`, then `oboard_plan_server_onboarding` or `servers.onboarding.plan` with the intended unique `name`, region, and IP stack. Empty input is invalid and returns a warning that `name` is required.
-3. If a same-name server already exists, do not call `servers.onboard`. Present the existing `SJC#id` candidate and use `servers.enrollment.issue` (or Fast Path `confirm_reissue`) to reissue a one-time enrollment token. Use `servers.delete` with `confirm=true` only to remove unused duplicates.
-4. Present name conflicts, defaults, and the exact external installation action. Obtain user approval before using cloud APIs, SSH, or cloud-init.
-5. For a new unique name, call `oboard_create_changeset` with `servers.onboard`, a unique idempotency key, and the planner's server input. `idempotency_key` only deduplicates the same request; it does not make two different creates share one server name.
-6. Call `oboard_validate_changeset`. Show the plan hash, warnings, risk class, and blast radius. Stop while status is `awaiting_approval`.
-7. Call `oboard_apply_changeset` only after Controller approval. Treat an enrollment token as a one-time secret: do not log it, retain it in memory, or place it in chat history beyond the immediate install action. Issued install commands set `OBOARD_INSTALL_BBR` to `0` or `1`; they must not pass the literal `${OBOARD_INSTALL_BBR:-0}` as the value.
-8. Wait for Node Agent registration, then query the server and verify connectivity, detected addresses, region, architecture, Agent build, kernel build, and capabilities.
-9. Plan topology and deployment separately. Enrollment success is not approval to create listeners or deploy a proxy path.
+1. Call `oboard_task` first with intent `server.onboard`. Pass **only** the properties the user specified (`name` is required). Do not send `false` or `0` for unspecified switches.
+2. Controller fills the same defaults as the panel 添加服务器 dialog. Read `oboard://forms/server-create` when you need the current map. Fast Path already applies it.
+3. If a same-name server already exists, do not create another record. Follow `needs_input` or `choose_candidate` and reissue enrollment with `servers.enrollment.issue` / `confirm_reissue`. Use `servers.delete` with `confirm=true` only to remove unused duplicates.
+4. If Fast Path returns `fallback_required`, call `oboard_validate_form` with `capability: "servers.onboard"` and the same sparse input. Submit `normalized_input` (keep `applied_defaults`). Do not reconstruct omitted booleans as false.
+5. `ready` → explain summary/risk/approval, then `oboard_commit_task` with the `prepared_id` after confirmation. Follow the Workflow and redeem its external action only when requested.
+6. Present the generated install command for the user to run in their own terminal. Issued install commands set `OBOARD_INSTALL_BBR` to `0` or `1`; they must not pass the literal `${OBOARD_INSTALL_BBR:-0}` as the value. Treat enrollment material as a one-time secret.
+7. Wait for Node Agent registration, then query the server and verify connectivity, detected addresses, region, architecture, Agent build, kernel build, and capabilities.
+8. Plan topology and deployment separately. Enrollment success is not approval to create listeners or deploy a proxy path.
+
+`servers.update` is a patch. Omitted fields stay unchanged and must not be filled with create defaults.
 
 ## Stop Conditions
 
-Stop on an expired enrollment token, changed plan hash, unavailable server capability, failed Controller validation, or any request to expose Agent tokens, proxy credentials, private keys, or signing material.
+Stop on an expired enrollment token, changed plan hash, unavailable server capability, failed Controller validation, or any request to expose Agent tokens, proxy credentials, private keys, or signing material. Never SSH into target servers.

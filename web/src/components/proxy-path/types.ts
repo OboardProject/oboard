@@ -107,6 +107,7 @@ export type Server = {
   auto_renew_enabled?: boolean
   expiry_notify_enabled?: boolean
   last_auto_renewed_at?: string
+  last_seen_at?: string
   created_at?: string
   updated_at?: string
 }

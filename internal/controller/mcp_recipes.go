@@ -292,13 +292,7 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	if region == "" {
 		region = inferredRegionCode(input.Goal)
 	}
-	bbr := taskBoolParam(input.Params, true, "server.bbr_enabled", "bbr_enabled")
-	if containsAnyFold(input.Goal, "关闭 bbr", "禁用 bbr", "不启用 bbr", "disable bbr", "without bbr", "no bbr") {
-		bbr = false
-	} else if containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "启用 bbr", "enable bbr", "with bbr") {
-		bbr = true
-	}
-	server := map[string]any{"name": name, "ip_stack": ipStack, "bbr_enabled": bbr}
+	server := map[string]any{"name": name, "ip_stack": ipStack}
 	onboardMapping := map[string]string{
 		"name":                                  "name",
 		"server.name":                           "name",
@@ -370,6 +364,18 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 		"latency_probe_regions":                 "latency_probe_regions",
 		"server.latency_probe_max_targets":      "latency_probe_max_targets",
 		"latency_probe_max_targets":             "latency_probe_max_targets",
+		"monitoring_mode":                       "monitoring_mode",
+		"server.monitoring_mode":                "monitoring_mode",
+		"service_start_at":                      "service_start_at",
+		"server.service_start_at":               "service_start_at",
+		"traffic_reset_mode":                    "traffic_reset_mode",
+		"server.traffic_reset_mode":             "traffic_reset_mode",
+		"traffic_reset_day":                     "traffic_reset_day",
+		"server.traffic_reset_day":              "traffic_reset_day",
+		"traffic_limit_bytes":                   "traffic_limit_bytes",
+		"server.traffic_limit_bytes":            "traffic_limit_bytes",
+		"traffic_used_bytes":                    "traffic_used_bytes",
+		"server.traffic_used_bytes":             "traffic_used_bytes",
 	}
 	copyTaskParams(server, input.Params, onboardMapping)
 	if nested, ok := input.Params["server"].(map[string]any); ok {
@@ -378,8 +384,20 @@ func (s *Server) prepareServerOnboardRecipe(ctx context.Context, principal appli
 	if region != "" {
 		server["region_code"] = region
 	}
-	operation := mcpOperationRef{Capability: "servers.onboard", Input: map[string]any{"server": server, "issue_enrollment_token": true}}
-	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "bbr_enabled": bbr, "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
+	if containsAnyFold(input.Goal, "关闭 bbr", "禁用 bbr", "不启用 bbr", "disable bbr", "without bbr", "no bbr") {
+		server["bbr_enabled"] = false
+	} else if containsAnyFold(input.Goal, "开启 bbr", "打开 bbr", "启用 bbr", "enable bbr", "with bbr") {
+		server["bbr_enabled"] = true
+	}
+	defaults, err := s.panelServerFormDefaults(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fillServerMapDefaults(server, defaults)
+	issueToken := taskBoolParam(input.Params, defaults.IssueEnrollmentToken, "issue_enrollment_token")
+	bbrEnabled, _ := server["bbr_enabled"].(bool)
+	operation := mcpOperationRef{Capability: "servers.onboard", Input: map[string]any{"server": server, "issue_enrollment_token": issueToken}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "server.onboard", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "onboard_server", "server_name": name, "region_code": region, "ip_stack": ipStack, "bbr_enabled": bbrEnabled, "requires_external_install": true}, Verification: map[string]any{"after_commit": []string{"external_action_redeemed", "agent_connected", "workflow_terminal"}}}, nil
 }
 
 func (s *Server) prepareExistingServerEnrollmentRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput, existing []model.Server) (*mcpPreparedRecipe, error) {

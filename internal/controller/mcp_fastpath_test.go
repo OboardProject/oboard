@@ -98,6 +98,12 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	if !request.Server.LatencyProbeEnabled || !request.Server.ConnectionAuditEnabled {
 		t.Fatalf("missing controller defaults: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
 	}
+	if !request.Server.BBREnabled || !request.Server.ResourceHistoryEnabled || !request.Server.OfflineNotifyEnabled || !request.Server.ExpiryNotifyEnabled || !request.IssueEnrollmentToken {
+		t.Fatalf("missing panel defaults: bbr=%v history=%v offline=%v expiry_notify=%v enroll=%v", request.Server.BBREnabled, request.Server.ResourceHistoryEnabled, request.Server.OfflineNotifyEnabled, request.Server.ExpiryNotifyEnabled, request.IssueEnrollmentToken)
+	}
+	if request.Server.ListenIP != "0.0.0.0" || request.Server.MonitoringMode != "lightweight" || request.Server.UDPInboundMode != model.UDPInboundAllow {
+		t.Fatalf("missing addressing defaults: listen_ip=%q monitoring=%q udp=%q", request.Server.ListenIP, request.Server.MonitoringMode, request.Server.UDPInboundMode)
+	}
 
 	request, err = decodeServerOnboardingOperation(json.RawMessage(`{"server":{"name":"Tokyo-02","latency_probe_enabled":false,"connection_audit_enabled":false}}`))
 	if err != nil {
@@ -108,6 +114,43 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	}
 	if request.Server.LatencyProbeEnabled || request.Server.ConnectionAuditEnabled {
 		t.Fatalf("explicit false values were replaced: latency_probe_enabled=%v connection_audit_enabled=%v", request.Server.LatencyProbeEnabled, request.Server.ConnectionAuditEnabled)
+	}
+
+	normalized, applied, warnings, err := s.materializeServerOnboardForm(ctx, json.RawMessage(`{"server":{"name":"Tokyo-form"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverForm, _ := normalized["server"].(map[string]any)
+	if serverForm["latency_probe_enabled"] != true || serverForm["resource_history_enabled"] != true || serverForm["bbr_enabled"] != true {
+		t.Fatalf("validate form missing default-on switches: %#v", serverForm)
+	}
+	if normalized["issue_enrollment_token"] != true {
+		t.Fatalf("issue_enrollment_token default = %#v", normalized["issue_enrollment_token"])
+	}
+	if len(applied) == 0 {
+		t.Fatal("expected applied_defaults for omitted panel fields")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings for omitted fields: %#v", warnings)
+	}
+	_, _, explicitWarnings, err := s.materializeServerOnboardForm(ctx, json.RawMessage(`{"server":{"name":"Tokyo-off","latency_probe_enabled":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(explicitWarnings) == 0 {
+		t.Fatal("expected a warning when explicit false disables a panel default")
+	}
+
+	nameOnly, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{"name": "Tokyo-defaults-only"}})
+	if err != nil || nameOnly == nil || len(nameOnly.Operations) != 1 {
+		t.Fatalf("name-only prepared=%#v err=%v", nameOnly, err)
+	}
+	nameServer, _ := nameOnly.Operations[0].Input["server"].(map[string]any)
+	if nameServer["latency_probe_enabled"] != true || nameServer["resource_history_enabled"] != true || nameServer["bbr_enabled"] != true || nameServer["offline_notify_enabled"] != true {
+		t.Fatalf("name-only onboard missing panel defaults: %#v", nameServer)
+	}
+	if nameOnly.Operations[0].Input["issue_enrollment_token"] != true {
+		t.Fatalf("name-only issue_enrollment_token=%#v", nameOnly.Operations[0].Input["issue_enrollment_token"])
 	}
 
 	prepared, err := s.prepareServerOnboardRecipe(ctx, application.Principal{}, mcpTaskInput{Params: map[string]any{

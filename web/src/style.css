@@ -1805,8 +1805,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
   isolation: isolate;
 }
 
@@ -2284,12 +2284,12 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   height: 100%;
   min-width: 0;
   position: relative;
   z-index: 0;
-  padding: 14px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-solid);
@@ -2481,6 +2481,222 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-card-title > div { min-width: 0; }
+
+.server-card-identity {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.server-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.server-card-name-row h3 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-stack-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.server-stack-badge.dual {
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-2));
+  color: var(--primary);
+}
+
+.server-stack-badge.v6 {
+  background: color-mix(in srgb, #2563eb 12%, var(--surface-2));
+  color: #2563eb;
+}
+
+.server-stack-badge.v4 {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.server-metric-list {
+  display: grid;
+  gap: 8px;
+}
+
+.server-metric-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.server-metric-row > svg {
+  color: var(--muted);
+}
+
+.server-metric-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.server-metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.server-metric-head strong {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.server-metric-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--surface-3, rgba(127, 127, 127, 0.14));
+}
+
+.server-metric-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #3b82f6;
+  transition: width 0.28s ease;
+}
+
+.server-metric-fill.memory { background: #2563eb; }
+.server-metric-fill.disk { background: #8b5cf6; }
+.server-metric-fill.traffic { background: #10b981; }
+.server-metric-fill.warning { background: #f59e0b; }
+.server-metric-fill.danger { background: #ef4444; }
+
+.server-metric-sub {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.server-card-rates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.server-card-rate {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.server-card-rate > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.server-card-rate.down > span { color: #16a34a; }
+.server-card-rate.up > span { color: #2563eb; }
+.server-card-rate small {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.server-card-quality {
+  display: grid;
+  gap: 6px;
+}
+
+.server-card-quality-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.server-card-quality-head strong {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.server-quality-bar {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  height: 6px;
+}
+
+.server-quality-seg {
+  border-radius: 99px;
+  background: var(--surface-3, rgba(127, 127, 127, 0.16));
+}
+
+.server-quality-seg.ok { background: #22c55e; }
+.server-quality-seg.fair { background: #f59e0b; }
+.server-quality-seg.poor { background: #ef4444; }
+
+.server-card-life {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.server-card-life-item {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.server-card-life-item strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.server-card-life-item.expiry strong { color: #d97706; }
+.server-card-life-item.uptime strong { color: #2563eb; }
+
+.server-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.server-card-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
 
 .region-flag {
   box-sizing: border-box;
@@ -10728,6 +10944,50 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .server-dialog {
   width: min(760px, 100%);
   max-height: min(90vh, 820px);
+}
+
+.server-dialog-wide {
+  width: min(920px, calc(100vw - 24px));
+  max-height: min(92vh, 920px);
+}
+
+.server-dialog-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 18px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.server-dialog-tabs button {
+  min-height: 32px;
+  padding: 6px 12px;
+  color: var(--muted);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.server-dialog-tabs button:hover {
+  color: var(--text-strong);
+  background: var(--surface-2);
+}
+
+.server-dialog-tabs button.active {
+  color: var(--primary-contrast);
+  background: var(--primary);
+  border-radius: var(--radius-full);
+}
+
+.server-dialog-wide .dialog-body {
+  min-height: 420px;
+}
+
+.server-network-dialog .dialog-body {
+  min-height: 360px;
 }
 
 .server-delete-dialog {

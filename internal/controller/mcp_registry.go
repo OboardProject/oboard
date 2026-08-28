@@ -155,7 +155,7 @@ func (s *Server) computeMCPToolsetHashLocked() string {
 	for _, name := range []string{
 		"oboard_task", "oboard_commit_task",
 		"oboard_discover", "oboard_get_capability_schema",
-		"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_submit_changeset",
+		"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset",
 		"oboard_get_changeset", "oboard_get_workflow", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action",
 		"system_get_capabilities", "system_bootstrap",
 	} {

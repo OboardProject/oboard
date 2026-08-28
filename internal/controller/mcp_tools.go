@@ -58,6 +58,7 @@ func (s *Server) registerMCPTools(server *mcp.Server, principal application.Prin
 	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
 		s.addMCPPlanDesiredStateTool(server, principal)
 		s.addMCPValidateDesiredStateTool(server, principal)
+		s.addMCPValidateFormTool(server, principal)
 		s.addMCPGetChangesetTool(server, principal)
 		s.addMCPGetWorkflowTool(server, principal)
 	}
@@ -322,6 +323,49 @@ func (s *Server) addMCPValidateDesiredStateTool(server *mcp.Server, principal ap
 		}
 		s.recordToolCall(ctx, principal, "desired_state.validate", input, "succeeded", capability.DataInternal)
 		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", result), nil
+	})
+}
+
+type mcpValidateFormInput struct {
+	Capability string         `json:"capability"`
+	Input      map[string]any `json:"input"`
+}
+
+func (s *Server) addMCPValidateFormTool(server *mcp.Server, principal application.Principal) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "oboard_validate_form", Title: "Validate Form", Description: "Validate a management form against the same defaults as the panel create UI. Omitted fields receive panel defaults; explicit false/zero stays authoritative. Use before a fallback servers.onboard submit so newly added default-on switches are not JSON-false. servers.update is a patch and is not filled with create defaults.",
+		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
+			"capability": map[string]any{"type": "string", "enum": []string{"servers.onboard"}},
+			"input":      map[string]any{"type": "object"},
+		}, "capability", "input")),
+		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
+	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpValidateFormInput) (*mcp.CallToolResult, any, error) {
+		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
+		capabilityName := normalizeValidateFormCapability(input.Capability)
+		if capabilityName != "servers.onboard" {
+			return mcpPlainFailureResult("", "oboard_validate_form currently supports servers.onboard"), nil, nil
+		}
+		if !principal.AllowsCreate("server") {
+			return mcpPlainFailureResult("", "resource filter does not allow creating servers"), nil, nil
+		}
+		rawInput, err := json.Marshal(input.Input)
+		if err != nil {
+			return mcpPlainFailureResult("", "input must be a JSON object"), nil, nil
+		}
+		normalized, applied, warnings, err := s.materializeServerOnboardForm(ctx, rawInput)
+		if err != nil {
+			return mcpPlainFailureResult("", err.Error()), nil, nil
+		}
+		s.recordToolCall(ctx, principal, "forms.validate", input, "succeeded", capability.DataInternal)
+		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", map[string]any{
+			"valid":             true,
+			"capability":        capabilityName,
+			"normalized_input":  normalized,
+			"applied_defaults":  applied,
+			"warnings":          warnings,
+			"submit_capability": "servers.onboard",
+			"notes":             []string{"Commit through oboard_task when possible. If fallback is required, submit normalized_input rather than reconstructing omitted booleans as false."},
+		}), nil
 	})
 }
 

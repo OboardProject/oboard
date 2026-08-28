@@ -92,7 +92,7 @@ import {
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
-  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save
+  ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -7254,7 +7254,50 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly', expiry_notify_enabled: true }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: 60, latency_probe_sample_count: 3, latency_probe_regions: [], latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',     expiry_notify_enabled: true }
+}
+
+const serverSettingTabs = [
+  { id: 'basic', label: '基础' },
+  { id: 'billing', label: '到期' },
+  { id: 'network', label: '网络' },
+  { id: 'monitor', label: '监控' },
+  { id: 'system', label: '系统' },
+] as const
+
+type ServerSettingsTab = typeof serverSettingTabs[number]['id']
+
+function serverStackBadge(server: Server) {
+  const v4 = Boolean(String(server.public_ipv4 || '').trim())
+  const v6 = Boolean(String(server.public_ipv6 || server.interface_ipv6 || '').trim())
+  if (v4 && v6) return { label: '双栈', tone: 'dual' as const }
+  if (v6) return { label: 'IPv6', tone: 'v6' as const }
+  return { label: 'IPv4', tone: 'v4' as const }
+}
+
+function resourcePercent(used: number, total: number) {
+  if (!total || !Number.isFinite(used) || !Number.isFinite(total)) return 0
+  return Math.min(100, Math.max(0, (used / total) * 100))
+}
+
+function metricTone(percent: number) {
+  if (percent >= 90) return 'danger'
+  if (percent >= 75) return 'warning'
+  return ''
+}
+
+function enrolledDaysLabel(server: Server, now = new Date()) {
+  const raw = String(server.created_at || '').trim()
+  if (!raw) return ''
+  const created = new Date(raw)
+  if (Number.isNaN(created.getTime())) return ''
+  const days = Math.max(0, Math.floor((now.getTime() - created.getTime()) / 86400000))
+  return `${days} 天`
+}
+
+function cpuCoresLabel(server: Server) {
+  const value = String(server.cpu || '').trim()
+  return value || '—'
 }
 
 function GridViewIcon() {
@@ -7307,8 +7350,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
   const [installTarget, setInstallTarget] = useState<{ server: Server; token: string } | null>(null)
   const [logServer, setLogServer] = useState<Server | null>(null)
-  const [mtuServer, setMtuServer] = useState<Server | null>(null)
-  const [dnsServer, setDNSServer] = useState<Server | null>(null)
+  const [networkServer, setNetworkServer] = useState<{ server: Server; tab: 'dns' | 'mtu' } | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
   const [terminalServer, setTerminalServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
@@ -7755,8 +7797,9 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'edit') setEditServer(s)
     else if (type === 'extend-expiry') setExtendServer(s)
     else if (type === 'reset-traffic') void resetServerTraffic(s)
-    else if (type === 'mtu') setMtuServer(s)
-    else if (type === 'dns') setDNSServer(s)
+    else if (type === 'mtu') setNetworkServer({ server: s, tab: 'mtu' })
+    else if (type === 'dns') setNetworkServer({ server: s, tab: 'dns' })
+    else if (type === 'network') setNetworkServer({ server: s, tab: 'dns' })
     else if (type === 'agent-config') setAgentConfigServer(s)
     else if (type === 'update-agent') updateAgent(s)
     else if (type === 'enroll') enroll(s)
@@ -7944,26 +7987,26 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
-    <AnimatePresence>{mtuServer && <MTUSettingsDialog draft={serverToDraft(mtuServer)} onCancel={() => setMtuServer(null)} onSave={async (patch) => {
-      try {
-        const result = await client.request(`/servers/${mtuServer.id}`, { method: 'PATCH', body: JSON.stringify({ ...mtuServer, ...patch }) }) as { server?: Server }
-        if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
-        setMtuServer(null)
-        revalidateServers()
-        notify?.('MTU 设置已保存', 'success')
-      } catch (error: any) {
-        await dialogs.alert({ title: '保存 MTU 设置失败', message: localizeErrorMessage(error?.message || error) })
-      }
-    }} />}</AnimatePresence>
-    <AnimatePresence>{dnsServer && <DNSSettingsDialog
-      server={dnsServer}
-      policy={(data.server_dns_policies || []).find((policy: ServerDNSPolicy) => Number(policy.server_id) === Number(dnsServer.id))}
+    <AnimatePresence>{networkServer && <ServerNetworkSettingsDialog
+      server={networkServer.server}
+      initialTab={networkServer.tab}
+      policy={(data.server_dns_policies || []).find((policy: ServerDNSPolicy) => Number(policy.server_id) === Number(networkServer.server.id))}
       lists={data.dns_lists || []}
-      benchmarks={(data.dns_benchmarks || []).filter((item: DNSBenchmarkResult) => Number(item.server_id) === Number(dnsServer.id))}
+      benchmarks={(data.dns_benchmarks || []).filter((item: DNSBenchmarkResult) => Number(item.server_id) === Number(networkServer.server.id))}
       client={client}
-      onClose={() => setDNSServer(null)}
+      onClose={() => setNetworkServer(null)}
       onChanged={load}
       notify={notify}
+      onSaveMTU={async (patch) => {
+        try {
+          const result = await client.request(`/servers/${networkServer.server.id}`, { method: 'PATCH', body: JSON.stringify({ ...networkServer.server, ...patch }) }) as { server?: Server }
+          if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
+          revalidateServers()
+          notify?.('MTU 设置已保存', 'success')
+        } catch (error: any) {
+          await dialogs.alert({ title: '保存 MTU 设置失败', message: localizeErrorMessage(error?.message || error) })
+        }
+      }}
     />}</AnimatePresence>
     </div>
   </section>
@@ -8299,6 +8342,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
     }
     return next
   })
+  const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -8315,13 +8359,19 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="server-dialog">
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide">
       <header className="dialog-head">
-        <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">设置名称、入口地址和网络策略。</p></div>
+        <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">按顶部标签依次填写基础、到期、网络、监控和系统设置。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
+      <div className="server-dialog-tabs" role="tablist" aria-label="服务器设置分类">
+        {serverSettingTabs.map(item => (
+          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>
+        ))}
+      </div>
       <div className="dialog-body">
         <div className="form server-dialog-form labeled-form">
+          {tab === 'basic' && <>
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom">
             <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" />
@@ -8344,7 +8394,9 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
             <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
           </FormField>
+          </>}
 
+          {tab === 'billing' && <>
           <div className="form-section-title">到期与续期</div>
           <FormField label="计费开始日" hint="用于自动推导流量重置日；有此日则按此日，无则按到期日。留空不影响到期追踪。仅取日精度，例如 2025-07-05 起租即每月 5 日重置。" placement="bottom">
             <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
@@ -8367,7 +8419,16 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
             <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
           </FormField>
+          <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
+          <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
+            <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
+          </FormField>
+          <FormField label="已用流量" hint="当前周期已产生的流量，默认为 0，创建时可填入已用的一半等初始值。">
+            <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
+          </FormField>
+          </>}
 
+          {tab === 'network' && <>
           <div className="form-section-title">网络策略</div>
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。">
             <Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
@@ -8378,17 +8439,20 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
-          <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
-            <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
-          </FormField>
           <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。">
             <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
           </FormField>
           <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。">
             <PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} />
           </FormField>
+          <div className="form-extra-row">
+            <button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)} aria-haspopup="dialog">MTU 检测设置</button>
+            <span>首次部署或设置变化时执行。</span>
+          </div>
+          </>}
 
-          <div className="form-section-title">监控与流量</div>
+          {tab === 'monitor' && <>
+          <div className="form-section-title">监控</div>
           <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
             <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value as 'lightweight' | 'standard' })}>
               <option value="lightweight">轻量</option>
@@ -8397,13 +8461,6 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </FormField>
           <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
-          </FormField>
-          <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
-          <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
-            <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
-          </FormField>
-          <FormField label="已用流量" hint="当前周期已产生的流量，默认为 0，创建时可填入已用的一半等初始值。">
-            <TrafficLimitInput bytes={Number(draft.traffic_used_bytes || 0)} onChange={value => update({ traffic_used_bytes: value })} />
           </FormField>
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
@@ -8442,15 +8499,20 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
               }}
             />
           </FormField>}
+          </>}
 
-          <div className="form-extra-row">
-            <button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)} aria-haspopup="dialog">MTU 检测设置</button>
-            <span>首次部署或设置变化时执行。</span>
-          </div>
+          {tab === 'system' && <>
+          <div className="form-section-title">系统</div>
+          <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
+            <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
+          </FormField>
+          </>}
         </div>
       </div>
       <footer className="dialog-actions">
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
+        {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
+        {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
         <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '创建中...' : '创建'}</button>
       </footer>
       {latencyDialogOpen && (
@@ -8488,6 +8550,7 @@ function serverToDraft(server: Server) {
 
 function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
+  const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -8522,13 +8585,19 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="server-dialog">
+  return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide">
       <header className="dialog-head">
-        <div><h2 id="server-edit-title">服务器设置</h2><p className="muted">设置 {server.name} 的入口地址和网络策略。</p></div>
+        <div><h2 id="server-edit-title">服务器设置</h2><p className="muted">按顶部标签设置 {server.name}。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
+      <div className="server-dialog-tabs" role="tablist" aria-label="服务器设置分类">
+        {serverSettingTabs.map(item => (
+          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>
+        ))}
+      </div>
       <div className="dialog-body">
         <div className="form server-dialog-form labeled-form">
+          {tab === 'basic' && <>
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
@@ -8543,6 +8612,8 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           ) : null}
           <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
           <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          </>}
+          {tab === 'billing' && <>
           <div className="form-section-title">到期与续期</div>
           <FormField label="计费开始日" hint="用于自动推导流量重置日；有此日则按此日，无则按到期日。留空不影响到期追踪。仅取日精度，例如 2025-07-05 起租即每月 5 日重置。" placement="bottom">
             <input type="date" value={draft.service_start_at || ''} onChange={e => update({ service_start_at: e.target.value })} aria-label="计费开始日" />
@@ -8571,22 +8642,6 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <FormField label="到期提醒" hint="在系统通知设置中配置提前天数和发送时间，需要 Bark/TG 频道勾选“服务器到期”事件。">
             <Switch checked={draft.expiry_notify_enabled !== false} onChange={checked => update({ expiry_notify_enabled: checked })} ariaLabel="到期提醒" />
           </FormField>
-          <div className="form-section-title">网络策略</div>
-          <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
-          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
-            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
-          </FormField>
-          <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} /></FormField>
-          <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
-          <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
-          <div className="form-section-title">监控与流量</div>
-          <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
-            <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
-          </FormField>
-          <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
-            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
-          </FormField>
           <TrafficResetFields mode={draft.traffic_reset_mode} day={draft.traffic_reset_day} onChange={update} />
           <FormField label="周期流量限额" hint="0 表示不限量，按上方重置周期统计，仅用于展示与提醒。">
             <TrafficLimitInput bytes={Number(draft.traffic_limit_bytes || 0)} onChange={value => update({ traffic_limit_bytes: value })} />
@@ -8602,6 +8657,26 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
               <span>将表单中的已用流量改为 0，保存后生效。</span>
             </div>
           )}
+          </>}
+          {tab === 'network' && <>
+          <div className="form-section-title">网络策略</div>
+          <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
+          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
+            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
+          </FormField>
+          <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
+          <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
+          <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
+          </>}
+          {tab === 'monitor' && <>
+          <div className="form-section-title">监控</div>
+          <FormField label="回报模式" hint="轻量 20 秒，标准 10 秒。">
+            <Select variant="segmented" value={draft.monitoring_mode || 'lightweight'} onChange={e => update({ monitoring_mode: e.target.value })}><option value="lightweight">轻量</option><option value="standard">标准</option></Select>
+          </FormField>
+          <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
+            <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
+          </FormField>
           <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
             <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
           </FormField>
@@ -8639,12 +8714,19 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
               }}
             />
           </FormField>}
-          <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
+          </>}
+          {tab === 'system' && <>
+          <div className="form-section-title">系统</div>
+          <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} /></FormField>
           <div className="form-section-title">远程控制</div>
           <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={hasManagementAccess(role)} />
+          </>}
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button><button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={cancel} disabled={saving}>取消</button>
+        {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
+        {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
+        <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
       {latencyDialogOpen && (
         <LatencyProbeSettingsDialog
           draft={draft}
@@ -8714,9 +8796,9 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
   const restartCommands = ['auto', 'none', 'systemd-restart', 'openrc-restart']
   const timeSyncCommands = ['auto', 'none', 'chrony', 'systemd-timesyncd']
   const update = (patch: any) => setCfg(old => ({ ...old, ...patch }))
-  return <MotionDialogPanel onCancel={onCancel} className="server-dialog">
+  return <MotionDialogPanel onCancel={onCancel} className="server-dialog server-dialog-wide">
       <header className="dialog-head">
-        <div><h2 id="agent-config-title">Agent 设置</h2><p className="muted">设置 {server.name} 的本机运行参数。</p></div>
+        <div><h2 id="agent-config-title">系统设置</h2><p className="muted">设置 {server.name} 的本机运行参数。时间校准在「服务器设置 → 系统」。</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
@@ -8809,7 +8891,47 @@ function AgentConfigDialog({ server, controllerURL, onCancel, onSubmit }: { serv
   </MotionDialogPanel>
 }
 
-function MTUSettingsDialog({ draft, onCancel, onSave }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void> }) {
+function ServerNetworkSettingsDialog({
+  server,
+  initialTab = 'dns',
+  policy,
+  lists,
+  benchmarks,
+  client,
+  onClose,
+  onChanged,
+  notify,
+  onSaveMTU,
+}: {
+  server: Server
+  initialTab?: 'dns' | 'mtu'
+  policy?: ServerDNSPolicy
+  lists: DNSList[]
+  benchmarks: DNSBenchmarkResult[]
+  client: ReturnType<typeof api>
+  onClose: () => void
+  onChanged: () => Promise<void>
+  notify?: (message: string, tone?: ToastKind) => void
+  onSaveMTU: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>
+}) {
+  const [tab, setTab] = useState<'dns' | 'mtu'>(initialTab)
+  useEffect(() => { setTab(initialTab) }, [initialTab])
+  return <MotionDialogPanel onCancel={onClose} className="server-dialog server-dialog-wide server-network-dialog">
+    <header className="dialog-head">
+      <div><h2 id="server-network-title">网络设置</h2><p className="muted">{server.name} · DNS 解析与 MTU 检测</p></div>
+      <button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="server-dialog-tabs" role="tablist" aria-label="网络设置分类">
+      <button type="button" role="tab" aria-selected={tab === 'dns'} className={tab === 'dns' ? 'active' : ''} onClick={() => setTab('dns')}>DNS</button>
+      <button type="button" role="tab" aria-selected={tab === 'mtu'} className={tab === 'mtu' ? 'active' : ''} onClick={() => setTab('mtu')}>MTU</button>
+    </div>
+    {tab === 'dns'
+      ? <DNSSettingsDialog embedded server={server} policy={policy} lists={lists} benchmarks={benchmarks} client={client} onClose={onClose} onChanged={onChanged} notify={notify} />
+      : <MTUSettingsDialog embedded draft={serverToDraft(server)} onCancel={onClose} onSave={onSaveMTU} />}
+  </MotionDialogPanel>
+}
+
+function MTUSettingsDialog({ draft, onCancel, onSave, embedded = false }: { draft: ReturnType<typeof defaultServerDraft>; onCancel: () => void; onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>; embedded?: boolean }) {
   const [value, setValue] = useState<{
     mtu_mode: string
     mtu_value: number | string
@@ -8841,11 +8963,11 @@ function MTUSettingsDialog({ draft, onCancel, onSave }: { draft: ReturnType<type
     }
   }
   const cancel = () => { if (!saving) onCancel() }
-  return <MotionDialogPanel onCancel={cancel} className="mtu-dialog">
-      <header className="dialog-head">
+  const body = <>
+      {!embedded && <header className="dialog-head">
         <div><h2 id="mtu-dialog-title">MTU 检测设置</h2><p className="muted">首次部署或设置变化时执行，不会随每次下发重复检测。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
-      </header>
+      </header>}
       <div className="dialog-body">
         <div className="form mtu-dialog-form labeled-form">
           <FormField label="MTU 模式" hint="选择只检测或自动应用">
@@ -8895,7 +9017,9 @@ function MTUSettingsDialog({ draft, onCancel, onSave }: { draft: ReturnType<type
         <button className="ghost" onClick={cancel} disabled={saving}>取消</button>
         <button onClick={() => void save()} disabled={saving}>{saving ? '保存中...' : '保存设置'}</button>
       </footer>
-  </MotionDialogPanel>
+  </>
+  if (embedded) return body
+  return <MotionDialogPanel onCancel={cancel} className="mtu-dialog">{body}</MotionDialogPanel>
 }
 
 function DetectedEntryAddressNote({ ipv4, ipv6 }: { ipv4?: string; ipv6?: string }) {
@@ -9005,12 +9129,11 @@ function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: 
     {
       title: '配置与策略',
       items: [
-        { label: '基础设置', type: 'edit', icon: SlidersHorizontal },
+        { label: '服务器设置', type: 'edit', icon: SlidersHorizontal },
         { label: '延长到期', type: 'extend-expiry', icon: CalendarDays, admin: true },
         { label: '清零已用流量', type: 'reset-traffic', icon: RotateCcw, admin: true },
-        { label: 'DNS 设置', type: 'dns', icon: Globe },
-        { label: 'MTU 设置', type: 'mtu', icon: Gauge },
-        { label: 'Agent 设置', type: 'agent-config', icon: Sliders, admin: true },
+        { label: '网络设置', type: 'network', icon: Globe },
+        { label: '系统设置', type: 'agent-config', icon: Sliders, admin: true },
       ],
     },
     {
@@ -9643,6 +9766,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
     const upRate = formatByteRate(server.network_upload_bps || 0)
     const totalTraffic = formatBytes(trafficTotalBytes)
     const limitTraffic = trafficLimitBytes > 0 ? formatBytes(trafficLimitBytes) : ''
+    const stack = serverStackBadge(server)
 
     return (
       <MotionCard tag="article" className="server-card server-list-row server-card-monitorable" hoverEffect={false}>
@@ -9654,6 +9778,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <div className="server-list-identity-text">
             <div className="server-list-name-row">
               <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
+              <span className={`server-stack-badge ${stack.tone}`}>{stack.label}</span>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
               <ServerExpiryBadge server={server} />
@@ -9735,18 +9860,37 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
     )
   }
 
+  const cpuPercent = Number.isFinite(server.cpu_usage_percent) ? Number(server.cpu_usage_percent) : 0
+  const memPercent = resourcePercent(server.memory_used_bytes, server.memory_total_bytes)
+  const diskPercent = resourcePercent(server.disk_bytes, server.disk_total_bytes)
+  const stack = serverStackBadge(server)
+  const enrolled = enrolledDaysLabel(server)
+  const expiry = serverExpiryStatus(server)
+  const qualitySamples = samples.slice(-12)
+  const qualitySegs = qualitySamples.length
+    ? qualitySamples.map(sample => {
+        if (sample.connectivity_available === false) return 'poor'
+        const latency = Number(sample.connectivity_latency_ms || 0)
+        if (!sample.connectivity_available || latency <= 0) return ''
+        if (latency < 80) return 'ok'
+        if (latency < 180) return 'fair'
+        return 'poor'
+      })
+    : []
+
   return (
     <MotionCard tag="article" className="server-card server-card-monitorable" hoverEffect={false}>
       <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
-      {/* Header */}
       <div className="server-card-head">
         <div className="server-card-title">
           <RegionFlag code={serverRegionCode(server)} size={20} />
-          <div>
-            <h3>{server.name || `server-${server.id}`} <span style={{ fontWeight: 500, opacity: 0.55, fontSize: '0.9em' }}>#{server.id}</span></h3>
+          <div className="server-card-identity">
+            <div className="server-card-name-row">
+              <h3>{server.name || `server-${server.id}`} <span style={{ fontWeight: 500, opacity: 0.55, fontSize: '0.9em' }}>#{server.id}</span></h3>
+              <span className={`server-stack-badge ${stack.tone}`}>{stack.label}</span>
+            </div>
           </div>
         </div>
-
         <div className="server-card-head-actions">
           {outdated && (
             <div className={`server-version-update${updateInfoOpen ? ' open' : ''}`}>
@@ -9757,7 +9901,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               </div>
             </div>
           )}
-          <ServerExpiryBadge server={server} />
           {timeIssue && <button
             type="button"
             className={`server-time-issue ${timeIssue.tone}`}
@@ -9773,99 +9916,84 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
 		  <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
       </div>
-
-      {/* Meta grid */}
-      <div className="server-meta" style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '8px',
-        textAlign: 'left',
-        fontSize: '12px'
-      }}>
-        {/* CPU & Memory bars */}
-        <div className="server-resource-summary" style={{ gridColumn: 'span 2' }}>
-          <div className="server-resource-summary-head">
-            <span>系统资源</span>
-            <div className="server-resource-summary-head-badge">
-              <small>{server.resource_history_enabled ? '历史已开启' : '仅实时'}</small>
-              <ChevronRight size={13} aria-hidden="true" />
+      <div className="server-metric-list">
+        <div className="server-metric-row">
+          <Cpu size={15} aria-hidden="true" />
+          <div className="server-metric-copy">
+            <div className="server-metric-head"><span>CPU</span><strong>{Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(1)}%` : '—'}</strong></div>
+            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(cpuPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="CPU 使用率">
+              <div className={`server-metric-fill ${metricTone(cpuPercent)}`} style={{ width: `${Math.max(cpuPercent, cpuPercent > 0 ? 2 : 0)}%` }} />
             </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
-            {/* CPU Progress */}
-            <div style={{ width: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', width: '100%' }}>
-                <span>CPU 使用率</span>
-                <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(server.cpu_usage_percent) ? `${Number(server.cpu_usage_percent).toFixed(1)}%` : '—'}</span>
-              </div>
-              <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  width: `${Math.max(server.cpu_usage_percent || 0, (server.cpu_usage_percent && server.cpu_usage_percent > 0) ? 2 : 0)}%`,
-                  backgroundColor: '#3b82f6',
-                  borderRadius: '3px',
-                  transition: 'width 0.3s ease'
-                }} />
-              </div>
-            </div>
-
-            {/* Memory Progress */}
-            <div style={{ width: '100%' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px', width: '100%' }}>
-                <span>内存 ({serverMemoryLabel(server)})</span>
-                <span style={{ fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>{server.memory_total_bytes ? `${((server.memory_used_bytes / server.memory_total_bytes) * 100).toFixed(0)}%` : '—'}</span>
-              </div>
-              <div style={{ height: '6px', width: '100%', backgroundColor: 'var(--surface-3, rgba(0,0,0,0.06))', borderRadius: '3px', overflow: 'hidden' }}>
-                <div style={{
-                  height: '100%',
-                  width: `${server.memory_total_bytes ? Math.max((server.memory_used_bytes / server.memory_total_bytes) * 100, 2) : 0}%`,
-                  backgroundColor: '#10b981',
-                  borderRadius: '3px',
-                  transition: 'width 0.3s ease'
-                }} />
-              </div>
-            </div>
+            <span className="server-metric-sub">{cpuCoresLabel(server)}</span>
           </div>
         </div>
-
-        <div className="server-telemetry" style={{ gridColumn: 'span 2' }}>
-          <div className="server-telemetry-heading">
-            <span>网络流量</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {trafficLimitBytes > 0 && (
-                <small className={`server-quota-badge ${trafficQuotaTone}`} title={`已用 ${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)} · ${serverTrafficPeriodLabel(server)}`}>{trafficPercentLabel} · {formatBytes(trafficTotalBytes)}/{formatBytes(trafficLimitBytes)}</small>
-              )}
-              <small>{server.monitoring_mode === 'standard' ? '标准' : '轻量'}</small>
+        <div className="server-metric-row">
+          <MemoryStick size={15} aria-hidden="true" />
+          <div className="server-metric-copy">
+            <div className="server-metric-head"><span>内存</span><strong>{server.memory_total_bytes ? `${memPercent.toFixed(0)}%` : '—'}</strong></div>
+            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(memPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="内存使用率">
+              <div className={`server-metric-fill memory ${metricTone(memPercent)}`} style={{ width: `${Math.max(memPercent, memPercent > 0 ? 2 : 0)}%` }} />
             </div>
+            <span className="server-metric-sub">{serverMemoryLabel(server)}</span>
           </div>
-          <div className="server-rate-row">
-            <div><ArrowDown size={13} aria-hidden="true" /><span>下载</span><strong>{formatByteRate(server.network_download_bps || 0)}</strong></div>
-            <div><ArrowUp size={13} aria-hidden="true" /><span>上传</span><strong>{formatByteRate(server.network_upload_bps || 0)}</strong></div>
-            <div><span>本周期</span><strong style={{ fontVariantNumeric: 'tabular-nums' }}>{trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)}</strong></div>
-          </div>
-          {trafficLimitBytes > 0 && (
-            <div className="server-traffic-quota-track" role="progressbar" aria-valuenow={Math.round(trafficPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="周期流量使用率">
-              <div className={`server-traffic-quota-fill ${trafficQuotaTone}`} style={{ width: `${trafficPercent}%` }} />
+        </div>
+        <div className="server-metric-row">
+          <HardDrive size={15} aria-hidden="true" />
+          <div className="server-metric-copy">
+            <div className="server-metric-head"><span>磁盘</span><strong>{server.disk_total_bytes ? `${diskPercent.toFixed(0)}%` : '—'}</strong></div>
+            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(diskPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="磁盘使用率">
+              <div className={`server-metric-fill disk ${metricTone(diskPercent)}`} style={{ width: `${Math.max(diskPercent, diskPercent > 0 ? 2 : 0)}%` }} />
             </div>
-          )}
-          <ServerTelemetryChart samples={samples} type="network" />
-          <div className="server-chart-caption"><span><i className="download" />下载</span><span><i className="upload" />上传</span><small>{trafficLimitBytes > 0 ? `${trafficPercentLabel} · ${serverTrafficPeriodLabel(server)}` : serverTrafficPeriodLabel(server)}</small></div>
+            <span className="server-metric-sub">{server.disk_total_bytes ? `${formatBytes(server.disk_bytes || 0)} / ${formatBytes(server.disk_total_bytes)}` : '—'}</span>
+          </div>
         </div>
-
-        <div className="server-connectivity" style={{ gridColumn: 'span 2' }}>
-          <span className="server-telemetry-heading">
-            <span className="server-telemetry-title">
-              <span>延迟测试</span>
-              <small className={server.connectivity_status === 'available' ? 'is-ok' : server.connectivity_status === 'unavailable' ? 'is-error' : ''}>{server.latency_probe_enabled ? (server.connectivity_status === 'available' ? '可用' : server.connectivity_status === 'unavailable' ? '不可用' : '等待检测') : '未配置'}</small>
-            </span>
-            <ChevronRight size={13} className="connectivity-open-chevron" aria-hidden="true" />
-          </span>
-          <span className="server-latency-value">
-            <strong>{connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
-            <span>{connectivityProbeDomain(server)} · {server.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}</span>
-          </span>
-          <ServerTelemetryChart samples={samples} type="latency" />
+        <div className="server-metric-row">
+          <ArrowDownUp size={15} aria-hidden="true" />
+          <div className="server-metric-copy">
+            <div className="server-metric-head"><span>周期流量</span><strong>{trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'}</strong></div>
+            <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(trafficPercent)} aria-valuemin={0} aria-valuemax={100} aria-label="周期流量使用率">
+              <div className={`server-metric-fill traffic ${trafficQuotaTone}`} style={{ width: `${trafficLimitBytes > 0 ? Math.max(trafficPercent, trafficPercent > 0 ? 2 : 0) : 0}%` }} />
+            </div>
+            <span className="server-metric-sub">{trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : `${formatBytes(trafficTotalBytes)} / ∞`}</span>
+          </div>
         </div>
+      </div>
+      <div className="server-card-rates">
+        <div className="server-card-rate down">
+          <span><ArrowDown size={13} aria-hidden="true" />{formatByteRate(server.network_download_bps || 0)}</span>
+          <small>{formatBytes(server.traffic_download_bytes || 0)}</small>
+        </div>
+        <div className="server-card-rate up">
+          <span><ArrowUp size={13} aria-hidden="true" />{formatByteRate(server.network_upload_bps || 0)}</span>
+          <small>{formatBytes(server.traffic_upload_bytes || 0)}</small>
+        </div>
+      </div>
+      <div className="server-card-quality">
+        <div className="server-card-quality-head">
+          <span>延迟</span>
+          <strong>{server.latency_probe_enabled ? connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms) : '未配置'}</strong>
+        </div>
+        <div className="server-quality-bar" aria-hidden="true">
+          {(qualitySegs.length ? qualitySegs : Array.from({ length: 12 }, () => '')).map((tone, index) => (
+            <span key={index} className={`server-quality-seg ${tone}`} />
+          ))}
+        </div>
+      </div>
+      <div className="server-card-life">
+        <div className="server-card-life-item expiry">
+          <span>到期</span>
+          <strong>{expiry.tone === 'muted' ? '未设置' : expiry.label}</strong>
+        </div>
+        <div className="server-card-life-item uptime">
+          <span>接入</span>
+          <strong>{enrolled || '—'}</strong>
+        </div>
+      </div>
+      <div className="server-card-tags">
+        <span className="server-card-tag">{labelValue(server.ip_stack || 'auto')}</span>
+        <span className="server-card-tag">{server.monitoring_mode === 'standard' ? '标准监控' : '轻量监控'}</span>
+        {server.resource_history_enabled ? <span className="server-card-tag">负载历史</span> : null}
+        {server.latency_probe_enabled ? <span className="server-card-tag">{server.latency_probe_mode === 'icmp' ? 'ICMP' : 'TCP'} 延迟</span> : null}
       </div>
     </MotionCard>
   )
@@ -19113,7 +19241,7 @@ function DNSGroupStatus({ title, selected, group }: { title: string; selected: D
   })}</div>
 }
 
-function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose, onChanged, notify }: { server: Server; policy?: ServerDNSPolicy; lists: DNSList[]; benchmarks: DNSBenchmarkResult[]; client: ReturnType<typeof api>; onClose: () => void; onChanged: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void }) {
+function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose, onChanged, notify, embedded = false }: { server: Server; policy?: ServerDNSPolicy; lists: DNSList[]; benchmarks: DNSBenchmarkResult[]; client: ReturnType<typeof api>; onClose: () => void; onChanged: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void; embedded?: boolean }) {
   const [draft, setDraft] = useState(() => dnsPolicyDraft(policy, lists))
   const [working, setWorking] = useState('')
   const latest = benchmarks[0]
@@ -19150,8 +19278,8 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
       if (action !== 'test') onClose()
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
-  return <MotionDialogPanel onCancel={onClose} className="dns-settings-dialog">
-    <header className="dialog-head"><div><h2>DNS 设置</h2><p className="muted">{server.name}</p></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
+  const body = <>
+    {!embedded && <header className="dialog-head"><div><h2>DNS 设置</h2><p className="muted">{server.name}</p></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>}
     <div className="dialog-body dns-settings-body">
       <div className="dns-status-strip"><span><strong>{stale ? '等待重新检查' : policy?.last_success_at ? '解析服务正常' : '尚未检查'}</strong><small>{policy?.last_success_at ? formatTableTime(policy.last_success_at) : '保存后会使用当前列表'}</small></span><span><strong>{draft.hourlyTest ? '每小时检查' : '关闭自动检查'}</strong><small>自动检查不会直接修改服务器配置</small></span><span className={policy?.last_error ? 'has-error' : ''}><strong>{policy?.last_error ? '最近检查失败' : latest?.status === 'stale' ? '检查结果已过期' : '状态正常'}</strong><small>{policy?.last_error || latest?.error || '—'}</small></span></div>
       {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新检查</strong><span>旧的检查结果已停止使用。</span></div>}
@@ -19167,7 +19295,9 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
       </div>
     </div>
     <footer className="dialog-actions dns-dialog-actions"><button className="ghost" disabled={Boolean(working)} onClick={() => void run('save')}>{working === 'save' ? '保存中...' : '仅保存'}</button><button className="ghost" disabled={Boolean(working)} onClick={() => void run('test')}><Gauge size={15} />{working === 'test' ? '检查中...' : '仅检查'}</button><button disabled={Boolean(working)} onClick={() => void run('test_and_apply')}><RefreshCw size={15} />{working === 'test_and_apply' ? '检查中...' : '检查并应用'}</button></footer>
-  </MotionDialogPanel>
+  </>
+  if (embedded) return body
+  return <MotionDialogPanel onCancel={onClose} className="dns-settings-dialog">{body}</MotionDialogPanel>
 }
 
 type DNSBulkDraft = {

@@ -197,7 +197,7 @@ func (s *Server) mcpDiscoverCompactData(ctx context.Context) map[string]any {
 	}
 	return map[string]any{
 		"primary_tool": "oboard_task", "recipes": recipes, "capability_groups": capabilityGroups,
-		"fallback_tools": []string{"oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_submit_changeset"},
+		"fallback_tools": []string{"oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset"},
 		"workflow_rules":     map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false},
 		"capability_revision": manifest.CapabilityRevision, "toolset_hash": manifest.ToolsetHash, "api_version": manifest.APIVersion,
 	}
@@ -222,7 +222,7 @@ func (s *Server) mcpResourceGroups(principal application.Principal) []map[string
 	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
 		groups = append(groups,
 			map[string]any{"group": "identity", "uris": []string{"oboard://context/bootstrap", "oboard://auth/grant", "oboard://system/version", "oboard://system/capabilities"}},
-			map[string]any{"group": "docs", "uris": []string{"oboard://docs/guide", "oboard://docs/security", "oboard://docs/workflows", "oboard://docs/capabilities"}},
+			map[string]any{"group": "docs", "uris": []string{"oboard://docs/guide", "oboard://docs/security", "oboard://docs/workflows", "oboard://docs/capabilities", "oboard://forms/server-create"}},
 			map[string]any{"group": "inventory", "uris": []string{"oboard://inventory/summary", "oboard://servers", "oboard://users", "oboard://topology/current", "oboard://subscriptions", "oboard://subscription-plans", "oboard://proxy-paths", "oboard://deployments"}},
 			map[string]any{"group": "node_workspace", "uris": []string{"oboard://users/{id}/node-library", "oboard://users/{id}/node-groups", "oboard://users/{id}/node-sources", "oboard://users/{id}/subscription-outputs"}},
 			map[string]any{"group": "access_control", "uris": []string{"oboard://user-groups", "oboard://user-group-members"}},

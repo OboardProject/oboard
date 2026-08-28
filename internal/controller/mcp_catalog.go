@@ -40,6 +40,8 @@ OBoard MCP never provides arbitrary SSH access. Shell execution is available onl
 
 User traffic accounting is diagnosed with ` + "`traffic.get_user_ledger`" + `, ` + "`traffic.get_server_sync_state`" + `, and ` + "`traffic.list_reconciliation_issues`" + `. These tools explain confirmed usage, server leases, and reconciliation status. Never rewrite user traffic totals, delete traffic reports, or force checkpoints. Server panel period counters are independent of user quotas; reset the current server period with ` + "`servers.reset_traffic`" + `. That does not change traffic limits, reset day, user ledgers, or Agent checkpoints.
 
+Server create uses the same defaults as the panel 添加服务器 dialog. Omit unspecified fields; never send false or 0 for a switch the user did not mention. Fast Path ` + "`oboard_task`" + ` intent ` + "`server.onboard`" + ` fills those defaults. Before a fallback ` + "`servers.onboard`" + ` submit, call ` + "`oboard_validate_form`" + ` and keep ` + "`applied_defaults`" + `. Read ` + "`oboard://forms/server-create`" + ` for the current default map. ` + "`servers.update`" + ` is a patch and must not be filled with create defaults.
+
 Never request, reveal, persist, repeat, or log passwords, private keys, access tokens, refresh tokens, enrollment tokens, or other credentials. One-time onboarding actions are sensitive. Present one-time material only through the designated external-action flow and do not retain it after use.
 
 Use a stable idempotency key for every state-changing request. On a revision conflict, refresh the affected resources and re-plan. Never overwrite newer state.
@@ -249,6 +251,7 @@ func (s *Server) mcpAllowedToolNames(principal application.Principal) map[string
 		allowed["oboard_get_capability_schema"] = true
 		allowed["oboard_plan_desired_state"] = true
 		allowed["oboard_validate_desired_state"] = true
+		allowed["oboard_validate_form"] = true
 		allowed["oboard_get_changeset"] = true
 		allowed["oboard_get_workflow"] = true
 	}
