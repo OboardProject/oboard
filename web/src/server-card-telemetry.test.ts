@@ -7,7 +7,10 @@ describe('server card cpu cores', () => {
   it('shows reported cpu_cores and keeps the model name on hover', () => {
     expect(mainSource).toContain('const cores = Math.trunc(Number(server.cpu_cores))')
     expect(mainSource).not.toContain('(?:核|cores?|v?cpus?)')
-    expect(mainSource).toContain('title={na ? undefined : cpuModelLabel(server)}')
+    expect(mainSource).toContain("title ? ' has-tip' : ''")
+    expect(mainSource).toContain('role="tooltip" className="server-metric-tip"')
+    expect(mainSource).toContain('cpuModelLabel(server)')
+    expect(mainSource).not.toContain('server-metric-sub" title=')
   })
 })
 

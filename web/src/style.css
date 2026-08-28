@@ -2302,7 +2302,9 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-card:has(.server-version-update:hover),
 .server-card:has(.server-version-update:focus-within),
-.server-card:has(.server-version-update.open) {
+.server-card:has(.server-version-update.open),
+.server-card:has(.server-metric-row.has-tip:hover),
+.server-card:has(.server-metric-row.has-tip:focus-within) {
   z-index: 90;
 }
 
@@ -2346,7 +2348,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-monitorable .server-time-issue,
 .server-card-monitorable .server-expiry-badge,
 .server-card-monitorable .server-version-update,
-.server-card-monitorable .server-offline-badge {
+.server-card-monitorable .server-offline-badge,
+.server-card-monitorable .server-metric-row.has-tip {
   position: relative;
   z-index: 2;
 }
@@ -2602,6 +2605,43 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   color: var(--muted);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+}
+
+.server-metric-tip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: var(--z-popover);
+  width: max-content;
+  max-width: min(240px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-soft);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.96) translateY(3px);
+  transform-origin: bottom left;
+  transition: opacity var(--duration-appica) var(--ease-appica-spring),
+              transform var(--duration-appica) var(--ease-appica-spring),
+              visibility var(--duration-appica) ease;
+}
+
+.server-metric-row.has-tip:hover .server-metric-tip,
+.server-metric-row.has-tip:focus-within .server-metric-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1) translateY(0);
 }
 
 .server-card-rates {
@@ -8713,20 +8753,26 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .controller-update-install-dialog {
-  width: min(600px, calc(100vw - 28px));
+  width: min(580px, calc(100vw - 28px));
+  max-height: min(94vh, 760px);
+}
+
+.dialog.controller-update-install-dialog .dialog-head {
+  padding: 14px 18px;
 }
 
 .controller-update-install-body {
   display: grid;
-  gap: 16px;
+  gap: 12px;
+  padding: 14px 18px;
 }
 
 .controller-update-install-lead,
 .controller-update-install-state,
 .controller-update-install-result {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
@@ -8737,12 +8783,16 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: var(--text-secondary);
 }
 
+.controller-update-install-state > svg {
+  color: var(--primary);
+}
+
 .controller-update-install-lead > div,
 .controller-update-install-state > div,
 .controller-update-install-result > div {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 
 .controller-update-install-lead strong,
@@ -8757,33 +8807,38 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .controller-update-install-state p,
 .controller-update-install-result p {
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
 .controller-update-install-notice {
   display: grid;
   gap: 4px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: var(--warning-soft);
   color: var(--text);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .controller-update-install-notice.compact {
-  padding-block: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .controller-update-install-advice {
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .controller-update-stages {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  padding: 8px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
@@ -8791,49 +8846,61 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 .controller-update-stage {
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  padding: 11px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.controller-update-stage:last-child {
-  border-bottom: 0;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border: 1px solid transparent;
 }
 
 .controller-update-stage > span {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   border: 1px solid var(--border);
   border-radius: 50%;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .controller-update-stage > div {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .controller-update-stage strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .controller-update-stage small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controller-update-stage.active {
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--primary) 25%, transparent);
 }
 
 .controller-update-stage.active > span {
-  border-color: var(--text-strong);
-  background: var(--text-strong);
-  color: var(--surface-solid);
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-contrast);
 }
 
 .controller-update-stage.active strong {
@@ -8847,7 +8914,7 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
 }
 
 .controller-update-install-progress {
-  height: 6px;
+  height: 5px;
   overflow: hidden;
   background: var(--surface-2);
   border-radius: 999px;
@@ -8879,6 +8946,10 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   color: var(--text-secondary);
 }
 
+.dialog.controller-update-install-dialog .dialog-actions {
+  padding: 12px 18px;
+}
+
 @media (max-width: 640px) {
   .dialog.controller-update-install-dialog {
     width: calc(100vw - 16px);
@@ -8907,18 +8978,19 @@ body:has(.dialog-backdrop) { overflow-y: hidden; }
   }
   .controller-update-stages {
     grid-template-columns: 1fr 1fr;
-    column-gap: 8px;
+    gap: 5px 6px;
+    padding: 6px 0;
   }
   .controller-update-stage {
-    padding: 7px 0;
+    padding: 4px 6px;
     align-items: center;
   }
   .controller-update-stage small { display: none; }
-  .controller-update-stage strong { font-size: 12px; }
+  .controller-update-stage strong { font-size: 11.5px; }
   .controller-update-stage > span {
-    width: 22px;
-    height: 22px;
-    font-size: 11px;
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
   }
   .dialog.controller-update-install-dialog .dialog-actions {
     display: grid;
@@ -24681,4 +24753,170 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+/* ===== Server Workspace Dialog (unified visual system) ===== */
+.server-workspace-dialog {
+  width: min(960px, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: min(85vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+.server-workspace-dialog .dialog-head,
+.server-workspace-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-solid, var(--bg-card));
+}
+.server-workspace-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.server-workspace-title-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.server-workspace-title-text h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.server-workspace-title-id { font-weight: 500; opacity: 0.55; font-size: 13px; }
+.server-workspace-subtitle { color: var(--muted); font-size: 12px; font-weight: 500; margin-left: 6px; }
+.server-workspace-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: var(--radius-full); border: 1px solid var(--border); background: var(--surface-2); }
+.server-workspace-status.online { color: var(--success); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); background: var(--success-soft); }
+.server-workspace-status.offline { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: var(--danger-soft); }
+.server-workspace-status.unenrolled { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 30%, var(--border)); background: var(--warning-soft); }
+.server-workspace-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+.server-workspace-header-actions { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.server-workspace-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-solid, var(--bg-card));
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.server-workspace-tabs button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-bottom-color: transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.server-workspace-tabs button:hover { color: var(--text-strong); background: var(--surface-2); }
+.server-workspace-tabs button.active { color: var(--primary); background: var(--surface-solid); border-color: var(--border); border-bottom-color: var(--surface-solid); }
+.server-workspace-tabs button.disabled { opacity: 0.45; cursor: not-allowed; }
+.server-workspace-tabs button:disabled { opacity: 0.45; cursor: not-allowed; }
+.server-workspace-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 18px;
+  background: var(--bg-page, var(--bg));
+}
+.server-workspace-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-solid, var(--bg-card));
+}
+.server-workspace-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* About dialog */
+.server-about-dialog .server-detail-body { padding-top: 10px; }
+.server-about-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 16px; }
+.server-about-item { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.server-about-label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.server-about-value { font-size: 13px; font-weight: 600; color: var(--text-strong); display: inline-flex; align-items: center; gap: 6px; word-break: break-all; }
+@media (max-width: 640px) { .server-about-grid { grid-template-columns: 1fr; } }
+
+/* Network Overview */
+.server-health-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+.server-health-card { display:flex; flex-direction:column; gap:4px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background: var(--surface-2); }
+.server-health-card.ok { border-color: color-mix(in srgb, var(--success) 25%, var(--border)); }
+.server-health-card.warn { border-color: color-mix(in srgb, var(--warning) 25%, var(--border)); }
+.server-health-label { font-size:11px; font-weight:600; color:var(--muted); }
+.server-health-value { font-size:13px; font-weight:650; color:var(--text-strong); }
+
+/* Traffic */
+.server-traffic-cards { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; }
+.server-traffic-card { display:flex; flex-direction:column; gap:4px; padding:14px 14px; border:1px solid var(--border); border-radius:12px; background: var(--surface-solid); }
+.server-traffic-card.down { border-color: color-mix(in srgb, #0ea5e9 18%, var(--border)); }
+.server-traffic-card.up { border-color: color-mix(in srgb, #8b5cf6 18%, var(--border)); }
+.server-traffic-card.total { border-color: color-mix(in srgb, var(--primary) 18%, var(--border)); }
+.server-traffic-label { font-size:11px; font-weight:600; color:var(--muted); letter-spacing:0.02em; }
+.server-traffic-value { font-size:16px; font-weight:750; color:var(--text-strong); }
+.server-traffic-value small { font-size:11px; font-weight:600; color:var(--muted); margin-left:6px; }
+.server-traffic-meta { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; color:var(--muted); font-size:12px; }
+.server-operation-card { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid var(--border); border-radius:12px; background: var(--surface-solid); margin-top:12px; }
+.server-operation-card strong { display:block; font-size:13px; font-weight:650; color:var(--text-strong); }
+.server-operation-card small { display:block; font-size:11px; }
+.server-confirm-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; min-width:0; }
+
+/* Diagnostics */
+.server-diagnostics-grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:8px; }
+.server-diagnostics-card { display:flex; flex-direction:column; gap:6px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background: var(--surface-2); text-align:center; }
+.server-diagnostics-card span:first-child { font-size:11px; font-weight:600; color:var(--muted); }
+.server-diagnostics-status { font-size:16px; font-weight:800; }
+.server-diagnostics-status.ok { color: var(--success); }
+.server-diagnostics-status.fail { color: var(--danger); }
+.server-entry-probe-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background: var(--surface-2); }
+.server-entry-probe-row .ok { color: var(--success); font-weight:650; }
+.server-entry-probe-row .fail { color: var(--danger); font-weight:650; }
+
+/* Logs */
+.server-logs-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.server-logs-content { min-height:160px; }
+.server-logs-actions { margin-top:12px; }
+
+/* Tasks dialog */
+.server-tasks-table th { font-size:11px; font-weight:700; color:var(--muted); letter-spacing:0.03em; }
+.server-tasks-table td { font-size:13px; border-top:1px solid var(--border); }
+.server-tasks-table tr:hover td { background: var(--surface-2); }
+
+/* Legacy overrides for v2 menu */
+.server-actions-menu-v2 { width:192px; min-width:192px; }
+.server-actions-menu-v2 button.disabled { opacity:0.45; cursor:not-allowed; }
+.server-actions-menu-v2 button:disabled { opacity:0.45; cursor:not-allowed; background:transparent !important; color:var(--muted) !important; }
+
+/* Responsive workspace */
+@media (max-width: 720px) {
+  .server-workspace-dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+  .server-traffic-cards { grid-template-columns: 1fr; }
+  .server-health-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .server-diagnostics-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }

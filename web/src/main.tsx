@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import {
@@ -120,6 +120,12 @@ import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel
 import { SubscriptionTemplatesPanel } from './components/SubscriptionTemplatesPanel'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
+import { ServerAboutDialog } from './components/server/ServerAboutDialog'
+import { ServerBasicSettingsDialog } from './components/server/ServerBasicSettingsDialog'
+import { ServerNetworkDialog } from './components/server/ServerNetworkDialog'
+import { ServerSystemDialog } from './components/server/ServerSystemDialog'
+import { ServerTasksDialog } from './components/server/ServerTasksDialog'
+import { ServerActionMenu } from './components/server/ServerActionMenu'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -7469,17 +7475,23 @@ function ServerDisplayTagsEditor({ tags, onChange }: { tags: { text: string; ton
   )
 }
 
-function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = '', title }: { icon: React.ReactNode; label: string; value: string; percent: number; sub: string; fill?: string; tone?: string; title?: string }) {
+function ServerMetricCell({ icon, label, value, percent, sub, fill = '', tone = '', title, onClick }: { icon: React.ReactNode; label: string; value: string; percent: number; sub: string; fill?: string; tone?: string; title?: string; onClick?: () => void }) {
+  const tipID = useId()
   return (
-    <div className="server-metric-row">
+    <div
+      className={`server-metric-row${title ? ' has-tip' : ''}`}
+      aria-describedby={title ? tipID : undefined}
+      onClick={title ? event => { event.stopPropagation(); onClick?.() } : undefined}
+    >
       {icon}
       <div className="server-metric-copy">
         <div className="server-metric-head"><span>{label}</span><strong>{value}</strong></div>
         <div className="server-metric-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
           <div className={`server-metric-fill ${fill} ${tone || metricTone(percent)}`} style={{ width: `${Math.max(percent, percent > 0 ? 2 : 0)}%` }} />
         </div>
-        <span className="server-metric-sub" title={title || undefined}>{sub}</span>
+        <span className="server-metric-sub">{sub}</span>
       </div>
+      {title ? <span id={tipID} role="tooltip" className="server-metric-tip">{title}</span> : null}
     </div>
   )
 }
@@ -7534,8 +7546,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
   const [installTarget, setInstallTarget] = useState<{ server: Server; token: string } | null>(null)
   const [logServer, setLogServer] = useState<Server | null>(null)
-  const [networkServer, setNetworkServer] = useState<{ server: Server; tab: 'dns' | 'mtu' } | null>(null)
+  const [networkServer, setNetworkServer] = useState<{ server: Server; tab: 'overview' | 'traffic' | 'settings' | 'dns' | 'mtu' | 'diagnostics' } | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
+  const [aboutServer, setAboutServer] = useState<Server | null>(null)
+  const [basicServer, setBasicServer] = useState<Server | null>(null)
+  const [systemServer, setSystemServer] = useState<{ server: Server; tab: 'overview' | 'agent' | 'settings' | 'logs' } | null>(null)
+  const [tasksServer, setTasksServer] = useState<Server | null>(null)
   const [terminalServer, setTerminalServer] = useState<Server | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
@@ -7576,6 +7592,41 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [deleteServerBusy, setDeleteServerBusy] = useState(false)
   const [uninstallingServerIDs, setUninstallingServerIDs] = useState<Set<number>>(() => new Set())
 
+  // URL panel state sync: /servers?server=12&panel=network&tab=diagnostics
+  const syncURLPanel = (serverId: number | null, panel: string | null, tab: string | null) => {
+    try {
+      const url = new URL(window.location.href)
+      if (serverId && panel) {
+        url.searchParams.set('server', String(serverId))
+        url.searchParams.set('panel', panel)
+        if (tab) url.searchParams.set('tab', tab); else url.searchParams.delete('tab')
+      } else {
+        url.searchParams.delete('server'); url.searchParams.delete('panel'); url.searchParams.delete('tab')
+      }
+      window.history.replaceState(null, '', url.toString())
+    } catch {}
+  }
+  // open panel from URL on mount
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search)
+      const sid = Number(q.get('server')||0)
+      const panel = q.get('panel')||''
+      const tab = q.get('tab')||''
+      if(!sid || !panel) return
+      const target = (data.servers||[]).find((s:Server)=> Number(s.id)===sid)
+      if(!target) return
+      if(panel==='about') setAboutServer(target)
+      else if(panel==='basic') setBasicServer(target)
+      else if(panel==='network') setNetworkServer({ server: target, tab: (tab as any) || 'overview' })
+      else if(panel==='system') setSystemServer({ server: target, tab: (tab as any) || 'overview' })
+      else if(panel==='tasks') setTasksServer(target)
+      else if(panel==='terminal') setTerminalServer(target)
+    } catch {}
+    // only on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     setServers(((data.servers || []) as Server[]).filter(server => !pendingDeleteServerIDsRef.current.has(server.id)))
   }, [data.servers])
@@ -7611,6 +7662,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     })
   }, [data.server_metrics])
   useEffect(() => { if (realtimeStatus === 'open') setServerRefreshFailed(false) }, [realtimeStatus])
+  // sync URL when workspace panels open/close
+  useEffect(()=>{ if(aboutServer) syncURLPanel(aboutServer.id,'about',null) }, [aboutServer?.id])
+  useEffect(()=>{ if(basicServer) syncURLPanel(basicServer.id,'basic',null) }, [basicServer?.id])
+  useEffect(()=>{ if(networkServer) syncURLPanel(networkServer.server.id,'network', networkServer.tab) }, [networkServer?.server.id, networkServer?.tab])
+  useEffect(()=>{ if(systemServer) syncURLPanel(systemServer.server.id,'system', systemServer.tab) }, [systemServer?.server.id, systemServer?.tab])
+  useEffect(()=>{ if(tasksServer) syncURLPanel(tasksServer.id,'tasks',null) }, [tasksServer?.id])
+  useEffect(()=>{ if(terminalServer) syncURLPanel(terminalServer.id,'terminal',null) }, [terminalServer?.id])
+  useEffect(()=>{ if(!aboutServer && !basicServer && !networkServer && !systemServer && !tasksServer && !terminalServer) syncURLPanel(null,null,null) }, [aboutServer, basicServer, networkServer, systemServer, tasksServer, terminalServer])
   useEffect(() => { saveServerListPreferences(listPreferences) }, [listPreferences])
   useEffect(() => {
     setListPreferences(current => {
@@ -7972,24 +8031,26 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       await dialogs.alert({ title: '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
     }
   }
+  const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
   const handleServerAction = async (type: string, s: Server) => {
-    if (type === 'details') setDetailServer(s)
+    if (type === 'about' || type === 'details') { clearServerWorkspaces(); setAboutServer(s) }
+    else if (type === 'basic-settings' || type === 'edit') { clearServerWorkspaces(); setBasicServer(s) }
     else if (type === 'terminal') setTerminalServer(s)
     else if (type === 'resource-details') setConnectivityServer({ server: s })
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
-    else if (type === 'edit') setEditServer(s)
-    else if (type === 'extend-expiry') setExtendServer(s)
-    else if (type === 'reset-traffic') void resetServerTraffic(s)
-    else if (type === 'mtu') setNetworkServer({ server: s, tab: 'mtu' })
-    else if (type === 'dns') setNetworkServer({ server: s, tab: 'dns' })
-    else if (type === 'network') setNetworkServer({ server: s, tab: 'dns' })
-    else if (type === 'agent-config') setAgentConfigServer(s)
-    else if (type === 'update-agent') updateAgent(s)
+    else if (type === 'extend-expiry') { clearServerWorkspaces(); setBasicServer(s) }
+    else if (type === 'reset-traffic') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'traffic' }) }
+    else if (type === 'mtu') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'mtu' }) }
+    else if (type === 'dns') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'dns' }) }
+    else if (type === 'network') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'overview' }) }
+    else if (type === 'system') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'overview' }) }
+    else if (type === 'agent-config') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'settings' }) }
+    else if (type === 'update-agent') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'agent' }) }
     else if (type === 'enroll') enroll(s)
-    else if (type === 'logs') setLogServer(s)
-    else if (type === 'diagnose') diagnose(s)
-    else if (type === 'tasks') tasks(s)
+    else if (type === 'logs') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'logs' }) }
+    else if (type === 'diagnose') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'diagnostics' }) }
+    else if (type === 'tasks') { clearServerWorkspaces(); setTasksServer(s) }
     else if (type === 'delete') {
       if (uninstallingServerIDs.has(s.id)) {
         notify?.('这台服务器正在卸载 Agent，请等待完成', 'info')
@@ -8156,6 +8217,11 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} role={role} onResetTraffic={() => void resetServerTraffic(detailServer)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{aboutServer && <ServerAboutDialog server={aboutServer} onClose={() => setAboutServer(null)} />}</AnimatePresence>
+    <AnimatePresence>{basicServer && <ServerBasicSettingsDialog server={basicServer} onCancel={() => setBasicServer(null)} onSubmit={async (patch) => { await updateServer(patch); setBasicServer(null) }} />}</AnimatePresence>
+    <AnimatePresence>{networkServer && <ServerNetworkDialog server={networkServer.server} initialTab={networkServer.tab} data={data} client={client} notify={notify} role={role} onClose={() => setNetworkServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
+    <AnimatePresence>{systemServer && <ServerSystemDialog server={systemServer.server} initialTab={systemServer.tab} data={data} client={client} notify={notify} controllerURL={effectiveControllerURL(data)} role={role} onClose={() => setSystemServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
+    <AnimatePresence>{tasksServer && <ServerTasksDialog server={tasksServer} client={client} onClose={() => setTasksServer(null)} />}</AnimatePresence>
     {terminalServer ? <RemoteTerminal serverId={terminalServer.id} serverName={terminalServer.name || `server-${terminalServer.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${terminalServer.id}/terminal/ws/${sessionId}`)} passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)} onClose={() => setTerminalServer(null)} /> : null}
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
@@ -8171,27 +8237,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
-    <AnimatePresence>{networkServer && <ServerNetworkSettingsDialog
-      server={networkServer.server}
-      initialTab={networkServer.tab}
-      policy={(data.server_dns_policies || []).find((policy: ServerDNSPolicy) => Number(policy.server_id) === Number(networkServer.server.id))}
-      lists={data.dns_lists || []}
-      benchmarks={(data.dns_benchmarks || []).filter((item: DNSBenchmarkResult) => Number(item.server_id) === Number(networkServer.server.id))}
-      client={client}
-      onClose={() => setNetworkServer(null)}
-      onChanged={load}
-      notify={notify}
-      onSaveMTU={async (patch) => {
-        try {
-          const result = await client.request(`/servers/${networkServer.server.id}`, { method: 'PATCH', body: JSON.stringify({ ...networkServer.server, ...patch }) }) as { server?: Server }
-          if (result.server?.id) setServers(current => upsertServerSnapshot(current, result.server as Server))
-          revalidateServers()
-          notify?.('MTU 设置已保存', 'success')
-        } catch (error: any) {
-          await dialogs.alert({ title: '保存 MTU 设置失败', message: localizeErrorMessage(error?.message || error) })
-        }
-      }}
-    />}</AnimatePresence>
     </div>
   </section>
 }
@@ -9296,172 +9341,7 @@ type ServerActionGroup = {
 }
 
 function ServerActionsDropdown({ server, role = 'viewer', onAction }: { server: Server; role?: Role; onAction: (type: string, server: Server) => void }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
-
-  const groups: ServerActionGroup[] = [
-    {
-      title: '监控与运维',
-      items: [
-        { label: '详细信息', type: 'details', icon: Info },
-        { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
-        { label: '运行日志', type: 'logs', icon: FileText, admin: true },
-        { label: '网络诊断', type: 'diagnose', icon: Activity, admin: true },
-        { label: '任务记录', type: 'tasks', icon: ClipboardList },
-      ],
-    },
-    {
-      title: '配置与策略',
-      items: [
-        { label: '服务器设置', type: 'edit', icon: SlidersHorizontal },
-        { label: '延长到期', type: 'extend-expiry', icon: CalendarDays, admin: true },
-        { label: '清零已用流量', type: 'reset-traffic', icon: RotateCcw, admin: true },
-        { label: '网络设置', type: 'network', icon: Globe },
-        { label: '系统设置', type: 'agent-config', icon: Sliders, admin: true },
-      ],
-    },
-    {
-      title: 'Agent 维护',
-      items: [
-        { label: '更新 Agent', type: 'update-agent', icon: ArrowUpCircle, admin: true },
-        { label: '接入命令', type: 'enroll', icon: Terminal, admin: true },
-      ],
-    },
-    {
-      items: [
-        { label: '删除服务器', type: 'delete', icon: Trash2, danger: true },
-      ],
-    },
-  ]
-
-  const visibleGroups = groups
-    .map(g => ({ ...g, items: g.items.filter(item => !item.admin || hasManagementAccess(role)) }))
-    .filter(g => g.items.length > 0)
-
-  const totalVisibleItems = visibleGroups.reduce((acc, g) => acc + g.items.length, 0)
-
-  const updateMenuPosition = () => {
-    const button = buttonRef.current
-    if (!button) return
-    const rect = button.getBoundingClientRect()
-    const width = 176
-    const estimatedHeight = Math.min(totalVisibleItems * 32 + visibleGroups.length * 28 + 16, window.innerHeight - 16)
-    const height = menuRef.current?.offsetHeight || estimatedHeight
-    const roomBelow = window.innerHeight - rect.bottom - 8 - 6
-    const roomAbove = rect.top - 8 - 6
-    const openBelow = roomBelow >= height || roomBelow >= roomAbove
-    const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width))
-    const top = openBelow
-      ? Math.min(rect.bottom + 6, window.innerHeight - height - 8)
-      : Math.max(8, rect.top - height - 6)
-    setMenuPosition({ top, left })
-  }
-
-  useEffect(() => {
-    if (!isOpen) return
-    updateMenuPosition()
-    const frame = window.requestAnimationFrame(updateMenuPosition)
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null
-      if (target && ref.current && !ref.current.contains(target) && !menuRef.current?.contains(target)) {
-        setIsOpen(false)
-      }
-    }
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOpen(false)
-        buttonRef.current?.focus()
-      }
-    }
-    window.addEventListener('resize', updateMenuPosition)
-    window.addEventListener('scroll', updateMenuPosition, true)
-    document.addEventListener('mousedown', handleClickOutside)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      window.removeEventListener('resize', updateMenuPosition)
-      window.removeEventListener('scroll', updateMenuPosition, true)
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [isOpen, totalVisibleItems])
-
-  return (
-    <div ref={ref} className={isOpen ? 'server-actions-dropdown is-open' : 'server-actions-dropdown'}>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          if (!isOpen) updateMenuPosition()
-          setIsOpen(!isOpen)
-        }}
-        className="ghost icon-button"
-        style={{
-          width: '28px',
-          height: '28px',
-          borderRadius: '50%',
-          border: '1px solid var(--border-color)',
-          display: 'grid',
-          placeContent: 'center',
-          cursor: 'pointer',
-          backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)',
-          color: 'var(--text-primary)',
-          transition: 'all 0.15s',
-        }}
-        title="服务器操作"
-        aria-label="打开服务器操作菜单"
-        aria-haspopup="menu"
-        aria-expanded={isOpen}
-      >
-        <MoreHorizontal size={16} aria-hidden="true" />
-      </button>
-      {isOpen && createPortal(
-        <div
-          ref={menuRef}
-          className="server-actions-menu action-menu-portal"
-          role="menu"
-          style={{
-            position: 'fixed',
-            top: menuPosition.top,
-            left: menuPosition.left,
-          }}
-        >
-          {visibleGroups.map((group, groupIdx) => (
-            <React.Fragment key={group.title || groupIdx}>
-              {groupIdx > 0 && <div className="server-actions-divider" role="separator" />}
-              <div className="server-actions-section">
-                {group.title && <div className="server-actions-section-title">{group.title}</div>}
-                {group.items.map((item) => {
-                  const Icon = item.icon
-                  return (
-                    <button
-                      key={item.type}
-                      type="button"
-                      role="menuitem"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onAction(item.type, server)
-                        setIsOpen(false)
-                      }}
-                      className={item.danger ? 'danger' : ''}
-                    >
-                      <span className="server-action-icon"><Icon size={14} aria-hidden="true" /></span>
-                      <span className="server-action-label">{item.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </React.Fragment>
-          ))}
-        </div>,
-        document.body
-      )}
-    </div>
-  );
+  return <ServerActionMenu server={server} role={role as any} onAction={onAction} />
 }
 
 function compactBuildLabel(value?: string) {
@@ -10117,7 +9997,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         </div>
       </div>
       <div className="server-metric-list">
-        <ServerMetricCell icon={<Cpu size={15} aria-hidden="true" />} label="CPU" value={na ? 'N/A' : Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(2)}%` : '—'} percent={na ? 0 : cpuPercent} sub={na ? 'N/A' : cpuCoresLabel(server)} title={na ? undefined : cpuModelLabel(server)} />
+        <ServerMetricCell icon={<Cpu size={15} aria-hidden="true" />} label="CPU" value={na ? 'N/A' : Number.isFinite(server.cpu_usage_percent) ? `${cpuPercent.toFixed(2)}%` : '—'} percent={na ? 0 : cpuPercent} sub={na ? 'N/A' : cpuCoresLabel(server)} title={na ? undefined : cpuModelLabel(server)} onClick={() => onAction('resource-details', server)} />
         <ServerMetricCell icon={<MemoryStick size={15} aria-hidden="true" />} label="内存" value={na ? 'N/A' : server.memory_total_bytes ? `${memPercent.toFixed(2)}%` : '—'} percent={na ? 0 : memPercent} sub={na ? 'N/A' : serverMemoryLabel(server)} fill="memory" />
         <ServerMetricCell icon={<HardDrive size={15} aria-hidden="true" />} label="磁盘" value={na ? 'N/A' : server.disk_total_bytes ? `${diskPercent.toFixed(1)}%` : '—'} percent={na ? 0 : diskPercent} sub={na ? 'N/A' : server.disk_total_bytes ? `${formatBytes(server.disk_bytes || 0)} / ${formatBytes(server.disk_total_bytes)}` : '—'} fill="disk" />
         <ServerMetricCell icon={<ArrowDownUp size={15} aria-hidden="true" />} label="月度" value={trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)} percent={na ? 0 : trafficPercent} sub={trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'} fill="traffic" tone={trafficQuotaTone} />
