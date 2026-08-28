@@ -4047,7 +4047,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
     { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
-    { key: 'subscriptions', label: '订阅安全', icon: Shield, description: '订阅加密、入口 Host 和独立订阅入口。' },
+    { key: 'subscriptions', label: '订阅', icon: Shield, description: '订阅加密、入口 Host 和独立订阅入口。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
     { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
     { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
