@@ -12,6 +12,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type UniqueIdentifier,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -134,6 +135,10 @@ function moveItem<T>(list: T[], index: number, delta: number): T[] {
   const [item] = next.splice(index, 1)
   next.splice(target, 0, item)
   return next
+}
+
+function isolateSortableAction(event: React.SyntheticEvent) {
+  event.stopPropagation()
 }
 
 export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
@@ -513,8 +518,8 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                           {entry?.label || key}
                         </span>
                         <span className="muted" style={{ fontSize: 12 }}>{entry?.count || 0} 个节点</span>
-                        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => setEntryOrder(moveItem(entryKeyList, index, -1))} aria-label="上移"><ChevronUp size={14} /></Button>
-                        <Button variant="ghost" size="icon" disabled={index === entryKeyList.length - 1} onClick={() => setEntryOrder(moveItem(entryKeyList, index, 1))} aria-label="下移"><ChevronDown size={14} /></Button>
+                        <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => setEntryOrder(moveItem(entryKeyList, index, -1))} aria-label="上移"><ChevronUp size={14} /></Button>
+                        <Button type="button" variant="ghost" size="icon" disabled={index === entryKeyList.length - 1} onPointerDown={isolateSortableAction} onClick={() => setEntryOrder(moveItem(entryKeyList, index, 1))} aria-label="下移"><ChevronDown size={14} /></Button>
                       </>
                     )
                   }} />
@@ -551,11 +556,11 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                             {node.entry_region && <span className="muted"> · 入口 {node.entry_region}</span>}
                             {node.exit_region && <span className="muted"> · 出口 {node.exit_region}</span>}
                           </span>
-                          <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveManualToEdge(key, true)} aria-label="移到顶部"><MoveUp size={14} /></Button>
-                          <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => moveManual(key, -1)} aria-label="上移"><ArrowUp size={14} /></Button>
-                          <Button variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onClick={() => moveManual(key, 1)} aria-label="下移"><ArrowDown size={14} /></Button>
-                          <Button variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onClick={() => moveManualToEdge(key, false)} aria-label="移到底部"><MoveDown size={14} /></Button>
-                          <Button variant="ghost" size="icon" onClick={() => removeManual(key)} aria-label="移出顺序"><Trash2 size={14} /></Button>
+                          <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => moveManualToEdge(key, true)} aria-label="移到顶部"><MoveUp size={14} /></Button>
+                          <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => moveManual(key, -1)} aria-label="上移"><ArrowUp size={14} /></Button>
+                          <Button type="button" variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onPointerDown={isolateSortableAction} onClick={() => moveManual(key, 1)} aria-label="下移"><ArrowDown size={14} /></Button>
+                          <Button type="button" variant="ghost" size="icon" disabled={index === manualOrder.length - 1} onPointerDown={isolateSortableAction} onClick={() => moveManualToEdge(key, false)} aria-label="移到底部"><MoveDown size={14} /></Button>
+                          <Button type="button" variant="ghost" size="icon" onPointerDown={isolateSortableAction} onClick={() => removeManual(key)} aria-label="移出顺序"><Trash2 size={14} /></Button>
                         </>
                       )
                     }} />
@@ -677,9 +682,9 @@ function RegionOrderEditor({ list, onChange }: { list: string[]; onChange: (list
             <strong>{code}</strong>
           </Badge>
         </div>
-        <Button variant="ghost" size="icon" disabled={index === 0} onClick={() => onChange(moveItem(list, index, -1))} aria-label={`上移 ${code}`} title="上移" style={{ width: 28, height: 28 }}><ChevronUp size={14} /></Button>
-        <Button variant="ghost" size="icon" disabled={index === list.length - 1} onClick={() => onChange(moveItem(list, index, 1))} aria-label={`下移 ${code}`} title="下移" style={{ width: 28, height: 28 }}><ChevronDown size={14} /></Button>
-        <Button variant="ghost" size="icon" onClick={() => onChange(list.filter(c => c !== code))} aria-label={`移除 ${code}`} title="移除" style={{ width: 28, height: 28, color: 'var(--color-danger)' }}><Trash2 size={14} /></Button>
+        <Button type="button" variant="ghost" size="icon" disabled={index === 0} onPointerDown={isolateSortableAction} onClick={() => onChange(moveItem(list, index, -1))} aria-label={`上移 ${code}`} title="上移" style={{ width: 28, height: 28 }}><ChevronUp size={14} /></Button>
+        <Button type="button" variant="ghost" size="icon" disabled={index === list.length - 1} onPointerDown={isolateSortableAction} onClick={() => onChange(moveItem(list, index, 1))} aria-label={`下移 ${code}`} title="下移" style={{ width: 28, height: 28 }}><ChevronDown size={14} /></Button>
+        <Button type="button" variant="ghost" size="icon" onPointerDown={isolateSortableAction} onClick={() => onChange(list.filter(c => c !== code))} aria-label={`移除 ${code}`} title="移除" style={{ width: 28, height: 28, color: 'var(--color-danger)' }}><Trash2 size={14} /></Button>
       </>
     )} />
   )
@@ -690,24 +695,31 @@ function SortableList({ items, onReorder, renderRow }: {
   onReorder: (next: string[]) => void
   renderRow: (item: string, index: number) => React.ReactNode
 }) {
+  const listId = React.useId()
+  const sortableId = React.useCallback((item: string) => `${listId}::${item}`, [listId])
+  const itemFromSortableId = React.useCallback((id: UniqueIdentifier) => {
+    const raw = String(id)
+    const prefix = `${listId}::`
+    return raw.startsWith(prefix) ? raw.slice(prefix.length) : raw
+  }, [listId])
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = items.indexOf(String(active.id))
-    const newIndex = items.indexOf(String(over.id))
+    const oldIndex = items.indexOf(itemFromSortableId(active.id))
+    const newIndex = items.indexOf(itemFromSortableId(over.id))
     if (oldIndex === -1 || newIndex === -1) return
     onReorder(arrayMove(items, oldIndex, newIndex))
   }
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={items} strategy={verticalListSortingStrategy}>
+    <DndContext id={listId} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={items.map(sortableId)} strategy={verticalListSortingStrategy}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {items.map((item, index) => (
-            <SortableRow key={item} id={item}>{renderRow(item, index)}</SortableRow>
+            <SortableRow key={item} id={sortableId(item)}>{renderRow(item, index)}</SortableRow>
           ))}
         </div>
       </SortableContext>

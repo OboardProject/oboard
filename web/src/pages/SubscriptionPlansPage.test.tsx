@@ -60,6 +60,7 @@ describe('SubscriptionPlansPage', () => {
         member_count: 0,
       }
       if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [], policy: { mode: 'exit_region' } }
       if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
       if (path === '/users') return { users: [{ id: 7, username: 'alice', nickname: 'Alice', status: 'active' }] }
       throw new Error(`unexpected request: ${path}`)
@@ -107,6 +108,7 @@ describe('SubscriptionPlansPage', () => {
         member_count: 0,
       }
       if (path.startsWith('/assignable-nodes?')) return { nodes: catalogNodes, total: catalogNodes.length, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [{ key: 'inbound:24' }, { key: 'inbound:30' }, { key: 'proxy_path:1' }], policy: { mode: 'exit_region' } }
       if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
       if (path === '/subscription-plans/1/nodes/preview') {
         const body = JSON.parse(String(init?.body || '{}'))
@@ -179,6 +181,7 @@ describe('SubscriptionPlansPage', () => {
         member_count: 1,
       }
       if (path.startsWith('/assignable-nodes?')) return { nodes: [{ type: 'proxy_path', id: 11, key: 'proxy_path:11', name: 'CDT | Starhub', effective_global_name: 'CDT | Starhub', entry_server_name: 'CDT', exit_region: 'SG', status: 'ok' }], total: 1, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [{ key: 'proxy_path:11' }], policy: { mode: 'exit_region' } }
       if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
       if (path === '/access-changes/17/cancel') return { access_change_id: 17, status: 'cancelled' }
       throw new Error(`unexpected request: ${path}`)
@@ -202,5 +205,48 @@ describe('SubscriptionPlansPage', () => {
     act(() => abandonButton?.click())
     await flushEffects()
     expect(request).toHaveBeenCalledWith('/access-changes/17/cancel', { method: 'POST', body: '{}' })
+  })
+
+  it('opens plan detail with standalone SSH in subscription order instead of node_type order', async () => {
+    const latestNodes = [
+      { node_type: 'inbound', node_id: 31, display_group: '', source_type: 'explicit' },
+      { node_type: 'proxy_path', node_id: 1, display_group: '', source_type: 'explicit' },
+      { node_type: 'proxy_path', node_id: 2, display_group: '', source_type: 'explicit' },
+    ]
+    const catalogNodes = [
+      { type: 'inbound', id: 31, key: 'inbound:31', name: '沪日｜SSH', effective_global_name: '沪日｜SSH', entry_server_name: '沪日', entry_protocol: 'ssh', exit_region: 'JP', status: 'ok' },
+      { type: 'proxy_path', id: 1, key: 'proxy_path:1', name: '9929', effective_global_name: '9929', entry_server_name: '9929', entry_protocol: 'vless', exit_region: 'DE', status: 'ok' },
+      { type: 'proxy_path', id: 2, key: 'proxy_path:2', name: '沪日｜HY2', effective_global_name: '沪日｜HY2', entry_server_name: '沪日', entry_protocol: 'hysteria2', exit_region: 'JP', status: 'ok' },
+    ]
+    const request = vi.fn(async (path: string) => {
+      if (path === '/subscription-plans') return { subscription_plans: [{ ...plan, node_count: 3 }] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1') return {
+        subscription_plan: { ...plan, node_count: 3 },
+        latest_nodes: latestNodes,
+        revisions: [{ id: 1, revision: 1, version_no: 1, status: 'current', speed_limit_mbps: 100, traffic_limit_bytes: 1073741824, traffic_reset_mode: 'monthly', traffic_reset_day: 1, created_at: '2026-08-11T00:00:00Z' }],
+        member_count: 0,
+      }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: catalogNodes, total: catalogNodes.length, page: 1, page_size: 200 }
+      if (path === '/subscription-plans/1/ordering') return {
+        nodes: [{ key: 'proxy_path:1' }, { key: 'inbound:31' }, { key: 'proxy_path:2' }],
+        policy: { mode: 'manual' },
+      }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    await act(async () => {
+      root.render(<SubscriptionPlansPage data={{ subscription_plans: [{ ...plan, node_count: 3 }] }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+
+    const editButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')
+    act(() => editButton?.click())
+    await flushEffects()
+    await flushEffects()
+
+    const names = Array.from(document.body.querySelectorAll('.plan-node-row strong')).map(el => el.textContent)
+    expect(names).toEqual(['9929', '沪日｜SSH', '沪日｜HY2'])
   })
 })

@@ -111,6 +111,7 @@ type OrderingState = {
   base_revision_id: number
   lock_version: number
   policy: Record<string, any>
+  nodes?: { key: string }[]
 }
 
 const changeTypeLabels: Record<string, string> = {
@@ -178,6 +179,31 @@ function revisionStatus(r: Revision, plan: Plan) {
 
 function nodeKey(n: PlanNode) { return `${n.node_type}:${n.node_id}` }
 
+const PLAN_NODE_SORTABLE_PREFIX = 'plan-node:'
+
+function planNodeSortableId(key: string) { return `${PLAN_NODE_SORTABLE_PREFIX}${key}` }
+
+function planNodeKeyFromSortableId(id: string) {
+  return id.startsWith(PLAN_NODE_SORTABLE_PREFIX) ? id.slice(PLAN_NODE_SORTABLE_PREFIX.length) : id
+}
+
+function isolateSortableAction(event: React.SyntheticEvent) {
+  event.stopPropagation()
+}
+
+function sortPlanNodesByOrder(nodes: PlanNode[], orderKeys: string[]) {
+  if (orderKeys.length === 0 || nodes.length < 2) return nodes
+  const rank = new Map(orderKeys.map((key, index) => [key, index]))
+  return nodes.slice().sort((a, b) => {
+    const aRank = rank.get(nodeKey(a))
+    const bRank = rank.get(nodeKey(b))
+    if (aRank !== undefined && bRank !== undefined && aRank !== bRank) return aRank - bRank
+    if (aRank !== undefined && bRank === undefined) return -1
+    if (aRank === undefined && bRank !== undefined) return 1
+    return 0
+  })
+}
+
 async function loadAssignableNodeCatalog(client: AnyClient): Promise<CatalogNode[]> {
   const firstPage = await client.request<CatalogPage>('/assignable-nodes?page=1&page_size=200')
   const pageSize = firstPage.page_size || 200
@@ -189,7 +215,7 @@ async function loadAssignableNodeCatalog(client: AnyClient): Promise<CatalogNode
 }
 
 function SortablePlanNodeRow({ node, children, disabled }: { node: PlanNode; children: React.ReactNode; disabled?: boolean }) {
-  const id = nodeKey(node)
+  const id = planNodeSortableId(nodeKey(node))
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id, disabled })
   return (
     <tr
@@ -291,9 +317,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setDetailError('')
     setDetailLoading(true)
     try {
-      const [res, catalog] = await Promise.all([
+      const [res, catalog, ordering] = await Promise.all([
         client.request<any>(`/subscription-plans/${id}`),
         loadAssignableNodeCatalog(client),
+        client.request<OrderingState>(`/subscription-plans/${id}/ordering`).catch(() => null),
       ])
       const names: Record<string, string> = {}
       const catalogByKey = new Map<string, CatalogNode>()
@@ -304,7 +331,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       setNodeNames(names)
       setDetail(res)
       setWorkingSettings(res.subscription_plan)
-      setWorkingNodes((res.latest_nodes || []).flatMap((n: any) => {
+      const nextNodes = (res.latest_nodes || []).flatMap((n: any) => {
         const key = `${n.node_type}:${n.node_id}`
         const catalogNode = catalogByKey.get(key)
         if (!catalogNode) return []
@@ -319,10 +346,12 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           source_name: catalogNode.source_name || globalName,
           exit_region: catalogNode.exit_region,
           entry_server_name: catalogNode.entry_server_name,
+          entry_protocol: catalogNode.entry_protocol,
           source_type: n.source_type || 'explicit',
           source_rule_id: n.source_rule_id,
         }]
-      }))
+      })
+      setWorkingNodes(sortPlanNodesByOrder(nextNodes, (ordering?.nodes || []).map((node: any) => String(node.key || ''))))
     } catch (e: any) {
       setDetailError(e?.message || String(e))
     } finally {
@@ -507,15 +536,15 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   })
 
   const orderSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
   const saveDraggedOrder = async (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || active.id === over.id || membershipChanged || orderBusy) return
-    const oldIndex = workingNodes.findIndex(node => nodeKey(node) === String(active.id))
-    const newIndex = workingNodes.findIndex(node => nodeKey(node) === String(over.id))
+    const oldIndex = workingNodes.findIndex(node => nodeKey(node) === planNodeKeyFromSortableId(String(active.id)))
+    const newIndex = workingNodes.findIndex(node => nodeKey(node) === planNodeKeyFromSortableId(String(over.id)))
     if (oldIndex < 0 || newIndex < 0) return
     const previous = workingNodes
     const next = arrayMove(workingNodes, oldIndex, newIndex)
@@ -959,8 +988,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         <th style={{ textAlign: 'right', minWidth: 110 }}>操作</th>
                       </tr>
                     </thead>
-                    <DndContext sensors={orderSensors} collisionDetection={closestCenter} onDragEnd={saveDraggedOrder}>
-                    <SortableContext items={workingNodes.map(nodeKey)} strategy={verticalListSortingStrategy}>
+                    <DndContext id="plan-node-table" sensors={orderSensors} collisionDetection={closestCenter} onDragEnd={saveDraggedOrder}>
+                    <SortableContext items={workingNodes.map(node => planNodeSortableId(nodeKey(node)))} strategy={verticalListSortingStrategy}>
                     <tbody>
                       {workingNodes.map(n => {
                         const key = nodeKey(n)
@@ -1023,8 +1052,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                             </td>
                             <td className="table-actions" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                               <Button
+                                type="button"
                                 variant="ghost"
                                 size="icon"
+                                onPointerDown={isolateSortableAction}
                                 onClick={() => editPlanNodeName(n)}
                                 title="修改在该套餐内的显示名称"
                                 aria-label={`重命名 ${effectiveName}`}
@@ -1034,9 +1065,11 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                               </Button>
                               {hasOverride && (
                                 <Button
+                                  type="button"
                                   variant="ghost"
                                   size="icon"
                                   disabled={nameBusy}
+                                  onPointerDown={isolateSortableAction}
                                   onClick={() => void savePlanNodeName(null, { key: key, effective_name: n.name || key, global_name: n.global_name || n.name || key, source_name: n.source_name || n.global_name || n.name || key, display_name_override: n.display_name_override })}
                                   title="恢复继承全局名称"
                                   aria-label={`恢复 ${n.name || key} 的全局名称`}
@@ -1046,8 +1079,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                                 </Button>
                               )}
                               <Button
+                                type="button"
                                 variant="ghost"
                                 size="icon"
+                                onPointerDown={isolateSortableAction}
                                 onClick={() => {
                                   if (n.source_type === 'rule') { void excludeRuleNode(n); return }
                                   setWorkingNodes(list => list.filter(x => nodeKey(x) !== key))

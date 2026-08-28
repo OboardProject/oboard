@@ -115,6 +115,44 @@ func TestPlanMembershipRulesAndOrderingCopyAPI(t *testing.T) {
 	}
 }
 
+func TestPlanOrderingManualOrderPlacesStandaloneSSH(t *testing.T) {
+	h, _, token := setupPlansAPITestServer(t)
+	jp := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "沪日", "region_mode": "manual", "region_code": "JP", "entry_ip_mode": "custom", "entry_address": "203.0.113.10", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)["server"].(map[string]any)
+	de := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "9929", "region_mode": "manual", "region_code": "DE", "entry_ip_mode": "custom", "entry_address": "203.0.113.11", "listen_ip": "0.0.0.0", "port_range_start": 20020, "port_range_end": 20030}, http.StatusCreated)["server"].(map[string]any)
+	ssh := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": jp["id"], "name": "沪日-ssh", "protocol": "ssh", "listen_ip": "0.0.0.0", "port": 2222, "config_json": `{"exposure_confirmed":true,"exposure_confirmation_version":"ssh-inbound-v1","access_mode":"restricted_proxy"}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	vless := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": de["id"], "name": "9929-vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	path := request(t, h, http.MethodPost, "/api/v1/ui/proxy-paths", token, map[string]any{"inbound_id": vless["id"], "name": "9929直连", "enabled": true}, http.StatusCreated)["proxy_path"].(map[string]any)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{
+		"name": "ssh-order", "enabled": true,
+		"nodes": []map[string]any{
+			{"node_type": "proxy_path", "node_id": path["id"]},
+			{"node_type": "inbound", "node_id": ssh["id"]},
+		},
+	}, http.StatusCreated)["subscription_plan"].(map[string]any)
+	planID := int64(plan["id"].(float64))
+	sshKey := "inbound:" + itoa(int64(ssh["id"].(float64)))
+	pathKey := "proxy_path:" + itoa(int64(path["id"].(float64)))
+	state := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
+	request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering/versions", token, map[string]any{
+		"base_revision_id":      int64(state["base_revision_id"].(float64)),
+		"expected_lock_version": int64(state["lock_version"].(float64)),
+		"policy":                orderingPolicy("manual", "exit_region", []string{"JP", "DE"}),
+		"manual_node_order":     []string{sshKey, pathKey},
+	}, http.StatusOK)
+	ordered := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/ordering", token, nil, http.StatusOK)
+	nodes := ordered["nodes"].([]any)
+	if len(nodes) != 2 {
+		t.Fatalf("ordering nodes = %#v", nodes)
+	}
+	first, second := nodes[0].(map[string]any), nodes[1].(map[string]any)
+	if first["key"] != sshKey || first["entry_protocol"] != "ssh" || first["manual_position"] == nil {
+		t.Fatalf("SSH leading node = %#v", first)
+	}
+	if second["key"] != pathKey {
+		t.Fatalf("path trailing node = %#v", second)
+	}
+}
+
 func TestPlanOrderingAPI(t *testing.T) {
 	h, _, token, ids := setupOrderingTestTopology(t)
 	planID := ids["plan"]

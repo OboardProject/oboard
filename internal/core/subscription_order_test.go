@@ -196,6 +196,43 @@ func TestManualExplicitPositions(t *testing.T) {
 	}
 }
 
+func TestBuildOrderingNodesManualOrderPlacesStandaloneSSH(t *testing.T) {
+	first, second := 0, 1
+	servers := []model.Server{
+		{ID: 1, Name: "沪日", Status: model.ServerOnline, RegionCode: "JP", DetectedRegionCode: "JP"},
+		{ID: 2, Name: "9929", Status: model.ServerOnline, RegionCode: "DE", DetectedRegionCode: "DE"},
+	}
+	inbounds := []model.Inbound{
+		{ID: 31, ServerID: 1, Name: "ssh", Protocol: model.ProtocolSSH, Port: 2222, Enabled: true},
+		{ID: 41, ServerID: 2, Name: "vless", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true},
+	}
+	paths := []model.ProxyPath{{ID: 100, Kind: model.ProxyPathKindDirect, Name: "de-direct", InboundID: 41, Enabled: true}}
+	policy := model.NewSubscriptionNodeOrderPolicy()
+	policy.Mode = model.SubscriptionNodeOrderManual
+	planNodes := []model.SubscriptionPlanNode{
+		{NodeType: model.AssignableNodeProxyPath, NodeID: 100, SortPosition: &first},
+		{NodeType: model.AssignableNodeInbound, NodeID: 31, SortPosition: &second},
+	}
+	nodes, err := BuildOrderingNodes(planNodes, servers, inbounds, paths, nil, nil, nil, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(nodes); !equalStrings(got, []string{"proxy_path:100", "inbound:31"}) {
+		t.Fatalf("SSH after path = %v", got)
+	}
+	planNodes[0].SortPosition, planNodes[1].SortPosition = &second, &first
+	nodes, err = BuildOrderingNodes(planNodes, servers, inbounds, paths, nil, nil, nil, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keysOf(nodes); !equalStrings(got, []string{"inbound:31", "proxy_path:100"}) {
+		t.Fatalf("SSH before path = %v", got)
+	}
+	if nodes[0].NodeType != model.AssignableNodeInbound || nodes[0].Inbound.Protocol != model.ProtocolSSH {
+		t.Fatalf("leading SSH node = %#v", nodes[0])
+	}
+}
+
 func TestManualUnplacedNodesUseSeedTail(t *testing.T) {
 	policy := model.NewSubscriptionNodeOrderPolicy()
 	policy.Mode = model.SubscriptionNodeOrderManual
