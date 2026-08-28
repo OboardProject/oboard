@@ -113,7 +113,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		}),
 	})
 	agentUpdates := closedObject(map[string]any{
-		"target_build": stringValue, "target_version": stringValue, "paused": boolValue, "pause_reason": stringValue,
+		"target_build": stringValue, "target_version": stringValue, "paused": boolValue, "rolling": boolValue, "pause_reason": stringValue,
 		"attempted": map[string]any{"type": "integer"}, "succeeded": map[string]any{"type": "integer"},
 		"failed": map[string]any{"type": "integer"}, "total": map[string]any{"type": "integer"},
 		"enrolled": map[string]any{"type": "integer"}, "current": map[string]any{"type": "integer"},

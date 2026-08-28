@@ -271,6 +271,7 @@ type AgentFleetUpdateStatus = {
   target_build: string
   target_version: string
   paused: boolean
+  rolling: boolean
   pause_reason: string
   attempted: number
   succeeded: number
@@ -4854,7 +4855,7 @@ function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdat
   }
   if (!status) return null
   return <section className="settings-card controller-update-card">
-    <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.message}</p></div>
+    <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.rolling && !status.paused ? '正在滚动更新全部已接入 Agent。' : status.message}</p></div>
     <div className="controller-update-meta">
       <span>目标构建<strong title={status.target_build}>{status.target_build || '—'}</strong></span>
       <span>已是当前<strong>{status.current}</strong></span>
@@ -7608,12 +7609,20 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     }
     const online = enrolled.filter(s => String(s.status || '').toLowerCase() === 'online').length
     const offline = enrolled.length - online
+    let limit = 4
+    try {
+      const fleet = await client.request('/agent-updates/status') as AgentFleetUpdateStatus
+      const parsed = Number(fleet.effective_concurrency || 0)
+      if (parsed > 0) limit = parsed
+    } catch {
+      // keep the auto-minimum fallback when status is unavailable
+    }
     const ok = await dialogs.confirm({
       title: '一键更新所有 Agent',
       confirmText: '开始更新',
       message: <div>
-        <p>将为 <strong>{enrolled.length}</strong> 台已接入服务器创建 Agent 更新任务。</p>
-        <p className="muted">在线 {online} 台{offline > 0 ? `，离线 ${offline} 台会立即标记失败` : ''}。进度请在任务中心查看。</p>
+        <p>将滚动更新全部已接入 Agent，同时最多 <strong>{limit}</strong> 台，完成后自动接下一批。</p>
+        <p className="muted">在线 {online} 台会立即进入队列{offline > 0 ? `；离线 ${offline} 台不创建任务，重新上线后继续` : ''}。进度可在系统设置的 Agent 版本同步中查看。</p>
       </div>,
     })
     if (!ok) return
@@ -7622,19 +7631,21 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       await load()
       const summary = res.summary || {}
       const created = Number(summary.created || 0)
-      const existing = Number(summary.existing || 0)
+      const running = Number(res.running || created)
+      const pending = Number(res.pending || 0)
       const failed = Number(summary.failed || 0)
-      const skipped = Number(summary.skipped || 0)
-      const parts = [
-        created ? `新建 ${created}` : '',
-        existing ? `已有进行中 ${existing}` : '',
-        failed ? `失败 ${failed}` : '',
-        skipped ? `跳过 ${skipped}` : '',
-      ].filter(Boolean)
-      notify?.(
-        parts.length ? `Agent 批量更新已提交：${parts.join(' · ')}` : 'Agent 批量更新已提交',
-        failed && !created && !existing ? 'warning' : 'success',
-      )
+      if (failed && !created && !running) {
+        notify?.('Agent 批量更新未能开始', 'warning')
+      } else if (created || running || pending) {
+        notify?.(
+          pending
+            ? `已开始滚动更新：同时 ${running} 台，其余 ${pending} 台会自动接上`
+            : `已开始滚动更新：当前 ${running} 台进行中`,
+          'success',
+        )
+      } else {
+        notify?.('当前没有需要更新的在线 Agent', 'warning')
+      }
     } catch (err: any) {
       notify?.(localizeErrorMessage(err?.message || err), 'error')
     }

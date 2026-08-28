@@ -35,6 +35,13 @@ type agentUpdateCoordinator struct {
 	mu     sync.Mutex
 }
 
+type agentFleetFillResult struct {
+	store.AgentFleetCounts
+	Created int
+	Limit   int
+	Rolling bool
+}
+
 func newAgentUpdateCoordinator(server *Server) *agentUpdateCoordinator {
 	return &agentUpdateCoordinator{server: server, wake: make(chan struct{}, 1)}
 }
@@ -109,10 +116,12 @@ func (c *agentUpdateCoordinator) concurrency(ctx context.Context, settings map[s
 	return auto
 }
 
-// Fill occupies free Agent update slots. manual bypasses the auto-update
-// switch, maintenance window, and pause so an operator can still roll.
-func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) store.AgentFleetCounts {
-	empty := store.AgentFleetCounts{}
+// Fill occupies free Agent update slots. manual starts an operator roll that
+// continues after this call: later Wake/Fill(false) still bypasses the
+// auto-update switch and maintenance window until the enrolled fleet is
+// current. Pause and the circuit breaker still stop refill.
+func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) agentFleetFillResult {
+	empty := agentFleetFillResult{}
 	if c == nil {
 		return empty
 	}
@@ -122,14 +131,6 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) store.Ag
 	if err != nil {
 		return empty
 	}
-	if !manual {
-		if !settingBool(settings, agentAutoUpdateSetting, false) {
-			return empty
-		}
-		if !automaticUpdateAllowedAt(settings, time.Now()) {
-			return empty
-		}
-	}
 	targetBuild := strings.TrimSpace(version.AgentBuild)
 	if targetBuild == "" || strings.EqualFold(targetBuild, "dev") {
 		return empty
@@ -138,26 +139,56 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) store.Ag
 	if err != nil {
 		return empty
 	}
+	if !manual && !state.Rolling {
+		if !settingBool(settings, agentAutoUpdateSetting, false) {
+			return empty
+		}
+		if !automaticUpdateAllowedAt(settings, time.Now()) {
+			return empty
+		}
+	}
+	dirty := false
 	if state.TargetBuild != targetBuild {
-		state = store.AgentFleetState{TargetBuild: targetBuild}
-		_ = c.server.store.SaveAgentFleetState(ctx, state)
+		state = store.AgentFleetState{TargetBuild: targetBuild, Rolling: state.Rolling || manual}
+		dirty = true
 		_ = c.server.store.ClearAgentUpdateRetriesForBuild(ctx, targetBuild)
 	}
-	if !manual && state.Paused {
-		return empty
+	if manual && !state.Rolling {
+		state.Rolling = true
+		dirty = true
 	}
 	limit := c.concurrency(ctx, settings)
+	persist := func() {
+		if dirty {
+			_ = c.server.store.SaveAgentFleetState(ctx, state)
+			dirty = false
+		}
+	}
+	finish := func(counts store.AgentFleetCounts, created int, counted bool) agentFleetFillResult {
+		if counted && state.Rolling && counts.Running == 0 && counts.Outdated == 0 {
+			state.Rolling = false
+			dirty = true
+		}
+		persist()
+		return agentFleetFillResult{AgentFleetCounts: counts, Created: created, Limit: limit, Rolling: state.Rolling}
+	}
+	if !manual && state.Paused {
+		counts, countErr := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
+		return finish(counts, 0, countErr == nil)
+	}
 	active, err := c.server.store.CountActiveAgentUpdates(ctx)
 	if err != nil {
+		persist()
 		return empty
 	}
 	free := limit - active
 	if free < 1 {
-		counts, _ := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
-		return counts
+		counts, countErr := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
+		return finish(counts, 0, countErr == nil)
 	}
 	candidates, err := c.server.store.ListAgentUpdateCandidates(ctx, targetBuild, free*4)
 	if err != nil {
+		persist()
 		return empty
 	}
 	versionStamp := time.Now().Unix()
@@ -191,14 +222,14 @@ func (c *agentUpdateCoordinator) Fill(ctx context.Context, manual bool) store.Ag
 		}
 		enqueued++
 		state.Attempted++
+		dirty = true
 	}
 	if enqueued > 0 {
-		_ = c.server.store.SaveAgentFleetState(ctx, state)
-		log.Printf("agent fleet update enqueued=%d active_limit=%d target_build=%s", enqueued, limit, targetBuild)
+		log.Printf("agent fleet update enqueued=%d active_limit=%d target_build=%s rolling=%t", enqueued, limit, targetBuild, state.Rolling)
 		c.server.publishRealtime("agent-updates", "controller-update")
 	}
-	counts, _ := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
-	return counts
+	counts, countErr := c.server.store.CountAgentUpdateFleet(ctx, targetBuild)
+	return finish(counts, enqueued, countErr == nil)
 }
 
 func (c *agentUpdateCoordinator) fillRelayUpdates(ctx context.Context) {
@@ -244,7 +275,7 @@ func (s *Server) noteAgentUpdateOutcome(ctx context.Context, serverID int64, sta
 		return
 	}
 	if state.TargetBuild != targetBuild {
-		state = store.AgentFleetState{TargetBuild: targetBuild}
+		state = store.AgentFleetState{TargetBuild: targetBuild, Rolling: state.Rolling}
 	}
 	switch status {
 	case "succeeded":
@@ -305,6 +336,7 @@ func (s *Server) agentFleetStatus(ctx context.Context) (map[string]any, error) {
 		"target_build":          targetBuild,
 		"target_version":        version.AgentVersion,
 		"paused":                state.Paused,
+		"rolling":               state.Rolling,
 		"pause_reason":          state.LastPauseReason,
 		"attempted":             state.Attempted,
 		"succeeded":             state.Succeeded,

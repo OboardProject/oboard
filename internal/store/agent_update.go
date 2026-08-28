@@ -28,11 +28,13 @@ type AgentFleetCounts struct {
 	Running  int
 	Offline  int
 	Enrolled int
+	Outdated int
 }
 
 // AgentFleetState is the persisted coordinator pause/circuit-breaker snapshot.
 type AgentFleetState struct {
 	Paused          bool
+	Rolling         bool
 	TargetBuild     string
 	Attempted       int
 	Succeeded       int
@@ -59,7 +61,7 @@ func (s *Store) migrateAgentUpdateIndexes(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_agent_tasks_one_active_update on agent_tasks(server_id) where type='update_agent' and status in ('pending','running')`); err != nil {
 		return err
 	}
-	return nil
+	return s.ensureColumn(ctx, "agent_fleet_update_state", "rolling", `alter table agent_fleet_update_state add column rolling integer not null default 0`)
 }
 
 // ListAgentUpdateCandidates returns at most limit online enrolled servers whose
@@ -94,9 +96,10 @@ func (s *Store) CountAgentUpdateFleet(ctx context.Context, targetBuild string) (
 		coalesce(sum(case when agent_id is not null and agent_id<>'' then 1 else 0 end),0),
 		coalesce(sum(case when status=? and agent_id is not null and agent_id<>'' and coalesce(agent_build,'')=? then 1 else 0 end),0),
 		coalesce(sum(case when status=? and agent_id is not null and agent_id<>'' and coalesce(agent_build,'')<>? then 1 else 0 end),0),
-		coalesce(sum(case when status<>? and agent_id is not null and agent_id<>'' then 1 else 0 end),0)
-		from servers`, model.ServerOnline, targetBuild, model.ServerOnline, targetBuild, model.ServerOnline).Scan(
-		&counts.Total, &counts.Enrolled, &counts.Current, &counts.Pending, &counts.Offline,
+		coalesce(sum(case when status<>? and agent_id is not null and agent_id<>'' then 1 else 0 end),0),
+		coalesce(sum(case when agent_id is not null and agent_id<>'' and coalesce(agent_build,'')<>? then 1 else 0 end),0)
+		from servers`, model.ServerOnline, targetBuild, model.ServerOnline, targetBuild, model.ServerOnline, targetBuild).Scan(
+		&counts.Total, &counts.Enrolled, &counts.Current, &counts.Pending, &counts.Offline, &counts.Outdated,
 	); err != nil {
 		return AgentFleetCounts{}, err
 	}
@@ -205,8 +208,9 @@ func (s *Store) EnqueueUniqueAgentTask(ctx context.Context, v *model.AgentTask, 
 func (s *Store) GetAgentFleetState(ctx context.Context) (AgentFleetState, error) {
 	var state AgentFleetState
 	var paused int
+	var rolling int
 	var updated string
-	err := s.db.QueryRowContext(ctx, `select paused,target_build,attempted,succeeded,failed,last_pause_reason,updated_at from agent_fleet_update_state where id=1`).Scan(&paused, &state.TargetBuild, &state.Attempted, &state.Succeeded, &state.Failed, &state.LastPauseReason, &updated)
+	err := s.db.QueryRowContext(ctx, `select paused,rolling,target_build,attempted,succeeded,failed,last_pause_reason,updated_at from agent_fleet_update_state where id=1`).Scan(&paused, &rolling, &state.TargetBuild, &state.Attempted, &state.Succeeded, &state.Failed, &state.LastPauseReason, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentFleetState{}, nil
 	}
@@ -214,13 +218,14 @@ func (s *Store) GetAgentFleetState(ctx context.Context) (AgentFleetState, error)
 		return AgentFleetState{}, err
 	}
 	state.Paused = paused == 1
+	state.Rolling = rolling == 1
 	state.UpdatedAt = parseTime(updated)
 	return state, nil
 }
 
 func (s *Store) SaveAgentFleetState(ctx context.Context, state AgentFleetState) error {
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into agent_fleet_update_state(id,paused,target_build,attempted,succeeded,failed,last_pause_reason,updated_at) values(1,?,?,?,?,?,?,?) on conflict(id) do update set paused=excluded.paused,target_build=excluded.target_build,attempted=excluded.attempted,succeeded=excluded.succeeded,failed=excluded.failed,last_pause_reason=excluded.last_pause_reason,updated_at=excluded.updated_at`, boolInt(state.Paused), strings.TrimSpace(state.TargetBuild), state.Attempted, state.Succeeded, state.Failed, state.LastPauseReason, ts)
+	_, err := s.db.ExecContext(ctx, `insert into agent_fleet_update_state(id,paused,rolling,target_build,attempted,succeeded,failed,last_pause_reason,updated_at) values(1,?,?,?,?,?,?,?,?) on conflict(id) do update set paused=excluded.paused,rolling=excluded.rolling,target_build=excluded.target_build,attempted=excluded.attempted,succeeded=excluded.succeeded,failed=excluded.failed,last_pause_reason=excluded.last_pause_reason,updated_at=excluded.updated_at`, boolInt(state.Paused), boolInt(state.Rolling), strings.TrimSpace(state.TargetBuild), state.Attempted, state.Succeeded, state.Failed, state.LastPauseReason, ts)
 	return err
 }
 

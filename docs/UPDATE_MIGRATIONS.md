@@ -77,13 +77,13 @@
 - **类别：** SQLite schema / data backfill
 - **原因：** 大规模服务器下 Controller 更新与 Agent 滚动更新必须与服务器数量解耦：Online Backup、单一活跃更新运行、轻量候选查询、唯一 `update_agent` 任务。
 - **源状态：** 使用 `VACUUM INTO` 备份；无 `controller_update_runs` / `agent_fleet_update_state` / `agent_update_retries`；同一服务器可有多条活跃 `update_agent`；每分钟 `ListServers()` 扫描自动更新。
-- **目标状态：** Online Backup；至多一个非终态 Controller 更新运行；重复活跃 `update_agent` 被折叠后建立唯一索引；Fleet coordinator 按槽位滚动。
+- **目标状态：** Online Backup；至多一个非终态 Controller 更新运行；重复活跃 `update_agent` 被折叠后建立唯一索引；Fleet coordinator 按槽位滚动；`agent_fleet_update_state.rolling` 标记管理员一键滚动，任务完成后继续填槽，不依赖自动更新开关。
 - **实现位置：** `oboard/internal/store/backup.go`、`store.go` migrate、`agent_update.go`、`controller_update_run.go`；`oboard/internal/controller/agent_update_coordinator.go`
 - **更新脚本：** 进程启动 `migrate()` 执行 DDL 与重复任务折叠
-- **数据影响：** 为同一服务器保留最新一条活跃 `update_agent`，其余标为 failed/superseded；新建表与索引；不改 Agent 任务 payload。
-- **重复执行：** `CREATE IF NOT EXISTS` 与按 `newer.id` 折叠，幂等
+- **数据影响：** 为同一服务器保留最新一条活跃 `update_agent`，其余标为 failed/superseded；新建表与索引；为已有 fleet 状态表补 `rolling` 列（默认 0）；不改 Agent 任务 payload。
+- **重复执行：** `CREATE IF NOT EXISTS`、`ensureColumn(rolling)` 与按 `newer.id` 折叠，幂等
 - **失败行为：** 迁移失败阻止 Store 打开
-- **回归测试：** `TestAgentUpdateIndexesExist`、`TestEnqueueUniqueAgentTaskSuppressesDuplicates`、`TestListAgentUpdateCandidatesIsLightweight`、`TestAgentFleetCoordinatorRespectsConcurrency`
+- **回归测试：** `TestAgentUpdateIndexesExist`、`TestAgentFleetRollingColumnMigratesFromPreviousSchema`、`TestEnqueueUniqueAgentTaskSuppressesDuplicates`、`TestListAgentUpdateCandidatesIsLightweight`、`TestAgentFleetCoordinatorRespectsConcurrency`、`TestOperatorFleetRollContinuesWithoutAutoUpdate`
 - **移除条件：** 产品声明并实施最老可直接升级版本，且该版本已包含本 schema；备份恢复拒绝更老 schema
 - **移除状态：** 生效中
 

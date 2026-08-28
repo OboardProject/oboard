@@ -66,6 +66,76 @@ func TestAgentFleetCoordinatorRespectsConcurrency(t *testing.T) {
 	}
 }
 
+func TestOperatorFleetRollContinuesWithoutAutoUpdate(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.SetSettings(ctx, map[string]string{
+		agentAutoUpdateSetting: "false",
+		"controller_url":       "https://controller.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldBuild := version.AgentBuild
+	version.AgentBuild = "20260828010101"
+	t.Cleanup(func() { version.AgentBuild = oldBuild })
+	for i := 0; i < 10; i++ {
+		server := &model.Server{Name: fmt.Sprintf("node-%d", i), Status: model.ServerOnline, AgentID: fmt.Sprintf("agent-%d", i), AgentBuild: "20260101000000"}
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := newTestServer(db, "test-secret", "")
+	if got := s.agentUpdates.Fill(ctx, false); got.Created != 0 {
+		t.Fatalf("auto-update off Fill(false) created = %d, want 0", got.Created)
+	}
+	first := s.agentUpdates.Fill(ctx, true)
+	if first.Created != agentUpdateAutoConcurrencyMin || !first.Rolling {
+		t.Fatalf("operator fill = created %d rolling %t, want created %d rolling true", first.Created, first.Rolling, agentUpdateAutoConcurrencyMin)
+	}
+	active, err := db.CountActiveAgentUpdates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active != agentUpdateAutoConcurrencyMin {
+		t.Fatalf("active after operator fill = %d, want %d", active, agentUpdateAutoConcurrencyMin)
+	}
+	tasks, err := db.ListTasksByServer(ctx, 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("server 1 tasks = %#v", tasks)
+	}
+	payload, _ := json.Marshal(map[string]any{"message": "updated"})
+	if err := db.CompleteTask(ctx, tasks[0].ID, "succeeded", string(payload)); err != nil {
+		t.Fatal(err)
+	}
+	node, err := db.GetServer(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.AgentBuild = version.AgentBuild
+	if err := db.UpdateServerRuntimeState(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	s.noteAgentUpdateOutcome(ctx, 1, "succeeded", "", version.AgentBuild)
+	refill := s.agentUpdates.Fill(ctx, false)
+	if refill.Created != 1 || !refill.Rolling {
+		t.Fatalf("refill without auto-update = created %d rolling %t, want created 1 rolling true", refill.Created, refill.Rolling)
+	}
+	active, err = db.CountActiveAgentUpdates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active != agentUpdateAutoConcurrencyMin {
+		t.Fatalf("active after refill = %d, want %d", active, agentUpdateAutoConcurrencyMin)
+	}
+}
+
 func TestAgentFleetCircuitBreakerPauses(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
 	if err != nil {

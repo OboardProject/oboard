@@ -203,10 +203,18 @@ func (s *Server) registerTaskTriggerOperations() {
 		if s.agentUpdates == nil {
 			return nil, errors.New("Agent 更新协调器不可用")
 		}
-		counts := s.agentUpdates.Fill(ctx, true)
+		result := s.agentUpdates.Fill(ctx, true)
 		s.agentUpdates.Wake()
-		summary := map[string]int{"total": counts.Enrolled, "created": counts.Running, "existing": 0, "skipped": counts.Offline, "failed": 0}
-		return map[string]any{"summary": summary, "created_count": summary["created"]}, nil
+		created := result.Created
+		if created < 0 {
+			created = 0
+		}
+		existing := result.Running - created
+		if existing < 0 {
+			existing = 0
+		}
+		summary := map[string]int{"total": result.Enrolled, "created": created, "existing": existing, "skipped": result.Offline, "failed": 0}
+		return map[string]any{"summary": summary, "created_count": created}, nil
 	})
 
 	s.automation.RegisterValidator("configuration_sync.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {

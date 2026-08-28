@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -48,7 +49,7 @@ func TestListAgentUpdateCandidatesIsLightweight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if counts.Current != 1 || counts.Offline != 1 || counts.Pending < 16 {
+	if counts.Current != 1 || counts.Offline != 1 || counts.Pending < 16 || counts.Outdated != 81 {
 		t.Fatalf("fleet counts = %#v", counts)
 	}
 }
@@ -76,6 +77,64 @@ func TestEnqueueUniqueAgentTaskSuppressesDuplicates(t *testing.T) {
 	}
 }
 
+func TestAgentFleetRollingColumnMigratesFromPreviousSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fleet-rolling.sqlite")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := db.SaveAgentFleetState(ctx, AgentFleetState{TargetBuild: "old", Attempted: 3, Succeeded: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`alter table agent_fleet_update_state drop column rolling`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	state, err := db.GetAgentFleetState(ctx)
+	if err != nil || state.Rolling || state.TargetBuild != "old" || state.Attempted != 3 || state.Succeeded != 1 {
+		t.Fatalf("migrated fleet state = %#v err=%v", state, err)
+	}
+	state.Rolling = true
+	if err := db.SaveAgentFleetState(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetAgentFleetState(ctx)
+	if err != nil || !got.Rolling || got.Attempted != 3 {
+		t.Fatalf("saved rolling state = %#v err=%v", got, err)
+	}
+}
+
+func TestAgentFleetStatePersistsRolling(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.SaveAgentFleetState(ctx, AgentFleetState{Rolling: true, TargetBuild: "20260828010101", Attempted: 4}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.GetAgentFleetState(ctx)
+	if err != nil || !state.Rolling || state.TargetBuild != "20260828010101" || state.Attempted != 4 {
+		t.Fatalf("fleet state = %#v err=%v", state, err)
+	}
+}
+
 func TestAgentUpdateIndexesExist(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -90,6 +149,13 @@ func TestAgentUpdateIndexesExist(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("missing index %s", name)
 		}
+	}
+	var rolling int
+	if err := db.db.QueryRow(`select count(*) from pragma_table_info('agent_fleet_update_state') where name='rolling'`).Scan(&rolling); err != nil {
+		t.Fatal(err)
+	}
+	if rolling != 1 {
+		t.Fatal("missing agent_fleet_update_state.rolling")
 	}
 }
 

@@ -4487,22 +4487,32 @@ func (s *Server) agentsUpdateAll(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("Agent 更新协调器不可用"), http.StatusServiceUnavailable)
 		return
 	}
-	counts := s.agentUpdates.Fill(r.Context(), true)
+	result := s.agentUpdates.Fill(r.Context(), true)
 	s.agentUpdates.Wake()
-	auditReq(s, r, "update", "agent", fmt.Sprintf("fleet:%d", counts.Running))
+	created := result.Created
+	if created < 0 {
+		created = 0
+	}
+	existing := result.Running - created
+	if existing < 0 {
+		existing = 0
+	}
+	auditReq(s, r, "update", "agent", fmt.Sprintf("fleet:%d", created))
 	write(w, 202, map[string]any{
 		"summary": map[string]int{
-			"total":    counts.Enrolled,
-			"created":  counts.Running,
-			"existing": 0,
-			"skipped":  counts.Offline,
+			"total":    result.Enrolled,
+			"created":  created,
+			"existing": existing,
+			"skipped":  result.Offline,
 			"failed":   0,
 		},
-		"running":        counts.Running,
-		"pending":        counts.Pending,
-		"offline":        counts.Offline,
-		"current":        counts.Current,
-		"config_version": time.Now().Unix(),
+		"running":         result.Running,
+		"pending":         result.Pending,
+		"offline":         result.Offline,
+		"current":         result.Current,
+		"rolling":         result.Rolling,
+		"max_concurrency": result.Limit,
+		"config_version":  time.Now().Unix(),
 	})
 }
 
