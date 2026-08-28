@@ -562,6 +562,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.seedNodePresets(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateRemoveVLESSTLSVisionPreset(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateAnyTLSPaddingPresets(ctx); err != nil {
 		return err
 	}

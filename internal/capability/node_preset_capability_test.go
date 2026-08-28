@@ -27,6 +27,9 @@ func TestNodePresetCapabilitiesAreManagementOnlyAndExecutable(t *testing.T) {
 	if !jsonStringContains(raw, `"kind"`) || !jsonStringContains(raw, `"vless-reality"`) || !jsonStringContains(raw, `"hy2-salamander"`) || !jsonStringContains(raw, `"anytls-large-padding"`) || !jsonStringContains(raw, `"config_json"`) {
 		t.Fatalf("node_presets.create schema lacks template fields: %s", raw)
 	}
+	if jsonStringContains(raw, `"vless-tls-vision"`) {
+		t.Fatalf("node_presets.create still exposes removed kind vless-tls-vision: %s", raw)
+	}
 	var input map[string]any
 	if err := json.Unmarshal(create.InputSchema, &input); err != nil {
 		t.Fatal(err)

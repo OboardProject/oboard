@@ -182,4 +182,7 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 	if strings.Contains(raw, "_guidance") {
 		t.Fatalf("inbounds.create schema leaked an internal guidance property: %s", raw)
 	}
+	if strings.Contains(raw, "vless-tls-vision") {
+		t.Fatalf("inbounds.create still exposes removed kind vless-tls-vision: %s", raw)
+	}
 }

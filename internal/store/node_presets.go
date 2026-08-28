@@ -38,7 +38,6 @@ const (
 
 var builtinNodePresets = []nodePresetSeed{
 	{Name: "VLESS Reality Vision", Protocol: "vless", Kind: "vless-reality", DefaultPort: 443, Remark: "TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com", ConfigJSON: `{"flow":"xtls-rprx-vision","reality_domains":["gateway.icloud.com","cdn.icloud-content.com","www.tesla.com","www.nvidia.com","www.sony.com","www.mozilla.org"],"tls":{"enabled":true,"server_name":"gateway.icloud.com","reality":{"enabled":true,"handshake":{"server":"gateway.icloud.com","server_port":443}}},"tcp_fast_open":true}`},
-	{Name: "VLESS TLS Vision", Protocol: "vless", Kind: "vless-tls-vision", DefaultPort: 443, Remark: "TCP + TLS + Vision，需要证书", ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true},"tcp_fast_open":true}`},
 	{Name: "VLESS WebSocket", Protocol: "vless", Kind: "vless-ws", DefaultPort: 443, Remark: "WebSocket + TLS，需要证书", ConfigJSON: `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}},"tcp_fast_open":true}`},
 	{Name: "VLESS TCP", Protocol: "vless", Kind: "vless-tcp", DefaultPort: 443, Remark: "无 TLS，适合内网或测试", ConfigJSON: `{"tcp_fast_open":true}`},
 	{Name: "Hysteria2 标准", Protocol: "hy2", Kind: "hy2-tls", DefaultPort: 443, Remark: "HY2 标准模式，需要证书", ConfigJSON: `{"tls":{"enabled":true}}`},
@@ -72,6 +71,100 @@ func (s *Store) seedNodePresets(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, `insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at)
 			select ?,?,?,?,?,?,1,1,?,? where not exists (select 1 from node_presets where kind=? and builtin=1)`,
 			seed.Name, seed.Protocol, seed.Kind, seed.ConfigJSON, seed.DefaultPort, seed.Remark, ts, ts, seed.Kind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const removedVLESSTLSVisionKind = "vless-tls-vision"
+
+func (s *Store) migrateRemoveVLESSTLSVisionPreset(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `select id from node_presets where kind=?`, removedVLESSTLSVisionKind)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if err := s.stripNodePresetReferences(ctx, id); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `delete from node_presets where kind=?`, removedVLESSTLSVisionKind)
+	return err
+}
+
+func (s *Store) stripNodePresetReferences(ctx context.Context, presetID int64) error {
+	rows, err := s.db.QueryContext(ctx, `select id, config_json from inbounds where config_json like '%"node_preset_id":'||?||'%' or config_json like '%"node_preset_id": '||?||'%'`, presetID, presetID)
+	if err != nil {
+		return err
+	}
+	type inboundRow struct {
+		id         int64
+		configJSON string
+	}
+	var toUpdate []inboundRow
+	for rows.Next() {
+		var item inboundRow
+		if err := rows.Scan(&item.id, &item.configJSON); err != nil {
+			rows.Close()
+			return err
+		}
+		toUpdate = append(toUpdate, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range toUpdate {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(item.configJSON), &cfg); err != nil || cfg == nil {
+			continue
+		}
+		value, ok := cfg["node_preset_id"]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			if int64(typed) != presetID {
+				continue
+			}
+		case json.Number:
+			parsed, err := typed.Int64()
+			if err != nil || parsed != presetID {
+				continue
+			}
+		default:
+			if fmt.Sprint(value) != fmt.Sprint(presetID) {
+				continue
+			}
+		}
+		delete(cfg, "node_preset_id")
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `update inbounds set config_json=?, updated_at=? where id=?`, string(encoded), now(), item.id); err != nil {
 			return err
 		}
 	}
@@ -498,7 +591,6 @@ func (s *Store) RestoreBuiltinNodePresets(ctx context.Context) (int64, error) {
 
 var nodePresetKinds = map[string]string{
 	"vless-reality":        "vless",
-	"vless-tls-vision":     "vless",
 	"vless-ws":             "vless",
 	"vless-tcp":            "vless",
 	"hy2-tls":              "hy2",

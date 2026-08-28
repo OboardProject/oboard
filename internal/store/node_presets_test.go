@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,10 +39,13 @@ func TestNodePresetsSeededAndProtected(t *testing.T) {
 		}
 		kinds[preset.Kind] = preset
 	}
-	for _, kind := range []string{"vless-reality", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-2022-128", "mieru-basic", "socks5-auth"} {
+	for _, kind := range []string{"vless-reality", "vless-ws", "vless-tcp", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-2022-128", "mieru-basic", "socks5-auth"} {
 		if _, exists := kinds[kind]; !exists {
 			t.Fatalf("missing builtin kind %s", kind)
 		}
+	}
+	if _, exists := kinds["vless-tls-vision"]; exists {
+		t.Fatal("removed builtin kind vless-tls-vision is still seeded")
 	}
 	assertNodePresetPadding(t, kinds["anytls-basic"], core.AnyTLSBalancedPaddingScheme())
 	assertNodePresetPadding(t, kinds["anytls-large-padding"], core.AnyTLSLargePaddingScheme())
@@ -293,6 +297,92 @@ func TestNormalizeNodePresetRejectsInvalidAnyTLSPadding(t *testing.T) {
 	preset := model.NodePreset{Name: "坏填充", Protocol: "anytls", Kind: "anytls-basic", ConfigJSON: `{"padding_scheme":["stop=2","2=64-128"]}`, DefaultPort: 443}
 	if err := NormalizeNodePreset(&preset); err == nil {
 		t.Fatal("expected invalid AnyTLS padding to fail")
+	}
+}
+
+func TestRemoveVLESSTLSVisionPresetFromLegacyBuiltin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oboard.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.CreateServer(ctx, &model.Server{Name: "edge", AgentID: "agent-tls-vision", ChainSecret: "chain-secret", ListenIP: "0.0.0.0", Status: model.ServerOnline}); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := s.ListServers(ctx)
+	if err != nil || len(servers) == 0 {
+		t.Fatalf("server: %v", err)
+	}
+	if err := s.CreateInbound(ctx, &model.Inbound{ServerID: servers[0].ID, Name: "legacy-tls", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := db.Exec(`insert into node_presets(name,protocol,kind,config_json,default_port,remark,builtin,enabled,created_at,updated_at) values(?,?,?,?,?,?,1,1,?,?)`, "VLESS TLS Vision", "vless", "vless-tls-vision", `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`, 443, "TCP + TLS + Vision，需要证书", builtinNodePresetSeedTimestamp, builtinNodePresetSeedTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presetID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`update inbounds set config_json=?`, fmt.Sprintf(`{"flow":"xtls-rprx-vision","tls":{"enabled":true},"node_preset_id":%d}`, presetID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	items, err := reopened.ListNodePresets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Kind == "vless-tls-vision" {
+			t.Fatalf("legacy vless-tls-vision preset was not removed: %#v", item)
+		}
+	}
+	inbounds, err := reopened.ListInbounds(ctx)
+	if err != nil || len(inbounds) != 1 {
+		t.Fatalf("inbounds=%#v err=%v", inbounds, err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(inbounds[0].ConfigJSON), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := cfg["node_preset_id"]; exists {
+		t.Fatalf("inbound still references removed preset: %#v", cfg)
+	}
+	if cfg["flow"] != "xtls-rprx-vision" {
+		t.Fatalf("inbound protocol config was rewritten: %#v", cfg)
+	}
+	count := len(items)
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	againStore, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer againStore.Close()
+	again, err := againStore.ListNodePresets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != count {
+		t.Fatalf("removal is not idempotent: %d -> %d", count, len(again))
 	}
 }
 

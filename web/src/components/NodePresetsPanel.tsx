@@ -67,7 +67,6 @@ const anyTLSLightPaddingScheme = ['stop=5', '0=16-80', '1=120-320', '2=320-620,c
 
 export const nodePresetKinds = [
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision，内置握手域名模板，默认 gateway.icloud.com', defaultPort: 443, config: { flow: 'xtls-rprx-vision', reality_domains: [...builtinRealityDomains], tls: { enabled: true, server_name: 'gateway.icloud.com', reality: { enabled: true, handshake: { server: 'gateway.icloud.com', server_port: 443 } } }, tcp_fast_open: true } },
-  { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision，需要证书', defaultPort: 443, config: { flow: 'xtls-rprx-vision', tls: { enabled: true }, tcp_fast_open: true } },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，需要证书', defaultPort: 443, config: { tls: { enabled: true }, transport: { type: 'ws', path: '/vless', headers: {} }, tcp_fast_open: true } },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443, config: { tcp_fast_open: true } },
 	{ id: 'hy2-tls', protocol: 'hy2', label: 'Hysteria2 标准', description: 'HY2 标准模式，需要证书', defaultPort: 443, config: { tls: { enabled: true } } },

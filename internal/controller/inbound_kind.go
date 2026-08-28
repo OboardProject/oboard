@@ -14,7 +14,6 @@ import (
 
 var inboundKindProtocols = map[string]model.Protocol{
 	"vless-reality":        model.ProtocolVLESS,
-	"vless-tls-vision":     model.ProtocolVLESS,
 	"vless-ws":             model.ProtocolVLESS,
 	"vless-tcp":            model.ProtocolVLESS,
 	"hy2-tls":              model.ProtocolHY2,
@@ -73,12 +72,6 @@ func applyNonRealityInboundKindDefaults(v *model.Inbound) error {
 		return &core.ConfigFieldError{Path: "config_json", Problem: err.Error()}
 	}
 	switch v.Kind {
-	case "vless-tls-vision":
-		cfg["flow"] = "xtls-rprx-vision"
-		tls := ensureObject(cfg, "tls")
-		tls["enabled"] = true
-		delete(tls, "reality")
-		v.TLS = true
 	case "vless-ws":
 		tls := ensureObject(cfg, "tls")
 		tls["enabled"] = true
@@ -343,7 +336,7 @@ func inferredInboundKind(v model.Inbound) string {
 			return "vless-ws"
 		}
 		if tls["enabled"] == true {
-			return "vless-tls-vision"
+			return ""
 		}
 		return "vless-tcp"
 	}

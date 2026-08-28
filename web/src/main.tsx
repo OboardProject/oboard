@@ -15155,7 +15155,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const [presetID, setPresetID] = useState(() => inferInboundPreset(protocol, draft.config_json))
   const selectedPreset = inboundPreset(presetID)
   const presetProtocol = selectedPreset.protocol
-  const presetOptions = inboundPresetsForProtocol(presetProtocol)
+  const presetOptions = inboundPresetsForProtocol(presetProtocol, presetID)
   const cfg = parseConfig(draft.config_json) || {}
   const tlsForReality = objectConfig(cfg.tls)
   const dnsCredentials: DNSCredential[] = data.dns_credentials || []
@@ -15757,7 +15757,7 @@ function controlledInboundPayload(draft: any) {
   for (const field of ['__edit', '__graphPosition', '__port_manual', '__custom_sni', '__rotate_reality_key', 'kind', 'reality', 'rotate_reality_key']) delete body[field]
   if (editing) delete body.anytls_padding
   const kind = inferInboundPreset(body.protocol as Protocol, body.config_json || '{}')
-  body.kind = kind
+  if (inboundPresets.some(item => item.id === kind)) body.kind = kind
   if (kind !== 'vless-reality') return { __graphPosition, body }
 
   const cfg = parseConfig(body.config_json) || {}
@@ -21131,7 +21131,6 @@ const anyTLSLightPaddingScheme = [
 ] as const
 
 const inboundPresets: InboundPreset[] = [
-  { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS Vision', description: 'TCP + TLS + Vision', defaultPort: 443 },
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision', defaultPort: 443 },
   { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS', defaultPort: 443 },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443 },
@@ -21148,6 +21147,8 @@ const inboundPresets: InboundPreset[] = [
   { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080 },
   { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '密码认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]
+
+const leftoverVLESSTLSPreset: InboundPreset = { id: 'vless-tls-vision', protocol: 'vless', label: 'VLESS TLS', description: '已有入口：TCP + TLS + Vision', defaultPort: 443 }
 
 const shadowsocksMethods = [
   { value: 'aes-128-gcm', label: 'SS 128' },
@@ -21201,11 +21202,15 @@ function randomBase64(byteLength: number) {
 }
 
 function inboundPreset(id: string) {
-  return inboundPresets.find(x => x.id === id) || inboundPresets[0]
+  return inboundPresets.find(x => x.id === id) || (id === leftoverVLESSTLSPreset.id ? leftoverVLESSTLSPreset : inboundPresets[0])
 }
 
-function inboundPresetsForProtocol(protocol: Protocol) {
-  return inboundPresets.filter(x => x.protocol === protocol)
+function inboundPresetsForProtocol(protocol: Protocol, currentID?: string) {
+  const list = inboundPresets.filter(x => x.protocol === protocol)
+  if (protocol === 'vless' && currentID === leftoverVLESSTLSPreset.id) {
+    return [leftoverVLESSTLSPreset, ...list]
+  }
+  return list
 }
 
 function defaultInboundPreset(protocol: Protocol) {

@@ -623,8 +623,6 @@ func defaultInboundPresetConfig(protocol string) string {
 
 func defaultInboundKindConfig(kind, protocol string) string {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "vless-tls-vision":
-		return `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`
 	case "vless-ws":
 		return `{"tls":{"enabled":true},"transport":{"type":"ws","path":"/vless","headers":{}}}`
 	case "vless-tcp":
@@ -661,7 +659,7 @@ func defaultInboundKind(protocol string) string {
 
 func inboundKindUsesManagedCertificate(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "vless-tls-vision", "vless-ws", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding":
+	case "vless-ws", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding":
 		return true
 	default:
 		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "anytls-")

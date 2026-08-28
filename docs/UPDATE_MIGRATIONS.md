@@ -43,6 +43,7 @@
 
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
+| `controller-db-20260828-remove-vless-tls-vision` | Controller | SQLite seed / data backfill | `dev-pending` | 待发布 | 生效中 | - |
 | `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-4d9ba516be1d` | 待发布 | 生效中 | - |
 | `controller-db-20260812-connectivity-probe-target` | Controller | SQLite schema | `dev-26cd0a1013d1` | 待发布 | 生效中 | - |
 | `controller-db-20260812-latency-probes` | Controller | SQLite schema | `dev-490892a0ae99` | 待发布 | 生效中 | - |
@@ -66,6 +67,26 @@
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260828-remove-vless-tls-vision
+
+- **引入日期：** 2026-08-28
+- **引入提交：** pending
+- **引入版本：** `dev-pending`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite seed / data backfill
+- **原因：** 内置入口/节点预设不再提供「VLESS TLS Vision」（TCP + TLS + Vision，需要证书）。VLESS 证书 TLS 入口只保留 WebSocket；Reality Vision 与无 TLS 的 TCP 不受影响。
+- **源状态：** `node_presets` 存在 `kind='vless-tls-vision'` 的内置或自定义行；入口 `config_json` 可能引用其 `node_preset_id`；MCP/REST `kind` 枚举与面板创建列表包含该 kind。
+- **目标状态：** 种子、kind 枚举、MCP schema 与创建选择器不再包含 `vless-tls-vision`；打开数据库时删除该 kind 的预设行，并从入口 `config_json` 去掉对应 `node_preset_id`；既有 VLESS+TLS+Vision 入口的 `flow`/`tls` 保持不变，GET 不再推断该 kind。
+- **实现位置：** `internal/store/node_presets.go`（`migrateRemoveVLESSTLSVisionPreset`）、`store.go`；`internal/controller/inbound_kind.go`、`mcp_recipes.go`、`mcp_catalog.go`、`mcp_resources.go`、`mcp_prompts.go`；`internal/capability/catalog.go`、`catalog_network.go`；`web/src/main.tsx`、`web/src/components/NodePresetsPanel.tsx`。
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时在补种内置预设之后删除该 kind。
+- **数据影响：** 删除 `kind='vless-tls-vision'` 的预设行；剥离引用这些行的入口 `node_preset_id`；不改写 `flow`、TLS 或证书字段。新建入口无法再选择该 kind；创建/PATCH 提交 `kind=vless-tls-vision` 被拒绝。
+- **重复执行：** 无匹配行时立即返回；剥离与删除按 kind/id 判断。重复打开不会改写已剥离的入口 JSON。
+- **失败行为：** 查询、剥离或删除失败会阻止 Controller 打开数据库。
+- **回归测试：** `TestRemoveVLESSTLSVisionPresetFromLegacyBuiltin` 从真实旧内置行和带 `node_preset_id` 的入口打开数据库，验证预设删除、引用剥离、协议配置保留与幂等；`TestNodePresetsSeededAndProtected`、`TestApplyInboundKindRejectsVLESSTLSVision`、`TestInferredInboundKindOmitsVLESSTLSVision`、`TestInboundSchemaCarriesProtocolGuidance`、`TestNodePresetCapabilitiesAreManagementOnlyAndExecutable` 覆盖当前种子、kind 拒绝与 MCP 枚举。
+- **移除条件：** 在通用删除门槛之外，最老支持数据库和所有可恢复备份都不得再含 `vless-tls-vision` 预设行；当前种子、kind 拒绝与 MCP 枚举测试继续保留。
+- **移除状态：** 生效中。
 
 ### controller-db-20260828-update-fleet
 

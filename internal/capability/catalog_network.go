@@ -80,7 +80,7 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"obfs_host": stringValue, "mode": map[string]any{"type": "string", "enum": []string{"default", "unshaped", "unsafe-raw"}},
 		"reuse": boolValue, "tcp_fast_open": boolValue, "remark": stringValue, "enabled": boolValue,
 	}, "name", "version", "psk")
-	nodePresetKinds := []string{"vless-reality", "vless-tls-vision", "vless-ws", "vless-tcp", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "socks5-auth"}
+	nodePresetKinds := []string{"vless-reality", "vless-ws", "vless-tcp", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding", "ss-aes-128-gcm", "ss-aes-256-gcm", "ss-2022-128", "ss-2022-256", "mieru-basic", "socks5-auth"}
 	nodePreset := closedObject(map[string]any{
 		"id": positiveID, "name": stringValue, "protocol": stringValue,
 		"kind":        map[string]any{"type": "string", "enum": nodePresetKinds},

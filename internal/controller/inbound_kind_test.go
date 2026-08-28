@@ -2,11 +2,34 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
+
+func TestApplyInboundKindRejectsVLESSTLSVision(t *testing.T) {
+	inbound := model.Inbound{Kind: "vless-tls-vision", Protocol: model.ProtocolVLESS, ConfigJSON: `{"tls":{"enabled":true}}`}
+	err := applyInboundKindDefaults(&inbound, nil)
+	if err == nil {
+		t.Fatal("expected vless-tls-vision to be rejected")
+	}
+	var fieldErr *core.ConfigFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Path != "kind" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInferredInboundKindOmitsVLESSTLSVision(t *testing.T) {
+	if got := inferredInboundKind(model.Inbound{Protocol: model.ProtocolVLESS, ConfigJSON: `{"flow":"xtls-rprx-vision","tls":{"enabled":true}}`}); got != "" {
+		t.Fatalf("tls-only vless kind = %q, want empty", got)
+	}
+	if got := inferredInboundKind(model.Inbound{Protocol: model.ProtocolVLESS, ConfigJSON: `{}`}); got != "vless-tcp" {
+		t.Fatalf("plain vless kind = %q", got)
+	}
+}
 
 func TestApplyInboundKindHY2Defaults(t *testing.T) {
 	standard := model.Inbound{Kind: "hy2-tls", Protocol: model.ProtocolHY2, ConfigJSON: `{}`}
