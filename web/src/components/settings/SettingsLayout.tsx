@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { Switch } from '../ui/switch'
 
@@ -80,9 +80,61 @@ type SettingsDisclosureProps = {
 }
 
 export function SettingsDisclosure({ title, description, summary, children, defaultOpen = false, className = '' }: SettingsDisclosureProps) {
+  const detailsRef = useRef<HTMLDetailsElement>(null)
+  const isAnimating = useRef(false)
+
+  const handleSummaryClick = (e: React.MouseEvent<HTMLElement>) => {
+    const details = detailsRef.current
+    if (!details || typeof details.animate !== 'function') return
+
+    e.preventDefault()
+    if (isAnimating.current) return
+
+    const summaryEl = details.querySelector('summary')
+    const bodyEl = details.querySelector('.settings-disclosure-body') as HTMLElement | null
+    const summaryHeight = summaryEl ? summaryEl.offsetHeight : 54
+
+    if (details.open) {
+      isAnimating.current = true
+      const startHeight = details.offsetHeight
+      const endHeight = summaryHeight
+
+      const animation = details.animate(
+        [
+          { height: `${startHeight}px`, overflow: 'hidden' },
+          { height: `${endHeight}px`, overflow: 'hidden' },
+        ],
+        { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+      )
+
+      animation.onfinish = () => {
+        details.open = false
+        isAnimating.current = false
+      }
+    } else {
+      details.open = true
+      isAnimating.current = true
+      const bodyHeight = bodyEl ? bodyEl.offsetHeight : 0
+      const startHeight = summaryHeight
+      const endHeight = summaryHeight + bodyHeight
+
+      const animation = details.animate(
+        [
+          { height: `${startHeight}px`, overflow: 'hidden' },
+          { height: `${endHeight}px`, overflow: 'hidden' },
+        ],
+        { duration: 250, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+      )
+
+      animation.onfinish = () => {
+        isAnimating.current = false
+      }
+    }
+  }
+
   return (
-    <details className={`settings-disclosure${className ? ` ${className}` : ''}`} open={defaultOpen || undefined}>
-      <summary>
+    <details ref={detailsRef} className={`settings-disclosure${className ? ` ${className}` : ''}`} open={defaultOpen || undefined}>
+      <summary onClick={handleSummaryClick}>
         <span className="settings-disclosure-copy">
           <strong>{title}</strong>
           {description && <small>{description}</small>}

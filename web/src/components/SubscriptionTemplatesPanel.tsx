@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { FileCode2, RotateCcw } from 'lucide-react'
 import { useDialogs } from './ui/dialog-context'
 import { Dialog } from './ui/dialog'
-import { SettingsGroup } from './settings/SettingsLayout'
+import { SettingsDisclosure } from './settings/SettingsLayout'
 
 export type SubscriptionClientTemplate = {
   format: string
@@ -100,21 +100,30 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
     await refresh()
   })
 
+  const customCount = items.filter(item => item.source === 'custom').length
+  const summaryText = items.length ? `${items.length} 个模板${customCount > 0 ? ` · ${customCount} 个自定义` : ''}` : undefined
+
   return (
-    <SettingsGroup title="客户端模板" description="模板只描述配置外壳和分组结构。SSH、Snell、Mieru 等协议字段仍由系统转换，不会进入模板脚本。">
-      {loading ? <p className="muted">正在加载模板</p> : (
-        <div className="subscription-template-list">
-          {items.map(item => (
-            <button key={item.format} type="button" className="subscription-template-row" onClick={() => openEditor(item)}>
-              <div>
-                <strong>{item.label}</strong>
-                <span className="muted">{item.format} · {item.source === 'custom' ? '自定义' : '系统'} · revision {item.revision || 0}</span>
-              </div>
-              <span className={`status-pill ${item.source === 'custom' ? 'warning' : 'ok'}`}>{item.source === 'custom' ? (item.builtin_updated ? '基于旧系统模板' : '自定义') : '系统默认'}</span>
-            </button>
-          ))}
-        </div>
-      )}
+    <>
+      <SettingsDisclosure
+        title="客户端模板"
+        description="模板只描述配置外壳和分组结构。SSH、Snell、Mieru 等协议字段仍由系统转换，不会进入模板脚本。"
+        summary={summaryText}
+      >
+        {loading ? <p className="muted" style={{ margin: '14px 0 0' }}>正在加载模板...</p> : (
+          <div className="subscription-template-list">
+            {items.map(item => (
+              <button key={item.format} type="button" className="subscription-template-row" onClick={() => openEditor(item)}>
+                <div>
+                  <strong>{item.label}</strong>
+                  <span className="muted">{item.format} · {item.source === 'custom' ? '自定义' : '系统'} · revision {item.revision || 0}</span>
+                </div>
+                <span className={`status-pill ${item.source === 'custom' ? 'warning' : 'ok'}`}>{item.source === 'custom' ? (item.builtin_updated ? '基于旧系统模板' : '自定义') : '系统默认'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </SettingsDisclosure>
       {editing && (
         <Dialog isOpen={Boolean(editing)} onClose={() => setEditing(null)} title={`${editing.label} 模板`} size="xl">
           <div className="subscription-template-editor">
@@ -132,6 +141,6 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
           </div>
         </Dialog>
       )}
-    </SettingsGroup>
+    </>
   )
 }

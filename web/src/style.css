@@ -23005,6 +23005,22 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .settings-disclosure-body > .settings-row:first-child { padding-top: 14px; }
 .settings-disclosure-body > .form { padding-top: 14px; }
 
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+  .settings-disclosure::details-content {
+    opacity: 0;
+    block-size: 0;
+    overflow-y: clip;
+    transition: content-visibility 0.24s allow-discrete, opacity 0.22s ease, block-size 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .settings-disclosure[open]::details-content {
+    opacity: 1;
+    block-size: auto;
+  }
+}
+
 .settings-shell .ui-segmented-select {
   min-width: min(100%, calc(var(--segment-count, 2) * 92px));
   width: max-content;
@@ -24153,6 +24169,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .subscription-template-list {
   display: grid;
   gap: 8px;
+  padding-top: 14px;
 }
 
 .subscription-template-row {
@@ -24163,21 +24180,42 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid, var(--surface));
+  color: var(--text-primary);
+  font-weight: 400;
   text-align: left;
+  box-shadow: none;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease;
 }
 
 .subscription-template-row:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--bg-card-hover, var(--surface-2));
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.subscription-template-row:active {
+  transform: scale(0.995);
+}
+
+.subscription-template-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .subscription-template-row strong {
   display: block;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
 }
 
 .subscription-template-row .muted {
   font-size: 12px;
+  color: var(--text-muted);
 }
 
 .subscription-template-editor {
