@@ -174,7 +174,7 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 		t.Fatalf("inbounds.create description lacks async certificate guidance: %q", descriptor.Description)
 	}
 	raw := string(descriptor.InputSchema)
-	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"anytls_padding"`, `"balanced_v1"`, `"light_v1"`, `"examples"`, `"gateway.icloud.com"`, `"anytls-basic"`, `"oc.example.com"`, `"dns_domain"`, `"certificate_mode"`} {
+	for _, fragment := range []string{`"kind"`, `"vless-reality"`, `"hy2-salamander"`, `"reality"`, `"handshake_server"`, `"rotate_reality_key"`, `"anytls_padding"`, `"balanced_v1"`, `"light_v1"`, `"examples"`, `"gateway.icloud.com"`, `"anytls-basic"`, `"oc.example.com"`, `"dns_domain"`, `"certificate_mode"`, `missing_dns_credential`, `available_credentials`} {
 		if !strings.Contains(raw, fragment) {
 			t.Fatalf("inbounds.create schema lacks %s: %s", fragment, raw)
 		}

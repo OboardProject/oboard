@@ -256,6 +256,7 @@ func (s *Server) mcpBootstrapContext(ctx context.Context) (map[string]any, error
 		"inventory":                map[string]any{"servers_total": servers, "servers_online": online},
 		"fast_path":                map[string]any{"primary_tool": "oboard_task", "commit_tool": "oboard_commit_task", "advanced_tools_only_after": "fallback_required"},
 		"workflow_rules":           map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false, "shell_supported": false, "admin_deletion_supported": false, "risk4_auto_approval": false},
+		"dns":                      s.dnsBootstrapContext(ctx),
 		"recommended_next_actions": []string{"For a normal request, call oboard_task directly with the user's goal"},
 	}, nil
 }

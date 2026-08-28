@@ -20,14 +20,15 @@ type mcpAffectedResource struct {
 }
 
 type mcpErrorBody struct {
-	Code            string                `json:"code"`
-	Message         string                `json:"message"`
-	DeniedBy        string                `json:"denied_by,omitempty"`
-	RequiredScope   string                `json:"required_scope,omitempty"`
-	RequiredRole    string                `json:"required_role,omitempty"`
-	DeniedResources []mcpauth.ResourceRef `json:"denied_resources,omitempty"`
-	Recoverable     bool                  `json:"recoverable"`
-	NextAction      *mcpNextActionBody    `json:"next_action,omitempty"`
+	Code                 string                `json:"code"`
+	Message              string                `json:"message"`
+	DeniedBy             string                `json:"denied_by,omitempty"`
+	RequiredScope        string                `json:"required_scope,omitempty"`
+	RequiredRole         string                `json:"required_role,omitempty"`
+	DeniedResources      []mcpauth.ResourceRef `json:"denied_resources,omitempty"`
+	Recoverable          bool                  `json:"recoverable"`
+	NextAction           *mcpNextActionBody    `json:"next_action,omitempty"`
+	AvailableCredentials any                   `json:"available_credentials,omitempty"`
 }
 
 type mcpNextActionBody struct {

@@ -453,6 +453,12 @@ func TestResolveEntryAddressHostUsesIPForStaticSingleStack(t *testing.T) {
 			want:    "198.51.100.8",
 		},
 		{
+			name:    "both records on ipv4-only server still use domain",
+			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "both", EntryIPMode: model.EntryIPModeAuto},
+			server:  ipv4,
+			want:    domain,
+		},
+		{
 			name:    "ipv4 mode on dual stack",
 			inbound: model.Inbound{DNSSyncEnabled: true, DNSDomain: domain, DNSRecordTypes: "both", EntryIPMode: model.EntryIPModeIPv4},
 			server:  dual,

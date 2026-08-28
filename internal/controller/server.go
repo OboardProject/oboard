@@ -5728,6 +5728,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		if err := s.resolveInboundDNSCredential(r.Context(), &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := s.application.PrepareInboundCreate(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
@@ -5827,6 +5831,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := normalizeMieruInboundPorts(&v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.resolveInboundDNSCredential(r.Context(), &v); err != nil {
 			fail(w, err, 400)
 			return
 		}
@@ -16868,6 +16876,14 @@ func fail(w http.ResponseWriter, err error, status int) {
 	var coded interface{ Code() string }
 	if errors.As(err, &coded) && strings.TrimSpace(coded.Code()) != "" {
 		payload["code"] = coded.Code()
+	}
+	var detailed interface{ ErrorDetails() map[string]any }
+	if errors.As(err, &detailed) {
+		for key, value := range detailed.ErrorDetails() {
+			if _, exists := payload[key]; !exists && strings.TrimSpace(key) != "" && key != "error" && key != "code" {
+				payload[key] = value
+			}
+		}
 	}
 	write(w, status, payload)
 }

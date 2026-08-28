@@ -585,7 +585,9 @@ func (s *Server) prepareInboundCreateRecipe(ctx context.Context, principal appli
 	if _, exists := values["enabled"]; !exists {
 		values["enabled"] = true
 	}
-	if blocked := s.applyInboundRecipeManagedCertificate(ctx, input, values, resolved.Value.ID); blocked != nil {
+	if blocked, err := s.applyInboundRecipeManagedCertificate(ctx, input, values, resolved.Value.ID); err != nil {
+		return nil, err
+	} else if blocked != nil {
 		return blocked, nil
 	}
 	operation := mcpOperationRef{Capability: "inbounds.create", Input: map[string]any{"inbound": values}}
@@ -715,9 +717,11 @@ func inferredInboundDNSDomain(goal string) string {
 }
 
 // applyInboundRecipeManagedCertificate copies dns_domain into the SNI field and
-// attaches a covering DNS credential so Controller can issue the certificate
-// during deployment. Create itself does not wait for a ready certificate.
-func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input mcpTaskInput, values map[string]any, serverID int64) *mcpPreparedRecipe {
+// attaches a DNS credential so Controller can issue the certificate during
+// deployment. dns_sync_enabled=true is validated as strictly as inbounds.update:
+// a credential is required before ready. Create itself does not wait for a
+// ready certificate.
+func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input mcpTaskInput, values map[string]any, serverID int64) (*mcpPreparedRecipe, error) {
 	kind := strings.ToLower(strings.TrimSpace(fmt.Sprint(values["kind"])))
 	mode := inboundRecipeCertificateMode(values)
 	managed := mode == model.CertificateModeAuto || mode == model.CertificateModeExact || mode == model.CertificateModeWildcard || (mode == "" && inboundKindUsesManagedCertificate(kind))
@@ -727,6 +731,8 @@ func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input
 	}
 	if inboundRecipeWantsDNSSync(input, values) {
 		values["dns_sync_enabled"] = true
+	} else if parsed, ok := coerceTaskBool(values["dns_sync_enabled"]); ok {
+		values["dns_sync_enabled"] = parsed
 	}
 	certificateDomain := taskStringParam(values, "certificate_domain")
 	if certificateDomain == "" && dnsDomain != "" {
@@ -737,62 +743,25 @@ func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input
 	}
 	syncEnabled := taskBoolParam(values, false, "dns_sync_enabled")
 	if syncEnabled && !isDNSDomainName(dnsDomain) {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_domain", "type": "string", "reason": "启用 DNS 同步时需要有效的解析域名；提交后由主控写入解析并申请证书，不必等证书就绪"}}}
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_domain", "type": "string", "reason": "启用 DNS 同步时需要有效的解析域名；提交后由主控写入解析并申请证书，不必等证书就绪"}}}, nil
 	}
 	if managed && !isDNSDomainName(certificateDomain) {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_domain", "type": "string", "reason": "托管证书入口需要有效的解析/SNI 域名。把域名交给主控即可，主控在部署时匹配或申请证书，创建不必等待证书签发完成，也不必改走面板"}}}
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_domain", "type": "string", "reason": "托管证书入口需要有效的解析/SNI 域名。把域名交给主控即可，主控在部署时匹配或申请证书，创建不必等待证书签发完成，也不必改走面板"}}}, nil
 	}
 	needsCredential := syncEnabled || (managed && isDNSDomainName(certificateDomain))
-	if !needsCredential || taskIntParam(values, "dns_credential_id") > 0 {
-		return nil
+	if !needsCredential {
+		return nil, nil
 	}
-	matches, err := s.coveringDNSCredentials(ctx, firstNonEmptyString(dnsDomain, certificateDomain), serverID)
-	if err != nil {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_credential_id", "type": "integer", "reason": "无法读取 DNS 凭据：" + err.Error()}}}
-	}
-	if len(matches) == 1 {
-		values["dns_credential_id"] = matches[0].ID
-		return nil
-	}
-	if len(matches) == 0 {
-		reason := "自动申请证书需要覆盖该域名的 DNS 凭据。先配置 DNS 账号，再把入口和域名交给主控签发；不要改用 external 占位，也不必先在面板里把证书申请完"
-		if syncEnabled {
-			reason = "启用 DNS 同步需要选择覆盖该域名的 DNS 凭据。主控会在部署时申请证书，创建不必等待签发完成"
-		}
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_credential_id", "type": "integer", "reason": reason}}}
-	}
-	candidates := make([]MCPResourceRef, 0, len(matches))
-	for _, credential := range matches {
-		candidates = append(candidates, MCPResourceRef{
-			Type: "dns_credential", ID: credential.ID, Name: credential.Name,
-			Ref: "dns_credential:" + strconv.FormatInt(credential.ID, 10), Label: credential.Name,
-		})
-	}
-	return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "inbound.create", Field: "dns_credential_id", Candidates: candidates}
-}
-
-func (s *Server) coveringDNSCredentials(ctx context.Context, domain string, serverID int64) ([]model.DNSCredential, error) {
 	credentials, err := s.store.ListDNSCredentials(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var verified, enabled []model.DNSCredential
-	for _, credential := range credentials {
-		if !credential.Enabled {
-			continue
-		}
-		if _, err := selectDNSCredentialZone(credential, domain, serverID); err != nil {
-			continue
-		}
-		enabled = append(enabled, credential)
-		if credential.VerifiedAt != nil {
-			verified = append(verified, credential)
-		}
+	id, available, ok := pickInboundDNSCredential(credentials, firstNonEmptyString(dnsDomain, certificateDomain), serverID, int64(taskIntParam(values, "dns_credential_id")))
+	if !ok {
+		return nil, missingDNSCredentialError{Available: available}
 	}
-	if len(verified) > 0 {
-		return verified, nil
-	}
-	return enabled, nil
+	values["dns_credential_id"] = id
+	return nil, nil
 }
 
 func inferredInboundProtocol(goal string) string {
@@ -1004,16 +973,30 @@ func taskStringParam(params map[string]any, keys ...string) string {
 func taskBoolParam(params map[string]any, fallback bool, keys ...string) bool {
 	for _, key := range keys {
 		if value, ok := params[key]; ok {
-			switch v := value.(type) {
-			case bool:
-				return v
-			case string:
-				parsed, _ := strconv.ParseBool(v)
+			if parsed, ok := coerceTaskBool(value); ok {
 				return parsed
 			}
 		}
 	}
 	return fallback
+}
+
+func coerceTaskBool(value any) (bool, bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(v))
+		return parsed, err == nil
+	case int:
+		return v != 0, true
+	case int64:
+		return v != 0, true
+	case float64:
+		return v != 0, true
+	default:
+		return false, false
+	}
 }
 func taskIntParam(params map[string]any, keys ...string) int {
 	for _, key := range keys {

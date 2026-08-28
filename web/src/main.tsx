@@ -1687,7 +1687,8 @@ const errorMessages: Record<string, string> = {
   terminal_request_invalid: '远程终端不能指定 Shell、命令或环境变量',
   terminal_mode_invalid: '终端模式只能是登录环境或最小环境',
   origin_denied: '来源地址不被允许',
-  terminal_auth_expired: '终端认证已失效，请重试连接'
+  terminal_auth_expired: '终端认证已失效，请重试连接',
+  missing_dns_credential: '启用 DNS 自动解析时需要选择 DNS 凭据'
 }
 
 const systemErrorMarkers: Array<[string, string]> = [
@@ -1734,8 +1735,10 @@ function apiErrorMessage(data: any, res: Response) {
 }
 
 function apiRequestError(data: any, res: Response) {
-  const error = new Error(apiErrorMessage(data, res))
-  ;(error as any).status = res.status
+  const error = new Error(apiErrorMessage(data, res)) as Error & { status?: number; code?: string; available_credentials?: Array<{ id: number; name: string; provider: string }> }
+  error.status = res.status
+  if (typeof data?.code === 'string' && data.code.trim()) error.code = data.code.trim()
+  if (Array.isArray(data?.available_credentials)) error.available_credentials = data.available_credentials
   return error
 }
 
@@ -10763,7 +10766,7 @@ function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?
   if (!isIPv4 && !isIPv6) return domain
   if (entry.entry_ip_mode === 'ipv4' || entry.entry_ip_mode === 'ipv6' || entry.entry_ip_mode === 'custom') return literal || domain
   const records = String(entry.dns_record_types || 'auto').toLowerCase()
-  if (records === 'both' && server?.public_ipv4 && (server.public_ipv6 || server.interface_ipv6)) return domain
+  if (records === 'both') return domain
   return literal || domain
 }
 function inboundEntryAddress(data: any, entry: Inbound) {
@@ -14947,8 +14950,12 @@ function formatInboundDisplayEndpoint(data: any, inbound: any): string {
   const displayPort = inboundDisplayPort(inbound)
   const listenPort = inboundListenPort(inbound)
   const base = formatHostPort(addr, displayPort)
-  if (listenPort && displayPort && listenPort !== displayPort) return `${base}（监听 ${listenPort}）`
-  return base
+  const records = String(inbound?.dns_record_types || '').toLowerCase()
+  const hostLabel = inbound?.dns_sync_enabled && inbound?.dns_domain && records && records !== 'auto'
+    ? `${base} (${records})`
+    : base
+  if (listenPort && displayPort && listenPort !== displayPort) return `${hostLabel}（监听 ${listenPort}）`
+  return hostLabel
 }
 
 function nextAvailableInboundPort(data: any, server: Server | undefined, protocol: Protocol, fallbackPort = 443, excludeInboundID = 0) {
@@ -15159,6 +15166,11 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const cfg = parseConfig(draft.config_json) || {}
   const tlsForReality = objectConfig(cfg.tls)
   const dnsCredentials: DNSCredential[] = data.dns_credentials || []
+  const enabledDNSCredentials = dnsCredentials.filter(item => item.enabled)
+  const hasDNSCredentials = enabledDNSCredentials.length > 0
+  const defaultDNSCredentialID = enabledDNSCredentials.length === 1
+    ? enabledDNSCredentials[0].id
+    : (enabledDNSCredentials.find(item => item.verified_at)?.id || enabledDNSCredentials[0]?.id)
   const certificates: Certificate[] = data.certificates || []
   const selectedDNSCredential = dnsCredentials.find(item => item.id === Number(draft.dns_credential_id || 0))
   const selectedCertificate = certificates.find(item => item.id === Number(draft.certificate_id || 0))
@@ -15281,6 +15293,15 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const listenOverride = String(draft.listen_ip || '').trim() && String(draft.listen_ip) !== '0.0.0.0'
   const transport = transportCapability(protocol, cfg)
   const hasTransport = protocol !== 'ssh' && (transport.genericMux || transport.tfo || Boolean(transport.nativeMux))
+  const dnsSyncIncomplete = Boolean(draft.dns_sync_enabled) && !Number(draft.dns_credential_id || 0)
+  const entryAddressDisplay = (() => {
+    const formatted = entryAddress ? formatHostPort(entryAddress, displayPort) : ''
+    const records = String(draft.dns_record_types || '').toLowerCase()
+    if (draft.dns_sync_enabled && draft.dns_domain && records && records !== 'auto') {
+      return formatted ? `${formatted} (${records})` : `${draft.dns_domain} (${records})`
+    }
+    return formatted || '待 Agent 检测或填写自定义地址'
+  })()
   return <MotionDialogPanel onCancel={onCancel} className="entry-dialog">
       <header className="dialog-head">
         <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">设置入口协议、地址和端口。</p></div>
@@ -15329,8 +15350,8 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。自动模式跟随服务器检测结果。" placement="bottom">
                 <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
               </FormField>
-              <FormField label="当前入口地址" hint={draft.dns_sync_enabled && draft.dns_domain ? `订阅 Host；TLS 的 SNI 仍用证书域名。${natEnabled ? '对外端口' : '监听端口'}对客户端生效，Agent 本机仍监听 ${Number(draft.port) || 0}。` : `订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`} placement="bottom">
-                <input readOnly value={entryAddress ? formatHostPort(entryAddress, displayPort) : '待 Agent 检测或填写自定义地址'} />
+              <FormField label="当前入口地址" hint={draft.dns_sync_enabled && draft.dns_domain ? `订阅 Host；DNS 同步开启时使用解析域名。TLS 的 SNI 仍用证书域名。${natEnabled ? '对外端口' : '监听端口'}对客户端生效，Agent 本机仍监听 ${Number(draft.port) || 0}。` : `订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`} placement="bottom">
+                <input readOnly value={entryAddressDisplay} />
               </FormField>
               {entryMode === 'custom' && <FormField label="自定义入口地址" required full hint="可填写域名、IPv4 或 IPv6。">
                 <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
@@ -15347,13 +15368,14 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <div className="switch-setting-row">
                 <span className="switch-setting-label">
                   自动同步 DNS 解析
-                  <FieldHelp label="自动同步 DNS 解析" hint="开启后，部署前会按入口地址创建或更新解析记录。" />
+                  <FieldHelp label="自动同步 DNS 解析" hint="开启后，部署前会按入口地址创建或更新解析记录，订阅 Host 使用解析域名。" />
                 </span>
-                <Switch checked={Boolean(draft.dns_sync_enabled)} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || dnsCredentials.find(item => item.verified_at)?.id) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} ariaLabel="自动同步 DNS 解析" />
+                <Switch checked={Boolean(draft.dns_sync_enabled) && hasDNSCredentials} disabled={!hasDNSCredentials} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || defaultDNSCredentialID) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} ariaLabel="自动同步 DNS 解析" aria-describedby={!hasDNSCredentials ? 'entry-dns-sync-hint' : undefined} />
               </div>
-              {draft.dns_sync_enabled && <>
+              {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能开启自动同步。</span></div>}
+              {draft.dns_sync_enabled && hasDNSCredentials && <>
                 <FormField label="域名服务账号" required hint="使用已验证的域名解析账号。">
-                  <Select value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))}><option value={0}>选择凭据</option>{dnsCredentials.filter(item => item.enabled).map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
+                  <Select required value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))} aria-required="true"><option value={0}>选择凭据</option>{enabledDNSCredentials.map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
                 </FormField>
                 <FormField label="解析域名" required hint="客户端连接使用的域名。">
                   <div className="dns-domain-input">
@@ -15379,7 +15401,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                   <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="公网 IP 变化时定时更新" />
                 </div>}
                 {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
-                {!dnsCredentials.length && <div className="access-note warning"><strong>还没有可用的域名服务账号</strong><span>请先到“域名解析”创建并验证账号。</span></div>}
               </>}
             </EntryFormDisclosure>
           </EntryFormSection>
@@ -15481,7 +15502,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       </div>
       <footer className="dialog-actions">
         <button className="ghost" onClick={onCancel}>取消</button>
-        <button onClick={onSubmit}>{mode === 'edit' ? '保存入口协议' : '创建入口协议'}</button>
+        <button onClick={onSubmit} disabled={dnsSyncIncomplete} title={dnsSyncIncomplete ? '启用 DNS 自动解析时需要选择 DNS 凭据' : undefined}>{mode === 'edit' ? '保存入口协议' : '创建入口协议'}</button>
       </footer>
   </MotionDialogPanel>
 }

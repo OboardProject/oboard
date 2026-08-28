@@ -127,6 +127,9 @@ func (s *Server) prepareMCPTask(ctx context.Context, principal application.Princ
 		if errors.Is(err, sql.ErrNoRows) {
 			return fastPathError("resource_not_found", "the requested resource was not found in the current grant", true, "change_parameters")
 		}
+		if result := fastPathCodedError(err, true, "change_parameters"); result != nil {
+			return result
+		}
 		return fastPathError("recipe_validation_failed", err.Error(), true, "change_parameters")
 	}
 	if prepared.Status == "needs_input" || prepared.Status == "choose_candidate" {
@@ -158,6 +161,9 @@ func (s *Server) prepareMCPTask(ctx context.Context, principal application.Princ
 	}
 	validated, err := s.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: operationRequests})
 	if err != nil {
+		if result := fastPathCodedError(err, true, "change_parameters"); result != nil {
+			return result
+		}
 		return fastPathError("validation_failed", err.Error(), true, "change_parameters")
 	}
 	operationsJSON, _ := json.Marshal(prepared.Operations)
@@ -312,8 +318,28 @@ func mcpPreparedPlanHash(principalID, grantID, recipeID, recipeVersion string, o
 }
 
 func fastPathError(code, message string, recoverable bool, nextAction string) *ToolEnvelope {
-	result := newToolEnvelope("error", "", map[string]any{"code": code, "message": message, "recoverable": recoverable, "next_action": map[string]any{"type": nextAction}})
-	result.Error = &mcpErrorBody{Code: code, Message: message, Recoverable: recoverable}
+	return fastPathErrorData(code, message, recoverable, nextAction, nil)
+}
+
+func fastPathCodedError(err error, recoverable bool, nextAction string) *ToolEnvelope {
+	var missing missingDNSCredentialError
+	if errors.As(err, &missing) {
+		return fastPathErrorData(missingDNSCredentialCode, missing.Error(), recoverable, nextAction, map[string]any{"available_credentials": missing.Available})
+	}
+	return nil
+}
+
+func fastPathErrorData(code, message string, recoverable bool, nextAction string, extra map[string]any) *ToolEnvelope {
+	data := map[string]any{"code": code, "message": message, "recoverable": recoverable, "next_action": map[string]any{"type": nextAction}}
+	for key, value := range extra {
+		data[key] = value
+	}
+	result := newToolEnvelope("error", "", data)
+	body := &mcpErrorBody{Code: code, Message: message, Recoverable: recoverable}
+	if creds, ok := extra["available_credentials"]; ok {
+		body.AvailableCredentials = creds
+	}
+	result.Error = body
 	if nextAction != "" {
 		result.NextAction = map[string]any{"type": nextAction}
 	}

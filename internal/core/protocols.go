@@ -2976,15 +2976,17 @@ func inboundClientHostUsesDomain(inbound model.Inbound, server model.Server, alw
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(inbound.DNSRecordTypes), "both") {
-		return strings.TrimSpace(server.PublicIPv4) != "" && ServerEntryIPv6(server) != ""
+		return true
 	}
 	return false
 }
 
 // ResolveEntryAddressHost is the client-facing subscription Host.
 // TLS SNI stays the certificate/DNS domain. Static single-stack inbounds
-// may advertise a public IP to skip a client lookup; dual-stack (A+AAAA),
-// DDNS, custom domain targets, and alwaysUseDomain keep the managed name.
+// may advertise a public IP to skip a client lookup; dns_record_types=both
+// always advertises the managed name so dual-stack A+AAAA can take effect
+// even before both families are detected. DDNS, custom domain targets, and
+// alwaysUseDomain also keep the managed name.
 func ResolveEntryAddressHost(inbound model.Inbound, server model.Server, alwaysUseDomain bool) string {
 	if inboundClientHostUsesDomain(inbound, server, alwaysUseDomain) {
 		return strings.TrimSpace(inbound.DNSDomain)

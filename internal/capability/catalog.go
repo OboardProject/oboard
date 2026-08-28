@@ -391,7 +391,7 @@ func defaultDescriptors() []Descriptor {
 		if domain.name == "servers.onboard" {
 			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue"
 		} else if domain.name == "inbounds.create" {
-			description = "创建入口。TLS 入口提交服务器、协议/kind、端口和 dns_domain 即可；certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请"
+			description = "创建入口。TLS 入口提交服务器、协议/kind、端口和 dns_domain 即可；dns_sync_enabled=true 时必须有 dns_credential_id（唯一凭据或 bootstrap default 可自动填充，否则 missing_dns_credential 带 available_credentials）；certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请"
 		} else if domain.name == "servers.reset_traffic" {
 			description = "将指定服务器当前周期已用流量清零；不影响限额、重置日、用户流量账本，也不触发部署。后续 Agent 上报会重新累计"
 		} else if domain.name == "inbounds.padding.update" {
@@ -715,8 +715,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"advertise_port":        map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同"},
 			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
 			"external_ip":           map[string]any{"type": "string", "maxLength": 255},
-			"dns_sync_enabled":      map[string]any{"type": "boolean", "description": "true 时由主控写入解析。创建入口时连同域名一起提交即可，不必先有 DNS 记录或现成证书"},
-			"dns_credential_id":     map[string]any{"type": []string{"integer", "null"}, "description": "DNS 凭据。dns_sync 或托管证书自动签发时需要；覆盖该域名的唯一凭据可由 Fast Path 自动选择"},
+			"dns_sync_enabled":      map[string]any{"type": "boolean", "description": "true 时由主控写入解析，并要求 dns_credential_id。租户仅一条凭据或 bootstrap default_dns_credential_id 可由服务端自动填充；否则 validation_failed 返回 missing_dns_credential 与 available_credentials"},
+			"dns_credential_id":     map[string]any{"type": []string{"integer", "null"}, "description": "DNS 凭据。dns_sync_enabled=true 时必填。唯一启用凭据或 bootstrap default_dns_credential_id 可省略并由服务端填充；无法填充时错误带 available_credentials: [{id, name, provider}]"},
 			"dns_domain":            map[string]any{"type": "string", "maxLength": 253, "description": "入口解析域名。托管证书若未填 certificate_domain，主控用此域名作为 SNI"},
 			"dns_proxy_enabled":     boolValue,
 			"dns_record_types":      map[string]any{"type": "string", "enum": []string{"auto", "a", "aaaa", "both"}},
@@ -751,13 +751,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//   snell: single-PSK protocol; version 4/6 with optional
 		//     obfs_mode/obfs_host (v4) or mode (v6), reusable via
 		//     config_json.snell_profile_id.
-		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws default to certificate_mode=auto: pass dns_domain (and dns_sync_enabled plus a covering dns_credential_id when DNS records should be written); omit certificate_domain to follow dns_domain; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
+		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws default to certificate_mode=auto: pass dns_domain (and dns_sync_enabled plus a covering dns_credential_id when DNS records should be written); a single tenant DNS credential or bootstrap default_dns_credential_id is filled automatically; otherwise create/update fail before ready with code missing_dns_credential and available_credentials [{id,name,provider}]; omit certificate_domain to follow dns_domain; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},
 			"entry_ip_mode": stringValue, "external_ip": stringValue, "dns_sync_enabled": boolValue,
-			"dns_domain": stringValue, "tls": boolValue, "certificate_mode": stringValue,
-			"certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue,
+			"dns_credential_id": map[string]any{"type": []string{"integer", "null"}}, "dns_domain": stringValue, "dns_record_types": stringValue,
+			"tls": boolValue, "certificate_mode": stringValue, "certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue,
 		})
 		if name == "inbounds.create" {
 			inboundFields := closedObject(inboundProperties, "server_id", "name", "kind", "port")

@@ -384,6 +384,9 @@ func (s *Server) validateInboundAutomationCandidate(ctx context.Context, princip
 	if err := normalizeMieruInboundPorts(inbound); err != nil {
 		return err
 	}
+	if err := s.resolveInboundDNSCredential(ctx, inbound); err != nil {
+		return err
+	}
 	if err := validateInbound(*inbound); err != nil {
 		return err
 	}
@@ -425,7 +428,8 @@ func automationInboundView(inbound model.Inbound) map[string]any {
 		"server_id": inbound.ServerID, "name": inbound.Name, "protocol": inbound.Protocol,
 		"listen_ip": inbound.ListenIP, "port": inbound.Port, "advertise_port": inbound.AdvertisePort, "entry_ip_mode": inbound.EntryIPMode,
 		"external_ip": inbound.ExternalIP, "dns_sync_enabled": inbound.DNSSyncEnabled,
-		"dns_domain": inbound.DNSDomain, "tls": inbound.TLS, "certificate_mode": inbound.CertificateMode,
+		"dns_credential_id": inbound.DNSCredentialID, "dns_domain": inbound.DNSDomain, "dns_record_types": inbound.DNSRecordTypes,
+		"tls": inbound.TLS, "certificate_mode": inbound.CertificateMode,
 		"certificate_domain": inbound.CertificateDomain, "kind": inferredInboundKind(inbound), "enabled": inbound.Enabled,
 		"advanced_configured": strings.TrimSpace(inbound.ConfigJSON) != "" && strings.TrimSpace(inbound.ConfigJSON) != "{}",
 	}
