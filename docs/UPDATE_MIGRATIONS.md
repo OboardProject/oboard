@@ -43,7 +43,7 @@
 
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
-| `controller-db-20260828-remove-vless-tls-vision` | Controller | SQLite seed / data backfill | `dev-pending` | 待发布 | 生效中 | - |
+| `controller-db-20260828-remove-vless-tls-vision` | Controller | SQLite seed / data backfill | `dev-fa658a2d2473` | 待发布 | 生效中 | - |
 | `controller-db-20260828-update-fleet` | Controller | SQLite schema / data backfill | `dev-4d9ba516be1d` | 待发布 | 生效中 | - |
 | `controller-db-20260812-connectivity-probe-target` | Controller | SQLite schema | `dev-26cd0a1013d1` | 待发布 | 生效中 | - |
 | `controller-db-20260812-latency-probes` | Controller | SQLite schema | `dev-490892a0ae99` | 待发布 | 生效中 | - |
@@ -71,8 +71,8 @@
 ### controller-db-20260828-remove-vless-tls-vision
 
 - **引入日期：** 2026-08-28
-- **引入提交：** pending
-- **引入版本：** `dev-pending`
+- **引入提交：** `OboardProject/oboard@fa658a2d24734405aaccf74147ef8b72b49452ff`
+- **引入版本：** `dev-fa658a2d2473`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/controller`、`internal/capability`、Web
 - **类别：** SQLite seed / data backfill
