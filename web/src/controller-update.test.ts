@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CONTROLLER_UPDATE_PENDING_MESSAGE,
+  controllerUpdateDisplayPhase,
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
@@ -72,6 +73,11 @@ describe('controller update pending toast', () => {
   })
 
   it('treats only active update phases as in progress', () => {
+    expect(isControllerUpdateInProgressStatus('checking')).toBe(true)
+    expect(isControllerUpdateInProgressStatus('preflight')).toBe(true)
+    expect(isControllerUpdateInProgressStatus('backing_up')).toBe(true)
+    expect(isControllerUpdateInProgressStatus('restarting')).toBe(true)
+    expect(isControllerUpdateInProgressStatus('verifying')).toBe(true)
     expect(isControllerUpdateInProgressStatus('downloading')).toBe(true)
     expect(isControllerUpdateInProgressStatus('ready')).toBe(true)
     expect(isControllerUpdateInProgressStatus('installing')).toBe(true)
@@ -79,6 +85,11 @@ describe('controller update pending toast', () => {
     expect(isControllerUpdateInProgressStatus('current')).toBe(false)
     expect(isControllerUpdateInProgressStatus('failed')).toBe(false)
     expect(isControllerUpdateInProgressStatus(undefined)).toBe(false)
+  })
+
+  it('prefers the orchestration phase over updater status', () => {
+    expect(controllerUpdateDisplayPhase({ status: 'ready', operation: { active: true, phase: 'backing_up' } })).toBe('backing_up')
+    expect(controllerUpdateDisplayPhase({ status: 'available', operation: { active: false, phase: 'idle' } })).toBe('available')
   })
 
   it('distinguishes failed background cancellation from a requested cancellation', () => {

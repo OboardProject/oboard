@@ -175,7 +175,7 @@ func configurationMutationPath(path, method string) bool {
 		return false
 	}
 	switch parts[0] {
-	case "deployments", "agent-tasks", "task-results", "dns-benchmarks", "mtu-detections", "port-forward-probes", "inbound-probes", "certificates", "dns-records", "dns-credentials", "google-eab-credentials", "notification-channels", "notification-announcements", "backups", "controller-update", "auth", "me", "access-changes", "assignable-nodes", "assignable-node-scopes":
+	case "deployments", "agent-tasks", "task-results", "dns-benchmarks", "mtu-detections", "port-forward-probes", "inbound-probes", "certificates", "dns-records", "dns-credentials", "google-eab-credentials", "notification-channels", "notification-announcements", "backups", "controller-update", "agent-updates", "auth", "me", "access-changes", "assignable-nodes", "assignable-node-scopes":
 		return false
 	case "changesets":
 		return false // automation.Apply invokes the canonical observer after commit.

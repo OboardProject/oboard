@@ -194,3 +194,39 @@ func TestApplyHealthReportPreservesSemantics(t *testing.T) {
 		t.Fatalf("new period should start at zero: upload=%d download=%d", stored.TrafficUploadBytes, stored.TrafficDownloadBytes)
 	}
 }
+
+func TestHealthReportCoalescesUnchangedRuntime(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "hot", AgentID: "agent-hot", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000, Status: model.ServerUnknown}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	first, err := s.ApplyHealthReport(ctx, server.ID, healthReportFixture(server.AgentID, at), healthReportWindow(at))
+	if err != nil || first.Coalesced {
+		t.Fatalf("first report coalesced=%t err=%v", first.Coalesced, err)
+	}
+	before := s.SQLStatementCount()
+	second, err := s.ApplyHealthReport(ctx, server.ID, healthReportFixture(server.AgentID, at.Add(time.Second)), healthReportWindow(at.Add(time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Coalesced {
+		t.Fatal("unchanged volatile report within 45s should coalesce")
+	}
+	if delta := s.SQLStatementCount() - before; delta >= healthReportStatementCount {
+		t.Fatalf("coalesced statement delta = %d, want fewer than first-write %d", delta, healthReportStatementCount)
+	}
+	changed := healthReportFixture(server.AgentID, at.Add(2*time.Second))
+	changed.AgentBuild = "20260828010101"
+	third, err := s.ApplyHealthReport(ctx, server.ID, changed, healthReportWindow(at.Add(2*time.Second)))
+	if err != nil || third.Coalesced {
+		t.Fatalf("agent build change must persist: coalesced=%t err=%v", third.Coalesced, err)
+	}
+}
+

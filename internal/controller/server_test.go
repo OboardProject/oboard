@@ -3428,6 +3428,9 @@ func TestAgentsUpdateAllCreatesTasks(t *testing.T) {
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
 	token := login["token"].(string)
+	oldBuild := version.AgentBuild
+	version.AgentBuild = "20260828010101"
+	t.Cleanup(func() { version.AgentBuild = oldBuild })
 
 	online := &model.Server{Name: "online", AgentID: "agent-1", AgentTokenHash: security.HashSecret("t1"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	offline := &model.Server{Name: "offline", AgentID: "agent-2", AgentTokenHash: security.HashSecret("t2"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOffline}

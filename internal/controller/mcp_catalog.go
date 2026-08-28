@@ -50,7 +50,9 @@ Keep the requested blast radius as small as possible. Explain required approvals
 
 Panel path changes keep both prefixes until enrolled Agents update. Unenrolled servers are skipped. Offline Agents can be retried, force-completed, or revoked; revoke only rolls back Agents that already received the new controller URL.
 
-For TLS inbounds (AnyTLS, HY2, VLESS TLS), pass the server, protocol or kind, port, and dns_domain. Set dns_sync_enabled when DNS records should be written. Those kinds default to certificate_mode=auto. Do not wait for a ready certificate, do not create an external-mode placeholder, and do not send the operator to the panel to pre-issue the certificate. Controller matches or issues the managed certificate during deployment; issuance takes time and a later deploy picks it up once ready.`
+For TLS inbounds (AnyTLS, HY2, VLESS TLS), pass the server, protocol or kind, port, and dns_domain. Set dns_sync_enabled when DNS records should be written. Those kinds default to certificate_mode=auto. Do not wait for a ready certificate, do not create an external-mode placeholder, and do not send the operator to the panel to pre-issue the certificate. Controller matches or issues the managed certificate during deployment; issuance takes time and a later deploy picks it up once ready.
+
+Controller update success means the new Controller binary is available. It does not wait for Agent reconnect or fleet version sync and must not queue apply_deployment. Read ` + "`agent_updates.status`" + ` or ` + "`oboard://agent-updates`" + ` for rolling Agent progress. ` + "`agents.update_all`" + ` fills a bounded concurrency window; never loop ` + "`servers.update_agent`" + ` across the inventory.`
 
 var (
 	mcpSingletonMu sync.Mutex

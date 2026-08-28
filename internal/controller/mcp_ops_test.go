@@ -8,6 +8,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/version"
 )
 
 func TestOpsTaskTriggerCapabilities(t *testing.T) {
@@ -203,8 +204,11 @@ func TestAgentsUpdateAllCapability(t *testing.T) {
 	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	oldBuild := version.AgentBuild
+	version.AgentBuild = "20260902000000"
+	t.Cleanup(func() { version.AgentBuild = oldBuild })
 	principal := userAutomationPrincipal(t, db, admin.ID)
-	node := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline, AgentID: "agent_1", AgentBuild: "20260901000000"}
+	node := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline, AgentID: "agent_1", AgentBuild: "20260801000000"}
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}

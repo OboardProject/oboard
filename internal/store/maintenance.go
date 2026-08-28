@@ -19,17 +19,26 @@ const (
 	MaxServerMonitoringRetentionDays     = 30
 )
 
+const historicalTaskRetention = 30 * 24 * time.Hour
+
 type MaintenanceResult struct {
-	ConnectionAuditsDeleted    int64
-	SubscriptionAuditsDeleted  int64
-	ProbeEpisodesDeleted       int64
-	RateBucketsDeleted         int64
-	ServerMetricSamplesDeleted int64
-	LatencyProbeResultsDeleted int64
-	ConnectivityProbesDeleted  int64
-	WALBusyFrames              int
-	WALLogFrames               int
-	WALCheckpointedFrames      int
+	ConnectionAuditsDeleted       int64
+	SubscriptionAuditsDeleted     int64
+	ProbeEpisodesDeleted          int64
+	RateBucketsDeleted            int64
+	ServerMetricSamplesDeleted    int64
+	LatencyProbeResultsDeleted    int64
+	ConnectivityProbesDeleted     int64
+	AgentTasksDeleted             int64
+	DNSBenchmarkRunsDeleted       int64
+	DNSBenchmarkResultsDeleted    int64
+	MTUDetectionsDeleted          int64
+	InboundProbesDeleted          int64
+	PortForwardProbesDeleted      int64
+	NotificationDeliveriesDeleted int64
+	WALBusyFrames                 int
+	WALLogFrames                  int
+	WALCheckpointedFrames         int
 }
 
 func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceResult, error) {
@@ -96,6 +105,48 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			)`,
 			cutoff: at.Add(-monitoringRetention),
 			count:  &result.ConnectivityProbesDeleted,
+		},
+		{
+			name:   "agent task retention",
+			query:  `delete from agent_tasks where id in (select id from agent_tasks where status in ('succeeded','failed','rollback_failed') and completed_at < ? order by completed_at limit ?)`,
+			cutoff: at.Add(-historicalTaskRetention),
+			count:  &result.AgentTasksDeleted,
+		},
+		{
+			name:   "dns benchmark run retention",
+			query:  `delete from dns_benchmark_runs where id in (select id from dns_benchmark_runs where created_at < ? order by created_at limit ?)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.DNSBenchmarkRunsDeleted,
+		},
+		{
+			name:   "dns benchmark result retention",
+			query:  `delete from dns_benchmark_results where id in (select id from dns_benchmark_results where created_at < ? order by created_at limit ?)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.DNSBenchmarkResultsDeleted,
+		},
+		{
+			name:   "mtu detection retention",
+			query:  `delete from mtu_detection_results where id in (select id from mtu_detection_results where created_at < ? order by created_at limit ?)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.MTUDetectionsDeleted,
+		},
+		{
+			name:   "inbound probe retention",
+			query:  `delete from inbound_probe_results where id in (select id from inbound_probe_results where created_at < ? order by created_at limit ?)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.InboundProbesDeleted,
+		},
+		{
+			name:   "port forward probe retention",
+			query:  `delete from port_forward_probe_results where id in (select id from port_forward_probe_results where created_at < ? order by created_at limit ?)`,
+			cutoff: at.Add(-monitoringRetention),
+			count:  &result.PortForwardProbesDeleted,
+		},
+		{
+			name:   "notification delivery retention",
+			query:  `delete from notification_deliveries where id in (select id from notification_deliveries where status in ('sent','failed') and created_at < ? order by created_at limit ?)`,
+			cutoff: at.Add(-historicalTaskRetention),
+			count:  &result.NotificationDeliveriesDeleted,
 		},
 	}
 	for _, job := range jobs {

@@ -70,6 +70,7 @@ type HealthApplyResult struct {
 	Prev           ServerRuntimeState
 	Curr           ServerRuntimeState
 	SampleInserted bool
+	Coalesced      bool
 }
 
 // ApplyHealthReport persists one Agent health report. Unlike
@@ -159,17 +160,22 @@ func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report mo
 	}
 	curr.LastSeenAt = &seenAt
 
-	res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
-		newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, report.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
-	if err != nil {
-		return HealthApplyResult{}, err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return HealthApplyResult{}, err
-	}
-	if affected != 1 {
-		return HealthApplyResult{}, sql.ErrNoRows
+	coalesced := shouldCoalesceHealthRuntime(prev, curr, seenAt)
+	if !coalesced {
+		res, err := tx.ExecContext(ctx, `update servers set status=?,os=?,distro_id=?,distro_version=?,distro_name=?,libc=?,service_manager=?,package_manager=?,arch=?,kernel=?,cpu=?,memory_bytes=?,cpu_usage_percent=?,memory_used_bytes=?,memory_total_bytes=?,agent_memory_bytes=?,disk_bytes=?,disk_total_bytes=?,tcp_connection_count=?,udp_connection_count=?,process_count=?,agent_version=?,agent_build=?,sing_box_version=?,kernel_capabilities_json=?,tcp_fastopen_state=?,tcp_fastopen_value=?,public_ipv4=?,public_ipv6=?,interface_ipv6=?,detected_region_code=?,last_seen_at=? where id=? and status=?`,
+			newStatus, report.OS, report.DistroID, report.DistroVersion, report.DistroName, report.Libc, report.ServiceManager, report.PackageManager, report.Arch, report.Kernel, report.CPU, report.MemoryBytes, report.CPUUsagePercent, report.MemoryUsedBytes, report.MemoryTotalBytes, report.AgentMemoryBytes, report.DiskBytes, report.DiskTotalBytes, report.TCPConnectionCount, report.UDPConnectionCount, report.ProcessCount, report.AgentVersion, report.AgentBuild, report.SingBoxVersion, stringSliceJSON(report.KernelCapabilities), curr.TCPFastOpenState, curr.TCPFastOpenValue, server.PublicIPv4, server.PublicIPv6, server.InterfaceIPv6, server.DetectedRegionCode, nilTime(&seenAt), serverID, oldStatus)
+		if err != nil {
+			return HealthApplyResult{}, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return HealthApplyResult{}, err
+		}
+		if affected != 1 {
+			return HealthApplyResult{}, sql.ErrNoRows
+		}
+	} else {
+		curr.LastSeenAt = prev.LastSeenAt
 	}
 	sampleInserted, err := s.updateServerTelemetryReportTx(ctx, tx, serverID, report, window, ts, nowText, &curr)
 	if err != nil {
@@ -178,8 +184,74 @@ func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report mo
 	if err := tx.Commit(); err != nil {
 		return HealthApplyResult{}, err
 	}
-	result := HealthApplyResult{OldStatus: prev.Status, NewStatus: newStatus, StatusChanged: prev.Status != newStatus, Prev: prev, Curr: curr, SampleInserted: sampleInserted}
+	result := HealthApplyResult{OldStatus: prev.Status, NewStatus: newStatus, StatusChanged: !coalesced && prev.Status != newStatus, Prev: prev, Curr: curr, SampleInserted: sampleInserted, Coalesced: coalesced}
 	return result, nil
+}
+
+const healthRuntimeCoalesceInterval = 45 * time.Second
+
+func shouldCoalesceHealthRuntime(prev, curr ServerRuntimeState, seenAt time.Time) bool {
+	if healthRuntimeCriticalChanged(prev, curr) {
+		return false
+	}
+	if prev.LastSeenAt == nil || seenAt.Sub(*prev.LastSeenAt) >= healthRuntimeCoalesceInterval {
+		return false
+	}
+	return !healthRuntimeVolatileChanged(prev, curr)
+}
+
+func healthRuntimeCriticalChanged(prev, curr ServerRuntimeState) bool {
+	if prev.Status != curr.Status || prev.PublicIPv4 != curr.PublicIPv4 || prev.PublicIPv6 != curr.PublicIPv6 || prev.InterfaceIPv6 != curr.InterfaceIPv6 || prev.DetectedRegionCode != curr.DetectedRegionCode {
+		return true
+	}
+	if prev.AgentBuild != curr.AgentBuild || prev.AgentVersion != curr.AgentVersion || prev.SingBoxVersion != curr.SingBoxVersion {
+		return true
+	}
+	if prev.OS != curr.OS || prev.Arch != curr.Arch || prev.Kernel != curr.Kernel || prev.DistroID != curr.DistroID || prev.ServiceManager != curr.ServiceManager {
+		return true
+	}
+	if prev.TCPFastOpenState != curr.TCPFastOpenState || prev.TCPFastOpenValue != curr.TCPFastOpenValue {
+		return true
+	}
+	if len(prev.KernelCapabilities) != len(curr.KernelCapabilities) {
+		return true
+	}
+	for i := range prev.KernelCapabilities {
+		if prev.KernelCapabilities[i] != curr.KernelCapabilities[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func healthRuntimeVolatileChanged(prev, curr ServerRuntimeState) bool {
+	if absFloat(prev.CPUUsagePercent-curr.CPUUsagePercent) >= 2 {
+		return true
+	}
+	if absUint64Diff(prev.MemoryUsedBytes, curr.MemoryUsedBytes) >= 16<<20 {
+		return true
+	}
+	if absUint64Diff(prev.DiskBytes, curr.DiskBytes) >= 64<<20 {
+		return true
+	}
+	if absUint64Diff(prev.TCPConnectionCount, curr.TCPConnectionCount) >= 50 || absUint64Diff(prev.UDPConnectionCount, curr.UDPConnectionCount) >= 50 {
+		return true
+	}
+	return absUint64Diff(prev.ProcessCount, curr.ProcessCount) >= 10
+}
+
+func absFloat(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func absUint64Diff(a, b uint64) uint64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 // updateServerTelemetryReportTx performs the traffic-accounting and metric

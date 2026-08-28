@@ -19,6 +19,7 @@ import (
 	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -91,7 +92,9 @@ func (s *Server) ConfigureControllerBackups(dbPath string) {
 		acmeHome = filepath.Join(filepath.Dir(dbPath), "acme")
 	}
 	s.acmeHome = acmeHome
-	manager, err := backup.New(backup.Config{Root: directory, DatabasePath: dbPath, ACMEHome: acmeHome, MasterSecret: s.sessionSecret, SourceVersion: version.Version, Snapshot: s.store.Backup})
+	manager, err := backup.New(backup.Config{Root: directory, DatabasePath: dbPath, ACMEHome: acmeHome, MasterSecret: s.sessionSecret, SourceVersion: version.Version, Snapshot: func(ctx context.Context, dest string) error {
+		return s.store.Backup(ctx, dest, store.BackupOptions{})
+	}})
 	if err != nil {
 		log.Printf("configure controller backups: %v", err)
 		return

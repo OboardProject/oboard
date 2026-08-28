@@ -25,6 +25,7 @@ func (s *Server) registerSystemAutomationOperations() {
 	s.registerSettingsOperations()
 	s.registerTelegramBotOperations()
 	s.registerControllerUpdateOperations()
+	s.registerAgentUpdateOperations()
 	s.registerSubscriptionRelayOperations()
 	s.registerBackupOperations()
 	s.registerCertificateOperations()
@@ -288,6 +289,8 @@ var settingsAutomationFields = map[string]bool{
 	"agent_auto_update_enabled":              true,
 	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
 	"update_window_start_hour": true, "update_window_end_hour": true,
+	"agent_update_max_concurrency":          true,
+	"managed_update_startup_quiet_seconds": true,
 	"registration_enabled":    true,
 	"remote_terminal_enabled": true, "mcp_remote_operations_enabled": true,
 	"remote_terminal_password_confirmation_enabled": true,
@@ -587,6 +590,20 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			updates[key] = strconv.Itoa(hour)
 		}
 	}
+	if value, ok := fields[agentUpdateMaxConcurrencySetting]; ok {
+		var n int
+		if err := json.Unmarshal(value, &n); err != nil || n < 0 || n > 32 {
+			return nil, errors.New("agent_update_max_concurrency must be between 0 and 32")
+		}
+		updates[agentUpdateMaxConcurrencySetting] = strconv.Itoa(n)
+	}
+	if value, ok := fields[managedUpdateStartupQuietSetting]; ok {
+		var n int
+		if err := json.Unmarshal(value, &n); err != nil || n < 0 || n > 300 {
+			return nil, errors.New("managed_update_startup_quiet_seconds must be between 0 and 300")
+		}
+		updates[managedUpdateStartupQuietSetting] = strconv.Itoa(n)
+	}
 	if value, ok := fields["server_default_mtu_mode"]; ok {
 		if err := setString(settingServerDefaultMTUMode, value); err != nil {
 			return nil, err
@@ -733,6 +750,9 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	}
 	if err := s.store.SetSettings(ctx, updates); err != nil {
 		return nil, err
+	}
+	if value, ok := updates[agentAutoUpdateSetting]; ok && value == "true" && s.agentUpdates != nil {
+		s.agentUpdates.Wake()
 	}
 	return changed, nil
 }

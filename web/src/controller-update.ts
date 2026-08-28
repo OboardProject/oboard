@@ -1,10 +1,25 @@
 export const CONTROLLER_UPDATE_PENDING_MESSAGE = '正在等待更新完成'
 
-const CONTROLLER_UPDATE_IN_PROGRESS_STATUSES = ['downloading', 'ready', 'installing', 'cancelling']
+const CONTROLLER_UPDATE_IN_PROGRESS_STATUSES = [
+  'checking',
+  'downloading',
+  'preflight',
+  'backing_up',
+  'ready',
+  'installing',
+  'restarting',
+  'verifying',
+  'cancelling',
+]
 const EXPECTED_DISCONNECT_MARKERS = ['failed to fetch', 'networkerror', 'load failed', 'bad gateway', 'service unavailable', 'gateway timeout']
 
 export function isControllerUpdateInProgressStatus(status: string | undefined | null): boolean {
   return status != null && CONTROLLER_UPDATE_IN_PROGRESS_STATUSES.includes(status)
+}
+
+export function controllerUpdateDisplayPhase(status: { status?: string; operation?: { active?: boolean; phase?: string } } | null | undefined): string {
+  if (status?.operation?.active && status.operation.phase) return status.operation.phase
+  return status?.status || ''
 }
 
 export function isControllerUpdateFailedStatus(status: string | undefined | null, lastError?: string | null): boolean {

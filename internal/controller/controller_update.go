@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -108,6 +110,7 @@ func (s *Server) restoreControllerUpdateMaintenance(ctx context.Context) {
 }
 
 func (s *Server) ConfigureControllerUpdates(dbPath, listenAddress string) {
+	s.controllerDBPath = dbPath
 	s.controllerListenAddress = listenAddress
 	s.controllerRuntimeStatePath = filepath.Join(filepath.Dir(dbPath), controllerupdate.RuntimeStateName)
 	if configured := strings.TrimSpace(os.Getenv("OBOARD_BACKUP_DIR")); configured != "" {
@@ -136,6 +139,10 @@ func (s *Server) syncControllerRuntimeState() {
 }
 
 func (s *Server) StartControllerUpdates(ctx context.Context) {
+	s.recoverControllerUpdateRun(ctx)
+	if s.agentUpdates != nil {
+		go s.agentUpdates.Start(ctx)
+	}
 	initial := time.NewTimer(10 * time.Second)
 	select {
 	case <-ctx.Done():
@@ -143,7 +150,6 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 		return
 	case <-initial.C:
 		go s.runScheduledControllerUpdate(ctx)
-		go s.runScheduledManagedUpdates(ctx)
 	}
 	ticker := time.NewTicker(controllerUpdateSchedulerPeriod)
 	defer ticker.Stop()
@@ -153,7 +159,6 @@ func (s *Server) StartControllerUpdates(ctx context.Context) {
 			return
 		case <-ticker.C:
 			go s.runScheduledControllerUpdate(ctx)
-			go s.runScheduledManagedUpdates(ctx)
 		}
 	}
 }
@@ -166,7 +171,7 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	settings, settingsErr := s.store.ListSettings(ctx)
 	autoUpdateEnabled := settingsErr == nil && settingBool(settings, controllerAutoUpdateSetting, false)
 	if settingsErr == nil {
-		s.cleanupControllerUpdateBackupFiles(settings[controllerBackupSetting])
+		s.retainControllerUpdateBackups()
 	}
 	status, err := s.controllerUpdater.Status(ctx)
 	if err == nil {
@@ -187,6 +192,9 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 		return
 	}
 	if status.Channel == "pinned" || isActiveControllerUpdateStatus(status.State) {
+		return
+	}
+	if run, _ := s.store.GetActiveControllerUpdateRun(ctx); run != nil {
 		return
 	}
 	if !status.UpdateAvailable {
@@ -259,6 +267,20 @@ func (s *Server) markControllerScheduledCheck(at time.Time) {
 }
 
 func (s *Server) installScheduledControllerUpdate(ctx context.Context, status controllerupdate.Status) {
+	if active, _ := s.store.GetActiveControllerUpdateRun(ctx); active != nil {
+		return
+	}
+	run := &store.ControllerUpdateRun{
+		Source:         "auto",
+		CurrentVersion: version.Version,
+		CurrentBuild:   version.Build,
+		TargetVersion:  status.Available.Version,
+		TargetBuild:    status.Available.Build,
+		Phase:          store.ControllerUpdatePhaseDownloading,
+	}
+	if err := s.store.CreateControllerUpdateRun(ctx, run); err != nil {
+		return
+	}
 	prepared := true
 	prepareStatus, err := s.controllerUpdater.Prepare(ctx)
 	if err != nil {
@@ -266,6 +288,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 			publicErr := controllerUpdateOperationError("启动自动更新下载失败", prepareStatus, err)
 			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
 			s.notifyControllerUpdateFailure(ctx, "下载更新", status.Available.Version, publicErr.Error())
+			s.failControllerUpdateRun(ctx, run, publicErr.Error())
 			return
 		}
 		prepared = false
@@ -273,43 +296,11 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 	} else {
 		s.startControllerUpdateWatch()
 	}
-	backup, err := s.createControllerBackup(ctx)
-	if err != nil {
-		if prepared {
-			s.cancelPreparedControllerUpdate()
-		}
-		message := "创建自动更新备份失败: " + localizeBackupErrorMessage(err.Error())
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
-		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
-		return
+	status = prepareStatus
+	if strings.TrimSpace(run.TargetBuild) == "" {
+		run.TargetBuild = status.Available.Build
 	}
-	targetBuild := strings.TrimSpace(prepareStatus.Available.Build)
-	if targetBuild == "" {
-		targetBuild = status.Available.Build
-	}
-	if err := s.recordControllerUpdateBackup(ctx, backup, targetBuild); err != nil {
-		if prepared {
-			s.cancelPreparedControllerUpdate()
-		}
-		message := "记录自动更新备份失败: " + localizeBackupErrorMessage(err.Error())
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
-		s.notifyControllerUpdateFailure(ctx, "更新前备份", status.Available.Version, message)
-		return
-	}
-	if !s.controllerPanelIdle(time.Now()) {
-		if prepared {
-			s.cancelPreparedControllerUpdate()
-		}
-		return
-	}
-	if installStatus, err := s.installControllerUpdate(ctx, targetBuild); err != nil {
-		publicErr := controllerUpdateOperationError("启动自动更新失败", installStatus, err)
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
-		s.notifyControllerUpdateFailure(ctx, "安装更新", status.Available.Version, publicErr.Error())
-		return
-	}
-	s.startControllerUpdateWatch()
-	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+	s.applyPreparedControllerUpdate(ctx, status, prepared, run)
 }
 
 func (s *Server) cancelPreparedControllerUpdate() {
@@ -377,7 +368,14 @@ func (s *Server) controllerUpdateActivity(w http.ResponseWriter, r *http.Request
 }
 
 func isActiveControllerUpdateStatus(state string) bool {
-	return state == "checking" || state == "downloading" || state == "ready" || state == "installing" || state == "cancelling"
+	switch state {
+	case "checking", "downloading", "ready", "installing", "cancelling",
+		store.ControllerUpdatePhasePreflight, store.ControllerUpdatePhaseBackingUp,
+		store.ControllerUpdatePhaseRestarting, store.ControllerUpdatePhaseVerifying:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) controllerUpdate(w http.ResponseWriter, r *http.Request) {
@@ -504,6 +502,9 @@ func (s *Server) beginManualControllerUpdate(ctx context.Context) (controllerupd
 			s.controllerUpdateRunMu.Unlock()
 		}
 	}()
+	if active, _ := s.store.GetActiveControllerUpdateRun(ctx); active != nil {
+		return controllerupdate.Status{}, false, errControllerUpdateBusy
+	}
 	status, err := s.controllerUpdater.Status(ctx)
 	if err != nil {
 		return status, false, errControllerUpdaterUnavailable
@@ -511,15 +512,34 @@ func (s *Server) beginManualControllerUpdate(ctx context.Context) (controllerupd
 	if status.Channel == "pinned" {
 		return status, false, errControllerUpdatePinned
 	}
+	run := &store.ControllerUpdateRun{
+		Source:         "manual",
+		CurrentVersion: version.Version,
+		CurrentBuild:   version.Build,
+		TargetVersion:  status.Available.Version,
+		TargetBuild:    status.Available.Build,
+		Phase:          store.ControllerUpdatePhaseChecking,
+	}
+	if err := s.store.CreateControllerUpdateRun(ctx, run); err != nil {
+		return status, false, errControllerUpdateBusy
+	}
 	if !status.UpdateAvailable {
+		run.Phase = store.ControllerUpdatePhaseChecking
+		_ = s.store.UpdateControllerUpdateRun(ctx, run)
 		status, err = s.controllerUpdater.Check(ctx)
 		if err != nil {
+			s.failControllerUpdateRun(ctx, run, controllerUpdateOperationError("检查主控更新失败", status, err).Error())
 			return status, false, controllerUpdateOperationError("检查主控更新失败", status, err)
 		}
 	}
 	if !status.UpdateAvailable {
+		s.cancelControllerUpdateRun(ctx, run)
 		return status, false, nil
 	}
+	run.TargetVersion = status.Available.Version
+	run.TargetBuild = status.Available.Build
+	run.Phase = store.ControllerUpdatePhaseDownloading
+	_ = s.store.UpdateControllerUpdateRun(ctx, run)
 	checkedStatus := status
 	prepared := true
 	prepareStatus, err := s.controllerUpdater.Prepare(ctx)
@@ -528,6 +548,7 @@ func (s *Server) beginManualControllerUpdate(ctx context.Context) (controllerupd
 		if !controllerUpdaterPrepareUnsupported(err) {
 			publicErr := controllerUpdateOperationError("启动主控更新下载失败", status, err)
 			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
+			s.failControllerUpdateRun(ctx, run, publicErr.Error())
 			return status, false, publicErr
 		}
 		prepared = false
@@ -537,53 +558,131 @@ func (s *Server) beginManualControllerUpdate(ctx context.Context) (controllerupd
 	}
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
 	backgroundStarted = true
-	go s.finishManualControllerUpdate(status, prepared)
+	go s.finishManualControllerUpdate(status, prepared, run)
 	return status, true, nil
 }
 
-func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, prepared bool) {
+func (s *Server) finishManualControllerUpdate(status controllerupdate.Status, prepared bool, run *store.ControllerUpdateRun) {
 	defer s.controllerUpdateRunMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), controllerUpdateInstallTimeout)
-	defer cancel()
-	backup, err := s.createControllerBackup(ctx)
-	if err != nil {
-		log.Printf("manual Controller update backup failed: %v", err)
+	s.setControllerUpdateCancel(cancel)
+	defer func() {
+		s.cancelControllerUpdateContext()
+	}()
+	s.applyPreparedControllerUpdate(ctx, status, prepared, run)
+}
+
+func (s *Server) applyPreparedControllerUpdate(ctx context.Context, status controllerupdate.Status, prepared bool, run *store.ControllerUpdateRun) {
+	if run == nil {
+		return
+	}
+	run.Phase = store.ControllerUpdatePhasePreflight
+	_ = s.store.UpdateControllerUpdateRun(ctx, run)
+	s.publishRealtime("controller_update")
+	dir := s.controllerBackupDir
+	if strings.TrimSpace(dir) == "" {
+		dir = filepath.Join("data", "backups")
+	}
+	if err := s.preflightControllerUpdate(ctx, run, dir); err != nil {
+		log.Printf("controller update preflight failed: %v", err)
 		if prepared {
 			s.cancelPreparedControllerUpdate()
 		}
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "创建数据库备份失败，已取消更新: "+localizeBackupErrorMessage(err.Error()))
-		s.publishRealtime("controller_update")
+		message := "更新前检查失败: " + localizeBackupErrorMessage(err.Error())
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
+		s.failControllerUpdateRun(ctx, run, message)
 		return
+	}
+	run.Phase = store.ControllerUpdatePhaseBackingUp
+	_ = s.store.UpdateControllerUpdateRun(ctx, run)
+	s.publishRealtime("controller_update")
+	backupStarted := time.Now()
+	backup, err := s.createControllerBackup(ctx)
+	run.BackupDurationMS = time.Since(backupStarted).Milliseconds()
+	if err != nil {
+		log.Printf("Controller update backup failed: %v", err)
+		if prepared {
+			s.cancelPreparedControllerUpdate()
+		}
+		if errors.Is(err, context.Canceled) {
+			s.cancelControllerUpdateRun(ctx, run)
+			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+			return
+		}
+		message := "创建数据库备份失败，已取消更新: " + localizeBackupErrorMessage(err.Error())
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
+		s.failControllerUpdateRun(ctx, run, message)
+		return
+	}
+	run.BackupPath = backup
+	if info, statErr := os.Stat(backup); statErr == nil {
+		run.BackupSizeBytes = info.Size()
+		run.BackupRemainingPages = 0
 	}
 	if err := s.recordControllerUpdateBackup(ctx, backup, status.Available.Build); err != nil {
-		log.Printf("manual Controller update backup recording failed: %v", err)
+		log.Printf("Controller update backup recording failed: %v", err)
 		if prepared {
 			s.cancelPreparedControllerUpdate()
 		}
-		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "记录数据库备份失败，已取消更新: "+localizeBackupErrorMessage(err.Error()))
-		s.publishRealtime("controller_update")
+		message := "记录数据库备份失败，已取消更新: " + localizeBackupErrorMessage(err.Error())
+		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, message)
+		s.failControllerUpdateRun(ctx, run, message)
 		return
 	}
-	status, err = s.installControllerUpdate(ctx, status.Available.Build)
+	if run.Source == "auto" && !s.controllerPanelIdle(time.Now()) {
+		if prepared {
+			s.cancelPreparedControllerUpdate()
+		}
+		s.cancelControllerUpdateRun(ctx, run)
+		return
+	}
+	run.Phase = store.ControllerUpdatePhaseInstalling
+	_ = s.store.UpdateControllerUpdateRun(ctx, run)
+	s.publishRealtime("controller_update")
+	installStarted := time.Now()
+	targetBuild := strings.TrimSpace(run.TargetBuild)
+	if targetBuild == "" {
+		targetBuild = status.Available.Build
+	}
+	status, err = s.installControllerUpdate(ctx, targetBuild)
+	run.InstallDurationMS = time.Since(installStarted).Milliseconds()
 	if err != nil {
 		if (status.State == "cancelled" || status.State == "cancelling") && strings.TrimSpace(status.LastError) == "" {
+			s.cancelControllerUpdateRun(ctx, run)
 			_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
-			s.publishRealtime("controller_update")
 			return
 		}
 		publicErr := controllerUpdateOperationError("启动主控更新失败", status, err)
-		log.Printf("manual Controller update start failed: %v", publicErr)
+		log.Printf("Controller update start failed: %v", publicErr)
 		_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, publicErr.Error())
-		s.publishRealtime("controller_update")
+		s.failControllerUpdateRun(ctx, run, publicErr.Error())
 		return
 	}
+	run.Phase = store.ControllerUpdatePhaseRestarting
+	_ = s.store.UpdateControllerUpdateRun(ctx, run)
 	s.startControllerUpdateWatch()
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+	s.publishRealtime("controller_update")
 }
 
 func (s *Server) controllerUpdateCancel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		method(w)
+		return
+	}
+	run, _ := s.store.GetActiveControllerUpdateRun(r.Context())
+	if run != nil && controllerUpdatePhaseCancellable(run.Phase) {
+		s.cancelControllerUpdateContext()
+		s.cancelPreparedControllerUpdate()
+		s.cancelControllerUpdateRun(r.Context(), run)
+		_ = s.store.SetSetting(r.Context(), controllerUpdateErrorSetting, "")
+		auditReq(s, r, "cancel", "controller_update", run.TargetBuild)
+		status, err := s.controllerUpdater.Status(r.Context())
+		if err != nil {
+			status = s.fallbackControllerUpdateStatus()
+		}
+		status.State = store.ControllerUpdatePhaseCancelled
+		s.writeControllerUpdateStatus(w, r, status)
 		return
 	}
 	status, err := s.controllerUpdater.Cancel(r.Context())
@@ -594,6 +693,9 @@ func (s *Server) controllerUpdateCancel(w http.ResponseWriter, r *http.Request) 
 			fail(w, errors.New("当前没有可以中断的更新"), http.StatusConflict)
 		}
 		return
+	}
+	if run != nil {
+		s.cancelControllerUpdateRun(r.Context(), run)
 	}
 	auditReq(s, r, "cancel", "controller_update", status.Channel+":"+status.Available.Version)
 	s.writeControllerUpdateStatus(w, r, status)
@@ -688,6 +790,7 @@ func (s *Server) writeControllerUpdateStatus(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	status.LastError = localizeBackupErrorMessage(status.LastError)
+	s.attachControllerUpdateOperation(r.Context(), &status)
 	write(w, http.StatusOK, status)
 }
 
@@ -699,11 +802,25 @@ func (s *Server) createControllerBackup(ctx context.Context) (string, error) {
 	s.cleanupZeroByteControllerUpdateBackupFiles()
 	name := "oboard-before-update-" + time.Now().UTC().Format("20060102T150405.000000000Z") + ".sqlite"
 	path := filepath.Join(dir, name)
-	if err := s.store.Backup(ctx, path); err != nil {
+	started := time.Now()
+	run, _ := s.store.GetActiveControllerUpdateRun(ctx)
+	err := s.store.Backup(ctx, path, store.BackupOptions{
+		Progress: func(progress store.BackupProgress) {
+			s.controllerUpdateProgress.Store(progress)
+			if run != nil {
+				s.persistControllerUpdateProgress(run, progress)
+			}
+			now := time.Now()
+			if now.Sub(started) >= 250*time.Millisecond {
+				s.publishRealtime("controller_update")
+				started = now
+			}
+		},
+	})
+	if err != nil {
 		_ = os.Remove(path)
 		return "", err
 	}
-	s.cleanupControllerUpdateBackupFiles(path)
 	return path, nil
 }
 
@@ -730,7 +847,7 @@ func (s *Server) cleanupZeroByteControllerUpdateBackupFiles() {
 	}
 }
 
-func (s *Server) cleanupControllerUpdateBackupFiles(retainedPath string) {
+func (s *Server) retainControllerUpdateBackups() {
 	dir := s.controllerBackupDir
 	if strings.TrimSpace(dir) == "" {
 		dir = filepath.Join("data", "backups")
@@ -739,19 +856,40 @@ func (s *Server) cleanupControllerUpdateBackupFiles(retainedPath string) {
 	if err != nil {
 		return
 	}
-	retained := strings.TrimSpace(retainedPath)
+	type backupFile struct {
+		path    string
+		modTime time.Time
+		size    int64
+	}
+	var complete []backupFile
 	for _, entry := range entries {
 		if !isControllerUpdateBackupName(entry.Name()) || !entry.Type().IsRegular() {
 			continue
 		}
-		entryPath := filepath.Join(dir, entry.Name())
-		if retained != "" && filepath.Clean(entryPath) == filepath.Clean(retained) {
+		info, err := entry.Info()
+		if err != nil {
 			continue
 		}
-		if err := os.Remove(entryPath); err != nil && !os.IsNotExist(err) {
-			log.Printf("remove Controller update backup %s: %v", entryPath, err)
+		path := filepath.Join(dir, entry.Name())
+		if info.Size() <= 0 {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				log.Printf("remove partial Controller update backup %s: %v", path, err)
+			}
+			continue
+		}
+		complete = append(complete, backupFile{path: path, modTime: info.ModTime(), size: info.Size()})
+	}
+	sort.Slice(complete, func(i, j int) bool { return complete[i].modTime.After(complete[j].modTime) })
+	for index := controllerUpdateBackupRetain; index < len(complete); index++ {
+		if err := os.Remove(complete[index].path); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove excess Controller update backup %s: %v", complete[index].path, err)
 		}
 	}
+}
+
+func (s *Server) cleanupControllerUpdateBackupFiles(retainedPath string) {
+	s.retainControllerUpdateBackups()
+	_ = retainedPath
 }
 
 func (s *Server) recordControllerUpdateBackup(ctx context.Context, path, targetBuild string) error {
@@ -767,17 +905,7 @@ func (s *Server) removeSuccessfulControllerUpdateBackup(ctx context.Context, set
 	if path == "" || targetBuild == "" || strings.TrimSpace(status.Current.Build) != targetBuild || !s.isControllerUpdateBackupPath(path) {
 		return
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		log.Printf("remove successful Controller update backup %s: %v", path, err)
-		return
-	}
-	if err := s.store.SetSettings(ctx, map[string]string{
-		controllerBackupSetting:            "",
-		controllerBackupTargetBuildSetting: "",
-	}); err != nil {
-		log.Printf("clear successful Controller update backup state: %v", err)
-	}
-	s.cleanupControllerUpdateBackupFiles("")
+	s.retainControllerUpdateBackups()
 }
 
 func (s *Server) isControllerUpdateBackupPath(path string) bool {

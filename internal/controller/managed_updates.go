@@ -10,6 +10,11 @@ import (
 )
 
 func (s *Server) runScheduledManagedUpdates(ctx context.Context) {
+	if s.agentUpdates != nil {
+		s.agentUpdates.Fill(ctx, false)
+		s.agentUpdates.fillRelayUpdates(ctx)
+		return
+	}
 	settings, err := s.store.ListSettings(ctx)
 	if err != nil || !automaticUpdateAllowedAt(settings, time.Now()) {
 		return
@@ -27,17 +32,18 @@ func (s *Server) scheduleAgentUpdates(ctx context.Context) {
 	if targetBuild == "" || strings.EqualFold(targetBuild, "dev") {
 		return
 	}
-	servers, err := s.store.ListServers(ctx)
+	candidates, err := s.store.ListAgentUpdateCandidates(ctx, targetBuild, 8)
 	if err != nil {
 		return
 	}
 	versionStamp := time.Now().Unix()
-	for index := range servers {
-		server := &servers[index]
-		if server.Status != model.ServerOnline || strings.TrimSpace(server.AgentID) == "" || !buildNeedsUpdate(server.AgentBuild, targetBuild) {
+	for index := range candidates {
+		item := candidates[index]
+		if !buildNeedsUpdate(item.AgentBuild, targetBuild) {
 			continue
 		}
-		_, _, _ = s.enqueueAgentUpdateWithVersion(ctx, server, model.AgentUpdateRequest{}, versionStamp)
+		server := &model.Server{ID: item.ServerID, AgentID: item.AgentID, AgentBuild: item.AgentBuild, Status: item.Status}
+		_, _, _ = s.enqueueAgentUpdateWithVersion(ctx, server, model.AgentUpdateRequest{Source: "auto"}, versionStamp)
 	}
 }
 
@@ -46,16 +52,16 @@ func (s *Server) scheduleSubscriptionRelayUpdates(ctx context.Context) {
 	if targetBuild == "" || strings.EqualFold(targetBuild, "dev") {
 		return
 	}
-	relays, err := s.store.ListSubscriptionRelays(ctx)
+	candidates, err := s.store.ListRelayUpdateCandidates(ctx, targetBuild, relayUpdateMaxConcurrency)
 	if err != nil {
 		return
 	}
-	for index := range relays {
-		relay := &relays[index]
-		if relay.TokenHash == "" || relay.UpdateRequestedAt != nil || !buildNeedsUpdate(relay.Build, targetBuild) {
+	for index := range candidates {
+		item := candidates[index]
+		if !buildNeedsUpdate(item.Build, targetBuild) {
 			continue
 		}
-		_ = s.store.RequestSubscriptionRelayUpdate(ctx, relay.ID, version.Version, targetBuild)
+		_ = s.store.RequestSubscriptionRelayUpdate(ctx, item.ID, version.Version, targetBuild)
 	}
 }
 

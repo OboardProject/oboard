@@ -200,33 +200,12 @@ func (s *Server) registerTaskTriggerOperations() {
 		if _, err := s.publicBaseURL(ctx); err != nil {
 			return nil, err
 		}
-		servers, err := s.store.ListServers(ctx)
-		if err != nil {
-			return nil, err
+		if s.agentUpdates == nil {
+			return nil, errors.New("Agent 更新协调器不可用")
 		}
-		versionStamp := time.Now().Unix()
-		summary := map[string]int{"total": 0, "created": 0, "existing": 0, "skipped": 0, "failed": 0}
-		for _, server := range servers {
-			if strings.TrimSpace(server.AgentID) == "" {
-				summary["skipped"]++
-				summary["total"]++
-				continue
-			}
-			summary["total"]++
-			task, existing, err := s.enqueueAgentUpdateWithVersion(ctx, &server, model.AgentUpdateRequest{}, versionStamp)
-			if err != nil {
-				summary["failed"]++
-				continue
-			}
-			_ = task
-			if existing {
-				summary["existing"]++
-			} else if task.Status == "failed" {
-				summary["failed"]++
-			} else {
-				summary["created"]++
-			}
-		}
+		counts := s.agentUpdates.Fill(ctx, true)
+		s.agentUpdates.Wake()
+		summary := map[string]int{"total": counts.Enrolled, "created": counts.Running, "existing": 0, "skipped": counts.Offline, "failed": 0}
 		return map[string]any{"summary": summary, "created_count": summary["created"]}, nil
 	})
 

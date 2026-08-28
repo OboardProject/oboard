@@ -138,6 +138,7 @@ type Server struct {
 	certificateIssues             map[int64]bool
 	controllerUpdater             *controllerupdate.Client
 	controllerBackupDir           string
+	controllerDBPath              string
 	controllerRuntimeStatePath    string
 	controllerListenAddress       string
 	controllerUpdateRunMu         sync.Mutex
@@ -145,6 +146,11 @@ type Server struct {
 	controllerLastScheduledCheck  time.Time
 	controllerUpdateWatchMu       sync.Mutex
 	controllerUpdateWatching      bool
+	controllerUpdateCancelMu      sync.Mutex
+	controllerUpdateAbort         context.CancelFunc
+	controllerUpdateProgress      atomic.Value
+	controllerUpdateProgressAt    atomic.Int64
+	agentUpdates                  *agentUpdateCoordinator
 	controllerActivityMu          sync.Mutex
 	controllerActiveRequests      int
 	controllerLastActivity        time.Time
@@ -219,6 +225,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.agentLive = map[int64]chan any{}
 	s.remoteExecHub = newRemoteExecResultHub()
 	s.terminalHub = newTerminalSessionHub()
+	s.agentUpdates = newAgentUpdateCoordinator(s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.initializeTrustedProxies()
@@ -297,6 +304,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
+	mux.HandleFunc("/api/v1/agent-updates/status", s.auth(s.agentUpdatesStatus, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/agent-updates/pause", s.auth(s.agentUpdatesPause, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/agent-updates/resume", s.auth(s.agentUpdatesResume, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/agent-updates/retry-failed", s.auth(s.agentUpdatesRetryFailed, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups", s.auth(s.controllerBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings", s.auth(s.controllerBackupSettings, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/backups/settings/test", s.auth(s.controllerBackupTestDestination, model.RoleAdmin))
@@ -864,6 +875,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ControllerAutoUpdateInterval              *int               `json:"controller_auto_update_interval_hours"`
 			AgentAutoUpdate                           *bool              `json:"agent_auto_update_enabled"`
 			SubscriptionRelayAutoUpdate               *bool              `json:"subscription_relay_auto_update_enabled"`
+			AgentUpdateMaxConcurrency                 *int               `json:"agent_update_max_concurrency"`
+			ManagedUpdateStartupQuietSeconds          *int               `json:"managed_update_startup_quiet_seconds"`
 			UpdateWindowEnabled                       *bool              `json:"update_window_enabled"`
 			UpdateWindowStartHour                     *int               `json:"update_window_start_hour"`
 			UpdateWindowEndHour                       *int               `json:"update_window_end_hour"`
@@ -1205,6 +1218,31 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, key)
+			if key == agentAutoUpdateSetting && *value && s.agentUpdates != nil {
+				s.agentUpdates.Wake()
+			}
+		}
+		if req.AgentUpdateMaxConcurrency != nil {
+			if *req.AgentUpdateMaxConcurrency < 0 || *req.AgentUpdateMaxConcurrency > 32 {
+				fail(w, errors.New("agent_update_max_concurrency must be between 0 and 32"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), agentUpdateMaxConcurrencySetting, strconv.Itoa(*req.AgentUpdateMaxConcurrency)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, agentUpdateMaxConcurrencySetting)
+		}
+		if req.ManagedUpdateStartupQuietSeconds != nil {
+			if *req.ManagedUpdateStartupQuietSeconds < 0 || *req.ManagedUpdateStartupQuietSeconds > 300 {
+				fail(w, errors.New("managed_update_startup_quiet_seconds must be between 0 and 300"), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), managedUpdateStartupQuietSetting, strconv.Itoa(*req.ManagedUpdateStartupQuietSeconds)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, managedUpdateStartupQuietSetting)
 		}
 		for key, value := range map[string]*int{
 			updateWindowStartHourSetting: req.UpdateWindowStartHour,
@@ -1418,6 +1456,8 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
+	out[agentUpdateMaxConcurrencySetting] = 0
+	out[managedUpdateStartupQuietSetting] = agentUpdateDefaultQuietSeconds
 	out[updateWindowEnabledSetting] = false
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
@@ -1431,6 +1471,8 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
 	out[agentAutoUpdateSetting] = settingBool(items, agentAutoUpdateSetting, false)
 	out[subscriptionRelayAutoUpdateSetting] = settingBool(items, subscriptionRelayAutoUpdateSetting, false)
+	out[agentUpdateMaxConcurrencySetting] = settingInt(items, agentUpdateMaxConcurrencySetting, 0, 0, 32)
+	out[managedUpdateStartupQuietSetting] = settingInt(items, managedUpdateStartupQuietSetting, agentUpdateDefaultQuietSeconds, 0, 300)
 	out[settingServerMonitoringRetentionDays] = store.ServerMonitoringRetentionDays(items)
 	out[updateWindowEnabledSetting] = settingBool(items, updateWindowEnabledSetting, false)
 	out[updateWindowStartHourSetting] = updateWindowHour(items, updateWindowStartHourSetting, updateWindowDefaultStartHour)
@@ -1490,6 +1532,12 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[settingMCPRawShellEnabled] = settingBool(items, settingMCPRawShellEnabled, false)
 	if migration, err := s.basePathMigrationProgress(ctx); err == nil {
 		out["base_path_migration"] = migration
+	}
+	if pageCount, pageSize, freelist, err := s.store.DatabasePageStats(ctx); err == nil {
+		dbBytes := pageCount * pageSize
+		if pageCount > 0 && dbBytes > 512<<20 && float64(freelist)/float64(pageCount) > 0.25 {
+			out["database_maintenance_hint"] = "建议进行数据库维护"
+		}
 	}
 	return out
 }
@@ -4336,6 +4384,8 @@ func (s *Server) serverAgentUpdate(w http.ResponseWriter, r *http.Request, id in
 			status = 400
 		} else if strings.Contains(err.Error(), "not allowed") {
 			status = 400
+		} else if errors.Is(err, errAgentUpdateOffline) {
+			status = http.StatusConflict
 		}
 		fail(w, err, status)
 		return
@@ -4344,9 +4394,6 @@ func (s *Server) serverAgentUpdate(w http.ResponseWriter, r *http.Request, id in
 	write(w, 202, map[string]any{"task": task, "existing": existing})
 }
 
-// agentsUpdateAll queues update_agent tasks for every enrolled server.
-// Offline/unenrolled servers are still recorded (createAgentTask fails them immediately)
-// so operators can see results in the task center.
 func (s *Server) serverAgentUninstall(w http.ResponseWriter, r *http.Request, id int64) {
 	if r.Method != http.MethodPost {
 		method(w)
@@ -4426,72 +4473,37 @@ func (s *Server) enqueueAgentUninstall(ctx context.Context, server *model.Server
 	return task, false, nil
 }
 
+// agentsUpdateAll fills the bounded Agent fleet update window. It does not
+// enqueue one task per server and never creates update_agent tasks for offline hosts.
 func (s *Server) agentsUpdateAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		method(w)
 		return
 	}
-	var req model.AgentUpdateRequest
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			fail(w, err, 400)
-			return
-		}
-	}
 	if _, err := s.publicBaseURL(r.Context()); err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	servers, err := s.store.ListServers(r.Context())
-	if err != nil {
-		fail(w, err, 500)
+	if s.agentUpdates == nil {
+		fail(w, errors.New("Agent 更新协调器不可用"), http.StatusServiceUnavailable)
 		return
 	}
-	versionStamp := time.Now().Unix()
-	type itemResult struct {
-		ServerID   int64  `json:"server_id"`
-		ServerName string `json:"server_name"`
-		Status     string `json:"status"` // created | existing | skipped | failed
-		TaskID     int64  `json:"task_id,omitempty"`
-		Error      string `json:"error,omitempty"`
-	}
-	results := make([]itemResult, 0, len(servers))
-	summary := map[string]int{"total": 0, "created": 0, "existing": 0, "skipped": 0, "failed": 0}
-	tasks := make([]model.AgentTask, 0)
-
-	for _, server := range servers {
-		if strings.TrimSpace(server.AgentID) == "" {
-			summary["skipped"]++
-			summary["total"]++
-			results = append(results, itemResult{ServerID: server.ID, ServerName: server.Name, Status: "skipped", Error: "Agent 未接入"})
-			continue
-		}
-		summary["total"]++
-		// Use shared version stamp so task center batches bulk updates together.
-		task, existing, err := s.enqueueAgentUpdateWithVersion(r.Context(), &server, req, versionStamp)
-		if err != nil {
-			summary["failed"]++
-			results = append(results, itemResult{ServerID: server.ID, ServerName: server.Name, Status: "failed", Error: err.Error()})
-			continue
-		}
-		if existing {
-			summary["existing"]++
-			results = append(results, itemResult{ServerID: server.ID, ServerName: server.Name, Status: "existing", TaskID: task.ID})
-		} else if task.Status == "failed" {
-			summary["failed"]++
-			results = append(results, itemResult{ServerID: server.ID, ServerName: server.Name, Status: "failed", TaskID: task.ID, Error: taskResultMessage(task)})
-		} else {
-			summary["created"]++
-			results = append(results, itemResult{ServerID: server.ID, ServerName: server.Name, Status: "created", TaskID: task.ID})
-		}
-		tasks = append(tasks, task)
-	}
-	auditReq(s, r, "update", "agent", fmt.Sprintf("all:%d", summary["created"]+summary["existing"]))
+	counts := s.agentUpdates.Fill(r.Context(), true)
+	s.agentUpdates.Wake()
+	auditReq(s, r, "update", "agent", fmt.Sprintf("fleet:%d", counts.Running))
 	write(w, 202, map[string]any{
-		"summary":        summary,
-		"results":        results,
-		"tasks":          tasks,
-		"config_version": versionStamp,
+		"summary": map[string]int{
+			"total":    counts.Enrolled,
+			"created":  counts.Running,
+			"existing": 0,
+			"skipped":  counts.Offline,
+			"failed":   0,
+		},
+		"running":        counts.Running,
+		"pending":        counts.Pending,
+		"offline":        counts.Offline,
+		"current":        counts.Current,
+		"config_version": time.Now().Unix(),
 	})
 }
 
@@ -4520,11 +4532,8 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 	if strings.TrimSpace(server.AgentID) == "" {
 		return model.AgentTask{}, false, errors.New("agent is not enrolled")
 	}
-	_ = s.store.FailStaleActiveTasksByServerType(ctx, server.ID, model.AgentTaskTypeUpdateAgent, time.Now().Add(-10*time.Minute), `{"message":"更新任务超时，已允许重新创建"}`)
-	if active, err := s.store.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeUpdateAgent); err == nil {
-		return *active, true, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return model.AgentTask{}, false, err
+	if server.Status != model.ServerOnline {
+		return model.AgentTask{}, false, errAgentUpdateOffline
 	}
 	source := strings.ToLower(strings.TrimSpace(req.Source))
 	if source == "" {
@@ -4544,17 +4553,35 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 	if err != nil {
 		return model.AgentTask{}, false, err
 	}
-	task, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUpdateAgent, model.UpdateAgentTaskPayload{
+	nonce, err := security.RandomToken(12)
+	if err != nil {
+		return model.AgentTask{}, false, err
+	}
+	payload, err := json.Marshal(model.UpdateAgentTaskPayload{
 		ControllerURL: controllerURL,
 		ExpectedBuild: version.AgentBuild,
 		Source:        source,
 		GitHubRepo:    repo,
-	}, configVersion)
+	})
 	if err != nil {
 		return model.AgentTask{}, false, err
 	}
-	return task, false, nil
+	task := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeUpdateAgent, PayloadJSON: string(payload), Status: "pending", ResultJSON: "{}", ConfigVersion: configVersion, Nonce: nonce}
+	got, created, err := s.store.EnqueueUniqueAgentTask(ctx, task, time.Now().Add(-10*time.Minute))
+	if err != nil {
+		return model.AgentTask{}, false, err
+	}
+	if created {
+		s.tasks.wake(server.ID)
+		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+	}
+	if got == nil {
+		return model.AgentTask{}, false, errors.New("agent update was not queued")
+	}
+	return *got, !created, nil
 }
+
+var errAgentUpdateOffline = errors.New("服务器离线，将在重新连接后更新")
 
 func emptyDash(value string) string {
 	if strings.TrimSpace(value) == "" {
@@ -14308,6 +14335,7 @@ func (s *Server) completeAgentUpdateAfterReconnect(ctx context.Context, serverID
 	}
 	log.Printf("agent update confirmed server=%d build=%s", task.ServerID, agentBuild)
 	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+	s.noteAgentUpdateOutcome(ctx, serverID, "succeeded", "", payload.ExpectedBuild)
 }
 
 func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
@@ -14416,6 +14444,9 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	if err := s.completeTaskWithNotification(r.Context(), req.TaskID, req.Status, req.ResultJSON); err != nil {
 		fail(w, err, 500)
 		return
+	}
+	if task.Type == model.AgentTaskTypeUpdateAgent {
+		s.noteAgentUpdateOutcome(r.Context(), task.ServerID, req.Status, taskResultMessage(model.AgentTask{ResultJSON: req.ResultJSON}), agentUpdatePayloadBuild(*task))
 	}
 	s.recordConfigurationTaskResult(r.Context(), *task, req.Status, req.ResultJSON)
 	// A completed task may advance an access-change phase or open an

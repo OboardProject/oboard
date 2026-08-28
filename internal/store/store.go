@@ -12,7 +12,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -541,11 +540,21 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_traffic_counter_streams_lookup on traffic_counter_streams(server_id,user_id,period_key,last_seen_at)`,
 		`create table if not exists traffic_reconciliation_events (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, source text not null default '', stream_id text not null default '', counter_epoch text not null default '', period_key text not null default '', kind text not null, detail text not null default '', created_at text not null, resolved_at text)`,
 		`create index if not exists idx_traffic_reconciliation_open on traffic_reconciliation_events(user_id,server_id,created_at desc)`,
+		`create table if not exists controller_update_runs (id integer primary key autoincrement, source text not null default 'manual', current_version text not null default '', current_build text not null default '', target_version text not null default '', target_build text not null default '', phase text not null, started_at text not null, updated_at text not null, finished_at text, backup_path text not null default '', backup_total_pages integer not null default 0, backup_remaining_pages integer not null default 0, backup_size_bytes integer not null default 0, download_duration_ms integer not null default 0, backup_duration_ms integer not null default 0, install_duration_ms integer not null default 0, restart_duration_ms integer not null default 0, total_duration_ms integer not null default 0, error text not null default '')`,
+		`create unique index if not exists idx_controller_update_runs_one_active on controller_update_runs((1)) where phase not in ('succeeded','failed','cancelled')`,
+		`create table if not exists agent_fleet_update_state (id integer primary key check(id=1), paused integer not null default 0, target_build text not null default '', attempted integer not null default 0, succeeded integer not null default 0, failed integer not null default 0, last_pause_reason text not null default '', updated_at text not null)`,
+		`insert or ignore into agent_fleet_update_state(id,paused,target_build,attempted,succeeded,failed,last_pause_reason,updated_at) values(1,0,'',0,0,0,'','1970-01-01T00:00:00Z')`,
+		`create table if not exists agent_update_retries (server_id integer primary key references servers(id) on delete cascade, target_build text not null default '', attempts integer not null default 0, next_retry_at text, last_error text not null default '', updated_at text not null)`,
+		`create index if not exists idx_servers_agent_update_scan on servers(status, agent_build, id)`,
+		`create index if not exists idx_agent_tasks_update_active on agent_tasks(type, status, server_id)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateAgentUpdateIndexes(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureNullablePortForwardTargetServer(ctx); err != nil {
 		return err
@@ -1632,30 +1641,6 @@ func (s *Store) SetSettings(ctx context.Context, values map[string]string) error
 // Controller settings snapshot is valid while this value is unchanged.
 func (s *Store) SettingsRevision() int64 {
 	return s.settingsRevision.Load()
-}
-
-// Backup writes a transactionally consistent standalone SQLite snapshot and
-// avoids copying live WAL/SHM sidecars.
-func (s *Store) Backup(ctx context.Context, destination string) error {
-	destination = strings.TrimSpace(destination)
-	if destination == "" {
-		return errors.New("backup destination is required")
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-		return err
-	}
-	if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `vacuum into ?`, destination); err != nil {
-		_ = os.Remove(destination)
-		return fmt.Errorf("create SQLite backup: %w", err)
-	}
-	if err := os.Chmod(destination, 0o600); err != nil {
-		_ = os.Remove(destination)
-		return fmt.Errorf("secure SQLite backup: %w", err)
-	}
-	return nil
 }
 
 func (s *Store) CheckIntegrity(ctx context.Context) error {

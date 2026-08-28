@@ -143,8 +143,8 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(firstBackup); !os.IsNotExist(err) {
-		t.Fatalf("previous update backup was not removed: %v", err)
+	if _, err := os.Stat(firstBackup); err != nil {
+		t.Fatalf("previous update backup was removed: %v", err)
 	}
 	if _, err := os.Stat(zeroStale); !os.IsNotExist(err) {
 		t.Fatalf("zero-byte stale update backup was not removed: %v", err)
@@ -159,7 +159,7 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backups) != 1 || backups[0] != latestBackup {
+	if len(backups) != 2 {
 		t.Fatalf("unexpected retained update backups: %#v", backups)
 	}
 }
@@ -189,19 +189,17 @@ func TestCleanupControllerUpdateBackupFilesPreservesRetained(t *testing.T) {
 		t.Fatal(err)
 	}
 	app.cleanupControllerUpdateBackupFiles(retained)
-	for _, path := range []string{stale, zero} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("stale update backup was not removed: %v", err)
-		}
+	if _, err := os.Stat(zero); !os.IsNotExist(err) {
+		t.Fatalf("zero-byte update backup was not removed: %v", err)
 	}
-	for _, path := range []string{retained, unrelated} {
+	for _, path := range []string{retained, stale, unrelated} {
 		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("retained backup or unrelated file was removed: %v", err)
+			t.Fatalf("complete backup or unrelated file was removed: %v", err)
 		}
 	}
 }
 
-func TestSuccessfulControllerUpdateRemovesBackup(t *testing.T) {
+func TestSuccessfulControllerUpdateRetainsBackup(t *testing.T) {
 	root := t.TempDir()
 	db, err := store.Open(filepath.Join(root, "oboard.sqlite"))
 	if err != nil {
@@ -226,15 +224,8 @@ func TestSuccessfulControllerUpdateRemovesBackup(t *testing.T) {
 		t.Fatalf("backup was removed before the target build succeeded: %v", err)
 	}
 	app.removeSuccessfulControllerUpdateBackup(context.Background(), settings, controllerupdate.Status{Current: controllerupdate.BuildInfo{Build: "20260810010101"}})
-	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
-		t.Fatalf("successful update backup was not removed: %v", err)
-	}
-	settings, err = db.ListSettings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if settings[controllerBackupSetting] != "" || settings[controllerBackupTargetBuildSetting] != "" {
-		t.Fatalf("successful update backup state was not cleared: %#v", settings)
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("successful update backup was removed: %v", err)
 	}
 }
 

@@ -166,6 +166,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			status = s.fallbackControllerUpdateStatus()
 		}
 		return s.controllerUpdateAutomationView(ctx, status), nil
+	case "agent_updates.status":
+		var request struct{}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return s.agentFleetStatus(ctx)
 	default:
 		result, err := s.application.Query(ctx, principal, capabilityName, input)
 		if err == nil {
@@ -269,8 +275,11 @@ func (s *Server) controllerUpdateAutomationCandidate(ctx context.Context, capabi
 			return request, status, errors.New("主控更新已经在进行中")
 		}
 	}
-	if capabilityName == "controller_update.cancel" && !status.CanCancel {
-		return request, status, errors.New("当前没有可以中断的更新")
+	if capabilityName == "controller_update.cancel" {
+		run, _ := s.store.GetActiveControllerUpdateRun(ctx)
+		if (run == nil || !controllerUpdatePhaseCancellable(run.Phase)) && !status.CanCancel {
+			return request, status, errors.New("当前没有可以中断的更新")
+		}
 	}
 	return request, status, nil
 }
@@ -286,16 +295,21 @@ func (s *Server) controllerUpdateAutomationView(ctx context.Context, status cont
 			status.LastError = settings[controllerUpdateErrorSetting]
 		}
 	}
+	s.attachControllerUpdateOperation(ctx, &status)
 	buildView := func(item controllerupdate.BuildInfo) map[string]any {
 		return map[string]any{"version": item.Version, "build": item.Build, "commit": item.Commit, "date": item.Date}
 	}
-	return map[string]any{
+	view := map[string]any{
 		"channel": status.Channel, "current": buildView(status.Current), "available": buildView(status.Available),
 		"update_available": status.UpdateAvailable, "auto_update_enabled": status.AutoUpdateEnabled,
 		"auto_update_interval_hours": status.AutoUpdateIntervalHours, "can_cancel": status.CanCancel,
 		"status": status.State, "last_checked_at": status.LastCheckedAt, "last_error": status.LastError,
 		"backup_configured": backupConfigured,
 	}
+	if status.Operation != nil {
+		view["operation"] = status.Operation
+	}
+	return view
 }
 
 func controllerUpdateAutomationRevision(status controllerupdate.Status) string {

@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +26,7 @@ func TestBackupCreatesReadableSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(root, "backups", "snapshot.sqlite")
-	if err := db.Backup(context.Background(), destination); err != nil {
+	if err := db.Backup(context.Background(), destination, BackupOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := Open(destination)
@@ -73,7 +76,7 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 		}
 	}()
 	destination := filepath.Join(root, "backups", "snapshot.sqlite")
-	backupErr := db.Backup(ctx, destination)
+	backupErr := db.Backup(ctx, destination, BackupOptions{})
 	close(stop)
 	writer.Wait()
 	close(writerErr)
@@ -122,6 +125,165 @@ func TestBackupDuringConcurrentWrites(t *testing.T) {
 	}
 	if mode != "wal" {
 		t.Fatalf("normal journal_mode after restore = %q, want wal", mode)
+	}
+}
+
+func TestBackupReportsProgressAndHonorsCancel(t *testing.T) {
+	root := t.TempDir()
+	db, err := Open(filepath.Join(root, "source.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `create table if not exists backup_fill (id integer primary key, blob blob not null)`); err != nil {
+		t.Fatal(err)
+	}
+	chunk := make([]byte, 256<<10)
+	for i := 0; i < 40; i++ {
+		if _, err := db.db.ExecContext(ctx, `insert into backup_fill(blob) values(?)`, chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var reports []BackupProgress
+	destination := filepath.Join(root, "progress.sqlite")
+	if err := db.Backup(ctx, destination, BackupOptions{PagesPerStep: 16, Progress: func(progress BackupProgress) {
+		reports = append(reports, progress)
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) == 0 || reports[len(reports)-1].Percent < 99 {
+		t.Fatalf("backup progress = %#v", reports)
+	}
+	if _, err := os.Stat(destination); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelDest := filepath.Join(root, "cancelled.sqlite")
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	first := true
+	err = db.Backup(cancelCtx, cancelDest, BackupOptions{PagesPerStep: 8, Progress: func(BackupProgress) {
+		if first {
+			first = false
+			cancel()
+		}
+	}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled backup err = %v", err)
+	}
+	if _, statErr := os.Stat(cancelDest); !os.IsNotExist(statErr) {
+		t.Fatalf("partial backup was left behind: %v", statErr)
+	}
+}
+
+func TestBackupDoesNotUseVacuumInto(t *testing.T) {
+	source, err := os.ReadFile("backup.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(source)), "vacuum into") {
+		t.Fatal("online backup still contains VACUUM INTO")
+	}
+}
+
+func TestBackupAllowsConcurrentWrites(t *testing.T) {
+	root := t.TempDir()
+	db, err := Open(filepath.Join(root, "source.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if err := db.SetSetting(ctx, "backup-concurrent", "start"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		var writeErr error
+		for i := 0; i < 32; i++ {
+			writeErr = db.SetSetting(ctx, fmt.Sprintf("k-%d", i), "v")
+			if writeErr != nil {
+				break
+			}
+		}
+		done <- writeErr
+	}()
+	destination := filepath.Join(root, "snapshot.sqlite")
+	if err := db.Backup(ctx, destination, BackupOptions{PagesPerStep: 8}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("writes during backup: %v", err)
+	}
+	snapshot, err := Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	if _, err := snapshot.ListSettings(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackupCopiesHundredMegabytes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("100MB backup is skipped in short mode")
+	}
+	root := t.TempDir()
+	db, err := Open(filepath.Join(root, "source.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `create table if not exists backup_blob (id integer primary key, data blob)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, 100<<20)
+	if _, err := db.db.ExecContext(ctx, `insert into backup_blob(data) values(?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "large.sqlite")
+	if err := db.Backup(ctx, destination, BackupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() < 90<<20 {
+		t.Fatalf("backup size = %d, want at least 90MiB", info.Size())
+	}
+}
+
+func TestBackupCopiesOneGigabyte(t *testing.T) {
+	if os.Getenv("OBOARD_BACKUP_LARGE_TEST") != "1" {
+		t.Skip("set OBOARD_BACKUP_LARGE_TEST=1 to run the 1GB backup test")
+	}
+	root := t.TempDir()
+	db, err := Open(filepath.Join(root, "source.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.db.ExecContext(ctx, `create table if not exists backup_blob (id integer primary key, data blob)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, 1<<30)
+	if _, err := db.db.ExecContext(ctx, `insert into backup_blob(data) values(?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "huge.sqlite")
+	if err := db.Backup(ctx, destination, BackupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() < 900<<20 {
+		t.Fatalf("backup size = %d, want at least 900MiB", info.Size())
 	}
 }
 

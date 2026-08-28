@@ -142,6 +142,7 @@ import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServ
 import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue } from './server-expiry'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import {
+  controllerUpdateDisplayPhase,
   controllerUpdatePendingToast,
   createControllerUpdateRequestGuard,
   isControllerUpdateFailedStatus,
@@ -255,6 +256,34 @@ type ControllerUpdateStatus = {
   last_error?: string
   backup_path?: string
   manual_command?: string
+  operation?: {
+    active: boolean
+    phase: string
+    started_at?: string
+    target_build?: string
+    progress_percent?: number
+    backup?: { total_pages: number; remaining_pages: number; size_bytes: number }
+  }
+}
+type AgentFleetUpdateStatus = {
+  target_build: string
+  target_version: string
+  paused: boolean
+  pause_reason: string
+  attempted: number
+  succeeded: number
+  failed: number
+  total: number
+  enrolled: number
+  current: number
+  pending: number
+  running: number
+  offline: number
+  max_concurrency: number
+  effective_concurrency: number
+  startup_quiet_seconds: number
+  auto_update_enabled: boolean
+  message: string
 }
 type BackupDestination = { provider: 's3' | 'webdav' | ''; endpoint: string; bucket?: string; prefix?: string; region?: string; force_path_style?: boolean; enabled: boolean }
 type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automatic' | 'uploaded' | 'pre_restore' | string; local_status: string; remote_status: string; remote_error?: string; remote_retrievable: boolean; size_bytes: number; source_version: string; format_version: number; protected: boolean; created_at: string }
@@ -4272,10 +4301,10 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       onControllerUpdateInProgressChange?.(false)
       return
     }
-    if (result.status === 'downloading') setPhase('downloading')
-    else if (result.status === 'ready') setPhase('ready')
-    else if (result.status === 'installing') setPhase('installing')
-    else if (result.status === 'cancelling') setPhase('cancelling')
+    const display = controllerUpdateDisplayPhase(result)
+    if (isControllerUpdateInProgressStatus(display) || ['checking', 'preflight', 'backing_up', 'restarting', 'verifying'].includes(display)) {
+      setPhase(display as ControllerUpdateInstallPhase)
+    }
   }
 
   const refresh = async () => {
@@ -4376,8 +4405,10 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       targetVersion={snapshot.available?.version || ''}
       connectionInterrupted={connectionInterrupted}
       failure={failure}
-      canCancel={false}
+      canCancel={Boolean(snapshot.can_cancel)}
       cancelling={false}
+      progressPercent={snapshot.operation?.progress_percent}
+      backupBytes={snapshot.operation?.backup?.size_bytes}
       onCancel={() => setDialogOpen(false)}
       onInstall={() => void install()}
       onInterrupt={() => undefined}
@@ -4462,10 +4493,8 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       setInstallDialogOpen(true)
       return
     }
-    if (result.status === 'downloading') setInstallPhase('downloading')
-    else if (result.status === 'ready') setInstallPhase('ready')
-    else if (result.status === 'installing') setInstallPhase('installing')
-    else if (result.status === 'cancelling') setInstallPhase('cancelling')
+    const display = controllerUpdateDisplayPhase(result)
+    if (['checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(display)) setInstallPhase(display as ControllerUpdateInstallPhase)
     else setInstallPhase('starting')
   }
   const refresh = async (quiet = false) => {
@@ -4779,45 +4808,123 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       targetVersion={snapshot.available?.version || ''}
       connectionInterrupted={installConnectionInterrupted}
       failure={installFailure}
-      canCancel={Boolean(snapshot.can_cancel) && ['downloading', 'ready'].includes(installPhase)}
+      canCancel={Boolean(snapshot.can_cancel) && ['checking', 'downloading', 'preflight', 'backing_up', 'ready'].includes(installPhase)}
       cancelling={working === 'cancel' || installPhase === 'cancelling'}
+      progressPercent={snapshot.operation?.progress_percent}
+      backupBytes={snapshot.operation?.backup?.size_bytes}
       onCancel={() => setInstallDialogOpen(false)}
       onInstall={() => void install()}
       onInterrupt={() => void cancelInstall()}
       onHide={() => setInstallDialogOpen(false)}
       onReload={() => window.location.reload()}
     />}</AnimatePresence>
+    <AgentFleetUpdateCard client={client} notify={notify} updateSettings={updateSettings} saveManagedUpdateSetting={saveManagedUpdateSetting} working={working} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   </section>
 }
 
-type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'downloading' | 'ready' | 'installing' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
+function AgentFleetUpdateCard({ client, notify, updateSettings, saveManagedUpdateSetting, working, realtimeStatus, realtimeRevision, realtimeResources }: any) {
+  const [status, setStatus] = useState<AgentFleetUpdateStatus | null>(null)
+  const [busy, setBusy] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const refresh = async () => {
+    try {
+      const result = await client.request('/agent-updates/status') as AgentFleetUpdateStatus
+      setStatus(result)
+    } catch {
+      setStatus(null)
+    }
+  }
+  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    if (realtimeRevision > 0 && realtimeStatus === 'open' && (realtimeResources.includes('agent_updates') || realtimeResources.includes('all') || realtimeResources.includes('controller_update'))) void refresh()
+  }, [realtimeRevision, realtimeStatus, realtimeResources])
+  const act = async (path: string, label: string) => {
+    setBusy(path)
+    try {
+      const result = await client.request(path, { method: 'POST' }) as AgentFleetUpdateStatus
+      setStatus(result)
+      notify?.(label, 'success')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+  if (!status) return null
+  return <section className="settings-card controller-update-card">
+    <div className="settings-card-head"><h3>Agent 版本同步</h3><p className="muted">{status.message}</p></div>
+    <div className="controller-update-meta">
+      <span>目标构建<strong title={status.target_build}>{status.target_build || '—'}</strong></span>
+      <span>已是当前<strong>{status.current}</strong></span>
+      <span>滚动中<strong>{status.running}</strong></span>
+      <span>待更新<strong>{status.pending}</strong></span>
+      <span>离线<strong>{status.offline}</strong></span>
+    </div>
+    {status.paused && <div className="controller-update-error" role="status">{status.pause_reason || 'Agent 滚动更新已暂停'}</div>}
+    {updateSettings?.database_maintenance_hint && <div className="controller-update-warning">{String(updateSettings.database_maintenance_hint)}</div>}
+    <div className="settings-actions controller-update-actions">
+      {status.paused
+        ? <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/resume', '已恢复 Agent 滚动更新')}>{busy === '/agent-updates/resume' ? '处理中...' : '恢复'}</button>
+        : <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/pause', '已暂停 Agent 滚动更新')}>{busy === '/agent-updates/pause' ? '处理中...' : '暂停'}</button>}
+      <button type="button" className="ghost" disabled={Boolean(busy)} onClick={() => void act('/agent-updates/retry-failed', '已重试失败的 Agent 更新')}>重试失败</button>
+      <button type="button" className="ghost" onClick={() => setAdvancedOpen(true)}>高级</button>
+    </div>
+    <Dialog isOpen={advancedOpen} onClose={() => setAdvancedOpen(false)} title="Agent 滚动更新" size="default">
+      <div className="auto-update-dialog-content">
+        <FormField label="并发上限（0 为自动）">
+          <Select value={Number(updateSettings.agent_update_max_concurrency ?? 0)} disabled={Boolean(working)} onChange={event => void saveManagedUpdateSetting({ agent_update_max_concurrency: Number(event.target.value) })} aria-label="Agent 更新并发">
+            <option value={0}>自动（当前 {status.effective_concurrency}）</option>
+            {Array.from({ length: 32 }, (_, index) => index + 1).map(value => <option key={value} value={value}>{value}</option>)}
+          </Select>
+        </FormField>
+        <FormField label="启动静默秒数">
+          <Select value={Number(updateSettings.managed_update_startup_quiet_seconds ?? 30)} disabled={Boolean(working)} onChange={event => void saveManagedUpdateSetting({ managed_update_startup_quiet_seconds: Number(event.target.value) })} aria-label="启动静默秒数">
+            {[0, 10, 30, 60, 120, 300].map(value => <option key={value} value={value}>{value} 秒</option>)}
+          </Select>
+        </FormField>
+      </div>
+    </Dialog>
+  </section>
+}
 
-function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, onCancel, onInstall, onInterrupt, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; onCancel: () => void; onInstall: () => void; onInterrupt: () => void; onHide: () => void; onReload: () => void }) {
-  const waiting = ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)
-  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'starting' ? '正在准备更新' : phase === 'downloading' ? '正在下载更新' : phase === 'ready' ? '更新文件已准备好' : phase === 'installing' ? '正在安装更新' : phase === 'cancelling' ? '正在中断更新' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'complete' ? '主控更新已完成' : '主控更新未完成'
-  const activeTitle = phase === 'starting' ? '正在备份数据' : phase === 'downloading' ? '正在下载并检查更新文件' : phase === 'ready' ? '更新文件已经检查完成' : phase === 'cancelling' ? '正在停止更新' : connectionInterrupted ? '正在重新启动主控' : '正在安装新版本'
-  const activeDescription = phase === 'starting' ? '备份完成后会自动开始下载。' : phase === 'downloading' ? '此阶段可以安全中断，不会改动当前程序。' : phase === 'ready' ? '安装即将开始，此时仍可安全中断。' : phase === 'cancelling' ? '当前程序不会被替换，请稍候。' : connectionInterrupted ? '面板会自动尝试重新连接。' : '安装完成后主控会自动重新启动。'
-  const downloadDone = phase === 'ready' || phase === 'installing'
+type ControllerUpdateInstallPhase = 'confirm' | 'starting' | 'checking' | 'downloading' | 'preflight' | 'backing_up' | 'ready' | 'installing' | 'restarting' | 'verifying' | 'cancelling' | 'cancelled' | 'stopped' | 'complete' | 'failed'
+
+function controllerUpdateStageState(phase: ControllerUpdateInstallPhase, id: ControllerUpdateInstallPhase, donePhases: ControllerUpdateInstallPhase[]) {
+  if (phase === id) return 'active'
+  if (donePhases.includes(phase)) return 'done'
+  return ''
+}
+
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, progressPercent, backupBytes, elapsedLabel, onCancel, onInstall, onInterrupt, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; progressPercent?: number; backupBytes?: number; elapsedLabel?: string; onCancel: () => void; onInstall: () => void; onInterrupt: () => void; onHide: () => void; onReload: () => void }) {
+  const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
+  const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : '正在更新主控'
+  const backupLabel = phase === 'backing_up' && typeof progressPercent === 'number' ? `备份 ${Math.max(0, Math.min(100, Math.round(progressPercent)))}%` : phase === 'backing_up' ? '正在备份数据库' : ''
+  const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
   return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog">
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
       {phase === 'confirm' && <>
-        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先备份数据库，再下载并检查更新文件，然后安装新版本，最后重新启动主控。</p></div></div>
+        <div className="controller-update-install-lead"><Info size={20} /><div><strong>整个过程通常需要几分钟</strong><p>面板会先检查并下载更新，再备份数据库、安装新版本并重新启动主控。主控更新成功后，Agent 版本同步会在后台滚动进行。</p></div></div>
         <div className="controller-update-install-notice"><strong>更新期间暂时无法访问面板是正常现象</strong><span>主控停止和重新启动期间，连接可能短暂中断，刷新时也可能看到 502 或“页面暂时无法访问”的提示。这不代表更新失败。</span></div>
         <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。</p>
       </>}
       {waiting && <>
-        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{activeTitle}</strong><p>{activeDescription}</p></div></div>
+        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><p>{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</p></div></div>
         <div className="controller-update-stages" aria-label="更新进度">
-          <div className={`controller-update-stage ${phase === 'downloading' || phase === 'cancelling' ? 'active' : downloadDone ? 'done' : ''}`}><span>{downloadDone ? <Check size={14} /> : '1'}</span><div><strong>下载更新</strong><small>{downloadDone ? '更新文件已经准备好' : phase === 'cancelling' ? '正在停止更新' : phase === 'downloading' ? '正在下载并检查文件' : '等待开始'}</small></div></div>
-          <div className={`controller-update-stage ${phase === 'ready' || phase === 'installing' ? 'active' : ''}`}><span>2</span><div><strong>安装更新</strong><small>{phase === 'ready' ? '即将开始安装' : phase === 'installing' ? connectionInterrupted ? '正在重新启动主控' : '正在安装新版本' : '等待下载完成'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'checking', ['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '1'}</span><div><strong>检查</strong><small>{phase === 'checking' ? '正在检查可用版本' : '完成'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'downloading', ['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '2'}</span><div><strong>下载</strong><small>{phase === 'downloading' || phase === 'cancelling' ? '正在下载并检查文件' : '等待开始'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'preflight', ['backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '3'}</span><div><strong>准备</strong><small>{phase === 'preflight' ? '正在检查磁盘和备份条件' : '等待下载完成'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'backing_up', ['ready', 'installing', 'restarting', 'verifying'])}`}><span>{['ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '4'}</span><div><strong>备份</strong><small>{phase === 'backing_up' ? `${Math.round(progressPercent || 0)}%` : '等待准备完成'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'installing', ['restarting', 'verifying'])}`}><span>{['restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '5'}</span><div><strong>安装</strong><small>{phase === 'installing' ? '正在替换主控程序' : '等待备份完成'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'restarting', ['verifying'])}`}><span>{phase === 'verifying' ? <Check size={14} /> : '6'}</span><div><strong>等待重启</strong><small>{phase === 'restarting' || connectionInterrupted ? '主控正在重新启动' : '等待安装完成'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'verifying', [])}`}><span>7</span><div><strong>验证</strong><small>{phase === 'verifying' ? '正在确认新版本可用' : '等待重启完成'}</small></div></div>
         </div>
-        <div className="controller-update-install-progress" role="progressbar" aria-label="主控更新进行中"><span /></div>
+        <div className="controller-update-install-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPercent || 0)} aria-label="主控更新进行中"><span style={{ width: `${Math.max(8, Math.round(progressPercent || 0))}%` }} /></div>
         <div className="controller-update-install-notice compact"><span>期间出现连接中断、短暂白屏或 502 提示都是正常现象。</span></div>
       </>}
       {phase === 'cancelled' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>更新已安全中断</strong><p>当前版本没有被改动，可以稍后重新开始更新。</p></div></div>}
       {phase === 'stopped' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>本次更新不会继续进行</strong><p>请重新检查当前版本，再决定是否重新更新。</p></div></div>}
-      {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>新版本已经安装完成</strong><p>主控服务已恢复，可以重新加载面板并继续使用。</p></div></div>}
+      {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>Controller 更新成功</strong><p>Agent 版本同步将在后台滚动进行。</p></div></div>}
       {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
     </div>
     <footer className="dialog-actions">

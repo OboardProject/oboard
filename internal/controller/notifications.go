@@ -404,6 +404,9 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	}
 	s.queueDeploymentAfterReconnect(ctx, serverID)
 	s.retryBasePathMigrationForServer(ctx, serverID)
+	if s.agentUpdates != nil {
+		s.agentUpdates.Wake()
+	}
 	server, err := s.store.GetServer(ctx, serverID)
 	if err != nil {
 		return

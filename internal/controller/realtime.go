@@ -842,8 +842,8 @@ func realtimeResourcesForRequest(path string) []string {
 		return []string{"dns", "settings", "topology"}
 	case "notification-channels", "notification-announcements":
 		return []string{"notifications"}
-	case "settings", "controller-update":
-		return []string{"settings", "controller_update", "servers", "user_overview"}
+	case "settings", "controller-update", "agent-updates":
+		return []string{"settings", "controller_update", "agent_updates", "servers", "user_overview"}
 	case "backups":
 		return []string{"backups", "settings"}
 	case "changesets":
