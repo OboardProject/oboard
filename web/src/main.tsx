@@ -7654,8 +7654,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       } else if (created || running || pending) {
         notify?.(
           pending
-            ? `已开始滚动更新：同时 ${running} 台，其余 ${pending} 台会自动接上`
-            : `已开始滚动更新：当前 ${running} 台进行中`,
+            ? `Agent 滚动更新已启动：${running} 台正在更新，${pending} 台等待调度`
+            : `Agent 滚动更新已启动：${running} 台正在更新`,
           'success',
         )
       } else {
