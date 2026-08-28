@@ -82,7 +82,7 @@ func TestOperatorFleetRollContinuesWithoutAutoUpdate(t *testing.T) {
 	oldBuild := version.AgentBuild
 	version.AgentBuild = "20260828010101"
 	t.Cleanup(func() { version.AgentBuild = oldBuild })
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		server := &model.Server{Name: fmt.Sprintf("node-%d", i), Status: model.ServerOnline, AgentID: fmt.Sprintf("agent-%d", i), AgentBuild: "20260101000000"}
 		if err := db.CreateServer(ctx, server); err != nil {
 			t.Fatal(err)

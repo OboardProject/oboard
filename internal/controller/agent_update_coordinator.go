@@ -23,7 +23,7 @@ const (
 	agentUpdateRetrySecond            = time.Hour
 	agentUpdateCircuitMinAttempted    = 10
 	agentUpdateCircuitFailureRatio    = 0.4
-	agentUpdateAutoConcurrencyMin     = 4
+	agentUpdateAutoConcurrencyMin     = 10
 	agentUpdateAutoConcurrencyMax     = 16
 	agentUpdateAutoConcurrencyPercent = 0.02
 	relayUpdateMaxConcurrency         = 4
