@@ -37,6 +37,44 @@ func TestLatencyProbeTargetsUseExactProvinceCarrierPairs(t *testing.T) {
 	}
 }
 
+func TestLatencyProbeTargetsKeepHostnameWithoutLiteralIP(t *testing.T) {
+	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
+		"广东": {"中国电信": {"gd-ct-v4.ip.zstaticcdn.com"}, "教育网": {"192.0.2.8"}},
+	}}
+	server := model.Server{LatencyProbeRegions: []model.LatencyProbeRegion{{Province: "广东", Carrier: "中国电信"}, {Province: "广东", Carrier: "教育网"}}, LatencyProbeMaxTargets: 8}
+	targets := latencyProbeTargets(resource, server)
+	if len(targets) != 3 {
+		t.Fatalf("targets = %#v", targets)
+	}
+	if targets[1].Host != "gd-ct-v4.ip.zstaticcdn.com" || targets[1].IP != "" || targets[1].Province != "广东" || targets[1].Carrier != "中国电信" {
+		t.Fatalf("hostname target = %#v", targets[1])
+	}
+	if targets[2].Host != "192.0.2.8" || targets[2].IP != "192.0.2.8" || targets[2].Carrier != "教育网" {
+		t.Fatalf("literal target = %#v", targets[2])
+	}
+}
+
+func TestValidateAutonomousLatencyProbeReportAcceptsHostnameRegionalTarget(t *testing.T) {
+	now := time.Now().UTC()
+	report := model.LatencyProbeResultReport{
+		ReportID: "agent-latency-1", ResourceVersion: "v1", CheckedAt: now,
+		Items: []model.LatencyProbeResult{
+			{ProbeID: "public-cloudflare", Kind: "public", Mode: "tcp", Host: "cp.cloudflare.com", Port: 443, Available: true, LatencyMS: 20, MinLatencyMS: 18, P95LatencyMS: 22, SampleCount: 3, SuccessCount: 3},
+			{ProbeID: "广东-中国电信-0", Kind: "regional", Mode: "tcp", Province: "广东", Carrier: "中国电信", Host: "gd-ct-v4.ip.zstaticcdn.com", Port: 80, Available: true, LatencyMS: 30, MinLatencyMS: 28, P95LatencyMS: 32, SampleCount: 3, SuccessCount: 3},
+			{ProbeID: "广东-教育网-0", Kind: "regional", Mode: "tcp", Province: "广东", Carrier: "教育网", Host: "192.0.2.8", IP: "192.0.2.8", Port: 80, Available: true, LatencyMS: 12, MinLatencyMS: 10, P95LatencyMS: 14, SampleCount: 3, SuccessCount: 3},
+		},
+	}
+	if err := validateAutonomousLatencyProbeReport(&report); err != nil {
+		t.Fatal(err)
+	}
+	invalid := report
+	invalid.Items = append([]model.LatencyProbeResult(nil), report.Items...)
+	invalid.Items[1].Host = "localhost"
+	if err := validateAutonomousLatencyProbeReport(&invalid); err == nil {
+		t.Fatal("localhost regional host was accepted")
+	}
+}
+
 func TestLoadLatencyProbeResourceValidationAndCache(t *testing.T) {
 	firstBody := []byte(`{"广东":{"中国电信":["192.0.2.1"]}}`)
 	resource, err := parseLatencyProbeResource(firstBody, time.Unix(100, 0))
@@ -55,6 +93,16 @@ func TestLoadLatencyProbeResourceValidationAndCache(t *testing.T) {
 	}
 	if _, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["127.0.0.1"]}}`), time.Now()); err == nil {
 		t.Fatal("non-public resource target was accepted")
+	}
+	if _, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["localhost"]}}`), time.Now()); err == nil {
+		t.Fatal("single-label hostname was accepted")
+	}
+	hostnameResource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["gd-ct-v4.ip.zstaticcdn.com"]}}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostnameResource.Provinces["广东"]["中国电信"][0] != "gd-ct-v4.ip.zstaticcdn.com" {
+		t.Fatalf("hostname resource = %#v", hostnameResource)
 	}
 	latencyProbeCache.Lock()
 	latencyProbeCache.resource = resource

@@ -149,9 +149,8 @@ func parseLatencyProbeResource(body []byte, updatedAt time.Time) (latencyProbeRe
 				return latencyProbeResource{}, errors.New("probe resource has invalid carrier")
 			}
 			for _, value := range ips {
-				addr, parseErr := netip.ParseAddr(strings.TrimSpace(value))
-				if parseErr != nil || !validLatencyProbeResourceIPv4(addr) {
-					return latencyProbeResource{}, fmt.Errorf("probe resource contains invalid IPv4 %q", value)
+				if _, _, ok := parseLatencyProbeResourceTarget(value); !ok {
+					return latencyProbeResource{}, fmt.Errorf("probe resource contains invalid target %q", value)
 				}
 			}
 		}
@@ -161,8 +160,58 @@ func parseLatencyProbeResource(body []byte, updatedAt time.Time) (latencyProbeRe
 	return latencyProbeResource{Version: version, UpdatedAt: updatedAt.UTC(), Provinces: raw}, nil
 }
 
+func parseLatencyProbeResourceTarget(value string) (host, ip string, ok bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", "", false
+	}
+	if addr, err := netip.ParseAddr(value); err == nil {
+		if !validLatencyProbeResourceIPv4(addr) {
+			return "", "", false
+		}
+		ip := addr.String()
+		return ip, ip, true
+	}
+	if !validLatencyProbeHostname(value) {
+		return "", "", false
+	}
+	return value, "", true
+}
+
 func validLatencyProbeResourceIPv4(addr netip.Addr) bool {
 	return addr.IsValid() && addr.Is4() && addr.IsGlobalUnicast() && !addr.IsPrivate() && !addr.IsLoopback() && !addr.IsLinkLocalUnicast() && !addr.IsLinkLocalMulticast() && !addr.IsMulticast() && !addr.IsUnspecified()
+}
+
+func validLatencyProbeHostname(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || len(host) > 253 || strings.Contains(host, "..") {
+		return false
+	}
+	host = strings.TrimSuffix(host, ".")
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) < 1 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	tld := labels[len(labels)-1]
+	if len(tld) < 2 {
+		return false
+	}
+	for _, c := range tld {
+		if c < 'a' || c > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 func latencyProbeTargets(resource latencyProbeResource, server model.Server) []model.LatencyProbeTarget {
@@ -209,7 +258,11 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server) []m
 			if server.LatencyProbeMaxTargets > 0 && len(items) >= server.LatencyProbeMaxTargets {
 				return items
 			}
-			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("%s-%s-%d", group.province, group.carrier, ipIndex), Kind: "regional", Province: group.province, Carrier: group.carrier, Host: group.ips[ipIndex], IP: group.ips[ipIndex], Port: regionalPort})
+			host, ip, ok := parseLatencyProbeResourceTarget(group.ips[ipIndex])
+			if !ok {
+				continue
+			}
+			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("%s-%s-%d", group.province, group.carrier, ipIndex), Kind: "regional", Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: regionalPort})
 		}
 		if !added {
 			break
@@ -421,9 +474,22 @@ func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport
 				return errors.New("公网延迟目标无效")
 			}
 		} else if item.Kind == "regional" {
-			addr, err := netip.ParseAddr(item.IP)
-			if err != nil || !validLatencyProbeResourceIPv4(addr) || item.Host != item.IP || item.Province == "" || item.Carrier == "" {
+			if item.Province == "" || item.Carrier == "" {
 				return errors.New("地区延迟目标无效")
+			}
+			host, expectedIP, ok := parseLatencyProbeResourceTarget(item.Host)
+			if !ok || item.Host != host {
+				return errors.New("地区延迟目标无效")
+			}
+			if expectedIP != "" {
+				if item.IP != expectedIP {
+					return errors.New("地区延迟目标无效")
+				}
+			} else if item.IP != "" {
+				addr, err := netip.ParseAddr(item.IP)
+				if err != nil || !validLatencyProbeResourceIPv4(addr) {
+					return errors.New("地区延迟目标无效")
+				}
 			}
 		} else {
 			return errors.New("延迟测试目标类型无效")
