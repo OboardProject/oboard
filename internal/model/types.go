@@ -1341,9 +1341,12 @@ type RoutingRule struct {
 	FamilyDNSStrategy     FamilyDNSStrategy `json:"family_dns_strategy,omitempty"`
 	TargetServerID        *int64            `json:"target_server_id,omitempty"`
 	OutboundTag           string            `json:"outbound_tag"`
-	InterfaceName         string            `json:"interface_name,omitempty"`
-	InterfaceIPStack      IPStack           `json:"-"`
-	SourcePrefix          string            `json:"source_prefix,omitempty"`
+	InterfaceName          string            `json:"interface_name,omitempty"`
+	InterfaceIPStack       IPStack           `json:"-"`
+	InterfaceBindKnown     bool              `json:"-"`
+	InterfaceHasGlobalIPv4 bool              `json:"-"`
+	InterfaceHasGlobalIPv6 bool              `json:"-"`
+	SourcePrefix           string            `json:"source_prefix,omitempty"`
 	SyncGroupID           string            `json:"sync_group_id,omitempty"`
 	SyncSourceRuleID      *int64            `json:"sync_source_rule_id,omitempty"`
 	SyncEnabled           bool              `json:"sync_enabled,omitempty"`

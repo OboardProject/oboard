@@ -13180,18 +13180,56 @@ func (s *Server) routingRulesWithInterfaceIPStacks(ctx context.Context, serverID
 	if err := json.Unmarshal([]byte(task.ResultJSON), &result); err != nil {
 		return nil, fmt.Errorf("decode server %d network interface inventory: %w", serverID, err)
 	}
-	stacks := make(map[string]model.IPStack, len(result.Interfaces))
-	for _, networkInterface := range result.Interfaces {
-		stacks[strings.TrimSpace(networkInterface.Name)] = networkInterfaceIPStack(networkInterface)
+	return applyNetworkInterfaceBindInfo(rules, serverID, result.Interfaces), nil
+}
+
+func applyNetworkInterfaceBindInfo(rules []model.RoutingRule, serverID int64, interfaces []model.NetworkInterfaceInfo) []model.RoutingRule {
+	type bindInfo struct {
+		stack model.IPStack
+		v4    bool
+		v6    bool
+	}
+	inventory := make(map[string]bindInfo, len(interfaces))
+	for _, networkInterface := range interfaces {
+		name := strings.TrimSpace(networkInterface.Name)
+		v4, v6 := networkInterfaceGlobalFamilies(networkInterface)
+		inventory[name] = bindInfo{stack: networkInterfaceIPStack(networkInterface), v4: v4, v6: v6}
 	}
 	resolved := append([]model.RoutingRule(nil), rules...)
 	for index := range resolved {
 		rule := &resolved[index]
-		if routingRuleUsesHostInterface(*rule, serverID) {
-			rule.InterfaceIPStack = stacks[strings.TrimSpace(rule.InterfaceName)]
+		if !routingRuleUsesHostInterface(*rule, serverID) {
+			continue
+		}
+		info, ok := inventory[strings.TrimSpace(rule.InterfaceName)]
+		if !ok {
+			continue
+		}
+		rule.InterfaceIPStack = info.stack
+		rule.InterfaceBindKnown = true
+		rule.InterfaceHasGlobalIPv4 = info.v4
+		rule.InterfaceHasGlobalIPv6 = info.v6
+	}
+	return resolved
+}
+
+func networkInterfaceGlobalFamilies(networkInterface model.NetworkInterfaceInfo) (ipv4, ipv6 bool) {
+	for _, raw := range networkInterface.Addresses {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		address := prefix.Addr().Unmap()
+		if !address.IsValid() || address.IsUnspecified() || address.IsLoopback() || address.IsLinkLocalUnicast() || address.IsMulticast() || address.IsPrivate() {
+			continue
+		}
+		if address.Is4() {
+			ipv4 = true
+		} else if address.Is6() {
+			ipv6 = true
 		}
 	}
-	return resolved, nil
+	return ipv4, ipv6
 }
 
 func networkInterfaceIPStack(networkInterface model.NetworkInterfaceInfo) model.IPStack {

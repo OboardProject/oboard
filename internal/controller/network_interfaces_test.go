@@ -93,6 +93,13 @@ func TestNetworkInterfaceIPStackIgnoresLocalOnlyAddresses(t *testing.T) {
 	}
 }
 
+func TestNetworkInterfaceGlobalFamiliesIgnoresPrivateIPv4(t *testing.T) {
+	gotIPv4, gotIPv6 := networkInterfaceGlobalFamilies(model.NetworkInterfaceInfo{Addresses: []string{"10.7.0.68/23", "2408:820c:7509:b244::1/64"}})
+	if gotIPv4 || !gotIPv6 {
+		t.Fatalf("eth0-style addresses v4=%v v6=%v, want v4=false v6=true", gotIPv4, gotIPv6)
+	}
+}
+
 func TestRoutingRulesUseLatestAgentInterfaceIPStack(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
@@ -119,6 +126,9 @@ func TestRoutingRulesUseLatestAgentInterfaceIPStack(t *testing.T) {
 		}
 		if len(rules) != 1 || rules[0].InterfaceIPStack != model.IPStackIPv6Only {
 			t.Fatalf("action %s resolved rules = %#v", action, rules)
+		}
+		if !rules[0].InterfaceBindKnown || rules[0].InterfaceHasGlobalIPv4 || !rules[0].InterfaceHasGlobalIPv6 {
+			t.Fatalf("action %s global families = known=%v v4=%v v6=%v", action, rules[0].InterfaceBindKnown, rules[0].InterfaceHasGlobalIPv4, rules[0].InterfaceHasGlobalIPv6)
 		}
 	}
 }

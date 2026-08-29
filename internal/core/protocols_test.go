@@ -664,6 +664,43 @@ func TestPathStageInterfaceRuleOnSnellFollowsContinuationWithoutAuthUser(t *test
 	}
 }
 
+func TestPathStageInterfaceRuleSkipsBindWhenInterfaceLacksGlobalIPv4(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "LQ", PublicIPv4: "116.192.3.132", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := model.Server{ID: 2, Name: "Cogent", PublicIPv4: "82.29.38.156", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "LQ-snell", Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 11787, ConfigJSON: `{"version":4,"psk":"secret-psk-1234"}`, Enabled: true}
+	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "LQ | Cogent", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	serverBID, pathID := serverB.ID, path.ID
+	stepB := model.ProxyPathStep{ID: 101, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
+	rule := model.RoutingRule{
+		ID: 7, ServerID: serverA.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID,
+		SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "LQ-route", MatchJSON: `{}`,
+		Action: model.RouteActionInterface, InterfaceName: "eth0", Enabled: true,
+		InterfaceBindKnown: true, InterfaceHasGlobalIPv4: false, InterfaceHasGlobalIPv6: true,
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	config := mustServerConfig(t, serverA, []model.Inbound{root}, []model.User{user}, ConfigOptions{
+		Servers: []model.Server{serverA, serverB}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path},
+		ProxyPathSteps: []model.ProxyPathStep{stepB}, InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+		RoutingRules: []model.RoutingRule{rule},
+	})
+	baseTag := proxyPathStepTag(path.ID, stepB.Position)
+	boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
+	bound := findOutbound(config, boundTag)
+	if len(bound) == 0 {
+		t.Fatalf("continuation clone %q missing; config=%s", boundTag, config)
+	}
+	if bound["bind_interface"] != nil {
+		t.Fatalf("IPv4 hop must not bind an interface without global IPv4: %#v", bound)
+	}
+	if bound["server"] != "82.29.38.156" {
+		t.Fatalf("continuation dest = %#v, want Cogent IPv4", bound["server"])
+	}
+	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
+	if len(routes) < 1 || routes[0]["outbound"] != boundTag {
+		t.Fatalf("path-stage rule = %#v, want continuation %q", routes, boundTag)
+	}
+}
+
 func TestPathStageInterfaceRuleWithoutContinuationStaysTerminal(t *testing.T) {
 	server := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	root := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
