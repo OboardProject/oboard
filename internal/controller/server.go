@@ -4415,6 +4415,8 @@ func (s *Server) serverAgentUpdate(w http.ResponseWriter, r *http.Request, id in
 			status = 400
 		} else if errors.Is(err, errAgentUpdateOffline) {
 			status = http.StatusConflict
+		} else if strings.Contains(err.Error(), "已是最新") {
+			status = http.StatusConflict
 		}
 		fail(w, err, status)
 		return
@@ -4573,6 +4575,12 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 	}
 	if server.Status != model.ServerOnline {
 		return model.AgentTask{}, false, errAgentUpdateOffline
+	}
+	targetBuild := strings.TrimSpace(version.AgentBuild)
+	if targetBuild != "" && !strings.EqualFold(targetBuild, "dev") {
+		if !buildNeedsUpdate(strings.TrimSpace(server.AgentBuild), targetBuild) {
+			return model.AgentTask{}, false, fmt.Errorf("Agent 已是最新版本 (%s)，无需更新", emptyDash(strings.TrimSpace(server.AgentBuild)))
+		}
 	}
 	source := strings.ToLower(strings.TrimSpace(req.Source))
 	if source == "" {

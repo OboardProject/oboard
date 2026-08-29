@@ -23,7 +23,14 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
   const [loading, setLoading]=useState(false)
   const [updating, setUpdating]=useState(false)
   const currentBuild = String(server.agent_build||'').trim()
-  const needUpdate = Boolean(expectedBuild && currentBuild && expectedBuild!==currentBuild)
+  const buildNeedsUpdate = (current: string, target: string): boolean => {
+    const c = String(current || '').trim()
+    const t = String(target || '').trim()
+    if (!c || !t) return !c && !!t
+    if (c.length === t.length && /^[0-9]+$/.test(c) && /^[0-9]+$/.test(t)) return c < t
+    return c !== t
+  }
+  const needUpdate = Boolean(expectedBuild && String(expectedBuild).trim() && String(expectedBuild).trim().toLowerCase() !== 'dev' && buildNeedsUpdate(currentBuild, String(expectedBuild)) )
 
   const handleEnroll=async()=>{
     if(disabled) return
@@ -83,8 +90,9 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
           <div className="access-note"><strong>已是最新版本</strong><span>当前构建与主控期望一致</span></div>
         )}
         <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
-          <button type="button" className="ghost" onClick={()=>void handleUpdate()} disabled={updating || !isOnline || disabled}>{updating? '更新中...':'更新 Agent'}</button>
+          <button type="button" className="ghost" onClick={()=>void handleUpdate()} disabled={updating || !isOnline || disabled || !needUpdate} title={!needUpdate ? '已是最新版本，无需更新' : undefined}>{updating? '更新中...':'更新 Agent'}</button>
           {disabled && <small className="muted">{disabledReason}</small>}
+          {!needUpdate && <small className="muted">已是最新版本</small>}
         </div>
       </section>
 

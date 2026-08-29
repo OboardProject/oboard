@@ -7958,14 +7958,37 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       })
     }
   }
+  const buildNeedsUpdate = (current: string, target: string): boolean => {
+    const c = String(current || '').trim()
+    const t = String(target || '').trim()
+    if (!c || !t) return !c && !!t
+    if (c.length === t.length && /^[0-9]+$/.test(c) && /^[0-9]+$/.test(t)) return c < t
+    return c !== t
+  }
   const updateAllAgents = async () => {
     const enrolled = servers.filter(s => String(s.agent_id || '').trim())
     if (!enrolled.length) {
       notify?.('没有已接入的 Agent，无法更新', 'warning')
       return
     }
-    const online = enrolled.filter(s => String(s.status || '').toLowerCase() === 'online').length
-    const offline = enrolled.length - online
+    const expectedBuild = String(data.version?.agent_expected_build || '').trim()
+    const needsUpdate = (s: Server) => {
+      const t = expectedBuild
+      if (!t || t.toLowerCase() === 'dev') return false
+      return buildNeedsUpdate(String((s as any).agent_build || ''), t)
+    }
+    const outdated = enrolled.filter(needsUpdate)
+    if (!outdated.length) {
+      notify?.('全部 Agent 已是最新版本，无需更新', 'success')
+      return
+    }
+    const outdatedOnline = outdated.filter(s => String(s.status || '').toLowerCase() === 'online')
+    const outdatedOffline = outdated.length - outdatedOnline.length
+    const upToDate = enrolled.length - outdated.length
+    if (!outdatedOnline.length) {
+      notify?.(`待更新的 ${outdated.length} 台 Agent 当前均离线，已开启滚动更新，重新上线后将自动更新`, 'info')
+      // still trigger rolling so offline will be handled when back online
+    }
     let limit = 4
     try {
       const fleet = await client.request('/agent-updates/status') as AgentFleetUpdateStatus
@@ -7978,8 +8001,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       title: '一键更新所有 Agent',
       confirmText: '开始更新',
       message: <div>
-        <p>将滚动更新全部已接入 Agent，同时最多 <strong>{limit}</strong> 台，完成后自动接下一批。</p>
-        <p className="muted">在线 {online} 台会立即进入队列{offline > 0 ? `；离线 ${offline} 台不创建任务，重新上线后继续` : ''}。进度可在系统设置的 Agent 版本同步中查看。</p>
+        <p>将滚动更新 <strong>{outdatedOnline.length}</strong> 台待更新 Agent{upToDate ? <>，<span className="muted">已最新 {upToDate} 台将跳过</span></> : null}，同时最多 <strong>{limit}</strong> 台，完成后自动接下一批。</p>
+        <p className="muted">在线 {outdatedOnline.length} 台会立即进入队列{outdatedOffline > 0 ? `；离线 ${outdatedOffline} 台不创建任务，重新上线后继续` : ''}。进度可在系统设置的 Agent 版本同步中查看。</p>
       </div>,
     })
     if (!ok) return
@@ -8118,6 +8141,17 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const role: Role = data.session?.role || 'viewer'
   const enrolledCount = servers.filter(s => String(s.agent_id || '').trim()).length
+  const expectedBuildForBadge = String(data.version?.agent_expected_build || '').trim()
+  const outdatedCount = (() => {
+    const t = expectedBuildForBadge
+    if (!t || t.toLowerCase() === 'dev') return 0
+    return servers.filter(s => String(s.agent_id || '').trim() && buildNeedsUpdate(String((s as any).agent_build || ''), t)).length
+  })()
+  const outdatedOnlineCount = (() => {
+    const t = expectedBuildForBadge
+    if (!t || t.toLowerCase() === 'dev') return 0
+    return servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online' && buildNeedsUpdate(String((s as any).agent_build || ''), t)).length
+  })()
   const renderServerCard = (server: Server, index: number) => {
     const custom = listPreferences.sortMode === 'custom'
     const previous = visibleServers[index - 1]
@@ -8185,20 +8219,45 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
             <span>添加服务器</span>
           </button>
         </div>
-        {hasManagementAccess(role) && (
-          <button
-            type="button"
-            className="ghost server-update-agents-button"
-            disabled={!enrolledCount}
-            onClick={() => void updateAllAgents()}
-            aria-label={enrolledCount ? `一键更新 ${enrolledCount} 台 Agent` : '一键更新 Agent'}
-            title={enrolledCount ? `为 ${enrolledCount} 台已接入 Agent 创建更新任务` : '没有已接入的 Agent'}
-          >
-            <ArrowUpCircle size={15} />
-            <span className="server-update-agents-label">一键更新 Agent</span>
-            {enrolledCount > 0 && <span className="server-update-agents-badge">{enrolledCount}</span>}
-          </button>
-        )}
+        {hasManagementAccess(role) && (() => {
+          const hasExpected = Boolean(expectedBuildForBadge && expectedBuildForBadge.toLowerCase() !== 'dev')
+          const badgeCount = hasExpected ? outdatedCount : enrolledCount
+          const buttonDisabled = hasExpected ? outdatedCount === 0 : enrolledCount === 0
+          const badgeCountForDisplay = badgeCount
+          let ariaLabel = '一键更新 Agent'
+          let title = '没有已接入的 Agent'
+          if (enrolledCount) {
+            if (hasExpected) {
+              if (outdatedCount) {
+                ariaLabel = `一键更新 ${outdatedCount} 台待更新 Agent`
+                title = `为 ${outdatedCount} 台待更新 Agent 创建更新任务，${enrolledCount - outdatedCount} 台已是最新将跳过`
+                if (outdatedOnlineCount !== outdatedCount) {
+                  title += `（在线 ${outdatedOnlineCount} 台立即更新，离线 ${outdatedCount - outdatedOnlineCount} 台稍后自动更新）`
+                }
+              } else {
+                ariaLabel = '全部 Agent 已是最新'
+                title = '全部已接入 Agent 已是最新版本，无需更新'
+              }
+            } else {
+              ariaLabel = `一键更新 ${enrolledCount} 台 Agent`
+              title = `为 ${enrolledCount} 台已接入 Agent 创建更新任务`
+            }
+          }
+          return (
+            <button
+              type="button"
+              className="ghost server-update-agents-button"
+              disabled={buttonDisabled}
+              onClick={() => void updateAllAgents()}
+              aria-label={ariaLabel}
+              title={title}
+            >
+              <ArrowUpCircle size={15} />
+              <span className="server-update-agents-label">一键更新 Agent</span>
+              {badgeCountForDisplay > 0 && <span className="server-update-agents-badge">{badgeCountForDisplay}</span>}
+            </button>
+          )
+        })()}
         <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
           <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
           <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>
