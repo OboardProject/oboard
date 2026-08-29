@@ -2312,9 +2312,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card:has(.server-version-update:focus-within),
 .server-card:has(.server-version-update.open),
 .server-card:has(.server-metric-row.has-tip:hover),
-.server-card:has(.server-metric-row.has-tip:focus-within),
-.server-card:has(.server-address-block.has-entry:hover),
-.server-card:has(.server-address-block.has-entry:focus-within) {
+.server-card:has(.server-metric-row.has-tip:focus-within) {
   z-index: 90;
 }
 
@@ -2628,54 +2626,22 @@ button.server-address-line.copied:hover {
 }
 
 .server-address-entry-tip {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 4px);
+  position: fixed;
   z-index: var(--z-popover);
   display: grid;
   gap: 2px;
   width: max-content;
-  max-width: min(240px, calc(100vw - 32px));
+  max-width: min(240px, calc(100vw - 16px));
   padding: 7px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--surface-solid) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--surface-solid);
   box-shadow: var(--shadow-soft);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: scale(0.96) translateY(-3px);
-  transform-origin: top left;
-  transition: opacity var(--duration-appica) var(--ease-appica-spring),
-              transform var(--duration-appica) var(--ease-appica-spring),
-              visibility var(--duration-appica) ease;
 }
 
-.server-address-entry-tip::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 8px;
-}
-
-.server-address-block.has-entry:hover .server-address-entry-tip,
-.server-address-block.has-entry:focus-within .server-address-entry-tip {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transform: scale(1) translateY(0);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .server-address-entry-tip {
-    transform: none;
-    transition: opacity 120ms ease, visibility 120ms ease;
-  }
+.server-address-entry-tip .server-address-kicker {
+  line-height: 1.2;
 }
 
 .server-metric-list {

@@ -7355,7 +7355,6 @@ function ServerAddressLine({ family, value, copied, onCopy }: { family: 'v4' | '
     <button
       type="button"
       className={`server-address-line ${family}${copied ? ' copied' : ''}`}
-      title={copied ? `已复制出口 ${label}` : `复制出口 ${label} ${value}`}
       aria-label={`复制出口 ${label} ${value}`}
       onClick={() => onCopy()}
     >
@@ -7376,7 +7375,11 @@ function ServerAddressBadge({ server }: { server: Server }) {
   const v6 = String(server.public_ipv6 || '').trim()
   const entry = serverCustomEntry(server)
   const [copied, setCopied] = useState<'v4' | 'v6' | 'entry' | null>(null)
+  const [tipOpen, setTipOpen] = useState(false)
+  const [tipPos, setTipPos] = useState({ top: 0, left: 0 })
   const copiedTimer = useRef(0)
+  const hideTimer = useRef(0)
+  const blockRef = useRef<HTMLDivElement>(null)
   const tipID = useId()
 
   const copy = async (kind: 'v4' | 'v6' | 'entry', value: string) => {
@@ -7387,29 +7390,72 @@ function ServerAddressBadge({ server }: { server: Server }) {
     copiedTimer.current = window.setTimeout(() => setCopied(null), 1200)
   }
 
-  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
+  const showTip = () => {
+    if (!entry || !blockRef.current) return
+    const rect = blockRef.current.getBoundingClientRect()
+    window.clearTimeout(hideTimer.current)
+    setTipPos({
+      top: rect.bottom + 6,
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 248)),
+    })
+    setTipOpen(true)
+  }
+
+  const scheduleHideTip = () => {
+    window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => setTipOpen(false), 120)
+  }
+
+  useEffect(() => () => {
+    window.clearTimeout(copiedTimer.current)
+    window.clearTimeout(hideTimer.current)
+  }, [])
+
+  useEffect(() => {
+    if (!tipOpen) return
+    const close = () => setTipOpen(false)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [tipOpen])
 
   return (
-    <div className={`server-address-block${entry ? ' has-entry' : ''}`} aria-describedby={entry ? tipID : undefined}>
+    <div
+      ref={blockRef}
+      className={`server-address-block${entry ? ' has-entry' : ''}`}
+      aria-describedby={entry && tipOpen ? tipID : undefined}
+      onMouseEnter={entry ? showTip : undefined}
+      onMouseLeave={entry ? scheduleHideTip : undefined}
+    >
       <span className="server-address-kicker">出口</span>
       <div className="server-address-stack">
         {v4 ? <ServerAddressLine family="v4" value={v4} copied={copied === 'v4'} onCopy={() => void copy('v4', v4)} /> : null}
         {v6 ? <ServerAddressLine family="v6" value={v6} copied={copied === 'v6'} onCopy={() => void copy('v6', v6)} /> : null}
         {!v4 && !v6 ? <span className="server-address-empty">待检测</span> : null}
       </div>
-      {entry ? (
-        <div id={tipID} role="tooltip" className="server-address-entry-tip">
+      {entry && tipOpen ? createPortal(
+        <div
+          id={tipID}
+          role="tooltip"
+          className="server-address-entry-tip"
+          style={{ top: tipPos.top, left: tipPos.left }}
+          onMouseEnter={showTip}
+          onMouseLeave={scheduleHideTip}
+        >
           <span className="server-address-kicker">入口</span>
           <button
             type="button"
             className={`server-address-line${copied === 'entry' ? ' copied' : ''}`}
-            title={copied === 'entry' ? '已复制入口' : `复制入口 ${entry}`}
             aria-label={`复制入口 ${entry}`}
             onClick={() => void copy('entry', entry)}
           >
             <span className="server-address-value">{entry}</span>
           </button>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   )
