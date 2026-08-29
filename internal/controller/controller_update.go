@@ -41,6 +41,7 @@ const (
 	controllerUpdateDefaultIntervalHours = 24
 	updateWindowDefaultStartHour         = 3
 	updateWindowDefaultEndHour           = 7
+	controllerUpdateBackupRetentionSetting = "controller_update_backup_retention"
 )
 
 type controllerUpdateMaintenanceMarker struct {
@@ -302,7 +303,7 @@ func (s *Server) installScheduledControllerUpdate(ctx context.Context, status co
 	if strings.TrimSpace(run.TargetBuild) == "" {
 		run.TargetBuild = status.Available.Build
 	}
-	s.applyPreparedControllerUpdate(ctx, status, prepared, run, true)
+	s.applyPreparedControllerUpdate(ctx, status, prepared, run, false)
 }
 
 func (s *Server) cancelPreparedControllerUpdate() {
@@ -509,7 +510,7 @@ var (
 )
 
 func controllerUpdateSkipBackup(value *bool) bool {
-	return value == nil || *value
+	return value != nil && *value
 }
 
 func (s *Server) beginManualControllerUpdate(ctx context.Context, skipBackup bool) (controllerupdate.Status, bool, error) {
@@ -915,6 +916,11 @@ func (s *Server) cleanupZeroByteControllerUpdateBackupFiles() {
 }
 
 func (s *Server) retainControllerUpdateBackups() {
+	retain := s.controllerUpdateRetention()
+	s.retainControllerUpdateBackupsWithLimit(retain)
+}
+
+func (s *Server) retainControllerUpdateBackupsWithLimit(retain int) {
 	dir := s.controllerBackupDir
 	if strings.TrimSpace(dir) == "" {
 		dir = filepath.Join("data", "backups")
@@ -947,7 +953,10 @@ func (s *Server) retainControllerUpdateBackups() {
 		complete = append(complete, backupFile{path: path, modTime: info.ModTime(), size: info.Size()})
 	}
 	sort.Slice(complete, func(i, j int) bool { return complete[i].modTime.After(complete[j].modTime) })
-	for index := controllerUpdateBackupRetain; index < len(complete); index++ {
+	if retain < 0 {
+		retain = 0
+	}
+	for index := retain; index < len(complete); index++ {
 		if err := os.Remove(complete[index].path); err != nil && !os.IsNotExist(err) {
 			log.Printf("remove excess Controller update backup %s: %v", complete[index].path, err)
 		}
@@ -972,7 +981,16 @@ func (s *Server) removeSuccessfulControllerUpdateBackup(ctx context.Context, set
 	if path == "" || targetBuild == "" || strings.TrimSpace(status.Current.Build) != targetBuild || !s.isControllerUpdateBackupPath(path) {
 		return
 	}
-	s.retainControllerUpdateBackups()
+	retain := s.controllerUpdateRetention()
+	if retain == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove successful Controller update backup %s: %v", path, err)
+		}
+		_ = s.store.SetSettings(ctx, map[string]string{controllerBackupSetting: "", controllerBackupTargetBuildSetting: ""})
+		s.retainControllerUpdateBackupsWithLimit(0)
+		return
+	}
+	s.retainControllerUpdateBackupsWithLimit(retain)
 }
 
 func (s *Server) isControllerUpdateBackupPath(path string) bool {

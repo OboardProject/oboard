@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	"github.com/OboardProject/oboard/internal/storage"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
-const controllerUpdateBackupRetain = 7
+const controllerUpdateBackupRetain = 2
+const controllerUpdateBackupRetainDefault = 2
 
 func (s *Server) recoverControllerUpdateRun(ctx context.Context) {
 	run, err := s.store.GetActiveControllerUpdateRun(ctx)
@@ -149,29 +151,120 @@ func (s *Server) preflightControllerUpdate(ctx context.Context, run *store.Contr
 	if skipBackup {
 		return nil
 	}
+	if err := storage.EnsureDirectoryWritable(backupDir); err != nil {
+		return fmt.Errorf("备份目录不可写: %w", err)
+	}
+	if err := s.checkControllerDiskBudget(ctx, backupDir, skipBackup); err != nil {
+		return err
+	}
 	pageCount, pageSize, _, err := s.store.DatabasePageStats(ctx)
 	if err != nil {
 		return fmt.Errorf("数据库不可读: %w", err)
 	}
 	dbSize := pageCount * pageSize
-	if err := os.MkdirAll(backupDir, 0o700); err != nil {
-		return fmt.Errorf("备份目录不可写: %w", err)
-	}
-	probe := filepath.Join(backupDir, ".oboard-backup-writable")
-	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
-		return fmt.Errorf("备份目录不可写: %w", err)
-	}
-	_ = os.Remove(probe)
-	free, err := store.DiskFreeBytes(backupDir)
+	run.BackupSizeBytes = dbSize
+	return nil
+}
+
+func (s *Server) checkControllerDiskBudget(ctx context.Context, backupDir string, skipBackup bool) error {
+	// Check backupDir filesystem
+	stats, err := storage.StatFilesystem(backupDir)
 	if err != nil {
 		return fmt.Errorf("无法检查磁盘空间: %w", err)
 	}
-	need := store.RequiredBackupFreeBytes(dbSize)
-	if free < need {
-		return fmt.Errorf("磁盘空间不足：需要至少 %d 字节，当前可用 %d 字节", need, free)
+	reserve := storage.ControllerReserve(stats.TotalBytes)
+	var required uint64
+	if !skipBackup {
+		pageCount, pageSize, _, err := s.store.DatabasePageStats(ctx)
+		if err == nil {
+			dbSize := uint64(pageCount * pageSize)
+			need := uint64(store.RequiredBackupFreeBytes(int64(dbSize)))
+			// RequiredBackupFreeBytes already includes reserve-like headroom, but we also enforce reserve
+			required = need
+			// If need already > reserve, reserve is double counted, take max
+			if reserve > 0 && need < dbSize+reserve {
+				required = dbSize + reserve
+			}
+		}
+	} else {
+		// Even without backup, ensure we have reserve headroom
+		required = reserve / 2
+		if required == 0 {
+			required = reserve
+		}
 	}
-	run.BackupSizeBytes = dbSize
+	if stats.AvailableBytes < required+reserve/2 {
+		// Attempt light GC: clean stale temp files and excess backups before failing
+		s.cleanupControllerDiskPressure(backupDir)
+		stats2, err2 := storage.StatFilesystem(backupDir)
+		if err2 == nil {
+			stats = stats2
+		}
+		if stats.AvailableBytes < required {
+			return fmt.Errorf("磁盘空间不足：需要至少 %d 字节，当前可用 %d 字节", required, stats.AvailableBytes)
+		}
+	}
+	// Also check download/work dir if different filesystem
+	if workDir := s.controllerBackupDir; workDir != "" && workDir != backupDir {
+		if _, err := storage.StatFilesystem(workDir); err == nil {
+			// best effort, already covered
+		}
+	}
 	return nil
+}
+
+func (s *Server) cleanupControllerDiskPressure(backupDir string) {
+	// Order: stale tmp, excess update snapshots, expired pre_restore, excess automatic backups
+	_ = os.Remove(filepath.Join(backupDir, ".oboard-backup-writable"))
+	s.cleanupZeroByteControllerUpdateBackupFiles()
+	s.retainControllerUpdateBackups()
+	_ = s.pruneExpiredPreRestoreBackups(context.Background())
+	if s.backupManager != nil {
+		_, _ = s.backupManager.RemoveZeroByteBackups()
+	}
+}
+
+func (s *Server) controllerUpdateRetention() int {
+	settings, err := s.store.ListSettings(context.Background())
+	if err != nil {
+		return controllerUpdateBackupRetainDefault
+	}
+	val := strings.TrimSpace(settings[controllerUpdateBackupRetentionSetting])
+	if val == "" {
+		// fallback to backup setting key
+		val = strings.TrimSpace(settings[controllerBackupUpdateRetentionSetting])
+	}
+	if val == "" {
+		return controllerUpdateBackupRetainDefault
+	}
+	if n, err := parseRetentionValue(val, 0, 10); err == nil {
+		return n
+	}
+	return controllerUpdateBackupRetainDefault
+}
+
+func parseRetentionValue(raw string, min, max int) (int, error) {
+	v, err := parseIntString(raw)
+	if err != nil {
+		return 0, err
+	}
+	if v < min || v > max {
+		return 0, errors.New("out of range")
+	}
+	return v, nil
+}
+
+func parseIntString(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, errors.New("empty")
+	}
+	var n int
+	_, err := fmt.Sscanf(raw, "%d", &n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (s *Server) failControllerUpdateRun(ctx context.Context, run *store.ControllerUpdateRun, message string) {

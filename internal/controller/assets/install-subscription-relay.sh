@@ -188,7 +188,17 @@ tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR"
 [ -x "$TMP_DIR/bin/oboard-subscription-relay" ] || fail "发布包缺少订阅中继程序。"
 install -d -m 0755 "$INSTALL_DIR"
 install -m 0755 "$TMP_DIR/bin/oboard-subscription-relay" "$INSTALL_DIR/oboard-subscription-relay.new"
-mv -f "$INSTALL_DIR/oboard-subscription-relay.new" "$INSTALL_DIR/oboard-subscription-relay"
+# Transactional rollback: keep one backup during update.
+ROLLBACK_FILE="$INSTALL_DIR/oboard-subscription-relay.rollback"
+HAD_OLD=0
+if [ -x "$INSTALL_DIR/oboard-subscription-relay" ]; then
+	HAD_OLD=1
+	cp -f "$INSTALL_DIR/oboard-subscription-relay" "$ROLLBACK_FILE" || fail "无法创建回滚备份。"
+fi
+if ! mv -f "$INSTALL_DIR/oboard-subscription-relay.new" "$INSTALL_DIR/oboard-subscription-relay"; then
+	if [ "$HAD_OLD" = 1 ]; then mv -f "$ROLLBACK_FILE" "$INSTALL_DIR/oboard-subscription-relay" 2>/dev/null || true; fi
+	fail "安装中继程序失败。"
+fi
 
 if [ "$ACTION" = install ]; then
 	echo "[4/4] 接入主控并启动中继服务"
@@ -209,7 +219,12 @@ if [ "$manager" = systemd ]; then
 		systemctl daemon-reload
 		systemctl enable oboard-subscription-relay.service oboard-subscription-relay-updater.service
 	fi
-	systemctl restart oboard-subscription-relay.service
+	if ! systemctl restart oboard-subscription-relay.service; then
+		if [ "$HAD_OLD" = 1 ]; then mv -f "$ROLLBACK_FILE" "$INSTALL_DIR/oboard-subscription-relay" 2>/dev/null || true; systemctl restart oboard-subscription-relay.service 2>/dev/null || true; fi
+		rm -f "$INSTALL_DIR/oboard-subscription-relay.new"
+		fail "中继服务启动失败，已回滚到旧版本。"
+	fi
+	if [ "$HAD_OLD" = 1 ]; then rm -f "$ROLLBACK_FILE"; fi
 	[ "$MANAGED_UPDATE" = 1 ] || systemctl restart oboard-subscription-relay-updater.service
 elif [ "$manager" = openrc ]; then
 	if [ "$MANAGED_UPDATE" = 0 ]; then
@@ -218,11 +233,18 @@ elif [ "$manager" = openrc ]; then
 		rc-update add oboard-subscription-relay default
 		rc-update add oboard-subscription-relay-updater default
 	fi
-	rc-service oboard-subscription-relay restart
+	if ! rc-service oboard-subscription-relay restart; then
+		if [ "$HAD_OLD" = 1 ]; then mv -f "$ROLLBACK_FILE" "$INSTALL_DIR/oboard-subscription-relay" 2>/dev/null || true; rc-service oboard-subscription-relay restart 2>/dev/null || true; fi
+		rm -f "$INSTALL_DIR/oboard-subscription-relay.new"
+		fail "中继服务启动失败，已回滚到旧版本。"
+	fi
+	if [ "$HAD_OLD" = 1 ]; then rm -f "$ROLLBACK_FILE"; fi
 	[ "$MANAGED_UPDATE" = 1 ] || rc-service oboard-subscription-relay-updater restart
 else
 	fail "未识别 systemd 或 OpenRC；程序已安装但尚未启动。"
 fi
+# Cleanup rollback if still present (non-service case)
+rm -f "$ROLLBACK_FILE" 2>/dev/null || true
 
 echo ""
 if [ "$ACTION" = install ]; then

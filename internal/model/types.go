@@ -3233,33 +3233,45 @@ type HealthReport struct {
 	CPUUsagePercent           float64      `json:"cpu_usage_percent"`
 	MemoryUsedBytes           uint64       `json:"memory_used_bytes"`
 	MemoryTotalBytes          uint64       `json:"memory_total_bytes"`
-	AgentMemoryBytes          uint64       `json:"agent_memory_bytes"`
-	DiskBytes                 uint64       `json:"disk_bytes"`
-	DiskTotalBytes            uint64       `json:"disk_total_bytes"`
-	TCPConnectionCount        uint64       `json:"tcp_connection_count"`
-	UDPConnectionCount        uint64       `json:"udp_connection_count"`
-	ProcessCount              uint64       `json:"process_count"`
-	AgentVersion              string       `json:"agent_version"`
-	AgentBuild                string       `json:"agent_build"`
-	SingBoxVersion            string       `json:"sing_box_version"`
-	KernelCapabilities        []string     `json:"kernel_capabilities,omitempty"`
-	TCPFastOpenState          string       `json:"tcp_fastopen_state,omitempty"`
-	TCPFastOpenValue          int          `json:"tcp_fastopen_value,omitempty"`
-	NetworkUploadBPS          uint64       `json:"network_upload_bps"`
-	NetworkDownloadBPS        uint64       `json:"network_download_bps"`
-	NetworkTotalUploadBytes   uint64       `json:"network_total_upload_bytes"`
-	NetworkTotalDownloadBytes uint64       `json:"network_total_download_bytes"`
-	ConnectivityProbeEnabled  bool         `json:"-"`
-	ConnectivityProbeTarget   string       `json:"-"`
-	ConnectivityAvailable     bool         `json:"-"`
-	ConnectivityLatencyMS     int64        `json:"-"`
-	ConnectivityCheckedAt     time.Time    `json:"-"`
-	ConnectivityError         string       `json:"-"`
-	Timestamp                 time.Time                `json:"timestamp"`
-	AppliedConfigVersion      int64                  `json:"applied_config_version,omitempty"`
-	AppliedConfigDigest       string                 `json:"applied_config_digest,omitempty"`
-	RemoteAccess              RemoteAccessReport     `json:"remote_access,omitempty"`
+	AgentMemoryBytes          uint64                     `json:"agent_memory_bytes"`
+	DiskBytes                 uint64                     `json:"disk_bytes"`
+	DiskTotalBytes            uint64                     `json:"disk_total_bytes"`
+	DiskAvailableBytes        uint64                     `json:"disk_available_bytes,omitempty"`
+	DiskPressure              string                     `json:"disk_pressure,omitempty"`
+	StorageProfile            string                     `json:"storage_profile,omitempty"`
+	TCPConnectionCount        uint64                     `json:"tcp_connection_count"`
+	UDPConnectionCount        uint64                     `json:"udp_connection_count"`
+	ProcessCount              uint64                     `json:"process_count"`
+	AgentVersion              string                     `json:"agent_version"`
+	AgentBuild                string                     `json:"agent_build"`
+	SingBoxVersion            string                     `json:"sing_box_version"`
+	KernelCapabilities        []string                   `json:"kernel_capabilities,omitempty"`
+	TCPFastOpenState          string                     `json:"tcp_fastopen_state,omitempty"`
+	TCPFastOpenValue          int                        `json:"tcp_fastopen_value,omitempty"`
+	NetworkUploadBPS          uint64                     `json:"network_upload_bps"`
+	NetworkDownloadBPS        uint64                     `json:"network_download_bps"`
+	NetworkTotalUploadBytes   uint64                     `json:"network_total_upload_bytes"`
+	NetworkTotalDownloadBytes uint64                     `json:"network_total_download_bytes"`
+	ConnectivityProbeEnabled  bool                       `json:"-"`
+	ConnectivityProbeTarget   string                     `json:"-"`
+	ConnectivityAvailable     bool                       `json:"-"`
+	ConnectivityLatencyMS     int64                      `json:"-"`
+	ConnectivityCheckedAt     time.Time                  `json:"-"`
+	ConnectivityError         string                     `json:"-"`
+	Timestamp                 time.Time                  `json:"timestamp"`
+	AppliedConfigVersion      int64                      `json:"applied_config_version,omitempty"`
+	AppliedConfigDigest       string                     `json:"applied_config_digest,omitempty"`
+	RemoteAccess              RemoteAccessReport         `json:"remote_access,omitempty"`
 	NetworkInventory          *NetworkInterfaceInventory `json:"network_inventory,omitempty"`
+	Storage                   *StorageDiskInfo           `json:"storage,omitempty"`
+}
+
+type StorageDiskInfo struct {
+	TotalBytes     uint64  `json:"total_bytes"`
+	AvailableBytes uint64  `json:"available_bytes"`
+	UsagePercent   float64 `json:"usage_percent"`
+	StorageProfile string  `json:"storage_profile"`
+	Pressure       string  `json:"pressure"`
 }
 
 type MetricReport struct {

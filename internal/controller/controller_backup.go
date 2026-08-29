@@ -36,6 +36,17 @@ const (
 	controllerBackupLastSuccessSetting      = "controller_backup_last_success_at"
 	controllerBackupLastErrorSetting        = "controller_backup_last_error"
 	controllerBackupRestoreReconcileSetting = "controller_backup_restore_reconcile"
+	controllerBackupUpdateRetentionSetting  = "controller_backup_update_retention"
+	controllerBackupPreRestoreRetention     = 1
+	controllerBackupPreRestoreMaxAge        = 7 * 24 * time.Hour
+)
+
+type BackupRetentionClass string
+
+const (
+	BackupRetentionRegular    BackupRetentionClass = "regular"
+	BackupRetentionPreUpdate  BackupRetentionClass = "pre_update"
+	BackupRetentionPreRestore BackupRetentionClass = "pre_restore"
 )
 
 var errBackupRecoveryPasswordRequired = errors.New("请先设置备份恢复密码")
@@ -60,6 +71,7 @@ type controllerBackupSettingsState struct {
 	Weekday         int                `json:"weekday"`
 	LocalRetention  int                `json:"local_retention"`
 	RemoteRetention int                `json:"remote_retention"`
+	UpdateRetention int                `json:"update_retention"`
 	Destination     backup.Destination `json:"destination"`
 	Secrets         controllerBackupSecrets
 	Timezone        string `json:"-"`
@@ -74,6 +86,7 @@ type controllerBackupSettingsRequest struct {
 	Weekday          int                `json:"weekday"`
 	LocalRetention   int                `json:"local_retention"`
 	RemoteRetention  int                `json:"remote_retention"`
+	UpdateRetention  *int               `json:"update_retention"`
 	Destination      backup.Destination `json:"destination"`
 	RecoveryPassword string             `json:"recovery_password"`
 	S3AccessKey      string             `json:"s3_access_key"`
@@ -271,8 +284,9 @@ func (s *Server) loadControllerBackupSettings(ctx context.Context) (controllerBa
 		Schedule:        strings.TrimSpace(items[controllerBackupScheduleSetting]),
 		Time:            strings.TrimSpace(items[controllerBackupTimeSetting]),
 		Weekday:         settingInt(items, controllerBackupWeekdaySetting, 0, 0, 6),
-		LocalRetention:  settingInt(items, controllerBackupLocalRetentionSetting, 7, 1, 100),
+		LocalRetention:  settingInt(items, controllerBackupLocalRetentionSetting, 3, 1, 100),
 		RemoteRetention: settingInt(items, controllerBackupRemoteRetentionSetting, 30, 1, 365),
+		UpdateRetention: settingInt(items, controllerBackupUpdateRetentionSetting, 2, 0, 10),
 		Timezone:        strings.TrimSpace(items["traffic_timezone"]),
 		LastSuccessAt:   items[controllerBackupLastSuccessSetting],
 		LastError:       items[controllerBackupLastErrorSetting],
@@ -314,6 +328,7 @@ func publicControllerBackupSettings(settings controllerBackupSettingsState) map[
 		"weekday":                settings.Weekday,
 		"local_retention":        settings.LocalRetention,
 		"remote_retention":       settings.RemoteRetention,
+		"update_retention":       settings.UpdateRetention,
 		"destination":            settings.Destination,
 		"password_configured":    settings.Secrets.RecoveryPassword != "",
 		"destination_configured": !settings.Destination.Enabled || destinationSecretsConfigured(settings.Destination, settings.Secrets.Remote),
@@ -440,8 +455,11 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 	if req.RemoteRetention != 0 {
 		state.RemoteRetention = req.RemoteRetention
 	}
-	if state.LocalRetention < 1 || state.LocalRetention > 100 || state.RemoteRetention < 1 || state.RemoteRetention > 365 {
-		fail(w, errors.New("本地保留数量应为 1 至 100，远端保留数量应为 1 至 365"), 400)
+	if req.UpdateRetention != nil {
+		state.UpdateRetention = *req.UpdateRetention
+	}
+	if state.LocalRetention < 1 || state.LocalRetention > 100 || state.RemoteRetention < 1 || state.RemoteRetention > 365 || state.UpdateRetention < 0 || state.UpdateRetention > 10 {
+		fail(w, errors.New("本地保留数量应为 1 至 100，远端保留数量应为 1 至 365，更新快照保留数量应为 0 至 10"), 400)
 		return
 	}
 	state.Destination = req.Destination
@@ -499,6 +517,7 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 		controllerBackupWeekdaySetting:         strconv.Itoa(state.Weekday),
 		controllerBackupLocalRetentionSetting:  strconv.Itoa(state.LocalRetention),
 		controllerBackupRemoteRetentionSetting: strconv.Itoa(state.RemoteRetention),
+		controllerBackupUpdateRetentionSetting: strconv.Itoa(state.UpdateRetention),
 		controllerBackupDestinationSetting:     string(destinationData),
 		controllerBackupSecretsSetting:         wrapped,
 	}
@@ -751,6 +770,9 @@ func (s *Server) controllerBackupRestore(w http.ResponseWriter, r *http.Request,
 	if protectionPassword == "" {
 		protectionPassword = req.RecoveryPassword
 	}
+	if err := s.pruneExpiredPreRestoreBackups(r.Context()); err != nil {
+		log.Printf("prune expired pre_restore backups: %v", err)
+	}
 	if _, err := s.createControllerDataBackupWithPassword(r.Context(), state, protectionPassword, "pre_restore", false, true); err != nil {
 		fail(w, fmt.Errorf("恢复前保护备份创建失败：%s", localizeBackupErrorMessage(err.Error())), 500)
 		return
@@ -830,7 +852,7 @@ func (s *Server) enforceControllerBackupRetention(ctx context.Context, settings 
 	}
 	localKept := 0
 	for _, item := range items {
-		if item.LocalPath == "" || item.Protected {
+		if item.LocalPath == "" || item.Protected || item.Origin == "pre_restore" {
 			continue
 		}
 		localKept++
@@ -849,7 +871,7 @@ func (s *Server) enforceControllerBackupRetention(ctx context.Context, settings 
 	remoteKept := 0
 	currentTarget := backup.DestinationID(settings.Destination)
 	for _, item := range items {
-		if item.RemoteStatus != "available" || item.RemoteKey == "" || item.RemoteTarget != currentTarget || item.Protected || !settings.Destination.Enabled {
+		if item.RemoteStatus != "available" || item.RemoteKey == "" || item.RemoteTarget != currentTarget || item.Protected || item.Origin == "pre_restore" || !settings.Destination.Enabled {
 			continue
 		}
 		remoteKept++
@@ -865,7 +887,69 @@ func (s *Server) enforceControllerBackupRetention(ctx context.Context, settings 
 			return err
 		}
 	}
+	if err := s.enforcePreRestoreRetention(ctx, items); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Server) enforcePreRestoreRetention(ctx context.Context, items []model.ControllerBackup) error {
+	preRestoreKept := 0
+	now := time.Now()
+	for _, item := range items {
+		if item.Origin != "pre_restore" || !item.Protected {
+			continue
+		}
+		expiredByAge := false
+		if !item.CreatedAt.IsZero() && now.Sub(item.CreatedAt) > controllerBackupPreRestoreMaxAge {
+			expiredByAge = true
+		}
+		preRestoreKept++
+		shouldKeep := preRestoreKept <= controllerBackupPreRestoreRetention && !expiredByAge
+		if shouldKeep {
+			continue
+		}
+		if item.LocalPath != "" && s.backupManager != nil && s.backupManager.ContainsLocal(item.LocalPath) {
+			if err := s.backupManager.RemoveLocal(item.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		if item.LocalPath != "" {
+			if err := s.store.ExpireControllerBackupLocal(ctx, item.ID); err != nil {
+				return err
+			}
+		}
+		if item.RemoteStatus == "available" && item.RemoteKey != "" {
+			if err := s.store.ExpireControllerBackupRemote(ctx, item.ID); err != nil {
+				return err
+			}
+		}
+		if item.LocalPath == "" && item.RemoteStatus != "available" {
+			_ = s.store.DeleteControllerBackup(ctx, item.ID)
+		}
+	}
+	return nil
+}
+
+func (s *Server) pruneExpiredPreRestoreBackups(ctx context.Context) error {
+	items, err := s.store.ListControllerBackups(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for _, item := range items {
+		if item.Origin != "pre_restore" || !item.Protected {
+			continue
+		}
+		if item.CreatedAt.IsZero() || now.Sub(item.CreatedAt) <= controllerBackupPreRestoreMaxAge {
+			continue
+		}
+		if item.LocalPath != "" && s.backupManager != nil && s.backupManager.ContainsLocal(item.LocalPath) {
+			_ = s.backupManager.RemoveLocal(item.LocalPath)
+			_ = s.store.ExpireControllerBackupLocal(ctx, item.ID)
+		}
+	}
+	return s.enforcePreRestoreRetention(ctx, items)
 }
 
 func (s *Server) ensureControllerBackupLocal(ctx context.Context, settings controllerBackupSettingsState, item *model.ControllerBackup) error {
