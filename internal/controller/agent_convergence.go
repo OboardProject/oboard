@@ -60,8 +60,10 @@ func (s *Server) reconcileAgentAppliedState(ctx context.Context, serverID int64,
 			return
 		}
 		s.markAgentConfigurationDrift(ctx, serverID)
-	case "synced", "failed":
+	case "synced":
 		s.markAgentConfigurationDrift(ctx, serverID)
+	case "failed":
+		return
 	default:
 		s.signalConfigurationReconcile()
 	}

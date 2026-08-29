@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+const (
+	// ConfigurationSyncTriggerRevision is a management write that advanced the
+	// desired-state watermark. Unchanged servers stay failed or no-op; they
+	// must not allocate a new config_version.
+	ConfigurationSyncTriggerRevision = "revision"
+	// ConfigurationSyncTriggerOperatorRetry is an explicit retry of a failed
+	// sync. The same payload may be requeued at the existing config_version.
+	ConfigurationSyncTriggerOperatorRetry = "operator_retry"
+	// ConfigurationSyncTriggerAgentDrift means a previously synced Agent no
+	// longer matches the last successful payload and must be redeployed.
+	ConfigurationSyncTriggerAgentDrift = "agent_drift"
+	// ConfigurationSyncMaxPreparationRetries bounds automatic retries of
+	// prepare-time failures that never queued an Agent task. A task that
+	// already ran and failed stays failed until the operator retries or the
+	// desired projection actually changes.
+	ConfigurationSyncMaxPreparationRetries = 6
+)
+
 // ConfigurationSyncState is the durable bridge between a saved desired state
 // and the Agent task queue. The database remains authoritative across process
 // restarts; the Controller worker only provides prompt reconciliation.
@@ -69,7 +87,7 @@ func (s *Store) MarkConfigurationSyncPending(ctx context.Context, revision uint6
 		unique[serverID] = struct{}{}
 		_, err := tx.ExecContext(ctx, `
 			insert into configuration_sync_states(server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,trigger_reason,sync_strategy,changed_at,updated_at)
-			values(?,?,?,'pending',0,0,0,null,'','','',?,?)
+			values(?,?,?,'pending',0,0,0,null,'',?,'',?,?)
 			on conflict(server_id) do update set
 				wanted_revision=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.wanted_revision else configuration_sync_states.wanted_revision end,
 				wanted_digest=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.wanted_digest else configuration_sync_states.wanted_digest end,
@@ -77,9 +95,10 @@ func (s *Store) MarkConfigurationSyncPending(ctx context.Context, revision uint6
 				retry_count=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then 0 else configuration_sync_states.retry_count end,
 				next_retry_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then null else configuration_sync_states.next_retry_at end,
 				last_error=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then '' else configuration_sync_states.last_error end,
+				trigger_reason=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.trigger_reason else configuration_sync_states.trigger_reason end,
 				sync_strategy=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then '' else configuration_sync_states.sync_strategy end,
 				changed_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.changed_at else configuration_sync_states.changed_at end,
-				updated_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.updated_at else configuration_sync_states.updated_at end`, serverID, revision, digest, now, now)
+				updated_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.updated_at else configuration_sync_states.updated_at end`, serverID, revision, digest, ConfigurationSyncTriggerRevision, now, now)
 		if err != nil {
 			return nil, err
 		}
@@ -105,7 +124,7 @@ func (s *Store) EnsureConfigurationSyncRevision(ctx context.Context, serverID in
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.ExecContext(ctx, `
 		insert into configuration_sync_states(server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,trigger_reason,sync_strategy,changed_at,updated_at)
-		values(?,?,?,'pending',0,0,0,null,'','','',?,?)
+		values(?,?,?,'pending',0,0,0,null,'',?,'',?,?)
 		on conflict(server_id) do update set
 			wanted_revision=excluded.wanted_revision,
 			wanted_digest=excluded.wanted_digest,
@@ -113,10 +132,11 @@ func (s *Store) EnsureConfigurationSyncRevision(ctx context.Context, serverID in
 			retry_count=0,
 			next_retry_at=null,
 			last_error='',
+			trigger_reason=excluded.trigger_reason,
 			changed_at=excluded.changed_at,
 			updated_at=excluded.updated_at
 		where configuration_sync_states.wanted_revision < excluded.wanted_revision`,
-		serverID, revision, fmt.Sprintf("routing:%d", revision), now, now)
+		serverID, revision, fmt.Sprintf("routing:%d", revision), ConfigurationSyncTriggerRevision, now, now)
 	if err != nil {
 		return false, err
 	}
@@ -129,7 +149,7 @@ func (s *Store) MarkConfigurationSyncDrift(ctx context.Context, serverID int64, 
 		return fmt.Errorf("server id and configuration revision must be positive")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set wanted_revision=case when ?>wanted_revision then ? else wanted_revision end,wanted_digest=case when ?>wanted_revision then ? else wanted_digest end,state='pending',next_retry_at=null,last_error='',changed_at=?,updated_at=? where server_id=?`, revision, revision, revision, fmt.Sprintf("routing:%d", revision), now, now, serverID)
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set wanted_revision=case when ?>wanted_revision then ? else wanted_revision end,wanted_digest=case when ?>wanted_revision then ? else wanted_digest end,state='pending',trigger_reason=?,next_retry_at=null,last_error='',changed_at=?,updated_at=? where server_id=? and state!='failed'`, revision, revision, revision, fmt.Sprintf("routing:%d", revision), ConfigurationSyncTriggerAgentDrift, now, now, serverID)
 	return err
 }
 
@@ -147,7 +167,8 @@ func (s *Store) MarkConfigurationSyncWaiting(ctx context.Context, serverID int64
 
 func (s *Store) ListConfigurationSyncStates(ctx context.Context, now time.Time) ([]ConfigurationSyncState, error) {
 	formattedNow := now.UTC().Format(time.RFC3339Nano)
-	rows, err := s.db.QueryContext(ctx, `select server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,ifnull(trigger_reason,''),ifnull(sync_strategy,''),changed_at,updated_at from configuration_sync_states where (state='pending' and (next_retry_at is null or next_retry_at<=?)) or (state='failed' and retry_count<6 and (next_retry_at is null or next_retry_at<=?)) order by wanted_revision,server_id`, formattedNow, formattedNow)
+	query := fmt.Sprintf(`select server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,ifnull(trigger_reason,''),ifnull(sync_strategy,''),changed_at,updated_at from configuration_sync_states where (state='pending' and (next_retry_at is null or next_retry_at<=?)) or (state='failed' and last_config_version=0 and retry_count<%d and (next_retry_at is null or next_retry_at<=?)) order by wanted_revision,server_id`, ConfigurationSyncMaxPreparationRetries)
+	rows, err := s.db.QueryContext(ctx, query, formattedNow, formattedNow)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +206,11 @@ func (s *Store) UpdateConfigurationSyncWantedDigest(ctx context.Context, serverI
 }
 
 func (s *Store) RecoverConfigurationSyncStates(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',next_retry_at=null,updated_at=? where state in ('preparing','queued') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running'))`, time.Now().UTC().Format(time.RFC3339Nano))
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='failed',next_retry_at=null,updated_at=? where state in ('preparing','queued') and last_config_version>0 and exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status='failed') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running'))`, now); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',next_retry_at=null,updated_at=? where state in ('preparing','queued') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running','failed'))`, now)
 	return err
 }
 
@@ -224,6 +249,19 @@ func (s *Store) MarkConfigurationSyncQueued(ctx context.Context, serverID int64,
 	return err
 }
 
+// MarkConfigurationSyncUnchangedFailure restores a claimed row to failed when
+// the current projection matches the last failed apply_deployment. It does not
+// increment retry_count or allocate a later retry, so the operator-facing
+// blocked state stays stable until an explicit retry or a real change.
+func (s *Store) MarkConfigurationSyncUnchangedFailure(ctx context.Context, serverID int64, revision uint64, resultError string) error {
+	if len(resultError) > 2000 {
+		resultError = resultError[:2000]
+	}
+	resultError = strings.TrimSpace(resultError)
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='failed',next_retry_at=null,last_error=case when ?='' then last_error else ? end,updated_at=? where server_id=? and wanted_revision=? and state='preparing'`, resultError, resultError, time.Now().UTC().Format(time.RFC3339Nano), serverID, revision)
+	return err
+}
+
 func (s *Store) MarkConfigurationSyncResult(ctx context.Context, serverID, configVersion int64, succeeded bool, resultError string) error {
 	now := time.Now().UTC()
 	if succeeded {
@@ -250,8 +288,8 @@ func (s *Store) MarkConfigurationSyncResult(ctx context.Context, serverID, confi
 }
 
 func (s *Store) RetryFailedConfigurationSync(ctx context.Context, serverIDs []int64) (int64, error) {
-	args := []any{time.Now().UTC().Format(time.RFC3339Nano)}
-	query := `update configuration_sync_states set state='pending',retry_count=0,next_retry_at=null,last_error='',updated_at=? where state='failed'`
+	args := []any{ConfigurationSyncTriggerOperatorRetry, time.Now().UTC().Format(time.RFC3339Nano)}
+	query := `update configuration_sync_states set state='pending',retry_count=0,next_retry_at=null,last_error='',trigger_reason=?,updated_at=? where state='failed'`
 	if len(serverIDs) > 0 {
 		placeholders := make([]string, 0, len(serverIDs))
 		for _, id := range serverIDs {

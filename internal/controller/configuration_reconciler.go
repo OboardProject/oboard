@@ -426,8 +426,8 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	if len(claimed) == 0 {
 		return
 	}
-	changedIDs, unchanged := s.automaticProjectionChanges(ctx, claimed)
-	for _, state := range unchanged {
+	plan := s.automaticProjectionChanges(ctx, claimed)
+	for _, state := range plan.noop {
 		digest := s.serverExpectedPayloadDigest(ctx, state.ServerID, state.LastConfigVersion)
 		if err := s.store.MarkConfigurationSyncNoop(ctx, state.ServerID, state.WantedRevision, digest); err != nil {
 			logConfigurationError("mark semantic noop", err)
@@ -435,23 +435,40 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		}
 		s.configurationSemanticNoopTotal.Add(1)
 	}
-	if len(changedIDs) == 0 {
+	for _, state := range plan.keepFailed {
+		message := s.lastApplyDeploymentError(ctx, state.ServerID)
+		if err := s.store.MarkConfigurationSyncUnchangedFailure(ctx, state.ServerID, state.WantedRevision, message); err != nil {
+			logConfigurationError("keep unchanged failure", err)
+		}
+	}
+	for _, state := range plan.inFlight {
+		if err := s.markConfigurationSyncInFlight(ctx, state); err != nil {
+			logConfigurationError("attach in-flight task", err)
+		}
+	}
+	for _, state := range plan.retrySame {
+		if err := s.requeueUnchangedDeployment(ctx, state); err != nil {
+			logConfigurationError("requeue unchanged deployment", err)
+			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, err.Error())
+		}
+	}
+	if len(plan.changed) == 0 {
 		s.publishRealtime("configuration", "deployments", "tasks")
 		return
 	}
-	for serverID := range changedIDs {
+	for serverID := range plan.changed {
 		if err := s.store.SupersedePendingTasksByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment, "新的期望配置已保存，旧任务已抑制"); err != nil {
 			logConfigurationError("supersede stale task", err)
 		}
 	}
-	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, changedIDs, nil)
+	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, plan.changed, nil)
 	if deployErr != nil {
 		if s.reconcileConfigurationAroundDuplicateDirectPaths(ctx, claimed) {
 			s.publishRealtime("configuration", "deployments", "tasks")
 			return
 		}
 		for _, state := range claimed {
-			if !changedIDs[state.ServerID] {
+			if !plan.changed[state.ServerID] {
 				continue
 			}
 			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, deployErr.Error())
@@ -464,7 +481,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		tasksByServer[task.ServerID] = task
 	}
 	for _, state := range claimed {
-		if !changedIDs[state.ServerID] {
+		if !plan.changed[state.ServerID] {
 			continue
 		}
 		task, ok := tasksByServer[state.ServerID]
@@ -479,29 +496,56 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	s.publishRealtime("configuration", "deployments", "tasks")
 }
 
-func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store.ConfigurationSyncState) (map[int64]bool, []store.ConfigurationSyncState) {
-	changed := make(map[int64]bool)
-	unchanged := make([]store.ConfigurationSyncState, 0)
+type configurationProjectionPlan struct {
+	changed    map[int64]bool
+	noop       []store.ConfigurationSyncState
+	keepFailed []store.ConfigurationSyncState
+	retrySame  []store.ConfigurationSyncState
+	inFlight   []store.ConfigurationSyncState
+}
+
+func (p *configurationProjectionPlan) excludeChanged() {
+	if p == nil || len(p.changed) == 0 {
+		return
+	}
+	p.noop = filterSyncStatesNotIn(p.noop, p.changed)
+	p.keepFailed = filterSyncStatesNotIn(p.keepFailed, p.changed)
+	p.retrySame = filterSyncStatesNotIn(p.retrySame, p.changed)
+	p.inFlight = filterSyncStatesNotIn(p.inFlight, p.changed)
+}
+
+func filterSyncStatesNotIn(states []store.ConfigurationSyncState, changed map[int64]bool) []store.ConfigurationSyncState {
+	filtered := states[:0]
+	for _, state := range states {
+		if changed[state.ServerID] {
+			continue
+		}
+		filtered = append(filtered, state)
+	}
+	return filtered
+}
+
+func allChangedProjectionPlan(claimed []store.ConfigurationSyncState) configurationProjectionPlan {
+	changed := make(map[int64]bool, len(claimed))
+	for _, state := range claimed {
+		changed[state.ServerID] = true
+	}
+	return configurationProjectionPlan{changed: changed}
+}
+
+func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store.ConfigurationSyncState) configurationProjectionPlan {
+	plan := configurationProjectionPlan{changed: make(map[int64]bool)}
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
-		for _, state := range claimed {
-			changed[state.ServerID] = true
-		}
-		return changed, unchanged
+		return allChangedProjectionPlan(claimed)
 	}
 	forwards, err := s.store.ListPortForwards(ctx)
 	if err != nil {
-		for _, state := range claimed {
-			changed[state.ServerID] = true
-		}
-		return changed, unchanged
+		return allChangedProjectionPlan(claimed)
 	}
 	tunnels, err := s.store.ListTunnels(ctx)
 	if err != nil {
-		for _, state := range claimed {
-			changed[state.ServerID] = true
-		}
-		return changed, unchanged
+		return allChangedProjectionPlan(claimed)
 	}
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
 	if derived, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger); err == nil {
@@ -514,54 +558,118 @@ func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store
 	for _, state := range claimed {
 		server, ok := serverByID(data.Servers, state.ServerID)
 		if !ok {
-			changed[state.ServerID] = true
-			continue
-		}
-		lastTask, err := s.store.LastSuccessfulTaskByServerType(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment)
-		if err != nil {
-			changed[state.ServerID] = true
-			continue
-		}
-		var payload model.DeploymentTaskPayload
-		if json.Unmarshal([]byte(lastTask.PayloadJSON), &payload) != nil {
-			changed[state.ServerID] = true
+			plan.changed[state.ServerID] = true
 			continue
 		}
 		current, err := s.currentDeploymentProjection(ctx, server, data, forwards, tunnels, ledger)
 		if err != nil {
-			changed[state.ServerID] = true
+			plan.changed[state.ServerID] = true
+			continue
+		}
+		latest, err := s.store.LatestTaskByServerType(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment)
+		if err != nil {
+			plan.changed[state.ServerID] = true
+			continue
+		}
+		var payload model.DeploymentTaskPayload
+		if json.Unmarshal([]byte(latest.PayloadJSON), &payload) != nil {
+			plan.changed[state.ServerID] = true
 			continue
 		}
 		configJSON := payload.Config.Config
-		if lastConfig, cfgErr := s.lastControllerDesiredConfig(ctx, state.ServerID); cfgErr == nil && lastConfig != "" {
-			configJSON = lastConfig
+		if latest.Status == "succeeded" {
+			if lastConfig, cfgErr := s.lastControllerDesiredConfig(ctx, state.ServerID); cfgErr == nil && lastConfig != "" {
+				configJSON = lastConfig
+			}
 		}
 		last := lastDeploymentProjection(payload, configJSON, server)
-		if current.topologyEqual(last) {
-			unchanged = append(unchanged, state)
+		equal := current.topologyEqual(last)
+		if strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerAgentDrift {
+			plan.changed[state.ServerID] = true
 			continue
 		}
-		changed[state.ServerID] = true
+		if !equal {
+			plan.changed[state.ServerID] = true
+			continue
+		}
+		switch latest.Status {
+		case "pending", "running":
+			plan.inFlight = append(plan.inFlight, state)
+		case "succeeded":
+			plan.noop = append(plan.noop, state)
+		case "failed", "rollback_failed":
+			if strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerOperatorRetry {
+				plan.retrySame = append(plan.retrySame, state)
+			} else {
+				plan.keepFailed = append(plan.keepFailed, state)
+			}
+		default:
+			plan.changed[state.ServerID] = true
+		}
 	}
-	if len(changed) > 0 {
+	if len(plan.changed) > 0 {
 		for serverID := range trusted {
-			if changed[serverID] {
+			if plan.changed[serverID] {
 				for memberID := range trusted {
-					changed[memberID] = true
+					plan.changed[memberID] = true
 				}
 				break
 			}
 		}
-		filtered := unchanged[:0]
-		for _, state := range unchanged {
-			if changed[state.ServerID] {
-				continue
-			}
-			filtered = append(filtered, state)
-		}
-		unchanged = filtered
+		plan.excludeChanged()
 	}
-	return changed, unchanged
+	return plan
+}
+
+func (s *Server) markConfigurationSyncInFlight(ctx context.Context, state store.ConfigurationSyncState) error {
+	last, err := s.store.LatestTaskByServerType(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment)
+	if err != nil {
+		return err
+	}
+	return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, last.ConfigVersion, last.ID, configurationTaskPayloadDigest(*last))
+}
+
+func (s *Server) requeueUnchangedDeployment(ctx context.Context, state store.ConfigurationSyncState) error {
+	ctx = withAutomaticConfigurationSync(ctx)
+	last, err := s.store.LatestTaskByServerType(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment)
+	if err != nil {
+		return err
+	}
+	if last.Status == "pending" || last.Status == "running" {
+		return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, last.ConfigVersion, last.ID, configurationTaskPayloadDigest(*last))
+	}
+	task, err := s.createAgentTask(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment, last.PayloadJSON, last.ConfigVersion)
+	if err != nil {
+		return err
+	}
+	return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, last.ConfigVersion, task.ID, configurationTaskPayloadDigest(task))
+}
+
+func (s *Server) lastApplyDeploymentError(ctx context.Context, serverID int64) string {
+	last, err := s.store.LatestTaskByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment)
+	if err != nil {
+		return "配置未变化，沿用上次失败结果"
+	}
+	if message := configurationTaskResultMessage(last.ResultJSON); message != "" {
+		return message
+	}
+	if last.Status == "failed" || last.Status == "rollback_failed" {
+		return "Agent 配置任务失败"
+	}
+	return "配置未变化，沿用上次失败结果"
+}
+
+func configurationTaskResultMessage(resultJSON string) string {
+	var result map[string]any
+	if json.Unmarshal([]byte(resultJSON), &result) != nil {
+		return ""
+	}
+	for _, key := range []string{"error", "message"} {
+		if value, ok := result[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Context, claimed []store.ConfigurationSyncState) bool {
@@ -687,26 +795,13 @@ func (s *Server) recordConfigurationTaskResult(ctx context.Context, task model.A
 	succeeded := status == "succeeded"
 	message := ""
 	if !succeeded {
-		var result map[string]any
-		if jsonErr := json.Unmarshal([]byte(resultJSON), &result); jsonErr == nil {
-			if value, ok := result["error"].(string); ok {
-				message = value
-			}
-			if message == "" {
-				if value, ok := result["message"].(string); ok {
-					message = value
-				}
-			}
-		}
+		message = configurationTaskResultMessage(resultJSON)
 		if message == "" {
 			message = "Agent 配置任务失败"
 		}
 	}
 	if err := s.store.MarkConfigurationSyncResult(ctx, task.ServerID, task.ConfigVersion, succeeded, message); err != nil {
 		logConfigurationError("record task result", err)
-	}
-	if !succeeded {
-		s.signalConfigurationReconcile()
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")
 }

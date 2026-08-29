@@ -586,7 +586,7 @@ func TestConfigurationSaveDispatchesOnlineAgentWithinSLO(t *testing.T) {
 	}
 }
 
-func TestFailedSyncHealthReportReopensReconciliation(t *testing.T) {
+func TestFailedSyncHealthReportDoesNotReopenReconciliation(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -609,8 +609,8 @@ func TestFailedSyncHealthReportReopensReconciliation(t *testing.T) {
 	}
 	srv.reconcileAgentAppliedState(ctx, server.ID, model.HealthReport{})
 	state, err := db.ConfigurationSyncState(ctx, server.ID)
-	if err != nil || state.State != "pending" {
-		t.Fatalf("failed reconnect state = %#v err=%v", state, err)
+	if err != nil || state.State != "failed" {
+		t.Fatalf("failed health report reopened sync = %#v err=%v", state, err)
 	}
 }
 
@@ -783,5 +783,145 @@ func TestLegacySemanticNoopDigestConvergesAndRepairs(t *testing.T) {
 	}
 	if state.WantedDigest != expectedDigest {
 		t.Fatalf("legacy semantic noop was not repaired = %q, want %q", state.WantedDigest, expectedDigest)
+	}
+}
+
+func failLatestApplyDeployment(t *testing.T, db *store.Store, serverID int64) *model.AgentTask {
+	t.Helper()
+	ctx := context.Background()
+	task, err := db.ActiveTaskByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment)
+	if err != nil || task == nil {
+		t.Fatalf("expected apply_deployment task, got err=%v", err)
+	}
+	if err := db.SetTaskStateForTest(ctx, task.ID, "failed", task.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkConfigurationSyncResult(ctx, serverID, task.ConfigVersion, false, "部署失败：1个关键步骤未完成"); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return failed
+}
+
+func TestFailedDeploymentDoesNotLoopOrCreateNewConfig(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "loop-node", AgentID: "loop-agent", AgentTokenHash: security.HashSecret("loop-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
+	srv.reconcileConfiguration(ctx)
+	first := failLatestApplyDeployment(t, db, server.ID)
+	before := countTasksByType(t, db, model.AgentTaskTypeApplyDeployment)
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(model.HealthReport{Status: model.ServerOnline, AppliedConfigVersion: 0, Timestamp: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		srv.processAgentSocketMessage(ctx, stored, map[string]json.RawMessage{"health_report": raw}, "192.0.2.10")
+		srv.reconcileConfiguration(ctx)
+	}
+	if got := countTasksByType(t, db, model.AgentTaskTypeApplyDeployment); got != before {
+		t.Fatalf("failed deployment created extra tasks %d -> %d", before, got)
+	}
+	if got := maxTaskConfigVersion(t, db); got != first.ConfigVersion {
+		t.Fatalf("failed deployment allocated new config_version %d, want %d", got, first.ConfigVersion)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "failed" {
+		t.Fatalf("failed deployment state = %#v err=%v", state, err)
+	}
+}
+
+func TestUnchangedRevisionAfterFailedDeployDoesNotCreateConfig(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "stale-rev-node", AgentID: "stale-rev-agent", AgentTokenHash: security.HashSecret("stale-rev-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
+	srv.reconcileConfiguration(ctx)
+	first := failLatestApplyDeployment(t, db, server.ID)
+	revision, err := db.ConfigurationRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, revision+1, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	before := countTasksByType(t, db, model.AgentTaskTypeApplyDeployment)
+	srv.reconcileConfiguration(ctx)
+	if got := countTasksByType(t, db, model.AgentTaskTypeApplyDeployment); got != before {
+		t.Fatalf("unchanged revision created apply_deployment %d -> %d", before, got)
+	}
+	if got := maxTaskConfigVersion(t, db); got != first.ConfigVersion {
+		t.Fatalf("unchanged revision allocated config_version %d, want %d", got, first.ConfigVersion)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "failed" {
+		t.Fatalf("unchanged revision state = %#v err=%v", state, err)
+	}
+}
+
+func TestOperatorRetryRequeuesSameConfigVersion(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "retry-node", AgentID: "retry-agent", AgentTokenHash: security.HashSecret("retry-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
+	srv.reconcileConfiguration(ctx)
+	first := failLatestApplyDeployment(t, db, server.ID)
+	if _, err := db.RetryFailedConfigurationSync(ctx, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileConfiguration(ctx)
+	latest, err := db.LatestTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
+	if err != nil || latest == nil {
+		t.Fatalf("operator retry missing task err=%v", err)
+	}
+	if latest.ID == first.ID || latest.ConfigVersion != first.ConfigVersion || latest.Status != "pending" {
+		t.Fatalf("operator retry task = %#v, first = %#v", latest, first)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "queued" || state.LastTaskID != latest.ID || state.LastConfigVersion != first.ConfigVersion {
+		t.Fatalf("operator retry sync state = %#v err=%v", state, err)
 	}
 }

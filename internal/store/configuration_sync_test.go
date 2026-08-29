@@ -162,3 +162,65 @@ func TestConfigurationSyncRecoveryRequeuesMissingTask(t *testing.T) {
 		t.Fatalf("missing task was not requeued = %#v, err=%v", state, err)
 	}
 }
+
+func TestConfigurationSyncExecutionFailureIsNotAutoRetried(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "exec-fail-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, 30, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.ClaimConfigurationSync(ctx, server.ID, 30); err != nil || !ok {
+		t.Fatalf("claim = %v, err=%v", ok, err)
+	}
+	if err := db.MarkConfigurationSyncQueued(ctx, server.ID, 30, 301, 12, "digest-301"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkConfigurationSyncResult(ctx, server.ID, 301, false, "部署失败：1个关键步骤未完成"); err != nil {
+		t.Fatal(err)
+	}
+	due, err := db.ListConfigurationSyncStates(ctx, time.Now().UTC().Add(time.Hour))
+	if err != nil || len(due) != 0 {
+		t.Fatalf("execution failure was auto-retried = %#v, err=%v", due, err)
+	}
+}
+
+func TestConfigurationSyncRecoveryKeepsFailedExecution(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "recover-fail-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: "{}", Status: "failed", ResultJSON: `{"message":"部署失败"}`, ConfigVersion: 401, Nonce: "recover-fail"}
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, 40, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.ClaimConfigurationSync(ctx, server.ID, 40); err != nil || !ok {
+		t.Fatalf("claim = %v, err=%v", ok, err)
+	}
+	if err := db.MarkConfigurationSyncQueued(ctx, server.ID, 40, 401, task.ID, "digest-401"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecoverConfigurationSyncStates(ctx); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || state.State != "failed" {
+		t.Fatalf("failed execution was reopened as pending = %#v, err=%v", state, err)
+	}
+}
