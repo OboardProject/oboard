@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID } from './graph-sources'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID } from './graph-sources'
 
 describe('server graph sources', () => {
   it('keeps the batch source handle stable', () => {
     expect(SERVER_GRAPH_SOURCE_HANDLE).toBe('server-source')
+    expect(isGenericServerSourceHandle(SERVER_GRAPH_SOURCE_HANDLE)).toBe(true)
+    expect(isGenericServerSourceHandle('source-bottom')).toBe(true)
+    expect(isGenericServerSourceHandle('server-entry-12')).toBe(false)
   })
 
   it('keeps each inbound on its own server handle', () => {

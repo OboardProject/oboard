@@ -2,6 +2,10 @@ import type { ProxyPathReuseSource } from './TransportDialog'
 
 export const SERVER_GRAPH_SOURCE_HANDLE = 'server-source'
 
+export function isGenericServerSourceHandle(handle?: string | null) {
+  return handle === SERVER_GRAPH_SOURCE_HANDLE || handle === 'source-bottom'
+}
+
 export function serverEntryHandleID(inboundID: number) {
   return `server-entry-${inboundID}`
 }

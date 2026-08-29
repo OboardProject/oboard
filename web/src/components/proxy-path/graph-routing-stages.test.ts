@@ -11,6 +11,7 @@ import {
   graphPathHasTerminalCatchAll,
   graphDirectExitHiddenByRouting,
   routingHostForGraphSource,
+  routingHostForServerConnect,
 } from './graph-routing-stages'
 
 it('encodes and parses rule-specific source handles separately from fallback handles', () => {
@@ -158,7 +159,7 @@ describe('graph routing stages', () => {
 })
 
 describe('routing host for a new graph split', () => {
-  it('hosts an inbound split on a sibling chain instead of an existing direct exit', () => {
+  it('hosts an inbound split as its own block instead of reusing an existing branch', () => {
     expect(routingHostForGraphSource(
       [
         { id: 42, inbound_id: 7, kind: 'direct', enabled: true },
@@ -166,7 +167,7 @@ describe('routing host for a new graph split', () => {
       ],
       [{ id: 501, path_id: 41, position: 1, node_type: 'server_inbound' }],
       { inbound_id: 7 },
-    )).toEqual({ pathID: 41, stageStepID: 0 })
+    )).toEqual({ inboundID: 7 })
   })
 
   it('retargets a direct-exit prefix step to the parent chain at the same fork', () => {
@@ -197,11 +198,38 @@ describe('routing host for a new graph split', () => {
     )).toEqual({ pathID: 41, stageStepID: 501 })
   })
 
-  it('keeps a lone direct exit as the host when no sibling chain exists', () => {
+  it('keeps a lone inbound as the host when no path exists yet', () => {
     expect(routingHostForGraphSource(
       [{ id: 42, inbound_id: 7, kind: 'direct', enabled: true }],
       [],
       { inbound_id: 7 },
-    )).toEqual({ pathID: 42, stageStepID: 0 })
+    )).toEqual({ inboundID: 7 })
+  })
+
+  it('attaches a root server card to that server inbound without picking a branch', () => {
+    expect(routingHostForServerConnect(
+      [
+        { id: 41, inbound_id: 7, kind: 'chain', enabled: true },
+        { id: 42, inbound_id: 8, kind: 'chain', enabled: true },
+      ],
+      [
+        { id: 501, path_id: 41, position: 1, node_type: 'server_inbound' },
+        { id: 601, path_id: 42, position: 1, node_type: 'server_inbound' },
+      ],
+      [
+        { id: 7, server_id: 1, enabled: true },
+        { id: 8, server_id: 2, enabled: true },
+      ],
+      { serverID: 1 },
+    )).toEqual({ inboundID: 7 })
+  })
+
+  it('keeps a path-instance server on its hop', () => {
+    expect(routingHostForServerConnect(
+      [{ id: 41, inbound_id: 7, kind: 'chain', enabled: true }],
+      [{ id: 501, path_id: 41, position: 1, node_type: 'server_inbound' }],
+      [{ id: 7, server_id: 1, enabled: true }],
+      { serverID: 2, stepID: 501 },
+    )).toEqual({ pathID: 41, stageStepID: 501 })
   })
 })

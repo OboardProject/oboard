@@ -52,7 +52,7 @@ import {
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
-import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { GRAPH_EDGE_ARROW_GAP, GRAPH_EDGE_ARROW_LENGTH, curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, routeEndArrowPath, routeEndArrowPoints, trimRouteEnd, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
@@ -68,6 +68,7 @@ import {
   graphRoutingStageSourceHandleID,
   graphDirectExitHiddenByRouting,
   routingHostForGraphSource,
+  routingHostForServerConnect,
   type GraphRoutingStage,
 } from './components/proxy-path/graph-routing-stages'
 import { relatedProxyPaths, type GraphRelationTarget, type RelatedProxyPath } from './components/proxy-path/graph-relations'
@@ -11281,7 +11282,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; ipv4_target_proxy_path_id: number; ipv6_target_proxy_path_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean }
+type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; ipv4_target_proxy_path_id: number; ipv6_target_proxy_path_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean; lock_host?: boolean }
 type TunnelDraft = { name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
@@ -12417,15 +12418,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    reconcileTopology()
 			    return
 			  }
-				  if (conn.sourceHandle === SERVER_GRAPH_SOURCE_HANDLE) {
-			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器', targetEntity?.type !== 'routing' && targetEntity?.type !== 'detached-step')
+				  if (isGenericServerSourceHandle(conn.sourceHandle)) {
+			    if (targetEntity?.type === 'routing') {
+			      openRoutingForServerNode(conn.source, conn.target)
+			      return
+			    }
+			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器', targetEntity?.type !== 'detached-step')
 			    if (!sources?.length) return
 			    if (targetEntity?.type === 'detached-step') {
 			      await reconnectDetachedChain(sources[0], conn.target)
-			      return
-			    }
-			    if (targetEntity?.type === 'routing') {
-			      openRoutingForSource(sources[0], conn.target)
 			      return
 			    }
 			    if (targetEntity?.type === 'direct') {
@@ -12505,7 +12506,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			      openRoutingForSource({ inbound_id: sourceEntry.id }, conn.target)
 			      return
 			    }
-			    return dialogs.alert({ title: '请选择分流位置', message: '从入口、服务器入口点或路径中的服务器继续连接点拖线到分流出口。' })
+			    if (sourceEntity?.type === 'server' || sourceEntity?.type === 'proxy-path-step') {
+			      openRoutingForServerNode(conn.source, conn.target)
+			      return
+			    }
+			    return dialogs.alert({ title: '请连接服务器', message: '把服务器或入口拖到分流区块即可把规则写在那台服务器上，不需要先选分支。' })
 			  }
 			  if (targetEntity?.type === 'warp') {
 	    const target = { node_type: 'warp' as const, transport_mode: 'singbox' as const, config_json: '{}' }
@@ -12709,12 +12714,15 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       return next
     })
   }
-  const openRouting = (context?: { pathID?: number; inboundID?: number; stageStepID?: number; serverID?: number; canvasTargetID?: string }) => {
+  const openRouting = (context?: { pathID?: number; inboundID?: number; stageStepID?: number; serverID?: number; canvasTargetID?: string; lockHost?: boolean }) => {
     const requestedPath = ((data.proxy_paths || []) as ProxyPath[]).find(item => item.id === context?.pathID)
-    const path = requestedPath || (context?.inboundID ? undefined : visibleProxyPaths[0] || (data.proxy_paths || [])[0])
+    const path = requestedPath || (context?.inboundID || context?.lockHost ? undefined : visibleProxyPaths[0] || (data.proxy_paths || [])[0])
     const inbound = entries.find(item => item.id === context?.inboundID)
       || (!path ? selectedEntries.find(item => item.enabled !== false) : undefined)
-    if (!path && !inbound) return dialogs.alert({ title: '无法添加分流', message: '请先创建入口节点。' })
+    if (!path && !inbound) {
+      if (context?.canvasTargetID) return dialogs.alert({ title: '请先连接服务器', message: '把服务器连到这个分流区块后，规则会写在那台服务器上；区块后面再连的节点是未匹配兜底。' })
+      return dialogs.alert({ title: '无法添加分流', message: '请先创建入口节点。' })
+    }
     const stages = routingStages(data, path?.id || 0, inbound?.id || 0)
     const stage = stages.find(item => item.stepID === Number(context?.stageStepID || 0) && item.available)
       || stages.find(item => item.serverID === context?.serverID && item.available)
@@ -12730,19 +12738,33 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       inbound_id: path ? 0 : Number(inbound?.id || 0),
       server_id: stage?.serverID || server.id,
       stage_step_id: stage?.stepID || 0,
+      lock_host: Boolean(context?.lockHost),
     })
   }
-  const openRoutingForSource = (source: ProxyPathReuseSource, canvasTargetID: string) => {
-    const paths = (data.proxy_paths || []) as ProxyPath[]
-    const steps = (data.proxy_path_steps || []) as ProxyPathStep[]
-    const host = routingHostForGraphSource(paths, steps, source)
-    if (!host) return dialogs.alert({ title: '无法添加分流', message: '没有找到这条路径的位置，请刷新后重试。' })
-    if ('inboundID' in host) return openRouting({ inboundID: host.inboundID, canvasTargetID })
+  const openRoutingHost = (host: { pathID: number; stageStepID: number } | { inboundID: number }, canvasTargetID: string) => {
+    if ('inboundID' in host) return openRouting({ inboundID: host.inboundID, canvasTargetID, lockHost: true })
     const stages = routingStages(data, host.pathID)
     const stage = stages.find(item => item.stepID === host.stageStepID && item.available)
       || stages.find(item => item.available)
     if (!stage) return dialogs.alert({ title: '此处不能执行分流', message: '分流规则需要连接到可执行规则的受控服务器节点。' })
-    return openRouting({ pathID: host.pathID, stageStepID: stage.stepID, serverID: stage.serverID, canvasTargetID })
+    return openRouting({ pathID: host.pathID, stageStepID: stage.stepID, serverID: stage.serverID, canvasTargetID, lockHost: true })
+  }
+  const openRoutingForSource = (source: ProxyPathReuseSource, canvasTargetID: string) => {
+    const host = routingHostForGraphSource((data.proxy_paths || []) as ProxyPath[], (data.proxy_path_steps || []) as ProxyPathStep[], source)
+    if (!host) return dialogs.alert({ title: '无法添加分流', message: '没有找到这条路径的位置，请刷新后重试。' })
+    return openRoutingHost(host, canvasTargetID)
+  }
+  const openRoutingForServerNode = (nodeID: string, canvasTargetID: string) => {
+    const entity = graphEntity(nodeID)
+    const paths = (data.proxy_paths || []) as ProxyPath[]
+    const steps = (data.proxy_path_steps || []) as ProxyPathStep[]
+    const host = entity?.type === 'proxy-path-step' && entity.id
+      ? routingHostForGraphSource(paths, steps, { step_id: entity.id })
+      : entity?.type === 'server' && entity.id
+        ? routingHostForServerConnect(paths, steps, entries, { serverID: entity.id })
+        : null
+    if (!host) return dialogs.alert({ title: '无法添加分流', message: '这台服务器没有可作为分流起点的入口。' })
+    return openRoutingHost(host, canvasTargetID)
   }
   const submitRoutingDraft = async () => {
     if (!routingDraft) return
@@ -13228,8 +13250,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     }
 	  if (entity?.type === 'direct' && entity.path_id) editProxyPathNameForEntity(entity)
 		  if (entity?.type === 'routing') {
-		    if (entity.path_id) openRouting({ pathID: entity.path_id, stageStepID: entity.stage_step_id, canvasTargetID: '' })
-		    else openRouting({ canvasTargetID: entity.node_id })
+		    if (entity.path_id) openRouting({ pathID: entity.path_id, stageStepID: entity.stage_step_id, canvasTargetID: '', lockHost: true })
+		    else openRouting({ canvasTargetID: entity.node_id, lockHost: true })
 		  }
   }
 	  const graphPathIDs = (item: Node | Edge) => ((item.data?.pathIDs || []) as number[])
@@ -13894,7 +13916,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'imported', label: '导入节点', desc: 'SS / SOCKS / VLESS' },
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
-  { id: 'routing', label: '分流出口', desc: '先连接路径，再配置规则' },
+  { id: 'routing', label: '分流出口', desc: '连上服务器后配置规则，后面的节点是未匹配兜底' },
   { id: 'transport', label: '流量转发', desc: '按入口管理转发规则' },
 ]
 
@@ -14190,7 +14212,7 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, ipv4_target_proxy_path_id: 0, ipv6_target_proxy_path_id: 0, family_dns_strategy: 'auto', proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true }
+  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, ipv4_target_proxy_path_id: 0, ipv6_target_proxy_path_id: 0, family_dns_strategy: 'auto', proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true, lock_host: false }
 }
 
 function defaultTunnelDraft(servers: Server[], selected?: Server): TunnelDraft {
@@ -14511,10 +14533,13 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
           分流规则编排
         </h2>
         <p className="muted">
-          {paths.find(path => path.id === draft.proxy_path_id)?.name || (virtualInbound ? `${virtualInbound.name} · 默认直出` : '代理分支')} · 为链路节点配置条件分流与目标出口
+          {draft.lock_host
+            ? `${selectedStage?.serverName || '当前服务器'} · 规则写在连上的服务器上，后面连接的节点是未匹配兜底`
+            : `${paths.find(path => path.id === draft.proxy_path_id)?.name || (virtualInbound ? `${virtualInbound.name} · 默认直出` : '代理分支')} · 为链路节点配置条件分流与目标出口`}
         </p>
       </div>
       <div className="routing-composer-head-right">
+        {!draft.lock_host && (
         <div className="routing-composer-branch-field">
           <span>代理分支</span>
           <Select
@@ -14535,6 +14560,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
             {paths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}</option>)}
           </Select>
         </div>
+        )}
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </div>
     </header>
@@ -14564,20 +14590,20 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
       <aside className={`routing-composer-sidebar${mobileTab === 'list' ? ' mobile-show' : ''}`}>
         <div className="routing-sidebar-stages">
           <div className="routing-sidebar-stages-head">
-            <span>链路节点</span>
-            <small>{stages.length} 个节点</small>
+            <span>{draft.lock_host ? '规则位置' : '链路节点'}</span>
+            <small>{draft.lock_host ? selectedStage?.serverName : `${stages.length} 个节点`}</small>
           </div>
           <div className="routing-stage-pipeline" role="group" aria-label="链路节点">
-            {stages.map(stage => {
+            {(draft.lock_host ? stages.filter(stage => stage.stepID === selectedStage?.stepID) : stages).map(stage => {
               const stageRuleCount = rules.filter(r => Number(r.stage_step_id || 0) === stage.stepID).length
               return (
                 <button
                   key={stage.key}
                   type="button"
                   aria-pressed={selectedStage?.key === stage.key}
-                  disabled={!stage.available}
+                  disabled={!stage.available || Boolean(draft.lock_host)}
                   className={`routing-stage-pip-btn${selectedStage?.key === stage.key ? ' selected' : ''}`}
-                  onClick={() => selectStage(stage)}
+                  onClick={() => { if (!draft.lock_host) selectStage(stage) }}
                   title={stage.unavailableReason || `${stage.label} 节点：${stage.serverName}`}
                 >
                   <span className="routing-pip-letter">{stage.label}</span>
@@ -14686,7 +14712,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                       >
                         <ArrowDown size={13} />
                       </button>
-                      {stages.length > 1 && !draft.lock_host && (
+                      {!draft.lock_host && stages.length > 1 && (
                         <>
                           <button
                             type="button"
@@ -14731,7 +14757,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
               <ArrowDown size={13} aria-hidden="true" />
               <span>未命中规则时</span>
             </div>
-            <strong>{currentStageIndex < stages.length - 1 ? `继续节点 ${stages[currentStageIndex + 1].label}` : '默认出口'}</strong>
+            <strong>{currentStageIndex < stages.length - 1 ? `继续节点 ${stages[currentStageIndex + 1].label}` : '后面连接的节点 / 默认出口'}</strong>
           </div>
         </div>
       </aside>
@@ -14741,7 +14767,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
           <div className="routing-editor-header-bar">
             <div className="routing-editor-title-group">
               <h3 id="routing-rule-editor-title">{isEditing ? `编辑规则：${draft.name || '未命名'}` : '新建分流规则'}</h3>
-              <span>· 作用于 {selectedStage.label} 节点 ({selectedStage.serverName})</span>
+              <span>· 作用于 {selectedStage.serverName}</span>
             </div>
             {isEditing && (
               <button
@@ -15076,7 +15102,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                     ))}
                   </Select>
                 </FormField>
-				<FormField label="后续节点出口" hint="可让规则链路的第一个代理连接从指定网卡或源地址发起。">
+				<FormField label="后续节点出口" hint="指定网卡后，这条规则链路后面的节点都会从该网卡发起；未指定时沿用服务器默认出口。">
 				  <Select
 					variant="segmented"
 					value={proxyPathBindingMode}
@@ -15165,7 +15191,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                   </Select>
                 </div>
                 {draft.action === 'interface' ? (
-                  <FormField label="出口网卡" required>
+                  <FormField label="出口网卡" required hint="命中后从这块网卡访问分流区块后面的节点；后面没有节点时，直接从该网卡出口。">
                     <NetworkInterfacePicker
                       serverID={selectedStage.serverID}
                       value={draft.interface_name}
@@ -17273,7 +17299,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const id = canvasRoutingNodeID(instance)
     const rootPosition = serverPositions.get(rootID) || defaultServerGraphPosition(0)
     const position = positions[id] || { x: rootPosition.x + index * 240, y: rootPosition.y + 450 }
-	    nodes.push({ id, className: 'graph-node routing-graph-node canvas-routing-node', position, style: { width: 220 }, data: { entity: { type: 'routing', id: 0, label: '分流出口', node_id: id } as GraphEntity, label: <RoutingGraphNode title="分流出口" meta="连接路径后配置规则" /> } })
+	    nodes.push({ id, className: 'graph-node routing-graph-node canvas-routing-node', position, style: { width: 220 }, data: { entity: { type: 'routing', id: 0, label: '分流出口', node_id: id } as GraphEntity, label: <RoutingGraphNode title="分流出口" meta="连接服务器后配置规则" /> } })
 	  })
 	canvasDetachedChains.filter(chain => chain.root_server_id === rootID).forEach(chain => {
 	  chain.steps.forEach((item, index) => {
@@ -17705,7 +17731,9 @@ function GraphNode({
           </React.Fragment>
         )
 	  })}
-      {!independentSourceCount && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
+      {isServer && <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="从此服务器连接分流或后续节点" />}
+      {isServer && <span className="server-shared-source-label">连接</span>}
+      {!isServer && !independentSourceCount && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}
       <div className="rf-node-header">

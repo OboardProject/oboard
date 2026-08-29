@@ -104,6 +104,12 @@ export type GraphRoutingHostSource = {
   step_id?: number
 }
 
+export type GraphRoutingInbound = {
+  id: number
+  server_id: number
+  enabled?: boolean
+}
+
 export type GraphRoutingHost =
   | { pathID: number; stageStepID: number }
   | { inboundID: number }
@@ -127,9 +133,9 @@ function preferredChainForInbound(paths: GraphRoutingPath[], inboundID: number) 
 }
 
 /**
- * Chooses which path should host a newly connected routing block. Explicit
- * direct-exit branches stay siblings; attaching the split to them would hide
- * the exit card as an implicit fallback while the branch still exists.
+ * Chooses which path should host a newly connected routing block. Connecting
+ * from an inbound creates a dedicated split; existing branches stay siblings.
+ * Connecting from a direct-exit prefix step retargets to the parent chain.
  */
 export function routingHostForGraphSource(
   paths: GraphRoutingPath[],
@@ -164,14 +170,28 @@ export function routingHostForGraphSource(
 
   const inboundID = Number(source.inbound_id || 0)
   if (!inboundID) return null
-  const chain = preferredChainForInbound(enabled, inboundID)
-  if (chain) return { pathID: chain.id, stageStepID: 0 }
-  const direct = enabled
-    .filter(path => path.inbound_id === inboundID)
+  return { inboundID }
+}
+
+/**
+ * Connects a server card to a split block without asking which existing
+ * branch to reuse. Path-instance cards keep their hop; root/canvas servers
+ * attach the split to that server's inbound so the first saved rule can
+ * create a dedicated fallback path.
+ */
+export function routingHostForServerConnect(
+  paths: GraphRoutingPath[],
+  steps: GraphRoutingStep[],
+  inbounds: GraphRoutingInbound[],
+  source: { serverID: number; stepID?: number },
+): GraphRoutingHost | null {
+  if (source.stepID) return routingHostForGraphSource(paths, steps, { step_id: source.stepID })
+  const inbound = inbounds
+    .filter(item => item.server_id === source.serverID && item.enabled !== false)
     .slice()
     .sort((left, right) => left.id - right.id)[0]
-  if (direct) return { pathID: direct.id, stageStepID: 0 }
-  return { inboundID }
+  if (!inbound) return null
+  return { inboundID: inbound.id }
 }
 
 function isEnabledInlineCatchAll(rule: GraphRoutingRule) {

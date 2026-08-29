@@ -583,11 +583,11 @@ func TestResolveReachableEntryAddressForFamilyMatrix(t *testing.T) {
 	}
 }
 
-func TestPathStageInterfaceRuleRoutesThroughBoundDirectOutbound(t *testing.T) {
+func TestPathStageInterfaceRuleFollowsContinuationThroughBoundNextHop(t *testing.T) {
 	serverA := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
 	serverB := model.Server{ID: 2, Name: "B", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 31000, PortRangeEnd: 31100}
 	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
-	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "A-B", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindChain, Name: "A-B", InboundID: root.ID, Secret: "path-secret", Enabled: true}
 	serverBID, pathID := serverB.ID, path.ID
 	stepB := model.ProxyPathStep{ID: 101, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &serverBID}
 	rule := model.RoutingRule{
@@ -602,17 +602,98 @@ func TestPathStageInterfaceRuleRoutesThroughBoundDirectOutbound(t *testing.T) {
 		RoutingRules: []model.RoutingRule{rule},
 	})
 
-	boundTag := routingRuleInterfaceOutboundTag(rule.ID)
+	baseTag := proxyPathStepTag(path.ID, stepB.Position)
+	boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
 	bound := findOutbound(config, boundTag)
-	if bound["type"] != "direct" || bound["bind_interface"] != "eth0" {
-		t.Fatalf("bound interface outbound = %#v, want direct outbound on eth0; config=%s", bound, config)
+	if len(bound) == 0 || bound["bind_interface"] != "eth0" {
+		t.Fatalf("bound continuation %q = %#v, want bind_interface=eth0; config=%s", boundTag, bound, config)
+	}
+	if terminal := findOutbound(config, routingRuleInterfaceOutboundTag(rule.ID)); len(terminal) != 0 {
+		t.Fatalf("terminal interface outbound should be omitted when continuation exists: %#v", terminal)
+	}
+	base := findOutbound(config, baseTag)
+	if base["bind_interface"] != nil {
+		t.Fatalf("shared continuation was modified: %#v", base)
 	}
 	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
 	if len(routes) < 2 || routes[0]["action"] != "route" || routes[0]["outbound"] != boundTag {
 		t.Fatalf("first path-stage rule = %#v, want route through %q; config=%s", routes, boundTag, config)
 	}
-	if routes[1]["outbound"] != proxyPathStepTag(path.ID, stepB.Position) {
-		t.Fatalf("path fallback changed unexpectedly: %#v", routes)
+	if routes[1]["outbound"] != baseTag {
+		t.Fatalf("unmatched fallback changed unexpectedly: %#v", routes)
+	}
+}
+
+func TestPathStageInterfaceRuleWithoutContinuationStaysTerminal(t *testing.T) {
+	server := model.Server{ID: 1, Name: "A", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	root := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "direct", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	pathID := path.ID
+	rule := model.RoutingRule{
+		ID: 8, ServerID: server.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID,
+		SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "ssh-via-eth0", MatchJSON: `{"port":[22]}`,
+		Action: model.RouteActionInterface, InterfaceName: "eth0", Enabled: true,
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	config := mustServerConfig(t, server, []model.Inbound{root}, []model.User{user}, ConfigOptions{
+		Servers: []model.Server{server}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path},
+		InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+		RoutingRules: []model.RoutingRule{rule},
+	})
+
+	boundTag := routingRuleInterfaceOutboundTag(rule.ID)
+	bound := findOutbound(config, boundTag)
+	if bound["type"] != "direct" || bound["bind_interface"] != "eth0" {
+		t.Fatalf("terminal interface outbound = %#v, want direct outbound on eth0; config=%s", bound, config)
+	}
+	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
+	if len(routes) < 2 || routes[0]["outbound"] != boundTag || routes[1]["outbound"] != "direct" {
+		t.Fatalf("path-stage rules = %#v, want terminal interface then unmatched direct; config=%s", routes, config)
+	}
+}
+
+func TestPathStageInterfaceRuleFollowsWARPContinuationThroughBoundEndpoint(t *testing.T) {
+	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackPreferIPv4, PortRangeStart: 30000, PortRangeEnd: 30100}
+	root := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindChain, Name: "warp-fallback", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	warpStep := model.ProxyPathStep{ID: 201, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}
+	pathID := path.ID
+	rule := model.RoutingRule{
+		ID: 9, ServerID: server.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID,
+		SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "all-via-eth1", MatchJSON: `{}`,
+		Action: model.RouteActionInterface, InterfaceName: "eth1", InterfaceIPStack: model.IPStackIPv4Only, Enabled: true,
+	}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	profile := model.WARPProfile{ID: 30, ServerID: server.ID, Name: "warp", Status: model.WARPStatusReady, ConfigJSON: `{"type":"wireguard","address":["172.16.0.2/32"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}]}`, Enabled: true}
+	config := mustServerConfig(t, server, []model.Inbound{root}, []model.User{user}, ConfigOptions{
+		Servers: []model.Server{server}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path},
+		ProxyPathSteps: []model.ProxyPathStep{warpStep}, WARPProfiles: []model.WARPProfile{profile},
+		InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+		RoutingRules: []model.RoutingRule{rule},
+	})
+
+	baseTag := WARPOutboundTag(profile.ID)
+	boundTag := routingRuleBoundOutboundTag(rule.ID, baseTag)
+	base := findEndpoint(config, baseTag)
+	bound := findEndpoint(config, boundTag)
+	if len(base) == 0 || len(bound) == 0 {
+		t.Fatalf("base or bound WARP endpoint missing: %s", config)
+	}
+	if base["bind_interface"] != nil {
+		t.Fatalf("shared WARP endpoint was modified: %#v", base)
+	}
+	if bound["bind_interface"] != "eth1" {
+		t.Fatalf("bound WARP endpoint = %#v, want bind_interface=eth1", bound)
+	}
+	if terminal := findOutbound(config, routingRuleInterfaceOutboundTag(rule.ID)); len(terminal) != 0 {
+		t.Fatalf("terminal interface outbound should be omitted when WARP continuation exists: %#v", terminal)
+	}
+	routes := mapList(parseSingBoxConfig(t, config).Route["rules"])
+	if len(routes) < 2 || routes[0]["outbound"] != boundTag {
+		t.Fatalf("first path-stage rule = %#v, want route through %q; config=%s", routes, boundTag, config)
+	}
+	if routes[1]["outbound"] != baseTag {
+		t.Fatalf("unmatched fallback changed unexpectedly: %#v", routes)
 	}
 }
 

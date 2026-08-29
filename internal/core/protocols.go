@@ -684,7 +684,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.Outbounds = append(config.Outbounds, sourcePrefixOutbounds...)
-	interfaceOutbounds, err := buildRoutingRuleInterfaceOutbounds(server, opts.RoutingRules)
+	interfaceOutbounds, err := buildRoutingRuleInterfaceOutbounds(server, opts.RoutingRules, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles)
 	if err != nil {
 		return "", err
 	}
@@ -2055,7 +2055,11 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 		}
 		if rule.Action == model.RouteActionInterface {
 			item["action"] = "route"
-			item["outbound"] = routingRuleInterfaceOutboundTag(rule.ID)
+			if continuation, err := routingRuleSamePathContinuationTag(rule, server, paths, steps, warpProfiles); err == nil && continuation != "" {
+				item["outbound"] = routingRuleBoundOutboundTag(rule.ID, continuation)
+			} else {
+				item["outbound"] = routingRuleInterfaceOutboundTag(rule.ID)
+			}
 			result = append(result, item)
 			continue
 		}
@@ -2098,6 +2102,13 @@ func routingRuleProxyPathOutboundTag(rule model.RoutingRule, server model.Server
 		return "", errors.New("source and target proxy paths are required")
 	}
 	return routingRuleTargetProxyPathOutboundTag(rule, *rule.TargetProxyPathID, server, paths, steps, warpProfiles)
+}
+
+func routingRuleSamePathContinuationTag(rule model.RoutingRule, server model.Server, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) (string, error) {
+	if rule.ProxyPathID == nil {
+		return "", errors.New("source proxy path is required")
+	}
+	return routingRuleTargetProxyPathOutboundTag(rule, *rule.ProxyPathID, server, paths, steps, warpProfiles)
 }
 
 func routingRuleTargetProxyPathOutboundTag(rule model.RoutingRule, targetPathID int64, server model.Server, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) (string, error) {
@@ -2188,10 +2199,13 @@ func routingRuleFamilyBranchTag(ruleID int64, family, outboundTag string) string
 	return fmt.Sprintf("routing-rule-%d-%s-%s", ruleID, family, outboundTag)
 }
 
-func buildRoutingRuleInterfaceOutbounds(server model.Server, rules []model.RoutingRule) ([]map[string]any, error) {
+func buildRoutingRuleInterfaceOutbounds(server model.Server, rules []model.RoutingRule, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) ([]map[string]any, error) {
 	result := make([]map[string]any, 0)
 	for _, rule := range rules {
 		if !rule.Enabled || rule.ServerID != server.ID || rule.Action != model.RouteActionInterface {
+			continue
+		}
+		if _, err := routingRuleSamePathContinuationTag(rule, server, paths, steps, warpProfiles); err == nil {
 			continue
 		}
 		interfaceName := strings.TrimSpace(rule.InterfaceName)
@@ -2221,15 +2235,27 @@ func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.Routin
 		}
 	}
 	for _, rule := range rules {
-		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID || rule.Action != model.RouteActionProxyPath || !routingRuleHasProxyPathBinding(rule) {
+		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID {
 			continue
 		}
-		if strings.TrimSpace(rule.InterfaceName) != "" && strings.TrimSpace(rule.SourcePrefix) != "" {
-			return fmt.Errorf("routing rule %s cannot bind both an interface and a source prefix", rule.Name)
-		}
-		baseTag, err := routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
-		if err != nil {
-			return fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		var baseTag string
+		var err error
+		switch {
+		case rule.Action == model.RouteActionProxyPath && routingRuleHasProxyPathBinding(rule):
+			if strings.TrimSpace(rule.InterfaceName) != "" && strings.TrimSpace(rule.SourcePrefix) != "" {
+				return fmt.Errorf("routing rule %s cannot bind both an interface and a source prefix", rule.Name)
+			}
+			baseTag, err = routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
+			if err != nil {
+				return fmt.Errorf("routing rule %s: %w", rule.Name, err)
+			}
+		case rule.Action == model.RouteActionInterface && strings.TrimSpace(rule.InterfaceName) != "":
+			baseTag, err = routingRuleSamePathContinuationTag(rule, server, paths, steps, warpProfiles)
+			if err != nil {
+				continue
+			}
+		default:
+			continue
 		}
 		base, ok := byTag[baseTag]
 		if !ok {
@@ -2535,12 +2561,24 @@ func applyRoutingRuleWARPEndpointBindings(server model.Server, rules []model.Rou
 		}
 	}
 	for _, rule := range rules {
-		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID || rule.Action != model.RouteActionProxyPath || !routingRuleHasProxyPathBinding(rule) {
+		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID {
 			continue
 		}
-		baseTag, err := routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
-		if err != nil {
-			return fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		var baseTag string
+		var err error
+		switch {
+		case rule.Action == model.RouteActionProxyPath && routingRuleHasProxyPathBinding(rule):
+			baseTag, err = routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
+			if err != nil {
+				return fmt.Errorf("routing rule %s: %w", rule.Name, err)
+			}
+		case rule.Action == model.RouteActionInterface && strings.TrimSpace(rule.InterfaceName) != "":
+			baseTag, err = routingRuleSamePathContinuationTag(rule, server, paths, steps, warpProfiles)
+			if err != nil {
+				continue
+			}
+		default:
+			continue
 		}
 		if _, isWARP := routingRuleWARPProfileForTag(server.ID, baseTag, warpProfiles); !isWARP {
 			continue
