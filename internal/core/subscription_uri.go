@@ -113,6 +113,9 @@ func canonicalShareURI(proxy subscriptionProxy) (string, error) {
 	case "snell":
 		encoded := base64.RawStdEncoding.EncodeToString([]byte("chacha20-ietf-poly1305:" + proxy.PSK + "@" + endpoint))
 		params := []string{"version=" + strconv.Itoa(proxy.Version)}
+		if proxy.UserKey != "" {
+			params = append(params, "userkey="+escapeURIComponent(proxy.UserKey))
+		}
 		if proxy.Reuse {
 			params = append(params, "reuse=1")
 		}

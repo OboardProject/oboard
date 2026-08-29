@@ -45,6 +45,7 @@ type subscriptionProxy struct {
 	UoT            bool
 	Version        int
 	PSK            string
+	UserKey        string
 	ObfsHost       string
 	Mode           string
 	Reuse          bool
@@ -139,6 +140,10 @@ func normalizeSubscriptionNode(node SubscriptionNode) (subscriptionProxy, error)
 	proxy.ObfsType = strings.ToLower(proxy.ObfsType)
 	proxy.Version = intFromAny(raw["version"])
 	proxy.PSK = stringFromAny(raw["psk"])
+	proxy.UserKey = stringFromAny(raw["userkey"])
+	if proxy.UserKey == "" {
+		proxy.UserKey = stringFromAny(raw["user_key"])
+	}
 	proxy.ObfsHost = stringFromAny(raw["obfs_host"])
 	proxy.Mode = strings.ToLower(strings.TrimSpace(stringFromAny(raw["mode"])))
 	proxy.Reuse = boolValue(raw["reuse"])
@@ -213,6 +218,9 @@ func validateNormalizedSubscriptionProxy(proxy subscriptionProxy) error {
 	case "snell":
 		if proxy.PSK == "" {
 			return missing("snell psk")
+		}
+		if proxy.UserKey == "" {
+			return missing("snell userkey")
 		}
 		if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
 			return fmt.Errorf("subscription node %s has unsupported snell version %d", proxy.Name, proxy.Version)

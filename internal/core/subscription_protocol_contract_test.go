@@ -17,14 +17,14 @@ func specialProtocolContractNodes() []SubscriptionNode {
 		{
 			Name: "Snell v4", Group: "备用", Raw: map[string]any{
 				"type": "snell", "server": "snell.example.com", "server_port": 6160,
-				"version": 4, "psk": "snell-v4-psk", "obfs_mode": "http", "obfs_host": "bing.com",
+				"version": 4, "psk": "snell-v4-psk", "userkey": "snell-v4-userkey", "obfs_mode": "http", "obfs_host": "bing.com",
 				"reuse": true, "tcp_fast_open": true,
 			},
 		},
 		{
 			Name: "Snell v6", Group: "备用", Raw: map[string]any{
 				"type": "snell", "server": "snell6.example.com", "server_port": 7177,
-				"version": 6, "psk": "snell-v6-psk", "mode": "unshaped", "reuse": true,
+				"version": 6, "psk": "snell-v6-psk", "userkey": "snell-v6-userkey", "mode": "unshaped", "reuse": true,
 				"tcp_fast_open": true,
 			},
 		},

@@ -51,11 +51,11 @@ func SubscriptionTemplatePreviewNodes() []SubscriptionNode {
 		}},
 		{Name: "Snell v4", Group: "preview", Raw: map[string]any{
 			"type": "snell", "server": "snell.example.com", "server_port": 6160,
-			"version": 4, "psk": "preview-snell-v4", "obfs_mode": "http", "obfs_host": "bing.com", "reuse": true,
+			"version": 4, "psk": "preview-snell-v4", "userkey": "preview-snell-v4-userkey", "obfs_mode": "http", "obfs_host": "bing.com", "reuse": true,
 		}},
 		{Name: "Snell v6", Group: "preview", Raw: map[string]any{
 			"type": "snell", "server": "snell6.example.com", "server_port": 7177,
-			"version": 6, "psk": "preview-snell-v6", "mode": "unshaped", "reuse": true,
+			"version": 6, "psk": "preview-snell-v6", "userkey": "preview-snell-v6-userkey", "mode": "unshaped", "reuse": true,
 		}},
 	}
 }

@@ -20,7 +20,7 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 		"socks5":    {"version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open"},
 		"ssh":       {"password", "host_key"},
 		"mieru":     {"server_ports", "transport", "username", "password", "multiplexing", "traffic_pattern", "tcp_fast_open"},
-		"snell":     {"version", "psk", "obfs_mode", "obfs_host", "mode", "reuse", "network", "tcp_fast_open"},
+		"snell":     {"version", "psk", "userkey", "obfs_mode", "obfs_host", "mode", "reuse", "network", "tcp_fast_open"},
 	}
 	typeName := map[string]string{"ss": "shadowsocks", "socks5": "socks"}[proxy.Type]
 	if typeName == "" {

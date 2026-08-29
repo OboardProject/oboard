@@ -653,14 +653,14 @@ func TestPathStageInterfaceRuleOnSnellFollowsContinuationWithoutAuthUser(t *test
 	if len(routes) < 2 || routes[0]["outbound"] != boundTag {
 		t.Fatalf("first path-stage rule = %#v, want route through %q; config=%s", routes, boundTag, config)
 	}
-	if _, hasAuth := routes[0]["auth_user"]; hasAuth {
-		t.Fatalf("Snell path-stage rule must not constrain auth_user: %#v", routes[0])
+	if _, hasAuth := routes[0]["auth_user"]; !hasAuth {
+		t.Fatalf("Snell path-stage rule must constrain auth_user: %#v", routes[0])
 	}
 	if routes[1]["outbound"] != baseTag {
 		t.Fatalf("unmatched fallback = %#v, want %q", routes[1], baseTag)
 	}
-	if _, hasAuth := routes[1]["auth_user"]; hasAuth {
-		t.Fatalf("Snell fallback must not constrain auth_user: %#v", routes[1])
+	if _, hasAuth := routes[1]["auth_user"]; !hasAuth {
+		t.Fatalf("Snell fallback must constrain auth_user: %#v", routes[1])
 	}
 }
 
@@ -2612,7 +2612,7 @@ func TestSnellAdapterVersionMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node["version"] != 4 || node["psk"] != "secret-psk-1234" || node["obfs_mode"] != "http" || node["obfs_host"] != "bing.com" {
+	if node["version"] != 4 || node["psk"] != "secret-psk-1234" || node["userkey"] != "pass-a" || node["obfs_mode"] != "http" || node["obfs_host"] != "bing.com" {
 		t.Fatalf("snell v4 subscription node = %#v", node)
 	}
 	// Panel v6 maps to the sing-box v6 inbound and advertises v6; obfs is
@@ -2628,14 +2628,26 @@ func TestSnellAdapterVersionMapping(t *testing.T) {
 	if _, err := adapter.Inbound(model.Inbound{ID: 9, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 7178, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","obfs_mode":"http"}`, Enabled: true}, nil); err == nil {
 		t.Fatal("snell v6 with obfs must be rejected")
 	}
-	// PSK falls back to the bound user password when config_json has none.
+	// PSK is now a stable per-inbound server credential and must be present
+	// in config_json; the old fallback to the first bound user's password is
+	// removed. An inbound without a PSK fails at config generation so the
+	// controller can persist a generated one.
 	pskless := model.Inbound{ID: 10, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6161, ConfigJSON: `{"version":4}`, Enabled: true}
-	blockUser, err := adapter.Inbound(pskless, []model.User{{Username: "alice", ProxyPassword: "12345678-abcdef"}})
+	if _, err := adapter.Inbound(pskless, []model.User{{Username: "alice", ProxyPassword: "12345678-abcdef"}}); err == nil {
+		t.Fatal("snell inbound without psk must be rejected")
+	}
+	// Inbound must emit a multi-user users array derived from bound users.
+	multi := model.Inbound{ID: 15, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6165, ConfigJSON: `{"version":4,"psk":"secret-psk-1234"}`, Enabled: true}
+	multiBlock, err := adapter.Inbound(multi, []model.User{{Username: "alice", ProxyPassword: "alice-key"}, {Username: "bob", ProxyPassword: "bob-key"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blockUser["psk"] != "12345678-abcdef" {
-		t.Fatalf("snell psk fallback = %#v", blockUser)
+	users, ok := multiBlock["users"].([]map[string]any)
+	if !ok || len(users) != 2 {
+		t.Fatalf("snell multi-user inbound users = %#v", multiBlock["users"])
+	}
+	if users[0]["name"] != "alice" || users[0]["userkey"] != "alice-key" || users[1]["name"] != "bob" || users[1]["userkey"] != "bob-key" {
+		t.Fatalf("snell users = %#v", users)
 	}
 	// Unsupported panel versions are rejected.
 	if _, err := adapter.Inbound(model.Inbound{ID: 11, Protocol: model.ProtocolSnell, ListenIP: "0.0.0.0", Port: 6162, ConfigJSON: `{"version":5,"psk":"secret-psk-1234"}`, Enabled: true}, nil); err == nil {

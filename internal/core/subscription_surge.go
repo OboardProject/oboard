@@ -48,6 +48,9 @@ func renderSurgeLine(proxy subscriptionProxy, format model.SubscriptionFormat) (
 		parts = append(parts, fmt.Sprintf("%s=ssh,%s,%d", name, host, proxy.Port), "username="+quoteConf(proxy.Username), "password="+quoteConf(proxy.Password), "server-fingerprint="+quoteConf(strings.Join(proxy.HostKeys, ",")))
 	case "snell":
 		parts = append(parts, fmt.Sprintf("%s=snell,%s,%d", name, host, proxy.Port), "version="+strconv.Itoa(proxy.Version), "psk="+quoteConf(proxy.PSK))
+		if proxy.UserKey != "" {
+			parts = append(parts, "userkey="+quoteConf(proxy.UserKey))
+		}
 		if proxy.Version == SnellVersionV6 {
 			if proxy.Mode != "" && proxy.Mode != "default" {
 				parts = append(parts, "mode="+proxy.Mode)

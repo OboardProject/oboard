@@ -62,13 +62,13 @@ func subscriptionFormatFixtureNodes() []SubscriptionNode {
 		{
 			Name: "Snell v4", Group: "备用", Raw: map[string]any{
 				"type": "snell", "tag": "Snell v4", "server": "snell.example.com", "server_port": 6160,
-				"version": 4, "psk": "snell-v4-psk", "obfs_mode": "http", "obfs_host": "bing.com",
+				"version": 4, "psk": "snell-v4-psk", "userkey": "snell-v4-userkey", "obfs_mode": "http", "obfs_host": "bing.com",
 			},
 		},
 		{
 			Name: "Snell v6", Group: "备用", Raw: map[string]any{
 				"type": "snell", "tag": "Snell v6", "server": "snell6.example.com", "server_port": 7177,
-				"version": 6, "psk": "snell-v6-psk", "mode": "unshaped",
+				"version": 6, "psk": "snell-v6-psk", "userkey": "snell-v6-userkey", "mode": "unshaped",
 			},
 		},
 	}
@@ -250,7 +250,7 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		contains   []string
 		excludes   []string
 	}{
-		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, `"padding_scheme"`, "oboard_group", "must-not-leak"}},
+		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`, `"userkey": "snell-v4-userkey"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, `"padding_scheme"`, "oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru", "type: snell"}},
 		{format: model.SubscriptionFormatShadowrocket, proxyCount: 8, contains: []string{"vless://", "hysteria2://", "mierus://", "snell://", "version=4", "version=6"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
@@ -643,7 +643,7 @@ func TestShadowrocketSnellURI(t *testing.T) {
 			name: "Snell v4",
 			raw: map[string]any{
 				"type": "snell", "server": "snell.example.com", "server_port": 8443,
-				"version": 4, "psk": "v4-test-psk", "reuse": true,
+				"version": 4, "psk": "v4-test-psk", "userkey": "v4-user-key", "reuse": true,
 				"obfs_mode": "http", "obfs_host": "bing.com", "tcp_fast_open": true,
 			},
 			wantBody:  "chacha20-ietf-poly1305:v4-test-psk@snell.example.com:8443",
@@ -653,7 +653,7 @@ func TestShadowrocketSnellURI(t *testing.T) {
 			name: "Snell v6",
 			raw: map[string]any{
 				"type": "snell", "server": "2001:db8::6", "server_port": 7177,
-				"version": 6, "psk": "v6-test-secret", "mode": "unshaped",
+				"version": 6, "psk": "v6-test-secret", "userkey": "v6-user-key", "mode": "unshaped",
 			},
 			wantBody:   "chacha20-ietf-poly1305:v6-test-secret@[2001:db8::6]:7177",
 			wantQuery:  map[string]string{"version": "6", "udp": "1", "mode": "unshaped"},

@@ -6949,8 +6949,10 @@ func configInt64(cfg map[string]any, key string) int64 {
 // parameters into the inbound config_json so core config generation sees the
 // final parameter set. Inbound-level explicit fields win over profile fields.
 // The `snell_profile_id` reference is retained for audit and usage counting.
-// An explicit empty `psk` in the request body keeps the profile PSK (or the
-// bound user password at generation time).
+// Snell server PSK is now a stable per-inbound credential: if the inbound
+// (and the referenced profile when present) provide no PSK, a random PSK is
+// generated and persisted so adding or removing users never rotates existing
+// clients.
 func (s *Server) resolveSnellProfileIntoInbound(ctx context.Context, v *model.Inbound) error {
 	if v == nil || v.Protocol != model.ProtocolSnell {
 		return nil
@@ -6960,36 +6962,44 @@ func (s *Server) resolveSnellProfileIntoInbound(ctx context.Context, v *model.In
 		return err
 	}
 	profileID, _ := cfg["snell_profile_id"].(float64)
-	if profileID <= 0 {
-		return nil
+	var profile *model.SnellProfile
+	if profileID > 0 {
+		p, err := s.store.GetSnellProfile(ctx, int64(profileID))
+		if err != nil {
+			return fmt.Errorf("snell profile %d not found", int64(profileID))
+		}
+		if !p.Enabled {
+			return fmt.Errorf("snell profile %d is disabled", p.ID)
+		}
+		profile = p
+		if _, exists := cfg["version"]; !exists || cfg["version"] == nil {
+			cfg["version"] = profile.Version
+		}
+		if psk, _ := cfg["psk"].(string); psk == "" {
+			cfg["psk"] = profile.PSK
+		}
+		if obfs, _ := cfg["obfs_mode"].(string); obfs == "" {
+			cfg["obfs_mode"] = profile.ObfsMode
+		}
+		if host, _ := cfg["obfs_host"].(string); host == "" {
+			cfg["obfs_host"] = profile.ObfsHost
+		}
+		if mode, _ := cfg["mode"].(string); mode == "" {
+			cfg["mode"] = profile.Mode
+		}
+		if _, exists := cfg["reuse"]; !exists || cfg["reuse"] == nil {
+			cfg["reuse"] = profile.Reuse
+		}
+		if _, exists := cfg["tcp_fast_open"]; !exists || cfg["tcp_fast_open"] == nil {
+			cfg["tcp_fast_open"] = profile.TCPFastOpen
+		}
 	}
-	profile, err := s.store.GetSnellProfile(ctx, int64(profileID))
-	if err != nil {
-		return fmt.Errorf("snell profile %d not found", int64(profileID))
-	}
-	if !profile.Enabled {
-		return fmt.Errorf("snell profile %d is disabled", profile.ID)
-	}
-	if _, exists := cfg["version"]; !exists || cfg["version"] == nil {
-		cfg["version"] = profile.Version
-	}
-	if psk, _ := cfg["psk"].(string); psk == "" {
-		cfg["psk"] = profile.PSK
-	}
-	if obfs, _ := cfg["obfs_mode"].(string); obfs == "" {
-		cfg["obfs_mode"] = profile.ObfsMode
-	}
-	if host, _ := cfg["obfs_host"].(string); host == "" {
-		cfg["obfs_host"] = profile.ObfsHost
-	}
-	if mode, _ := cfg["mode"].(string); mode == "" {
-		cfg["mode"] = profile.Mode
-	}
-	if _, exists := cfg["reuse"]; !exists || cfg["reuse"] == nil {
-		cfg["reuse"] = profile.Reuse
-	}
-	if _, exists := cfg["tcp_fast_open"]; !exists || cfg["tcp_fast_open"] == nil {
-		cfg["tcp_fast_open"] = profile.TCPFastOpen
+	if psk, _ := cfg["psk"].(string); strings.TrimSpace(psk) == "" {
+		secret, err := security.RandomToken(24)
+		if err != nil {
+			return err
+		}
+		cfg["psk"] = secret
 	}
 	encoded, err := json.Marshal(cfg)
 	if err != nil {

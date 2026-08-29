@@ -52,6 +52,7 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 		out["host_keys"] = append([]string(nil), proxy.HostKeys...)
 	case "snell":
 		out["psk"] = proxy.PSK
+		out["userkey"] = proxy.UserKey
 		out["version"] = proxy.Version
 		out["udp_relay"] = true
 		if proxy.Reuse {
