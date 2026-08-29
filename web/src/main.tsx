@@ -10142,11 +10142,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
       <div className="server-card-head">
         <div className="server-card-title">
           <RegionFlag code={serverRegionCode(server)} size={20} />
-          <div className="server-card-identity">
-            <div className="server-card-name-row">
-              <h3>{server.name || `server-${server.id}`}</h3>
-              <ExternalLink size={13} className="server-card-open-icon" aria-hidden="true" />
-            </div>
+          <div className="server-card-name-row">
+            <h3>{server.name || `server-${server.id}`}</h3>
             <ServerAddressBadge server={server} />
           </div>
         </div>

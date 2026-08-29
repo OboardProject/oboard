@@ -2475,11 +2475,11 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-head {
   display: flex;
   flex-wrap: nowrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  min-height: 38px;
-  padding-bottom: 6px;
+  gap: 8px;
+  min-height: 28px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -2487,45 +2487,39 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  overflow: visible;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
   text-align: left;
-}
-
-.server-card-title > div { min-width: 0; }
-
-.server-card-identity {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
 }
 
 .server-card-name-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .server-card-name-row h3 {
   margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.server-card-open-icon {
-  flex: 0 0 auto;
-  color: var(--muted);
+  flex: 0 1 auto;
 }
 
 .server-address-block {
   position: relative;
   min-width: 0;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
 }
 
 .server-address-kicker {
