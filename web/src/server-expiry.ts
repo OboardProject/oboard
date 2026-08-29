@@ -36,8 +36,8 @@ export function serverExpiryStatusValue(expiresAt?: string, autoRenewEnabled = f
       : { label: '已到期', tone: 'danger' }
   }
   if (days === 0) return { label: '今天到期', tone: 'danger' }
-  if (days <= 7) return { label: `${days} 天后到期`, tone: 'danger' }
-  if (days <= 15) return { label: `${days} 天后到期`, tone: 'warning' }
+  if (days < 7) return { label: `${days} 天后到期`, tone: 'danger' }
+  if (days < 15) return { label: `${days} 天后到期`, tone: 'warning' }
   return { label: `${days} 天后到期`, tone: 'ok' }
 }
 

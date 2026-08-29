@@ -147,7 +147,7 @@ import { isConfigurationMutationPath, mergeConfigurationMutationResponse, Mutati
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
-import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue } from './server-expiry'
+import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue, type ServerExpiryTone } from './server-expiry'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
 import {
   CONTROLLER_UPDATE_FORCE_FINISH_PHRASE,
@@ -7491,17 +7491,23 @@ function cpuCoresLabel(server: Server) {
   return `${cores}核`
 }
 
-function cardExpiryLabel(server: Server, now = new Date()) {
+function cardExpiryStatus(server: Server, now = new Date()): { label: string; tone: ServerExpiryTone } {
   const raw = String(server.expires_at || '').trim()
-  if (!raw) return '未设置'
+  if (!raw) return { label: '未设置', tone: 'muted' }
   const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return '未设置'
+  if (Number.isNaN(date.getTime())) return { label: '未设置', tone: 'muted' }
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const expiry = new Date(date.getFullYear(), date.getMonth(), date.getDate())
   const days = Math.round((expiry.getTime() - today.getTime()) / 86400000)
-  if (days < 0) return server.auto_renew_enabled ? '续期中' : '已到期'
-  if (days === 0) return '今天'
-  return `${days}天`
+  if (days < 0) return { label: server.auto_renew_enabled ? '续期中' : '已到期', tone: server.auto_renew_enabled ? 'warning' : 'danger' }
+  if (days === 0) return { label: '今天', tone: 'danger' }
+  if (days < 7) return { label: `${days}天`, tone: 'danger' }
+  if (days < 15) return { label: `${days}天`, tone: 'warning' }
+  return { label: `${days}天`, tone: 'ok' }
+}
+
+function cardExpiryLabel(server: Server, now = new Date()) {
+  return cardExpiryStatus(server, now).label
 }
 
 function offlineAgoLabel(lastSeen?: string, now = new Date()) {
@@ -10106,7 +10112,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const memPercent = resourcePercent(server.memory_used_bytes, server.memory_total_bytes)
   const diskPercent = resourcePercent(server.disk_bytes, server.disk_total_bytes)
   const enrolled = enrolledDaysLabel(server)
-  const expiryLabel = cardExpiryLabel(server)
+  const expiry = cardExpiryStatus(server)
   const qualitySegs = qualitySegments(samples)
   const lossSegs = lossSegments(samples)
   const lossPercent = connectivityLossPercent(samples)
@@ -10211,9 +10217,9 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         </div>
       </div>
       <div className="server-card-life">
-        <div className="server-card-life-item expiry">
+        <div className={`server-card-life-item expiry ${expiry.tone}`}>
           <span><CalendarDays size={12} aria-hidden="true" />到期</span>
-          <strong>{expiryLabel}</strong>
+          <strong className={`tone-${expiry.tone}`}>{expiry.label}</strong>
         </div>
         <div className="server-card-life-item uptime">
           <span><RefreshCw size={12} aria-hidden="true" />在线</span>
