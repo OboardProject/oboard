@@ -1245,7 +1245,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 		}
 		activeServerID := root.ServerID
 		activeInboundTag := tag("in", root.ID)
-		activeAuthUsers := proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+		activeAuthUsers := routingAuthUsersForProtocol(root.Protocol, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers)))
 		var activeStageStepID *int64
 		previousTag := ""
 		for _, step := range steps {
@@ -1443,7 +1443,7 @@ func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep
 	if step.InboundID != nil && *step.InboundID != 0 {
 		inbound := inboundByID[*step.InboundID]
 		user := proxyPathLinkUser(path, inbound)
-		return tag("in", *step.InboundID), []string{protocolAuthUsername(inbound.Protocol, user)}
+		return tag("in", *step.InboundID), routingAuthUsersForProtocol(inbound.Protocol, []string{protocolAuthUsername(inbound.Protocol, user)})
 	}
 	if service, ok := proxyPathChainServiceForStep(services, step, targetServerID); ok {
 		user := proxyPathInternalUser(path, step)
@@ -3290,6 +3290,21 @@ func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
 		// user or the inbound's own psk.
 		return false
 	}
+}
+
+// protocolHasRoutingAuthUser reports whether sing-box route rules can match
+// connections on this inbound by auth_user. Snell authenticates with a single
+// PSK and never populates a routing username, so an auth_user constraint would
+// miss every connection and fall through to the default direct outbound.
+func protocolHasRoutingAuthUser(protocol model.Protocol) bool {
+	return protocol != model.ProtocolSnell
+}
+
+func routingAuthUsersForProtocol(protocol model.Protocol, users []string) []string {
+	if !protocolHasRoutingAuthUser(protocol) {
+		return nil
+	}
+	return users
 }
 
 func shadowsocksMethodSupportsUsers(method string) bool {
