@@ -14686,7 +14686,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                       >
                         <ArrowDown size={13} />
                       </button>
-                      {stages.length > 1 && (
+                      {stages.length > 1 && !draft.lock_host && (
                         <>
                           <button
                             type="button"
@@ -16012,6 +16012,7 @@ function InboundTransportFields({ protocol, config, updateConfig, server }: { pr
       ? <>
         <div className="switch-form-row"><span className="switch-form-label">TCP Fast Open</span><Switch checked={Boolean(config.tcp_fast_open)} onChange={checked => updateConfig({ tcp_fast_open: checked || undefined })} ariaLabel="TCP Fast Open" /></div>
         <small className={`field-hint${config.tcp_fast_open && !tfoReady ? ' warning-text' : ''}`}>{serverTCPFastOpenNote(server)}</small>
+        {protocol === 'anytls' ? <small className="field-hint">仅作用于入站监听。内核链式 AnyTLS 出站和 sing-box 订阅不会下发该选项。</small> : null}
       </>
       : <div className="access-note compact"><strong>TCP Fast Open</strong><span>{protocol === 'mieru' ? '当前为 UDP 传输，不使用 TCP 套接字，因此不可用。' : '该协议的数据面不跑在 TCP 上，因此不可用。'}</span></div>}
   </div>
