@@ -1190,7 +1190,7 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	planMetaSQL := `name=?,description=?,enabled=?`
 	planMetaArgs := []any{planName, planDescription, planEnabled}
 	if changeClass == "presentation_only" {
-		if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,current_revision_id=?,latest_revision_id=?,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, revisionID, newLock, ts, planID)...); err != nil {
+		if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,current_revision_id=?,latest_revision_id=?,active_revision_id=?,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, revisionID, revisionID, newLock, ts, planID)...); err != nil {
 			return nil, err
 		}
 	} else {
@@ -1296,7 +1296,7 @@ func (s *Store) ActivatePlanVersionGuarded(ctx context.Context, planID, expected
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,pending_revision_id=case when coalesce(pending_revision_id,0)=? then null else pending_revision_id end,updated_at=? where id=?`, candidateRevisionID, candidateRevisionID, ts, planID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,active_revision_id=?,pending_revision_id=case when coalesce(pending_revision_id,0)=? then null else pending_revision_id end,updated_at=? where id=?`, candidateRevisionID, candidateRevisionID, candidateRevisionID, ts, planID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `update subscription_plan_revisions set activated_at=?,activation_change_id=? where id=?`, ts, accessChangeID, candidateRevisionID); err != nil {
@@ -2561,6 +2561,14 @@ func (s *Store) migratePlanVersionPointers(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_subscription_plan_revision_version_no on subscription_plan_revisions(plan_id, version_no)`); err != nil {
+		return err
+	}
+	// Self-heal drift between legacy active pointer and current pointer.
+	// After the initial backfill only null current was handled; existing DBs
+	// that already had current set could still have active != current (e.g.
+	// 38/39 vs 59/58). Current is the authority for subscriptions/panel/MCP,
+	// so active must mirror it.
+	if _, err := s.db.ExecContext(ctx, `update subscription_plans set active_revision_id=current_revision_id,updated_at=? where current_revision_id is not null and (active_revision_id is null or active_revision_id!=current_revision_id)`, now()); err != nil {
 		return err
 	}
 	return nil
