@@ -350,7 +350,7 @@ func (s *Server) planProxyPathReuse(ctx context.Context, request proxyPathReuseR
 			targetStep := proxyPathReuseTargetStep(request, targetInbound)
 			targetStep.ID, targetStep.PathID, targetStep.Position = nextStepID, path.ID, len(prefix)+1
 			nextStepID--
-			if err := s.normalizeProxyPathStepCandidate(ctx, &targetStep); err != nil {
+			if err := s.normalizeProxyPathStepCandidate(ctx, &path, &targetStep); err != nil {
 				return nil, err
 			}
 			appendSteps = append(appendSteps, targetStep)
@@ -363,7 +363,7 @@ func (s *Server) planProxyPathReuse(ctx context.Context, request proxyPathReuseR
 					step.ID, step.PathID, step.Position = nextStepID, path.ID, len(prefix)+len(appendSteps)+1
 					nextStepID--
 					step.CreatedAt, step.UpdatedAt = model.ProxyPathStep{}.CreatedAt, model.ProxyPathStep{}.UpdatedAt
-					if err := s.normalizeProxyPathStepCandidate(ctx, &step); err != nil {
+					if err := s.normalizeProxyPathStepCandidate(ctx, &path, &step); err != nil {
 						return nil, err
 					}
 					appendSteps = append(appendSteps, step)

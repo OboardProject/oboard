@@ -959,6 +959,18 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 		})
 		plan := model.ProxyPathPlan{PathID: path.ID, Name: path.Name, InboundID: path.InboundID, Enabled: path.Enabled}
 		root, ok := inboundByID[path.InboundID]
+		if IsFamilyBranch(path) {
+			if err := ValidateFamilyBranchTransport(pathSteps); err != nil {
+				if path.Enabled {
+					return nil, nil, fmt.Errorf("代理路径 %s: %w", path.Name, err)
+				}
+				plan.Warnings = append(plan.Warnings, err.Error())
+			}
+			if !ok {
+				root = model.Inbound{Name: path.Name, Enabled: true}
+				ok = true
+			}
+		}
 		if !ok {
 			if path.Enabled {
 				return nil, nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
@@ -997,7 +1009,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 						plan.RuntimeNodes = append(plan.RuntimeNodes, proxyPathRuntimeTargetNode(path, step, targetServerID, plannedInbound, chainServices, transparentGroups[path.ID]))
 					}
 				}
-				if path.Enabled && mode == model.ProxyPathTransportSingBox {
+				if path.Enabled && mode == model.ProxyPathTransportSingBox && previousServerID != 0 {
 					sourceServer, sourceOK := serverByID[previousServerID]
 					targetServer, targetServerOK := serverByID[targetServerID]
 					if !sourceOK || !targetServerOK {
@@ -1199,12 +1211,18 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 		if !path.Enabled {
 			continue
 		}
+		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
+		if IsFamilyBranch(path) {
+			if err := ValidateFamilyBranchTransport(ordered); err != nil {
+				return fmt.Errorf("代理路径 %s: %w", path.Name, err)
+			}
+			continue
+		}
 		root, ok := inboundByID[path.InboundID]
 		if !ok {
 			continue
 		}
 		enabledByInbound[path.InboundID] = append(enabledByInbound[path.InboundID], path)
-		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
 		for _, step := range ordered {
 			if step.InboundID == nil || *step.InboundID == 0 {
 				continue
@@ -1229,8 +1247,8 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 			if step.NodeType != model.ProxyPathStepWARP {
 				continue
 			}
-			if path.Kind != "" && path.Kind != model.ProxyPathKindChain {
-				return fmt.Errorf("WARP 只能作为普通代理拓扑的出口")
+			if path.Kind != "" && path.Kind != model.ProxyPathKindChain && path.Kind != model.ProxyPathKindFamilyBranch {
+				return fmt.Errorf("WARP 只能作为普通代理拓扑或双栈模板的出口")
 			}
 			if index != len(ordered)-1 {
 				return fmt.Errorf("代理路径 %s 的 WARP 必须是最后一个节点", path.Name)
@@ -1315,11 +1333,16 @@ func ProxyPathWARPServerIDs(paths []model.ProxyPath, steps []model.ProxyPathStep
 		if !path.Enabled {
 			continue
 		}
-		root, ok := inboundByID[path.InboundID]
-		if !ok {
-			return nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
+		currentServerID := int64(0)
+		if IsFamilyBranch(path) {
+			// Family-branch templates have no inbound; start from the first hop.
+		} else {
+			root, ok := inboundByID[path.InboundID]
+			if !ok {
+				return nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
+			}
+			currentServerID = root.ServerID
 		}
-		currentServerID := root.ServerID
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
 		for index, step := range ordered {
 			switch step.NodeType {

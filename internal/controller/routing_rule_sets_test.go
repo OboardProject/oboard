@@ -307,40 +307,39 @@ func TestRoutingRuleTargetPathValidationRequiresSharedPrefixAndRejectsCycles(t *
 func TestFamilySplitRoutingRuleValidationMatrix(t *testing.T) {
 	tests := []struct {
 		name      string
-		mutate    func(*model.Server, *model.Server, *model.Server, *model.ProxyPath)
+		mutate    func(*model.Server, *model.Server, *model.Server)
+		ipv6Mode  model.ProxyPathStepTransportMode
 		disabled  bool
 		wantError string
 	}{
 		{name: "IPv4-only and IPv6-only"},
-		{name: "both targets dual stack", mutate: func(_ *model.Server, ipv4, ipv6 *model.Server, _ *model.ProxyPath) {
+		{name: "both targets dual stack", mutate: func(_ *model.Server, ipv4, ipv6 *model.Server) {
 			ipv4.PublicIPv6 = "2001:db8::4"
 			ipv4.ListenIP = "::"
 			ipv4.IPStack = model.IPStackDualStack
 			ipv6.PublicIPv4 = "203.0.113.6"
 			ipv6.IPStack = model.IPStackDualStack
 		}},
-		{name: "missing IPv6 address", mutate: func(_ *model.Server, _ *model.Server, ipv6 *model.Server, _ *model.ProxyPath) { ipv6.PublicIPv6 = "" }, wantError: "缺少 IPV6"},
-		{name: "IPv6 listener unavailable", mutate: func(_ *model.Server, _ *model.Server, ipv6 *model.Server, _ *model.ProxyPath) {
+		{name: "missing IPv6 address", mutate: func(_ *model.Server, _ *model.Server, ipv6 *model.Server) { ipv6.PublicIPv6 = "" }, wantError: "缺少 IPV6"},
+		{name: "IPv6 listener unavailable", mutate: func(_ *model.Server, _ *model.Server, ipv6 *model.Server) {
 			ipv6.ListenIP = "0.0.0.0"
 			ipv6.ListenMode = model.ListenModeIPv4Only
 		}, wantError: "监听地址"},
-		{name: "IPv6 target offline", mutate: func(_ *model.Server, _ *model.Server, ipv6 *model.Server, _ *model.ProxyPath) {
+		{name: "IPv6 target offline", mutate: func(_ *model.Server, _ *model.Server, ipv6 *model.Server) {
 			ipv6.Status = model.ServerOffline
 		}, wantError: "offline"},
-		{name: "IPv6 path disabled", mutate: func(_ *model.Server, _ *model.Server, _ *model.Server, ipv6Path *model.ProxyPath) {
-			ipv6Path.Enabled = false
-		}, wantError: "enabled chain"},
-		{name: "source cannot reach IPv6", mutate: func(source *model.Server, _ *model.Server, _ *model.Server, _ *model.ProxyPath) {
+		{name: "IPv6 transparent prefix", ipv6Mode: model.ProxyPathTransportPortForward, wantError: "透明端口转发"},
+		{name: "source cannot reach IPv6", mutate: func(source *model.Server, _ *model.Server, _ *model.Server) {
 			source.IPStack = model.IPStackIPv4Only
 		}, wantError: "无法连接 IPV6"},
-		{name: "enrolled kernel capability present", mutate: func(source *model.Server, _ *model.Server, _ *model.Server, _ *model.ProxyPath) {
+		{name: "enrolled kernel capability present", mutate: func(source *model.Server, _ *model.Server, _ *model.Server) {
 			source.AgentID = "agent-new"
 			source.KernelCapabilities = []string{"family_selector_v1"}
 		}},
-		{name: "enrolled kernel capability missing", mutate: func(source *model.Server, _ *model.Server, _ *model.Server, _ *model.ProxyPath) {
+		{name: "enrolled kernel capability missing", mutate: func(source *model.Server, _ *model.Server, _ *model.Server) {
 			source.AgentID = "agent-old"
 		}, wantError: "family_selector_v1"},
-		{name: "disabled rule can be saved when kernel capability is missing", disabled: true, mutate: func(source *model.Server, _ *model.Server, _ *model.Server, _ *model.ProxyPath) {
+		{name: "disabled rule can be saved when kernel capability is missing", disabled: true, mutate: func(source *model.Server, _ *model.Server, _ *model.Server) {
 			source.AgentID = "agent-old"
 		}},
 	}
@@ -355,9 +354,8 @@ func TestFamilySplitRoutingRuleValidationMatrix(t *testing.T) {
 			source := model.Server{Name: "entry", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", ListenIP: "::", IPStack: model.IPStackDualStack, Status: model.ServerOnline}
 			ipv4 := model.Server{Name: "v4", PublicIPv4: "203.0.113.4", ListenIP: "0.0.0.0", ListenMode: model.ListenModeIPv4Only, IPStack: model.IPStackIPv4Only, Status: model.ServerOnline}
 			ipv6 := model.Server{Name: "v6", PublicIPv6: "2001:db8::6", ListenIP: "::", IPStack: model.IPStackIPv6Only, Status: model.ServerOnline}
-			ipv6Path := model.ProxyPath{Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: "v6", Enabled: true}
 			if test.mutate != nil {
-				test.mutate(&source, &ipv4, &ipv6, &ipv6Path)
+				test.mutate(&source, &ipv4, &ipv6)
 			}
 			for _, item := range []*model.Server{&source, &ipv4, &ipv6} {
 				if err := db.CreateServer(ctx, item); err != nil {
@@ -368,26 +366,36 @@ func TestFamilySplitRoutingRuleValidationMatrix(t *testing.T) {
 			if err := db.CreateInbound(ctx, root); err != nil {
 				t.Fatal(err)
 			}
-			ipv4Path := model.ProxyPath{InboundID: root.ID, Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: "v4", Enabled: true}
-			ipv6Path.InboundID = root.ID
-			for _, path := range []*model.ProxyPath{&ipv4Path, &ipv6Path} {
-				if err := db.CreateProxyPath(ctx, path); err != nil {
-					t.Fatal(err)
-				}
+			sourcePath := model.ProxyPath{InboundID: root.ID, Kind: model.ProxyPathKindDirect, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: "src", Enabled: true}
+			if err := db.CreateProxyPath(ctx, &sourcePath); err != nil {
+				t.Fatal(err)
+			}
+			template := &model.FamilySplitTemplate{Name: "StarHub"}
+			if err := db.CreateFamilySplitTemplate(ctx, template, "v4-secret", "v6-secret"); err != nil {
+				t.Fatal(err)
+			}
+			ipv6Mode := test.ipv6Mode
+			if ipv6Mode == "" {
+				ipv6Mode = model.ProxyPathTransportSingBox
 			}
 			for _, step := range []model.ProxyPathStep{
-				{PathID: ipv4Path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv4.ID, ConfigJSON: `{}`},
-				{PathID: ipv6Path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv6.ID, ConfigJSON: `{}`},
+				{PathID: template.IPv4PathID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv4.ID, ConfigJSON: `{}`},
+				{PathID: template.IPv6PathID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: ipv6Mode, ServerID: &ipv6.ID, ConfigJSON: `{}`},
 			} {
 				step := step
 				if err := db.CreateProxyPathStep(ctx, &step); err != nil {
 					t.Fatal(err)
 				}
 			}
+			if !test.disabled {
+				if err := db.SetFamilyBranchPathsEnabled(ctx, template.ID, true); err != nil {
+					t.Fatal(err)
+				}
+			}
 			rule := model.RoutingRule{
-				Scope: model.RoutingRuleScopePathStage, ProxyPathID: &ipv4Path.ID, MatchSource: model.RoutingMatchSourceInline,
+				Scope: model.RoutingRuleScopePathStage, ProxyPathID: &sourcePath.ID, MatchSource: model.RoutingMatchSourceInline,
 				Name: "family", MatchJSON: `{}`, Action: model.RouteActionFamilySplit,
-				IPv4TargetProxyPathID: &ipv4Path.ID, IPv6TargetProxyPathID: &ipv6Path.ID, FamilyDNSStrategy: model.FamilyDNSStrategyAuto, Enabled: !test.disabled,
+				FamilySplitTemplateID: &template.ID, FamilyDNSStrategy: model.FamilyDNSStrategyAuto, Enabled: !test.disabled,
 			}
 			err = newTestServer(db, "test-secret", "").validateRoutingRule(ctx, &rule)
 			if test.wantError == "" {
@@ -434,17 +442,23 @@ func TestFamilySplitRoutingRuleRESTLifecycle(t *testing.T) {
 		}
 		return path
 	}
-	ipv4Path := createPath("v4", servers[1].ID)
-	ipv6Path := createPath("v6", servers[2].ID)
+	sourcePath := createPath("source", servers[1].ID)
 	server := newTestServer(db, "test-secret", "")
 	handler := server.Handler()
 	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	token := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	createdTemplate := request(t, handler, http.MethodPost, "/api/v1/ui/family-split-templates", token, map[string]any{"name": "StarHub"}, http.StatusCreated)
+	templateView := createdTemplate["family_split_template"].(map[string]any)
+	templateID := int64(templateView["id"].(float64))
+	ipv4PathID := int64(templateView["ipv4_path_id"].(float64))
+	ipv6PathID := int64(templateView["ipv6_path_id"].(float64))
+	request(t, handler, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": ipv4PathID, "position": 1, "node_type": model.ProxyPathStepServerInbound, "transport_mode": model.ProxyPathTransportSingBox, "server_id": servers[1].ID, "config_json": "{}"}, http.StatusCreated)
+	request(t, handler, http.MethodPost, "/api/v1/ui/proxy-path-steps", token, map[string]any{"path_id": ipv6PathID, "position": 1, "node_type": model.ProxyPathStepServerInbound, "transport_mode": model.ProxyPathTransportSingBox, "server_id": servers[2].ID, "config_json": "{}"}, http.StatusCreated)
 	body := map[string]any{
-		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": ipv4Path.ID, "sort_position": 0,
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": sourcePath.ID, "sort_position": 0,
 		"match_source": model.RoutingMatchSourceInline, "name": "双栈家族分流", "match_json": `{}`,
-		"action": model.RouteActionFamilySplit, "ipv4_target_proxy_path_id": ipv4Path.ID,
-		"ipv6_target_proxy_path_id": ipv6Path.ID, "family_dns_strategy": model.FamilyDNSStrategyPreferIPv6, "enabled": true,
+		"action": model.RouteActionFamilySplit, "family_split_template_id": templateID,
+		"family_dns_strategy": model.FamilyDNSStrategyPreferIPv6, "enabled": true,
 	}
 	created := request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules", token, body, http.StatusCreated)
 	view := created["routing_rule"].(map[string]any)
@@ -453,7 +467,7 @@ func TestFamilySplitRoutingRuleRESTLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Action != model.RouteActionFamilySplit || stored.IPv4TargetProxyPathID == nil || *stored.IPv4TargetProxyPathID != ipv4Path.ID || stored.IPv6TargetProxyPathID == nil || *stored.IPv6TargetProxyPathID != ipv6Path.ID || stored.FamilyDNSStrategy != model.FamilyDNSStrategyPreferIPv6 {
+	if stored.Action != model.RouteActionFamilySplit || stored.FamilySplitTemplateID == nil || *stored.FamilySplitTemplateID != templateID || stored.FamilyDNSStrategy != model.FamilyDNSStrategyPreferIPv6 {
 		t.Fatalf("stored family split = %#v", stored)
 	}
 	stored.FamilyDNSStrategy = model.FamilyDNSStrategyPreferIPv4
@@ -461,7 +475,7 @@ func TestFamilySplitRoutingRuleRESTLifecycle(t *testing.T) {
 	if got := patched["routing_rule"].(map[string]any)["family_dns_strategy"]; got != string(model.FamilyDNSStrategyPreferIPv4) {
 		t.Fatalf("patched family_dns_strategy = %#v", got)
 	}
-	body["ipv6_target_proxy_path_id"] = ipv4Path.ID
+	body["family_split_template_id"] = int64(0)
 	request(t, handler, http.MethodPost, "/api/v1/ui/routing-rules", token, body, http.StatusBadRequest)
 
 	deployment := request(t, handler, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)

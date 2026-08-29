@@ -284,9 +284,12 @@ func subscriptionHiddenFamilyTargets(opts SubscriptionOptions) map[int64]bool {
 		if !rule.Enabled || rule.Action != model.RouteActionFamilySplit || rule.ProxyPathID == nil || !familySources[*rule.ProxyPathID] {
 			continue
 		}
-		for _, target := range []*int64{rule.IPv4TargetProxyPathID, rule.IPv6TargetProxyPathID} {
-			if target != nil && *target > 0 && !familySources[*target] {
-				hidden[*target] = true
+		if rule.FamilySplitTemplateID == nil {
+			continue
+		}
+		for _, path := range opts.ProxyPaths {
+			if IsFamilyBranch(path) && path.TemplateID != nil && *path.TemplateID == *rule.FamilySplitTemplateID && !familySources[path.ID] {
+				hidden[path.ID] = true
 			}
 		}
 	}

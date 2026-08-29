@@ -499,11 +499,20 @@ func TestProxyPathLegacyNamesMigrateToAutomaticMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(paths) != 1 || paths[0].NameMode != model.ProxyPathNameAuto || len(paths[0].NameTemplate) != 0 || paths[0].Name != "" {
+	if len(paths) != 1 || paths[0].NameMode != model.ProxyPathNameAuto || paths[0].Kind != model.ProxyPathKindChain || len(paths[0].NameTemplate) != 0 || paths[0].Name != "" {
 		t.Fatalf("migrated path = %#v", paths)
 	}
-	created := model.ProxyPath{InboundID: 2, Enabled: true}
-	if err := s.CreateProxyPath(context.Background(), &created); err != nil {
+	ctx := context.Background()
+	server := &model.Server{Name: "entry", Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "::", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	if err := s.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	created := model.ProxyPath{InboundID: inbound.ID, Enabled: true}
+	if err := s.CreateProxyPath(ctx, &created); err != nil {
 		t.Fatalf("create path after migration: %v", err)
 	}
 	if created.Kind != model.ProxyPathKindChain {

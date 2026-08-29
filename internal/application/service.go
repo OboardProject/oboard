@@ -258,6 +258,18 @@ func (s *Service) ListRoutingRuleSets(ctx context.Context, principal Principal) 
 	return out, nil
 }
 
+func (s *Service) ListFamilySplitTemplates(ctx context.Context, principal Principal) ([]FamilySplitTemplateDTO, error) {
+	items, err := s.store.ListFamilySplitTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FamilySplitTemplateDTO, 0, len(items))
+	for _, item := range items {
+		out = append(out, familySplitTemplateDTO(item))
+	}
+	return out, nil
+}
+
 // ListExternalOutbounds returns redacted imported-node views. The node auth
 // config (config_json) is never included.
 func (s *Service) ListExternalOutbounds(ctx context.Context, principal Principal) ([]map[string]any, error) {
@@ -513,6 +525,8 @@ func (s *Service) Query(ctx context.Context, principal Principal, capability str
 		return s.ListRoutingRules(ctx, principal)
 	case "routing_rule_sets.list":
 		return s.ListRoutingRuleSets(ctx, principal)
+	case "family_split_templates.list":
+		return s.ListFamilySplitTemplates(ctx, principal)
 	case "external_outbounds.list":
 		return s.ListExternalOutbounds(ctx, principal)
 	case "warp_profiles.list":

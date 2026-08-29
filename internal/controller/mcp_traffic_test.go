@@ -127,13 +127,28 @@ func TestFamilySplitRoutingRuleCapabilityAndResourceFilter(t *testing.T) {
 		}
 		return path
 	}
-	ipv4Path := createPath("family-v4", servers[1].ID)
-	ipv6Path := createPath("family-v6", servers[2].ID)
+	sourcePath := createPath("family-source", servers[1].ID)
+	template := &model.FamilySplitTemplate{Name: "StarHub"}
+	if err := db.CreateFamilySplitTemplate(ctx, template, "v4-secret", "v6-secret"); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []model.ProxyPathStep{
+		{PathID: template.IPv4PathID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &servers[1].ID, ConfigJSON: `{}`},
+		{PathID: template.IPv6PathID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &servers[2].ID, ConfigJSON: `{}`},
+	} {
+		step := step
+		if err := db.CreateProxyPathStep(ctx, &step); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SetFamilyBranchPathsEnabled(ctx, template.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	principal := trafficAutomationPrincipal(t, server, operator.Username)
 	createInput, _ := json.Marshal(map[string]any{"routing_rule": map[string]any{
-		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": ipv4Path.ID, "sort_position": 0,
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": sourcePath.ID, "sort_position": 0,
 		"name": "family split", "match_json": `{}`, "action": model.RouteActionFamilySplit,
-		"ipv4_target_proxy_path_id": ipv4Path.ID, "ipv6_target_proxy_path_id": ipv6Path.ID,
+		"family_split_template_id": template.ID,
 		"family_dns_strategy": model.FamilyDNSStrategyPreferIPv6, "enabled": true,
 	}})
 	applyAutomationChangeset(t, server, principal, "routing-family-create", automation.OperationRequest{Capability: "routing_rules.create", Input: createInput})
@@ -151,16 +166,16 @@ func TestFamilySplitRoutingRuleCapabilityAndResourceFilter(t *testing.T) {
 	}
 	assertCapabilityOutputSchema(t, server, "routing_rules.list", listed)
 	encoded, _ := json.Marshal(listed)
-	if !contains(encoded, `"ipv4_target_proxy_path_id"`) || !contains(encoded, `"ipv6_target_proxy_path_id"`) || !contains(encoded, `"family_dns_strategy":"prefer_ipv6"`) {
+	if !contains(encoded, `"family_split_template_id"`) || !contains(encoded, `"family_dns_strategy":"prefer_ipv6"`) {
 		t.Fatalf("family fields missing from public MCP view: %s", encoded)
 	}
-	restricted := principal
-	restricted.ResourceFilter, _ = json.Marshal(application.ResourceFilter{
-		Servers:    &application.ResourceSelection{Mode: "all"},
-		ProxyPaths: &application.ResourceSelection{Mode: "selected", IDs: []int64{ipv4Path.ID}},
-	})
-	if _, _, err := server.routingRuleAutomationCandidate(ctx, restricted, createInput, "routing_rules.create"); err == nil || !strings.Contains(err.Error(), "IPv6 target") {
-		t.Fatalf("unauthorized IPv6 target path was not rejected: %v", err)
+	missingTemplate, _ := json.Marshal(map[string]any{"routing_rule": map[string]any{
+		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": sourcePath.ID, "sort_position": 0,
+		"name": "missing template", "match_json": `{}`, "action": model.RouteActionFamilySplit,
+		"family_split_template_id": int64(999), "family_dns_strategy": model.FamilyDNSStrategyPreferIPv6, "enabled": true,
+	}})
+	if _, _, err := server.routingRuleAutomationCandidate(ctx, principal, missingTemplate, "routing_rules.create"); err == nil || !strings.Contains(err.Error(), "family_split_template") {
+		t.Fatalf("missing family split template was not rejected: %v", err)
 	}
 	updateInput, _ := json.Marshal(map[string]any{"routing_rule_id": rule.ID, "changes": map[string]any{"family_dns_strategy": model.FamilyDNSStrategyPreferIPv4}})
 	applyAutomationChangeset(t, server, principal, "routing-family-update", automation.OperationRequest{Capability: "routing_rules.update", Input: updateInput})

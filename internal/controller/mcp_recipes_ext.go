@@ -154,7 +154,7 @@ var routingRuleRecipeFields = []string{
 	"server_id", "scope", "proxy_path_id", "stage_step_id", "sort_position",
 	"match_source", "rule_set_id", "dns_resolver", "name", "priority", "match_json", "action",
 	"outbound_id", "external_outbound_id", "target_proxy_path_id",
-	"ipv4_target_proxy_path_id", "ipv6_target_proxy_path_id", "family_dns_strategy",
+	"family_split_template_id", "family_dns_strategy",
 	"interface_name", "source_prefix", "enabled",
 }
 
@@ -735,4 +735,39 @@ func (s *Server) prepareSettingsRecipe(ctx context.Context, principal applicatio
 	}
 	operation := mcpOperationRef{Capability: "settings.update", Input: map[string]any{"changes": changes}}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "settings.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_settings", "changed_fields": changes}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+}
+
+func (s *Server) prepareFamilySplitTemplateRecipe(_ context.Context, _ application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	templateID := int64(taskIntParam(input.Params, "family_split_template_id"))
+	if templateID == 0 {
+		templateID = taskResourceRefID(input, "family_split_template")
+	}
+	deleting := containsAnyFold(input.Goal, "删除", "delete", "remove")
+	if deleting {
+		if templateID == 0 {
+			return recipeNeedInput("family_split_template.manage", "family_split_template_id", "需要指定要删除的双栈模板 ID"), nil
+		}
+		operation := mcpOperationRef{Capability: "family_split_templates.delete", Input: map[string]any{"family_split_template_id": templateID, "confirm": true}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "family_split_template.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "delete_family_split_template", "family_split_template_id": templateID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	fields := map[string]any{}
+	if nested, ok := input.Params["family_split_template"].(map[string]any); ok {
+		copyRecipeFields(fields, nested, []string{"name"})
+	}
+	if nested, ok := input.Params["changes"].(map[string]any); ok {
+		copyRecipeFields(fields, nested, []string{"name"})
+	}
+	copyRecipeFields(fields, input.Params, []string{"name"})
+	if templateID > 0 {
+		if len(fields) == 0 {
+			return recipeNeedInput("family_split_template.manage", "changes", "未识别到要修改的双栈模板名称"), nil
+		}
+		operation := mcpOperationRef{Capability: "family_split_templates.update", Input: map[string]any{"family_split_template_id": templateID, "changes": fields}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "family_split_template.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_family_split_template", "family_split_template_id": templateID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	if fields["name"] == nil {
+		return recipeNeedInput("family_split_template.manage", "name", "需要指定双栈模板名称"), nil
+	}
+	operation := mcpOperationRef{Capability: "family_split_templates.create", Input: map[string]any{"family_split_template": fields}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "family_split_template.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "create_family_split_template", "name": fields["name"]}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 }

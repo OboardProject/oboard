@@ -1223,31 +1223,52 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 		if !path.Enabled {
 			continue
 		}
-		root, ok := inboundByID[path.InboundID]
-		if !ok || !root.Enabled {
-			continue
-		}
-		steps := append([]model.ProxyPathStep(nil), stepsByPath[path.ID]...)
-		sort.SliceStable(steps, func(i, j int) bool {
-			if steps[i].Position == steps[j].Position {
-				return steps[i].ID < steps[j].ID
-			}
-			return steps[i].Position < steps[j].Position
-		})
+		steps := OrderedFamilyBranchSteps(stepsByPath[path.ID])
 		isDirect := path.Kind == model.ProxyPathKindDirect
-		if !isDirect && len(steps) == 0 {
-			continue
-		}
-		if len(steps) > 0 {
-			if err := validateProxyPathForConfig(path, root, steps); err != nil {
-				return nil, nil, err
-			}
-		}
-		activeServerID := root.ServerID
-		activeInboundTag := tag("in", root.ID)
-		activeAuthUsers := routingAuthUsersForProtocol(root.Protocol, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers)))
+		var root model.Inbound
+		activeServerID := int64(0)
+		activeInboundTag := ""
+		var activeAuthUsers []string
 		var activeStageStepID *int64
 		previousTag := ""
+		if IsFamilyBranch(path) {
+			if len(steps) == 0 {
+				continue
+			}
+			if err := validateProxyPathForConfig(path, model.Inbound{}, steps); err != nil {
+				return nil, nil, err
+			}
+			first := steps[0]
+			if first.NodeType != model.ProxyPathStepServerInbound {
+				continue
+			}
+			targetServerID, _, ok := proxyPathStepTargetServer(first, inboundByID)
+			if !ok {
+				continue
+			}
+			activeServerID = targetServerID
+			activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, first, model.Inbound{}, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+			stepID := first.ID
+			activeStageStepID = &stepID
+			steps = steps[1:]
+		} else {
+			var ok bool
+			root, ok = inboundByID[path.InboundID]
+			if !ok || !root.Enabled {
+				continue
+			}
+			if !isDirect && len(steps) == 0 {
+				continue
+			}
+			if len(steps) > 0 {
+				if err := validateProxyPathForConfig(path, root, steps); err != nil {
+					return nil, nil, err
+				}
+			}
+			activeServerID = root.ServerID
+			activeInboundTag = tag("in", root.ID)
+			activeAuthUsers = routingAuthUsersForProtocol(root.Protocol, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers)))
+		}
 		for _, step := range steps {
 			if step.TransportMode == "" {
 				step.TransportMode = model.ProxyPathTransportSingBox
@@ -1418,7 +1439,10 @@ func ProxyPathEntryRoutingIdentity(path model.ProxyPath, root model.Inbound, use
 
 func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps []model.ProxyPathStep) error {
 	processing := 0
-	seenServers := map[int64]bool{root.ServerID: true}
+	seenServers := map[int64]bool{}
+	if !IsFamilyBranch(path) {
+		seenServers[root.ServerID] = true
+	}
 	for _, step := range steps {
 		if step.ProcessingRole {
 			processing++
@@ -2341,6 +2365,19 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		serverByID[item.ID] = item
 	}
 	serverByID[server.ID] = server
+	externalByID := make(map[int64]model.ExternalOutbound, len(opts.ExternalOutbounds))
+	for _, item := range opts.ExternalOutbounds {
+		externalByID[item.ID] = item
+	}
+	stepsByPath := map[int64][]model.ProxyPathStep{}
+	for _, step := range opts.ProxyPathSteps {
+		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
+	}
+	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
+	if err != nil {
+		return nil, err
+	}
+	workingOutbounds := append([]map[string]any(nil), pathOutbounds...)
 	result := make([]map[string]any, 0)
 	for _, rule := range opts.RoutingRules {
 		if !rule.Enabled || rule.Action != model.RouteActionFamilySplit || rule.Scope != model.RoutingRuleScopePathStage || rule.ServerID != server.ID {
@@ -2349,8 +2386,15 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		if strings.TrimSpace(server.AgentID) != "" && !stringSliceContains(server.KernelCapabilities, "family_selector_v1") {
 			return nil, markInvalidDesiredState(fmt.Errorf("服务器 %s 的内核缺少 family_selector_v1 能力；请先更新 Agent/内核", server.Name))
 		}
-		if rule.IPv4TargetProxyPathID == nil || rule.IPv6TargetProxyPathID == nil {
-			return nil, fmt.Errorf("routing rule %s: both family target paths are required", rule.Name)
+		if rule.FamilySplitTemplateID == nil || *rule.FamilySplitTemplateID <= 0 {
+			return nil, fmt.Errorf("routing rule %s: family_split_template_id required", rule.Name)
+		}
+		ipv4Path, ipv6Path, err := FamilySplitTemplatePaths(opts.ProxyPaths, *rule.FamilySplitTemplateID)
+		if err != nil {
+			return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s: %w", rule.Name, err))
+		}
+		if !ipv4Path.Enabled || !ipv6Path.Enabled {
+			return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s: family split template branches are not enabled", rule.Name))
 		}
 		strategy, err := normalizedFamilyDNSStrategy(rule.FamilyDNSStrategy, server, inheritedDNSStrategy)
 		if err != nil {
@@ -2364,28 +2408,17 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		}
 		for _, branch := range []struct {
 			family  string
-			target  int64
+			path    model.ProxyPath
 			jsonKey string
 		}{
-			{family: "ipv4", target: *rule.IPv4TargetProxyPathID, jsonKey: "ipv4_outbound"},
-			{family: "ipv6", target: *rule.IPv6TargetProxyPathID, jsonKey: "ipv6_outbound"},
+			{family: "ipv4", path: ipv4Path, jsonKey: "ipv4_outbound"},
+			{family: "ipv6", path: ipv6Path, jsonKey: "ipv6_outbound"},
 		} {
-			baseTag, err := routingRuleTargetProxyPathOutboundTag(rule, branch.target, server, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles)
+			branchTag, clones, generated, err := buildFamilySplitBranchOutbound(rule, branch.family, branch.path, server, opts, inboundByID, serverByID, externalByID, stepsByPath, chainServices, workingOutbounds, defaultResolver)
 			if err != nil {
 				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
 			}
-			entryInbound, targetServer, err := routingRuleFamilyTargetEntry(rule, branch.target, branch.family, inboundByID, serverByID, opts.ProxyPathSteps)
-			if err != nil {
-				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
-			}
-			entryAddress, err := ResolveReachableEntryAddressForFamily(server, entryInbound, targetServer, branch.family)
-			if err != nil {
-				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
-			}
-			clones, branchTag, err := cloneRoutingRuleFamilyBranch(rule.ID, branch.family, baseTag, entryAddress, pathOutbounds, defaultResolver)
-			if err != nil {
-				return nil, markInvalidDesiredState(fmt.Errorf("routing rule %s %s branch: %w", rule.Name, branch.family, err))
-			}
+			workingOutbounds = append(workingOutbounds, generated...)
 			result = append(result, clones...)
 			selector[branch.jsonKey] = branchTag
 		}
@@ -2398,6 +2431,109 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		result = append(result, selector)
 	}
 	return result, nil
+}
+
+func buildFamilySplitBranchOutbound(rule model.RoutingRule, family string, path model.ProxyPath, server model.Server, opts ConfigOptions, inboundByID map[int64]model.Inbound, serverByID map[int64]model.Server, externalByID map[int64]model.ExternalOutbound, stepsByPath map[int64][]model.ProxyPathStep, chainServices map[proxyPathChainServiceKey]*proxyPathChainService, pathOutbounds []map[string]any, defaultResolver any) (string, []map[string]any, []map[string]any, error) {
+	steps := OrderedFamilyBranchSteps(stepsByPath[path.ID])
+	if err := ValidateFamilyBranchTransport(steps); err != nil {
+		return "", nil, nil, err
+	}
+	binding, err := FamilyBranchLastBinding(steps)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	remaining := CollapseFamilyBranchSteps(server.ID, steps, inboundByID)
+	if len(remaining) == 0 {
+		if binding.InterfaceName == "" && binding.SourcePrefix == "" {
+			return "direct", nil, nil, nil
+		}
+		tag := FamilySplitBoundExitTag(rule.ID, family)
+		item := map[string]any{"type": "direct", "tag": tag}
+		if err := applyFamilyBranchExitBinding(item, binding); err != nil {
+			return "", nil, nil, err
+		}
+		return tag, []map[string]any{item}, nil, nil
+	}
+	first := remaining[0]
+	generated := []map[string]any{}
+	if first.NodeType == model.ProxyPathStepWARP {
+		profile, ok := warpProfileForServer(opts.WARPProfiles, server.ID)
+		if !ok || !profile.Enabled {
+			return "", nil, nil, fmt.Errorf("family branch requires WARP on server %d", server.ID)
+		}
+		baseTag := tag("warp", profile.ID)
+		if binding.InterfaceName == "" && binding.SourcePrefix == "" {
+			return baseTag, nil, nil, nil
+		}
+		cloneTag := routingRuleFamilyBranchTag(rule.ID, family, baseTag)
+		item := map[string]any{"type": "direct", "tag": cloneTag, "detour": baseTag}
+		if err := applyFamilyBranchExitBinding(item, binding); err != nil {
+			return "", nil, nil, err
+		}
+		return cloneTag, []map[string]any{item}, nil, nil
+	}
+	baseTag := proxyPathStepTag(path.ID, first.Position)
+	if !outboundTagExists(pathOutbounds, baseTag) {
+		item, err := proxyPathStepOutbound(path, first, server, serverByID, inboundByID, externalByID, nil, baseTag, chainServices, opts.PortLedger)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		generated = append(generated, item)
+		pathOutbounds = append(pathOutbounds, item)
+	}
+	entryAddress := ""
+	if first.NodeType == model.ProxyPathStepServerInbound {
+		entryInbound, targetServer, err := familyBranchFirstHopEntry(first, family, inboundByID, serverByID)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		entryAddress, err = ResolveReachableEntryAddressForFamily(server, entryInbound, targetServer, family)
+		if err != nil {
+			return "", nil, nil, err
+		}
+	}
+	clones, branchTag, err := cloneRoutingRuleFamilyBranch(rule.ID, family, baseTag, entryAddress, pathOutbounds, defaultResolver)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if len(remaining) > 0 && remaining[len(remaining)-1].ID == steps[len(steps)-1].ID && (binding.InterfaceName != "" || binding.SourcePrefix != "") {
+		if err := applyFamilyBranchExitBinding(clones[len(clones)-1], binding); err != nil {
+			return "", nil, nil, err
+		}
+	}
+	return branchTag, clones, generated, nil
+}
+
+func outboundTagExists(outbounds []map[string]any, wanted string) bool {
+	for _, outbound := range outbounds {
+		if tag, _ := outbound["tag"].(string); tag == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func familyBranchFirstHopEntry(step model.ProxyPathStep, family string, inboundByID map[int64]model.Inbound, serverByID map[int64]model.Server) (model.Inbound, model.Server, error) {
+	targetServerID, inbound, ok := proxyPathStepTargetServer(step, inboundByID)
+	if !ok {
+		return model.Inbound{}, model.Server{}, errors.New("family branch first hop target is missing")
+	}
+	targetServer, ok := serverByID[targetServerID]
+	if !ok {
+		return model.Inbound{}, model.Server{}, errors.New("family branch first hop server is missing")
+	}
+	if targetServer.Status != model.ServerOnline {
+		return model.Inbound{}, model.Server{}, fmt.Errorf("target server %s is offline", targetServer.Name)
+	}
+	if inbound == nil {
+		synthetic := model.Inbound{ServerID: targetServer.ID, ListenIP: targetServer.ListenIP, EntryIPMode: model.EntryIPModeAuto, Enabled: true}
+		return synthetic, targetServer, nil
+	}
+	if !inbound.Enabled {
+		return model.Inbound{}, model.Server{}, errors.New("target inbound is disabled")
+	}
+	_ = family
+	return *inbound, targetServer, nil
 }
 
 func normalizedFamilyDNSStrategy(strategy model.FamilyDNSStrategy, server model.Server, inherited string) (string, error) {
@@ -2504,7 +2640,7 @@ func cloneRoutingRuleFamilyBranch(ruleID int64, family, baseTag, entryAddress st
 		if detour, _ := original["detour"].(string); detour != "" {
 			clone["detour"] = routingRuleFamilyBranchTag(ruleID, family, detour)
 		}
-		if index == 0 {
+		if index == 0 && strings.TrimSpace(entryAddress) != "" {
 			clone["server"] = entryAddress
 			if AddressFamily(entryAddress) == "domain" {
 				resolver := domainResolverMap(firstNonNil(clone["domain_resolver"], defaultResolver))

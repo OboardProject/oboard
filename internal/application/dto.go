@@ -147,8 +147,7 @@ type RoutingRuleDTO struct {
 	OutboundID            *int64                  `json:"outbound_id"`
 	ExternalOutboundID    *int64                  `json:"external_outbound_id"`
 	TargetProxyPathID     *int64                  `json:"target_proxy_path_id"`
-	IPv4TargetProxyPathID *int64                  `json:"ipv4_target_proxy_path_id"`
-	IPv6TargetProxyPathID *int64                  `json:"ipv6_target_proxy_path_id"`
+	FamilySplitTemplateID *int64                  `json:"family_split_template_id"`
 	FamilyDNSStrategy     model.FamilyDNSStrategy `json:"family_dns_strategy"`
 	OutboundTag           string                  `json:"outbound_tag"`
 	InterfaceName         string                  `json:"interface_name"`
@@ -286,12 +285,30 @@ func routingRuleDTO(item model.RoutingRule) RoutingRuleDTO {
 		SortPosition: item.SortPosition, MatchSource: item.MatchSource, RuleSetID: item.RuleSetID,
 		DNSResolver: item.DNSResolver, Priority: item.Priority, Action: item.Action, OutboundID: item.OutboundID,
 		ExternalOutboundID: item.ExternalOutboundID, TargetProxyPathID: item.TargetProxyPathID,
-		IPv4TargetProxyPathID: item.IPv4TargetProxyPathID, IPv6TargetProxyPathID: item.IPv6TargetProxyPathID,
+		FamilySplitTemplateID: item.FamilySplitTemplateID,
 		FamilyDNSStrategy: item.FamilyDNSStrategy, OutboundTag: item.OutboundTag,
 		InterfaceName: item.InterfaceName, SourcePrefix: item.SourcePrefix, SyncGroupID: item.SyncGroupID,
 		MatchConfigured: strings.TrimSpace(item.MatchJSON) != "" && strings.TrimSpace(item.MatchJSON) != "{}",
 		Enabled:         item.Enabled, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
+}
+
+func familySplitTemplateDTO(item model.FamilySplitTemplate) FamilySplitTemplateDTO {
+	return FamilySplitTemplateDTO{
+		ID: item.ID, Revision: revision(item.UpdatedAt), Name: item.Name,
+		IPv4PathID: item.IPv4PathID, IPv6PathID: item.IPv6PathID,
+		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+	}
+}
+
+type FamilySplitTemplateDTO struct {
+	ID         int64     `json:"id"`
+	Revision   string    `json:"revision"`
+	Name       string    `json:"name"`
+	IPv4PathID int64     `json:"ipv4_path_id"`
+	IPv6PathID int64     `json:"ipv6_path_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 func routingRuleSetDTO(item model.RoutingRuleSet) RoutingRuleSetDTO {

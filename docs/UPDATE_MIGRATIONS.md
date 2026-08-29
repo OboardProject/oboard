@@ -73,8 +73,29 @@
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
+| `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-pending` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260830-family-split-templates
+
+- **引入日期：** 2026-08-30
+- **引入提交：** `OboardProject/oboard@dev-pending`（待发布前以开发通道计）
+- **引入版本：** `dev-pending`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/model`、`internal/core`、`internal/controller`、`internal/capability`、`internal/application`、Web
+- **类别：** SQLite schema / data backfill
+- **原因：** `family_split` 从同入口兄弟分支改为可复用双栈模板，避免每条规则复制一套 IPv4/IPv6 路径，并让模板接到任意阶段。
+- **源状态：** `routing_rules` 使用 `ipv4_target_proxy_path_id` / `ipv6_target_proxy_path_id`；`proxy_paths.inbound_id` NOT NULL；无 `family_split_templates`，无 `proxy_paths.template_id` / `family`。
+- **目标状态：** 表 `family_split_templates`；`routing_rules.family_split_template_id`；`proxy_paths.inbound_id` 可空；`kind=family_branch` 且 `(template_id, family)` 唯一；启用的 `family_split` 引用计数打开分支；旧兄弟路径后缀跳数复制到新模板后保留原路径；删除 `ipv4_target_proxy_path_id` / `ipv6_target_proxy_path_id`。
+- **实现位置：** `oboard/internal/store/family_split_templates.go`、`oboard/internal/store/store.go`（建表）、`oboard/internal/core/family_split.go`、`oboard/internal/controller/family_split_templates.go`、`oboard/internal/capability/catalog_traffic.go`
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时 `migrateFamilySplitTemplates`：建表、补列、重建可空 `inbound_id`、回填模板、删旧列。
+- **数据影响：** 每条旧 `family_split` 规则生成一份模板并复制分流后后缀跳数；不删除旧兄弟分支；新库不再包含 ipv4/ipv6 目标列。
+- **重复执行：** 建表/补列/删列幂等；已绑定 `family_split_template_id` 的规则不再回填。
+- **失败行为：** 迁移失败阻止打开数据库。
+- **回归测试：** `TestFamilySplitTemplatesMigrateFromSiblingBranchSchema`、`TestRoutingRuleFamilyDNSStrategyMigratesFromPreviousSchema`、`TestFamilySplitRoutingRuleRESTLifecycle`、`TestFamilySplitRoutingRuleCapabilityAndResourceFilter`、`TestFamilySplitOutboundsForceTargetEntryFamilies`、`TestSubscriptionFamilySplitEmitsSingleLogicalNode`
+- **移除条件：** 最老支持数据库与所有可恢复备份已包含模板表且不再出现 ipv4/ipv6 目标列；恢复入口不得导入缺少该表的旧库。
+- **移除状态：** 生效中
 
 ### controller-db-20260829-plan-reconcile
 

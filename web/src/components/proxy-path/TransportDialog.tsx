@@ -90,6 +90,7 @@ export function TransportDialog({
   target,
   current,
   currentMode,
+  allowedModes,
   chainMethods,
   onPreview,
   onCancel,
@@ -98,6 +99,7 @@ export function TransportDialog({
   target: TransportDialogTarget
   current?: string
   currentMode?: TransportMode
+  allowedModes?: TransportMode[]
   chainMethods: ChainMethodOption[]
   onPreview?: (request: ProxyPathReuseRequest) => Promise<ProxyPathReusePreview>
   onCancel: () => void
@@ -107,7 +109,11 @@ export function TransportDialog({
   const reuseEnabled = Boolean(target.targetServerID && target.sources?.length && !target.importedOnly && !target.editing)
   const previewAvailable = Boolean(onPreview)
   const initialProtocol = generatedProtocol(existing.chain_protocol)
-  const [mode, setMode] = useState<TransportMode>(() => target.importedOnly ? 'singbox' : currentMode || 'singbox')
+  const allowed = allowedModes?.length ? allowedModes : (['singbox', 'port_forward', 'tunnel'] as TransportMode[])
+  const [mode, setMode] = useState<TransportMode>(() => {
+    const preferred = target.importedOnly ? 'singbox' : currentMode || 'singbox'
+    return allowed.includes(preferred) ? preferred : allowed[0]
+  })
   const [targetKind, setTargetKind] = useState<'generated' | 'existing'>(() => target.targetInboundID ? 'existing' : 'generated')
   const [targetInboundID, setTargetInboundID] = useState<number>(() => target.targetInboundID || 0)
   const [chainProtocol, setChainProtocol] = useState<GeneratedChainProtocol>(initialProtocol)
@@ -232,11 +238,13 @@ export function TransportDialog({
     }
   }
 
-  const modeOptions: Array<{ value: TransportMode; label: string; hint: string; icon: React.ReactNode; disabled?: boolean }> = [
-    { value: 'singbox', label: 'sing-box 出站链', hint: '由当前服务器建立协议出站，连接所选系统服务或已有入口。', icon: <Workflow size={14} /> },
-    { value: 'port_forward', label: '透明端口转发', hint: target.importedOnly ? '导入节点不能作为端口转发目标。' : '原样传递客户端密文，只能位于链路开头。', icon: <ArrowLeftRight size={14} />, disabled: target.importedOnly },
-    { value: 'tunnel', label: 'SSH / WireGuard 隧道', hint: target.importedOnly ? '导入节点不能作为隧道端点。' : '通过服务器间专用隧道连接所选入口。', icon: <Shield size={14} />, disabled: target.importedOnly },
-  ]
+  const modeOptions = (
+    [
+      { value: 'singbox' as const, label: 'sing-box 出站链', hint: '由当前服务器建立协议出站，连接所选系统服务或已有入口。', icon: <Workflow size={14} /> },
+      { value: 'port_forward' as const, label: '透明端口转发', hint: target.importedOnly ? '导入节点不能作为端口转发目标。' : '原样传递客户端密文，只能位于链路开头。', icon: <ArrowLeftRight size={14} />, disabled: target.importedOnly },
+      { value: 'tunnel' as const, label: 'SSH / WireGuard 隧道', hint: target.importedOnly ? '导入节点不能作为隧道端点。' : '通过服务器间专用隧道连接所选入口。', icon: <Shield size={14} />, disabled: target.importedOnly },
+    ] satisfies Array<{ value: TransportMode; label: string; hint: string; icon: React.ReactNode; disabled?: boolean }>
+  ).filter(option => allowed.includes(option.value))
 
   return (
     <MotionDialogPanel onCancel={onCancel} className="transport-dialog">

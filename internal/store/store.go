@@ -373,9 +373,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists user_group_members (id integer primary key autoincrement, group_id integer not null references user_groups(id) on delete cascade, user_id integer not null references users(id) on delete cascade, enabled integer not null default 1, created_at text not null, updated_at text not null, unique(group_id,user_id))`,
 		`create table if not exists outbounds (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, next_server_id integer references servers(id) on delete set null, name text not null, protocol text not null, target_address text not null, target_port integer not null, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists routing_rule_sets (id integer primary key autoincrement, name text not null unique, url text not null, format text not null, mihomo_behavior text not null default '', etag text not null default '', last_modified text not null default '', content blob not null default x'', revision text not null default '', status text not null default 'pending', last_error text not null default '', last_attempt_at text, last_success_at text, created_at text not null, updated_at text not null)`,
-		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, scope text not null default 'server', proxy_path_id integer references proxy_paths(id) on delete cascade, stage_step_id integer references proxy_path_steps(id) on delete cascade, sort_position integer not null default 0, match_source text not null default 'inline', rule_set_id integer references routing_rule_sets(id) on delete restrict, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_proxy_path_id integer references proxy_paths(id) on delete cascade, ipv4_target_proxy_path_id integer references proxy_paths(id) on delete restrict, ipv6_target_proxy_path_id integer references proxy_paths(id) on delete restrict, family_dns_strategy text not null default 'auto', target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', sync_group_id text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists family_split_templates (id integer primary key autoincrement, name text not null, created_at text not null, updated_at text not null)`,
+		`create table if not exists routing_rules (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, scope text not null default 'server', proxy_path_id integer references proxy_paths(id) on delete cascade, stage_step_id integer references proxy_path_steps(id) on delete cascade, sort_position integer not null default 0, match_source text not null default 'inline', rule_set_id integer references routing_rule_sets(id) on delete restrict, name text not null, priority integer not null default 100, match_json text not null default '{}', action text not null, outbound_id integer references outbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, target_proxy_path_id integer references proxy_paths(id) on delete cascade, family_split_template_id integer references family_split_templates(id) on delete restrict, family_dns_strategy text not null default 'auto', target_server_id integer references servers(id) on delete set null, outbound_tag text not null default '', sync_group_id text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists external_outbounds (id integer primary key autoincrement, server_id integer references servers(id) on delete set null, name text not null, protocol text not null, scope text not null default 'global', target_address text not null default '', target_port integer not null default 0, config_json text not null default '{}', region_mode text not null default 'auto', region_code text not null default '', expose_to_users integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer not null references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', exit_region_mode text not null default 'auto', exit_region_code text not null default '', secret text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists proxy_paths (id integer primary key autoincrement, inbound_id integer references inbounds(id) on delete cascade, kind text not null default 'chain', branch_source_step_id integer references proxy_path_steps(id) on delete set null, name_mode text not null default 'auto', name_template_json text not null default '[]', exit_region_mode text not null default 'auto', exit_region_code text not null default '', secret text not null default '', enabled integer not null default 1, template_id integer references family_split_templates(id) on delete cascade, family text not null default '', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_steps (id integer primary key autoincrement, path_id integer not null references proxy_paths(id) on delete cascade, position integer not null, node_type text not null, transport_mode text not null default 'singbox', processing_role integer not null default 0, server_id integer references servers(id) on delete set null, inbound_id integer references inbounds(id) on delete set null, external_outbound_id integer references external_outbounds(id) on delete set null, config_json text not null default '{}', created_at text not null, updated_at text not null)`,
 		`create table if not exists proxy_path_port_allocations (id integer primary key autoincrement, kind text not null, scope_key text not null, server_id integer not null references servers(id) on delete cascade, pool text not null default 'public', listen_ip text not null default '', network text not null default 'tcp_udp', generation integer not null default 1, ordinal integer not null default 0, port integer not null, state text not null default 'active', policy_revision integer not null default 0, created_at text not null, updated_at text not null, unique(kind,scope_key,server_id,generation,ordinal))`,
 		`create table if not exists warp_profiles (id integer primary key autoincrement, server_id integer not null unique references servers(id) on delete cascade, name text not null, status text not null default 'needed', config_json text not null default '{}', underlay_json text not null default '{}', mtu integer not null default 0, dns_strategy text not null default '', last_requested_at text, error text not null default '', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -590,12 +591,14 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateRoutingRuleScopes(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateFamilySplitTemplates(ctx); err != nil {
+		return err
+	}
 	for _, stmt := range []string{
 		`create index if not exists idx_routing_rules_stage_order on routing_rules(proxy_path_id,stage_step_id,sort_position,id) where scope='path_stage'`,
 		`create index if not exists idx_routing_rules_rule_set on routing_rules(rule_set_id) where rule_set_id is not null`,
 		`create index if not exists idx_routing_rules_target_path on routing_rules(target_proxy_path_id) where target_proxy_path_id is not null`,
-		`create index if not exists idx_routing_rules_ipv4_target_path on routing_rules(ipv4_target_proxy_path_id) where ipv4_target_proxy_path_id is not null`,
-		`create index if not exists idx_routing_rules_ipv6_target_path on routing_rules(ipv6_target_proxy_path_id) where ipv6_target_proxy_path_id is not null`,
+		`create index if not exists idx_routing_rules_family_split_template on routing_rules(family_split_template_id) where family_split_template_id is not null`,
 		`create index if not exists idx_routing_rules_sync_group on routing_rules(sync_group_id) where sync_group_id<>''`,
 		`create index if not exists idx_routing_rule_sets_refresh on routing_rule_sets(status,last_success_at)`,
 	} {
@@ -1483,8 +1486,6 @@ func (s *Store) migrateRoutingRuleScopes(ctx context.Context) error {
 		{"match_source", `alter table routing_rules add column match_source text not null default 'inline'`},
 		{"rule_set_id", `alter table routing_rules add column rule_set_id integer references routing_rule_sets(id) on delete restrict`},
 		{"target_proxy_path_id", `alter table routing_rules add column target_proxy_path_id integer references proxy_paths(id) on delete cascade`},
-		{"ipv4_target_proxy_path_id", `alter table routing_rules add column ipv4_target_proxy_path_id integer references proxy_paths(id) on delete restrict`},
-		{"ipv6_target_proxy_path_id", `alter table routing_rules add column ipv6_target_proxy_path_id integer references proxy_paths(id) on delete restrict`},
 		{"family_dns_strategy", `alter table routing_rules add column family_dns_strategy text not null default 'auto'`},
 		{"sync_group_id", `alter table routing_rules add column sync_group_id text not null default ''`},
 		{"dns_resolver", `alter table routing_rules add column dns_resolver text not null default ''`},
@@ -3693,7 +3694,7 @@ func (s *Store) CreateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,ipv4_target_proxy_path_id,ipv6_target_proxy_path_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.IPv4TargetProxyPathID, v.IPv6TargetProxyPathID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,family_split_template_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.FamilySplitTemplateID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3709,7 +3710,7 @@ func (s *Store) UpdateRoutingRule(ctx context.Context, v *model.RoutingRule) err
 	}
 	defer tx.Rollback()
 	ts := now()
-	if _, err := tx.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,dns_resolver=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_proxy_path_id=?,ipv4_target_proxy_path_id=?,ipv6_target_proxy_path_id=?,family_dns_strategy=?,target_server_id=?,outbound_tag=?,sync_group_id=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.IPv4TargetProxyPathID, v.IPv6TargetProxyPathID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, v.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `update routing_rules set server_id=?,scope=?,proxy_path_id=?,stage_step_id=?,sort_position=?,match_source=?,rule_set_id=?,dns_resolver=?,name=?,priority=?,match_json=?,action=?,outbound_id=?,external_outbound_id=?,target_proxy_path_id=?,family_split_template_id=?,family_dns_strategy=?,target_server_id=?,outbound_tag=?,sync_group_id=?,enabled=?,updated_at=? where id=?`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.FamilySplitTemplateID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, v.ID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(v.SyncGroupID) != "" {
@@ -3776,7 +3777,7 @@ func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRul
 	v.SyncGroupID = sourceGroup
 	setStoredRoutingRuleBinding(v)
 	ts := now()
-	res, err := tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,ipv4_target_proxy_path_id,ipv6_target_proxy_path_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.IPv4TargetProxyPathID, v.IPv6TargetProxyPathID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
+	res, err := tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,family_split_template_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Scope, v.ProxyPathID, v.StageStepID, v.SortPosition, v.MatchSource, v.RuleSetID, v.DNSResolver, v.Name, v.Priority, v.MatchJSON, v.Action, v.OutboundID, v.ExternalOutboundID, v.TargetProxyPathID, v.FamilySplitTemplateID, v.FamilyDNSStrategy, v.TargetServerID, v.OutboundTag, v.SyncGroupID, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3786,7 +3787,7 @@ func (s *Store) CreateSyncedRoutingRule(ctx context.Context, v *model.RoutingRul
 }
 
 func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,ipv4_target_proxy_path_id,ipv6_target_proxy_path_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at from routing_rules order by case when scope='path_stage' then 0 else 1 end,proxy_path_id,sort_position,priority,id`)
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,family_split_template_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at from routing_rules order by case when scope='path_stage' then 0 else 1 end,proxy_path_id,sort_position,priority,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -3794,10 +3795,10 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 	var out []model.RoutingRule
 	for rows.Next() {
 		var v model.RoutingRule
-		var pathID, stageStepID, ruleSetID, outboundID, externalID, targetPathID, ipv4TargetPathID, ipv6TargetPathID, targetID sql.NullInt64
+		var pathID, stageStepID, ruleSetID, outboundID, externalID, targetPathID, templateID, targetID sql.NullInt64
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.ServerID, &v.Scope, &pathID, &stageStepID, &v.SortPosition, &v.MatchSource, &ruleSetID, &v.DNSResolver, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetPathID, &ipv4TargetPathID, &ipv6TargetPathID, &v.FamilyDNSStrategy, &targetID, &v.OutboundTag, &v.SyncGroupID, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.ServerID, &v.Scope, &pathID, &stageStepID, &v.SortPosition, &v.MatchSource, &ruleSetID, &v.DNSResolver, &v.Name, &v.Priority, &v.MatchJSON, &v.Action, &outboundID, &externalID, &targetPathID, &templateID, &v.FamilyDNSStrategy, &targetID, &v.OutboundTag, &v.SyncGroupID, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if pathID.Valid {
@@ -3818,11 +3819,8 @@ func (s *Store) ListRoutingRules(ctx context.Context) ([]model.RoutingRule, erro
 		if targetPathID.Valid {
 			v.TargetProxyPathID = &targetPathID.Int64
 		}
-		if ipv4TargetPathID.Valid {
-			v.IPv4TargetProxyPathID = &ipv4TargetPathID.Int64
-		}
-		if ipv6TargetPathID.Valid {
-			v.IPv6TargetProxyPathID = &ipv6TargetPathID.Int64
+		if templateID.Valid {
+			v.FamilySplitTemplateID = &templateID.Int64
 		}
 		if targetID.Valid {
 			v.TargetServerID = &targetID.Int64
@@ -3924,7 +3922,7 @@ func (s *Store) CreateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`, v.InboundID, v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.ExitRegionMode, v.ExitRegionCode, v.Secret, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into proxy_paths(inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,template_id,family,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, zeroToNull(v.InboundID), v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.ExitRegionMode, v.ExitRegionCode, v.Secret, boolInt(v.Enabled), v.TemplateID, v.Family, ts, ts)
 	if err != nil {
 		return err
 	}
@@ -3950,7 +3948,7 @@ func (s *Store) CreateProxyPathComposition(ctx context.Context, path *model.Prox
 	if path.ID <= 0 {
 		return errors.New("proxy path composition id is required")
 	}
-	_, err = tx.ExecContext(ctx, `insert into proxy_paths(id,inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, path.ID, path.InboundID, path.Kind, path.BranchSourceStepID, path.NameMode, path.NameTemplateJSON, path.ExitRegionMode, path.ExitRegionCode, path.Secret, boolInt(path.Enabled), ts, ts)
+	_, err = tx.ExecContext(ctx, `insert into proxy_paths(id,inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,template_id,family,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, path.ID, zeroToNull(path.InboundID), path.Kind, path.BranchSourceStepID, path.NameMode, path.NameTemplateJSON, path.ExitRegionMode, path.ExitRegionCode, path.Secret, boolInt(path.Enabled), path.TemplateID, path.Family, ts, ts)
 	if err != nil {
 		return err
 	}
@@ -4044,7 +4042,7 @@ func (s *Store) ActivateProxyPathWithRoutingRule(ctx context.Context, pathID int
 		}
 		rule.SyncGroupID = sourceGroup
 	}
-	result, err = tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,ipv4_target_proxy_path_id,ipv6_target_proxy_path_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, rule.ServerID, rule.Scope, rule.ProxyPathID, rule.StageStepID, rule.SortPosition, rule.MatchSource, rule.RuleSetID, rule.DNSResolver, rule.Name, rule.Priority, rule.MatchJSON, rule.Action, rule.OutboundID, rule.ExternalOutboundID, rule.TargetProxyPathID, rule.IPv4TargetProxyPathID, rule.IPv6TargetProxyPathID, rule.FamilyDNSStrategy, rule.TargetServerID, rule.OutboundTag, rule.SyncGroupID, boolInt(rule.Enabled), ts, ts)
+	result, err = tx.ExecContext(ctx, `insert into routing_rules(server_id,scope,proxy_path_id,stage_step_id,sort_position,match_source,rule_set_id,dns_resolver,name,priority,match_json,action,outbound_id,external_outbound_id,target_proxy_path_id,family_split_template_id,family_dns_strategy,target_server_id,outbound_tag,sync_group_id,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, rule.ServerID, rule.Scope, rule.ProxyPathID, rule.StageStepID, rule.SortPosition, rule.MatchSource, rule.RuleSetID, rule.DNSResolver, rule.Name, rule.Priority, rule.MatchJSON, rule.Action, rule.OutboundID, rule.ExternalOutboundID, rule.TargetProxyPathID, rule.FamilySplitTemplateID, rule.FamilyDNSStrategy, rule.TargetServerID, rule.OutboundTag, rule.SyncGroupID, boolInt(rule.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -4086,12 +4084,12 @@ func (s *Store) UpdateProxyPath(ctx context.Context, v *model.ProxyPath) error {
 	if err := encodeProxyPathNameTemplate(v); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,kind=?,branch_source_step_id=?,name_mode=?,name_template_json=?,exit_region_mode=?,exit_region_code=?,secret=?,enabled=?,updated_at=? where id=?`, v.InboundID, v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.ExitRegionMode, v.ExitRegionCode, v.Secret, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update proxy_paths set inbound_id=?,kind=?,branch_source_step_id=?,name_mode=?,name_template_json=?,exit_region_mode=?,exit_region_code=?,secret=?,enabled=?,template_id=?,family=?,updated_at=? where id=?`, zeroToNull(v.InboundID), v.Kind, v.BranchSourceStepID, v.NameMode, v.NameTemplateJSON, v.ExitRegionMode, v.ExitRegionCode, v.Secret, boolInt(v.Enabled), v.TemplateID, v.Family, now(), v.ID)
 	return err
 }
 
 func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(kind,'chain'),branch_source_step_id,coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(exit_region_mode,'auto'),coalesce(exit_region_code,''),coalesce(secret,''),enabled,created_at,updated_at from proxy_paths order by id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,inbound_id,coalesce(kind,'chain'),branch_source_step_id,coalesce(name_mode,'auto'),coalesce(name_template_json,'[]'),coalesce(exit_region_mode,'auto'),coalesce(exit_region_code,''),coalesce(secret,''),enabled,template_id,coalesce(family,''),created_at,updated_at from proxy_paths order by id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -4099,10 +4097,17 @@ func (s *Store) ListProxyPaths(ctx context.Context) ([]model.ProxyPath, error) {
 	var out []model.ProxyPath
 	for rows.Next() {
 		var v model.ProxyPath
+		var inboundID, templateID sql.NullInt64
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.InboundID, &v.Kind, &v.BranchSourceStepID, &v.NameMode, &v.NameTemplateJSON, &v.ExitRegionMode, &v.ExitRegionCode, &v.Secret, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &inboundID, &v.Kind, &v.BranchSourceStepID, &v.NameMode, &v.NameTemplateJSON, &v.ExitRegionMode, &v.ExitRegionCode, &v.Secret, &en, &templateID, &v.Family, &ca, &ua); err != nil {
 			return nil, err
+		}
+		if inboundID.Valid {
+			v.InboundID = inboundID.Int64
+		}
+		if templateID.Valid {
+			v.TemplateID = &templateID.Int64
 		}
 		if err := decodeProxyPathNameTemplate(&v); err != nil {
 			return nil, err

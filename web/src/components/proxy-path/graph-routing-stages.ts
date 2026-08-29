@@ -96,6 +96,7 @@ export function graphDirectExitHiddenByRouting(
     item.id !== path.id
     && item.inbound_id === path.inbound_id
     && item.kind !== 'direct'
+    && item.kind !== 'family_branch'
   ))
 }
 
@@ -127,7 +128,7 @@ function orderedPathSteps(steps: GraphRoutingStep[], pathID: number) {
 
 function preferredChainForInbound(paths: GraphRoutingPath[], inboundID: number) {
   return enabledRoutingPaths(paths)
-    .filter(path => path.inbound_id === inboundID && path.kind !== 'direct')
+    .filter(path => path.inbound_id === inboundID && path.kind !== 'direct' && path.kind !== 'family_branch')
     .slice()
     .sort((left, right) => left.id - right.id)[0]
 }

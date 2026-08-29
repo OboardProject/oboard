@@ -1336,8 +1336,7 @@ type RoutingRule struct {
 	OutboundID            *int64            `json:"outbound_id,omitempty"`
 	ExternalOutboundID    *int64            `json:"external_outbound_id,omitempty"`
 	TargetProxyPathID     *int64            `json:"target_proxy_path_id,omitempty"`
-	IPv4TargetProxyPathID *int64            `json:"ipv4_target_proxy_path_id,omitempty"`
-	IPv6TargetProxyPathID *int64            `json:"ipv6_target_proxy_path_id,omitempty"`
+	FamilySplitTemplateID *int64            `json:"family_split_template_id,omitempty"`
 	FamilyDNSStrategy     FamilyDNSStrategy `json:"family_dns_strategy,omitempty"`
 	TargetServerID        *int64            `json:"target_server_id,omitempty"`
 	OutboundTag           string            `json:"outbound_tag"`
@@ -1441,8 +1440,19 @@ type ProxyPath struct {
 	ExitRegionProbedAt      *time.Time          `json:"exit_region_probed_at,omitempty"`
 	Secret                  string              `json:"-"`
 	Enabled                 bool                `json:"enabled"`
+	TemplateID              *int64              `json:"template_id,omitempty"`
+	Family                  string              `json:"family,omitempty"`
 	CreatedAt               time.Time           `json:"created_at"`
 	UpdatedAt               time.Time           `json:"updated_at"`
+}
+
+type FamilySplitTemplate struct {
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	IPv4PathID int64     `json:"ipv4_path_id"`
+	IPv6PathID int64     `json:"ipv6_path_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type ProxyPathEgressResult struct {
@@ -1466,8 +1476,14 @@ type ProxyPathEgressResult struct {
 type ProxyPathKind string
 
 const (
-	ProxyPathKindChain  ProxyPathKind = "chain"
-	ProxyPathKindDirect ProxyPathKind = "direct"
+	ProxyPathKindChain        ProxyPathKind = "chain"
+	ProxyPathKindDirect       ProxyPathKind = "direct"
+	ProxyPathKindFamilyBranch ProxyPathKind = "family_branch"
+)
+
+const (
+	FamilySplitFamilyIPv4 = "ipv4"
+	FamilySplitFamilyIPv6 = "ipv6"
 )
 
 type ProxyPathNameMode string

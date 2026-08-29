@@ -17,6 +17,7 @@ import type {
   EntryIPMode,
   ExternalOutbound,
   ExternalProtocol,
+  FamilySplitTemplate,
   Inbound,
   Protocol,
   ProxyPath,
@@ -28,6 +29,7 @@ import type {
   TimeCorrectionMode,
 } from './components/proxy-path/types'
 import { TransportDialog } from './components/proxy-path/TransportDialog'
+import { FamilySplitTemplateEditor } from './components/proxy-path/FamilySplitTemplateEditor'
 import { TrafficForwardingDialog, type TrafficForwardDraft } from './components/proxy-path/TrafficForwardingDialog'
 import {
   GRAPH_ENTRY_NODE_WIDTH,
@@ -362,7 +364,7 @@ type TelegramBinding = { id: number; channel_id: number; user_id: number; chat_i
 type NotificationAnnouncement = { id: number; actor_user_id: number; actor_name: string; title: string; body: string; user_ids: number[]; queued_count: number; created_at: string }
 type RouteAction = 'direct' | 'block' | 'outbound' | 'external' | 'proxy_path' | 'family_split' | 'interface' | 'source_prefix'
 type FamilyDNSStrategy = 'auto' | 'prefer_ipv4' | 'prefer_ipv6'
-type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; dns_resolver?: string; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_proxy_path_id?: number; ipv4_target_proxy_path_id?: number; ipv6_target_proxy_path_id?: number; family_dns_strategy?: FamilyDNSStrategy; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; sync_group_id?: string; enabled: boolean; updated_at?: string }
+type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_stage'; proxy_path_id?: number; stage_step_id?: number; sort_position?: number; match_source?: 'inline' | 'rule_set'; rule_set_id?: number; dns_resolver?: string; name: string; priority: number; match_json: string; action: RouteAction; outbound_id?: number; external_outbound_id?: number; target_proxy_path_id?: number; family_split_template_id?: number; family_dns_strategy?: FamilyDNSStrategy; target_server_id?: number; outbound_tag: string; interface_name?: string; source_prefix?: string; sync_group_id?: string; enabled: boolean; updated_at?: string }
 type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical' | 'blackmatrix_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
 type RoutingRuleCatalogItem = { name: string; path: string; url: string; format: RoutingRuleSet['format']; category: string; size: number }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
@@ -1619,7 +1621,7 @@ const fieldLabels: Record<string, string> = {
   encrypted_list: '加密解析服务', bootstrap_list: '基础解析服务', encrypted_selected: '加密解析结果', bootstrap_selected: '基础解析结果',
   backend: '后端', probe_mode: '探测模式', probe_interval_seconds: '探测间隔秒', sample_rate: '采样率',
   local_address: '本地地址', peer_address: '对端地址', interface_name: '网卡', current_mtu: '当前 MTU', path_mtu: '路径 MTU', recommended_mtu: '建议 MTU', applied_mtu: '已应用 MTU', confidence: '可信度', error: '错误',
-  format: '格式', group_name: '分组名', description: '描述', subscription_format: '订阅格式', subscription_url: '订阅链接', outbound_tag: '出口标签', ipv4_target_proxy_path_id: 'IPv4 代理分支', ipv6_target_proxy_path_id: 'IPv6 代理分支', family_dns_strategy: '域名家族优先级',
+  format: '格式', group_name: '分组名', description: '描述', subscription_format: '订阅格式', subscription_url: '订阅链接', outbound_tag: '出口标签', family_split_template_id: '双栈模板', family_dns_strategy: '域名家族优先级',
   created_at: '创建时间', updated_at: '更新时间', completed_at: '完成时间', last_success_at: '最近成功时间', last_attempt_at: '最近检查时间', config_version: '配置版本', task_id: '任务 ID', payload_json: '任务内容 JSON', nonce: '随机数', result: '结果',
   total: '总数', pending: '等待中', running: '执行中', succeeded: '成功', failed: '失败', partial_failed: '部分失败', timeout: '超时', latency_ms: '平均延迟', min_latency_ms: '最低延迟', p95_latency_ms: 'P95 延迟', jitter_ms: '抖动', success_count: '成功次数', sample_count: '样本数', endpoint: '探测端点', probe_status: '端口状态', probe_detail: '探测明细', checked_at: '检测时间', message: '消息'
 }
@@ -1627,7 +1629,7 @@ const fieldLabels: Record<string, string> = {
 const valueLabels: Record<string, string> = {
   admin: '管理员', operator: '操作员', viewer: '只读', active: '活跃', online: '在线', offline: '离线', unknown: '未知', healthy: '健康', unhealthy: '异常',
   enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', stale: '已过期', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
-  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', proxy_path: '代理链路', family_split: 'IPv4 / IPv6 分支', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
+  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', proxy_path: '代理链路', family_split: 'IPv4 / IPv6 分离合并', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
   singbox_source: 'sing-box JSON', singbox_binary: 'sing-box SRS', mihomo_domain: 'Mihomo domain', mihomo_ipcidr: 'Mihomo IP-CIDR', mihomo_classical: 'Mihomo classical', blackmatrix_classical: 'Blackmatrix7 规则',
   global: '全局', server: '服务器', auto: '自动（IPv4 优先）', ipv4: 'IPv4', ipv6: 'IPv6', custom: '自定义', ipv4_only: '仅 IPv4', ipv6_only: '仅 IPv6', dual_stack: '双栈', prefer_ipv4: '优先 IPv4', prefer_ipv6: '优先 IPv6',
   a: 'A', aaaa: 'AAAA', both: 'A + AAAA',
@@ -11220,7 +11222,7 @@ function inboundEntryAddress(data: any, entry: Inbound) {
   return inboundClientEntryHost(entry, server, settingEnabled(data.settings?.subscription_always_use_domain_host, false))
 }
 
-type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport'
+type ProxyToolAction = 'server' | 'entry' | 'imported' | 'direct' | 'warp' | 'routing' | 'transport' | 'family_split_template'
 const proxyToolDragType = 'application/oboard-proxy-tool'
 
 function ProxyPathsWorkspace({ data, client, load, loading, topbarTarget, patchPageData, focusRequest }: any) {
@@ -11282,7 +11284,7 @@ class ProxyGraphBoundary extends React.Component<{ children: React.ReactNode; on
 }
 
 type RoutingMatchKind = 'domain_suffix' | 'domain' | 'ip_cidr' | 'port' | 'port_range' | 'geosite' | 'geoip' | 'all'
-type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; ipv4_target_proxy_path_id: number; ipv6_target_proxy_path_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean; lock_host?: boolean }
+type RoutingDraft = { id: number; server_id: number; proxy_path_id: number; inbound_id: number; stage_step_id: number; name: string; match_source: 'inline' | 'rule_set'; rule_set_id: number; dns_resolver: string; match_kind: RoutingMatchKind; match_value: string; action: RouteAction; outbound_id: number; external_outbound_id: number; target_proxy_path_id: number; family_split_template_id: number; family_dns_strategy: FamilyDNSStrategy; proxy_path_binding: 'default' | 'interface' | 'source_prefix'; interface_name: string; source_prefix: string; sync_source_rule_id: number; sync_enabled: boolean; enabled: boolean; lock_host?: boolean }
 type TunnelDraft = { name: string; source_server_id: number; target_server_id: number; type: TunnelType; local_address: string; peer_address: string; listen_port: number; target_endpoint: string; target_port: number; priority: number; config_json: string; enabled: boolean }
 type GraphEntity = { type: 'server' | 'entry' | 'imported' | 'warp' | 'routing' | 'direct' | 'port-forward' | 'tunnel' | 'proxy-path' | 'proxy-path-step' | 'detached-step'; id: number; label: string; path_id?: number; stage_step_id?: number; rule_ids?: number[]; node_id?: string }
 type ProxyInboundFocusRequest = { inboundID: number; requestID: number }
@@ -11425,6 +11427,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	const [configNode, setConfigNode] = useState<ExternalOutbound | null>(null)
 	const [namingPath, setNamingPath] = useState<ProxyPath | null>(null)
 	const [transportRequest, setTransportRequest] = useState<TransportDialogRequest | null>(null)
+	const [familySplitEditor, setFamilySplitEditor] = useState<{ templateID?: number; select?: boolean } | null>(null)
 	const [sourceSelectionRequest, setSourceSelectionRequest] = useState<GraphSourceSelectionRequest | null>(null)
   const [graphMenu, setGraphMenu] = useState<GraphContextMenu | null>(null)
   const graphMenuRef = useRef<HTMLDivElement | null>(null)
@@ -12791,8 +12794,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       if (routingDraft.action === 'outbound' && routingDraft.outbound_id) body.outbound_id = routingDraft.outbound_id
       if (routingDraft.action === 'external' && routingDraft.external_outbound_id) body.external_outbound_id = routingDraft.external_outbound_id
       if (routingDraft.action === 'family_split') {
-        body.ipv4_target_proxy_path_id = routingDraft.ipv4_target_proxy_path_id
-        body.ipv6_target_proxy_path_id = routingDraft.ipv6_target_proxy_path_id
+        body.family_split_template_id = routingDraft.family_split_template_id
         body.family_dns_strategy = routingDraft.family_dns_strategy
       }
 	  if (routingDraft.action === 'proxy_path' && routingDraft.target_proxy_path_id) {
@@ -13218,6 +13220,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       return
     }
     if (action === 'transport') return void openTrafficForwarding()
+    if (action === 'family_split_template') return void setFamilySplitEditor({})
   }
   const onToolDragOver = (e: React.DragEvent) => {
     if (!Array.from(e.dataTransfer.types).includes(proxyToolDragType)) return
@@ -13624,7 +13627,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
-    <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} />}</AnimatePresence>
+    <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>
+    <AnimatePresence>{familySplitEditor && <FamilySplitTemplateEditor data={data} client={client} load={load} chainMethods={proxyPathChainMethods} initialTemplateID={familySplitEditor.templateID} onClose={() => setFamilySplitEditor(null)} onSelect={familySplitEditor.select ? id => { setRoutingDraft(old => old ? { ...old, family_split_template_id: id, action: 'family_split' } : old); setFamilySplitEditor(null) } : undefined} />}</AnimatePresence>
     <AnimatePresence>{trafficForwardingOpen && <TrafficForwardingDialog
       servers={servers}
       forwards={(data.port_forwards || []) as PortForward[]}
@@ -13917,6 +13921,7 @@ const proxyTools: Array<{ id: ProxyToolAction; label: string; desc: string }> = 
   { id: 'direct', label: '直接出口', desc: '添加本机直出目标' },
   { id: 'warp', label: 'WARP 出口', desc: '由末端服务器自动申请' },
   { id: 'routing', label: '分流出口', desc: '连上服务器后配置规则，后面的节点是未匹配兜底' },
+  { id: 'family_split_template', label: '双栈模板', desc: '独立编排可复用的 IPv4 / IPv6 分支' },
   { id: 'transport', label: '流量转发', desc: '按入口管理转发规则' },
 ]
 
@@ -14208,11 +14213,12 @@ function ProxyToolIcon({ kind }: { kind: ProxyToolAction }) {
 	if (kind === 'direct') return <LogOut size={15} />
 	if (kind === 'warp') return <Zap size={15} />
   if (kind === 'routing') return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9" /><path d="M4 17h9" /><path d="m14 4 3 3-3 3" /><path d="m14 14 3 3-3 3" /><path d="M17 7h3" /><path d="M17 17h3" /></svg>
+  if (kind === 'family_split_template') return <GitBranch size={15} />
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h8a4 4 0 0 1 0 8H9" /><path d="m9 11-4 4 4 4" /><path d="M18 5v4" /><path d="M16 7h4" /></svg>
 }
 
 function defaultRoutingDraft(server: Server, proxyPathID = 0): RoutingDraft {
-  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, ipv4_target_proxy_path_id: 0, ipv6_target_proxy_path_id: 0, family_dns_strategy: 'auto', proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true, lock_host: false }
+  return { id: 0, server_id: server.id, proxy_path_id: proxyPathID, inbound_id: 0, stage_step_id: 0, name: `${server.name || 'server'}-route`, match_source: 'inline', rule_set_id: 0, dns_resolver: '', match_kind: 'domain_suffix', match_value: 'example.com', action: 'direct', outbound_id: 0, external_outbound_id: 0, target_proxy_path_id: 0, family_split_template_id: 0, family_dns_strategy: 'auto', proxy_path_binding: 'default', interface_name: '', source_prefix: '', sync_source_rule_id: 0, sync_enabled: false, enabled: true, lock_host: false }
 }
 
 function defaultTunnelDraft(servers: Server[], selected?: Server): TunnelDraft {
@@ -14257,8 +14263,7 @@ function routingDraftFromRule(rule: RoutingRule): Partial<RoutingDraft> {
     outbound_id: Number(rule.outbound_id || 0),
     external_outbound_id: Number(rule.external_outbound_id || 0),
     target_proxy_path_id: Number(rule.target_proxy_path_id || 0),
-    ipv4_target_proxy_path_id: Number(rule.ipv4_target_proxy_path_id || 0),
-    ipv6_target_proxy_path_id: Number(rule.ipv6_target_proxy_path_id || 0),
+    family_split_template_id: Number(rule.family_split_template_id || 0),
     family_dns_strategy: rule.family_dns_strategy || 'auto',
 	proxy_path_binding: rule.interface_name ? 'interface' : rule.source_prefix ? 'source_prefix' : 'default',
     interface_name: rule.interface_name || '',
@@ -14288,38 +14293,53 @@ function effectiveRoutingListenIP(server: Server, inbound?: Inbound) {
   return server.public_ipv6 || server.interface_ipv6 ? '::' : '0.0.0.0'
 }
 
-function routingFamilyBranchReadiness(data: any, sourcePathID: number, stageStepID: number, sourceServer: Server | undefined, targetPathID: number, family: 'ipv4' | 'ipv6'): RoutingFamilyBranchReadiness {
-  if (!targetPathID) return { ok: false, summary: `请选择 ${family === 'ipv4' ? 'IPv4' : 'IPv6'} 代理分支` }
-  const targetPath = ((data.proxy_paths || []) as ProxyPath[]).find(path => path.id === targetPathID && path.enabled !== false)
-  if (!targetPath) return { ok: false, summary: '目标分支不存在或已停用' }
+function collapseFamilyBranchStepsForUI(graftServerID: number, steps: ProxyPathStep[], inbounds: Inbound[]): ProxyPathStep[] {
+  const ordered = [...steps].sort((a, b) => a.position - b.position || a.id - b.id)
+  if (!ordered.length || !graftServerID) return ordered
+  const first = ordered[0]
+  const inbound = inbounds.find(item => item.id === Number(first.inbound_id || 0))
+  const serverID = Number(inbound?.server_id || first.server_id || 0)
+  return serverID === graftServerID ? ordered.slice(1) : ordered
+}
+
+function routingFamilyTemplateReadiness(data: any, sourceServer: Server | undefined, templateID: number, family: 'ipv4' | 'ipv6'): RoutingFamilyBranchReadiness {
+  if (!templateID) return { ok: false, summary: '请选择或创建双栈模板' }
+  const template = ((data.family_split_templates || []) as FamilySplitTemplate[]).find(item => item.id === templateID)
+  if (!template) return { ok: false, summary: '双栈模板不存在' }
+  const pathID = family === 'ipv4' ? template.ipv4_path_id : template.ipv6_path_id
+  const targetPath = ((data.proxy_paths || []) as ProxyPath[]).find(path => path.id === pathID)
+  if (!targetPath) return { ok: false, summary: `${family === 'ipv4' ? 'IPv4' : 'IPv6'} 模板分支不存在` }
   const sourceStack = effectiveRoutingIPStack(sourceServer)
   if (sourceStack === 'auto' || family === 'ipv4' && sourceStack === 'ipv6_only' || family === 'ipv6' && sourceStack === 'ipv4_only') {
     return { ok: false, summary: `${sourceServer?.name || '决策服务器'} 当前不能连接 ${family === 'ipv4' ? 'IPv4' : 'IPv6'} 入口` }
   }
-  const allSteps = (data.proxy_path_steps || []) as ProxyPathStep[]
-  const sourceStep = allSteps.find(step => step.path_id === sourcePathID && step.id === stageStepID)
-  const stagePosition = Number(sourceStep?.position || 0)
-  const targetSteps = allSteps.filter(step => step.path_id === targetPathID).sort((left, right) => left.position - right.position)
-  const nextStep = targetSteps[stagePosition]
-  if (!nextStep || nextStep.node_type !== 'server_inbound' || (nextStep.transport_mode || 'sing_box') !== 'sing_box') {
-    return { ok: false, summary: '分流后的第一跳必须是受控 sing-box 入口' }
-  }
-  const inbound = ((data.inbounds || []) as Inbound[]).find(item => item.id === Number(nextStep.inbound_id || 0))
+  const inbounds = (data.inbounds || []) as Inbound[]
+  const hops = ((data.proxy_path_steps || []) as ProxyPathStep[]).filter(step => step.path_id === pathID)
+  const remaining = collapseFamilyBranchStepsForUI(Number(sourceServer?.id || 0), hops, inbounds)
+  if (!remaining.length) return { ok: true, summary: `${template.name} · ${family === 'ipv4' ? 'IPv4' : 'IPv6'} 本机继续` }
+  const first = remaining[0]
+  const mode = first.transport_mode || 'singbox'
+  if (mode === 'port_forward') return { ok: false, summary: '双栈模板不能使用透明端口转发' }
+  if (hops[0] && hops[0].id === first.id && mode === 'tunnel') return { ok: false, summary: '双栈模板第一跳不能使用隧道' }
+  if (first.node_type === 'warp' || first.node_type === 'imported') return { ok: true, summary: `${template.name} · ${first.node_type === 'warp' ? 'WARP' : '导入节点'}` }
+  if (mode === 'tunnel') return { ok: true, summary: `${template.name} · 隧道` }
+  if (mode !== 'singbox' || first.node_type !== 'server_inbound') return { ok: false, summary: '分流后的第一跳必须是受控 sing-box 入口' }
+  const inbound = inbounds.find(item => item.id === Number(first.inbound_id || 0))
   if (inbound && inbound.enabled === false) return { ok: false, summary: `${inbound.name} 已停用` }
-  const targetServerID = Number(inbound?.server_id || nextStep.server_id || 0)
+  const targetServerID = Number(inbound?.server_id || first.server_id || 0)
   const targetServer = ((data.servers || []) as Server[]).find(server => server.id === targetServerID)
   if (!targetServer) return { ok: false, summary: '目标受控服务器不存在' }
   if (targetServer.status !== 'online') return { ok: false, summary: `${targetServer.name} 当前离线` }
-  const mode = inbound?.entry_ip_mode && inbound.entry_ip_mode !== 'auto' ? inbound.entry_ip_mode : targetServer.entry_ip_mode
-  if (mode === 'ipv4' && family === 'ipv6' || mode === 'ipv6' && family === 'ipv4') {
-    return { ok: false, summary: `${targetServer.name} 的入口策略固定为 ${mode === 'ipv4' ? 'IPv4' : 'IPv6'}` }
+  const entryMode = inbound?.entry_ip_mode && inbound.entry_ip_mode !== 'auto' ? inbound.entry_ip_mode : targetServer.entry_ip_mode
+  if (entryMode === 'ipv4' && family === 'ipv6' || entryMode === 'ipv6' && family === 'ipv4') {
+    return { ok: false, summary: `${targetServer.name} 的入口策略固定为 ${entryMode === 'ipv4' ? 'IPv4' : 'IPv6'}` }
   }
   const listenIP = effectiveRoutingListenIP(targetServer, inbound)
   const listenSupportsFamily = listenIP === '::' || family === 'ipv4' && !listenIP.includes(':') || family === 'ipv6' && listenIP.includes(':')
   if (!listenSupportsFamily) return { ok: false, summary: `${targetServer.name} 的监听地址 ${listenIP} 不接受 ${family === 'ipv4' ? 'IPv4' : 'IPv6'}` }
   const familyAddress = family === 'ipv4' ? targetServer.public_ipv4 : targetServer.public_ipv6 || targetServer.interface_ipv6
   if (!familyAddress) return { ok: false, summary: `${targetServer.name} 缺少 ${family === 'ipv4' ? 'IPv4' : 'IPv6'} 入口地址` }
-  return { ok: true, summary: `${targetPath.name || `分支 ${targetPath.id}`} · ${targetServer.name} · ${familyAddress}` }
+  return { ok: true, summary: `${template.name} · ${targetServer.name} · ${familyAddress}` }
 }
 
 function routingMatchJSON(kind: RoutingMatchKind, value: string) {
@@ -14395,7 +14415,7 @@ function RoutingActionIcon({ action }: { action: RouteAction }) {
   return <Network size={15} aria-hidden="true" />
 }
 
-function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel, onSubmit }: { draft: RoutingDraft; setDraft: React.Dispatch<React.SetStateAction<RoutingDraft | null>>; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel, onSubmit, onOpenTemplateEditor }: { draft: RoutingDraft; setDraft: React.Dispatch<React.SetStateAction<RoutingDraft | null>>; data: any; client: ReturnType<typeof api>; load: () => Promise<void>; onCancel: () => void; onSubmit: () => Promise<void>; onOpenTemplateEditor?: (templateID?: number) => void }) {
   const dialogs = useDialogs()
   const [draggedRuleID, setDraggedRuleID] = useState(0)
   const [ruleSetQuery, setRuleSetQuery] = useState('')
@@ -14406,7 +14426,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [mobileTab, setMobileTab] = useState<'editor' | 'list'>('editor')
   const update = (patch: Partial<RoutingDraft>) => setDraft(old => old ? { ...old, ...patch } : old)
-  const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
+  const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false && path.kind !== 'family_branch')
   const virtualInbound = ((data.inbounds || []) as Inbound[]).find(inbound => inbound.id === draft.inbound_id)
   const stages = routingStages(data, draft.proxy_path_id, draft.inbound_id)
   const selectedStage = stages.find(stage => stage.stepID === draft.stage_step_id) || stages[0]
@@ -14438,14 +14458,14 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
   const externalOutbounds = (data.external_outbounds || []).filter((item: ExternalOutbound) => item.scope === 'global' || !item.server_id || item.server_id === Number(selectedStage?.serverID || draft.server_id))
   const sourcePath = paths.find(path => path.id === draft.proxy_path_id)
   const targetPaths = paths.filter(path => path.id !== draft.proxy_path_id && path.kind !== 'direct' && path.inbound_id === sourcePath?.inbound_id)
-  const familyTargetPaths = paths.filter(path => path.kind !== 'direct' && path.inbound_id === sourcePath?.inbound_id)
+  const familyTemplates = ((data.family_split_templates || []) as FamilySplitTemplate[])
   const selectedStageServer = ((data.servers || []) as Server[]).find(server => server.id === Number(selectedStage?.serverID || draft.server_id))
-  const ipv4BranchReadiness = routingFamilyBranchReadiness(data, draft.proxy_path_id, draft.stage_step_id, selectedStageServer, draft.ipv4_target_proxy_path_id, 'ipv4')
-  const ipv6BranchReadiness = routingFamilyBranchReadiness(data, draft.proxy_path_id, draft.stage_step_id, selectedStageServer, draft.ipv6_target_proxy_path_id, 'ipv6')
+  const ipv4BranchReadiness = routingFamilyTemplateReadiness(data, selectedStageServer, draft.family_split_template_id, 'ipv4')
+  const ipv6BranchReadiness = routingFamilyTemplateReadiness(data, selectedStageServer, draft.family_split_template_id, 'ipv6')
   const familySplitIssues = draft.action === 'family_split' && draft.enabled ? [
     selectedStageServer?.status !== 'online' ? `${selectedStageServer?.name || '决策服务器'} 当前不在线` : '',
     !selectedStageServer?.kernel_capabilities?.includes('family_selector_v1') ? '决策服务器内核尚未上报 family_selector_v1，请先更新 Agent / 内核' : '',
-    draft.ipv4_target_proxy_path_id && draft.ipv4_target_proxy_path_id === draft.ipv6_target_proxy_path_id ? 'IPv4 与 IPv6 必须选择两条不同的代理分支' : '',
+    !draft.family_split_template_id ? '请选择双栈模板' : '',
     !ipv4BranchReadiness.ok ? ipv4BranchReadiness.summary : '',
     !ipv6BranchReadiness.ok ? ipv6BranchReadiness.summary : '',
   ].filter(Boolean) : []
@@ -14518,8 +14538,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
       server_id: selectedStage?.serverID || draft.server_id,
       action: source.action === 'proxy_path' || source.action === 'family_split' ? 'direct' : source.action,
       target_proxy_path_id: source.action === 'proxy_path' ? 0 : Number(source.target_proxy_path_id || 0),
-      ipv4_target_proxy_path_id: source.action === 'family_split' ? 0 : Number(source.ipv4_target_proxy_path_id || 0),
-      ipv6_target_proxy_path_id: source.action === 'family_split' ? 0 : Number(source.ipv6_target_proxy_path_id || 0),
+      family_split_template_id: source.action === 'family_split' ? 0 : Number(source.family_split_template_id || 0),
       sync_source_rule_id: source.id,
       sync_enabled: false,
     })
@@ -14676,7 +14695,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                         <span>{rule.action === 'proxy_path'
                           ? (paths.find(path => path.id === rule.target_proxy_path_id)?.name || '代理链路')
                           : rule.action === 'family_split'
-                            ? `IPv4 ${paths.find(path => path.id === rule.ipv4_target_proxy_path_id)?.name || '未选择'} / IPv6 ${paths.find(path => path.id === rule.ipv6_target_proxy_path_id)?.name || '未选择'}`
+                            ? (familyTemplates.find(item => item.id === rule.family_split_template_id)?.name || '双栈模板未选择')
                             : labelValue(rule.action)}</span>
                       </div>
                       {ruleSet && <small className="muted">{labelValue(ruleSet.format)} · {ruleSet.revision?.slice(0, 10) || '未同步'} · {labelValue(ruleSet.status)}</small>}
@@ -15137,27 +15156,16 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
             {draft.action === 'family_split' && (
               <div className="routing-action-target-panel">
                 <div className="routing-action-helper-hint" style={{ marginBottom: 10 }}>
-                  <strong>按目标地址家族选择既有分支</strong>：IPv4 / IPv6 字面量严格走对应分支；域名保留 A 与 AAAA，TCP 仅在首选家族连接失败时跨家族降级一次，UDP 只在建流时选择且不中途切换。
+                  <strong>按目标地址家族合并可复用双栈模板</strong>：IPv4 / IPv6 字面量严格走对应分支；域名保留 A 与 AAAA，TCP 仅在首选家族连接失败时跨家族降级一次，UDP 只在建流时选择且不中途切换。
                 </div>
-                <div className="form-grid two">
-                  <FormField label="IPv4 代理分支" hint={ipv4BranchReadiness.summary} required>
-                    <Select
-                      value={draft.ipv4_target_proxy_path_id}
-                      onChange={event => update({ ipv4_target_proxy_path_id: Number(event.target.value) })}
-                    >
-                      <option value={0}>选择 IPv4 分支</option>
-                      {familyTargetPaths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}{path.id === draft.proxy_path_id ? ' · 当前分支后续' : ''}</option>)}
-                    </Select>
-                  </FormField>
-                  <FormField label="IPv6 代理分支" hint={ipv6BranchReadiness.summary} required>
-                    <Select
-                      value={draft.ipv6_target_proxy_path_id}
-                      onChange={event => update({ ipv6_target_proxy_path_id: Number(event.target.value) })}
-                    >
-                      <option value={0}>选择 IPv6 分支</option>
-                      {familyTargetPaths.map(path => <option key={path.id} value={path.id}>{path.name || `分支 ${path.id}`}{path.id === draft.proxy_path_id ? ' · 当前分支后续' : ''}</option>)}
-                    </Select>
-                  </FormField>
+                <FormField label="双栈模板" hint={familyTemplates.find(item => item.id === draft.family_split_template_id)?.name || '选择已编排的 IPv4 / IPv6 模板'} required>
+                  <Select value={draft.family_split_template_id} onChange={event => update({ family_split_template_id: Number(event.target.value) })}>
+                    <option value={0}>选择双栈模板</option>
+                    {familyTemplates.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </Select>
+                </FormField>
+                <div className="dialog-actions" style={{ justifyContent: 'flex-start', padding: '4px 0 10px' }}>
+                  <button type="button" className="ghost" onClick={() => onOpenTemplateEditor?.(draft.family_split_template_id || 0)}>编排双栈模板</button>
                 </div>
                 <FormField label="域名家族优先级" hint="自动继承服务器 DNS 策略与有效 IP 栈；两族同等可用且服务器未指定偏好时保持 IPv4 优先。仅域名允许一次受控降级，IP 字面量不降级。">
                   <Select value={draft.family_dns_strategy} onChange={event => update({ family_dns_strategy: event.target.value as FamilyDNSStrategy })}>
@@ -15170,8 +15178,8 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                   <div className={ipv4BranchReadiness.ok ? '' : 'danger-text'}>IPv4：{ipv4BranchReadiness.ok ? '入口就绪 · ' : '阻塞 · '}{ipv4BranchReadiness.summary}</div>
                   <div className={ipv6BranchReadiness.ok ? '' : 'danger-text'}>IPv6：{ipv6BranchReadiness.ok ? '入口就绪 · ' : '阻塞 · '}{ipv6BranchReadiness.summary}</div>
                   {familySplitIssues.filter(issue => issue !== ipv4BranchReadiness.summary && issue !== ipv6BranchReadiness.summary).map(issue => <div key={issue} className="danger-text">阻塞 · {issue}</div>)}
-                  {!draft.enabled && <div>规则已停用，可保存当前选择；再次启用时会重新校验内核能力、在线状态与两族入口。</div>}
-                  {draft.enabled && !familySplitIssues.length && <div>一个逻辑入口与订阅节点将同时承载两条家族分支。</div>}
+                  {!draft.enabled && <div>规则已停用，可保存当前选择；再次启用时会重新校验内核能力、在线状态与模板入口。</div>}
+                  {draft.enabled && !familySplitIssues.length && <div>一个逻辑入口与订阅节点将同时承载模板中的两条家族分支。</div>}
                 </div>
               </div>
             )}
@@ -16970,6 +16978,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   const inboundByID = new Map<number, Inbound>(entries.map(x => [x.id, x]))
   const visibleRootEntryIDs = new Set(entries.filter(x => x.server_id === rootID).map(x => x.id))
   const visiblePaths: ProxyPath[] = (data.proxy_paths || []).filter((path: ProxyPath) => {
+    if (path.kind === 'family_branch') return false
     const root = inboundByID.get(path.inbound_id)
     return path.enabled !== false && root?.server_id === rootID
   })
@@ -17988,7 +17997,8 @@ function Outbounds({ data, client, load }: any) {
 function RoutingRules({ data, client, load }: any) {
   const dialogs = useDialogs()
   const [draft, setDraft] = useState<RoutingDraft | null>(null)
-  const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false)
+  const [familySplitEditor, setFamilySplitEditor] = useState<{ templateID?: number; select?: boolean } | null>(null)
+  const paths = ((data.proxy_paths || []) as ProxyPath[]).filter(path => path.enabled !== false && path.kind !== 'family_branch')
   const rules = ((data.routing_rules || []) as RoutingRule[]).filter(rule => rule.scope === 'path_stage')
   const ruleSets = ((data.routing_rule_sets || []) as RoutingRuleSet[])
   const openComposer = () => {
@@ -18029,8 +18039,7 @@ function RoutingRules({ data, client, load }: any) {
       if (draft.action === 'outbound' && draft.outbound_id) body.outbound_id = draft.outbound_id
       if (draft.action === 'external' && draft.external_outbound_id) body.external_outbound_id = draft.external_outbound_id
       if (draft.action === 'family_split') {
-        body.ipv4_target_proxy_path_id = draft.ipv4_target_proxy_path_id
-        body.ipv6_target_proxy_path_id = draft.ipv6_target_proxy_path_id
+        body.family_split_template_id = draft.family_split_template_id
         body.family_dns_strategy = draft.family_dns_strategy
       }
 	  if (draft.action === 'proxy_path' && draft.target_proxy_path_id) body.target_proxy_path_id = draft.target_proxy_path_id
@@ -18051,7 +18060,8 @@ function RoutingRules({ data, client, load }: any) {
     <Panel title="分流规则" actions={<button type="button" onClick={openComposer} disabled={!paths.length}><Workflow size={15} aria-hidden="true" />编排规则</button>}>
       {rows.length ? <Table rows={rows} actions={(row: any) => <button className="ghost icon-button danger-text" onClick={() => remove(client, `/routing-rules/${row._raw.id}`, load, dialogs, row._raw)} aria-label={`删除 ${row._raw.name}`} title="删除"><Trash2 size={14} /></button>} /> : <div className="automation-empty"><Workflow size={22} aria-hidden="true" /><span>暂无节点分流规则</span></div>}
     </Panel>
-    <AnimatePresence>{draft && <RoutingRuleDraftDialog draft={draft} setDraft={setDraft} data={data} client={client} load={load} onCancel={() => setDraft(null)} onSubmit={submit} />}</AnimatePresence>
+    <AnimatePresence>{draft && <RoutingRuleDraftDialog draft={draft} setDraft={setDraft} data={data} client={client} load={load} onCancel={() => setDraft(null)} onSubmit={submit} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>
+    <AnimatePresence>{familySplitEditor && <FamilySplitTemplateEditor data={data} client={client} load={load} chainMethods={proxyPathChainMethods} initialTemplateID={familySplitEditor.templateID} onClose={() => setFamilySplitEditor(null)} onSelect={familySplitEditor.select ? id => { setDraft(old => old ? { ...old, family_split_template_id: id, action: 'family_split' } : old); setFamilySplitEditor(null) } : undefined} />}</AnimatePresence>
   </>
 }
 

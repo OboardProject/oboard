@@ -297,8 +297,16 @@ func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs,
 		if !pathSet[path.ID] {
 			continue
 		}
-		if inbound, ok := inboundByID[path.InboundID]; ok {
-			serverIDs = append(serverIDs, inbound.ServerID)
+		if path.InboundID > 0 {
+			if inbound, ok := inboundByID[path.InboundID]; ok {
+				serverIDs = append(serverIDs, inbound.ServerID)
+			}
+		}
+		if path.Kind == model.ProxyPathKindFamilyBranch && path.TemplateID != nil {
+			grafts, err := s.store.ListFamilySplitTemplateGraftServerIDs(ctx, *path.TemplateID)
+			if err == nil {
+				serverIDs = append(serverIDs, grafts...)
+			}
 		}
 	}
 	for _, step := range data.ProxyPathSteps {
@@ -709,7 +717,7 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 		conflictMessages = append(conflictMessages, fmt.Sprintf("入口 %d 的直接出口分支 %s 位于同一位置；请只保留其中一条", conflict.InboundID, strings.Join(pathNames, "、")))
 	}
 	for _, rule := range data.RoutingRules {
-		if optionalIDInSet(rule.ProxyPathID, ignoredPathIDs) || optionalIDInSet(rule.TargetProxyPathID, ignoredPathIDs) || optionalIDInSet(rule.IPv4TargetProxyPathID, ignoredPathIDs) || optionalIDInSet(rule.IPv6TargetProxyPathID, ignoredPathIDs) {
+		if routingRuleTouchesIgnoredPaths(rule, ignoredPathIDs, data.ProxyPaths) {
 			affectedServerIDs[rule.ServerID] = true
 		}
 	}

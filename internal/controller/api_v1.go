@@ -1092,7 +1092,7 @@ func (s *Server) registerAutomationHandlers() {
 			for index := range request.Steps {
 				step := request.Steps[index]
 				step.ID, step.PathID, step.Position = maxStepID+int64(index)+1, path.ID, index+1
-				if err := s.normalizeProxyPathStepCandidate(ctx, &step); err != nil {
+				if err := s.normalizeProxyPathStepCandidate(ctx, &path, &step); err != nil {
 					return nil, err
 				}
 				steps[index] = step
@@ -1398,7 +1398,7 @@ func (s *Server) validateTopologyWriteCandidate(ctx context.Context, request top
 	for index := range request.Steps {
 		step := request.Steps[index]
 		step.ID, step.PathID, step.Position = nextStepID+int64(index), path.ID, index+1
-		if err := s.normalizeProxyPathStepCandidate(ctx, &step); err != nil {
+		if err := s.normalizeProxyPathStepCandidate(ctx, &path, &step); err != nil {
 			return nil, err
 		}
 		steps = append(steps, step)

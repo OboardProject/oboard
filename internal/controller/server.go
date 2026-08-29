@@ -355,6 +355,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/outbounds/", s.auth(s.outbounds, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules", s.auth(s.routingRules, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rules/", s.auth(s.routingRules, model.RoleOperator))
+	mux.HandleFunc("/api/v1/family-split-templates", s.auth(s.familySplitTemplates, model.RoleOperator))
+	mux.HandleFunc("/api/v1/family-split-templates/", s.auth(s.familySplitTemplates, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rule-sets", s.auth(s.routingRuleSets, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rule-sets/", s.auth(s.routingRuleSets, model.RoleOperator))
 	mux.HandleFunc("/api/v1/routing-rule-catalog", s.auth(s.routingRuleCatalog, model.RoleOperator))
@@ -1828,6 +1830,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		outbounds     []model.Outbound
 		rules         []model.RoutingRule
 		ruleSets      []model.RoutingRuleSet
+		templates     []model.FamilySplitTemplate
 		externals     []model.ExternalOutbound
 		paths         []model.ProxyPath
 		steps         []model.ProxyPathStep
@@ -1870,6 +1873,13 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err := timing.run("routing_rule_sets", func() error {
 			var listErr error
 			ruleSets, listErr = s.store.ListRoutingRuleSets(ctx)
+			return listErr
+		}); err != nil {
+			return err
+		}
+		if err := timing.run("family_split_templates", func() error {
+			var listErr error
+			templates, listErr = s.store.ListFamilySplitTemplates(ctx)
 			return listErr
 		}); err != nil {
 			return err
@@ -1965,6 +1975,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		out["outbounds"] = outbounds
 		out["routing_rules"] = rules
 		out["routing_rule_sets"] = ruleSets
+		out["family_split_templates"] = templates
 		out["external_outbounds"] = externals
 		out["proxy_paths"] = paths
 		out["proxy_path_steps"] = publicProxyPathSteps(steps)
@@ -2089,6 +2100,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		templates, err := s.store.ListFamilySplitTemplates(ctx)
+		if err != nil {
+			return err
+		}
 		inbounds, err := s.store.ListInbounds(ctx)
 		if err != nil {
 			return err
@@ -2115,6 +2130,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		out["routing_rules"] = rules
 		out["routing_rule_sets"] = ruleSets
+		out["family_split_templates"] = templates
 		out["inbounds"] = inbounds
 		out["proxy_paths"] = paths
 		out["proxy_path_steps"] = publicProxyPathSteps(steps)
@@ -7511,6 +7527,13 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 			fail(w, errors.New("ids must contain 1 to 256 items"), http.StatusBadRequest)
 			return
 		}
+		previous := make([]model.RoutingRule, 0, len(request.IDs))
+		for _, id := range request.IDs {
+			item, err := s.store.GetRoutingRule(r.Context(), id)
+			if err == nil {
+				previous = append(previous, *item)
+			}
+		}
 		if err := s.store.DeleteRoutingRules(r.Context(), request.IDs); err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, sql.ErrNoRows) {
@@ -7519,6 +7542,7 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, status)
 			return
 		}
+		s.syncFamilySplitTemplatesForRules(r.Context(), previous...)
 		write(w, http.StatusOK, map[string]any{"deleted_ids": request.IDs})
 		return
 	}
@@ -7567,6 +7591,7 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		s.syncFamilySplitTemplatesForRules(r.Context(), v)
 		auditReq(s, r, "create", "routing_rule", fmt.Sprint(v.ID))
 		write(w, 201, map[string]any{"routing_rule": v})
 	case http.MethodPatch:
@@ -7595,15 +7620,24 @@ func (s *Server) routingRules(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		s.syncFamilySplitTemplatesForRules(r.Context(), *current, v)
 		write(w, 200, map[string]any{"routing_rule": v})
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
 			return
 		}
+		current, err := s.store.GetRoutingRule(r.Context(), id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			fail(w, err, 500)
+			return
+		}
 		if err := s.store.Delete(r.Context(), "routing_rules", id); err != nil {
 			fail(w, err, 500)
 			return
+		}
+		if current != nil {
+			s.syncFamilySplitTemplatesForRules(r.Context(), *current)
 		}
 		write(w, 200, map[string]any{"deleted": true})
 	default:
@@ -7685,8 +7719,7 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 		v.ProxyPathID = nil
 		v.StageStepID = nil
 		v.TargetProxyPathID = nil
-		v.IPv4TargetProxyPathID = nil
-		v.IPv6TargetProxyPathID = nil
+		v.FamilySplitTemplateID = nil
 		v.FamilyDNSStrategy = ""
 		v.RuleSetID = nil
 		v.MatchSource = model.RoutingMatchSourceInline
@@ -7738,8 +7771,7 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 		return fmt.Errorf("server %d: %w", v.ServerID, err)
 	}
 	if v.Action != model.RouteActionFamilySplit {
-		v.IPv4TargetProxyPathID = nil
-		v.IPv6TargetProxyPathID = nil
+		v.FamilySplitTemplateID = nil
 		v.FamilyDNSStrategy = ""
 	}
 	switch v.Action {
@@ -7791,14 +7823,8 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 		if v.Scope != model.RoutingRuleScopePathStage || v.ProxyPathID == nil {
 			return errors.New("family_split action requires a path_stage routing rule")
 		}
-		if v.IPv4TargetProxyPathID == nil || *v.IPv4TargetProxyPathID <= 0 {
-			return errors.New("ipv4_target_proxy_path_id required")
-		}
-		if v.IPv6TargetProxyPathID == nil || *v.IPv6TargetProxyPathID <= 0 {
-			return errors.New("ipv6_target_proxy_path_id required")
-		}
-		if *v.IPv4TargetProxyPathID == *v.IPv6TargetProxyPathID {
-			return errors.New("IPv4 and IPv6 family branches must use different proxy paths")
+		if v.FamilySplitTemplateID == nil || *v.FamilySplitTemplateID <= 0 {
+			return errors.New("family_split_template_id required")
 		}
 		if v.FamilyDNSStrategy == "" {
 			v.FamilyDNSStrategy = model.FamilyDNSStrategyAuto
@@ -7815,7 +7841,7 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 		if !v.Enabled {
 			return nil
 		}
-		return s.validateRoutingRuleFamilySplit(ctx, *v.ProxyPathID, v.StageStepID, *v.IPv4TargetProxyPathID, *v.IPv6TargetProxyPathID, v.ID)
+		return s.validateFamilyBranchGraft(ctx, *v.ProxyPathID, v.StageStepID, *v.FamilySplitTemplateID, v.ID)
 	case model.RouteActionInterface:
 		v.InterfaceName = strings.TrimSpace(v.InterfaceName)
 		if v.InterfaceName == "" {
@@ -8103,7 +8129,7 @@ func (s *Server) validateRoutingRuleTargetPath(ctx context.Context, sourcePathID
 		if item.ID == ruleID {
 			continue
 		}
-		appendRoutingRulePathEdges(edges, item)
+		s.appendRoutingRulePathEdges(ctx, edges, item)
 	}
 	edges[sourcePathID] = append(edges[sourcePathID], targetPathID)
 	if routingPathReachable(edges, targetPathID, sourcePathID, map[int64]bool{}) {
@@ -8165,7 +8191,7 @@ func (s *Server) validateRoutingRuleTargetCandidate(ctx context.Context, rule mo
 		if item.ID == rule.ID {
 			continue
 		}
-		appendRoutingRulePathEdges(edges, item)
+		s.appendRoutingRulePathEdges(ctx, edges, item)
 	}
 	edges[sourcePath.ID] = append(edges[sourcePath.ID], targetPath.ID)
 	if routingPathReachable(edges, targetPath.ID, sourcePath.ID, map[int64]bool{}) {
@@ -8174,22 +8200,35 @@ func (s *Server) validateRoutingRuleTargetCandidate(ctx context.Context, rule mo
 	return nil
 }
 
-func appendRoutingRulePathEdges(edges map[int64][]int64, rule model.RoutingRule) {
+func (s *Server) appendRoutingRulePathEdges(ctx context.Context, edges map[int64][]int64, rule model.RoutingRule) {
 	if !rule.Enabled || rule.ProxyPathID == nil {
 		return
 	}
 	sourcePathID := *rule.ProxyPathID
-	appendTarget := func(target *int64) {
-		if target != nil && *target > 0 && *target != sourcePathID {
-			edges[sourcePathID] = append(edges[sourcePathID], *target)
+	appendTarget := func(target int64) {
+		if target > 0 && target != sourcePathID {
+			edges[sourcePathID] = append(edges[sourcePathID], target)
 		}
 	}
 	switch rule.Action {
 	case model.RouteActionProxyPath:
-		appendTarget(rule.TargetProxyPathID)
+		if rule.TargetProxyPathID != nil {
+			appendTarget(*rule.TargetProxyPathID)
+		}
 	case model.RouteActionFamilySplit:
-		appendTarget(rule.IPv4TargetProxyPathID)
-		appendTarget(rule.IPv6TargetProxyPathID)
+		if rule.FamilySplitTemplateID == nil {
+			return
+		}
+		paths, err := s.store.ListProxyPaths(ctx)
+		if err != nil {
+			return
+		}
+		ipv4Path, ipv6Path, err := core.FamilySplitTemplatePaths(paths, *rule.FamilySplitTemplateID)
+		if err != nil {
+			return
+		}
+		appendTarget(ipv4Path.ID)
+		appendTarget(ipv6Path.ID)
 	}
 }
 
@@ -8962,6 +9001,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v := request.ProxyPath
+		if v.Kind == model.ProxyPathKindFamilyBranch {
+			fail(w, errors.New("family_branch 路径只能通过双栈模板接口创建"), 400)
+			return
+		}
 		if len(request.InitialSteps) > 0 {
 			s.createProxyPathComposition(w, r, &v, request.InitialSteps, request.RoutingRuleID)
 			return
@@ -9010,6 +9053,10 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 		current, err := s.store.GetProxyPath(r.Context(), id)
 		if err != nil {
 			fail(w, err, 404)
+			return
+		}
+		if current.Kind == model.ProxyPathKindFamilyBranch {
+			fail(w, errors.New("family_branch 路径只能通过双栈模板接口修改"), 400)
 			return
 		}
 		v := *current
@@ -9066,6 +9113,15 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		if id == 0 {
 			fail(w, errors.New("missing id"), 400)
+			return
+		}
+		currentPath, err := s.store.GetProxyPath(r.Context(), id)
+		if err != nil {
+			fail(w, err, 404)
+			return
+		}
+		if currentPath.Kind == model.ProxyPathKindFamilyBranch {
+			fail(w, errors.New("family_branch 路径只能通过双栈模板接口删除"), 400)
 			return
 		}
 		if _, err := s.guardAssignableNodeDelete(r.Context(), model.AssignableNodeProxyPath, id); err != nil {
@@ -9137,7 +9193,7 @@ func (s *Server) createProxyPathComposition(w http.ResponseWriter, r *http.Reque
 		step.PathID = path.ID
 		maxStepID++
 		step.ID = maxStepID
-		if err := s.normalizeProxyPathStepCandidate(r.Context(), step); err != nil {
+		if err := s.normalizeProxyPathStepCandidate(r.Context(), path, step); err != nil {
 			fail(w, err, http.StatusBadRequest)
 			return
 		}
@@ -9432,26 +9488,41 @@ func (s *Server) validateProxyPath(ctx context.Context, v *model.ProxyPath) erro
 		v.Kind = model.ProxyPathKindChain
 	}
 	switch v.Kind {
-	case model.ProxyPathKindChain, model.ProxyPathKindDirect:
+	case model.ProxyPathKindChain, model.ProxyPathKindDirect, model.ProxyPathKindFamilyBranch:
 	default:
-		return errors.New("kind must be chain or direct")
+		return errors.New("kind must be chain, direct or family_branch")
 	}
 	if v.Kind == model.ProxyPathKindChain && v.BranchSourceStepID != nil {
 		return errors.New("普通代理路径不能设置 branch_source_step_id")
 	}
-	if v.InboundID == 0 {
+	if v.Kind == model.ProxyPathKindFamilyBranch {
+		if v.InboundID != 0 {
+			return errors.New("family_branch 不能绑定入口")
+		}
+		if v.TemplateID == nil || *v.TemplateID <= 0 {
+			return errors.New("template_id required")
+		}
+		if v.Family != model.FamilySplitFamilyIPv4 && v.Family != model.FamilySplitFamilyIPv6 {
+			return errors.New("family must be ipv4 or ipv6")
+		}
+		if v.BranchSourceStepID != nil {
+			return errors.New("family_branch 不能设置 branch_source_step_id")
+		}
+	} else if v.InboundID == 0 {
 		return errors.New("inbound_id required")
 	}
 	if err := normalizeRegionSelection(&v.ExitRegionMode, &v.ExitRegionCode, "exit region"); err != nil {
 		return err
 	}
-	_, err := s.store.GetInbound(ctx, v.InboundID)
-	if err != nil {
-		return fmt.Errorf("inbound_id: %w", err)
-	}
-	if v.Enabled {
-		if err := s.validateInboundPathReuse(ctx, v.InboundID, v.ID); err != nil {
-			return err
+	if v.Kind != model.ProxyPathKindFamilyBranch {
+		_, err := s.store.GetInbound(ctx, v.InboundID)
+		if err != nil {
+			return fmt.Errorf("inbound_id: %w", err)
+		}
+		if v.Enabled {
+			if err := s.validateInboundPathReuse(ctx, v.InboundID, v.ID); err != nil {
+				return err
+			}
 		}
 	}
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.ID)
@@ -9692,7 +9763,7 @@ func (s *Server) createProxyPathStepBatch(w http.ResponseWriter, r *http.Request
 		seenPositions[step.Position] = true
 		maxStepID++
 		step.ID = maxStepID
-		if err := s.normalizeProxyPathStepCandidate(r.Context(), step); err != nil {
+		if err := s.normalizeProxyPathStepCandidate(r.Context(), path, step); err != nil {
 			fail(w, err, http.StatusBadRequest)
 			return
 		}
@@ -10042,7 +10113,7 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	if v.Position <= 0 {
 		return errors.New("position must be >= 1")
 	}
-	if err := s.normalizeProxyPathStepCandidate(ctx, v); err != nil {
+	if err := s.normalizeProxyPathStepCandidate(ctx, path, v); err != nil {
 		return err
 	}
 	steps, err := s.store.ListProxyPathStepsForPath(ctx, v.PathID)
@@ -10054,7 +10125,13 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 			return errors.New("same path step position already exists")
 		}
 	}
-	if err := s.validateProxyPathServerLoop(ctx, path.InboundID, appendProxyPathStep(steps, *v, currentID)); err != nil {
+	merged := appendProxyPathStep(steps, *v, currentID)
+	if path.Kind == model.ProxyPathKindFamilyBranch {
+		if err := core.ValidateFamilyBranchTransport(merged); err != nil {
+			return err
+		}
+	}
+	if err := s.validateProxyPathServerLoop(ctx, path.InboundID, merged); err != nil {
 		return err
 	}
 	// Branch reuse is a property of the path set, not of one step. It is enforced
@@ -10063,7 +10140,7 @@ func (s *Server) validateProxyPathStep(ctx context.Context, v *model.ProxyPathSt
 	return nil
 }
 
-func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.ProxyPathStep) error {
+func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *model.ProxyPath, v *model.ProxyPathStep) error {
 	if v.TransportMode == "" {
 		v.TransportMode = model.ProxyPathTransportSingBox
 	}
@@ -10089,8 +10166,14 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.P
 		v.ServerID = nil
 		v.InboundID = nil
 		v.ExternalOutboundID = nil
-		v.ConfigJSON = "{}"
 		v.ProcessingRole = false
+		if path != nil && path.Kind == model.ProxyPathKindFamilyBranch {
+			if err := applyFamilyBranchBindConfig(v, cfg); err != nil {
+				return err
+			}
+		} else {
+			v.ConfigJSON = "{}"
+		}
 	case model.ProxyPathStepImported:
 		if v.TransportMode != model.ProxyPathTransportSingBox {
 			return errors.New("导入节点只能使用 sing-box 出站链，端口转发和隧道需要连接到可控服务器")
@@ -10103,6 +10186,11 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.P
 		}
 		if _, err := s.store.GetExternalOutbound(ctx, *v.ExternalOutboundID); err != nil {
 			return fmt.Errorf("external_outbound_id: %w", err)
+		}
+		if path != nil && path.Kind == model.ProxyPathKindFamilyBranch {
+			if err := applyFamilyBranchBindConfig(v, cfg); err != nil {
+				return err
+			}
 		}
 	case model.ProxyPathStepServerInbound:
 		v.ExternalOutboundID = nil
@@ -10147,6 +10235,20 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, v *model.P
 		default:
 			if err := normalizeProxyPathChainConfig(v, cfg); err != nil {
 				return err
+			}
+			if path != nil && path.Kind == model.ProxyPathKindFamilyBranch {
+				var managed map[string]any
+				if err := json.Unmarshal([]byte(v.ConfigJSON), &managed); err != nil {
+					return err
+				}
+				if err := mergeFamilyBranchBindFields(managed, cfg); err != nil {
+					return err
+				}
+				encoded, err := json.Marshal(managed)
+				if err != nil {
+					return err
+				}
+				v.ConfigJSON = string(encoded)
 			}
 		}
 	default:
@@ -10478,11 +10580,14 @@ func appendProxyPathStep(steps []model.ProxyPathStep, next model.ProxyPathStep, 
 }
 
 func (s *Server) validateProxyPathServerLoop(ctx context.Context, rootInboundID int64, steps []model.ProxyPathStep) error {
-	root, err := s.store.GetInbound(ctx, rootInboundID)
-	if err != nil {
-		return err
+	seen := map[int64]bool{}
+	if rootInboundID > 0 {
+		root, err := s.store.GetInbound(ctx, rootInboundID)
+		if err != nil {
+			return err
+		}
+		seen[root.ServerID] = true
 	}
-	seen := map[int64]bool{root.ServerID: true}
 	sort.SliceStable(steps, func(i, j int) bool {
 		if steps[i].Position == steps[j].Position {
 			return steps[i].ID < steps[j].ID
@@ -12463,7 +12568,7 @@ func routingConfigWithoutProxyPaths(data store.FullRoutingConfig, ignored map[in
 	data.ProxyPathSteps = steps
 	rules := data.RoutingRules[:0]
 	for _, rule := range data.RoutingRules {
-		if optionalIDInSet(rule.ProxyPathID, ignored) || optionalIDInSet(rule.TargetProxyPathID, ignored) || optionalIDInSet(rule.IPv4TargetProxyPathID, ignored) || optionalIDInSet(rule.IPv6TargetProxyPathID, ignored) {
+		if routingRuleTouchesIgnoredPaths(rule, ignored, data.ProxyPaths) {
 			continue
 		}
 		rules = append(rules, rule)
@@ -12495,6 +12600,57 @@ func routingConfigWithoutProxyPaths(data store.FullRoutingConfig, ignored map[in
 
 func optionalIDInSet(id *int64, set map[int64]bool) bool {
 	return id != nil && set[*id]
+}
+
+func routingRuleTouchesIgnoredPaths(rule model.RoutingRule, ignored map[int64]bool, paths []model.ProxyPath) bool {
+	if optionalIDInSet(rule.ProxyPathID, ignored) || optionalIDInSet(rule.TargetProxyPathID, ignored) {
+		return true
+	}
+	if rule.Action != model.RouteActionFamilySplit || rule.FamilySplitTemplateID == nil {
+		return false
+	}
+	for _, path := range paths {
+		if path.TemplateID != nil && *path.TemplateID == *rule.FamilySplitTemplateID && ignored[path.ID] {
+			return true
+		}
+	}
+	return false
+}
+
+func applyFamilyBranchBindConfig(v *model.ProxyPathStep, cfg map[string]any) error {
+	managed := map[string]any{}
+	if err := mergeFamilyBranchBindFields(managed, cfg); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(managed)
+	if err != nil {
+		return err
+	}
+	v.ConfigJSON = string(encoded)
+	return nil
+}
+
+func mergeFamilyBranchBindFields(dst, src map[string]any) error {
+	if dst == nil {
+		return errors.New("config is required")
+	}
+	encoded, err := json.Marshal(src)
+	if err != nil {
+		return err
+	}
+	binding, err := core.ParseFamilyBranchExitBinding(string(encoded))
+	if err != nil {
+		return err
+	}
+	delete(dst, "interface_name")
+	delete(dst, "source_prefix")
+	if binding.InterfaceName != "" {
+		dst["interface_name"] = binding.InterfaceName
+	}
+	if binding.SourcePrefix != "" {
+		dst["source_prefix"] = binding.SourcePrefix
+	}
+	return nil
 }
 
 func filterPortForwardsForServers(items []model.PortForward, allowed map[int64]bool) []model.PortForward {

@@ -471,22 +471,24 @@ func TestFamilySplitOutboundsForceTargetEntryFamilies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			entry := model.Server{ID: 1, Name: "entry", PublicIPv4: "203.0.113.1", PublicIPv6: "2001:db8::1", ListenIP: "::", IPStack: model.IPStackDualStack, Status: model.ServerOnline, PortRangeStart: 30000, PortRangeEnd: 30100}
 			root := model.Inbound{ID: 10, ServerID: entry.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "::", Port: 443, ConfigJSON: `{}`, Enabled: true}
-			ipv4Path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindChain, Name: "v4-path", InboundID: root.ID, Secret: "v4-path", Enabled: true}
-			ipv6Path := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindChain, Name: "v6-path", InboundID: root.ID, Secret: "v6-path", Enabled: true}
+			templateID := int64(9)
+			sourcePath := model.ProxyPath{ID: 40, Kind: model.ProxyPathKindDirect, Name: "source", InboundID: root.ID, Secret: "source", Enabled: true}
+			ipv4Path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindFamilyBranch, Name: "v4-path", TemplateID: &templateID, Family: model.FamilySplitFamilyIPv4, Secret: "v4-path", Enabled: true}
+			ipv6Path := model.ProxyPath{ID: 51, Kind: model.ProxyPathKindFamilyBranch, Name: "v6-path", TemplateID: &templateID, Family: model.FamilySplitFamilyIPv6, Secret: "v6-path", Enabled: true}
 			ipv4ServerID, ipv6ServerID := test.ipv4Server.ID, test.ipv6Server.ID
 			ipv4Step := model.ProxyPathStep{ID: 101, PathID: ipv4Path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv4ServerID}
 			ipv6Step := model.ProxyPathStep{ID: 201, PathID: ipv6Path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &ipv6ServerID}
-			ipv4PathID, ipv6PathID := ipv4Path.ID, ipv6Path.ID
+			sourcePathID := sourcePath.ID
 			rule := model.RoutingRule{
-				ID: 7, ServerID: entry.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &ipv4PathID,
+				ID: 7, ServerID: entry.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &sourcePathID,
 				SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "family", MatchJSON: `{}`,
-				Action: model.RouteActionFamilySplit, IPv4TargetProxyPathID: &ipv4PathID, IPv6TargetProxyPathID: &ipv6PathID,
+				Action: model.RouteActionFamilySplit, FamilySplitTemplateID: &templateID,
 				FamilyDNSStrategy: model.FamilyDNSStrategyAuto, Enabled: true,
 			}
 			user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 			config := mustServerConfig(t, entry, []model.Inbound{root}, []model.User{user}, ConfigOptions{
 				Servers: []model.Server{entry, test.ipv4Server, test.ipv6Server}, Inbounds: []model.Inbound{root},
-				ProxyPaths: []model.ProxyPath{ipv4Path, ipv6Path}, ProxyPathSteps: []model.ProxyPathStep{ipv4Step, ipv6Step},
+				ProxyPaths: []model.ProxyPath{sourcePath, ipv4Path, ipv6Path}, ProxyPathSteps: []model.ProxyPathStep{ipv4Step, ipv6Step},
 				InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}}, RoutingRules: []model.RoutingRule{rule},
 			})
 			selectorTag := routingRuleFamilySelectorTag(rule.ID)
@@ -504,11 +506,6 @@ func TestFamilySplitOutboundsForceTargetEntryFamilies(t *testing.T) {
 			}
 			if branch := findOutbound(config, ipv6BranchTag); branch["server"] != test.ipv6Server.PublicIPv6 {
 				t.Fatalf("IPv6 branch entry = %#v, want %s", branch, test.ipv6Server.PublicIPv6)
-			}
-			baseIPv4 := findOutbound(config, proxyPathStepTag(ipv4Path.ID, ipv4Step.Position))
-			baseIPv6 := findOutbound(config, proxyPathStepTag(ipv6Path.ID, ipv6Step.Position))
-			if baseIPv4["server"] == nil || baseIPv6["server"] == nil {
-				t.Fatalf("shared path outbounds were lost: v4=%#v v6=%#v", baseIPv4, baseIPv6)
 			}
 			matched := false
 			for _, route := range mapList(parseSingBoxConfig(t, config).Route["rules"]) {

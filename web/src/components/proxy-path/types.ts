@@ -173,7 +173,7 @@ export type ProxyPathNamePart =
 
 export type ProxyPath = {
   id: number
-  kind: 'chain' | 'direct'
+  kind: 'chain' | 'direct' | 'family_branch'
   branch_source_step_id?: number
   name: string
   name_mode: 'auto' | 'custom'
@@ -188,6 +188,17 @@ export type ProxyPath = {
   exit_region_error?: string
   exit_region_probed_at?: string
   enabled: boolean
+  template_id?: number
+  family?: 'ipv4' | 'ipv6' | ''
+}
+
+export type FamilySplitTemplate = {
+  id: number
+  name: string
+  ipv4_path_id: number
+  ipv6_path_id: number
+  created_at?: string
+  updated_at?: string
 }
 
 export type ProxyPathTransportMode = 'singbox' | 'port_forward' | 'tunnel'

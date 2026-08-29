@@ -20,7 +20,9 @@ import (
 // static and never modified by resource data.
 const mcpServerInstructions = `You are connected to the OBoard Controller through an authenticated MCP session.
 
-OBoard manages servers, Agent onboarding, inbounds, outbounds, routing rules, imported nodes, DNS and certificates, proxy paths, deployments, users and groups, subscriptions, forwarding, tunnels, port forwards, WARP, diagnostics, tasks, notifications, audit, and global settings.
+OBoard manages servers, Agent onboarding, inbounds, outbounds, routing rules, imported nodes, DNS and certificates, proxy paths, dual-stack family-split templates, deployments, users and groups, subscriptions, forwarding, tunnels, port forwards, WARP, diagnostics, tasks, notifications, audit, and global settings.
+
+IPv4/IPv6 dual-stack merge uses reusable family_split_templates. Create, rename, or delete them with family_split_templates.list/create/update/delete. Branch hops use existing proxy_path_steps on the template ipv4_path_id / ipv6_path_id. routing_rules.action=family_split requires family_split_template_id; family_dns_strategy stays on the rule. Do not point family_split at ordinary sibling branches. family_branch paths are not subscription nodes.
 
 For normal OBoard requests, call ` + "`oboard_task`" + ` FIRST with the user's goal. Do NOT read bootstrap or grant, call discover, or fetch capability schemas unless ` + "`oboard_task`" + ` returns ` + "`fallback_required`" + `.
 
