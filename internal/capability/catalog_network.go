@@ -95,7 +95,7 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"config_json": map[string]any{"type": "object"}, "default_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
 		"remark": stringValue, "enabled": boolValue,
 	}, "name", "kind")
-	subscriptionTemplateFormat := map[string]any{"type": "string", "enum": []string{"mihomo", "stash", "surfboard", "surge", "surge-mac", "loon", "egern", "shadowrocket", "qx", "sing-box", "sing-box-mieru", "v2ray", "v2ray-uri"}}
+	subscriptionTemplateFormat := map[string]any{"type": "string", "enum": []string{"mihomo", "stash", "surfboard", "surge", "surge-mac", "loon", "egern", "shadowrocket", "qx", "sing-box", "v2ray", "v2ray-uri"}}
 	subscriptionTemplate := closedObject(map[string]any{
 		"format": subscriptionTemplateFormat, "label": stringValue, "content": stringValue, "source": map[string]any{"type": "string", "enum": []string{"builtin", "custom"}},
 		"revision": map[string]any{"type": "integer"}, "builtin_digest": stringValue, "base_builtin_digest": stringValue,

@@ -2356,7 +2356,6 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-monitorable .server-time-issue,
 .server-card-monitorable .server-expiry-badge,
 .server-card-monitorable .server-version-update,
-.server-card-monitorable .server-offline-pill,
 .server-card-monitorable .server-metric-row.has-tip,
 .server-card-monitorable .server-address-block {
   position: relative;
@@ -2915,29 +2914,7 @@ button.server-address-line.copied:hover {
   background: var(--surface-3, rgba(127, 127, 127, 0.12)) !important;
 }
 
-.server-offline-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 20px;
-  height: 20px;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border));
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--danger-soft, rgba(239, 68, 68, 0.08)) 80%, var(--surface-2));
-  color: var(--text-secondary);
-  font-size: 10.5px;
-  font-weight: 550;
-  line-height: 1;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
 
-.server-offline-pill svg {
-  color: var(--danger);
-  flex-shrink: 0;
-}
 
 .server-display-tags-editor {
   display: grid;
@@ -3242,8 +3219,12 @@ button.server-address-line.copied:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 3px;
+  gap: 6px;
   margin-left: auto;
+}
+
+.server-card-head-actions .server-status-dot {
+  margin-right: 5px;
 }
 
 .server-status-dot {

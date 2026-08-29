@@ -296,7 +296,6 @@ const (
 	SubscriptionFormatShadowrocket SubscriptionFormat = "shadowrocket"
 	SubscriptionFormatQX           SubscriptionFormat = "qx"
 	SubscriptionFormatSingBox      SubscriptionFormat = "sing-box"
-	SubscriptionFormatSingBoxMieru SubscriptionFormat = "sing-box-mieru"
 	SubscriptionFormatV2Ray        SubscriptionFormat = "v2ray"
 	SubscriptionFormatV2RayURI     SubscriptionFormat = "v2ray-uri"
 )

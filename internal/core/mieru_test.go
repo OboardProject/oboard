@@ -116,13 +116,6 @@ func TestMieruSubscriptionFormatsAreExplicit(t *testing.T) {
 	if strings.Contains(official, `"type": "mieru"`) {
 		t.Fatalf("official sing-box subscription contains Mieru: %s", official)
 	}
-	extended, err := renderSingBoxMieruSubscription(nodes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(extended, `"type": "mieru"`) {
-		t.Fatalf("extended sing-box subscription omitted Mieru: %s", extended)
-	}
 	links, err := renderSubscriptionTarget([]SubscriptionNode{nodes[0]}, model.SubscriptionFormatShadowrocket)
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +148,6 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 		wantMieru bool
 	}{
 		{format: model.SubscriptionFormatSingBox},
-		{format: model.SubscriptionFormatSingBoxMieru, wantMieru: true},
 		{format: model.SubscriptionFormatMihomo, wantMieru: true},
 		{format: model.SubscriptionFormatShadowrocket, wantMieru: true},
 		{format: model.SubscriptionFormatV2RayURI},
@@ -183,22 +175,29 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 	}
 }
 
-func TestMieruExtendedSubscriptionPreservesDisjointRanges(t *testing.T) {
+func TestMieruShareURLPreservesDisjointRanges(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "secret"}
 	server := model.Server{ID: 1, Name: "Mieru", PublicIPv4: "203.0.113.1"}
 	inbound := model.Inbound{
 		ID: 1, ServerID: server.ID, Name: "Mieru", Protocol: model.ProtocolMieru, Port: 8964, Enabled: true,
 		ConfigJSON: `{"transport":"UDP","listen_ports":["9000-9001"]}`,
 	}
-	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatSingBoxMieru, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatShadowrocket, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(subscription, `"server_port": 8964`) || !strings.Contains(subscription, `"9000-9001"`) {
-		t.Fatalf("extended subscription lost Mieru ports:\n%s", subscription)
+	parsed, err := url.Parse(strings.TrimSpace(subscription))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(subscription, `"transport": "UDP"`) {
-		t.Fatalf("Mieru transport missing:\n%s", subscription)
+	if parsed.Scheme != "mierus" {
+		t.Fatalf("unexpected Mieru share URL: %s", subscription)
+	}
+	if got := parsed.Query()["port"]; !reflect.DeepEqual(got, []string{"8964", "9000-9001"}) {
+		t.Fatalf("share URL ports = %v", got)
+	}
+	if got := parsed.Query()["protocol"]; !reflect.DeepEqual(got, []string{"UDP", "UDP"}) {
+		t.Fatalf("share URL protocols = %v", got)
 	}
 }
 

@@ -712,7 +712,6 @@ func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 		"shadowrocket",
 		"qx",
 		"sing-box",
-		"sing-box-mieru",
 		"v2ray",
 		"v2ray-uri",
 		"auto",
@@ -724,7 +723,7 @@ func TestSubStoreTargetFormatsAreAccepted(t *testing.T) {
 }
 
 func TestPlainJSONSubscriptionFormatIsRejected(t *testing.T) {
-	for _, format := range []model.SubscriptionFormat{"plain-json", "plainjson", "plain json", "json", "clash", "clash-meta", "mieru"} {
+	for _, format := range []model.SubscriptionFormat{"plain-json", "plainjson", "plain json", "json", "clash", "clash-meta", "mieru", "sing-box-mieru"} {
 		if IsSupportedSubscriptionFormat(format) {
 			t.Fatalf("removed format %q is still accepted", format)
 		}

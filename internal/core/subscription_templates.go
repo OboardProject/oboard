@@ -41,7 +41,7 @@ func subscriptionTemplateMarkers(format model.SubscriptionFormat) []string {
 		return []string{MarkerProxiesYAML}
 	case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatSurfboard:
 		return []string{MarkerProxyLines, MarkerProxyGroupLines, MarkerPrimaryGroup}
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		return []string{MarkerOutboundsJSON, MarkerRouteRulesJSON}
 	case model.SubscriptionFormatShadowrocket, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
 		return []string{MarkerURILines}

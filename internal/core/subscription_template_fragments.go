@@ -33,7 +33,7 @@ func encodeProtocolFragment(proxy subscriptionProxy, format model.SubscriptionFo
 		return marshalSubscriptionYAML(item)
 	case model.SubscriptionFormatEgern:
 		return marshalSubscriptionYAML(egernProxyMap(proxy))
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		return encodeSingBoxOutboundFragment(proxy)
 	case model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatSurfboard, model.SubscriptionFormatLoon, model.SubscriptionFormatQX:
 		return renderLineForFormat(proxy, format)
@@ -84,7 +84,7 @@ func buildSubscriptionTemplateFragments(proxies []subscriptionProxy, format mode
 		}
 		fragments.values[MarkerProxyLines] = strings.TrimSuffix(lines, "\n")
 		fragments.values[MarkerProxyGroupLines] = encodeConfGroupLines(proxies, format)
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		outbounds, err := encodeSingBoxOutboundsJSON(proxies)
 		if err != nil {
 			return fragments, err
@@ -196,7 +196,7 @@ func validateRenderedSubscription(format model.SubscriptionFormat, body string) 
 		if err := yaml.Unmarshal([]byte(body), &parsed); err != nil {
 			return fmt.Errorf("rendered %s document is not valid YAML: %w", format, err)
 		}
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		var parsed any
 		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 			return fmt.Errorf("rendered %s document is not valid JSON: %w", format, err)

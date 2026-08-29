@@ -364,7 +364,7 @@ type RoutingRule = { id: number; server_id: number; scope?: 'server' | 'path_sta
 type RoutingRuleSet = { id: number; name: string; url: string; format: 'singbox_source' | 'singbox_binary' | 'mihomo_domain' | 'mihomo_ipcidr' | 'mihomo_classical' | 'blackmatrix_classical'; mihomo_behavior?: string; revision?: string; status: 'pending' | 'ready' | 'refreshing' | 'error'; last_error?: string; last_attempt_at?: string; last_success_at?: string }
 type RoutingRuleCatalogItem = { name: string; path: string; url: string; format: RoutingRuleSet['format']; category: string; size: number }
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
-type SubscriptionFormat = 'auto' | 'stash' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'sing-box-mieru' | 'v2ray' | 'v2ray-uri'
+type SubscriptionFormat = 'auto' | 'stash' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'v2ray' | 'v2ray-uri'
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
 type AuditRiskLevel = 'normal' | 'watch' | 'alert' | 'high' | 'critical' | 'confirmed'
 type GeoDatabaseStatus = { available: boolean; provider: string; version?: string; revision?: string; error?: string }
@@ -1466,7 +1466,6 @@ const subscriptionFormats: { value: SubscriptionFormat; label: string }[] = [
   { value: 'qx', label: 'Quantumult X' },
   { value: 'surfboard', label: 'Surfboard' },
   { value: 'sing-box', label: 'sing-box' },
-  { value: 'sing-box-mieru', label: 'sing-box + Mieru' },
   { value: 'v2ray', label: 'V2Ray' },
   { value: 'v2ray-uri', label: 'V2Ray URI' },
 ]
@@ -10031,12 +10030,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               <ServerExpiryBadge server={server} />
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
               {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
-              {!isOnline && (
-                <span className="server-offline-pill" title={server.last_seen_at ? `最后在线时间：${new Date(server.last_seen_at).toLocaleString()}` : '离线'}>
-                  <Power size={10} aria-hidden="true" />
-                  <span>{offlineAgoLabel(server.last_seen_at)}</span>
-                </span>
-              )}
             </div>
             <ServerAddressBadge server={server} />
           </div>
@@ -10168,14 +10161,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <span>时间异常</span>
           </button>}
           {uninstalling && <span className="status-pill warning">卸载中</span>}
-          {!isOnline && (
-            <span className="server-offline-pill" title={server.last_seen_at ? `最后在线时间：${new Date(server.last_seen_at).toLocaleString()}` : '离线'}>
-              <Power size={11} aria-hidden="true" />
-              <span>{offlineAgoLabel(server.last_seen_at)}</span>
-            </span>
-          )}
           <span className={`server-health-ring ${healthTone}`} title={server.latency_probe_enabled ? connectivityStatusLabel(server.connectivity_status) : '未配置延迟测试'} aria-hidden="true" />
-          <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} />
+          <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} title={!isOnline && server.last_seen_at ? `离线（${offlineAgoLabel(server.last_seen_at)}）` : isOnline ? '在线' : '离线'} />
           <ServerActionsDropdown server={server} role={role} onAction={onAction} />
         </div>
       </div>
@@ -19836,7 +19823,6 @@ function Tunnels({ data, client, load }: any) {
 const subscriptionClientIcons: Record<string, string> = {
   auto: clashMetaClientIcon,
   'sing-box': singBoxClientIcon,
-  'sing-box-mieru': singBoxClientIcon,
   mihomo: clashMetaClientIcon,
   stash: stashClientIcon,
   surge: surgeClientIcon,
@@ -19899,7 +19885,6 @@ const subscriptionClientFormats: Array<{ id: SubscriptionFormat; name: string; t
   { id: 'qx', name: 'Quantumult X', type: 'Conf' },
   { id: 'surfboard', name: 'Surfboard', type: 'Conf' },
   { id: 'sing-box', name: 'sing-box', type: 'Native JSON' },
-  { id: 'sing-box-mieru', name: 'sing-box + Mieru', type: 'Extended JSON' },
   { id: 'v2ray', name: 'V2Ray', type: 'Base64 URI' },
   { id: 'v2ray-uri', name: 'V2Ray URI', type: 'URI' },
 ]

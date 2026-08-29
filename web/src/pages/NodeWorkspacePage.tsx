@@ -12,7 +12,7 @@ type Node = { id: string; group_id: number; name: string; protocol: string; sour
 type ImportPreview = { nodes: Array<{ name: string; protocol: string; fingerprint: string }>; issues: Array<{ index: number; name?: string; message: string }> }
 type Workspace = { subject: { id: number; username: string; nickname?: string }; node_groups: Group[]; node_sources: Source[]; subscription_outputs: Output[] }
 
-const formats = ['auto', 'mihomo', 'stash', 'surge', 'surge-mac', 'loon', 'egern', 'shadowrocket', 'qx', 'surfboard', 'sing-box', 'sing-box-mieru', 'v2ray', 'v2ray-uri']
+const formats = ['auto', 'mihomo', 'stash', 'surge', 'surge-mac', 'loon', 'egern', 'shadowrocket', 'qx', 'surfboard', 'sing-box', 'v2ray', 'v2ray-uri']
 
 export function NodeWorkspacePage({ data, client, load, notify, legacySubscriptions }: { data: any; client: Client; load: () => Promise<void>; notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void; legacySubscriptions?: React.ReactNode }) {
   const isAdmin = hasManagementAccess(data.session?.role)

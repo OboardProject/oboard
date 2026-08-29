@@ -53,7 +53,7 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 	}
 	if proxy.Type == "vmess" || proxy.Type == "trojan" || proxy.Type == "tuic" {
 		switch format {
-		case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru,
+		case model.SubscriptionFormatSingBox,
 			model.SubscriptionFormatMihomo,
 			model.SubscriptionFormatStash, model.SubscriptionFormatShadowrocket,
 			model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
@@ -61,9 +61,6 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 		default:
 			return false
 		}
-	}
-	if format == model.SubscriptionFormatSingBoxMieru {
-		return proxy.Type != "ssh"
 	}
 	if proxy.Type == "mieru" {
 		switch format {
@@ -183,7 +180,7 @@ func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProx
 		return proxy.Version == SnellVersionV4
 	case model.SubscriptionFormatMihomo:
 		return proxy.Version == SnellVersionV4
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		return true
 	case model.SubscriptionFormatEgern:
 		return proxy.Version == SnellVersionV4

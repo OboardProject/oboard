@@ -230,7 +230,6 @@ func TestSubscriptionTargetCapabilityMatrix(t *testing.T) {
 		excludes   []string
 	}{
 		{format: model.SubscriptionFormatSingBox, proxyCount: 7, contains: []string{`"udp_over_tcp": {`, `"version": 2`, `"type": "snell"`, `"version": 4`, `"obfs_mode": "http"`}, excludes: []string{`"type": "mieru"`, `"version": 1`, `"padding_scheme"`, "oboard_group", "must-not-leak"}},
-		{format: model.SubscriptionFormatSingBoxMieru, proxyCount: 8, contains: []string{`"type": "mieru"`, `"server_port": 25250`, `"type": "snell"`}, excludes: []string{"padding_scheme", "oboard_group", "must-not-leak"}},
 		{format: model.SubscriptionFormatMihomo, proxyCount: 7, contains: []string{"reality-opts:", "udp-over-tcp: true", "udp-over-tcp-version: 2", "type: mieru", "port-range: 25250-25252", "traffic-pattern: AA==", "type: snell", "psk: snell-v4-psk", "obfs-opts:", "host: bing.com"}, excludes: []string{"udp-over-tcp-version: 1", "snell-v6-psk"}},
 		{format: model.SubscriptionFormatStash, proxyCount: 5, contains: []string{"auth: hy2-pass", "up-speed: 100", "down-speed: 200"}, excludes: []string{"type: mieru", "type: snell"}},
 		{format: model.SubscriptionFormatShadowrocket, proxyCount: 8, contains: []string{"vless://", "hysteria2://", "mierus://", "snell://", "version=4", "version=6"}, excludes: []string{"proxies:", "proxy-groups:", "rules:"}},
@@ -367,7 +366,6 @@ func TestSSHSubscriptionTargetMappings(t *testing.T) {
 func TestSSHSubscriptionIsOmittedFromUnsupportedTargets(t *testing.T) {
 	node := sshSubscriptionFixtureNode()
 	formats := []model.SubscriptionFormat{
-		model.SubscriptionFormatSingBoxMieru,
 		model.SubscriptionFormatLoon,
 		model.SubscriptionFormatQX,
 		model.SubscriptionFormatSurfboard,
@@ -744,7 +742,7 @@ func TestSubscriptionContentTypesMatchNativeTargets(t *testing.T) {
 func countRenderedSubscriptionProxies(t *testing.T, format model.SubscriptionFormat, output string) int {
 	t.Helper()
 	switch format {
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		var parsed SingBoxConfig
 		if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 			t.Fatal(err)

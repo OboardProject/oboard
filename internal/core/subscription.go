@@ -560,10 +560,6 @@ func renderSingBoxSubscription(nodes []SubscriptionNode) (string, error) {
 	return renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBox)
 }
 
-func renderSingBoxMieruSubscription(nodes []SubscriptionNode) (string, error) {
-	return renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBoxMieru)
-}
-
 func querySuffix(q url.Values) string {
 	if len(q) == 0 {
 		return ""
@@ -589,8 +585,6 @@ func normalizeSubscriptionFormat(format model.SubscriptionFormat) model.Subscrip
 		return model.SubscriptionFormatSingBox
 	case "auto":
 		return model.SubscriptionFormatAuto
-	case "sing-box-mieru", "singbox-mieru", "singboxmieru":
-		return model.SubscriptionFormatSingBoxMieru
 	case "stash":
 		return model.SubscriptionFormatStash
 	case "mihomo":
@@ -634,7 +628,6 @@ func ConcreteSubscriptionFormats() []model.SubscriptionFormat {
 		model.SubscriptionFormatShadowrocket,
 		model.SubscriptionFormatQX,
 		model.SubscriptionFormatSingBox,
-		model.SubscriptionFormatSingBoxMieru,
 		model.SubscriptionFormatV2Ray,
 		model.SubscriptionFormatV2RayURI,
 	}
@@ -667,7 +660,7 @@ func IsSupportedSubscriptionFormat(format model.SubscriptionFormat) bool {
 
 func SubscriptionContentType(format model.SubscriptionFormat) string {
 	switch normalizeSubscriptionFormat(format) {
-	case model.SubscriptionFormatSingBox, model.SubscriptionFormatSingBoxMieru:
+	case model.SubscriptionFormatSingBox:
 		return "application/json"
 	case model.SubscriptionFormatMihomo, model.SubscriptionFormatStash, model.SubscriptionFormatEgern:
 		return "text/yaml; charset=utf-8"
@@ -700,8 +693,6 @@ func SubscriptionFormatLabel(format model.SubscriptionFormat) string {
 		return "Quantumult X"
 	case model.SubscriptionFormatSingBox:
 		return "sing-box"
-	case model.SubscriptionFormatSingBoxMieru:
-		return "sing-box + Mieru"
 	case model.SubscriptionFormatV2Ray:
 		return "V2Ray"
 	case model.SubscriptionFormatV2RayURI:

@@ -22,7 +22,7 @@ func TestRemovedSubscriptionFormatsReturn400(t *testing.T) {
 	adminToken := login["token"].(string)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{"username": "sub-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
 	token := created["user"].(map[string]any)["subscription_token"].(string)
-	for _, format := range []string{"clash", "clash-meta", "mieru"} {
+	for _, format := range []string{"clash", "clash-meta", "mieru", "sing-box-mieru"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/"+token+"?format="+format, nil)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
