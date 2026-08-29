@@ -7335,19 +7335,36 @@ const serverSettingTabs = [
 
 type ServerSettingsTab = typeof serverSettingTabs[number]['id']
 
-function serverAddressBadge(server: Server) {
-  const v4 = String(server.public_ipv4 || '').trim()
-  const v6 = String(server.public_ipv6 || server.interface_ipv6 || '').trim()
-  const tone = v4 && v6 ? 'dual' as const : v6 && !v4 ? 'v6' as const : 'v4' as const
-  return { v4, v6, tone }
+function serverCustomEntry(server: Server) {
+  if (String(server.entry_ip_mode || 'auto') !== 'custom') return ''
+  return String(server.entry_address || '').trim()
+}
+
+function ServerAddressLine({ family, value, copied, onCopy }: { family: 'v4' | 'v6'; value: string; copied: boolean; onCopy: () => void }) {
+  const label = family === 'v4' ? 'IPv4' : 'IPv6'
+  return (
+    <button
+      type="button"
+      className={`server-address-line${copied ? ' copied' : ''}`}
+      title={copied ? `已复制出口 ${label}` : `复制出口 ${label} ${value}`}
+      aria-label={`复制出口 ${label} ${value}`}
+      onClick={() => onCopy()}
+    >
+      <span className="server-address-family">{family}</span>
+      <span className="server-address-value">{value}</span>
+    </button>
+  )
 }
 
 function ServerAddressBadge({ server }: { server: Server }) {
-  const { v4, v6, tone } = serverAddressBadge(server)
-  const [copied, setCopied] = useState<'v4' | 'v6' | null>(null)
+  const v4 = String(server.public_ipv4 || '').trim()
+  const v6 = String(server.public_ipv6 || '').trim()
+  const entry = serverCustomEntry(server)
+  const [copied, setCopied] = useState<'v4' | 'v6' | 'entry' | null>(null)
   const copiedTimer = useRef(0)
+  const tipID = useId()
 
-  const copy = async (kind: 'v4' | 'v6', value: string) => {
+  const copy = async (kind: 'v4' | 'v6' | 'entry', value: string) => {
     const ok = await copyText(value)
     if (!ok) return
     window.clearTimeout(copiedTimer.current)
@@ -7357,32 +7374,29 @@ function ServerAddressBadge({ server }: { server: Server }) {
 
   useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
 
-  if (!v4 && !v6) {
-    return <span className="server-stack-badge v4" title="公网地址待检测">待检测</span>
-  }
-
-  if (v4 && v6) {
-    return (
-      <span className={`server-stack-badge dual${copied ? ' copied' : ''}`}>
-        <button type="button" className="server-stack-badge-part v4" title={copied === 'v4' ? '已复制 IPv4' : `复制 IPv4 ${v4}`} aria-label={`复制 IPv4 ${v4}`} onClick={() => void copy('v4', v4)}>{v4}</button>
-        <button type="button" className="server-stack-badge-part v6-tag" title={copied === 'v6' ? '已复制 IPv6' : `复制 IPv6 ${v6}`} aria-label={`复制 IPv6 ${v6}`} onClick={() => void copy('v6', v6)}>v6</button>
-      </span>
-    )
-  }
-
-  const kind = v4 ? 'v4' as const : 'v6' as const
-  const value = v4 || v6
-  const family = kind === 'v4' ? 'IPv4' : 'IPv6'
   return (
-    <button
-      type="button"
-      className={`server-stack-badge ${tone}${copied === kind ? ' copied' : ''}`}
-      title={copied === kind ? `已复制 ${family}` : `复制 ${family} ${value}`}
-      aria-label={`复制 ${family} ${value}`}
-      onClick={() => void copy(kind, value)}
-    >
-      {value}
-    </button>
+    <div className={`server-address-block${entry ? ' has-entry' : ''}`} aria-describedby={entry ? tipID : undefined}>
+      <span className="server-address-kicker">出口</span>
+      <div className="server-address-stack">
+        {v4 ? <ServerAddressLine family="v4" value={v4} copied={copied === 'v4'} onCopy={() => void copy('v4', v4)} /> : null}
+        {v6 ? <ServerAddressLine family="v6" value={v6} copied={copied === 'v6'} onCopy={() => void copy('v6', v6)} /> : null}
+        {!v4 && !v6 ? <span className="server-address-empty">待检测</span> : null}
+      </div>
+      {entry ? (
+        <div id={tipID} role="tooltip" className="server-address-entry-tip">
+          <span className="server-address-kicker">入口</span>
+          <button
+            type="button"
+            className={`server-address-line${copied === 'entry' ? ' copied' : ''}`}
+            title={copied === 'entry' ? '已复制入口' : `复制入口 ${entry}`}
+            aria-label={`复制入口 ${entry}`}
+            onClick={() => void copy('entry', entry)}
+          >
+            <span className="server-address-value">{entry}</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -9886,13 +9900,13 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <div className="server-list-identity-text">
             <div className="server-list-name-row">
               <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
-              <ServerAddressBadge server={server} />
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
               <ServerExpiryBadge server={server} />
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
               {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
             </div>
+            <ServerAddressBadge server={server} />
           </div>
         </div>
 
@@ -10006,8 +10020,8 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <div className="server-card-name-row">
               <h3>{server.name || `server-${server.id}`}</h3>
               <ExternalLink size={13} className="server-card-open-icon" aria-hidden="true" />
-              <ServerAddressBadge server={server} />
             </div>
+            <ServerAddressBadge server={server} />
           </div>
         </div>
         <div className="server-card-head-actions">

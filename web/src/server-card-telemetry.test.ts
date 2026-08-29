@@ -24,16 +24,18 @@ describe('server card latency sparkline', () => {
 })
 
 describe('server card address badge', () => {
-  it('puts the public IP in the former stack-badge slot and copies the clicked family', () => {
-    expect(mainSource).toContain('function serverAddressBadge')
+  it('stacks egress v4/v6 and copies a custom entry from the hover tip', () => {
+    expect(mainSource).toContain('function serverCustomEntry')
     expect(mainSource).toContain('function ServerAddressBadge')
     expect(mainSource).not.toContain('function serverStackBadge')
-    expect(mainSource).toContain('<ServerAddressBadge server={server} />')
-    expect(mainSource).toContain("const copy = async (kind: 'v4' | 'v6', value: string)")
-    expect(mainSource).toContain("onClick={() => void copy('v4', v4)}")
-    expect(mainSource).toContain("onClick={() => void copy('v6', v6)}")
-    expect(mainSource).toContain('复制 IPv4 ${v4}')
-    expect(mainSource).not.toContain('className={`server-stack-badge ${stack.tone}`}')
+    expect(mainSource).not.toContain('function serverAddressBadge')
+    expect(mainSource).toContain('<span className="server-address-kicker">出口</span>')
+    expect(mainSource).toContain('<span className="server-address-kicker">入口</span>')
+    expect(mainSource).toContain("family: 'v4' | 'v6'")
+    expect(mainSource).toContain("const copy = async (kind: 'v4' | 'v6' | 'entry', value: string)")
+    expect(mainSource).toContain("onClick={() => void copy('entry', entry)}")
+    expect(mainSource).toContain("const v6 = String(server.public_ipv6 || '').trim()")
+    expect(mainSource).not.toContain("const v6 = String(server.public_ipv6 || server.interface_ipv6")
   })
 })
 
