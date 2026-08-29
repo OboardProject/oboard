@@ -22,3 +22,16 @@ describe('server card latency sparkline', () => {
     expect(mainSource).toContain('values.flatMap((value, index) => value == null || !Number.isFinite(value) ? [] : [{ index, value }])')
   })
 })
+
+describe('server card action menu', () => {
+  const menuSource = readFileSync(new URL('./components/server/ServerActionMenu.tsx', import.meta.url), 'utf8')
+
+  it('keeps enroll command and agent update as top-level menu actions', () => {
+    expect(menuSource).toContain("label: '接入命令'")
+    expect(menuSource).toContain("type: 'enroll'")
+    expect(menuSource).toContain("label: '更新 Agent'")
+    expect(menuSource).toContain("type: 'update-agent'")
+    expect(mainSource).toContain("else if (type === 'update-agent') void updateAgent(s)")
+    expect(mainSource).toContain("else if (type === 'enroll') enroll(s)")
+  })
+})

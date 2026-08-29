@@ -8046,7 +8046,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'network') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'overview' }) }
     else if (type === 'system') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'overview' }) }
     else if (type === 'agent-config') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'settings' }) }
-    else if (type === 'update-agent') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'agent' }) }
+    else if (type === 'update-agent') void updateAgent(s)
     else if (type === 'enroll') enroll(s)
     else if (type === 'logs') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'logs' }) }
     else if (type === 'diagnose') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'diagnostics' }) }

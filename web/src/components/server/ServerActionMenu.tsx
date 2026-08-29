@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, MoreVertical } from 'lucide-react'
+import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, RefreshCw, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
 
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
@@ -27,22 +27,6 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
   const enrolled = Boolean(String(server.agent_id || '').trim())
   const isOnline = String(server.status || '').toLowerCase() === 'online'
 
-  // 7 fixed entries: 关于 / 基础设置 / 分隔 / 远程终端 / 网络 / 系统 / 任务记录 / 分隔 / 删除
-  // + conditional 接入 Agent when never enrolled (insert before 网络, sharing same divider block)
-  const mainItems: Item[] = !enrolled
-    ? [
-        { label: '接入 Agent', type: 'enroll', icon: Terminal, admin: true },
-        { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
-        { label: '网络', type: 'network', icon: Network },
-        { label: '系统', type: 'system', icon: Settings2 },
-        { label: '任务记录', type: 'tasks', icon: ClipboardList },
-      ]
-    : [
-        { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
-        { label: '网络', type: 'network', icon: Network },
-        { label: '系统', type: 'system', icon: Settings2 },
-        { label: '任务记录', type: 'tasks', icon: ClipboardList },
-      ]
   const groups: Array<{ items: Item[]; dividerBefore?: boolean }> = [
     {
       items: [
@@ -52,7 +36,19 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
     },
     {
       dividerBefore: true,
-      items: mainItems,
+      items: [
+        { label: '接入命令', type: 'enroll', icon: Terminal, admin: true },
+        ...(enrolled ? [{ label: '更新 Agent', type: 'update-agent', icon: RefreshCw, admin: true } satisfies Item] : []),
+      ],
+    },
+    {
+      dividerBefore: true,
+      items: [
+        { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
+        { label: '网络', type: 'network', icon: Network },
+        { label: '系统', type: 'system', icon: Settings2 },
+        { label: '任务记录', type: 'tasks', icon: ClipboardList },
+      ],
     },
     {
       dividerBefore: true,
