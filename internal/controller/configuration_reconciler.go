@@ -736,7 +736,7 @@ func (s *Server) configurationMutationResponse(ctx context.Context, body []byte,
 	}
 	response["desired_revision"] = revision
 	response["state_committed_at"] = time.Now().UTC()
-	response["configuration_sync"] = configurationSyncViews(filtered)
+	response["configuration_sync"] = s.configurationSyncViews(ctx, filtered)
 	encoded, err := json.Marshal(response)
 	if err != nil {
 		return body
@@ -754,7 +754,7 @@ func (s *Server) configurationSync(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	write(w, http.StatusOK, map[string]any{"configuration_sync": configurationSyncViews(states)})
+	write(w, http.StatusOK, map[string]any{"configuration_sync": s.configurationSyncViews(r.Context(), states)})
 }
 
 func (s *Server) configurationSyncRetry(w http.ResponseWriter, r *http.Request) {
@@ -781,10 +781,30 @@ func (s *Server) configurationSyncRetry(w http.ResponseWriter, r *http.Request) 
 	s.signalConfigurationReconcile()
 	s.publishRealtime("configuration", "deployments", "tasks")
 	states, _ := s.store.ListAllConfigurationSyncStates(r.Context())
-	write(w, http.StatusAccepted, map[string]any{"retried": count, "configuration_sync": configurationSyncViews(states)})
+	write(w, http.StatusAccepted, map[string]any{"retried": count, "configuration_sync": s.configurationSyncViews(r.Context(), states)})
 }
 
-func configurationSyncViews(states []store.ConfigurationSyncState) []map[string]any {
+func (s *Server) configurationSyncViews(ctx context.Context, states []store.ConfigurationSyncState) []map[string]any {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		logConfigurationError("list servers for sync views", err)
+		return configurationSyncViews(states, nil)
+	}
+	return configurationSyncViews(states, servers)
+}
+
+func configurationAgentReachable(server model.Server) bool {
+	if strings.TrimSpace(server.AgentID) == "" {
+		return false
+	}
+	return server.Status != model.ServerOffline
+}
+
+func configurationSyncViews(states []store.ConfigurationSyncState, servers []model.Server) []map[string]any {
+	byID := make(map[int64]model.Server, len(servers))
+	for _, server := range servers {
+		byID[server.ID] = server
+	}
 	out := make([]map[string]any, 0, len(states))
 	for _, state := range states {
 		item := map[string]any{
@@ -792,6 +812,9 @@ func configurationSyncViews(states []store.ConfigurationSyncState) []map[string]
 			"state": state.State, "config_version": state.LastConfigVersion,
 			"task_id": state.LastTaskID, "retry_count": state.RetryCount,
 			"changed_at": state.ChangedAt, "updated_at": state.UpdatedAt,
+		}
+		if server, ok := byID[state.ServerID]; ok {
+			item["agent_reachable"] = configurationAgentReachable(server)
 		}
 		if state.NextRetryAt != nil {
 			item["next_retry_at"] = state.NextRetryAt

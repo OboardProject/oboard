@@ -2675,7 +2675,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			fail(w, syncErr, http.StatusInternalServerError)
 			return
 		}
-		out["configuration_sync"] = configurationSyncViews(configurationStates)
+		out["configuration_sync"] = s.configurationSyncViews(ctx, configurationStates)
 	}
 	w.Header().Set("Server-Timing", timing.serverTiming())
 	timing.logSlowIfNeeded()

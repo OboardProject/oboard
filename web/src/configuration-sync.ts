@@ -6,6 +6,14 @@ export type ConfigurationSyncRow = {
   task_id?: number
   retry_count?: number
   error?: string
+  agent_reachable?: boolean
+}
+
+export type ConfigurationSyncServerRef = {
+  id: number
+  name?: string
+  status?: string
+  agent_id?: string
 }
 
 export type ConfigurationSyncPresentation = {
@@ -76,8 +84,18 @@ export function configurationSyncFailureIssues(rows: ConfigurationSyncRow[]): Co
 
 const configurationSyncBusyStates = ['pending', 'preparing', 'queued', 'running'] as const
 
-export function configurationSyncBusyRows(rows: ConfigurationSyncRow[]) {
-  return rows.filter(item => (configurationSyncBusyStates as readonly string[]).includes(item.state))
+export function configurationSyncAgentReachable(row: ConfigurationSyncRow, servers: ConfigurationSyncServerRef[] = []) {
+  if (row.agent_reachable === false) return false
+  if (row.agent_reachable === true) return true
+  const server = servers.find(item => Number(item.id) === Number(row.server_id))
+  if (!server) return true
+  if (server.agent_id !== undefined && !String(server.agent_id || '').trim()) return false
+  if (server.status !== undefined && String(server.status || '').toLowerCase() === 'offline') return false
+  return true
+}
+
+export function configurationSyncBusyRows(rows: ConfigurationSyncRow[], servers: ConfigurationSyncServerRef[] = []) {
+  return rows.filter(item => (configurationSyncBusyStates as readonly string[]).includes(item.state) && configurationSyncAgentReachable(item, servers))
 }
 
 export function configurationSyncBusyStateLabel(state: string) {
@@ -87,10 +105,11 @@ export function configurationSyncBusyStateLabel(state: string) {
   return '等待中'
 }
 
-export function configurationSyncPresentation(rows: ConfigurationSyncRow[], saving = false, retrying = false): ConfigurationSyncPresentation {
+export function configurationSyncPresentation(rows: ConfigurationSyncRow[], saving = false, retrying = false, servers: ConfigurationSyncServerRef[] = []): ConfigurationSyncPresentation {
   const failed = rows.filter(item => item.state === 'failed')
-  const active = configurationSyncBusyRows(rows)
-  const synced = rows.length > 0 && rows.every(item => item.state === 'synced')
+  const active = configurationSyncBusyRows(rows, servers)
+  const reachable = rows.filter(item => configurationSyncAgentReachable(item, servers))
+  const synced = reachable.length > 0 && reachable.every(item => item.state === 'synced')
   if (saving) return { tone: 'info', label: '正在保存...', retryServerIDs: [], busy: true }
   if (retrying) return { tone: 'info', label: '正在重试同步...', retryServerIDs: failed.map(item => item.server_id), busy: true }
   if (failed.length > 0) {

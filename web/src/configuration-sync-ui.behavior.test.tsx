@@ -56,7 +56,7 @@ describe('ConfigurationSyncStatus', () => {
         { server_id: 3, state: 'synced' },
         { server_id: 4, state: 'pending' },
       ]}
-      servers={[{ id: 1, name: '东京入口' }, { id: 2, name: '香港出口' }, { id: 3, name: '新加坡' }]}
+      servers={[{ id: 1, name: '东京入口', status: 'online', agent_id: 'agent-1' }, { id: 2, name: '香港出口', status: 'online', agent_id: 'agent-2' }, { id: 3, name: '新加坡', status: 'online', agent_id: 'agent-3' }]}
     />))
     const pill = container.querySelector('.deploy-status-pill.has-popover') as HTMLElement | null
     const popover = container.querySelector('[role="tooltip"]') as HTMLElement | null
@@ -71,6 +71,26 @@ describe('ConfigurationSyncStatus', () => {
     expect(popover?.textContent).toContain('排队中')
     expect(popover?.textContent).toContain('等待中')
     expect(popover?.textContent).not.toContain('新加坡')
+  })
+
+  it('does not wait on offline or unenrolled servers', () => {
+    act(() => root.render(<ConfigurationSyncStatus
+      rows={[
+        { server_id: 1, state: 'queued', agent_reachable: false },
+        { server_id: 2, state: 'pending' },
+        { server_id: 3, state: 'synced' },
+      ]}
+      servers={[
+        { id: 1, name: 'OC DE', status: 'offline', agent_id: 'agent-de' },
+        { id: 2, name: '待接入', status: 'unknown', agent_id: '' },
+        { id: 3, name: '9929', status: 'online', agent_id: 'agent-9929' },
+      ]}
+    />))
+    expect(container.textContent).toContain('配置已同步')
+    expect(container.textContent).not.toContain('正在同步')
+    expect(container.querySelector('[role="tooltip"]')).toBeNull()
+    expect(container.textContent).not.toContain('OC DE')
+    expect(container.textContent).not.toContain('排队中')
   })
 
   it('does not attach a syncing-server popover to idle, saving, or failed states', () => {

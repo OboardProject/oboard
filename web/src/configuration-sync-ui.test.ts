@@ -18,7 +18,7 @@ describe('configuration save UI contract', () => {
 
   it('shows save/sync state and exposes retry only through failed sync rows', () => {
     expect(main).toContain('<ConfigurationSyncStatus')
-    expect(syncStatus).toContain('configurationSyncPresentation(rows, saving, retrying)')
+    expect(syncStatus).toContain('configurationSyncPresentation(rows, saving, retrying, servers)')
     expect(syncStatus).toContain('configurationSyncFailureIssues(failed)')
     expect(syncStatus).toContain('onRetry?.()')
     expect(syncStatus).toContain('aria-haspopup="dialog"')

@@ -16,6 +16,25 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
+func TestConfigurationSyncViewsMarkUnreachableAgents(t *testing.T) {
+	states := []store.ConfigurationSyncState{
+		{ServerID: 1, WantedRevision: 9, State: "queued"},
+		{ServerID: 2, WantedRevision: 9, State: "pending"},
+		{ServerID: 3, WantedRevision: 9, State: "running"},
+	}
+	views := configurationSyncViews(states, []model.Server{
+		{ID: 1, Name: "offline", AgentID: "agent-offline", Status: model.ServerOffline},
+		{ID: 2, Name: "unenrolled", Status: model.ServerUnknown},
+		{ID: 3, Name: "online", AgentID: "agent-online", Status: model.ServerOnline},
+	})
+	if len(views) != 3 {
+		t.Fatalf("views = %#v", views)
+	}
+	if views[0]["agent_reachable"] != false || views[1]["agent_reachable"] != false || views[2]["agent_reachable"] != true {
+		t.Fatalf("agent reachability = %#v", views)
+	}
+}
+
 func TestConfigurationMutationClassification(t *testing.T) {
 	paths := []struct {
 		method string
@@ -259,7 +278,7 @@ func TestConfigurationWriteRespondsBeforeAsyncDeployment(t *testing.T) {
 		t.Fatalf("save response missing desired_revision: %#v", created)
 	}
 	syncRows, ok := created["configuration_sync"].([]any)
-	if !ok || len(syncRows) != 1 || syncRows[0].(map[string]any)["state"] != "pending" {
+	if !ok || len(syncRows) != 1 || syncRows[0].(map[string]any)["state"] != "pending" || syncRows[0].(map[string]any)["agent_reachable"] != false {
 		t.Fatalf("save response sync metadata = %#v", created["configuration_sync"])
 	}
 	state, err := db.ConfigurationSyncState(ctx, serverID)

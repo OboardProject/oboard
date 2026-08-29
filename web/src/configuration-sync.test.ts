@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
+import { configurationSyncAgentReachable, configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
 
 describe('configuration sync feedback', () => {
   it('shows local saving feedback synchronously before a response exists', () => {
@@ -51,6 +51,32 @@ describe('configuration sync feedback', () => {
     expect(configurationSyncBusyStateLabel('queued')).toBe('排队中')
     expect(configurationSyncBusyStateLabel('preparing')).toBe('准备中')
     expect(configurationSyncBusyStateLabel('pending')).toBe('等待中')
+  })
+
+  it('ignores offline and unenrolled servers in the sync wait', () => {
+    const rows = [
+      { server_id: 1, state: 'queued' as const, agent_reachable: false },
+      { server_id: 2, state: 'pending' as const },
+      { server_id: 3, state: 'running' as const },
+      { server_id: 4, state: 'synced' as const },
+    ]
+    const servers = [
+      { id: 2, name: '未接入节点', status: 'unknown', agent_id: '' },
+      { id: 3, name: '在线入口', status: 'online', agent_id: 'agent-3' },
+      { id: 4, name: '已同步', status: 'online', agent_id: 'agent-4' },
+    ]
+    expect(configurationSyncAgentReachable(rows[0], servers)).toBe(false)
+    expect(configurationSyncBusyRows(rows, servers).map(item => item.server_id)).toEqual([3])
+    expect(configurationSyncPresentation(rows, false, false, servers)).toMatchObject({ tone: 'info', label: '正在同步 1 台服务器', busy: true })
+    expect(configurationSyncPresentation([
+      { server_id: 1, state: 'queued', agent_reachable: false },
+      { server_id: 2, state: 'pending' },
+      { server_id: 4, state: 'synced' },
+    ], false, false, servers)).toMatchObject({ tone: 'ok', label: '配置已同步', busy: false })
+    expect(configurationSyncPresentation([
+      { server_id: 1, state: 'queued', agent_reachable: false },
+      { server_id: 2, state: 'pending' },
+    ], false, false, servers)).toMatchObject({ tone: 'warn', label: '配置已保存', busy: false })
   })
 
   it('merges desired revision and sync rows without discarding page entities', () => {
