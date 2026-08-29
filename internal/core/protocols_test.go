@@ -1945,6 +1945,89 @@ func TestValidateGeneratedSingBoxConfigRejectsUoTOnInbound(t *testing.T) {
 	}
 }
 
+func TestValidateGeneratedSingBoxConfigRejectsAnyTLSOutboundTFO(t *testing.T) {
+	config := SingBoxConfig{
+		DNS: map[string]any{"servers": []map[string]any{
+			{"type": "udp", "tag": "remote", "server": "1.1.1.1", "server_port": 53},
+		}, "final": "remote"},
+		Outbounds: []map[string]any{
+			{"type": "direct", "tag": "direct"},
+			{"type": "block", "tag": "block"},
+			{"type": "anytls", "tag": "anytls-out", "server": "anytls.example.com", "server_port": 443, "password": "secret", "tcp_fast_open": true},
+		},
+		Route: map[string]any{"final": "direct"},
+	}
+	err := ValidateGeneratedSingBoxConfig(config)
+	if err == nil || !strings.Contains(err.Error(), "tcp_fast_open is not supported with anytls outbound") {
+		t.Fatalf("error = %v, want anytls outbound TFO rejection", err)
+	}
+}
+
+func TestAnyTLSPathHopOmitsTCPFastOpen(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "edge-a", PublicIPv4: "203.0.113.1", IPStack: model.IPStackPreferIPv4}
+	serverB := model.Server{ID: 2, Name: "edge-b", PublicIPv4: "203.0.113.2", IPStack: model.IPStackPreferIPv4}
+	rootInbound := model.Inbound{ID: 10, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	targetInbound := model.Inbound{
+		ID: 20, ServerID: 2, Name: "next-anytls", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 8443, Enabled: true,
+		ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"},"tcp_fast_open":true}`,
+	}
+	path := model.ProxyPath{ID: 40, Name: "entry-via-anytls", InboundID: rootInbound.ID, Secret: "path-secret", Enabled: true}
+	targetID := targetInbound.ID
+	external := model.ExternalOutbound{
+		ID: 30, Name: "imported-anytls", Protocol: model.ProtocolAnyTLS, TargetAddress: "imported.example.com", TargetPort: 443, Enabled: true,
+		ConfigJSON: `{"type":"anytls","server":"imported.example.com","server_port":443,"password":"imported-pass","tcp_fast_open":true,"tls":{"enabled":true,"server_name":"imported.example.com"}}`,
+	}
+	externalID := external.ID
+	opts := ConfigOptions{
+		Servers:           []model.Server{serverA, serverB},
+		Inbounds:          []model.Inbound{rootInbound, targetInbound},
+		ExternalOutbounds: []model.ExternalOutbound{external},
+		ProxyPaths:        []model.ProxyPath{path},
+		ProxyPathSteps: []model.ProxyPathStep{
+			{ID: 1, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepImported, ExternalOutboundID: &externalID},
+			{ID: 2, PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, InboundID: &targetID},
+		},
+		InboundUsers: []model.InboundUser{{InboundID: rootInbound.ID, UserID: 1, Enabled: true}},
+	}
+	users := []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}}
+	config, err := GenerateServerConfigWithOptions(serverA, []model.Inbound{rootInbound, targetInbound}, nil, nil, users, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported := findOutbound(config, "path-40-step-1")
+	if imported["type"] != "anytls" {
+		t.Fatalf("imported hop = %#v", imported)
+	}
+	if _, exists := imported["tcp_fast_open"]; exists {
+		t.Fatalf("imported anytls hop still carries tcp_fast_open: %#v", imported)
+	}
+	hop := findOutbound(config, "path-40-step-2")
+	if hop["type"] != "anytls" || hop["detour"] != "path-40-step-1" {
+		t.Fatalf("controlled anytls hop = %#v", hop)
+	}
+	if _, exists := hop["tcp_fast_open"]; exists {
+		t.Fatalf("path anytls hop still carries tcp_fast_open: %#v", hop)
+	}
+	targetConfig, err := GenerateServerConfigWithOptions(serverB, []model.Inbound{rootInbound, targetInbound}, nil, nil, users, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed SingBoxConfig
+	if err := json.Unmarshal([]byte(targetConfig), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	var foundListen bool
+	for _, inbound := range parsed.Inbounds {
+		if inbound["tag"] == "in-20" {
+			foundListen = inbound["tcp_fast_open"] == true
+			break
+		}
+	}
+	if !foundListen {
+		t.Fatalf("target anytls inbound lost listen-side tcp_fast_open: %s", targetConfig)
+	}
+}
+
 func TestGeneratedConfigPassesOfficialSingBoxCheck(t *testing.T) {
 	bin, oboardSB := configuredSingBoxCheckBinary()
 	if bin == "" {

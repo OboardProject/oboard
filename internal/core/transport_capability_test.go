@@ -26,7 +26,8 @@ func TestValidateTransportOptionsMatrix(t *testing.T) {
 		{name: "brutal stays unexposed", protocol: model.ProtocolVLESS, configJSON: `{"multiplex":{"enabled":true,"brutal":{"enabled":true}}}`, side: transportSideOutbound, wantErr: "brutal"},
 		{name: "fractional stream limit", protocol: model.ProtocolVLESS, configJSON: `{"multiplex":{"enabled":true,"max_streams":1.5}}`, side: transportSideOutbound, wantErr: "non-negative integer"},
 		{name: "anytls rejects generic mux", protocol: model.ProtocolAnyTLS, configJSON: `{"multiplex":{"enabled":true}}`, side: transportSideInbound, wantErr: "does not support the sing-box multiplex option"},
-		{name: "anytls tfo", protocol: model.ProtocolAnyTLS, configJSON: `{"tcp_fast_open":true}`, side: transportSideInbound},
+		{name: "anytls inbound tfo", protocol: model.ProtocolAnyTLS, configJSON: `{"tcp_fast_open":true}`, side: transportSideInbound},
+		{name: "anytls outbound tfo stays in stored extra", protocol: model.ProtocolAnyTLS, configJSON: `{"tcp_fast_open":true}`, side: transportSideOutbound},
 		{name: "hy2 rejects generic mux", protocol: model.ProtocolHY2, configJSON: `{"multiplex":{"enabled":true}}`, side: transportSideInbound, wantErr: "QUIC"},
 		{name: "hy2 rejects tfo", protocol: model.ProtocolHY2, configJSON: `{"tcp_fast_open":true}`, side: transportSideInbound, wantErr: "QUIC over UDP"},
 		{name: "hy2 accepts disabled tfo", protocol: model.ProtocolHY2, configJSON: `{"tcp_fast_open":false}`, side: transportSideInbound},
@@ -105,5 +106,42 @@ func TestShadowsocksSubscriptionNodeCarriesMultiplexOrUoT(t *testing.T) {
 	}
 	if !udpOverTCPEnabled(uotNode["udp_over_tcp"]) {
 		t.Fatalf("uot node = %#v", uotNode)
+	}
+}
+
+func TestAnyTLSOutboundOmitsTCPFastOpen(t *testing.T) {
+	inbound := model.Inbound{
+		ID: 7, Name: "hk-anytls", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 443,
+		ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"},"tcp_fast_open":true}`,
+	}
+	listen, err := (anyTLSAdapter{}).Inbound(inbound, []model.User{{Username: "alice", ProxyPassword: "secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listen["tcp_fast_open"] != true {
+		t.Fatalf("anytls inbound lost tcp_fast_open: %#v", listen)
+	}
+	node, err := (anyTLSAdapter{}).SubscriptionNode(model.User{Username: "alice", ProxyPassword: "secret"}, inbound, model.Server{EntryAddress: "203.0.113.12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node["tcp_fast_open"] != true {
+		t.Fatalf("anytls subscription node lost tcp_fast_open: %#v", node)
+	}
+	if !InboundSupportsTCPFastOpen(inbound) {
+		t.Fatal("anytls inbound must still support listen-side TCP Fast Open")
+	}
+	if OutboundSupportsTCPFastOpen(model.ProtocolAnyTLS, inbound.ConfigJSON) {
+		t.Fatal("anytls kernel outbound must not advertise TCP Fast Open")
+	}
+	item, err := (anyTLSAdapter{}).Outbound(model.Outbound{
+		ID: 8, Protocol: model.ProtocolAnyTLS, TargetAddress: "203.0.113.12", TargetPort: 443,
+		ConfigJSON: `{"tcp_fast_open":true,"tls":{"enabled":true,"server_name":"anytls.example.com"}}`,
+	}, &model.User{Username: "alice", ProxyPassword: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := item["tcp_fast_open"]; exists {
+		t.Fatalf("anytls kernel outbound still carries tcp_fast_open: %#v", item)
 	}
 }

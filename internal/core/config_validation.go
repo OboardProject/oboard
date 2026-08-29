@@ -548,6 +548,9 @@ func (v *configValidator) validateRemoteAdapter(path, typ string, item map[strin
 		if strings.TrimSpace(stringFromAny(item["password"])) == "" {
 			v.addf("%s missing password", path)
 		}
+		if typ == "anytls" && boolValue(item["tcp_fast_open"]) {
+			v.addf("%s tcp_fast_open is not supported with anytls outbound", path)
+		}
 	case "shadowsocks":
 		method := stringFromAny(item["method"])
 		if method == "" {

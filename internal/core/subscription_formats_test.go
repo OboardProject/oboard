@@ -163,6 +163,27 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 	}
 }
 
+func TestTCPFastOpenAnyTLSSingBoxOmitsDialOption(t *testing.T) {
+	nodes := []SubscriptionNode{{Name: "AnyTLS TFO", Group: "自动选择", Raw: map[string]any{
+		"type": "anytls", "tag": "AnyTLS TFO", "server": "anytls.example.com", "server_port": 443, "password": "anytls-pass",
+		"tcp_fast_open": true, "tls": map[string]any{"enabled": true, "server_name": "anytls.example.com"},
+	}}}
+	singbox, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatSingBox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(singbox, `"tcp_fast_open"`) {
+		t.Fatalf("sing-box advertised tcp_fast_open for anytls:\n%s", singbox)
+	}
+	mihomo, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatMihomo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(mihomo, "tfo: true") {
+		t.Fatalf("mihomo lost AnyTLS tfo:\n%s", mihomo)
+	}
+}
+
 func TestSubscriptionNodesFollowInboundTCPFastOpenSwitch(t *testing.T) {
 	user := model.User{ID: 4, Username: "tfo-user", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "secret"}
 	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.21"}

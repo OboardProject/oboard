@@ -20,14 +20,16 @@ import (
 //   - TCPFastOpen is a shared listen/dial socket option. It is meaningful only
 //     where the protocol's data path really runs over TCP, so Hysteria2
 //     (QUIC/UDP) and WireGuard never expose it, and Mieru exposes it only in
-//     TCP transport mode.
+//     TCP transport mode. AnyTLS listen still uses TFO; the kernel and
+//     sing-box dialer must not, because upstream AnyTLS reads the remote
+//     address during handshake and crashes on a TFO lazy connection.
 //
 // Defaults: generic multiplex stays off for compatibility. TCP Fast Open is
 // enabled by default in builtin preset templates that have a TCP data path
 // (VLESS, AnyTLS, Shadowsocks, Mieru TCP, SOCKS5, Snell), but the listen
 // option only takes effect when the host `net.ipv4.tcp_fastopen` server bit
 // is set and can be disabled per inbound. Mieru UDP and Hysteria2 never
-// expose TFO.
+// expose TFO. Kernel AnyTLS outbounds and sing-box subscriptions omit it.
 type GenericMuxSupport string
 
 const (
@@ -58,6 +60,9 @@ const (
 	// TFOTransportTCP marks a protocol whose data path is TCP only in some
 	// transport modes (Mieru transport, VLESS v2ray transport).
 	TFOTransportTCP TFOSupport = "transport_tcp"
+	// TFOListenOnly marks a TCP data path whose listen socket accepts
+	// tcp_fast_open but whose kernel/sing-box dialer must not.
+	TFOListenOnly TFOSupport = "listen_only"
 )
 
 // TransportCapability is the per-protocol reuse/TFO capability record the
@@ -83,7 +88,7 @@ func (c TransportCapability) MayUseTCPFastOpen() bool {
 var protocolTransportCapabilities = map[model.Protocol]TransportCapability{
 	model.ProtocolVLESS:  {GenericMux: GenericMuxSingBox, NativeMux: NativeMuxNone, TFO: TFOTransportTCP},
 	model.ProtocolSS:     {GenericMux: GenericMuxSingBox, NativeMux: NativeMuxNone, TFO: TFOTCP},
-	model.ProtocolAnyTLS: {GenericMux: GenericMuxNone, NativeMux: NativeMuxAnyTLSSession, TFO: TFOTCP},
+	model.ProtocolAnyTLS: {GenericMux: GenericMuxNone, NativeMux: NativeMuxAnyTLSSession, TFO: TFOListenOnly},
 	model.ProtocolHY2:    {GenericMux: GenericMuxNone, NativeMux: NativeMuxQUICStream, TFO: TFOUnsupported},
 	model.ProtocolMieru:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxMieruLevel, TFO: TFOTransportTCP},
 	model.ProtocolSnell:  {GenericMux: GenericMuxNone, NativeMux: NativeMuxSnellReuse, TFO: TFOTCP},
@@ -107,17 +112,21 @@ func InboundSupportsTCPFastOpen(inbound model.Inbound) bool {
 	return protocolTCPDataPath(inbound.Protocol, parseExtra(inbound.ConfigJSON))
 }
 
-// OutboundSupportsTCPFastOpen mirrors InboundSupportsTCPFastOpen for the dial
-// side of a managed or imported outbound.
+// OutboundSupportsTCPFastOpen reports whether a kernel/sing-box dialer may
+// carry tcp_fast_open. AnyTLS is listen-only: inbound TFO stays valid, but the
+// generated outbound must omit the field.
 func OutboundSupportsTCPFastOpen(protocol model.Protocol, configJSON string) bool {
+	if ProtocolTransportCapability(protocol).TFO == TFOListenOnly {
+		return false
+	}
 	return protocolTCPDataPath(protocol, parseExtra(configJSON))
 }
 
 // protocolTCPDataPath decides whether a concrete configuration carries its
-// payload over TCP. Only that case makes tcp_fast_open meaningful.
+// payload over TCP. Only that case makes tcp_fast_open meaningful on listen.
 func protocolTCPDataPath(protocol model.Protocol, extra map[string]any) bool {
 	switch ProtocolTransportCapability(protocol).TFO {
-	case TFOTCP:
+	case TFOTCP, TFOListenOnly:
 		return true
 	case TFOTransportTCP:
 		switch protocol {
@@ -211,6 +220,9 @@ func tfoRejectionReason(protocol model.Protocol, capability TransportCapability)
 			return "the Hysteria2 data path is QUIC over UDP"
 		}
 		return "the data path does not run over TCP"
+	}
+	if capability.TFO == TFOListenOnly {
+		return "sing-box AnyTLS outbounds cannot use TCP Fast Open"
 	}
 	if protocol == model.ProtocolMieru {
 		return "UDP transport does not use a TCP socket"

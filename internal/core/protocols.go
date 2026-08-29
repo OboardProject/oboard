@@ -700,6 +700,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.Outbounds = append(config.Outbounds, familySplitOutbounds...)
+	omitUnsupportedDialTCPFastOpenAll(config.Outbounds)
 	for _, profile := range opts.WARPProfiles {
 		if !warpReferenced || profile.ServerID != server.ID || !profile.Enabled {
 			continue
@@ -932,6 +933,7 @@ func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Ser
 				raw["server_port"] = v.TargetPort
 			}
 			applyServerNetworkPolicy(raw, server, v.Protocol, false)
+			omitUnsupportedDialTCPFastOpen(raw)
 			return raw, nil
 		}
 	}
@@ -953,6 +955,7 @@ func externalOutboundToSingBoxWithTag(v model.ExternalOutbound, server model.Ser
 	}
 	item["tag"] = outboundTag
 	applyServerNetworkPolicy(item, server, v.Protocol, false)
+	omitUnsupportedDialTCPFastOpen(item)
 	return item, nil
 }
 
@@ -1641,6 +1644,7 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		}
 		item["tag"] = outboundTag
 		applyServerNetworkPolicy(item, sourceServer, inbound.Protocol, false)
+		omitUnsupportedDialTCPFastOpen(item)
 		return item, nil
 	default:
 		return nil, fmt.Errorf("unsupported node_type %q", step.NodeType)
@@ -3387,6 +3391,51 @@ func decodeSS2022Key(secret string, keyLen int) ([]byte, bool) {
 	return nil, false
 }
 
+func omitUnsupportedDialTCPFastOpenAll(outbounds []map[string]any) {
+	for _, item := range outbounds {
+		omitUnsupportedDialTCPFastOpen(item)
+	}
+}
+
+func omitUnsupportedDialTCPFastOpen(item map[string]any) {
+	if item == nil {
+		return
+	}
+	protocol := protocolFromKernelOutboundType(stringFromAny(item["type"]))
+	if protocol == "" {
+		return
+	}
+	encoded, err := json.Marshal(item)
+	configJSON := ""
+	if err == nil {
+		configJSON = string(encoded)
+	}
+	if !OutboundSupportsTCPFastOpen(protocol, configJSON) {
+		delete(item, "tcp_fast_open")
+	}
+}
+
+func protocolFromKernelOutboundType(typ string) model.Protocol {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "vless":
+		return model.ProtocolVLESS
+	case "hysteria2":
+		return model.ProtocolHY2
+	case "anytls":
+		return model.ProtocolAnyTLS
+	case "shadowsocks":
+		return model.ProtocolSS
+	case "mieru":
+		return model.ProtocolMieru
+	case "snell":
+		return model.ProtocolSnell
+	case "socks":
+		return model.ProtocolSocks
+	default:
+		return ""
+	}
+}
+
 func applyAllowed(dst map[string]any, extra map[string]any, keys ...string) {
 	for _, key := range keys {
 		if value, ok := extra[key]; ok && value != nil {
@@ -3615,10 +3664,11 @@ func (a anyTLSAdapter) Outbound(v model.Outbound, user *model.User) (map[string]
 	}
 	extra := parseExtra(v.ConfigJSON)
 	item := map[string]any{"type": "anytls", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "password": pass, "tls": defaultOutboundTLS(v.TargetAddress)}
-	applyAllowed(item, extra, "password", "tls", "idle_session_check_interval", "idle_session_timeout", "min_idle_session", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
+	applyAllowed(item, extra, "password", "tls", "idle_session_check_interval", "idle_session_timeout", "min_idle_session", "domain_resolver", "network_strategy", "fallback_delay")
 	if err := rejectDisabledTLS(item, "anytls"); err != nil {
 		return nil, err
 	}
+	omitUnsupportedDialTCPFastOpen(item)
 	return item, nil
 }
 func (a anyTLSAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {

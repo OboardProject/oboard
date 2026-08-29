@@ -6,14 +6,16 @@ import (
 
 func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionProxy) map[string]any {
 	// tcp_fast_open is a sing-box dial field, so it is allowed only for the
-	// types whose data path is TCP; QUIC-based hysteria2/tuic never carry it.
+	// types whose data path is TCP and whose sing-box dialer accepts it.
+	// QUIC-based hysteria2/tuic never carry it. AnyTLS listen may use TFO,
+	// but the sing-box AnyTLS outbound rejects it.
 	allowed := map[string][]string{
 		"vless":     {"uuid", "flow", "packet_encoding", "tls", "transport", "network", "multiplex", "tcp_fast_open"},
 		"vmess":     {"uuid", "security", "alter_id", "tls", "transport", "network", "multiplex", "tcp_fast_open"},
 		"trojan":    {"password", "tls", "transport", "network", "multiplex", "tcp_fast_open"},
 		"tuic":      {"uuid", "password", "congestion_control", "udp_relay_mode", "zero_rtt_handshake", "heartbeat", "tls"},
 		"hysteria2": {"password", "tls", "server_ports", "hop_interval", "hop_interval_max", "up_mbps", "down_mbps", "obfs", "network"},
-		"anytls":    {"password", "tls", "tcp_fast_open"},
+		"anytls":    {"password", "tls"},
 		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex", "tcp_fast_open"},
 		"socks5":    {"version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open"},
 		"ssh":       {"password", "host_key"},
