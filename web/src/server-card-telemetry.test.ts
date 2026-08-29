@@ -24,7 +24,9 @@ describe('server card latency sparkline', () => {
 })
 
 describe('server card address badge', () => {
-  it('places egress v4/v6 on one row and middle-ellipsizes IPv6 when space is tight', () => {
+  const styleSource = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
+
+  it('stacks egress v4/v6, keeps the server name visible, and middle-ellipsizes IPv6 when space is tight', () => {
     expect(mainSource).toContain('function serverCustomEntry')
     expect(mainSource).toContain('function ipv6DisplayParts')
     expect(mainSource).toContain('function ServerAddressBadge')
@@ -44,6 +46,9 @@ describe('server card address badge', () => {
     expect(mainSource).not.toContain('title={copied ? `已复制出口')
     expect(mainSource).toContain("const v6 = String(server.public_ipv6 || '').trim()")
     expect(mainSource).not.toContain("const v6 = String(server.public_ipv6 || server.interface_ipv6")
+    expect(styleSource).toMatch(/\.server-address-stack\s*\{[^}]*flex-direction:\s*column/)
+    expect(styleSource).toMatch(/\.server-card-name-row h3\s*\{[^}]*flex:\s*0 0 auto/)
+    expect(styleSource).toMatch(/\.server-address-block\s*\{[^}]*flex:\s*1 1 8\.5rem/)
   })
 })
 

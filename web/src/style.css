@@ -2486,7 +2486,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   overflow: hidden;
   text-align: left;
@@ -2494,11 +2494,11 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-card-name-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 2px 8px;
   min-width: 0;
   flex: 1 1 auto;
-  overflow: hidden;
 }
 
 .server-card-name-row h3 {
@@ -2509,16 +2509,18 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .server-address-block {
   position: relative;
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
-  flex: 0 1 auto;
+  flex: 1 1 8.5rem;
+  overflow: hidden;
 }
 
 .server-address-kicker {
@@ -2532,8 +2534,10 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-address-stack {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -2550,7 +2554,7 @@ button.server-address-line {
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  width: max-content;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   height: 14px;
@@ -2570,14 +2574,9 @@ button.server-address-line {
   cursor: copy;
 }
 
-button.server-address-line.v4 {
-  flex: 0 0 auto;
-}
-
+button.server-address-line.v4,
 button.server-address-line.v6 {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
+  flex: 0 1 auto;
 }
 
 button.server-address-line:hover,
@@ -3197,7 +3196,7 @@ button.server-address-line.copied:hover {
 }
 
 .server-card-head h3 {
-  margin: 0 0 2px;
+  margin: 0;
   overflow: hidden;
   color: var(--text-strong);
   font-size: 13px;
