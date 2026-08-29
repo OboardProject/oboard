@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal } from 'lucide-react'
+import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
 
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
@@ -142,7 +142,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
         aria-haspopup="menu"
         aria-expanded={isOpen}
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="8" cy="3" r="1.6" /><circle cx="8" cy="8" r="1.6" /><circle cx="8" cy="13" r="1.6" /></svg>
+        <MoreVertical size={16} aria-hidden="true" />
       </button>
       {isOpen && createPortal(
         <div
