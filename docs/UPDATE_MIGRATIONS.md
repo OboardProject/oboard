@@ -73,15 +73,15 @@
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
-| `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-pending` | 待发布 | 生效中 | - |
+| `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-c4c3e44e42d9` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
 
 ### controller-db-20260830-family-split-templates
 
 - **引入日期：** 2026-08-30
-- **引入提交：** `OboardProject/oboard@dev-pending`（待发布前以开发通道计）
-- **引入版本：** `dev-pending`
+- **引入提交：** `OboardProject/oboard@c4c3e44e42d9`（待发布前以开发通道计）
+- **引入版本：** `dev-c4c3e44e42d9`
 - **首次稳定版：** 待发布
 - **所有者：** Controller `internal/store`、`internal/model`、`internal/core`、`internal/controller`、`internal/capability`、`internal/application`、Web
 - **类别：** SQLite schema / data backfill
