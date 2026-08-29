@@ -24,11 +24,16 @@ describe('server card latency sparkline', () => {
 })
 
 describe('server card address badge', () => {
-  it('puts the public IP in the former stack-badge slot without a second header line', () => {
+  it('puts the public IP in the former stack-badge slot and copies the clicked family', () => {
     expect(mainSource).toContain('function serverAddressBadge')
+    expect(mainSource).toContain('function ServerAddressBadge')
     expect(mainSource).not.toContain('function serverStackBadge')
-    expect(mainSource).toContain('const label = v4 || v6 || \'待检测\'')
-    expect(mainSource).toContain('className={`server-stack-badge ${stack.tone}`}')
+    expect(mainSource).toContain('<ServerAddressBadge server={server} />')
+    expect(mainSource).toContain("const copy = async (kind: 'v4' | 'v6', value: string)")
+    expect(mainSource).toContain("onClick={() => void copy('v4', v4)}")
+    expect(mainSource).toContain("onClick={() => void copy('v6', v6)}")
+    expect(mainSource).toContain('复制 IPv4 ${v4}')
+    expect(mainSource).not.toContain('className={`server-stack-badge ${stack.tone}`}')
   })
 })
 

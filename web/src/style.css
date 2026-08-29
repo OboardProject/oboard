@@ -2514,15 +2514,19 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-stack-badge {
   flex: 0 1 auto;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
   max-width: 11.5em;
   height: 18px;
+  min-height: 18px;
   padding: 0 6px;
   overflow: hidden;
+  border: 0;
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--text-secondary);
+  box-shadow: none;
   font-size: 10px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -2530,9 +2534,69 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   line-height: 18px;
   white-space: nowrap;
   text-overflow: ellipsis;
+  gap: 0;
+}
+
+button.server-stack-badge {
+  cursor: copy;
+  justify-content: flex-start;
+  color: var(--text-secondary);
+}
+
+button.server-stack-badge:hover,
+button.server-stack-badge:active {
+  background: var(--surface-2);
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+
+.server-stack-badge-part {
+  min-height: 18px;
+  height: 18px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: copy;
+  gap: 0;
+}
+
+.server-stack-badge-part.v4 {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.server-stack-badge-part.v6-tag {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding-left: 4px;
+  border-left: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.server-stack-badge-part:hover,
+.server-stack-badge-part:active {
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
 }
 
 .server-stack-badge.dual {
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-2));
+  color: var(--primary);
+}
+
+button.server-stack-badge.dual:hover,
+button.server-stack-badge.dual:active {
   background: color-mix(in srgb, var(--primary) 12%, var(--surface-2));
   color: var(--primary);
 }
@@ -2542,9 +2606,20 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   color: #2563eb;
 }
 
+button.server-stack-badge.v6:hover,
+button.server-stack-badge.v6:active {
+  background: color-mix(in srgb, #2563eb 12%, var(--surface-2));
+  color: #2563eb;
+}
+
 .server-stack-badge.v4 {
   background: var(--surface-2);
   color: var(--text-secondary);
+}
+
+.server-stack-badge.copied,
+button.server-stack-badge.copied:hover {
+  color: var(--primary);
 }
 
 .server-metric-list {
