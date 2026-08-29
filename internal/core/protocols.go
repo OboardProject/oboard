@@ -3297,53 +3297,26 @@ func firstActiveUser(users []model.User) *model.User {
 	return nil
 }
 
-// InboundAuthCapabilities is the unified per-protocol auth model. It replaces the
-// scattered InboundSupportsMultipleUsers / protocolHasRoutingAuthUser helpers so
-// a newly added protocol capability cannot be missed in one path.
-type InboundAuthCapabilities struct {
-	MultiUser           bool
-	RoutingAuthUser     bool
-	HasServerCredential bool
-	HasUserCredential   bool
-}
-
-// AuthCapabilities returns the authoritative auth model for an inbound. All
-// proxy-path, rate-limit, audit and subscription paths must read this record
-// instead of guessing by protocol string.
-func AuthCapabilities(inbound model.Inbound) InboundAuthCapabilities {
+func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
 	switch inbound.Protocol {
-	case model.ProtocolVLESS:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
-	case model.ProtocolHY2:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
-	case model.ProtocolAnyTLS:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
-	case model.ProtocolMieru:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
-	case model.ProtocolSnell:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: true, HasUserCredential: true}
-	case model.ProtocolSocks:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
-	case model.ProtocolSSH:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
+	case model.ProtocolVLESS, model.ProtocolHY2, model.ProtocolAnyTLS, model.ProtocolMieru, model.ProtocolSocks, model.ProtocolSSH:
+		return true
 	case model.ProtocolSS:
 		method := stringValue(parseExtra(inbound.ConfigJSON), "method", "2022-blake3-aes-128-gcm")
-		multi := shadowsocksMethodSupportsUsers(method)
-		return InboundAuthCapabilities{MultiUser: multi, RoutingAuthUser: multi, HasServerCredential: multi, HasUserCredential: true}
+		return shadowsocksMethodSupportsUsers(method)
 	default:
-		return InboundAuthCapabilities{}
+		// Snell is a single-PSK protocol; the PSK resolves to the first bound
+		// user or the inbound's own psk.
+		return false
 	}
 }
 
-func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
-	return AuthCapabilities(inbound).MultiUser
-}
-
 // protocolHasRoutingAuthUser reports whether sing-box route rules can match
-// connections on this inbound by auth_user. Snell now participates as a normal
-// multi-user protocol with per-user userkey authentication.
+// connections on this inbound by auth_user. Snell authenticates with a single
+// PSK and never populates a routing username, so an auth_user constraint would
+// miss every connection and fall through to the default direct outbound.
 func protocolHasRoutingAuthUser(protocol model.Protocol) bool {
-	return AuthCapabilities(model.Inbound{Protocol: protocol}).RoutingAuthUser
+	return protocol != model.ProtocolSnell
 }
 
 func routingAuthUsersForProtocol(protocol model.Protocol, users []string) []string {
@@ -4024,11 +3997,9 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 //   - Version 5 is never emitted to clients: sing-box upstream does not
 //     implement a v5 outbound, so v5 nodes would not be usable.
 //
-// Snell is a multi-user protocol with a server PSK and per-user userkeys:
-// `config_json.psk` is the stable server credential, while each bound OBoard
-// user contributes a `users[].userkey` derived from their ProxyPassword and
-// `users[].name` derived from protocolAuthUsername. Branch users are emitted
-// as distinct identities in the same users set.
+// Snell is a single-PSK protocol. The PSK comes from the inbound's
+// `config_json.psk` or, when absent, from the first bound user's proxy
+// password (consistent with SS non-2022 behaviour).
 //
 // UDP relay rides on the established TCP stream, not on a native UDP
 // listener, so Snell inbounds remain TCP-only listeners and stay valid
@@ -4116,27 +4087,11 @@ func snellPanelVersion(extra map[string]any) (int, error) {
 	}
 }
 
-// snellServerPSK resolves the stable server PSK for an inbound. It is strictly
-// the inbound's config_json.psk and never falls back to a user password. The
-// PSK is expected to be persisted at creation time and remain unchanged when
-// users are added, removed, or rotate their passwords.
-func snellServerPSK(extra map[string]any) (string, error) {
-	psk := strings.TrimSpace(stringValue(extra, "psk", ""))
-	if psk == "" {
-		return "", errors.New("snell psk required (config_json.psk)")
-	}
-	version, err := snellPanelVersion(extra)
-	if err != nil {
-		return "", err
-	}
-	if err := validateSnellPSKLength(psk, version); err != nil {
-		return "", err
-	}
-	return psk, nil
-}
-
-// snellPSK is kept for migration only: it mirrors the old fallback (first bound
-// user password). New code must use snellServerPSK. Do not add new callers.
+// snellPSK resolves the single PSK for an inbound: config_json.psk wins, then
+// the first bound user's proxy password, then the profile/user fallback error.
+// Length policy follows the sing-box 1.14 documentation and sing-snell v6
+// server validation: v6 requires 12-255 bytes; v4 keeps a generous 8-byte
+// floor consistent with panel user password strength.
 func snellPSK(extra map[string]any, users []model.User) (string, error) {
 	psk := strings.TrimSpace(stringValue(extra, "psk", ""))
 	if psk == "" {
@@ -4158,31 +4113,6 @@ func snellPSK(extra map[string]any, users []model.User) (string, error) {
 		return "", err
 	}
 	return psk, nil
-}
-
-func snellUsers(users []model.User) []map[string]any {
-	out := make([]map[string]any, 0, len(users))
-	for _, user := range users {
-		if strings.TrimSpace(user.ProxyPassword) == "" {
-			continue
-		}
-		name := protocolAuthUsername(model.ProtocolSnell, user)
-		if strings.TrimSpace(name) == "" {
-			continue
-		}
-		out = append(out, map[string]any{"name": name, "userkey": user.ProxyPassword})
-	}
-	return out
-}
-
-func snellUserKey(user model.User) string {
-	return strings.TrimSpace(user.ProxyPassword)
-}
-
-// ValidateSnellPSKForVersion is the exported variant used by store migrations
-// and tests to validate a PSK against a panel version.
-func ValidateSnellPSKForVersion(psk string, version int) error {
-	return validateSnellPSKLength(psk, version)
 }
 
 // validateSnellPSKLength enforces the sing-box 1.14 Snell contract: v6 PSKs
@@ -4272,11 +4202,11 @@ func (a snellAdapter) Inbound(v model.Inbound, users []model.User) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	psk, err := snellServerPSK(extra)
+	psk, err := snellPSK(extra, users)
 	if err != nil {
 		return nil, err
 	}
-	item := map[string]any{"type": "snell", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "version": serverVersion, "psk": psk, "users": snellUsers(users)}
+	item := map[string]any{"type": "snell", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "version": serverVersion, "psk": psk}
 	if panelVersion == SnellVersionV4 {
 		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
 			return nil, err
@@ -4306,38 +4236,21 @@ func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 	if err != nil {
 		return nil, err
 	}
-	psk, err := snellServerPSK(extra)
-	if err != nil {
+	psk, err := snellPSK(extra, nil)
+	if err != nil || psk == "" {
 		if user != nil {
 			psk = strings.TrimSpace(user.ProxyPassword)
-			if psk != "" {
-				if verr := validateSnellPSKLength(psk, panelVersion); verr != nil {
-					return nil, verr
-				}
-			}
 		}
-		if psk == "" {
-			return nil, errors.New("snell psk required")
-		}
+	}
+	if psk == "" {
+		return nil, errors.New("snell psk required")
 	}
 	if clientVersion == SnellVersionV6 {
 		if err := validateSnellPSKLength(psk, SnellVersionV6); err != nil {
 			return nil, err
 		}
 	}
-	userkey := ""
-	if user != nil {
-		userkey = snellUserKey(*user)
-	} else {
-		userkey = strings.TrimSpace(stringValue(extra, "userkey", ""))
-		if userkey == "" {
-			userkey = strings.TrimSpace(stringValue(extra, "user_key", ""))
-		}
-	}
 	item := map[string]any{"type": "snell", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "version": clientVersion, "psk": psk}
-	if userkey != "" {
-		item["userkey"] = userkey
-	}
 	if snellReuse(extra) {
 		item["reuse"] = true
 	}
@@ -4373,15 +4286,11 @@ func (a snellAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	if err != nil {
 		return nil, err
 	}
-	psk, err := snellServerPSK(extra)
+	psk, err := snellPSK(extra, []model.User{user})
 	if err != nil {
 		return nil, err
 	}
-	userkey := snellUserKey(user)
-	if userkey == "" {
-		return nil, errors.New("snell userkey required (user proxy password)")
-	}
-	node := map[string]any{"type": "snell", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": clientVersion, "psk": psk, "userkey": userkey}
+	node := map[string]any{"type": "snell", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": clientVersion, "psk": psk}
 	if clientVersion == SnellVersionV4 {
 		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
 			return nil, err
