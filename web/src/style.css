@@ -2349,7 +2349,8 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-monitorable .server-expiry-badge,
 .server-card-monitorable .server-version-update,
 .server-card-monitorable .server-offline-badge,
-.server-card-monitorable .server-metric-row.has-tip {
+.server-card-monitorable .server-metric-row.has-tip,
+.server-card-monitorable .server-stack-badge {
   position: relative;
   z-index: 2;
 }
@@ -2512,17 +2513,23 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 }
 
 .server-stack-badge {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
+  flex: 0 1 auto;
+  display: inline-block;
+  min-width: 0;
+  max-width: 11.5em;
   height: 18px;
   padding: 0 6px;
+  overflow: hidden;
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--text-secondary);
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .server-stack-badge.dual {

@@ -23,6 +23,15 @@ describe('server card latency sparkline', () => {
   })
 })
 
+describe('server card address badge', () => {
+  it('puts the public IP in the former stack-badge slot without a second header line', () => {
+    expect(mainSource).toContain('function serverAddressBadge')
+    expect(mainSource).not.toContain('function serverStackBadge')
+    expect(mainSource).toContain('const label = v4 || v6 || \'待检测\'')
+    expect(mainSource).toContain('className={`server-stack-badge ${stack.tone}`}')
+  })
+})
+
 describe('server card action menu', () => {
   const menuSource = readFileSync(new URL('./components/server/ServerActionMenu.tsx', import.meta.url), 'utf8')
 

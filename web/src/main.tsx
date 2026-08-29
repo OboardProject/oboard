@@ -7335,12 +7335,13 @@ const serverSettingTabs = [
 
 type ServerSettingsTab = typeof serverSettingTabs[number]['id']
 
-function serverStackBadge(server: Server) {
-  const v4 = Boolean(String(server.public_ipv4 || '').trim())
-  const v6 = Boolean(String(server.public_ipv6 || server.interface_ipv6 || '').trim())
-  if (v4 && v6) return { label: '双栈', tone: 'dual' as const }
-  if (v6) return { label: 'IPv6', tone: 'v6' as const }
-  return { label: 'IPv4', tone: 'v4' as const }
+function serverAddressBadge(server: Server) {
+  const v4 = String(server.public_ipv4 || '').trim()
+  const v6 = String(server.public_ipv6 || server.interface_ipv6 || '').trim()
+  const tone = v4 && v6 ? 'dual' as const : v6 && !v4 ? 'v6' as const : 'v4' as const
+  const label = v4 || v6 || '待检测'
+  const title = [v4 && `IPv4 ${v4}`, v6 && `IPv6 ${v6}`].filter(Boolean).join(' · ') || '公网地址待检测'
+  return { label, tone, title }
 }
 
 function resourcePercent(used: number, total: number) {
@@ -9833,7 +9834,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
     const upRate = formatByteRate(server.network_upload_bps || 0)
     const totalTraffic = formatBytes(trafficTotalBytes)
     const limitTraffic = trafficLimitBytes > 0 ? formatBytes(trafficLimitBytes) : ''
-    const stack = serverStackBadge(server)
+    const stack = serverAddressBadge(server)
 
     return (
       <MotionCard tag="article" className="server-card server-list-row server-card-monitorable" hoverEffect={false}>
@@ -9845,7 +9846,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <div className="server-list-identity-text">
             <div className="server-list-name-row">
               <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
-              <span className={`server-stack-badge ${stack.tone}`}>{stack.label}</span>
+              <span className={`server-stack-badge ${stack.tone}`} title={stack.title}>{stack.label}</span>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
               <ServerExpiryBadge server={server} />
@@ -9930,7 +9931,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const cpuPercent = Number.isFinite(server.cpu_usage_percent) ? Number(server.cpu_usage_percent) : 0
   const memPercent = resourcePercent(server.memory_used_bytes, server.memory_total_bytes)
   const diskPercent = resourcePercent(server.disk_bytes, server.disk_total_bytes)
-  const stack = serverStackBadge(server)
+  const stack = serverAddressBadge(server)
   const enrolled = enrolledDaysLabel(server)
   const expiryLabel = cardExpiryLabel(server)
   const qualitySegs = qualitySegments(samples)
@@ -9966,7 +9967,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <div className="server-card-name-row">
               <h3>{server.name || `server-${server.id}`}</h3>
               <ExternalLink size={13} className="server-card-open-icon" aria-hidden="true" />
-              <span className={`server-stack-badge ${stack.tone}`}>{stack.label}</span>
+              <span className={`server-stack-badge ${stack.tone}`} title={stack.title}>{stack.label}</span>
             </div>
           </div>
         </div>
