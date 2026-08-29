@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -107,16 +108,85 @@ func TestRoutingRulesUseLatestAgentInterfaceIPStack(t *testing.T) {
 	if err := db.CreateTask(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CompleteTask(ctx, task.ID, "succeeded", `{"interfaces":[{"name":"he-ipv6","up":true,"running":true,"loopback":false,"addresses":["2001:470:1f00::2/64","fe80::1/64"]}]}`); err != nil {
+	if err := db.CompleteTask(ctx, task.ID, "succeeded", `{"interfaces":[{"name":"he-ipv6","up":true,"running":true,"loopback":false,"addresses":["2001:470:23:701::2/64","fe80::5216:1a9f/64"]}]}`); err != nil {
 		t.Fatal(err)
 	}
 	srv := newTestServer(db, "test-secret", "")
-	rules, err := srv.routingRulesWithInterfaceIPStacks(ctx, server.ID, []model.RoutingRule{{ServerID: server.ID, Action: model.RouteActionProxyPath, InterfaceName: "he-ipv6", Enabled: true}})
+	for _, action := range []model.RouteAction{model.RouteActionProxyPath, model.RouteActionInterface} {
+		rules, err := srv.routingRulesWithInterfaceIPStacks(ctx, server.ID, []model.RoutingRule{{ServerID: server.ID, Action: action, InterfaceName: "he-ipv6", Enabled: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rules) != 1 || rules[0].InterfaceIPStack != model.IPStackIPv6Only {
+			t.Fatalf("action %s resolved rules = %#v", action, rules)
+		}
+	}
+}
+
+func TestGenerateConfigInterfaceActionWARPUsesAgentIPv6Stack(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 1 || rules[0].InterfaceIPStack != model.IPStackIPv6Only {
-		t.Fatalf("resolved rules = %#v", rules)
+	defer db.Close()
+	ctx := context.Background()
+	node := &model.Server{Name: "NB TYO", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: node.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "alice", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	path := &model.ProxyPath{Kind: model.ProxyPathKindChain, InboundID: inbound.ID, NameMode: model.ProxyPathNameAuto, ExitRegionMode: "auto", Secret: "path-secret", Enabled: true}
+	if err := db.CreateProxyPath(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateProxyPathStep(ctx, &model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateWARPProfile(ctx, &model.WARPProfile{
+		ServerID: node.ID, Name: "warp", Status: model.WARPStatusReady, Enabled: true,
+		ConfigJSON: `{"type":"wireguard","address":["172.16.0.2/32"],"private_key":"private","peers":[{"address":"engage.cloudflareclient.com","port":2408,"public_key":"public","allowed_ips":["0.0.0.0/0","::/0"]}]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rule := &model.RoutingRule{
+		ServerID: node.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &path.ID,
+		SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "NB TYO-route",
+		MatchJSON: `{}`, Action: model.RouteActionInterface, InterfaceName: "he-ipv6", Enabled: true,
+	}
+	if err := db.CreateRoutingRule(ctx, rule); err != nil {
+		t.Fatal(err)
+	}
+	task := &model.AgentTask{ServerID: node.ID, Type: model.AgentTaskTypeListNetworkInterfaces, PayloadJSON: `{}`, Status: "pending", ResultJSON: `{}`, Nonce: "interfaces"}
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompleteTask(ctx, task.ID, "succeeded", `{"interfaces":[{"name":"he-ipv6","up":true,"running":true,"loopback":false,"addresses":["2001:470:23:701::2/64","fe80::5216:1a9f/64"]}]}`); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(db, "test-secret", "")
+	data, err := db.FullRoutingConfigData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := srv.generateServerCoreConfigWithLedger(ctx, *node, data, nil)
+	if err != nil {
+		t.Fatalf("generate with interface action: %v", err)
+	}
+	if _, err := srv.currentDeploymentProjection(ctx, *node, data, nil, nil, nil); err != nil {
+		t.Fatalf("projection with interface action: %v", err)
+	}
+	if !strings.Contains(generated.Config, `"bind_interface": "he-ipv6"`) {
+		t.Fatalf("generated config missing he-ipv6 bind: %s", generated.Config)
+	}
+	if !strings.Contains(generated.Config, `"strategy": "ipv6_only"`) {
+		t.Fatalf("generated config missing ipv6_only WARP resolver: %s", generated.Config)
 	}
 }
 

@@ -13146,21 +13146,20 @@ func deploymentConfigErrorStatus(err error) int {
 }
 
 func (s *Server) generateServerCoreConfigWithLedger(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger) (generatedServerCoreConfig, error) {
-	var err error
-	data.RoutingRules, err = s.routingRulesWithInterfaceIPStacks(ctx, server.ID, data.RoutingRules)
-	if err != nil {
-		return generatedServerCoreConfig{}, err
-	}
 	if ledger == nil {
 		ledger = core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
 	}
 	return s.generateServerCoreConfigInner(ctx, server, data, ledger, true)
 }
 
+func routingRuleUsesHostInterface(rule model.RoutingRule, serverID int64) bool {
+	return rule.Enabled && rule.ServerID == serverID && strings.TrimSpace(rule.InterfaceName) != ""
+}
+
 func (s *Server) routingRulesWithInterfaceIPStacks(ctx context.Context, serverID int64, rules []model.RoutingRule) ([]model.RoutingRule, error) {
 	needsInventory := false
 	for _, rule := range rules {
-		if rule.Enabled && rule.ServerID == serverID && rule.Action == model.RouteActionProxyPath && strings.TrimSpace(rule.InterfaceName) != "" {
+		if routingRuleUsesHostInterface(rule, serverID) {
 			needsInventory = true
 			break
 		}
@@ -13188,7 +13187,7 @@ func (s *Server) routingRulesWithInterfaceIPStacks(ctx context.Context, serverID
 	resolved := append([]model.RoutingRule(nil), rules...)
 	for index := range resolved {
 		rule := &resolved[index]
-		if rule.Enabled && rule.ServerID == serverID && rule.Action == model.RouteActionProxyPath && strings.TrimSpace(rule.InterfaceName) != "" {
+		if routingRuleUsesHostInterface(*rule, serverID) {
 			rule.InterfaceIPStack = stacks[strings.TrimSpace(rule.InterfaceName)]
 		}
 	}
@@ -13225,6 +13224,11 @@ func networkInterfaceIPStack(networkInterface model.NetworkInterfaceInfo) model.
 }
 
 func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger, includeTrafficRuntime bool) (generatedServerCoreConfig, error) {
+	var err error
+	data.RoutingRules, err = s.routingRulesWithInterfaceIPStacks(ctx, server.ID, data.RoutingRules)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	resolveRoutingProxyPathNames(&data)
 	inbounds, assets, err := s.prepareCertificateInbounds(ctx, data.Inbounds, server.ID)
 	if err != nil {

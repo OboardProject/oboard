@@ -463,6 +463,11 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 // it so prepare deploys exactly old-union-new and finalize exactly the new set,
 // independent of later plan edits.
 func (s *Server) generateServerCoreConfigForProjection(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger, snap *core.EffectiveAccessSnapshot) (generatedServerCoreConfig, error) {
+	var err error
+	data.RoutingRules, err = s.routingRulesWithInterfaceIPStacks(ctx, server.ID, data.RoutingRules)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	resolveRoutingProxyPathNames(&data)
 	inbounds, assets, err := s.prepareCertificateInbounds(ctx, data.Inbounds, server.ID)
 	if err != nil {
