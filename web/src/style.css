@@ -2356,7 +2356,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-card-monitorable .server-time-issue,
 .server-card-monitorable .server-expiry-badge,
 .server-card-monitorable .server-version-update,
-.server-card-monitorable .server-offline-badge,
+.server-card-monitorable .server-offline-pill,
 .server-card-monitorable .server-metric-row.has-tip,
 .server-card-monitorable .server-address-block {
   position: relative;
@@ -2907,34 +2907,42 @@ button.server-address-line.copied:hover {
 }
 
 .server-card.is-offline {
-  background:
-    repeating-linear-gradient(-45deg, transparent, transparent 8px, rgba(127, 127, 127, 0.05) 8px, rgba(127, 127, 127, 0.05) 16px),
-    var(--surface-solid);
+  background: var(--surface-solid);
 }
 
-.server-card.is-offline > *:not(.server-offline-badge):not(.server-monitor-open-overlay) {
-  filter: grayscale(1);
-  opacity: 0.72;
+.server-card.is-offline .server-metric-list,
+.server-card.is-offline .server-card-rates,
+.server-card.is-offline .server-card-quality-pair,
+.server-card.is-offline .server-card-life {
+  opacity: 0.6;
 }
 
-.server-offline-badge {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 3;
+.server-card.is-offline .server-quality-seg {
+  background: var(--surface-3, rgba(127, 127, 127, 0.12)) !important;
+}
+
+.server-offline-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-solid) 88%, #64748b);
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 700;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
+  gap: 4px;
+  min-height: 20px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, var(--border));
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--danger-soft, rgba(239, 68, 68, 0.08)) 80%, var(--surface-2));
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 550;
+  line-height: 1;
+  letter-spacing: -0.01em;
   white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.server-offline-pill svg {
+  color: var(--danger);
+  flex-shrink: 0;
 }
 
 .server-display-tags-editor {

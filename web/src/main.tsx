@@ -10031,6 +10031,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               <ServerExpiryBadge server={server} />
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
               {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
+              {!isOnline && (
+                <span className="server-offline-pill" title={server.last_seen_at ? `最后在线时间：${new Date(server.last_seen_at).toLocaleString()}` : '离线'}>
+                  <Power size={10} aria-hidden="true" />
+                  <span>{offlineAgoLabel(server.last_seen_at)}</span>
+                </span>
+              )}
             </div>
             <ServerAddressBadge server={server} />
           </div>
@@ -10133,12 +10139,6 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   return (
     <MotionCard tag="article" className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}`} hoverEffect={false}>
       <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
-      {!isOnline && (
-        <div className="server-offline-badge" aria-hidden="true">
-          <Power size={13} />
-          <span>{offlineAgoLabel(server.last_seen_at)}</span>
-        </div>
-      )}
       <div className="server-card-head">
         <div className="server-card-title">
           <RegionFlag code={serverRegionCode(server)} size={20} />
@@ -10171,6 +10171,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
             <span>时间异常</span>
           </button>}
           {uninstalling && <span className="status-pill warning">卸载中</span>}
+          {!isOnline && (
+            <span className="server-offline-pill" title={server.last_seen_at ? `最后在线时间：${new Date(server.last_seen_at).toLocaleString()}` : '离线'}>
+              <Power size={11} aria-hidden="true" />
+              <span>{offlineAgoLabel(server.last_seen_at)}</span>
+            </span>
+          )}
           <span className={`server-health-ring ${healthTone}`} title={server.latency_probe_enabled ? connectivityStatusLabel(server.connectivity_status) : '未配置延迟测试'} aria-hidden="true" />
           <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} aria-label={isOnline ? '在线' : '离线'} />
           <ServerActionsDropdown server={server} role={role} onAction={onAction} />
