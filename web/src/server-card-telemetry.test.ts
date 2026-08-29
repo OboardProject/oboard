@@ -24,14 +24,18 @@ describe('server card latency sparkline', () => {
 })
 
 describe('server card address badge', () => {
-  it('stacks egress v4/v6 and copies a custom entry from the hover tip', () => {
+  it('places egress v4/v6 on one row and middle-ellipsizes IPv6 when space is tight', () => {
     expect(mainSource).toContain('function serverCustomEntry')
+    expect(mainSource).toContain('function ipv6DisplayParts')
     expect(mainSource).toContain('function ServerAddressBadge')
     expect(mainSource).not.toContain('function serverStackBadge')
     expect(mainSource).not.toContain('function serverAddressBadge')
     expect(mainSource).toContain('<span className="server-address-kicker">出口</span>')
     expect(mainSource).toContain('<span className="server-address-kicker">入口</span>')
-    expect(mainSource).toContain("family: 'v4' | 'v6'")
+    expect(mainSource).toContain("className={`server-address-line ${family}${copied ? ' copied' : ''}`}")
+    expect(mainSource).toContain('server-address-value is-middle')
+    expect(mainSource).toContain('server-address-value-start')
+    expect(mainSource).toContain('server-address-value-end')
     expect(mainSource).toContain("const copy = async (kind: 'v4' | 'v6' | 'entry', value: string)")
     expect(mainSource).toContain("onClick={() => void copy('entry', entry)}")
     expect(mainSource).toContain("const v6 = String(server.public_ipv6 || '').trim()")

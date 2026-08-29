@@ -2525,22 +2525,26 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 .server-address-block {
   position: relative;
   min-width: 0;
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .server-address-kicker {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  line-height: 1.2;
+  line-height: 14px;
 }
 
 .server-address-stack {
-  display: grid;
-  gap: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .server-address-empty {
@@ -2575,6 +2579,16 @@ button.server-address-line {
   cursor: copy;
 }
 
+button.server-address-line.v4 {
+  flex: 0 0 auto;
+}
+
+button.server-address-line.v6 {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
 button.server-address-line:hover,
 button.server-address-line:active {
   background: transparent;
@@ -2599,6 +2613,25 @@ button.server-address-line.copied:hover {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-address-value.is-middle {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.server-address-value-start {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-address-value-end {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 

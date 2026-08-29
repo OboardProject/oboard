@@ -7340,18 +7340,34 @@ function serverCustomEntry(server: Server) {
   return String(server.entry_address || '').trim()
 }
 
+function ipv6DisplayParts(value: string) {
+  const text = String(value || '').trim()
+  const last = text.lastIndexOf(':')
+  const prev = last > 0 ? text.lastIndexOf(':', last - 1) : -1
+  if (prev <= 0) return { head: text, tail: '' }
+  return { head: text.slice(0, prev), tail: text.slice(prev) }
+}
+
 function ServerAddressLine({ family, value, copied, onCopy }: { family: 'v4' | 'v6'; value: string; copied: boolean; onCopy: () => void }) {
   const label = family === 'v4' ? 'IPv4' : 'IPv6'
+  const v6Parts = family === 'v6' ? ipv6DisplayParts(value) : null
   return (
     <button
       type="button"
-      className={`server-address-line${copied ? ' copied' : ''}`}
+      className={`server-address-line ${family}${copied ? ' copied' : ''}`}
       title={copied ? `已复制出口 ${label}` : `复制出口 ${label} ${value}`}
       aria-label={`复制出口 ${label} ${value}`}
       onClick={() => onCopy()}
     >
       <span className="server-address-family">{family}</span>
-      <span className="server-address-value">{value}</span>
+      {v6Parts?.tail ? (
+        <span className="server-address-value is-middle">
+          <span className="server-address-value-start">{v6Parts.head}</span>
+          <span className="server-address-value-end">{v6Parts.tail}</span>
+        </span>
+      ) : (
+        <span className="server-address-value">{value}</span>
+      )}
     </button>
   )
 }
