@@ -2601,14 +2601,6 @@ button.server-address-line.copied:hover {
   color: var(--primary);
 }
 
-.server-address-family {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: lowercase;
-}
-
 .server-address-value {
   min-width: 0;
   overflow: hidden;

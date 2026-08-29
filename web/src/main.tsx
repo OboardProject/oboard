@@ -7359,7 +7359,6 @@ function ServerAddressLine({ family, value, copied, onCopy }: { family: 'v4' | '
       aria-label={`复制出口 ${label} ${value}`}
       onClick={() => onCopy()}
     >
-      <span className="server-address-family">{family}</span>
       {v6Parts?.tail ? (
         <span className="server-address-value is-middle">
           <span className="server-address-value-start">{v6Parts.head}</span>

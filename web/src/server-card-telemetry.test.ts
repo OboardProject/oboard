@@ -36,6 +36,7 @@ describe('server card address badge', () => {
     expect(mainSource).toContain('server-address-value is-middle')
     expect(mainSource).toContain('server-address-value-start')
     expect(mainSource).toContain('server-address-value-end')
+    expect(mainSource).not.toContain('server-address-family')
     expect(mainSource).toContain("const copy = async (kind: 'v4' | 'v6' | 'entry', value: string)")
     expect(mainSource).toContain("onClick={() => void copy('entry', entry)}")
     expect(mainSource).toContain("const v6 = String(server.public_ipv6 || '').trim()")
