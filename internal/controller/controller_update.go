@@ -889,6 +889,9 @@ func (s *Server) createControllerBackup(ctx context.Context) (string, error) {
 		_ = os.Remove(path)
 		return "", err
 	}
+	if retain := s.controllerUpdateRetention(); retain > 0 {
+		s.retainControllerUpdateBackupsWithLimit(retain)
+	}
 	return path, nil
 }
 
@@ -921,6 +924,19 @@ func (s *Server) retainControllerUpdateBackups() {
 }
 
 func (s *Server) retainControllerUpdateBackupsWithLimit(retain int) {
+	s.retainControllerUpdateBackupsWithLimitAndProtected(retain, nil)
+}
+
+func (s *Server) cleanupControllerUpdateBackupFiles(retainedPath string) {
+	protected := map[string]struct{}{}
+	if strings.TrimSpace(retainedPath) != "" && s.isControllerUpdateBackupPath(retainedPath) {
+		protected[filepath.Clean(retainedPath)] = struct{}{}
+	}
+	retain := s.controllerUpdateRetention()
+	s.retainControllerUpdateBackupsWithLimitAndProtected(retain, protected)
+}
+
+func (s *Server) retainControllerUpdateBackupsWithLimitAndProtected(retain int, extraProtected map[string]struct{}) {
 	dir := s.controllerBackupDir
 	if strings.TrimSpace(dir) == "" {
 		dir = filepath.Join("data", "backups")
@@ -935,6 +951,7 @@ func (s *Server) retainControllerUpdateBackupsWithLimit(retain int) {
 		size    int64
 	}
 	var complete []backupFile
+	removedAny := false
 	for _, entry := range entries {
 		if !isControllerUpdateBackupName(entry.Name()) || !entry.Type().IsRegular() {
 			continue
@@ -947,6 +964,8 @@ func (s *Server) retainControllerUpdateBackupsWithLimit(retain int) {
 		if info.Size() <= 0 {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				log.Printf("remove partial Controller update backup %s: %v", path, err)
+			} else {
+				removedAny = true
 			}
 			continue
 		}
@@ -956,16 +975,38 @@ func (s *Server) retainControllerUpdateBackupsWithLimit(retain int) {
 	if retain < 0 {
 		retain = 0
 	}
+	protected := map[string]struct{}{}
+	if run, _ := s.store.GetActiveControllerUpdateRun(context.Background()); run != nil && strings.TrimSpace(run.BackupPath) != "" {
+		protected[filepath.Clean(run.BackupPath)] = struct{}{}
+	}
+	for key := range extraProtected {
+		protected[filepath.Clean(key)] = struct{}{}
+	}
+	var toDelete []backupFile
 	for index := retain; index < len(complete); index++ {
-		if err := os.Remove(complete[index].path); err != nil && !os.IsNotExist(err) {
-			log.Printf("remove excess Controller update backup %s: %v", complete[index].path, err)
+		cleaned := filepath.Clean(complete[index].path)
+		if _, ok := protected[cleaned]; ok {
+			continue
+		}
+		toDelete = append(toDelete, complete[index])
+	}
+	for _, file := range toDelete {
+		if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove excess Controller update backup %s: %v", file.path, err)
+		} else {
+			removedAny = true
 		}
 	}
-}
-
-func (s *Server) cleanupControllerUpdateBackupFiles(retainedPath string) {
-	s.retainControllerUpdateBackups()
-	_ = retainedPath
+	if removedAny || len(toDelete) > 0 {
+		if settings, err := s.store.ListSettings(context.Background()); err == nil {
+			stored := strings.TrimSpace(settings[controllerBackupSetting])
+			if stored != "" {
+				if _, err := os.Stat(stored); err != nil && os.IsNotExist(err) {
+					_ = s.store.SetSettings(context.Background(), map[string]string{controllerBackupSetting: "", controllerBackupTargetBuildSetting: ""})
+				}
+			}
+		}
+	}
 }
 
 func (s *Server) recordControllerUpdateBackup(ctx context.Context, path, targetBuild string) error {
@@ -1003,6 +1044,187 @@ func (s *Server) isControllerUpdateBackupPath(path string) bool {
 
 func isControllerUpdateBackupName(name string) bool {
 	return strings.HasPrefix(name, "oboard-before-update-") && strings.HasSuffix(name, ".sqlite")
+}
+
+type controllerUpdateBackupFile struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	SizeBytes   int64  `json:"size_bytes"`
+	ModTime     string `json:"mod_time"`
+	CreatedAt   string `json:"created_at"`
+	IsLatest    bool   `json:"is_latest"`
+	TargetBuild string `json:"target_build,omitempty"`
+}
+
+func parseControllerUpdateBackupTime(name string) (time.Time, bool) {
+	trimmed := strings.TrimPrefix(name, "oboard-before-update-")
+	trimmed = strings.TrimSuffix(trimmed, ".sqlite")
+	if t, err := time.Parse("20060102T150405.000000000Z", trimmed); err == nil {
+		return t, true
+	}
+	if t, err := time.Parse("20060102T150405Z", trimmed); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+func (s *Server) listControllerUpdateBackups() ([]controllerUpdateBackupFile, string, string) {
+	dir := s.controllerBackupDir
+	if strings.TrimSpace(dir) == "" {
+		dir = filepath.Join("data", "backups")
+	}
+	settings, _ := s.store.ListSettings(context.Background())
+	storedPath := ""
+	targetBuild := ""
+	if settings != nil {
+		storedPath = strings.TrimSpace(settings[controllerBackupSetting])
+		targetBuild = strings.TrimSpace(settings[controllerBackupTargetBuildSetting])
+	}
+	s.cleanupZeroByteControllerUpdateBackupFiles()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []controllerUpdateBackupFile{}, storedPath, targetBuild
+	}
+	var files []controllerUpdateBackupFile
+	for _, entry := range entries {
+		if !isControllerUpdateBackupName(entry.Name()) || !entry.Type().IsRegular() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() <= 0 {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		modTime := info.ModTime().UTC()
+		created := modTime
+		if parsed, ok := parseControllerUpdateBackupTime(entry.Name()); ok {
+			created = parsed
+		}
+		isLatest := filepath.Clean(path) == filepath.Clean(storedPath)
+		item := controllerUpdateBackupFile{
+			Name:      entry.Name(),
+			Path:      path,
+			SizeBytes: info.Size(),
+			ModTime:   modTime.Format(time.RFC3339Nano),
+			CreatedAt: created.Format(time.RFC3339Nano),
+			IsLatest:  isLatest,
+		}
+		if isLatest && targetBuild != "" {
+			item.TargetBuild = targetBuild
+		}
+		files = append(files, item)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		left, _ := time.Parse(time.RFC3339Nano, files[i].ModTime)
+		right, _ := time.Parse(time.RFC3339Nano, files[j].ModTime)
+		return left.After(right)
+	})
+	return files, storedPath, targetBuild
+}
+
+func (s *Server) controllerUpdateBackups(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		method(w)
+		return
+	}
+	files, _, _ := s.listControllerUpdateBackups()
+	retain := s.controllerUpdateRetention()
+	write(w, http.StatusOK, map[string]any{
+		"backups": files,
+		"retention": retain,
+	})
+}
+
+func (s *Server) controllerUpdateBackupSubroutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/v1/controller-update/backups/")
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		notFound(w, r)
+		return
+	}
+	name := parts[0]
+	if !isControllerUpdateBackupName(name) {
+		fail(w, errors.New("更新备份不存在"), http.StatusNotFound)
+		return
+	}
+	dir := s.controllerBackupDir
+	if strings.TrimSpace(dir) == "" {
+		dir = filepath.Join("data", "backups")
+	}
+	path := filepath.Join(dir, name)
+	if !s.isControllerUpdateBackupPath(path) {
+		fail(w, errors.New("更新备份路径无效"), http.StatusBadRequest)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "download" {
+		if r.Method != http.MethodGet {
+			method(w)
+			return
+		}
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			fail(w, errors.New("更新备份文件不可用"), http.StatusNotFound)
+			return
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			fail(w, errors.New("更新备份文件不可用"), http.StatusNotFound)
+			return
+		}
+		defer file.Close()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeContent(w, r, name, info.ModTime(), file)
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			fail(w, errors.New("更新备份不存在"), http.StatusNotFound)
+			return
+		}
+		modTime := info.ModTime().UTC()
+		created := modTime
+		if parsed, ok := parseControllerUpdateBackupTime(name); ok {
+			created = parsed
+		}
+		settings, _ := s.store.ListSettings(r.Context())
+		isLatest := false
+		targetBuild := ""
+		if settings != nil {
+			isLatest = filepath.Clean(path) == filepath.Clean(strings.TrimSpace(settings[controllerBackupSetting]))
+			if isLatest {
+				targetBuild = strings.TrimSpace(settings[controllerBackupTargetBuildSetting])
+			}
+		}
+		write(w, http.StatusOK, map[string]any{
+			"name":         name,
+			"path":         path,
+			"size_bytes":   info.Size(),
+			"mod_time":     modTime.Format(time.RFC3339Nano),
+			"created_at":   created.Format(time.RFC3339Nano),
+			"is_latest":    isLatest,
+			"target_build": targetBuild,
+		})
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			fail(w, localizeBackupError(err), 500)
+			return
+		}
+		if settings, err := s.store.ListSettings(r.Context()); err == nil {
+			stored := strings.TrimSpace(settings[controllerBackupSetting])
+			if stored != "" && filepath.Clean(stored) == filepath.Clean(path) {
+				_ = s.store.SetSettings(r.Context(), map[string]string{controllerBackupSetting: "", controllerBackupTargetBuildSetting: ""})
+			}
+		}
+		auditReq(s, r, "delete", "controller_update_backup", name)
+		write(w, http.StatusOK, map[string]any{"message": "更新前备份已删除"})
+		return
+	}
+	method(w)
 }
 
 func settingBool(settings map[string]string, key string, fallback bool) bool {

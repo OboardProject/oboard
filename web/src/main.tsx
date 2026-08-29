@@ -300,8 +300,9 @@ type AgentFleetUpdateStatus = {
 }
 type BackupDestination = { provider: 's3' | 'webdav' | ''; endpoint: string; bucket?: string; prefix?: string; region?: string; force_path_style?: boolean; enabled: boolean }
 type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automatic' | 'uploaded' | 'pre_restore' | string; local_status: string; remote_status: string; remote_error?: string; remote_retrievable: boolean; size_bytes: number; source_version: string; format_version: number; protected: boolean; created_at: string }
-type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
-type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[] }
+type ControllerUpdateBackup = { name: string; path: string; size_bytes: number; mod_time: string; created_at: string; is_latest: boolean; target_build?: string }
+type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; update_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
+type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[]; update_backups?: ControllerUpdateBackup[]; update_retention?: number }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
 type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number }
 type ServerResourceMetricsResponse = {
@@ -5030,12 +5031,13 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
 
 function ControllerBackupPanel({ client, notify, dialogs }: any) {
   const emptySettings: ControllerBackupSettings = {
-    enabled: false, schedule: 'daily', time: '03:00', weekday: 0, local_retention: 7, remote_retention: 30,
+    enabled: false, schedule: 'daily', time: '03:00', weekday: 0, local_retention: 7, remote_retention: 30, update_retention: 2,
     destination: { provider: '', endpoint: '', bucket: '', prefix: '', region: 'us-east-1', force_path_style: false, enabled: false },
     password_configured: false, destination_configured: true,
   }
-  const [snapshot, setSnapshot] = useState<ControllerBackupSnapshot>({ settings: emptySettings, backups: [] })
+  const [snapshot, setSnapshot] = useState<ControllerBackupSnapshot>({ settings: emptySettings, backups: [], update_backups: [] })
   const [draft, setDraft] = useState<ControllerBackupSettings>(emptySettings)
+  const [updateBackupDetail, setUpdateBackupDetail] = useState<ControllerUpdateBackup | null>(null)
   const [recoveryPassword, setRecoveryPassword] = useState('')
   const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('')
   const [s3AccessKey, setS3AccessKey] = useState('')
@@ -5088,6 +5090,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
           weekday: draft.weekday,
           local_retention: draft.local_retention,
           remote_retention: draft.remote_retention,
+          update_retention: draft.update_retention,
           destination: draft.destination,
           s3_access_key: s3AccessKey,
           s3_secret_key: s3SecretKey,
@@ -5097,6 +5100,8 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       }) as { settings: ControllerBackupSettings }
       setSnapshot(previous => ({ ...previous, settings: result.settings }))
       setDraft(result.settings)
+      // Refresh update backups after retention change may have triggered auto-delete.
+      void refresh(true)
       setS3AccessKey('')
       setS3SecretKey('')
       setWebdavUsername('')
@@ -5132,6 +5137,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
           weekday: settings.weekday,
           local_retention: settings.local_retention,
           remote_retention: settings.remote_retention,
+          update_retention: settings.update_retention,
           destination: settings.destination,
           recovery_password: recoveryPassword,
         }),
@@ -5255,6 +5261,44 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
     try {
       const result = await client.request(`/backups/${item.id}`, { method: 'DELETE' }) as { message?: string }
       notify?.(result.message || '备份已删除', 'success')
+      await refresh(true)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const viewUpdateBackup = async (item: ControllerUpdateBackup) => {
+    setUpdateBackupDetail(item)
+  }
+  const downloadUpdateBackup = async (item: ControllerUpdateBackup) => {
+    setWorking(`download-update-${item.name}`)
+    try {
+      const file = await client.download(`/controller-update/backups/${encodeURIComponent(item.name)}/download`)
+      const url = URL.createObjectURL(file.blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = file.filename || item.name
+      anchor.click()
+      URL.revokeObjectURL(url)
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setWorking('')
+    }
+  }
+  const removeUpdateBackup = async (item: ControllerUpdateBackup) => {
+    const confirmed = await dialogs.confirm({
+      title: '删除更新前备份？',
+      message: `将删除文件 ${item.name}（${formatBytes(Number(item.size_bytes || 0))}）。${item.is_latest ? '这是最近一次更新前的备份，删除后将无法通过该文件回滚。' : ''}`,
+      confirmText: '删除',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    setWorking(`delete-update-${item.name}`)
+    try {
+      const result = await client.request(`/controller-update/backups/${encodeURIComponent(item.name)}`, { method: 'DELETE' }) as { message?: string }
+      notify?.(result.message || '更新前备份已删除', 'success')
       await refresh(true)
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -5398,6 +5442,10 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       <div className="settings-card-head"><div><h3>备份记录</h3><p className="muted">恢复会先创建保护备份。受保护备份不会被自动滚动删除。</p></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
       {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {item.local_status === 'pending' ? '等待后台完成' : formatBytes(Number(item.size_bytes || 0)) + ' · 来源 ' + (item.source_version || '-')}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.local_status === 'pending' ? 'warning' : item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
     </section>
+    <section className="backup-records">
+      <div className="settings-card-head"><div><h3>更新前备份</h3><p className="muted">更新前自动创建的数据库快照，更新成功后按保留数量自动清理。0 份表示成功后立即删除。</p></div><span className="status-pill">{`保留 ${snapshot.settings?.update_retention ?? snapshot.update_retention ?? 2} 份`}</span><button className="ghost icon-button" onClick={() => void refresh(true)} disabled={Boolean(working)} title="刷新更新前备份" aria-label="刷新更新前备份"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
+      {snapshot.update_backups?.length ? <div className="backup-record-list">{snapshot.update_backups.map(item => <div className="backup-record" key={item.name}><div className="backup-record-main"><strong>{item.is_latest ? '最近更新前备份' : '更新前备份'} {item.is_latest && <span className="status-pill ok" style={{marginLeft:6, fontSize:11}}>最新</span>}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))}{item.target_build ? ` · 目标构建 ${item.target_build}` : ''}</span><small title={item.path} style={{overflowWrap:'anywhere'}}>{item.name}</small></div><span className={`status-pill ${item.is_latest ? 'warning' : 'ok'}`}>{item.is_latest ? '已关联' : '已保留'}</span><div className="backup-record-actions"><button type="button" className="ghost icon-button" title="查看详情" aria-label="查看详情" onClick={() => void viewUpdateBackup(item)} disabled={Boolean(working)}><Eye size={15} /></button><button type="button" className="ghost icon-button" title="下载快照" aria-label="下载快照" onClick={() => void downloadUpdateBackup(item)} disabled={Boolean(working)}><Download size={15} /></button><button type="button" className="ghost icon-button danger-text" title="删除更新前备份" aria-label="删除更新前备份" onClick={() => void removeUpdateBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">暂无更新前备份，更新时选择“备份”后会自动创建。</p>}
+    </section>
   </section>
   <AnimatePresence>{passwordDialogOpen && <MotionDialogPanel onCancel={closePasswordDialog} className="backup-password-dialog" ariaLabel={savedSettings.password_configured ? '更换备份恢复密码' : '设置备份恢复密码'}>
     <header className="dialog-head"><div><h2>{savedSettings.password_configured ? '更换备份密码' : '设置备份密码'}</h2><p className="muted">密码不会显示或找回，请妥善保存。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closePasswordDialog} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button></header>
@@ -5452,6 +5500,21 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
                 }}
               />
             </FormField>
+            <FormField label="更新前备份保留数量" hint="更新成功后保留的更新前快照数量，0 表示成功后立即删除">
+              <input
+                type="number"
+                min={0}
+                max={10}
+                placeholder="2"
+                value={(draft.update_retention as any) === '' ? '' : draft.update_retention}
+                onChange={event => setDraft(current => ({ ...current, update_retention: event.target.value === '' ? ('' as any) : Number(event.target.value) }))}
+                onBlur={event => {
+                  const n = Number(event.target.value)
+                  if (event.target.value === '' || isNaN(n) || n < 0) setDraft(c => ({ ...c, update_retention: 0 }))
+                  else if (n > 10) setDraft(c => ({ ...c, update_retention: 10 }))
+                }}
+              />
+            </FormField>
           </div>
         </section>
         <section className="backup-form-section">
@@ -5483,6 +5546,26 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       </form>
     </div>
     <footer className="dialog-actions backup-settings-dialog-actions"><button type="button" className="ghost" onClick={() => void testDestination()} disabled={Boolean(working) || !destination.enabled || !destination.provider}>{working === 'test' ? '测试中…' : '测试连接'}</button><span /><button type="button" className="ghost" onClick={closeSettingsDialog} disabled={Boolean(working)}>取消</button><button type="submit" form="backup-settings-form" disabled={Boolean(working)}>{working === 'save' ? '保存中…' : '保存设置'}</button></footer>
+  </MotionDialogPanel>}</AnimatePresence>
+  <AnimatePresence>{updateBackupDetail && <MotionDialogPanel onCancel={() => setUpdateBackupDetail(null)} className="backup-password-dialog" ariaLabel="更新前备份详情">
+    <header className="dialog-head"><div><h2>更新前备份详情</h2><p className="muted">查看快照文件信息，必要时可下载或删除。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setUpdateBackupDetail(null)} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <div className="dialog-body backup-password-dialog-body" style={{gap:14}}>
+      <div style={{display:'grid', gap:10}}>
+        <div><strong>文件名</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontSize:13, overflowWrap:'anywhere'}}>{updateBackupDetail.name}</div></div>
+        <div><strong>路径</strong><div title={updateBackupDetail.path} style={{marginTop:4, color:'var(--muted)', fontSize:12, overflowWrap:'anywhere'}}>{updateBackupDetail.path}</div></div>
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+          <div><strong>大小</strong><div style={{marginTop:4, color:'var(--text-secondary)'}}>{formatBytes(Number(updateBackupDetail.size_bytes || 0))}</div></div>
+          <div><strong>状态</strong><div style={{marginTop:4}}><span className={`status-pill ${updateBackupDetail.is_latest ? 'warning' : 'ok'}`}>{updateBackupDetail.is_latest ? '最新关联' : '已保留'}</span></div></div>
+        </div>
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+          <div><strong>创建时间</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontSize:13}}>{formatDate(updateBackupDetail.created_at)}</div></div>
+          <div><strong>修改时间</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontSize:13}}>{formatDate(updateBackupDetail.mod_time)}</div></div>
+        </div>
+        {updateBackupDetail.target_build && <div><strong>目标构建</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontFamily:'monospace', fontSize:13}}>{updateBackupDetail.target_build}</div></div>}
+        <div style={{padding:'10px 12px', background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', fontSize:12, color:'var(--muted)', lineHeight:1.6}}>更新前备份为原始 SQLite 快照，保留用于更新失败时手动恢复。删除后无法找回。</div>
+      </div>
+    </div>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setUpdateBackupDetail(null)}>关闭</button><button type="button" className="ghost" onClick={() => { const item = updateBackupDetail; setUpdateBackupDetail(null); if (item) void downloadUpdateBackup(item) }}>下载</button><button type="button" className="ghost danger-text" onClick={() => { const item = updateBackupDetail; setUpdateBackupDetail(null); if (item) void removeUpdateBackup(item) }}>删除</button></footer>
   </MotionDialogPanel>}</AnimatePresence>
   </>
 }

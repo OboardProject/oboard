@@ -372,7 +372,9 @@ func (s *Server) controllerBackups(w http.ResponseWriter, r *http.Request) {
 			items[i].RemoteReady = controllerBackupRemoteReady(items[i], settings)
 			items[i].RemoteError = localizeBackupErrorMessage(items[i].RemoteError)
 		}
-		write(w, 200, map[string]any{"settings": publicControllerBackupSettings(settings), "backups": items})
+		updateBackups, _, _ := s.listControllerUpdateBackups()
+		updateRetention := s.controllerUpdateRetention()
+		write(w, 200, map[string]any{"settings": publicControllerBackupSettings(settings), "backups": items, "update_backups": updateBackups, "update_retention": updateRetention})
 	case http.MethodPost:
 		var req struct {
 			UploadRemote *bool `json:"upload_remote"`
@@ -525,6 +527,8 @@ func (s *Server) controllerBackupSettings(w http.ResponseWriter, r *http.Request
 		fail(w, localizeBackupError(err), 500)
 		return
 	}
+	// Enforce update backup retention immediately when the user changes it.
+	s.retainControllerUpdateBackups()
 	auditReq(s, r, "update", "controller-backup", "settings")
 	write(w, 200, map[string]any{"settings": publicControllerBackupSettings(state)})
 }
