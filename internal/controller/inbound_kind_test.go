@@ -123,3 +123,47 @@ func TestMergeInboundPresetConfigSkipsHY2BandwidthAndObfsPassword(t *testing.T) 
 		t.Fatalf("preset salamander password leaked: %#v", createdObfs)
 	}
 }
+
+func TestInboundRequiresOwnDomainForManagedTLS(t *testing.T) {
+	hy2 := normalizeInbound(model.Inbound{ServerID: 1, Name: "hy2", Protocol: model.ProtocolHY2, Port: 443, TLS: true, ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
+	if !inboundRequiresOwnDomain(hy2) || !hy2.DNSSyncEnabled {
+		t.Fatalf("hy2 own-domain defaults: required=%v dns_sync=%v mode=%s", inboundRequiresOwnDomain(hy2), hy2.DNSSyncEnabled, hy2.CertificateMode)
+	}
+	if err := validateInbound(hy2); err == nil || !strings.Contains(err.Error(), "自有解析域名") {
+		t.Fatalf("hy2 without domain: %v", err)
+	}
+	anytls := normalizeInbound(model.Inbound{ServerID: 1, Name: "anytls", Protocol: model.ProtocolAnyTLS, Port: 443, TLS: true, ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
+	if err := validateInbound(anytls); err == nil {
+		t.Fatal("anytls without domain was accepted")
+	}
+	external := normalizeInbound(model.Inbound{ServerID: 1, Name: "anytls-ext", Protocol: model.ProtocolAnyTLS, Port: 443, CertificateMode: model.CertificateModeExternal, ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"}}`, Enabled: true})
+	if inboundRequiresOwnDomain(external) {
+		t.Fatal("external AnyTLS should not require managed DNS")
+	}
+}
+
+func TestFollowInboundCertificateDomainOnDNSChange(t *testing.T) {
+	current := model.Inbound{DNSDomain: "old.example.com", CertificateDomain: "old.example.com", CertificateMode: model.CertificateModeAuto}
+	next := current
+	next.DNSDomain = "new.example.com"
+	next.CertificateDomain = "old.example.com"
+	followInboundCertificateDomain(&next, &current)
+	if next.CertificateDomain != "new.example.com" {
+		t.Fatalf("followed SNI = %q", next.CertificateDomain)
+	}
+
+	current.CertificateDomain = "sni.example.com"
+	next = current
+	next.DNSDomain = "new.example.com"
+	next.CertificateDomain = "sni.example.com"
+	followInboundCertificateDomain(&next, &current)
+	if next.CertificateDomain != "sni.example.com" {
+		t.Fatalf("custom SNI overwritten: %q", next.CertificateDomain)
+	}
+
+	create := model.Inbound{DNSDomain: "entry.example.com", CertificateMode: model.CertificateModeAuto}
+	followInboundCertificateDomain(&create, nil)
+	if create.CertificateDomain != "entry.example.com" {
+		t.Fatalf("create SNI = %q", create.CertificateDomain)
+	}
+}

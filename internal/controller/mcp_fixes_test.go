@@ -115,6 +115,47 @@ func TestAnyTLSRecipeFillsManagedCertificateFromDNSDomain(t *testing.T) {
 	}
 }
 
+func TestAnyTLSRecipeEnablesDNSSyncWithoutMention(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	node := &model.Server{Name: "OC", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	verified := time.Now()
+	credential := &model.DNSCredential{
+		Name: "cf", Provider: model.DNSProviderCloudflare, ZoneName: "4805787.xyz", Enabled: true, VerifiedAt: &verified,
+		Zones: []model.DNSCredentialZone{{ZoneName: "4805787.xyz"}},
+	}
+	if err := db.CreateDNSCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.HumanPrincipal(*admin, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	prepared, err := server.prepareInboundCreateRecipe(ctx, principal, mcpTaskInput{
+		Goal:       "给 OC 创建一个 anytls 节点 oc.4805787.xyz",
+		Params:     map[string]any{"protocol": "anytls", "port": 443},
+		TargetRefs: []string{"server:" + int64String(node.ID)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Status != "ready" {
+		t.Fatalf("prepared status = %s questions=%#v", prepared.Status, prepared.Questions)
+	}
+	inbound, _ := prepared.Operations[0].Input["inbound"].(map[string]any)
+	if inbound["dns_sync_enabled"] != true {
+		t.Fatalf("dns_sync_enabled = %#v, want true without mentioning 同步 dns", inbound["dns_sync_enabled"])
+	}
+	if inbound["dns_domain"] != "oc.4805787.xyz" {
+		t.Fatalf("dns_domain = %#v", inbound["dns_domain"])
+	}
+}
+
 func TestAnyTLSRecipeNeedsDomainForManagedCertificate(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

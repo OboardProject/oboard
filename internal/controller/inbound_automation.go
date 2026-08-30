@@ -117,6 +117,9 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
+		if err := s.applyInboundDomainSideEffects(ctx, nil, &inbound); err != nil {
+			return nil, err
+		}
 		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
@@ -140,6 +143,9 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err := s.application.PrepareInboundCreate(ctx, &inbound); err != nil {
 			return nil, err
 		}
+		if err := s.applyInboundDomainSideEffects(ctx, nil, &inbound); err != nil {
+			return nil, err
+		}
 		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
@@ -154,8 +160,11 @@ func (s *Server) registerInboundAutomationOperations() {
 	})
 
 	s.automation.RegisterValidator("inbounds.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		_, inbound, err := s.decodeInboundUpdateOperation(ctx, principal, input)
+		current, inbound, err := s.decodeInboundUpdateOperation(ctx, principal, input)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.applyInboundDomainSideEffects(ctx, current, &inbound); err != nil {
 			return nil, err
 		}
 		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
@@ -181,17 +190,19 @@ func (s *Server) registerInboundAutomationOperations() {
 		if err := s.validateInboundAutomationCandidate(ctx, principal, &inbound); err != nil {
 			return nil, err
 		}
-		oldDomain := normalizeDomainName(current.DNSDomain)
-		newDomain := normalizeDomainName(inbound.DNSDomain)
-		if current.DNSSyncEnabled && (!inbound.DNSSyncEnabled || oldDomain != newDomain) {
-			if err := s.deleteDNSInboundRecords(ctx, *current); err != nil {
-				return nil, err
-			}
+		if err := s.applyInboundDomainSideEffects(ctx, current, &inbound); err != nil {
+			return nil, err
+		}
+		if err := s.deleteStaleInboundDNS(ctx, current, inbound); err != nil {
+			return nil, err
 		}
 		if err := s.store.UpdateInbound(ctx, &inbound); err != nil {
 			return nil, err
 		}
 		if err := s.saveInboundCertificateBinding(ctx, inbound); err != nil {
+			return nil, err
+		}
+		if err := s.syncInboundDNSIfChanged(ctx, current, inbound); err != nil {
 			return nil, err
 		}
 		if stored, getErr := s.store.GetInbound(ctx, inbound.ID); getErr == nil {

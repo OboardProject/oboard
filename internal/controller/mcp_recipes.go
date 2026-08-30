@@ -694,15 +694,6 @@ func defaultInboundKind(protocol string) string {
 	}
 }
 
-func inboundKindUsesManagedCertificate(kind string) bool {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "vless-ws", "hy2-tls", "hy2-salamander", "anytls-basic", "anytls-large-padding":
-		return true
-	default:
-		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "anytls-")
-	}
-}
-
 func inboundRecipeCertificateMode(values map[string]any) string {
 	return strings.ToLower(strings.TrimSpace(taskStringParam(values, "certificate_mode")))
 }
@@ -751,11 +742,11 @@ func inferredInboundDNSDomain(goal string) string {
 	return ""
 }
 
-// applyInboundRecipeManagedCertificate copies dns_domain into the SNI field and
-// attaches a DNS credential so Controller can issue the certificate during
-// deployment. dns_sync_enabled=true is validated as strictly as inbounds.update:
-// a credential is required before ready. Create itself does not wait for a
-// ready certificate.
+// applyInboundRecipeManagedCertificate copies dns_domain into the SNI field,
+// enables DNS sync for managed TLS kinds, and attaches a DNS credential so
+// Controller can issue the certificate during deployment. dns_sync_enabled=true
+// is validated as strictly as inbounds.update: a credential is required before
+// ready. Create itself does not wait for a ready certificate.
 func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input mcpTaskInput, values map[string]any, serverID int64) (*mcpPreparedRecipe, error) {
 	kind := strings.ToLower(strings.TrimSpace(fmt.Sprint(values["kind"])))
 	mode := inboundRecipeCertificateMode(values)
@@ -764,7 +755,9 @@ func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input
 	if dnsDomain != "" {
 		values["dns_domain"] = dnsDomain
 	}
-	if inboundRecipeWantsDNSSync(input, values) {
+	if inboundKindUsesManagedCertificate(kind) && mode != model.CertificateModeExternal && mode != model.CertificateModeExplicit {
+		values["dns_sync_enabled"] = true
+	} else if inboundRecipeWantsDNSSync(input, values) {
 		values["dns_sync_enabled"] = true
 	} else if parsed, ok := coerceTaskBool(values["dns_sync_enabled"]); ok {
 		values["dns_sync_enabled"] = parsed

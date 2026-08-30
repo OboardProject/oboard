@@ -5817,6 +5817,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusConflict)
 			return
 		}
+		if err := s.applyInboundDomainSideEffects(r.Context(), nil, &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
 		if err := s.store.CreateInbound(r.Context(), &v); err != nil {
 			fail(w, err, 500)
 			return
@@ -5919,13 +5923,13 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusConflict)
 			return
 		}
-		oldDomain := normalizeDomainName(current.DNSDomain)
-		newDomain := normalizeDomainName(v.DNSDomain)
-		if current.DNSSyncEnabled && (!v.DNSSyncEnabled || oldDomain != newDomain) {
-			if err := s.deleteDNSInboundRecords(r.Context(), *current); err != nil {
-				fail(w, err, 502)
-				return
-			}
+		if err := s.applyInboundDomainSideEffects(r.Context(), current, &v); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := s.deleteStaleInboundDNS(r.Context(), current, v); err != nil {
+			fail(w, err, 502)
+			return
 		}
 		if err := s.store.UpdateInbound(r.Context(), &v); err != nil {
 			fail(w, err, 500)
@@ -5934,6 +5938,13 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		if err := s.saveInboundCertificateBinding(r.Context(), v); err != nil {
 			fail(w, err, 500)
 			return
+		}
+		if err := s.syncInboundDNSIfChanged(r.Context(), current, v); err != nil {
+			fail(w, err, 502)
+			return
+		}
+		if stored, getErr := s.store.GetInbound(r.Context(), v.ID); getErr == nil {
+			v = *stored
 		}
 		write(w, 200, map[string]any{"inbound": v})
 	case http.MethodDelete:
@@ -6781,6 +6792,9 @@ func normalizeInbound(v model.Inbound) model.Inbound {
 	if v.CertificateMode != model.CertificateModeExternal && v.CertificateDomain == "" {
 		v.CertificateDomain = v.DNSDomain
 	}
+	if inboundRequiresOwnDomain(v) {
+		v.DNSSyncEnabled = true
+	}
 	if v.DDNSInterval == 0 {
 		v.DDNSInterval = 300
 	}
@@ -7064,6 +7078,9 @@ func validateInbound(v model.Inbound) error {
 	case "auto", "a", "aaaa", "both":
 	default:
 		return fmt.Errorf("invalid dns_record_types %q", v.DNSRecordTypes)
+	}
+	if inboundRequiresOwnDomain(v) && !isDNSDomainName(v.DNSDomain) {
+		return errors.New("此协议必须填写自有解析域名")
 	}
 	if v.DNSSyncEnabled {
 		if !isDNSDomainName(v.DNSDomain) {

@@ -213,6 +213,10 @@ func TestInboundCreateManagedCertificateAcceptsDNSDomainWithoutReadyCertificate(
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
+	credential := &model.DNSCredential{Name: "cf", Provider: model.DNSProviderCloudflare, ZoneName: "example.com", Enabled: true, Zones: []model.DNSCredentialZone{{ZoneName: "example.com"}}}
+	if err := db.CreateDNSCredential(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
 	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
 	input := json.RawMessage(`{"inbound":{"server_id":1,"name":"OC HY2","kind":"hy2-tls","listen_ip":"0.0.0.0","port":443,"dns_domain":"oc.example.com","certificate_mode":"auto","enabled":true}}`)
 	if _, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "inbounds.create", Input: input}}}); err != nil {

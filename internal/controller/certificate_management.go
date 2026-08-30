@@ -893,6 +893,90 @@ func wildcardDomainMatches(pattern, domain string) bool {
 	return !strings.Contains(strings.TrimSuffix(domain, "."+suffix), ".")
 }
 
+// followInboundCertificateDomain keeps managed SNI on the DNS hostname unless
+// the inbound already had a custom SNI distinct from its previous DNS domain.
+func followInboundCertificateDomain(inbound *model.Inbound, current *model.Inbound) {
+	if inbound == nil {
+		return
+	}
+	switch inbound.CertificateMode {
+	case model.CertificateModeExternal, model.CertificateModeExplicit:
+		return
+	}
+	newDNS := normalizeDomainName(inbound.DNSDomain)
+	if newDNS == "" {
+		return
+	}
+	if current != nil {
+		oldDNS := normalizeDomainName(current.DNSDomain)
+		oldCert := normalizeDomainName(current.CertificateDomain)
+		if oldCert != "" && oldDNS != "" && oldCert != oldDNS {
+			if inbound.CertificateDomain == "" {
+				inbound.CertificateDomain = oldCert
+			}
+			return
+		}
+	} else if inbound.CertificateDomain != "" && inbound.CertificateDomain != newDNS {
+		return
+	}
+	inbound.CertificateDomain = newDNS
+}
+
+func (s *Server) clearStaleInboundCertificateBinding(ctx context.Context, inbound *model.Inbound) error {
+	if inbound == nil || inbound.CertificateID == nil || *inbound.CertificateID <= 0 {
+		return nil
+	}
+	if inbound.CertificateMode == model.CertificateModeExternal || inbound.CertificateMode == model.CertificateModeExplicit {
+		return nil
+	}
+	domain := inboundCertificateDomain(*inbound)
+	certificate, err := s.store.GetCertificate(ctx, *inbound.CertificateID)
+	if err != nil || !certificateDomainCovered(certificate.Domains, domain) {
+		inbound.CertificateID = nil
+	}
+	return nil
+}
+
+// rematchInboundCertificateIfCovered binds a ready covering certificate after a
+// domain change. Issuance still happens during deployment.
+func (s *Server) rematchInboundCertificateIfCovered(ctx context.Context, inbound *model.Inbound) error {
+	if inbound == nil || inbound.CertificateMode == model.CertificateModeExternal || inbound.CertificateMode == model.CertificateModeExplicit {
+		return nil
+	}
+	if inbound.CertificateID != nil && *inbound.CertificateID > 0 {
+		return nil
+	}
+	domain := inboundCertificateDomain(*inbound)
+	if !isDNSDomainName(domain) {
+		return nil
+	}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(settings["certificate_auto_match_enabled"]), "false") && inbound.CertificateMode == model.CertificateModeAuto {
+		return nil
+	}
+	preference := strings.ToLower(strings.TrimSpace(settings["certificate_default_preference"]))
+	if preference != "wildcard" {
+		preference = "subdomain"
+	}
+	certificates, err := s.store.ListCertificates(ctx)
+	if err != nil {
+		return err
+	}
+	mode := inbound.CertificateMode
+	if mode == "" {
+		mode = model.CertificateModeAuto
+	}
+	certificate, err := selectCertificate(certificates, mode, inbound.CertificateID, domain, preference, time.Now())
+	if err != nil {
+		return nil
+	}
+	inbound.CertificateID = &certificate.ID
+	return nil
+}
+
 func inboundCertificateDomain(inbound model.Inbound) string {
 	if domain := normalizeDomainName(inbound.CertificateDomain); domain != "" {
 		return domain

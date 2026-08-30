@@ -699,6 +699,47 @@ func (s *Server) syncDNSInbound(ctx context.Context, servers map[int64]model.Ser
 	return strings.Join(actions, "，"), nil
 }
 
+func inboundDNSIdentityChanged(current, inbound model.Inbound) bool {
+	return normalizeDomainName(current.DNSDomain) != normalizeDomainName(inbound.DNSDomain) ||
+		inboundDNSCredentialID(current) != inboundDNSCredentialID(inbound) ||
+		current.DNSSyncEnabled != inbound.DNSSyncEnabled ||
+		current.DNSRecordTypes != inbound.DNSRecordTypes ||
+		current.DNSProxyEnabled != inbound.DNSProxyEnabled ||
+		current.EntryIPMode != inbound.EntryIPMode ||
+		current.ExternalIP != inbound.ExternalIP ||
+		current.ServerID != inbound.ServerID
+}
+
+func (s *Server) deleteStaleInboundDNS(ctx context.Context, current *model.Inbound, inbound model.Inbound) error {
+	if current == nil || !current.DNSSyncEnabled || (inbound.DNSSyncEnabled && !inboundDNSIdentityChanged(*current, inbound)) {
+		return nil
+	}
+	return s.deleteDNSInboundRecords(ctx, *current)
+}
+
+func (s *Server) syncInboundDNSIfChanged(ctx context.Context, current *model.Inbound, inbound model.Inbound) error {
+	if current == nil || !inbound.DNSSyncEnabled || inbound.ID <= 0 || !inboundDNSIdentityChanged(*current, inbound) {
+		return nil
+	}
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.syncDNSInbounds(ctx, servers, []model.Inbound{inbound})
+	return err
+}
+
+func (s *Server) applyInboundDomainSideEffects(ctx context.Context, current *model.Inbound, inbound *model.Inbound) error {
+	if inbound == nil {
+		return errors.New("inbound required")
+	}
+	followInboundCertificateDomain(inbound, current)
+	if err := s.clearStaleInboundCertificateBinding(ctx, inbound); err != nil {
+		return err
+	}
+	return s.rematchInboundCertificateIfCovered(ctx, inbound)
+}
+
 func (s *Server) deleteDNSInboundRecords(ctx context.Context, inbound model.Inbound) error {
 	if !inbound.DNSSyncEnabled || inbound.DNSCredentialID == nil || !isDNSDomainName(inbound.DNSDomain) {
 		return nil

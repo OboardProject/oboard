@@ -12652,12 +12652,22 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(e.message || e) })
     }
   }
-  const inboundDraftFromEntry = (entry: Inbound) => ({
-    ...entry,
-    __edit: true,
-    __graphPosition: null,
-    __custom_sni: Boolean(entry.certificate_domain && entry.certificate_domain !== entry.dns_domain),
-  })
+  const inboundDraftFromEntry = (entry: Inbound) => {
+    const presetID = inferInboundPreset(entry.protocol as Protocol, entry.config_json || '{}')
+    const requiresOwnDomain = presetRequiresCertificate(presetID)
+    const enabledCredentials = ((data.dns_credentials || []) as DNSCredential[]).filter(item => item.enabled)
+    const defaultCredentialID = enabledCredentials.length === 1
+      ? enabledCredentials[0].id
+      : (enabledCredentials.find(item => item.verified_at)?.id || enabledCredentials[0]?.id)
+    return {
+      ...entry,
+      __edit: true,
+      __graphPosition: null,
+      __custom_sni: Boolean(entry.certificate_domain && entry.certificate_domain !== entry.dns_domain),
+      dns_sync_enabled: requiresOwnDomain ? true : Boolean(entry.dns_sync_enabled),
+      dns_credential_id: requiresOwnDomain ? (entry.dns_credential_id || defaultCredentialID) : entry.dns_credential_id,
+    }
+  }
   const openEditEntry = (entry: Inbound) => setEditEntry(inboundDraftFromEntry(entry))
   const addEntry = async (position?: GraphPosition) => {
     const server = selected || servers[0]
@@ -15674,7 +15684,18 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     if (coveredEntry) return coveredEntry
     return certificate.domains.find(domain => !domain.startsWith('*.')) || ''
   }
-  const followedSNI = suggestedSNI()
+  const followedCertificateDomain = (dnsDomain = String(draft.dns_domain || ''), externalIP = String(draft.external_ip || '')) => {
+    if (draft.certificate_mode === 'explicit') return suggestedSNI(selectedCertificate, dnsDomain, externalIP)
+    if (draft.__custom_sni) return draft.certificate_domain
+    return dnsDomain
+  }
+  const certificateIDForDomain = (dnsDomain: string) => {
+    if (draft.certificate_mode === 'explicit') return draft.certificate_id
+    if (!certificateRequired) return undefined
+    if (selectedCertificate && certificateCoversSNI(selectedCertificate, dnsDomain)) return draft.certificate_id
+    return undefined
+  }
+  const followedSNI = followedCertificateDomain()
   const update = (patch: any) => setDraft((old: any) => old ? { ...old, ...patch } : old)
   const autoPortFor = (targetServer = server, targetProtocol = protocol, fallback = Number(draft.port) || inboundPreset(presetID).defaultPort) => nextAvailableInboundPort(data, targetServer, targetProtocol, fallback, draft.id)
   const applyPreset = (id: string) => {
@@ -15703,16 +15724,25 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
 		if (previous._oboard_padding !== undefined) next._oboard_padding = previous._oboard_padding
 		nextConfig = JSON.stringify(next, null, 2)
 	  }
+      const requiresOwnDomain = presetRequiresCertificate(preset.id)
+      const nextDNS = requiresOwnDomain
+        ? {
+            dns_sync_enabled: true,
+            dns_credential_id: old.dns_credential_id || defaultDNSCredentialID,
+            dns_record_types: old.dns_record_types === 'auto' || !old.dns_record_types ? 'a' : old.dns_record_types,
+          }
+        : {}
       return {
         ...old,
+        ...nextDNS,
         protocol: preset.protocol,
         port: nextPort,
         name: shouldRename ? autoInboundName(server, preset.protocol, nextPort) : old.name,
         config_json: nextConfig,
         tls: presetRequiresCertificate(preset.id),
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
-        certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip)) : '',
-        certificate_id: presetRequiresCertificate(preset.id) ? old.certificate_id : undefined,
+        certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : (requiresOwnDomain ? String(old.dns_domain || '') : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip))) : '',
+        certificate_id: presetRequiresCertificate(preset.id) ? (requiresOwnDomain && old.certificate_mode !== 'explicit' && old.dns_domain && selectedCertificate && !certificateCoversSNI(selectedCertificate, String(old.dns_domain || '')) ? undefined : old.certificate_id) : undefined,
 		anytls_padding: preset.protocol === 'anytls' && mode === 'create' ? (old.anytls_padding || { preset_id: 'balanced_v1', auto_tune: true }) : undefined,
       }
     })
@@ -15728,7 +15758,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const nextZones = (selectedDNSCredential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === serverID)
     const nextZone = nextZones.find(zone => zone.server_id === serverID) || nextZones.find(zone => zone.zone_name === selectedDNSZoneName) || nextZones[0]
     const dnsDomain = draft.dns_sync_enabled ? domainWithZone(dnsPrefix, nextZone?.zone_name || '') : draft.dns_domain
-    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(nextServer, protocol, nextPort) : draft.name, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
+    update({ server_id: serverID, listen_ip: nextServer?.listen_ip || '0.0.0.0', port: nextPort, name: shouldRename ? autoInboundName(nextServer, protocol, nextPort) : draft.name, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(dnsDomain, draft.external_ip) : draft.certificate_domain, certificate_id: certificateIDForDomain(dnsDomain) })
   }
   const chooseAutoPort = () => {
     const nextPort = autoPortFor(server, protocol, inboundPreset(presetID).defaultPort)
@@ -15739,7 +15769,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     update({ port: nextPort, __port_manual: manual, name: draft.name === oldName ? autoInboundName(server, protocol, nextPort) : draft.name })
   }
   const changeEntryMode = (nextMode: EntryIPMode) => update(nextMode === 'custom' ? { entry_ip_mode: nextMode, ddns_enabled: false } : { entry_ip_mode: nextMode })
-  const changeExternalIP = (externalIP: string) => update({ external_ip: externalIP, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, draft.dns_domain, externalIP) : draft.certificate_domain })
+  const changeExternalIP = (externalIP: string) => update({ external_ip: externalIP, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(draft.dns_domain, externalIP) : draft.certificate_domain })
   const domainWithZone = (prefix: string, zoneName: string) => {
     const normalizedPrefix = prefix.trim().replace(/^\.+|\.+$/g, '')
     return normalizedPrefix && zoneName ? `${normalizedPrefix}.${zoneName}` : ''
@@ -15749,15 +15779,15 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
     const zones = (credential?.zones || []).filter(zone => zone.server_id == null || zone.server_id === server?.id)
     const zone = zones.find(item => item.server_id === server?.id) || zones[0]
     const dnsDomain = domainWithZone(dnsPrefix, zone?.zone_name || '')
-    update({ dns_credential_id: credentialID || undefined, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain, dns_proxy_enabled: credential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })
+    update({ dns_credential_id: credentialID || undefined, dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(dnsDomain, draft.external_ip) : draft.certificate_domain, certificate_id: certificateIDForDomain(dnsDomain), dns_proxy_enabled: credential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })
   }
   const changeDNSZone = (zoneName: string) => {
     const dnsDomain = domainWithZone(dnsPrefix, zoneName)
-    update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
+    update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(dnsDomain, draft.external_ip) : draft.certificate_domain, certificate_id: certificateIDForDomain(dnsDomain) })
   }
   const changeDNSPrefix = (prefix: string) => {
     const dnsDomain = domainWithZone(prefix, selectedDNSZoneName)
-    update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? suggestedSNI(selectedCertificate, dnsDomain, draft.external_ip) : draft.certificate_domain })
+    update({ dns_domain: dnsDomain, certificate_domain: certificateRequired && draft.certificate_mode !== 'external' && !draft.__custom_sni ? followedCertificateDomain(dnsDomain, draft.external_ip) : draft.certificate_domain, certificate_id: certificateIDForDomain(dnsDomain) })
   }
   const updateConfig = (patch: Record<string, any>) => update({ config_json: JSON.stringify({ ...cfg, ...patch }, null, 2) })
   const previewConfig = presetID === 'vless-reality' ? redactRealityPrivateKey(draft.config_json || '') : (draft.config_json || '')
@@ -15773,6 +15803,42 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const transport = transportCapability(protocol, cfg)
   const hasTransport = protocol !== 'ssh' && (transport.genericMux || transport.tfo || Boolean(transport.nativeMux))
   const dnsSyncIncomplete = Boolean(draft.dns_sync_enabled) && !Number(draft.dns_credential_id || 0)
+  const ownDomainRequired = certificateRequired && draft.certificate_mode !== 'external'
+  const ownDomainIncomplete = ownDomainRequired && (!String(draft.dns_domain || '').trim() || !Number(draft.dns_credential_id || 0) || !hasDNSCredentials)
+  const submitBlocked = dnsSyncIncomplete || ownDomainIncomplete
+  const submitHint = ownDomainIncomplete
+    ? (hasDNSCredentials ? '此协议必须填写域名服务账号和解析域名' : '请先在「域名解析」创建并验证账号')
+    : dnsSyncIncomplete ? '启用 DNS 自动解析时需要选择 DNS 凭据' : undefined
+  const showDNSRecordFields = hasDNSCredentials && (ownDomainRequired || Boolean(draft.dns_sync_enabled))
+  const dnsRecordFields = showDNSRecordFields ? <>
+                <FormField label="域名服务账号" required hint="使用已验证的域名解析账号。">
+                  <Select required value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))} aria-required="true"><option value={0}>选择凭据</option>{enabledDNSCredentials.map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
+                </FormField>
+                <FormField label="解析域名" required hint="客户端连接使用的域名。修改后会删除旧解析、写入新解析，并匹配或申请对应证书。">
+                  <div className="dns-domain-input">
+                    <input value={dnsPrefix} onChange={e => changeDNSPrefix(e.target.value)} placeholder="例如 entry" aria-label="解析域名前缀" disabled={!selectedDNSZoneName} />
+                    {dnsZoneOptions.length > 1
+                      ? <Select value={selectedDNSZoneName} onChange={e => changeDNSZone(e.target.value)} aria-label="解析域名后缀">{dnsZoneOptions.map(zone => <option key={zone.id} value={zone.zone_name}>.{zone.zone_name}</option>)}</Select>
+                      : <span className="dns-domain-suffix">{selectedDNSZoneName ? `.${selectedDNSZoneName}` : '请先选择域名账号'}</span>}
+                  </div>
+                </FormField>
+                <FormField label="地址类型" hint={entryMode === 'custom' && isDomainLike(draft.external_ip || '') ? '域名目标会创建 CNAME。' : '选择要创建的解析记录。'}>
+                  <Select variant="segmented" value={draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a')} onChange={e => update({ dns_record_types: e.target.value as DNSRecordTypes })} disabled={entryMode === 'custom' && isDomainLike(draft.external_ip || '')}>
+                    {dnsRecordTypes.map(x => <option key={x} value={x}>{dnsRecordTypeLabel(x)}</option>)}
+                  </Select>
+                </FormField>
+                {selectedDNSCredential?.provider === 'cloudflare' && <FormField label="Cloudflare 代理" hint="普通代理建议使用 DNS only。">
+                  <Select variant="segmented" value={String(Boolean(draft.dns_proxy_enabled))} onChange={e => update({ dns_proxy_enabled: e.target.value === 'true' })}><option value="false">DNS only</option><option value="true">开启代理</option></Select>
+                </FormField>}
+                {entryMode !== 'custom' && <div className="switch-setting-row">
+                  <span className="switch-setting-label">
+                    公网 IP 变化时定时更新
+                    <FieldHelp label="公网 IP 变化时定时更新" hint="服务器公网地址变化后，按间隔把解析记录更新到新地址。" />
+                  </span>
+                  <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="公网 IP 变化时定时更新" />
+                </div>}
+                {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
+              </> : null
   const entryAddressDisplay = (() => {
     const formatted = entryAddress ? formatHostPort(entryAddress, displayPort) : ''
     const records = String(draft.dns_record_types || '').toLowerCase()
@@ -15783,7 +15849,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   })()
   return <MotionDialogPanel onCancel={onCancel} className="entry-dialog">
       <header className="dialog-head">
-        <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">设置入口协议、地址和端口。</p></div>
+        <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">{ownDomainRequired ? '此协议必须使用自有域名。先填解析，再确认端口。' : '设置入口协议、地址和端口。'}</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
@@ -15824,6 +15890,11 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
 			onPaddingUpdated?.(result)
 		  }} />}
 
+          {ownDomainRequired && <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="自有域名" description="必须填写域名服务账号和解析域名。保存后会删除旧解析、写入新解析；已有覆盖证书会立刻绑定，否则部署时申请。">
+            {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能创建此协议。</span></div>}
+            {dnsRecordFields}
+          </EntryFormSection>}
+
           <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="连接地址" description="客户端订阅里看到的入口地址。">
             <div className="entry-form-grid">
               <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。自动模式跟随服务器检测结果。" placement="bottom">
@@ -15836,12 +15907,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
               </FormField>}
             </div>
-            <EntryFormDisclosure
+            {!ownDomainRequired && <EntryFormDisclosure
               icon={<Globe size={15} aria-hidden="true" />}
               title="DNS 解析"
               hint="下发前把当前入口地址写入所选域名；开启定时更新后按间隔刷新。"
               summary={draft.dns_sync_enabled ? (draft.dns_domain || '已开启') : '未开启'}
-              defaultOpen={Boolean(draft.dns_sync_enabled) || protocol === 'anytls'}
+              defaultOpen={Boolean(draft.dns_sync_enabled)}
               tone={draft.dns_sync_enabled ? 'accent' : 'default'}
             >
               <div className="switch-setting-row">
@@ -15852,36 +15923,8 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 <Switch checked={Boolean(draft.dns_sync_enabled) && hasDNSCredentials} disabled={!hasDNSCredentials} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || defaultDNSCredentialID) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} ariaLabel="自动同步 DNS 解析" aria-describedby={!hasDNSCredentials ? 'entry-dns-sync-hint' : undefined} />
               </div>
               {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能开启自动同步。</span></div>}
-              {draft.dns_sync_enabled && hasDNSCredentials && <>
-                <FormField label="域名服务账号" required hint="使用已验证的域名解析账号。">
-                  <Select required value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))} aria-required="true"><option value={0}>选择凭据</option>{enabledDNSCredentials.map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
-                </FormField>
-                <FormField label="解析域名" required hint="客户端连接使用的域名。">
-                  <div className="dns-domain-input">
-                    <input value={dnsPrefix} onChange={e => changeDNSPrefix(e.target.value)} placeholder="例如 entry" aria-label="解析域名前缀" disabled={!selectedDNSZoneName} />
-                    {dnsZoneOptions.length > 1
-                      ? <Select value={selectedDNSZoneName} onChange={e => changeDNSZone(e.target.value)} aria-label="解析域名后缀">{dnsZoneOptions.map(zone => <option key={zone.id} value={zone.zone_name}>.{zone.zone_name}</option>)}</Select>
-                      : <span className="dns-domain-suffix">{selectedDNSZoneName ? `.${selectedDNSZoneName}` : '请先选择域名账号'}</span>}
-                  </div>
-                </FormField>
-                <FormField label="地址类型" hint={entryMode === 'custom' && isDomainLike(draft.external_ip || '') ? '域名目标会创建 CNAME。' : '选择要创建的解析记录。'}>
-                  <Select variant="segmented" value={draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a')} onChange={e => update({ dns_record_types: e.target.value as DNSRecordTypes })} disabled={entryMode === 'custom' && isDomainLike(draft.external_ip || '')}>
-                    {dnsRecordTypes.map(x => <option key={x} value={x}>{dnsRecordTypeLabel(x)}</option>)}
-                  </Select>
-                </FormField>
-                {selectedDNSCredential?.provider === 'cloudflare' && <FormField label="Cloudflare 代理" hint="普通代理建议使用 DNS only。">
-                  <Select variant="segmented" value={String(Boolean(draft.dns_proxy_enabled))} onChange={e => update({ dns_proxy_enabled: e.target.value === 'true' })}><option value="false">DNS only</option><option value="true">开启代理</option></Select>
-                </FormField>}
-                {entryMode !== 'custom' && <div className="switch-setting-row">
-                  <span className="switch-setting-label">
-                    公网 IP 变化时定时更新
-                    <FieldHelp label="公网 IP 变化时定时更新" hint="服务器公网地址变化后，按间隔把解析记录更新到新地址。" />
-                  </span>
-                  <Switch checked={Boolean(draft.ddns_enabled)} onChange={checked => update({ ddns_enabled: checked })} ariaLabel="公网 IP 变化时定时更新" />
-                </div>}
-                {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
-              </>}
-            </EntryFormDisclosure>
+              {dnsRecordFields}
+            </EntryFormDisclosure>}
           </EntryFormSection>
 
           <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description="Agent 在本机打开的地址和端口。">
@@ -15981,7 +16024,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       </div>
       <footer className="dialog-actions">
         <button className="ghost" onClick={onCancel}>取消</button>
-        <button onClick={onSubmit} disabled={dnsSyncIncomplete} title={dnsSyncIncomplete ? '启用 DNS 自动解析时需要选择 DNS 凭据' : undefined}>{mode === 'edit' ? '保存入口协议' : '创建入口协议'}</button>
+        <button onClick={onSubmit} disabled={submitBlocked} title={submitHint}>{mode === 'edit' ? '保存入口协议' : '创建入口协议'}</button>
       </footer>
   </MotionDialogPanel>
 }
@@ -21637,11 +21680,11 @@ const anyTLSLightPaddingScheme = [
 
 const inboundPresets: InboundPreset[] = [
   { id: 'vless-reality', protocol: 'vless', label: 'VLESS Reality Vision', description: 'TCP + Reality + Vision', defaultPort: 443 },
-  { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS', defaultPort: 443 },
+  { id: 'vless-ws', protocol: 'vless', label: 'VLESS WebSocket', description: 'WebSocket + TLS，必须使用自有域名', defaultPort: 443 },
   { id: 'vless-tcp', protocol: 'vless', label: 'VLESS TCP', description: '无 TLS，适合内网或测试', defaultPort: 443 },
-  { id: 'hy2-tls', protocol: 'hy2', label: 'HY2 标准', description: 'HY2 标准模式，需要证书', defaultPort: 443 },
-  { id: 'hy2-salamander', protocol: 'hy2', label: 'HY2 Salamander', description: 'HY2 Salamander 混淆，需要证书', defaultPort: 443 },
-  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: 'TLS 入口；Padding 在下方单独选择并由 Controller 固化', defaultPort: 443 },
+  { id: 'hy2-tls', protocol: 'hy2', label: 'HY2 标准', description: '必须使用自有域名签发证书', defaultPort: 443 },
+  { id: 'hy2-salamander', protocol: 'hy2', label: 'HY2 Salamander', description: 'Salamander 混淆，必须使用自有域名签发证书', defaultPort: 443 },
+  { id: 'anytls-basic', protocol: 'anytls', label: 'AnyTLS', description: '必须使用自有域名；Padding 在下方单独选择并由 Controller 固化', defaultPort: 443 },
   { id: 'ss-aes-128-gcm', protocol: 'shadowsocks', label: 'SS 128', description: 'AES-128-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-aes-256-gcm', protocol: 'shadowsocks', label: 'SS 256', description: 'AES-256-GCM，单用户', defaultPort: 8388 },
   { id: 'ss-2022-128', protocol: 'shadowsocks', label: 'SS 2022-128', description: 'AES-128-GCM，多用户', defaultPort: 8388 },
