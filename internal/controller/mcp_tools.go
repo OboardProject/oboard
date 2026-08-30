@@ -74,6 +74,7 @@ func (s *Server) registerMCPTools(server *mcp.Server, principal application.Prin
 	}
 	s.registerMCPCapabilityTools(server, principal)
 	s.registerRemoteAccessMCPTools(server)
+	s.registerMCPInteractiveTerminalTools(server)
 }
 
 type mcpDiscoverInput struct {

@@ -178,6 +178,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"trusted_proxy_cidrs":                       stringArray(0, 64), "controller_log_max_mb": map[string]any{"type": "integer"},
 			"controller_log_backups": map[string]any{"type": "integer"}, "registration_enabled": boolValue,
 			"remote_terminal_enabled": boolValue, "mcp_remote_operations_enabled": boolValue,
+			"mcp_structured_exec_enabled": boolValue, "mcp_raw_shell_enabled": boolValue, "mcp_interactive_terminal_enabled": boolValue,
 			"remote_terminal_password_confirmation_enabled": boolValue,
 			"agent_auto_update_enabled":                     boolValue,
 			"subscription_relay_auto_update_enabled":        boolValue, "update_window_enabled": boolValue,

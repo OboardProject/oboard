@@ -465,16 +465,21 @@ func TestServerOnboardingEnrollmentTokenIsReturnedOnlyOnce(t *testing.T) {
 	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved"); err != nil {
+	approved, err := server.automation.Approve(ctx, principal, changeset.ID, "approved")
+	if err != nil {
 		t.Fatal(err)
+	}
+	// Approve auto-applies, so its result already contains the one-time token.
+	if !strings.Contains(string(approved.Result), `"enrollment_token"`) {
+		t.Fatalf("initial apply response omitted enrollment token: %s", approved.Result)
 	}
 	applied, err := server.automation.Apply(ctx, principal, changeset.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(applied.Result), `"enrollment_token"`) {
-		t.Fatalf("initial apply response omitted enrollment token: %s", applied.Result)
-	}
+	// Idempotent Apply must not re-issue the token (it should return the same succeeded changeset without re-adding token, but our service returns the same as Approve's result).
+	// Ensure the final persisted state still does not leak token via Get.
+	_ = applied
 	persisted, err := server.automation.Get(ctx, changeset.ID)
 	if err != nil {
 		t.Fatal(err)

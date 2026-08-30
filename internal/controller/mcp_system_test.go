@@ -37,16 +37,23 @@ func TestSettingsCapabilities(t *testing.T) {
 	}
 	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_remote_operations_enabled": true, "remote_terminal_password_confirmation_enabled": false}})
 	changed, err := server.settingsUpdateCandidate(ctx, updateInput, false)
-	if err != nil || !containsString(changed, settingRemoteTerminalEnabled) {
-		t.Fatalf("MCP control must report its derived remote-control change: changed=%v err=%v", changed, err)
+	if err != nil || !containsString(changed, settingMCPRemoteOperationsEnabled) {
+		t.Fatalf("MCP control must report its change: changed=%v err=%v", changed, err)
+	}
+	if containsString(changed, settingRemoteTerminalEnabled) {
+		t.Fatalf("independent MCP control must not report derived remote control change: changed=%v", changed)
 	}
 	applyAutomationChangeset(t, server, principal, "settings-update", automation.OperationRequest{Capability: "settings.update", Input: updateInput})
 	settings, err := db.ListSettings(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingRemoteTerminalEnabled] != "true" || settings[settingMCPRemoteOperationsEnabled] != "true" || settings[settingMCPStructuredExecEnabled] != "true" || settings[settingMCPRawShellEnabled] != "true" || settings[settingRemoteTerminalPasswordConfirmationEnabled] != "false" {
+	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPRemoteOperationsEnabled] != "true" || settings[settingRemoteTerminalPasswordConfirmationEnabled] != "false" {
 		t.Fatalf("settings not applied: %#v", settings)
+	}
+	// Ensure independent: other MCP flags remain not true
+	if settings[settingMCPStructuredExecEnabled] == "true" || settings[settingMCPRawShellEnabled] == "true" || settings[settingMCPInteractiveTerminalEnabled] == "true" {
+		t.Fatalf("independent MCP flags were incorrectly enabled together: %#v", settings)
 	}
 	invalidInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "http://subscriptions.example.com"}})
 	if _, err := server.settingsUpdateCandidate(ctx, invalidInput, false); err == nil {
@@ -394,8 +401,12 @@ func applyAutomationChangesetResult(t *testing.T, server *Server, principal appl
 	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved"); err != nil {
+	approved, err := server.automation.Approve(ctx, principal, changeset.ID, "approved")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if approved.Status == model.ChangesetSucceeded {
+		return approved
 	}
 	applied, err := server.automation.Apply(ctx, principal, changeset.ID)
 	if err != nil {

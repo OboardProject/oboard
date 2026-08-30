@@ -37,21 +37,35 @@ func TestStepUpTokenCannotBeReusedOrCrossPurpose(t *testing.T) {
 }
 
 func TestNormalizeRemoteAccessSwitchesEnforcesMCPDependency(t *testing.T) {
+	// After fix, MCP switches are independent of human terminal and of each other.
 	on, off := true, false
-	remote, mcp, err := normalizeRemoteAccessSwitches(nil, &on, nil, nil)
+	remote, mcp, err := normalizeRemoteAccessSwitches(&on, &on, nil, nil)
 	if err != nil || remote == nil || !*remote || mcp == nil || !*mcp {
-		t.Fatalf("enabling MCP must enable remote control: remote=%v mcp=%v err=%v", remote, mcp, err)
+		t.Fatalf("normalize with on must preserve on: remote=%v mcp=%v err=%v", remote, mcp, err)
 	}
+	// Disabling remote terminal must NOT affect MCP independently
 	remote, mcp, err = normalizeRemoteAccessSwitches(&off, nil, nil, nil)
-	if err != nil || remote == nil || *remote || mcp == nil || *mcp {
-		t.Fatalf("disabling remote control must disable MCP: remote=%v mcp=%v err=%v", remote, mcp, err)
+	if err != nil || remote == nil || *remote {
+		t.Fatalf("remote off should stay off: remote=%v err=%v", remote, err)
 	}
-	if _, _, err := normalizeRemoteAccessSwitches(&off, &on, &on, &on); err == nil {
-		t.Fatal("an inconsistent remote-off MCP-on request must be rejected")
+	if mcp != nil {
+		t.Fatalf("mcp should remain nil when not provided: mcp=%v", mcp)
 	}
-	if _, _, err := normalizeRemoteAccessSwitches(&on, &on, &off, &on); err == nil {
-		t.Fatal("split MCP control values must be rejected")
+	// Split MCP values must be allowed (independent)
+	if _, _, err := normalizeRemoteAccessSwitches(&on, &on, &off, &on); err != nil {
+		t.Fatalf("split MCP control values must be allowed independently: %v", err)
 	}
+	// Verify independence via actual policy patch: each switch independent
+	patch := RemoteAccessPolicyPatch{
+		MCPRemoteOperationsEnabled: &on,
+		MCPStructuredExecEnabled:   &off,
+		MCPRawShellEnabled:         &on,
+		MCPInteractiveEnabled:      &off,
+	}
+	if err := normalizeRemoteAccessPatch(patch); err != nil {
+		t.Fatalf("independent patch must be valid: %v", err)
+	}
+	_ = off
 }
 
 func TestRemoteAccessDefaults(t *testing.T) {
@@ -65,8 +79,8 @@ func TestRemoteAccessDefaults(t *testing.T) {
 	if settings[settingRemoteTerminalEnabled] != true || settings[settingRemoteTerminalPasswordConfirmationEnabled] != true {
 		t.Fatalf("remote control and password confirmation must default on: %#v", settings)
 	}
-	if settings[settingMCPRemoteOperationsEnabled] != false {
-		t.Fatalf("MCP control must default off: %#v", settings)
+	if settings[settingMCPRemoteOperationsEnabled] != false || settings[settingMCPStructuredExecEnabled] != false || settings[settingMCPRawShellEnabled] != false || settings[settingMCPInteractiveTerminalEnabled] != false {
+		t.Fatalf("MCP controls must default off: %#v", settings)
 	}
 }
 

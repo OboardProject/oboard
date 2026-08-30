@@ -6,15 +6,17 @@ const (
 	RemoteAccessModeStandard = "standard"
 	RemoteAccessModeHardened = "hardened"
 
-	PrivilegeRemoteOperations = "remote_operations"
-	PrivilegeRemoteExec       = "remote_exec"
-	PrivilegeRemoteShell      = "remote_shell"
+	PrivilegeRemoteOperations  = "remote_operations"
+	PrivilegeRemoteExec        = "remote_exec"
+	PrivilegeRemoteShell       = "remote_shell"
+	PrivilegeRemoteInteractive = "remote_interactive"
 
 	ApprovalPolicyPrivilegedGrant = "privileged_grant"
 
 	RemoteAccessCapabilityTerminal         = "remote_terminal_v1"
 	RemoteAccessCapabilityTerminalLoginEnv = "terminal_login_env_v1"
 	RemoteAccessCapabilityExec             = "remote_exec_v1"
+	RemoteAccessCapabilityInteractiveMCP   = "remote_interactive_mcp_v1"
 	RemoteAccessCapabilityLocalGate        = "remote_access_local_gate_v1"
 
 	RemoteExecOriginMCP   = "mcp"
@@ -31,23 +33,27 @@ const (
 	RemoteOperationLogs           = "logs"
 	RemoteOperationDiagnostics    = "diagnostics"
 
-	StepUpPurposeRemoteTerminal     = "remote_terminal"
-	StepUpPurposeGrantMCPExec       = "grant_mcp_exec"
-	StepUpPurposeGrantMCPRawShell   = "grant_mcp_raw_shell"
-	StepUpPurposeGrantMCPOperations = "grant_mcp_operations"
-	StepUpPurposePrivilegedGrant    = "privileged_grant"
+	StepUpPurposeRemoteTerminal       = "remote_terminal"
+	StepUpPurposeGrantMCPExec         = "grant_mcp_exec"
+	StepUpPurposeGrantMCPRawShell     = "grant_mcp_raw_shell"
+	StepUpPurposeGrantMCPOperations   = "grant_mcp_operations"
+	StepUpPurposeGrantMCPInteractive  = "grant_mcp_interactive"
+	StepUpPurposePrivilegedGrant      = "privileged_grant"
 
-	RemoteAccessAuditTerminalOpen           = "terminal_open"
-	RemoteAccessAuditTerminalClose          = "terminal_close"
-	RemoteAccessAuditTerminalDenied         = "terminal_denied"
-	RemoteAccessAuditMCPRemoteOperation     = "mcp_remote_operation"
-	RemoteAccessAuditMCPExec                = "mcp_exec"
-	RemoteAccessAuditMCPShell               = "mcp_shell"
-	RemoteAccessAuditMCPExecDenied          = "mcp_exec_denied"
-	RemoteAccessAuditPrivilegedGrantCreated = "privileged_grant_created"
-	RemoteAccessAuditPrivilegedGrantUpdated = "privileged_grant_updated"
-	RemoteAccessAuditPrivilegedGrantRevoked = "privileged_grant_revoked"
-	RemoteAccessAuditAgentLocalGateDenied   = "agent_local_gate_denied"
+	RemoteAccessAuditTerminalOpen            = "terminal_open"
+	RemoteAccessAuditTerminalClose           = "terminal_close"
+	RemoteAccessAuditTerminalDenied          = "terminal_denied"
+	RemoteAccessAuditMCPRemoteOperation      = "mcp_remote_operation"
+	RemoteAccessAuditMCPExec                 = "mcp_exec"
+	RemoteAccessAuditMCPShell                = "mcp_shell"
+	RemoteAccessAuditMCPInteractiveOpen      = "mcp_interactive_open"
+	RemoteAccessAuditMCPInteractiveClose     = "mcp_interactive_close"
+	RemoteAccessAuditMCPInteractiveIO        = "mcp_interactive_io"
+	RemoteAccessAuditMCPExecDenied           = "mcp_exec_denied"
+	RemoteAccessAuditPrivilegedGrantCreated  = "privileged_grant_created"
+	RemoteAccessAuditPrivilegedGrantUpdated  = "privileged_grant_updated"
+	RemoteAccessAuditPrivilegedGrantRevoked  = "privileged_grant_revoked"
+	RemoteAccessAuditAgentLocalGateDenied    = "agent_local_gate_denied"
 )
 
 type RemoteAccessReport struct {
@@ -57,20 +63,23 @@ type RemoteAccessReport struct {
 }
 
 type RemoteAccessLocalAllow struct {
-	RemoteTerminal      bool `json:"remote_terminal"`
-	MCPRemoteOperations bool `json:"mcp_remote_operations"`
-	MCPStructuredExec   bool `json:"mcp_structured_exec"`
-	MCPRawShell         bool `json:"mcp_raw_shell"`
+	RemoteTerminal       bool `json:"remote_terminal"`
+	MCPRemoteOperations  bool `json:"mcp_remote_operations"`
+	MCPStructuredExec    bool `json:"mcp_structured_exec"`
+	MCPRawShell          bool `json:"mcp_raw_shell"`
+	MCPInteractive       bool `json:"mcp_interactive_terminal"`
+	MCPInteractiveLegacy bool `json:"-"` // compat: old JSON may use mcp_interactive_terminal
 }
 
 type ServerRemoteAccessPolicy struct {
-	ServerID                   int64     `json:"server_id"`
-	RemoteTerminalEnabled      bool      `json:"remote_terminal_enabled"`
-	MCPRemoteOperationsEnabled bool      `json:"mcp_remote_operations_enabled"`
-	MCPStructuredExecEnabled   bool      `json:"mcp_structured_exec_enabled"`
-	MCPRawShellEnabled         bool      `json:"mcp_raw_shell_enabled"`
-	CreatedAt                  time.Time `json:"created_at"`
-	UpdatedAt                  time.Time `json:"updated_at"`
+	ServerID                    int64     `json:"server_id"`
+	RemoteTerminalEnabled       bool      `json:"remote_terminal_enabled"`
+	MCPRemoteOperationsEnabled  bool      `json:"mcp_remote_operations_enabled"`
+	MCPStructuredExecEnabled    bool      `json:"mcp_structured_exec_enabled"`
+	MCPRawShellEnabled          bool      `json:"mcp_raw_shell_enabled"`
+	MCPInteractiveEnabled       bool      `json:"mcp_interactive_terminal_enabled"`
+	CreatedAt                   time.Time `json:"created_at"`
+	UpdatedAt                   time.Time `json:"updated_at"`
 }
 
 type ServerRemoteAccessStatus struct {
@@ -211,11 +220,17 @@ type InteractivePrepareEnvelope struct {
 	IssuedAt         string `json:"issued_at"`
 	ExpiresAt        string `json:"expires_at"`
 	Kind             string `json:"kind"`
+	Origin           string `json:"origin,omitempty"`
 	Cols             int    `json:"cols"`
 	Rows             int    `json:"rows"`
 	Mode             string `json:"mode,omitempty"`
 	Signature        string `json:"signature,omitempty"`
 }
+
+const (
+	InteractiveOriginHuman = "human"
+	InteractiveOriginMCP   = "mcp"
+)
 
 type StepUpChallenge struct {
 	ID                  string     `json:"id"`

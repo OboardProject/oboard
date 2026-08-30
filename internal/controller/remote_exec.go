@@ -87,69 +87,6 @@ func (s *Server) waitRemoteExec(ctx context.Context, principal mcpauth.GrantPrin
 	return out, nil
 }
 
-func (s *Server) assertRemoteExecAllowedHTTP(ctx context.Context, server *model.Server, privilege string) error {
-	settings, _ := s.store.ListSettings(ctx)
-	policy, err := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
-	if err != nil {
-		return err
-	}
-	status, err := s.store.GetServerRemoteAccessStatus(ctx, server.ID)
-	if err != nil {
-		return err
-	}
-	if !settingBool(settings, settingRemoteTerminalEnabled, true) {
-		return codedError("remote_access_global_disabled", "remote control is globally disabled")
-	}
-	if !policy.RemoteTerminalEnabled {
-		return codedError("remote_access_server_disabled", "remote control is disabled on the server")
-	}
-	globalMCPEnabled := settingBool(settings, settingMCPRemoteOperationsEnabled, false) &&
-		settingBool(settings, settingMCPStructuredExecEnabled, false) &&
-		settingBool(settings, settingMCPRawShellEnabled, false)
-	if !globalMCPEnabled {
-		return codedError("remote_access_global_disabled", "MCP control is globally disabled")
-	}
-	if !policy.MCPRemoteOperationsEnabled || !policy.MCPStructuredExecEnabled || !policy.MCPRawShellEnabled {
-		return codedError("remote_access_server_disabled", "MCP control is disabled on the server")
-	}
-	enabled := false
-	switch privilege {
-	case model.PrivilegeRemoteOperations:
-		enabled = settingBool(settings, settingMCPRemoteOperationsEnabled, false) && policy.MCPRemoteOperationsEnabled
-	case model.PrivilegeRemoteExec:
-		enabled = settingBool(settings, settingMCPStructuredExecEnabled, false) && policy.MCPStructuredExecEnabled
-	case model.PrivilegeRemoteShell:
-		enabled = settingBool(settings, settingMCPRawShellEnabled, false) && policy.MCPRawShellEnabled
-	}
-	if !enabled {
-		if !settingBool(settings, settingKeyForPrivilege(privilege), false) {
-			return codedError("remote_access_global_disabled", "this remote access feature is globally disabled")
-		}
-		return codedError("remote_access_server_disabled", "this remote access feature is disabled on the server")
-	}
-	if server.Status != model.ServerOnline {
-		return codedError("agent_offline", "agent is offline")
-	}
-	if !containsString(status.Capabilities, model.RemoteAccessCapabilityExec) {
-		return codedError("agent_upgrade_required", "agent does not advertise remote_exec_v1")
-	}
-	if status.LocalMode == model.RemoteAccessModeHardened {
-		allowed := false
-		switch privilege {
-		case model.PrivilegeRemoteOperations:
-			allowed = status.LocalAllow.MCPRemoteOperations
-		case model.PrivilegeRemoteExec:
-			allowed = status.LocalAllow.MCPStructuredExec
-		case model.PrivilegeRemoteShell:
-			allowed = status.LocalAllow.MCPRawShell
-		}
-		if !allowed {
-			return codedError("agent_local_gate_denied", "agent local security policy denied this operation")
-		}
-	}
-	return nil
-}
-
 func settingKeyForPrivilege(privilege string) string {
 	switch privilege {
 	case model.PrivilegeRemoteOperations:
@@ -158,6 +95,8 @@ func settingKeyForPrivilege(privilege string) string {
 		return settingMCPStructuredExecEnabled
 	case model.PrivilegeRemoteShell:
 		return settingMCPRawShellEnabled
+	case model.PrivilegeRemoteInteractive:
+		return settingMCPInteractiveTerminalEnabled
 	default:
 		return settingMCPStructuredExecEnabled
 	}

@@ -289,6 +289,9 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 	if err != nil {
 		return nil, err
 	}
+	if item.Status == model.ChangesetSucceeded {
+		return item, nil
+	}
 	if item.Status != model.ChangesetApproved {
 		return nil, errors.New("changeset is not approved")
 	}

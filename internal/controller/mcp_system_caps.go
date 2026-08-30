@@ -36,7 +36,29 @@ func (s *Server) addMCPSystemCapabilitiesTool(server *mcp.Server) {
 			"tool_count":          manifest.ToolCount,
 			"instructions_hash":   manifest.InstructionsHash,
 		}
-		if principal, err := mcpPrincipal(ctx); err == nil {
+		// interactive_terminal discovery: precise per-principal reason without server context
+		principal, _ := mcpPrincipal(ctx)
+		interactive := map[string]any{"available": false, "reason": "privileged_grant_required"}
+		hasInteractive := false
+		for _, c := range principal.PrivilegedClasses {
+			if c == "remote_interactive" {
+				hasInteractive = true
+				break
+			}
+		}
+		if !hasInteractive {
+			interactive["reason"] = "privileged_grant_required"
+		} else {
+			settings, _ := s.store.ListSettings(ctx)
+			if !settingBool(settings, settingMCPInteractiveTerminalEnabled, false) {
+				interactive["reason"] = "global_disabled"
+			} else {
+				interactive["available"] = true
+				interactive["reason"] = ""
+			}
+		}
+		data["interactive_terminal"] = interactive
+		if principal.ID != "" {
 			s.recordToolCall(ctx, principal, "system.get_capabilities", map[string]any{}, "succeeded", capability.DataInternal)
 		}
 		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", data), nil

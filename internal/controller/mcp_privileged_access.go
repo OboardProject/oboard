@@ -93,6 +93,8 @@ func (s *Server) putPrivilegedAccess(w http.ResponseWriter, r *http.Request, gra
 		Result: "updated", Capability: strings.Join(saved.Capabilities, ","),
 	})
 	s.mcpInvalidateRegistry()
+	// Immediately close MCP interactive sessions that are no longer authorized by the new grant.
+	s.enforceMCPTerminalsForGrant(grant.ID, saved)
 	write(w, http.StatusOK, map[string]any{"privileged_access": privilegedAccessView(*saved)})
 }
 
@@ -119,6 +121,7 @@ func (s *Server) deletePrivilegedAccess(w http.ResponseWriter, r *http.Request, 
 		})
 	}
 	s.mcpInvalidateRegistry()
+	s.closeMCPTerminalsForGrant(grant.ID)
 	write(w, http.StatusOK, map[string]any{"revoked": true})
 }
 
@@ -127,7 +130,7 @@ func normalizePrivilegedGrantInput(grant *model.OAuthGrant, actorID int64, req p
 	seen := map[string]bool{}
 	for _, item := range req.Capabilities {
 		switch strings.TrimSpace(item) {
-		case model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell:
+		case model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive:
 			if !seen[item] {
 				caps = append(caps, item)
 				seen[item] = true

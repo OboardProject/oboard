@@ -1,14 +1,17 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
@@ -24,31 +27,173 @@ const (
 	terminalMaxPerUser       = 4
 	terminalMaxCols          = 400
 	terminalMaxRows          = 150
+
+	terminalMCPBufferMax      = 256 << 10
+	terminalMCPReadMax        = 64 << 10
+	terminalMCPMaxPerGrant    = 4
+	terminalMCPMaxPerServer   = 1
+	terminalMCPMaxInput       = 64 << 10
+	terminalMCPMaxWaitMS      = 3000
+	terminalIdleTimeout       = 15 * time.Minute
+	terminalAbsTimeout        = time.Hour
 )
 
 var terminalPrepareTimeout = 20 * time.Second
 
+type InteractiveOwnerType string
+
+const (
+	InteractiveOwnerHuman InteractiveOwnerType = "human"
+	InteractiveOwnerMCP   InteractiveOwnerType = "mcp"
+)
+
+type TerminalOutputBuffer struct {
+	mu        sync.Mutex
+	chunks    []bufferChunk
+	total     int
+	maxBytes  int
+	nextSeq   int64
+	oldestSeq int64
+}
+
+type bufferChunk struct {
+	seq  int64
+	data []byte
+}
+
+func newTerminalOutputBuffer(maxBytes int) *TerminalOutputBuffer {
+	if maxBytes <= 0 {
+		maxBytes = terminalMCPBufferMax
+	}
+	return &TerminalOutputBuffer{maxBytes: maxBytes, nextSeq: 1, oldestSeq: 1}
+}
+
+func (b *TerminalOutputBuffer) Write(p []byte) int64 {
+	if len(p) == 0 {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	seq := b.nextSeq
+	b.nextSeq++
+	cp := make([]byte, len(p))
+	copy(cp, p)
+	b.chunks = append(b.chunks, bufferChunk{seq: seq, data: cp})
+	b.total += len(cp)
+	// evict oldest until within limit
+	for b.total > b.maxBytes && len(b.chunks) > 0 {
+		b.total -= len(b.chunks[0].data)
+		b.chunks = b.chunks[1:]
+		if len(b.chunks) > 0 {
+			b.oldestSeq = b.chunks[0].seq
+		} else {
+			b.oldestSeq = b.nextSeq
+		}
+	}
+	if len(b.chunks) == 1 && seq == 1 {
+		b.oldestSeq = 1
+	}
+	return seq
+}
+
+func (b *TerminalOutputBuffer) ReadAfter(after int64, maxBytes int) (out []byte, nextCursor int64, lost bool, oldest int64, truncated bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if maxBytes <= 0 {
+		maxBytes = terminalMCPReadMax
+	}
+	if maxBytes > 64<<10 {
+		maxBytes = 64 << 10
+	}
+	oldest = b.oldestSeq
+	if after < oldest-1 && len(b.chunks) > 0 {
+		lost = true
+	}
+	// collect
+	var buf []byte
+	var lastSeq int64 = after
+	for _, ch := range b.chunks {
+		if ch.seq <= after {
+			continue
+		}
+		if len(buf)+len(ch.data) > maxBytes {
+			need := maxBytes - len(buf)
+			if need > 0 {
+				buf = append(buf, ch.data[:need]...)
+				lastSeq = ch.seq
+				truncated = true
+			}
+			break
+		}
+		buf = append(buf, ch.data...)
+		lastSeq = ch.seq
+	}
+	if len(buf) == 0 {
+		nextCursor = after
+		if b.nextSeq > 1 {
+			// if no data, next cursor stays at after, but we may indicate current tip
+			// keep after as per spec, caller will poll
+		}
+		return buf, nextCursor, lost, oldest, truncated
+	}
+	nextCursor = lastSeq
+	return buf, nextCursor, lost, oldest, truncated
+}
+
+func (b *TerminalOutputBuffer) TotalBytes() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.total
+}
+
+func (b *TerminalOutputBuffer) OldestSeq() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.oldestSeq
+}
+
+func (b *TerminalOutputBuffer) NextSeq() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.nextSeq
+}
+
 type terminalSession struct {
-	ID           string
-	ServerID     int64
-	UserID       int64
-	Nonce        string
-	ExpiresAt    time.Time
-	CreatedAt    time.Time
-	Ticket       string
-	TicketUsed   bool
-	Cols         int
-	Rows         int
-	Mode         string
-	LoginEnv     bool
-	PrepareExp   string
-	browser      *websocket.Conn
-	agent        *websocket.Conn
-	relaying     bool
-	agentReady   bool
-	closed       bool
-	prepareTimer *time.Timer
-	mu           sync.Mutex
+	ID                 string
+	ServerID           int64
+	OwnerType          InteractiveOwnerType
+	UserID             int64
+	OAuthGrantID       string
+	OAuthClientID      string
+	PrivilegedGrantID  int64
+	Nonce              string
+	ExpiresAt          time.Time
+	CreatedAt          time.Time
+	LastActivityAt     time.Time
+	Ticket             string
+	TicketUsed         bool
+	Cols               int
+	Rows               int
+	Mode               string
+	LoginEnv           bool
+	PrepareExp         string
+	Origin             string
+	browser            *websocket.Conn
+	agent              *websocket.Conn
+	outputBuffer       *TerminalOutputBuffer
+	Ready              bool
+	Closed             bool
+	CloseReason        string
+	relaying           bool
+	agentReady         bool
+	closed             bool
+	prepareTimer       *time.Timer
+	idleTimer          *time.Timer
+	absTimer           *time.Timer
+	readyCh            chan struct{}
+	readyErr           string
+	mu                 sync.Mutex
+	writeMu            sync.Mutex
 }
 
 type terminalSessionHub struct {
@@ -78,6 +223,30 @@ func (h *terminalSessionHub) countForUser(userID int64) int {
 	n := 0
 	for _, session := range h.sessions {
 		if session.UserID == userID {
+			n++
+		}
+	}
+	return n
+}
+
+func (h *terminalSessionHub) countForGrant(grantID string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, session := range h.sessions {
+		if session.OwnerType == InteractiveOwnerMCP && session.OAuthGrantID == grantID {
+			n++
+		}
+	}
+	return n
+}
+
+func (h *terminalSessionHub) countForGrantServer(grantID string, serverID int64) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, session := range h.sessions {
+		if session.OwnerType == InteractiveOwnerMCP && session.OAuthGrantID == grantID && session.ServerID == serverID {
 			n++
 		}
 	}
@@ -122,6 +291,159 @@ func (s *Server) serverTerminal(w http.ResponseWriter, r *http.Request, serverID
 }
 
 func errNotFound() error { return codedError("not_found", "not found") }
+
+// prepareInteractiveSession is the single chokepoint for creating an interactive PTY session.
+// It allocates the session, signs the interactive_prepare envelope with the correct origin and version,
+// sends it to the Agent and waits for ready when owner is MCP.
+// Human caller is responsible for step-up and remote_terminal privilege;
+// MCP caller is responsible for PrivilegedGrant / resource boundary checks.
+func (s *Server) prepareInteractiveSession(ctx context.Context, owner InteractiveOwnerType, server *model.Server, userID int64, grantID, clientID string, privilegedGrantID int64, cols, rows int, mode string) (*terminalSession, error) {
+	if cols <= 0 || cols > terminalMaxCols {
+		cols = 120
+	}
+	if rows <= 0 || rows > terminalMaxRows {
+		rows = 32
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "login"
+	}
+	if mode != "login" && mode != "minimal" {
+		return nil, codedError("terminal_mode_invalid", "terminal mode must be login or minimal")
+	}
+	// limit checks
+	if s.terminalHub.countForServer(server.ID) >= terminalMaxPerServer {
+		return nil, codedError("terminal_limit_exceeded", "too many active terminals for this server")
+	}
+	if owner == InteractiveOwnerHuman {
+		if s.terminalHub.countForUser(userID) >= terminalMaxPerUser {
+			return nil, codedError("terminal_limit_exceeded", "too many active terminals for this user")
+		}
+	} else {
+		if s.terminalHub.countForGrant(grantID) >= terminalMCPMaxPerGrant {
+			return nil, codedError("terminal_limit_exceeded", "too many MCP terminals for this grant")
+		}
+		if s.terminalHub.countForGrantServer(grantID, server.ID) >= terminalMCPMaxPerServer {
+			return nil, codedError("terminal_limit_exceeded", "MCP terminal already open for this server")
+		}
+	}
+	sessionID, err := security.RandomToken(18)
+	if err != nil {
+		return nil, err
+	}
+	nonce, err := security.RandomToken(18)
+	if err != nil {
+		return nil, err
+	}
+	ticket := ""
+	if owner == InteractiveOwnerHuman {
+		ticket, err = security.RandomToken(24)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// Agent capability check: need to handle different origin
+	status, err := s.store.GetServerRemoteAccessStatus(ctx, server.ID)
+	if err != nil {
+		return nil, err
+	}
+	loginEnv := slices.Contains(status.Capabilities, model.RemoteAccessCapabilityTerminalLoginEnv)
+	now := time.Now().UTC()
+	prepareExp := now.Add(security.InteractivePrepareTTL)
+	absExp := now.Add(terminalAbsTimeout)
+	session := &terminalSession{
+		ID: sessionID, ServerID: server.ID, OwnerType: owner, UserID: userID,
+		OAuthGrantID: grantID, OAuthClientID: clientID, PrivilegedGrantID: privilegedGrantID,
+		Nonce: nonce, ExpiresAt: absExp, CreatedAt: now, LastActivityAt: now,
+		Ticket: ticket, Cols: cols, Rows: rows, Mode: mode, LoginEnv: loginEnv, PrepareExp: prepareExp.Format(time.RFC3339Nano),
+		Origin: string(owner), readyCh: make(chan struct{}), outputBuffer: nil,
+	}
+	if owner == InteractiveOwnerMCP {
+		session.outputBuffer = newTerminalOutputBuffer(terminalMCPBufferMax)
+		session.Origin = model.InteractiveOriginMCP
+	} else {
+		session.Origin = model.InteractiveOriginHuman
+	}
+	s.terminalHub.mu.Lock()
+	s.terminalHub.sessions[sessionID] = session
+	s.terminalHub.mu.Unlock()
+
+	var envelope security.InteractiveEnvelope
+	var sig string
+	var sigVersion int
+	if owner == InteractiveOwnerMCP {
+		envelope = security.InteractiveEnvelope{
+			Type: "interactive_prepare", ServerID: server.ID, SessionID: sessionID, Nonce: nonce,
+			IssuedAt: now.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
+			Kind: "terminal", Origin: model.InteractiveOriginMCP, Cols: cols, Rows: rows, Mode: mode,
+		}
+		sig = security.SignInteractiveEnvelopeV2(server.AgentTokenHash, envelope)
+		sigVersion = security.InteractiveSignatureV2
+	} else {
+		envelope = security.InteractiveEnvelope{
+			Type: "interactive_prepare", ServerID: server.ID, SessionID: sessionID, Nonce: nonce,
+			IssuedAt: now.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
+			Kind: "terminal", Cols: cols, Rows: rows,
+		}
+		sig = security.SignInteractiveEnvelope(server.AgentTokenHash, envelope)
+		sigVersion = security.InteractiveSignatureV1
+	}
+	payload := map[string]any{
+		"type": "interactive_prepare", "signature_version": sigVersion,
+		"server_id": server.ID, "session_id": sessionID, "nonce": nonce,
+		"issued_at": envelope.IssuedAt, "expires_at": envelope.ExpiresAt, "kind": "terminal",
+		"cols": cols, "rows": rows, "signature": sig,
+	}
+	if owner == InteractiveOwnerMCP {
+		payload["origin"] = model.InteractiveOriginMCP
+		payload["mode"] = mode
+	} else if loginEnv {
+		payload["mode"] = mode
+	}
+	if owner == InteractiveOwnerMCP && sigVersion == security.InteractiveSignatureV2 {
+		// Explicit origin for V2 already set
+	}
+	if !s.sendAgentControl(server.ID, payload) {
+		s.terminalHub.mu.Lock()
+		delete(s.terminalHub.sessions, sessionID)
+		s.terminalHub.mu.Unlock()
+		return nil, codedError("agent_offline", "agent control channel is unavailable")
+	}
+	session.mu.Lock()
+	session.prepareTimer = time.AfterFunc(terminalPrepareTimeout, func() {
+		s.failTerminalSession(sessionID, server.ID, "prepare_timeout", "")
+	})
+	// idle timeout for MCP sessions: will be reset on activity
+	if owner == InteractiveOwnerMCP {
+		session.idleTimer = time.AfterFunc(terminalIdleTimeout, func() {
+			s.closeMCPTerminalSession(sessionID, "idle_timeout")
+		})
+		session.absTimer = time.AfterFunc(terminalAbsTimeout, func() {
+			s.closeMCPTerminalSession(sessionID, "terminal_expired")
+		})
+	}
+	session.mu.Unlock()
+	return session, nil
+}
+
+func (s *Server) waitForTerminalReady(session *terminalSession) error {
+	select {
+	case <-session.readyCh:
+		session.mu.Lock()
+		errMsg := session.readyErr
+		ready := session.Ready || session.agentReady
+		session.mu.Unlock()
+		if errMsg != "" {
+			return codedError(errMsg, errMsg)
+		}
+		if !ready {
+			return codedError("terminal_prepare_timeout", "terminal prepare timeout")
+		}
+		return nil
+	case <-time.After(terminalPrepareTimeout):
+		return codedError("terminal_prepare_timeout", "terminal prepare timeout")
+	}
+}
 
 func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, serverID int64) {
 	user := currentUser(r)
@@ -177,75 +499,29 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		})
 		return
 	}
-	if s.terminalHub.countForServer(serverID) >= terminalMaxPerServer || s.terminalHub.countForUser(user.ID) >= terminalMaxPerUser {
-		failCode(w, "terminal_limit_exceeded", "too many active terminals", http.StatusConflict)
-		return
-	}
-	cols, rows := req.Cols, req.Rows
-	if cols <= 0 || cols > terminalMaxCols {
-		cols = 120
-	}
-	if rows <= 0 || rows > terminalMaxRows {
-		rows = 32
-	}
-	sessionID, err := security.RandomToken(18)
+	session, err := s.prepareInteractiveSession(r.Context(), InteractiveOwnerHuman, server, user.ID, "", "", 0, req.Cols, req.Rows, mode)
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		if coded, ok := err.(interface{ Code() string }); ok {
+			switch coded.Code() {
+			case "terminal_limit_exceeded":
+				failCode(w, coded.Code(), err.Error(), http.StatusConflict)
+			case "agent_offline", "agent_upgrade_required", "remote_access_global_disabled", "remote_access_server_disabled", "agent_local_gate_denied":
+				failCode(w, coded.Code(), err.Error(), http.StatusConflict)
+			default:
+				fail(w, err, http.StatusInternalServerError)
+			}
+		} else {
+			fail(w, err, http.StatusInternalServerError)
+		}
 		return
 	}
-	nonce, err := security.RandomToken(18)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	ticket, err := security.RandomToken(24)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	loginEnv := slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityTerminalLoginEnv)
-	now := time.Now().UTC()
-	expires := now.Add(security.InteractivePrepareTTL)
-	session := &terminalSession{
-		ID: sessionID, ServerID: serverID, UserID: user.ID, Nonce: nonce, ExpiresAt: now.Add(terminalAbsoluteLifetime),
-		CreatedAt: now, Ticket: ticket, Cols: cols, Rows: rows, Mode: mode, LoginEnv: loginEnv, PrepareExp: expires.Format(time.RFC3339Nano),
-	}
-	s.terminalHub.mu.Lock()
-	s.terminalHub.sessions[sessionID] = session
-	s.terminalHub.mu.Unlock()
-	envelope := security.InteractiveEnvelope{
-		Type: "interactive_prepare", ServerID: serverID, SessionID: sessionID, Nonce: nonce,
-		IssuedAt: now.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
-		Kind: "terminal", Cols: cols, Rows: rows,
-	}
-	payload := map[string]any{
-		"type": "interactive_prepare", "signature_version": security.InteractiveSignatureV1,
-		"server_id": serverID, "session_id": sessionID, "nonce": nonce,
-		"issued_at": envelope.IssuedAt, "expires_at": envelope.ExpiresAt, "kind": "terminal",
-		"cols": cols, "rows": rows, "signature": security.SignInteractiveEnvelope(server.AgentTokenHash, envelope),
-	}
-	if loginEnv {
-		payload["mode"] = mode
-	}
-	if !s.sendAgentControl(serverID, payload) {
-		s.terminalHub.mu.Lock()
-		delete(s.terminalHub.sessions, sessionID)
-		s.terminalHub.mu.Unlock()
-		failCode(w, "agent_offline", "agent control channel is unavailable", http.StatusConflict)
-		return
-	}
-	session.mu.Lock()
-	session.prepareTimer = time.AfterFunc(terminalPrepareTimeout, func() {
-		s.failTerminalSession(sessionID, serverID, "prepare_timeout", "")
-	})
-	session.mu.Unlock()
-	http.SetCookie(w, s.terminalTicketCookie(r, serverID, ticket, 120))
+	http.SetCookie(w, s.terminalTicketCookie(r, serverID, session.Ticket, 120))
 	s.recordRemoteAccessAudit(r, model.RemoteAccessAuditEvent{
 		EventType: model.RemoteAccessAuditTerminalOpen, ActorType: "user", ActorUserID: &user.ID,
-		ServerID: &serverID, SessionID: sessionID, Result: "opened", Capability: "remote_terminal",
+		ServerID: &serverID, SessionID: session.ID, Result: "opened", Capability: "remote_terminal",
 	})
 	write(w, http.StatusCreated, map[string]any{
-		"session_id": sessionID, "expires_at": session.ExpiresAt, "mode": mode, "login_env": loginEnv,
+		"session_id": session.ID, "expires_at": session.ExpiresAt, "mode": mode, "login_env": session.LoginEnv,
 	})
 }
 
@@ -272,6 +548,9 @@ func (s *Server) listTerminalSessions(w http.ResponseWriter, r *http.Request, se
 	items := []map[string]any{}
 	for _, session := range s.terminalHub.sessions {
 		if session.ServerID != serverID {
+			continue
+		}
+		if session.OwnerType == InteractiveOwnerMCP {
 			continue
 		}
 		if user != nil && session.UserID != user.ID && !roleAllows(currentRole(r), model.RoleAdmin) {
@@ -311,13 +590,31 @@ func (session *terminalSession) fail(reason, detail string) {
 func (session *terminalSession) notifyAndClose(msgType, reason, detail string) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if session.closed {
+	if session.closed && session.Closed {
 		return
 	}
 	session.closed = true
+	session.Closed = true
+	session.CloseReason = reason
 	if session.prepareTimer != nil {
 		session.prepareTimer.Stop()
 		session.prepareTimer = nil
+	}
+	if session.idleTimer != nil {
+		session.idleTimer.Stop()
+		session.idleTimer = nil
+	}
+	if session.absTimer != nil {
+		session.absTimer.Stop()
+		session.absTimer = nil
+	}
+	if session.readyCh != nil {
+		select {
+		case <-session.readyCh:
+		default:
+			session.readyErr = reason
+			close(session.readyCh)
+		}
 	}
 	payload := map[string]any{"type": msgType, "reason": reason}
 	if detail != "" {
@@ -340,6 +637,19 @@ func (session *terminalSession) markAgentConnected() {
 		session.prepareTimer.Stop()
 		session.prepareTimer = nil
 	}
+	session.Ready = true
+	session.agentReady = true
+	if session.readyCh != nil {
+		select {
+		case <-session.readyCh:
+		default:
+			close(session.readyCh)
+		}
+	}
+	session.LastActivityAt = time.Now().UTC()
+	if session.OwnerType == InteractiveOwnerMCP && session.idleTimer != nil {
+		session.idleTimer.Reset(terminalIdleTimeout)
+	}
 }
 
 func (s *Server) failTerminalSession(sessionID string, serverID int64, reason, detail string) {
@@ -351,6 +661,20 @@ func (s *Server) failTerminalSession(sessionID string, serverID int64, reason, d
 	}
 	delete(s.terminalHub.sessions, sessionID)
 	s.terminalHub.mu.Unlock()
+	// ensure readyCh is notified with error before fail
+	session.mu.Lock()
+	if session.readyCh != nil {
+		select {
+		case <-session.readyCh:
+		default:
+			session.readyErr = reason
+			if detail != "" {
+				session.readyErr = reason + ": " + detail
+			}
+			close(session.readyCh)
+		}
+	}
+	session.mu.Unlock()
 	session.fail(reason, detail)
 	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID})
 }
@@ -364,11 +688,46 @@ func (s *Server) markTerminalReady(sessionID string, serverID int64) {
 	}
 	session.mu.Lock()
 	session.agentReady = true
+	session.Ready = true
 	if session.prepareTimer != nil {
 		session.prepareTimer.Stop()
 		session.prepareTimer = nil
 	}
+	if session.readyCh != nil {
+		select {
+		case <-session.readyCh:
+		default:
+			close(session.readyCh)
+		}
+	}
+	session.LastActivityAt = time.Now().UTC()
+	if session.OwnerType == InteractiveOwnerMCP && session.idleTimer != nil {
+		session.idleTimer.Reset(terminalIdleTimeout)
+	}
 	session.mu.Unlock()
+}
+
+func (s *Server) closeMCPTerminalSession(sessionID string, reason string) {
+	s.terminalHub.mu.Lock()
+	session := s.terminalHub.sessions[sessionID]
+	if session == nil || session.OwnerType != InteractiveOwnerMCP {
+		s.terminalHub.mu.Unlock()
+		return
+	}
+	delete(s.terminalHub.sessions, sessionID)
+	s.terminalHub.mu.Unlock()
+	session.mu.Lock()
+	if session.readyCh != nil {
+		select {
+		case <-session.readyCh:
+		default:
+			session.readyErr = reason
+			close(session.readyCh)
+		}
+	}
+	session.mu.Unlock()
+	session.close(reason)
+	_ = s.sendAgentControl(session.ServerID, map[string]any{"type": "interactive_close", "session_id": sessionID})
 }
 
 func (s *Server) handleInteractiveAgentStatus(serverID int64, msg map[string]json.RawMessage) {
@@ -417,6 +776,12 @@ func (s *Server) browserTerminalWS(w http.ResponseWriter, r *http.Request, serve
 		s.terminalHub.mu.Unlock()
 		log.Printf("terminal websocket denied server=%d session=%s reason=ticket_invalid", serverID, sessionID)
 		failCode(w, "terminal_auth_expired", "terminal ticket is invalid", http.StatusUnauthorized)
+		return
+	}
+	if session.OwnerType == InteractiveOwnerMCP {
+		s.terminalHub.mu.Unlock()
+		log.Printf("terminal websocket denied server=%d session=%s reason=mcp_isolation", serverID, sessionID)
+		failCode(w, "terminal_not_owner", "MCP terminal cannot be attached via browser", http.StatusForbidden)
 		return
 	}
 	session.TicketUsed = true
@@ -477,6 +842,69 @@ func (s *Server) agentInteractive(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) relayTerminal(session *terminalSession) {
 	session.mu.Lock()
+	if session.OwnerType == InteractiveOwnerMCP {
+		agent := session.agent
+		if agent == nil || session.relaying {
+			session.mu.Unlock()
+			return
+		}
+		session.relaying = true
+		session.mu.Unlock()
+		// MCP relay: agent binary -> outputBuffer, with activity tracking
+		go func() {
+			for {
+				mt, data, err := agent.ReadMessage()
+				if err != nil {
+					// agent disconnected: mark session closed but keep entry for final io read
+					session.mu.Lock()
+					if !session.Closed && !session.closed {
+						session.CloseReason = "agent_disconnected"
+						session.Closed = true
+						session.closed = true
+						if session.readyCh != nil {
+							select {
+							case <-session.readyCh:
+							default:
+								session.readyErr = "agent_disconnected"
+								close(session.readyCh)
+							}
+						}
+					}
+					session.mu.Unlock()
+					// stop timers
+					session.mu.Lock()
+					if session.idleTimer != nil {
+						session.idleTimer.Stop()
+						session.idleTimer = nil
+					}
+					if session.absTimer != nil {
+						session.absTimer.Stop()
+						session.absTimer = nil
+					}
+					session.mu.Unlock()
+					// close agent conn
+					_ = agent.Close()
+					return
+				}
+				if mt == websocket.BinaryMessage {
+					if session.outputBuffer != nil && len(data) > 0 {
+						session.outputBuffer.Write(data)
+						session.mu.Lock()
+						session.LastActivityAt = time.Now().UTC()
+						if session.idleTimer != nil {
+							session.idleTimer.Reset(terminalIdleTimeout)
+						}
+						session.mu.Unlock()
+					}
+				} else if mt == websocket.TextMessage {
+					// control messages from agent (e.g., ready) already handled via control channel; ignore
+					continue
+				}
+			}
+		}()
+		return
+	}
+	// Human relay
 	browser := session.browser
 	agent := session.agent
 	if browser == nil || agent == nil || session.relaying {
@@ -512,4 +940,86 @@ func (s *Server) relayTerminal(session *terminalSession) {
 	}
 	go copy(browser, agent, true)
 	go copy(agent, browser, false)
+}
+
+// MCP helpers
+
+var ansiRegexp = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]|\x1b\\].*?(\x07|\x1b\\\\)|\x1b\\[[?0-9;]*[a-zA-Z]")
+
+func stripANSI(s string) string {
+	return ansiRegexp.ReplaceAllString(s, "")
+}
+
+func toValidUTF8(b []byte) string {
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	return strings.ToValidUTF8(string(b), "\uFFFD")
+}
+
+func (s *Server) mcpTerminalWrite(session *terminalSession, input string) error {
+	session.mu.Lock()
+	agent := session.agent
+	session.mu.Unlock()
+	if agent == nil {
+		return codedError("terminal_closed", "terminal is closed")
+	}
+	session.mu.Lock()
+	if session.Closed || session.closed {
+		session.mu.Unlock()
+		return codedError("terminal_closed", "terminal is closed")
+	}
+	session.LastActivityAt = time.Now().UTC()
+	if session.idleTimer != nil {
+		session.idleTimer.Reset(terminalIdleTimeout)
+	}
+	if time.Now().After(session.ExpiresAt) {
+		session.mu.Unlock()
+		session.close("terminal_expired")
+		return codedError("terminal_expired", "terminal has expired")
+	}
+	session.mu.Unlock()
+	if input == "" {
+		return nil
+	}
+	data := []byte(input)
+	if len(data) > terminalMCPMaxInput {
+		return codedError("invalid_input", "input exceeds 64KiB limit")
+	}
+	session.writeMu.Lock()
+	err := agent.WriteMessage(websocket.BinaryMessage, data)
+	session.writeMu.Unlock()
+	if err != nil {
+		session.close("agent_disconnected")
+		return codedError("agent_disconnected", "agent disconnected")
+	}
+	return nil
+}
+
+func (s *Server) mcpTerminalResize(session *terminalSession, cols, rows int) error {
+	session.mu.Lock()
+	agent := session.agent
+	session.mu.Unlock()
+	if agent == nil {
+		return codedError("terminal_closed", "terminal is closed")
+	}
+	if cols <= 0 || cols > terminalMaxCols || rows <= 0 || rows > terminalMaxRows {
+		return codedError("invalid_input", "invalid cols/rows")
+	}
+	session.mu.Lock()
+	session.Cols = cols
+	session.Rows = rows
+	session.LastActivityAt = time.Now().UTC()
+	if session.idleTimer != nil {
+		session.idleTimer.Reset(terminalIdleTimeout)
+	}
+	session.mu.Unlock()
+	payload, _ := json.Marshal(map[string]any{"type": "resize", "cols": cols, "rows": rows})
+	session.writeMu.Lock()
+	err := agent.WriteMessage(websocket.TextMessage, payload)
+	session.writeMu.Unlock()
+	if err != nil {
+		return codedError("agent_disconnected", "agent disconnected")
+	}
+	return nil
 }

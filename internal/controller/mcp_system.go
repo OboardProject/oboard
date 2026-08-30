@@ -292,7 +292,7 @@ var settingsAutomationFields = map[string]bool{
 	"agent_update_max_concurrency":          true,
 	"managed_update_startup_quiet_seconds": true,
 	"registration_enabled":    true,
-	"remote_terminal_enabled": true, "mcp_remote_operations_enabled": true,
+	"remote_terminal_enabled": true, "mcp_remote_operations_enabled": true, "mcp_structured_exec_enabled": true, "mcp_raw_shell_enabled": true, "mcp_interactive_terminal_enabled": true,
 	"remote_terminal_password_confirmation_enabled": true,
 }
 
@@ -706,39 +706,14 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, err
 		}
 	}
-	var remoteEnabled, mcpEnabled *bool
-	if value, ok := fields[settingRemoteTerminalEnabled]; ok {
-		var enabled bool
-		if err := json.Unmarshal(value, &enabled); err != nil {
-			return nil, err
+	for _, key := range []string{settingRemoteTerminalEnabled, settingMCPRemoteOperationsEnabled, settingMCPStructuredExecEnabled, settingMCPRawShellEnabled, settingMCPInteractiveTerminalEnabled} {
+		if value, ok := fields[key]; ok {
+			var enabled bool
+			if err := json.Unmarshal(value, &enabled); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			updates[key] = strconv.FormatBool(enabled)
 		}
-		remoteEnabled = &enabled
-	}
-	if value, ok := fields[settingMCPRemoteOperationsEnabled]; ok {
-		var enabled bool
-		if err := json.Unmarshal(value, &enabled); err != nil {
-			return nil, err
-		}
-		mcpEnabled = &enabled
-	}
-	remoteEnabled, mcpEnabled, err = normalizeRemoteAccessSwitches(remoteEnabled, mcpEnabled, mcpEnabled, mcpEnabled)
-	if err != nil {
-		return nil, err
-	}
-	appendChanged := func(key string) {
-		if _, explicit := fields[key]; !explicit {
-			changed = append(changed, key)
-		}
-	}
-	if remoteEnabled != nil {
-		updates[settingRemoteTerminalEnabled] = strconv.FormatBool(*remoteEnabled)
-		appendChanged(settingRemoteTerminalEnabled)
-	}
-	if mcpEnabled != nil {
-		for _, key := range []string{settingMCPRemoteOperationsEnabled, settingMCPStructuredExecEnabled, settingMCPRawShellEnabled} {
-			updates[key] = strconv.FormatBool(*mcpEnabled)
-		}
-		appendChanged(settingMCPRemoteOperationsEnabled)
 	}
 	if value, ok := fields[settingRemoteTerminalPasswordConfirmationEnabled]; ok {
 		if err := setBool(settingRemoteTerminalPasswordConfirmationEnabled, value); err != nil {

@@ -64,12 +64,18 @@ func TestMCPAccessChangeRetry(t *testing.T) {
 	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved in test"); err != nil {
-		t.Fatal(err)
-	}
-	applied, err := server.automation.Apply(ctx, principal, changeset.ID)
+	approved, err := server.automation.Approve(ctx, principal, changeset.ID, "approved in test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var applied *model.AutomationChangeset
+	if approved.Status == model.ChangesetSucceeded {
+		applied = approved
+	} else {
+		applied, err = server.automation.Apply(ctx, principal, changeset.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if applied.Status != model.ChangesetSucceeded {
 		t.Fatalf("changeset status = %s", applied.Status)

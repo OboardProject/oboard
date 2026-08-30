@@ -58,16 +58,19 @@ func applyAutomationChangeset(t *testing.T, server *Server, principal applicatio
 	base, _ := json.Marshal(draft.ExpectedRevisions)
 	changeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: idempotencyKey, BaseRevisions: base, Operations: operations})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("create: %v", err)
 	}
 	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
-		t.Fatal(err)
+		t.Fatalf("validate2: %v", err)
 	}
-	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved"); err != nil {
-		t.Fatal(err)
+	approved, err := server.automation.Approve(ctx, principal, changeset.ID, "approved")
+	if err != nil {
+		t.Fatalf("approve: %v", err)
 	}
-	if _, err := server.automation.Apply(ctx, principal, changeset.ID); err != nil {
-		t.Fatal(err)
+	if approved.Status != model.ChangesetSucceeded {
+		if _, err := server.automation.Apply(ctx, principal, changeset.ID); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
 	}
 }
 

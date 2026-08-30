@@ -71,6 +71,7 @@
 | `controller-db-20260826-preset-tfo-defaults` | Controller | SQLite seed / data backfill | `dev-4ef9a80efa97` | 待发布 | 生效中 | - |
 | `controller-db-20260826-hy2-salamander-presets` | Controller | SQLite seed / data backfill | `dev-c8f4a4dd07dd` | 待发布 | 生效中 | - |
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
+| `controller-db-20260830-remote-interactive` | Controller | SQLite schema | `dev-61294b2468d3` | 待发布 | 生效中 | - |
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
 | `controller-db-20260830-snell-server-psk` | Controller | SQLite data backfill | `dev-befb1492dc9f` | 待发布 | 生效中 | - |
@@ -824,6 +825,26 @@
 - **失败行为：** 启动失败
 - **回归测试：** `TestRemoteAccessTablesMigrateFromPreviousSchema`
 - **移除条件：** 最老直接升级版本与可恢复备份均已包含这些表，且恢复入口拒绝缺少它们的 schema
+- **移除状态：** 生效中
+
+### controller-db-20260830-remote-interactive
+
+- **引入日期：** 2026-08-30
+- **引入提交：** `OboardProject/oboard@61294b2468d3`
+- **引入版本：** `dev-61294b2468d3`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、`internal/capability`、`internal/mcpauth`、Web、Agent
+- **类别：** SQLite schema / wire protocol / capability
+- **原因：** 原 `mcp_remote_operations_enabled` / `mcp_structured_exec_enabled` / `mcp_raw_shell_enabled` 三开关被强制绑定为同一值，且与 `remote_terminal_enabled` 互绑，导致无法独立授权；`remote_terminal_enabled=false` 会错误关闭 MCP 执行，且 `mcp_raw_shell_enabled=false` 会错误关闭结构化执行。新增 `mcp_interactive_terminal_enabled`（MCP 交互式 PTY，最高风险）需要独立列并默认 `false` 迁移，不扩大已有权限；Privileged Grant 需支持 `remote_interactive` 能力，Controller 与 Agent 需通过 `remote_interactive_mcp_v1` 能力与 `mcp_interactive_terminal` 本地门控独立校验，签名升级至 V2（`origin=mcp`）。
+- **源状态：** `server_remote_access_policies` 缺少 `mcp_interactive_terminal_enabled` 列；`store` 读仅 4 列；全局 Setting 缺少 `mcp_interactive_terminal_enabled`；`model.ServerRemoteAccessPolicy` 与 `RemoteAccessLocalAllow` 缺少交互字段；`PrivilegeRemoteInteractive` 常量与能力不存在；`server_remote_access_policies` 的 `effective` 计算为 `remote_terminal && mcp_all && server_mcp_all` 绑定；`normalizeRemoteAccessSwitches` 强制三 MCP 值相同且 `mcp=true → remote=true`、`remote=false → mcp=false`；`assertRemoteExecAllowed` / `assertRemoteExecAllowedHTTP` 均检查 `remote_terminal_enabled` 再检查 `mcp_all`。
+- **目标状态：** `server_remote_access_policies` 含 `mcp_interactive_terminal_enabled integer not null default 0`（`ensureColumn` 幂等补列）；`GetServerRemoteAccessPolicy` / `Upsert` 读写 5 列（`coalesce(...,0)` 兼容旧库）；`model` 含 `PrivilegeRemoteInteractive = "remote_interactive"`、`RemoteAccessCapabilityInteractiveMCP = "remote_interactive_mcp_v1"`、`ServerRemoteAccessPolicy.MCPInteractiveEnabled`、`RemoteAccessLocalAllow.MCPInteractive`、`InteractivePrepareEnvelope.Origin`、`InteractiveSignatureV2`；`globalRemoteAccessPolicy` / `remoteAccessView.Effective` 对 5 开关独立计算 `global AND server`，不再依赖 `remote_terminal_enabled`；`normalizeRemoteAccessSwitches` 不再强制同值或互绑，`RemoteAccessPolicyPatch` 允许独立 PATCH；`assertRemotePrivilegeAllowed` 为单入口，按 `privilege` 仅检查对应全局/服务器开关、Agent 在线、`remote_exec_v1` 或 `remote_interactive_mcp_v1` 能力、以及 Hardened 下的对应本地门控；`remote_terminal` 与 MCP 五者完全独立。
+- **实现位置：** `oboard/internal/store/store.go`（`ensureColumn`）、`oboard/internal/store/remote_access.go`、`oboard/internal/model/remote_access.go`、`oboard/internal/controller/remote_access.go`、`oboard/internal/controller/remote_exec.go`、`oboard/internal/controller/remote_terminal.go`（`prepareInteractiveSession`、V2 签名、缓冲与限流、会话隔离）、`oboard/internal/controller/mcp_terminal.go`（`server_terminal_open/io/close/resize`）、`oboard/internal/controller/mcp_catalog.go`（`interactive_terminal` 能力与 instructions）、`oboard/internal/controller/mcp_system_caps.go`（`interactive_terminal` 发现）、`oboard/internal/controller/mcp_privileged_access.go`、`oboard/internal/capability/catalog_remote_access.go`、`oboard-agent/internal/model/remote_access.go`、`oboard-agent/internal/security/interactive.go`、`oboard-agent/internal/agent/remote_access.go`、`oboard-agent/internal/agent/remote_terminal.go`、`oboard-agent/internal/agentsecurity/local.go`、`oboard/docs/API_GUIDE.md`、`docs/AGENT_PROTOCOL.md`、`oboard/web/src/components/remote-access/*`、`oboard/web/src/components/mcp/MCPPrivilegedAccess.tsx`
+- **更新脚本：** 进程启动 `Open()` 执行；`ensureColumn` 幂等补列
+- **数据影响：** 仅新增列，默认值 `0`，不修改已有行；已有 MCP 授权与终端会话保持关闭，不扩大权限；新 `mcp_interactive_terminal_enabled` 对现有库迁移为 `false`
+- **重复执行：** `ensureColumn` 仅当列缺失时 `ALTER TABLE`；`Get` 用 `coalesce` 兼容；重复打开不改写
+- **失败行为：** 列缺失时 `SELECT` 失败阻止打开数据库；`ensureColumn` 失败返回错误
+- **回归测试：** `TestRemoteAccessDefaults`（5 开关默认）、`TestNormalizeRemoteAccessSwitchesEnforcesMCPDependency` 的独立性回归、`TestSettingsCapabilities` 的独立开关验证、`TestMCPAccessChangeRetry` 等
+- **移除条件：** 最老直接升级版本与所有可恢复备份均已含 `mcp_interactive_terminal_enabled` 列，且恢复入口拒绝缺少该列的 schema；`model` 与 `store` 的 5 列读写已成为唯一路径
 - **移除状态：** 生效中
 
 ### controller-db-20260831-server-service-start-and-traffic-reset

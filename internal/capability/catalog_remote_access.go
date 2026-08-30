@@ -6,10 +6,11 @@ import (
 )
 
 const (
-	PrivilegeRemoteOperations = model.PrivilegeRemoteOperations
-	PrivilegeRemoteExec       = model.PrivilegeRemoteExec
-	PrivilegeRemoteShell      = model.PrivilegeRemoteShell
-	ApprovalPrivilegedGrant   = model.ApprovalPolicyPrivilegedGrant
+	PrivilegeRemoteOperations  = model.PrivilegeRemoteOperations
+	PrivilegeRemoteExec        = model.PrivilegeRemoteExec
+	PrivilegeRemoteShell       = model.PrivilegeRemoteShell
+	PrivilegeRemoteInteractive = model.PrivilegeRemoteInteractive
+	ApprovalPrivilegedGrant    = model.ApprovalPolicyPrivilegedGrant
 )
 
 func remoteAccessDescriptors(positiveID map[string]any, stringValue, boolValue map[string]any) []Descriptor {

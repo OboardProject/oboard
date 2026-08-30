@@ -275,6 +275,30 @@ func (s *Server) Close() {
 	if s.geoIP != nil {
 		s.geoIP.Close()
 	}
+	if s.terminalHub != nil {
+		s.terminalHub.mu.Lock()
+		sessions := make([]*terminalSession, 0, len(s.terminalHub.sessions))
+		for _, sess := range s.terminalHub.sessions {
+			sessions = append(sessions, sess)
+		}
+		s.terminalHub.mu.Unlock()
+		for _, sess := range sessions {
+			sess.mu.Lock()
+			if sess.prepareTimer != nil {
+				sess.prepareTimer.Stop()
+				sess.prepareTimer = nil
+			}
+			if sess.idleTimer != nil {
+				sess.idleTimer.Stop()
+				sess.idleTimer = nil
+			}
+			if sess.absTimer != nil {
+				sess.absTimer.Stop()
+				sess.absTimer = nil
+			}
+			sess.mu.Unlock()
+		}
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -921,13 +945,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			MCPRemoteOperationsEnabled                *bool              `json:"mcp_remote_operations_enabled"`
 			MCPStructuredExecEnabled                  *bool              `json:"mcp_structured_exec_enabled"`
 			MCPRawShellEnabled                        *bool              `json:"mcp_raw_shell_enabled"`
+			MCPInteractiveTerminalEnabled             *bool              `json:"mcp_interactive_terminal_enabled"`
 		}
 		if !decode(w, r, &req) {
-			return
-		}
-		remoteEnabled, mcpEnabled, err := normalizeRemoteAccessSwitches(req.RemoteTerminalEnabled, req.MCPRemoteOperationsEnabled, req.MCPStructuredExecEnabled, req.MCPRawShellEnabled)
-		if err != nil {
-			fail(w, err, http.StatusBadRequest)
 			return
 		}
 		var normalizedTrustedProxyCIDRs []string
@@ -1438,11 +1458,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			value *bool
 			key   string
 		}{
-			{remoteEnabled, settingRemoteTerminalEnabled},
+			{req.RemoteTerminalEnabled, settingRemoteTerminalEnabled},
 			{req.RemoteTerminalPasswordConfirmationEnabled, settingRemoteTerminalPasswordConfirmationEnabled},
-			{mcpEnabled, settingMCPRemoteOperationsEnabled},
-			{mcpEnabled, settingMCPStructuredExecEnabled},
-			{mcpEnabled, settingMCPRawShellEnabled},
+			{req.MCPRemoteOperationsEnabled, settingMCPRemoteOperationsEnabled},
+			{req.MCPStructuredExecEnabled, settingMCPStructuredExecEnabled},
+			{req.MCPRawShellEnabled, settingMCPRawShellEnabled},
+			{req.MCPInteractiveTerminalEnabled, settingMCPInteractiveTerminalEnabled},
 		} {
 			if item.value == nil {
 				continue
@@ -1484,7 +1505,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPRemoteOperationsEnabled: false, settingMCPStructuredExecEnabled: false, settingMCPRawShellEnabled: false, settingMCPInteractiveTerminalEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[agentUpdateMaxConcurrencySetting] = 0
@@ -1561,6 +1582,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[settingMCPRemoteOperationsEnabled] = settingBool(items, settingMCPRemoteOperationsEnabled, false)
 	out[settingMCPStructuredExecEnabled] = settingBool(items, settingMCPStructuredExecEnabled, false)
 	out[settingMCPRawShellEnabled] = settingBool(items, settingMCPRawShellEnabled, false)
+	out[settingMCPInteractiveTerminalEnabled] = settingBool(items, settingMCPInteractiveTerminalEnabled, false)
 	if migration, err := s.basePathMigrationProgress(ctx); err == nil {
 		out["base_path_migration"] = migration
 	}
