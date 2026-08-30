@@ -176,6 +176,31 @@ func configurationRevisionConditions(table, updateCondition string) (string, str
 	}
 }
 
+func (s *Store) dropTriggersReferencingTable(ctx context.Context, table string) error {
+	rows, err := s.db.QueryContext(ctx, `select name from sqlite_master where type='trigger' and (tbl_name=? or instr(coalesce(sql,''), ?) > 0)`, table, table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	names := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, err := s.db.ExecContext(ctx, `drop trigger if exists `+name); err != nil {
+			return fmt.Errorf("drop trigger %s referencing %s: %w", name, table, err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) dropManagedRevisionTriggers(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `select name from sqlite_master where type='trigger' and (name like 'routing_rev_%' or name like 'config_rev_%')`)
 	if err != nil {

@@ -17,17 +17,23 @@ func (s *Store) migrateFamilySplitTemplates(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "routing_rules", "family_split_template_id", `alter table routing_rules add column family_split_template_id integer references family_split_templates(id) on delete restrict`); err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "template_id", `alter table proxy_paths add column template_id integer references family_split_templates(id) on delete cascade`); err != nil {
+	pathsExist, err := s.tableExists(ctx, "proxy_paths")
+	if err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "family", `alter table proxy_paths add column family text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureNullableProxyPathInbound(ctx); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_proxy_paths_template_family on proxy_paths(template_id, family) where template_id is not null`); err != nil {
-		return err
+	if pathsExist {
+		if err := s.ensureColumn(ctx, "proxy_paths", "template_id", `alter table proxy_paths add column template_id integer references family_split_templates(id) on delete cascade`); err != nil {
+			return err
+		}
+		if err := s.ensureColumn(ctx, "proxy_paths", "family", `alter table proxy_paths add column family text not null default ''`); err != nil {
+			return err
+		}
+		if err := s.ensureNullableProxyPathInbound(ctx); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_proxy_paths_template_family on proxy_paths(template_id, family) where template_id is not null`); err != nil {
+			return err
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_family_split_templates_name on family_split_templates(lower(name))`); err != nil {
 		return err
@@ -35,8 +41,10 @@ func (s *Store) migrateFamilySplitTemplates(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_routing_rules_family_split_template on routing_rules(family_split_template_id) where family_split_template_id is not null`); err != nil {
 		return err
 	}
-	if err := s.backfillFamilySplitTemplates(ctx); err != nil {
-		return err
+	if pathsExist {
+		if err := s.backfillFamilySplitTemplates(ctx); err != nil {
+			return err
+		}
 	}
 	if _, err := s.db.ExecContext(ctx, `drop index if exists idx_routing_rules_ipv4_target_path`); err != nil {
 		return err
@@ -62,6 +70,13 @@ func (s *Store) proxyPathCopyExpr(ctx context.Context, column, present, missing 
 }
 
 func (s *Store) ensureNullableProxyPathInbound(ctx context.Context) error {
+	exists, err := s.tableExists(ctx, "proxy_paths")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
 	var notNull int
 	if err := s.db.QueryRowContext(ctx, `select "notnull" from pragma_table_info('proxy_paths') where name='inbound_id'`).Scan(&notNull); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -71,6 +86,9 @@ func (s *Store) ensureNullableProxyPathInbound(ctx context.Context) error {
 	}
 	if notNull == 0 {
 		return nil
+	}
+	if err := s.dropTriggersReferencingTable(ctx, "proxy_paths"); err != nil {
+		return err
 	}
 	kindExpr, err := s.proxyPathCopyExpr(ctx, "kind", "coalesce(kind,'chain')", "'chain'")
 	if err != nil {

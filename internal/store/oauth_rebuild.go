@@ -6,6 +6,12 @@ import (
 	"fmt"
 )
 
+func (s *Store) tableExists(ctx context.Context, name string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name=?`, name).Scan(&count)
+	return count > 0, err
+}
+
 // tableHasColumn reports whether a column exists on a table.
 func (s *Store) tableHasColumn(ctx context.Context, table, column string) (bool, error) {
 	rows, err := s.db.QueryContext(ctx, `pragma table_info(`+table+`)`)
