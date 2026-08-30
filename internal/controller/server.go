@@ -10221,7 +10221,7 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *mode
 			if err != nil {
 				return fmt.Errorf("inbound_id: %w", err)
 			}
-			if err := core.ValidateProxyPathStepInboundBinding(*v, inbound, rawConfig); err != nil {
+			if err := core.ValidateProxyPathStepInboundBinding(*v, *inbound, rawConfig); err != nil {
 				return err
 			}
 			if v.ServerID != nil && *v.ServerID != 0 && *v.ServerID != inbound.ServerID {
