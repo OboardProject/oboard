@@ -243,6 +243,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.agentUpdates = newAgentUpdateCoordinator(s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.restoreControllerUpdateMaintenance(context.Background())
+	s.recoverControllerUpdateRun(context.Background())
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
 	s.restoreBasePathState(context.Background(), basePath)

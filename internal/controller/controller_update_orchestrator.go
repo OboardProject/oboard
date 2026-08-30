@@ -18,6 +18,58 @@ import (
 
 const controllerUpdateBackupRetain = 2
 const controllerUpdateBackupRetainDefault = 2
+const controllerUpdateStartupStaleReason = "主控更新未完成，重启时已自动清理；请重新尝试更新"
+const controllerUpdateStaleTimeout = controllerUpdateInstallTimeout + 10*time.Minute
+const controllerUpdateStartupGracePeriod = 2 * time.Minute
+
+func controllerUpdateRunIsStale(run *store.ControllerUpdateRun, now time.Time) bool {
+	if run == nil {
+		return false
+	}
+	if !run.UpdatedAt.IsZero() {
+		return now.Sub(run.UpdatedAt) > controllerUpdateStaleTimeout
+	}
+	if !run.StartedAt.IsZero() {
+		return now.Sub(run.StartedAt) > controllerUpdateStaleTimeout
+	}
+	return true
+}
+
+func (s *Server) clearStaleControllerUpdateRunOnStartup(ctx context.Context, run *store.ControllerUpdateRun) {
+	s.cancelControllerUpdateContext()
+	s.cancelPreparedControllerUpdate()
+	s.clearControllerUpdateMaintenance(ctx)
+	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
+	run.Phase = store.ControllerUpdatePhaseFailed
+	run.Error = controllerUpdateStartupStaleReason
+	if err := s.store.UpdateControllerUpdateRun(ctx, run); err != nil {
+		log.Printf("controller update startup cleanup failed: %v", err)
+		return
+	}
+	s.publishRealtime("controller_update")
+	s.retainControllerUpdateBackups()
+	log.Printf("controller update stalled run cleared on startup id=%d phase=%s target_build=%s", run.ID, run.Phase, run.TargetBuild)
+}
+
+func (s *Server) isControllerUpdateRunStaleOnStartup(run *store.ControllerUpdateRun, now time.Time, status controllerupdate.Status, statusErr error) bool {
+	if run == nil {
+		return false
+	}
+	// Any active phase outside installing/restarting cannot survive a restart:
+	// the background goroutine that drives preflight/backup/download is gone.
+	if run.Phase != store.ControllerUpdatePhaseInstalling && run.Phase != store.ControllerUpdatePhaseRestarting {
+		return true
+	}
+	if controllerUpdateRunIsStale(run, now) {
+		return true
+	}
+	if statusErr == nil && !isActiveControllerUpdateStatus(status.State) && status.State != "installing" {
+		if now.Sub(run.UpdatedAt) > controllerUpdateStartupGracePeriod {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *Server) recoverControllerUpdateRun(ctx context.Context) {
 	run, err := s.store.GetActiveControllerUpdateRun(ctx)
@@ -41,12 +93,18 @@ func (s *Server) recoverControllerUpdateRun(ctx context.Context) {
 		log.Printf("controller update succeeded id=%d target_build=%s agents_independent=true", run.ID, run.TargetBuild)
 		return
 	}
-	status, statusErr := s.controllerUpdater.Status(ctx)
+	statusCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	status, statusErr := s.controllerUpdater.Status(statusCtx)
+	cancel()
 	if statusErr == nil && (status.State == "failed" || status.State == "cancelled") {
 		run.Phase = status.State
 		run.Error = strings.TrimSpace(status.LastError)
 		_ = s.store.UpdateControllerUpdateRun(ctx, run)
 		s.publishRealtime("controller_update")
+		return
+	}
+	if s.isControllerUpdateRunStaleOnStartup(run, time.Now().UTC(), status, statusErr) {
+		s.clearStaleControllerUpdateRunOnStartup(ctx, run)
 		return
 	}
 	if run.Phase == store.ControllerUpdatePhaseInstalling || run.Phase == store.ControllerUpdatePhaseRestarting {
