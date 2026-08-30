@@ -7,23 +7,40 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 )
 
 func (s *Server) registerMCPInteractiveTerminalTools(server *mcp.Server) {
-	// server_terminal_open
+	server.AddTool(&mcp.Tool{
+		Name:  "server_terminal_command",
+		Title: "Run Login PTY Command",
+		Description: "Run one command in a real OBoard Agent PTY and return its output and exit code. Use this when a login shell environment or TTY is required. " +
+			"This tool is always discoverable to MCP principals with operate access, but execution requires an active remote_interactive Privileged MCP Grant, both resource boundaries, and MCP Interactive Terminal enabled globally and on the target server. Missing authorization returns a structured denial and does not open a PTY.",
+		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
+			"server_id":  map[string]any{"type": "integer", "minimum": 1},
+			"command":    map[string]any{"type": "string", "minLength": 1, "maxLength": 32768},
+			"timeout_ms": map[string]any{"type": "integer", "minimum": 100, "maximum": 300000},
+			"mode":       map[string]any{"type": "string", "enum": []string{"login", "minimal"}},
+		}, "server_id", "command")),
+		Annotations: mcpAnnotations(false, false),
+	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return s.callMCPServerTerminalCommand(ctx, req)
+	})
 	server.AddTool(&mcp.Tool{
 		Name:        "server_terminal_open",
 		Title:       "Open Interactive Terminal",
-		Description: "Open a persistent login PTY via OBoard Agent. Requires remote_interactive privileged grant and server boundary. Single terminal per grant per server, max 4 per grant.",
+		Description: "Open a persistent login PTY through the OBoard Agent. This tool is always discoverable to MCP principals with operate access, but execution requires MCP operate access, an active remote_interactive Privileged MCP Grant, the target server inside both resource boundaries, and MCP Interactive Terminal enabled globally and on the target server. If authorization is missing, it returns a structured denial and does not open a PTY.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"server_id": map[string]any{"type": "integer", "minimum": 1},
 			"mode":      map[string]any{"type": "string", "enum": []string{"login", "minimal"}},
@@ -34,11 +51,10 @@ func (s *Server) registerMCPInteractiveTerminalTools(server *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return s.callMCPServerTerminalOpen(ctx, req)
 	})
-	// server_terminal_io
 	server.AddTool(&mcp.Tool{
 		Name:        "server_terminal_io",
 		Title:       "Terminal IO",
-		Description: "Write stdin to an MCP PTY and read output via cursor. Input is optional (read-only). Wait up to 3000ms and max 64KiB per read.",
+		Description: "Write stdin to and read output from an owned OBoard MCP PTY. The active remote_interactive grant and all live access gates are rechecked on every call; revoked access closes the PTY.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"session_id":   map[string]any{"type": "string", "minLength": 1},
 			"input":        map[string]any{"type": "string", "maxLength": 65536},
@@ -51,23 +67,10 @@ func (s *Server) registerMCPInteractiveTerminalTools(server *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return s.callMCPServerTerminalIO(ctx, req)
 	})
-	// server_terminal_close
-	server.AddTool(&mcp.Tool{
-		Name:        "server_terminal_close",
-		Title:       "Close Terminal",
-		Description: "Close an MCP PTY session. Idempotent.",
-		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
-			"session_id": map[string]any{"type": "string", "minLength": 1},
-		}, "session_id")),
-		Annotations: mcpAnnotations(false, true),
-	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return s.callMCPServerTerminalClose(ctx, req)
-	})
-	// server_terminal_resize
 	server.AddTool(&mcp.Tool{
 		Name:        "server_terminal_resize",
 		Title:       "Resize Terminal",
-		Description: "Resize an MCP PTY. Validates cols/rows and forwards resize to Agent PTY.",
+		Description: "Resize an owned OBoard MCP PTY after rechecking the active remote_interactive grant and all live access gates.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"session_id": map[string]any{"type": "string", "minLength": 1},
 			"cols":       map[string]any{"type": "integer", "minimum": 1, "maximum": 400},
@@ -77,17 +80,192 @@ func (s *Server) registerMCPInteractiveTerminalTools(server *mcp.Server) {
 	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return s.callMCPServerTerminalResize(ctx, req)
 	})
+	server.AddTool(&mcp.Tool{
+		Name:        "server_terminal_close",
+		Title:       "Close Terminal",
+		Description: "Close an owned OBoard MCP PTY. Ownership and live remote_interactive authorization are rechecked; revoked access is closed and reported as denied.",
+		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
+			"session_id": map[string]any{"type": "string", "minLength": 1},
+		}, "session_id")),
+		Annotations: mcpAnnotations(false, true),
+	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return s.callMCPServerTerminalClose(ctx, req)
+	})
 }
 
-func (s *Server) callMCPServerTerminalOpen(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+type mcpTerminalAuthorization struct {
+	principal application.Principal
+	grant     mcpauth.GrantPrincipal
+	server    *model.Server
+}
+
+func mcpTerminalCapabilityDescriptor() capability.Descriptor {
+	return capability.Descriptor{
+		Name: "node.terminal", Description: "MCP interactive terminal", InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`),
+		MinimumAccess: mcpauth.AccessOperate, RBACPermission: capability.PermissionServersRemoteAccess, MCPEnabled: true,
+		PrivilegeClass: model.PrivilegeRemoteInteractive, ResourceTypes: []string{"server"}, ResolveResourceRefs: serverRefFromServerID,
+	}
+}
+
+func (s *Server) authorizeMCPTerminal(ctx context.Context, req *mcp.CallToolRequest, serverID int64) (*mcpTerminalAuthorization, *mcp.CallToolResult, string) {
 	principal, err := s.mcpPrincipalFromRequest(ctx, req)
 	if err != nil {
-		return mcpPlainFailureResult("", err.Error()), nil
+		return nil, mcpPlainFailureResult("oauth_token_invalid", err.Error()), "oauth_token_invalid"
 	}
 	grant, err := s.mcpGrantPrincipalFromRequest(ctx, req)
 	if err != nil {
-		return mcpPlainFailureResult("privileged_grant_required", err.Error()), nil
+		return nil, mcpPrivilegedDeniedResult(mcpauth.CodePrivilegedGrantRequired, "Interactive terminal requires an active Privileged MCP Grant.", model.PrivilegeRemoteInteractive, serverID), mcpauth.CodePrivilegedGrantRequired
 	}
+	args := map[string]any{"server_id": serverID}
+	decision := s.authorizeCapability(ctx, mcpTerminalCapabilityDescriptor(), args)
+	if !decision.Allowed {
+		code := decision.Code
+		if code == mcpauth.CodeResourceDenied {
+			code = "privileged_resource_denied"
+		}
+		return nil, mcpPrivilegedDecisionResult(decision, model.PrivilegeRemoteInteractive, serverID), code
+	}
+	server, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return nil, mcpPlainFailureResult("not_found", err.Error()), "not_found"
+	}
+	if err := s.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteInteractive); err != nil {
+		code := "remote_access_denied"
+		if coded, ok := err.(interface{ Code() string }); ok {
+			code = coded.Code()
+		}
+		return nil, mcpPrivilegedDeniedResult(code, err.Error(), model.PrivilegeRemoteInteractive, serverID), code
+	}
+	return &mcpTerminalAuthorization{principal: principal, grant: grant, server: server}, nil, ""
+}
+
+func quoteInteractiveShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func terminalCommandResult(buffer []byte, marker string) (string, int, bool) {
+	text := strings.ReplaceAll(toValidUTF8(buffer), "\r\n", "\n")
+	needle := "\n" + marker + ":"
+	index := strings.LastIndex(text, needle)
+	if index < 0 {
+		return "", 0, false
+	}
+	lineStart := index + len(needle)
+	lineEnd := strings.IndexByte(text[lineStart:], '\n')
+	if lineEnd < 0 {
+		return "", 0, false
+	}
+	codeText := strings.TrimSpace(text[lineStart : lineStart+lineEnd])
+	exitCode, err := strconv.Atoi(codeText)
+	if err != nil {
+		return "", 0, false
+	}
+	return stripANSI(text[:index]), exitCode, true
+}
+
+func (s *Server) callMCPServerTerminalCommand(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, err := mcpToolArguments(req)
+	if err != nil {
+		return mcpPlainFailureResult("invalid_input", err.Error()), nil
+	}
+	serverID := int64FromAny(args["server_id"])
+	command, _ := args["command"].(string)
+	if serverID <= 0 || strings.TrimSpace(command) == "" {
+		return mcpPlainFailureResult("invalid_input", "server_id and command are required"), nil
+	}
+	timeoutMS := int(int64FromAny(args["timeout_ms"]))
+	if timeoutMS == 0 {
+		timeoutMS = 5000
+	}
+	if timeoutMS < 100 || timeoutMS > 300000 {
+		return mcpPlainFailureResult("invalid_input", "timeout_ms must be between 100 and 300000"), nil
+	}
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = "login"
+	}
+	authz, denied, _ := s.authorizeMCPTerminal(ctx, req, serverID)
+	if denied != nil {
+		return denied, nil
+	}
+	session, err := s.prepareInteractiveSession(ctx, InteractiveOwnerMCP, authz.server, authz.grant.UserID, authz.grant.Grant.GrantID, authz.grant.ClientID, authz.grant.PrivilegedGrant.ID, 120, 32, mode)
+	if err != nil {
+		code := "terminal_prepare_failed"
+		if coded, ok := err.(interface{ Code() string }); ok {
+			code = coded.Code()
+		}
+		return mcpPlainFailureResult(code, err.Error()), nil
+	}
+	defer s.closeMCPTerminalSession(session.ID, "command_complete")
+	if err := s.waitForTerminalReady(session); err != nil {
+		code := "terminal_prepare_timeout"
+		if coded, ok := err.(interface{ Code() string }); ok {
+			code = coded.Code()
+		}
+		return mcpPlainFailureResult(code, err.Error()), nil
+	}
+	// Give the login shell a short prompt/profile grace period, then disable echo
+	// in this disposable PTY so the command and completion marker are not
+	// mistaken for command output.
+	time.Sleep(150 * time.Millisecond)
+	if err := s.mcpTerminalWrite(session, "stty -echo\n"); err != nil {
+		return mcpPlainFailureResult("terminal_write_failed", err.Error()), nil
+	}
+	time.Sleep(75 * time.Millisecond)
+	cursor := session.outputBuffer.NextSeq() - 1
+	markerToken, err := security.RandomToken(12)
+	if err != nil {
+		return mcpPlainFailureResult("terminal_command_failed", err.Error()), nil
+	}
+	marker := "__OBOARD_MCP_DONE_" + markerToken + "__"
+	payload := "eval " + quoteInteractiveShell(command) + "\n__oboard_status=$?\nprintf '\\n" + marker + ":%d\\n' \"$__oboard_status\"\n"
+	if err := s.mcpTerminalWrite(session, payload); err != nil {
+		return mcpPlainFailureResult("terminal_write_failed", err.Error()), nil
+	}
+
+	deadline := time.NewTimer(time.Duration(timeoutMS) * time.Millisecond)
+	defer deadline.Stop()
+	collected := make([]byte, 0, 32768)
+	outputTruncated := false
+	for {
+		chunk, nextCursor, lost, _, _ := session.outputBuffer.ReadAfter(cursor, 65536)
+		if len(chunk) > 0 {
+			cursor = nextCursor
+			collected = append(collected, chunk...)
+			if lost || len(collected) > terminalMCPBufferMax {
+				outputTruncated = true
+				if len(collected) > terminalMCPBufferMax {
+					collected = append([]byte(nil), collected[len(collected)-terminalMCPBufferMax:]...)
+				}
+			}
+			if output, exitCode, complete := terminalCommandResult(collected, marker); complete {
+				s.recordToolCall(ctx, authz.principal, "server_terminal_command", map[string]any{
+					"server_id": serverID, "mode": mode, "timeout_ms": timeoutMS, "output_bytes": len(output), "exit_code": exitCode,
+				}, "succeeded", capability.DataSensitive)
+				return mcpEnvelopeResult(newToolEnvelope("succeeded", "", map[string]any{
+					"status": "succeeded", "server_id": serverID, "output": output,
+					"exit_code": exitCode, "output_truncated": outputTruncated,
+				}))
+			}
+		}
+		session.mu.Lock()
+		closed := session.Closed || session.closed
+		reason := session.CloseReason
+		session.mu.Unlock()
+		if closed {
+			return mcpPlainFailureResult("terminal_closed", "terminal closed before command completion: "+reason), nil
+		}
+		select {
+		case <-ctx.Done():
+			return mcpPlainFailureResult("terminal_command_cancelled", ctx.Err().Error()), nil
+		case <-deadline.C:
+			return mcpPlainFailureResult("terminal_command_timeout", "PTY command timed out"), nil
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Server) callMCPServerTerminalOpen(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args, err := mcpToolArguments(req)
 	if err != nil {
 		return mcpPlainFailureResult("invalid_input", err.Error()), nil
@@ -96,36 +274,18 @@ func (s *Server) callMCPServerTerminalOpen(ctx context.Context, req *mcp.CallToo
 	if serverID <= 0 {
 		return mcpPlainFailureResult("invalid_input", "server_id is required"), nil
 	}
+	authz, denied, _ := s.authorizeMCPTerminal(ctx, req, serverID)
+	if denied != nil {
+		return denied, nil
+	}
 	mode, _ := args["mode"].(string)
 	if mode == "" {
 		mode = "login"
 	}
 	cols := int(int64FromAny(args["cols"]))
 	rows := int(int64FromAny(args["rows"]))
-	// Authorize via evaluator (RBAC + OAuth boundary + privileged)
-	descriptor := capability.Descriptor{
-		Name: "node.terminal", Description: "MCP interactive terminal", InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`),
-		MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings", MCPEnabled: true, PrivilegeClass: model.PrivilegeRemoteInteractive,
-		ResourceTypes: []string{"server"}, ResolveResourceRefs: serverRefFromServerID,
-	}
-	decision := s.authorizeCapability(ctx, descriptor, args)
-	if !decision.Allowed {
-		return mcpFailureResult(decision, ""), nil
-	}
-	server, err := s.store.GetServer(ctx, serverID)
-	if err != nil {
-		return mcpPlainFailureResult("not_found", err.Error()), nil
-	}
-	// Additional global/server/agent checks for interactive
-	if err := s.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteInteractive); err != nil {
-		code := ""
-		if c, ok := err.(interface{ Code() string }); ok {
-			code = c.Code()
-		}
-		return mcpPlainFailureResult(code, err.Error()), nil
-	}
-	// Enforce limits via prepareInteractiveSession helper will also check, but pre-check for clearer error
-	session, err := s.prepareInteractiveSession(ctx, InteractiveOwnerMCP, server, grant.UserID, grant.Grant.GrantID, grant.ClientID, 0, cols, rows, mode)
+	privilegedID := authz.grant.PrivilegedGrant.ID
+	session, err := s.prepareInteractiveSession(ctx, InteractiveOwnerMCP, authz.server, authz.grant.UserID, authz.grant.Grant.GrantID, authz.grant.ClientID, privilegedID, cols, rows, mode)
 	if err != nil {
 		code := ""
 		if c, ok := err.(interface{ Code() string }); ok {
@@ -165,13 +325,13 @@ func (s *Server) callMCPServerTerminalOpen(ctx context.Context, req *mcp.CallToo
 		_ = hex.EncodeToString(sum[:])
 	}
 	_ = inputHash
-	s.recordToolCall(ctx, principal, "server_terminal_open", map[string]any{
+	s.recordToolCall(ctx, authz.principal, "server_terminal_open", map[string]any{
 		"server_id": serverID, "session_id": session.ID, "mode": mode, "cols": cols, "rows": rows,
 	}, "succeeded", capability.DataSensitive)
 	// also audit event
 	serverIDCopy := serverID
 	s.recordRemoteAccessAuditWithContext(ctx, "", model.RemoteAccessAuditEvent{
-		EventType: model.RemoteAccessAuditMCPInteractiveOpen, ActorType: "mcp", OAuthGrantID: grant.Grant.GrantID, OAuthClientID: grant.ClientID,
+		EventType: model.RemoteAccessAuditMCPInteractiveOpen, ActorType: "mcp", OAuthGrantID: authz.grant.Grant.GrantID, OAuthClientID: authz.grant.ClientID,
 		ServerID: &serverIDCopy, SessionID: session.ID, Capability: model.PrivilegeRemoteInteractive, Result: "opened",
 		MetadataJSON: json.RawMessage(`{}`),
 	})
@@ -188,13 +348,9 @@ func (s *Server) callMCPServerTerminalOpen(ctx context.Context, req *mcp.CallToo
 }
 
 func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	principal, err := s.mcpPrincipalFromRequest(ctx, req)
-	if err != nil {
-		return mcpPlainFailureResult("", err.Error()), nil
-	}
 	grant, err := s.mcpGrantPrincipalFromRequest(ctx, req)
 	if err != nil {
-		return mcpPlainFailureResult("privileged_grant_required", err.Error()), nil
+		return mcpPrivilegedDeniedResult(mcpauth.CodePrivilegedGrantRequired, "Interactive terminal requires an active Privileged MCP Grant.", model.PrivilegeRemoteInteractive, 0), nil
 	}
 	args, err := mcpToolArguments(req)
 	if err != nil {
@@ -211,42 +367,17 @@ func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolR
 	if session == nil {
 		return mcpPlainFailureResult("terminal_not_found", "terminal session not found"), nil
 	}
-	// ownership check
-	if session.OwnerType != InteractiveOwnerMCP || session.OAuthGrantID != grant.Grant.GrantID || session.OAuthClientID != grant.ClientID {
+	if session.OwnerType != InteractiveOwnerMCP || session.OAuthGrantID != grant.Grant.GrantID || session.OAuthClientID != grant.ClientID || (session.UserID != 0 && grant.UserID != 0 && session.UserID != grant.UserID) {
 		return mcpPlainFailureResult("terminal_not_owner", "session does not belong to this grant"), nil
 	}
-	if session.UserID != 0 && grant.UserID != 0 && session.UserID != grant.UserID {
-		return mcpPlainFailureResult("terminal_not_owner", "session user mismatch"), nil
+	if grant.PrivilegedGrant == nil || session.PrivilegedGrantID == 0 || session.PrivilegedGrantID != grant.PrivilegedGrant.ID {
+		s.closeMCPTerminalSession(sessionID, "privileged_grant_revoked")
+		return mcpPrivilegedDeniedResult("privileged_grant_revoked", "The Privileged MCP Grant for this terminal is no longer active.", model.PrivilegeRemoteInteractive, session.ServerID), nil
 	}
-	// re-authorize every call (global/server/agent/local gate + RBAC + boundaries)
-	server, err := s.store.GetServer(ctx, session.ServerID)
-	if err != nil {
-		return mcpPlainFailureResult("not_found", err.Error()), nil
-	}
-	// re-check privilege boundaries via evaluator (use original args with server_id)
-	authArgs := map[string]any{"server_id": session.ServerID}
-	descriptor := capability.Descriptor{
-		Name: "node.terminal", MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings", MCPEnabled: true, PrivilegeClass: model.PrivilegeRemoteInteractive,
-		ResourceTypes: []string{"server"}, ResolveResourceRefs: serverRefFromServerID,
-	}
-	decision := s.authorizeCapability(ctx, descriptor, authArgs)
-	if !decision.Allowed {
-		// close session on revocation
-		if decision.Code == mcpauth.CodePrivilegedGrantRequired || decision.Code == mcpauth.CodeResourceDenied || decision.Code == mcpauth.CodeRoleDenied {
-			s.closeMCPTerminalSession(sessionID, "privileged_grant_revoked")
-		}
-		return mcpFailureResult(decision, ""), nil
-	}
-	if err := s.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteInteractive); err != nil {
-		code := ""
-		if c, ok := err.(interface{ Code() string }); ok {
-			code = c.Code()
-		}
-		// close on global/server disable
-		if code == "remote_access_global_disabled" || code == "remote_access_server_disabled" || code == "agent_local_gate_denied" {
-			s.closeMCPTerminalSession(sessionID, code)
-		}
-		return mcpPlainFailureResult(code, err.Error()), nil
+	authz, denied, denialCode := s.authorizeMCPTerminal(ctx, req, session.ServerID)
+	if denied != nil {
+		s.closeMCPTerminalSession(sessionID, denialCode)
+		return denied, nil
 	}
 	// check session closed/expired
 	session.mu.Lock()
@@ -259,7 +390,9 @@ func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolR
 		return mcpPlainFailureResult("terminal_expired", "terminal has expired"), nil
 	}
 	if closed {
-		// return closed status instead of error? spec says io should return closed true
+		if strings.HasPrefix(closeReason, "privileged_grant") {
+			return mcpPrivilegedDeniedResult("privileged_grant_revoked", "The Privileged MCP Grant for this terminal is no longer active.", model.PrivilegeRemoteInteractive, session.ServerID), nil
+		}
 		return mcpEnvelopeResult(newToolEnvelope("succeeded", "", map[string]any{
 			"status": "closed", "session_id": sessionID, "closed": true, "reason": closeReason,
 		}))
@@ -334,7 +467,7 @@ func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolR
 	}
 	_ = inputHash
 	// avoid full content in generic audit; use specialized metadata
-	s.recordToolCall(ctx, principal, "server_terminal_io", map[string]any{
+	s.recordToolCall(ctx, authz.principal, "server_terminal_io", map[string]any{
 		"session_id": sessionID, "server_id": session.ServerID,
 		"input_bytes": len(input), "input_sha256": inputHash, "output_bytes": len(out), "after_cursor": afterCursor, "next_cursor": nextCursor,
 	}, "succeeded", capability.DataSensitive)
@@ -347,6 +480,9 @@ func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolR
 	closeReason = session.CloseReason
 	session.mu.Unlock()
 	if closed {
+		if strings.HasPrefix(closeReason, "privileged_grant") {
+			return mcpPrivilegedDeniedResult("privileged_grant_revoked", "The Privileged MCP Grant for this terminal is no longer active.", model.PrivilegeRemoteInteractive, session.ServerID), nil
+		}
 		return mcpEnvelopeResult(newToolEnvelope("succeeded", "", map[string]any{
 			"status": "closed", "session_id": sessionID, "closed": true, "reason": closeReason,
 			"output": outputStr, "next_cursor": nextCursor, "output_bytes": len(out), "output_lost": lost, "oldest_cursor": oldest, "output_truncated": truncated,
@@ -372,60 +508,55 @@ func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolR
 func (s *Server) callMCPServerTerminalClose(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	grant, err := s.mcpGrantPrincipalFromRequest(ctx, req)
 	if err != nil {
-		return mcpPlainFailureResult("privileged_grant_required", err.Error()), nil
+		return mcpPrivilegedDeniedResult(mcpauth.CodePrivilegedGrantRequired, "Interactive terminal requires an active Privileged MCP Grant.", model.PrivilegeRemoteInteractive, 0), nil
 	}
 	args, err := mcpToolArguments(req)
 	if err != nil {
 		return mcpPlainFailureResult("invalid_input", err.Error()), nil
 	}
-	sessionID, _ := args["session_id"].(string)
-	sessionID = strings.TrimSpace(sessionID)
+	sessionID := strings.TrimSpace(fmt.Sprint(args["session_id"]))
 	if sessionID == "" {
 		return mcpPlainFailureResult("invalid_input", "session_id is required"), nil
 	}
 	s.terminalHub.mu.Lock()
 	session := s.terminalHub.sessions[sessionID]
-	if session != nil && session.OwnerType == InteractiveOwnerMCP {
-		// ownership check before delete
-		if session.OAuthGrantID != grant.Grant.GrantID || session.OAuthClientID != grant.ClientID {
-			s.terminalHub.mu.Unlock()
-			return mcpPlainFailureResult("terminal_not_owner", "session does not belong to this grant"), nil
-		}
-		delete(s.terminalHub.sessions, sessionID)
-		s.terminalHub.mu.Unlock()
-		session.close("user_close")
-		_ = s.sendAgentControl(session.ServerID, map[string]any{"type": "interactive_close", "session_id": sessionID})
-		serverID := session.ServerID
-		s.recordRemoteAccessAuditWithContext(ctx, "", model.RemoteAccessAuditEvent{
-			EventType: model.RemoteAccessAuditMCPInteractiveClose, ServerID: &serverID, SessionID: sessionID, OAuthGrantID: grant.Grant.GrantID, OAuthClientID: grant.ClientID, Capability: model.PrivilegeRemoteInteractive, Result: "closed",
-		})
-		principal, _ := s.mcpPrincipalFromRequest(ctx, req)
-		s.recordToolCall(ctx, principal, "server_terminal_close", map[string]any{"session_id": sessionID, "server_id": serverID}, "succeeded", capability.DataSensitive)
+	s.terminalHub.mu.Unlock()
+	if session == nil {
 		return mcpEnvelopeResult(newToolEnvelope("succeeded", "", map[string]any{"closed": true, "session_id": sessionID}))
 	}
-	// idempotent: if not found, treat as closed
-	var sessOwner bool
-	if session != nil {
-		sessOwner = session.OAuthGrantID == grant.Grant.GrantID
-	}
-	s.terminalHub.mu.Unlock()
-	if session != nil && !sessOwner {
+	if session.OwnerType != InteractiveOwnerMCP || session.OAuthGrantID != grant.Grant.GrantID || session.OAuthClientID != grant.ClientID || (session.UserID != 0 && grant.UserID != 0 && session.UserID != grant.UserID) {
 		return mcpPlainFailureResult("terminal_not_owner", "session does not belong to this grant"), nil
 	}
+	if grant.PrivilegedGrant == nil || session.PrivilegedGrantID == 0 || session.PrivilegedGrantID != grant.PrivilegedGrant.ID {
+		s.closeMCPTerminalSession(sessionID, "privileged_grant_revoked")
+		return mcpPrivilegedDeniedResult("privileged_grant_revoked", "The Privileged MCP Grant for this terminal is no longer active.", model.PrivilegeRemoteInteractive, session.ServerID), nil
+	}
+	authz, denied, denialCode := s.authorizeMCPTerminal(ctx, req, session.ServerID)
+	if denied != nil {
+		s.closeMCPTerminalSession(sessionID, denialCode)
+		return denied, nil
+	}
+	s.closeMCPTerminalSession(sessionID, "user_close")
+	serverID := session.ServerID
+	s.recordRemoteAccessAuditWithContext(ctx, "", model.RemoteAccessAuditEvent{
+		EventType: model.RemoteAccessAuditMCPInteractiveClose, ServerID: &serverID, SessionID: sessionID,
+		OAuthGrantID: authz.grant.Grant.GrantID, OAuthClientID: authz.grant.ClientID,
+		Capability: model.PrivilegeRemoteInteractive, Result: "closed",
+	})
+	s.recordToolCall(ctx, authz.principal, "server_terminal_close", map[string]any{"session_id": sessionID, "server_id": serverID}, "succeeded", capability.DataSensitive)
 	return mcpEnvelopeResult(newToolEnvelope("succeeded", "", map[string]any{"closed": true, "session_id": sessionID}))
 }
 
 func (s *Server) callMCPServerTerminalResize(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	grant, err := s.mcpGrantPrincipalFromRequest(ctx, req)
 	if err != nil {
-		return mcpPlainFailureResult("privileged_grant_required", err.Error()), nil
+		return mcpPrivilegedDeniedResult(mcpauth.CodePrivilegedGrantRequired, "Interactive terminal requires an active Privileged MCP Grant.", model.PrivilegeRemoteInteractive, 0), nil
 	}
 	args, err := mcpToolArguments(req)
 	if err != nil {
 		return mcpPlainFailureResult("invalid_input", err.Error()), nil
 	}
-	sessionID, _ := args["session_id"].(string)
-	sessionID = strings.TrimSpace(sessionID)
+	sessionID := strings.TrimSpace(fmt.Sprint(args["session_id"]))
 	cols := int(int64FromAny(args["cols"]))
 	rows := int(int64FromAny(args["rows"]))
 	s.terminalHub.mu.Lock()
@@ -434,30 +565,26 @@ func (s *Server) callMCPServerTerminalResize(ctx context.Context, req *mcp.CallT
 	if session == nil {
 		return mcpPlainFailureResult("terminal_not_found", "terminal session not found"), nil
 	}
-	if session.OwnerType != InteractiveOwnerMCP || session.OAuthGrantID != grant.Grant.GrantID || session.OAuthClientID != grant.ClientID {
+	if session.OwnerType != InteractiveOwnerMCP || session.OAuthGrantID != grant.Grant.GrantID || session.OAuthClientID != grant.ClientID || (session.UserID != 0 && grant.UserID != 0 && session.UserID != grant.UserID) {
 		return mcpPlainFailureResult("terminal_not_owner", "session does not belong to this grant"), nil
 	}
-	// re-authorize
-	server, err := s.store.GetServer(ctx, session.ServerID)
-	if err != nil {
-		return mcpPlainFailureResult("not_found", err.Error()), nil
+	if grant.PrivilegedGrant == nil || session.PrivilegedGrantID == 0 || session.PrivilegedGrantID != grant.PrivilegedGrant.ID {
+		s.closeMCPTerminalSession(sessionID, "privileged_grant_revoked")
+		return mcpPrivilegedDeniedResult("privileged_grant_revoked", "The Privileged MCP Grant for this terminal is no longer active.", model.PrivilegeRemoteInteractive, session.ServerID), nil
 	}
-	if err := s.assertRemotePrivilegeAllowed(ctx, server, model.PrivilegeRemoteInteractive); err != nil {
-		code := ""
-		if c, ok := err.(interface{ Code() string }); ok {
-			code = c.Code()
-		}
-		return mcpPlainFailureResult(code, err.Error()), nil
+	authz, denied, denialCode := s.authorizeMCPTerminal(ctx, req, session.ServerID)
+	if denied != nil {
+		s.closeMCPTerminalSession(sessionID, denialCode)
+		return denied, nil
 	}
 	if err := s.mcpTerminalResize(session, cols, rows); err != nil {
-		code := ""
-		if c, ok := err.(interface{ Code() string }); ok {
-			code = c.Code()
+		code := "terminal_resize_failed"
+		if coded, ok := err.(interface{ Code() string }); ok {
+			code = coded.Code()
 		}
 		return mcpPlainFailureResult(code, err.Error()), nil
 	}
-	principal, _ := s.mcpPrincipalFromRequest(ctx, req)
-	s.recordToolCall(ctx, principal, "server_terminal_resize", map[string]any{"session_id": sessionID, "cols": cols, "rows": rows}, "succeeded", capability.DataSensitive)
+	s.recordToolCall(ctx, authz.principal, "server_terminal_resize", map[string]any{"session_id": sessionID, "cols": cols, "rows": rows}, "succeeded", capability.DataSensitive)
 	return mcpEnvelopeResult(newToolEnvelope("succeeded", "", map[string]any{"resized": true, "session_id": sessionID, "cols": cols, "rows": rows}))
 }
 

@@ -190,9 +190,9 @@ func (s *Server) mcpPrincipalFromRequest(ctx context.Context, req mcp.Request) (
 }
 
 func (s *Server) mcpGrantPrincipalFromRequest(ctx context.Context, req mcp.Request) (mcpauth.GrantPrincipal, error) {
-	if p, err := mcpGrantPrincipal(ctx); err == nil {
-		return p, nil
-	}
+	// Prefer the current request token over the session context. Stateful MCP
+	// sessions retain their initialize context, while role and Privileged Grant
+	// authorization must be resolved live on every tools/call.
 	if req != nil && req.GetExtra() != nil && req.GetExtra().Header != nil {
 		if token, ok := bearerToken(req.GetExtra().Header.Get("Authorization")); ok {
 			canonical, err := s.publicBaseURL(ctx)
@@ -220,6 +220,9 @@ func (s *Server) mcpGrantPrincipalFromRequest(ctx context.Context, req mcp.Reque
 				}
 			}
 		}
+	}
+	if p, err := mcpGrantPrincipal(ctx); err == nil {
+		return p, nil
 	}
 	return mcpauth.GrantPrincipal{}, errors.New("authenticated OAuth grant is required")
 }

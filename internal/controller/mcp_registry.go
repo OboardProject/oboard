@@ -158,6 +158,7 @@ func (s *Server) computeMCPToolsetHashLocked() string {
 		"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset",
 		"oboard_get_changeset", "oboard_get_workflow", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action",
 		"system_get_capabilities", "system_bootstrap",
+		"server_terminal_command", "server_terminal_open", "server_terminal_io", "server_terminal_resize", "server_terminal_close",
 	} {
 		entries = append(entries, hashEntry{Name: name, Version: "1"})
 	}
@@ -175,7 +176,7 @@ func (s *Server) mcpToolCountLocked() int {
 	for range s.capabilities.AllMCPDescriptors() {
 		count++
 	}
-	count += 13
+	count += 18
 	return count
 }
 
@@ -187,5 +188,5 @@ func (s *Server) mcpInvalidateRegistry() {
 	mcpRegistryMu.Unlock()
 	newManifest := s.mcpCurrentManifest()
 	_ = newManifest
-	s.mcpBroadcastToolListChanged()
+	s.notifyMCPToolsChanged()
 }

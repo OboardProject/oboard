@@ -187,9 +187,16 @@ func TestMCPOperateGrantListsOnlyFinalTools(t *testing.T) {
 			t.Fatalf("tools/list is missing dynamic capability tool %q", name)
 		}
 	}
-	for _, name := range []string{"server_exec", "server_exec_shell", "server_get_system_info"} {
-		if _, ok := byName[name]; ok {
-			t.Fatalf("operate tools/list leaked privileged tool %q", name)
+	for _, name := range []string{
+		"server_get_system_info", "server_exec", "server_exec_shell",
+		"server_terminal_command", "server_terminal_open", "server_terminal_io", "server_terminal_resize", "server_terminal_close",
+	} {
+		tool, ok := byName[name]
+		if !ok {
+			t.Fatalf("operate tools/list is missing stable privileged tool %q", name)
+		}
+		if slices.Contains([]string{"server_get_system_info", "server_exec", "server_exec_shell", "server_terminal_command", "server_terminal_open"}, name) && !strings.Contains(tool.Description, "always discoverable") {
+			t.Fatalf("privileged tool %q description does not explain stable discovery: %q", name, tool.Description)
 		}
 	}
 	if alwaysLoad, ok := byName["oboard_task"].Meta["anthropic/alwaysLoad"].(bool); !ok || !alwaysLoad {
@@ -984,7 +991,7 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 
 func TestMCPServerInstructionsStatic(t *testing.T) {
 	instructions := mcpServerInstructions
-	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate", "subscription_plan.delete"} {
+	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate", "subscription_plan.delete", "explicit host-level diagnosis", "server_terminal_command", "native MCP names", "prefix or sanitize"} {
 		if !strings.Contains(instructions, fragment) {
 			t.Fatalf("instructions missing %q", fragment)
 		}

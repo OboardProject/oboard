@@ -22,6 +22,9 @@ func TestPrivilegedCapabilitiesAreNotDefaultGrantable(t *testing.T) {
 		if item.PrivilegeClass == "" {
 			t.Fatalf("%s must have a privilege class", name)
 		}
+		if item.RBACPermission != PermissionServersRemoteAccess {
+			t.Fatalf("%s RBAC permission = %q", name, item.RBACPermission)
+		}
 	}
 	for _, item := range catalog.ListMCP(principal) {
 		if item.PrivilegeClass != "" {
@@ -40,6 +43,12 @@ func TestPrivilegedCapabilitiesAreNotDefaultGrantable(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("privileged grant should expose node.exec")
+	}
+	if !catalog.RBAC().Allows(model.RoleAdmin, PermissionServersRemoteAccess) || !catalog.RBAC().Allows(model.RoleOperator, PermissionServersRemoteAccess) {
+		t.Fatal("admin and operator must be allowed servers.remote_access")
+	}
+	if catalog.RBAC().Allows(model.RoleViewer, PermissionServersRemoteAccess) {
+		t.Fatal("viewer must be denied servers.remote_access")
 	}
 }
 

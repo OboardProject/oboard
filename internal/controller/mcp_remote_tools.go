@@ -50,7 +50,7 @@ func (s *Server) registerRemoteAccessMCPTools(server *mcp.Server) {
 		}
 		desc := descriptor
 		tool := &mcp.Tool{
-			Name: name, Title: desc.Name, Description: desc.Description,
+			Name: name, Title: desc.Name, Description: remoteMCPToolDescription(desc),
 			InputSchema: desc.InputSchema, Annotations: mcpAnnotations(desc.ReadOnly, desc.Idempotent),
 		}
 		server.AddTool(tool, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -68,11 +68,11 @@ func (s *Server) callRemoteAccessMCPTool(ctx context.Context, request *mcp.CallT
 	if err != nil {
 		return mcpPlainFailureResult("", err.Error()), nil
 	}
+	serverID := int64FromAny(arguments["server_id"])
 	decision := s.authorizeCapability(ctx, descriptor, arguments)
 	if !decision.Allowed {
-		return mcpFailureResult(decision, ""), nil
+		return mcpPrivilegedDecisionResult(decision, descriptor.PrivilegeClass, serverID), nil
 	}
-	serverID := int64FromAny(arguments["server_id"])
 	if serverID <= 0 {
 		return mcpPlainFailureResult("invalid_input", "server_id is required"), nil
 	}
@@ -126,6 +126,9 @@ func (s *Server) callRemoteAccessMCPTool(ctx context.Context, request *mcp.CallT
 			code = coded.Code()
 		}
 		s.recordToolCall(ctx, principal, descriptor.Name, arguments, "failed", descriptor.DataClassification)
+		if isRemoteAccessDenialCode(code) {
+			return mcpPrivilegedDeniedResult(code, execErr.Error(), descriptor.PrivilegeClass, serverID), nil
+		}
 		if result != nil {
 			raw, _ := json.Marshal(result)
 			return mcpPlainFailureResult(code, execErr.Error()+": "+string(raw)), nil
@@ -134,6 +137,20 @@ func (s *Server) callRemoteAccessMCPTool(ctx context.Context, request *mcp.CallT
 	}
 	s.recordToolCall(ctx, principal, descriptor.Name, arguments, "succeeded", descriptor.DataClassification)
 	return mcpEnvelopeResult(newToolEnvelope("succeeded", "", result))
+}
+
+func remoteMCPToolDescription(descriptor capability.Descriptor) string {
+	return fmt.Sprintf("%s\n\nThis tool is always discoverable to MCP principals with operate access, but execution requires an active %s Privileged MCP Grant and the target server inside both OAuth and privileged resource boundaries. Missing authorization returns a structured denial and does not schedule host work.", descriptor.Description, descriptor.PrivilegeClass)
+}
+
+func isRemoteAccessDenialCode(code string) bool {
+	switch code {
+	case "privileged_grant_required", "privileged_grant_revoked", "privileged_grant_expired", "privileged_resource_denied",
+		"remote_access_global_disabled", "remote_access_server_disabled", "agent_offline", "agent_upgrade_required", "agent_local_gate_denied":
+		return true
+	default:
+		return false
+	}
 }
 
 func remoteOperationKind(name string) string {

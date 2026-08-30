@@ -6,25 +6,26 @@ import (
 )
 
 const (
-	PrivilegeRemoteOperations  = model.PrivilegeRemoteOperations
-	PrivilegeRemoteExec        = model.PrivilegeRemoteExec
-	PrivilegeRemoteShell       = model.PrivilegeRemoteShell
-	PrivilegeRemoteInteractive = model.PrivilegeRemoteInteractive
-	ApprovalPrivilegedGrant    = model.ApprovalPolicyPrivilegedGrant
+	PrivilegeRemoteOperations     = model.PrivilegeRemoteOperations
+	PrivilegeRemoteExec           = model.PrivilegeRemoteExec
+	PrivilegeRemoteShell          = model.PrivilegeRemoteShell
+	PrivilegeRemoteInteractive    = model.PrivilegeRemoteInteractive
+	ApprovalPrivilegedGrant       = model.ApprovalPolicyPrivilegedGrant
+	PermissionServersRemoteAccess = "servers.remote_access"
 )
 
 func remoteAccessDescriptors(positiveID map[string]any, stringValue, boolValue map[string]any) []Descriptor {
 	serverIDInput := schemaObject(map[string]any{"server_id": positiveID}, "server_id")
 	execInput := schemaObject(map[string]any{
-		"server_id": positiveID,
-		"argv":      map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": map[string]any{"type": "string", "maxLength": 4096}},
-		"cwd":       map[string]any{"type": "string", "maxLength": 4096},
+		"server_id":       positiveID,
+		"argv":            map[string]any{"type": "array", "minItems": 1, "maxItems": 64, "items": map[string]any{"type": "string", "maxLength": 4096}},
+		"cwd":             map[string]any{"type": "string", "maxLength": 4096},
 		"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 300},
 	}, "server_id", "argv")
 	shellInput := schemaObject(map[string]any{
-		"server_id": positiveID,
-		"command":   map[string]any{"type": "string", "minLength": 1, "maxLength": 32768},
-		"cwd":       map[string]any{"type": "string", "maxLength": 4096},
+		"server_id":       positiveID,
+		"command":         map[string]any{"type": "string", "minLength": 1, "maxLength": 32768},
+		"cwd":             map[string]any{"type": "string", "maxLength": 4096},
 		"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 300},
 	}, "server_id", "command")
 	execOutput := schemaObject(map[string]any{
@@ -39,7 +40,7 @@ func remoteAccessDescriptors(positiveID map[string]any, stringValue, boolValue m
 			ResourceEvaluator: "server_ids", RiskClass: risk, ApprovalPolicy: ApprovalPrivilegedGrant,
 			Idempotent: false, DataClassification: DataSensitive, MCPEnabled: true, Executable: executable,
 			ReadOnly: !executable, MinimumAccess: mcpauth.AccessOperate, PrivilegeClass: privilege,
-			RBACPermission: "admin.settings", ResolveResourceRefs: serverRefFromServerID,
+			RBACPermission: PermissionServersRemoteAccess, ResolveResourceRefs: serverRefFromServerID,
 		}
 	}
 	return []Descriptor{

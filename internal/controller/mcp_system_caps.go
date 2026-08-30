@@ -2,10 +2,15 @@ package controller
 
 import (
 	"context"
+	"strconv"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/capability"
+	"github.com/OboardProject/oboard/internal/mcpauth"
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 type mcpSystemGetCapabilitiesInput struct{}
@@ -17,9 +22,9 @@ type mcpSystemBootstrapInput struct {
 
 func (s *Server) addMCPSystemCapabilitiesTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "system_get_capabilities",
-		Title:       "Get Capabilities",
-		Description: "STABLE CAPABILITY MANIFEST. Returns server_version, api_version, capability_revision, toolset_hash, min_mcp_protocol, features, and deprecated_tools. This tool name never changes; use its capability_revision and toolset_hash to detect new tools without polling server_version. Compare capability_revision to decide whether to re-call tools/list.",
+		Name:         "system_get_capabilities",
+		Title:        "Get Capabilities",
+		Description:  "STABLE CAPABILITY MANIFEST. Returns registry metadata plus host_access states that separate stable tool visibility from current privileged authorization. This tool name never changes; use capability_revision and toolset_hash to detect schema changes without polling server_version.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{})),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}),
 		Annotations:  mcpAnnotations(true, true),
@@ -36,28 +41,8 @@ func (s *Server) addMCPSystemCapabilitiesTool(server *mcp.Server) {
 			"tool_count":          manifest.ToolCount,
 			"instructions_hash":   manifest.InstructionsHash,
 		}
-		// interactive_terminal discovery: precise per-principal reason without server context
 		principal, _ := mcpPrincipal(ctx)
-		interactive := map[string]any{"available": false, "reason": "privileged_grant_required"}
-		hasInteractive := false
-		for _, c := range principal.PrivilegedClasses {
-			if c == "remote_interactive" {
-				hasInteractive = true
-				break
-			}
-		}
-		if !hasInteractive {
-			interactive["reason"] = "privileged_grant_required"
-		} else {
-			settings, _ := s.store.ListSettings(ctx)
-			if !settingBool(settings, settingMCPInteractiveTerminalEnabled, false) {
-				interactive["reason"] = "global_disabled"
-			} else {
-				interactive["available"] = true
-				interactive["reason"] = ""
-			}
-		}
-		data["interactive_terminal"] = interactive
+		data["host_access"] = s.mcpHostAccessCapabilities(ctx, principal)
 		if principal.ID != "" {
 			s.recordToolCall(ctx, principal, "system.get_capabilities", map[string]any{}, "succeeded", capability.DataInternal)
 		}
@@ -67,9 +52,9 @@ func (s *Server) addMCPSystemCapabilitiesTool(server *mcp.Server) {
 
 func (s *Server) addMCPSystemBootstrapTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "system_bootstrap",
-		Title:       "Bootstrap",
-		Description: "STABLE BOOTSTRAP. Returns the minimal authenticated context plus the capability manifest and recommended client behavior. Always available, never renamed. Use it to discover server identity, capability_revision, and whether dynamic_tool_discovery is recommended.",
+		Name:         "system_bootstrap",
+		Title:        "Bootstrap",
+		Description:  "STABLE BOOTSTRAP. Returns the minimal authenticated context plus the capability manifest and recommended client behavior. Always available, never renamed. Use it to discover server identity, capability_revision, and whether dynamic_tool_discovery is recommended.",
 		InputSchema:  mustRawSchema(closedMCPSchema(map[string]any{"client_name": map[string]any{"type": "string"}, "client_version": map[string]any{"type": "string"}, "protocol": map[string]any{"type": "string"}})),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}),
 		Annotations:  mcpAnnotations(true, true),
@@ -106,6 +91,66 @@ func (s *Server) addMCPSystemBootstrapTool(server *mcp.Server) {
 		}
 		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", data), nil
 	})
+}
+
+func (s *Server) mcpHostAccessCapabilities(ctx context.Context, principal application.Principal) map[string]any {
+	grant, _ := mcpGrantPrincipal(ctx)
+	settings, _ := s.store.ListSettings(ctx)
+	servers, _ := s.store.ListServers(ctx)
+	state := func(privilege, setting string) map[string]any {
+		visible := s.grantAllowsOperate(principal)
+		result := map[string]any{"tool_visible": visible, "authorized": false}
+		if !visible {
+			result["reason"] = "operate_access_required"
+			return result
+		}
+		if !s.capabilities.RBAC().Allows(principal.Role, capability.PermissionServersRemoteAccess) {
+			result["reason"] = mcpauth.CodeRoleDenied
+			return result
+		}
+		policy := grant.PrivilegedGrant
+		if policy == nil {
+			result["reason"] = mcpauth.CodePrivilegedGrantRequired
+			return result
+		}
+		now := time.Now().UTC()
+		if policy.RevokedAt != nil && !policy.RevokedAt.IsZero() {
+			result["reason"] = mcpauth.CodePrivilegedGrantRevoked
+			return result
+		}
+		if policy.ExpiresAt != nil && !policy.ExpiresAt.IsZero() && !policy.ExpiresAt.After(now) {
+			result["reason"] = mcpauth.CodePrivilegedGrantExpired
+			return result
+		}
+		if !policy.HasCapability(privilege) {
+			result["reason"] = mcpauth.CodePrivilegedGrantRequired
+			return result
+		}
+		allowedServers := make([]int64, 0, len(servers))
+		for _, server := range servers {
+			ref := mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(server.ID, 10)}
+			if grant.Grant.ResourceBoundary.AllowsResource(ref) && policy.ResourceBoundary.AllowsResource(ref) {
+				allowedServers = append(allowedServers, server.ID)
+			}
+		}
+		result["servers"] = allowedServers
+		if len(allowedServers) == 0 {
+			result["reason"] = "privileged_resource_denied"
+			return result
+		}
+		if !settingBool(settings, setting, false) {
+			result["reason"] = "remote_access_global_disabled"
+			return result
+		}
+		result["authorized"] = true
+		return result
+	}
+	return map[string]any{
+		"remote_operations":    state(model.PrivilegeRemoteOperations, settingMCPRemoteOperationsEnabled),
+		"structured_exec":      state(model.PrivilegeRemoteExec, settingMCPStructuredExecEnabled),
+		"raw_shell":            state(model.PrivilegeRemoteShell, settingMCPRawShellEnabled),
+		"interactive_terminal": state(model.PrivilegeRemoteInteractive, settingMCPInteractiveTerminalEnabled),
+	}
 }
 
 func mcpCapabilityModules() []string {

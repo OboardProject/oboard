@@ -95,11 +95,52 @@ func mcpFailureResult(decision mcpauth.AuthorizationDecision, correlationID stri
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}}
 }
 
-// mcpPlainFailureResult renders a plain error without leaking internals.
-func mcpPlainFailureResult(correlationID, message string) *mcp.CallToolResult {
-	envelope := &ToolEnvelope{SchemaVersion: mcpSchemaVersion, Status: "failed", Warnings: []string{}, CorrelationID: correlationID, Error: &mcpErrorBody{Code: "invalid_input", Message: message}}
+// mcpPlainFailureResult renders a coded plain error without leaking internals.
+func mcpPlainFailureResult(code, message string) *mcp.CallToolResult {
+	if code == "" {
+		code = "invalid_input"
+	}
+	envelope := errorEnvelope("", mcpauth.AuthorizationDecision{}, code, message)
+	if envelope.CorrelationID == "" {
+		random, _ := security.RandomToken(18)
+		envelope.CorrelationID = "corr_" + random
+	}
 	encoded, _ := json.Marshal(envelope)
 	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}}
+}
+
+type mcpPrivilegedDenial struct {
+	Status            string `json:"status"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	RequiredPrivilege string `json:"required_privilege"`
+	ServerID          int64  `json:"server_id,omitempty"`
+}
+
+func mcpPrivilegedDeniedResult(code, message, privilege string, serverID int64) *mcp.CallToolResult {
+	if code == "" {
+		code = mcpauth.CodePrivilegedGrantRequired
+	}
+	if message == "" {
+		message = "This host operation requires an active Privileged MCP Grant."
+	}
+	encoded, _ := json.Marshal(mcpPrivilegedDenial{
+		Status: "denied", Code: code, Message: message,
+		RequiredPrivilege: privilege, ServerID: serverID,
+	})
+	return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}}
+}
+
+func mcpPrivilegedDecisionResult(decision mcpauth.AuthorizationDecision, privilege string, serverID int64) *mcp.CallToolResult {
+	code := decision.Code
+	if code == mcpauth.CodeResourceDenied {
+		code = "privileged_resource_denied"
+	}
+	message := decision.Reason
+	if code == mcpauth.CodePrivilegedGrantRequired && privilege == "remote_interactive" {
+		message = "Interactive terminal requires an active Privileged MCP Grant."
+	}
+	return mcpPrivilegedDeniedResult(code, message, privilege, serverID)
 }
 
 // ResourceEnvelope is the unified schema_version=1 resource body.

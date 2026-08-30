@@ -74,11 +74,14 @@ func NewCatalog() *Catalog {
 		c.items[item.Name] = item
 		c.rbac.Register(item.RBACPermission, authorization.PermissionSpec{ReadOnly: item.ReadOnly, ManagementOnly: item.ManagementOnly()})
 	}
+	c.rbac.Register(PermissionServersRemoteAccess, authorization.PermissionSpec{ManagementOnly: true})
 	return c
 }
 
 // ManagementOnly reports whether the capability is hidden from viewers.
-func (d Descriptor) ManagementOnly() bool { return d.RBACPermission == "admin.settings" }
+func (d Descriptor) ManagementOnly() bool {
+	return d.RBACPermission == "admin.settings" || d.RBACPermission == PermissionServersRemoteAccess
+}
 
 // RBAC returns the shared role-based permission service. The Controller wires
 // the same instance into the unified MCP evaluator.
@@ -391,7 +394,7 @@ func defaultDescriptors() []Descriptor {
 		input, output, evaluator := executableSchemas(domain.name)
 		description := "创建受验证和审批保护的管理变更"
 		if domain.name == "servers.onboard" {
-		description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue。省略的字段使用与面板添加服务器相同的默认值；未提到的开关不要传 false。提交前可用 oboard_validate_form 核对 applied_defaults"
+			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue。省略的字段使用与面板添加服务器相同的默认值；未提到的开关不要传 false。提交前可用 oboard_validate_form 核对 applied_defaults"
 		} else if domain.name == "inbounds.create" {
 			description = "创建入口。AnyTLS / HY2 / VLESS WebSocket 必须提交自有 dns_domain，并默认开启 dns_sync_enabled；dns_credential_id 必填（唯一凭据或 bootstrap default 可自动填充，否则 missing_dns_credential 带 available_credentials）。certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请。修改 dns_domain 会删除旧解析、写入新解析；已有覆盖证书则立刻绑定，否则下次部署申请"
 		} else if domain.name == "servers.reset_traffic" {
@@ -670,7 +673,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"resource_history_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true"}, "latency_probe_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true。未赋值时不要传 false"}, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
 			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
-			"monitoring_mode": map[string]any{"type": "string", "enum": []string{"lightweight", "standard"}, "description": "省略时默认 lightweight"},
+			"monitoring_mode":  map[string]any{"type": "string", "enum": []string{"lightweight", "standard"}, "description": "省略时默认 lightweight"},
 			"service_start_at": stringValue, "expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空时自动按 service_start_at(优先)或 expires_at 的日推导(仅日精度),例如 2025-07-05 起租即每月5日重置"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags": serverDisplayTagsSchema(),

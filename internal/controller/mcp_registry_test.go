@@ -3,11 +3,15 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 func TestMCPSystemGetCapabilitiesIsStable(t *testing.T) {
@@ -27,6 +31,13 @@ func TestMCPSystemGetCapabilitiesIsStable(t *testing.T) {
 		for _, fragment := range []string{`"capability_revision"`, `"toolset_hash":"sha256:`, `"server_version"`, `"api_version"`, `"min_mcp_protocol"`} {
 			if !strings.Contains(body, fragment) {
 				t.Fatalf("%s output missing %q: %s", name, fragment, body)
+			}
+		}
+		if name == "system_get_capabilities" {
+			for _, fragment := range []string{`"host_access"`, `"remote_operations"`, `"structured_exec"`, `"raw_shell"`, `"interactive_terminal"`, `"tool_visible":true`, `"authorized":false`, `"reason":"privileged_grant_required"`} {
+				if !strings.Contains(body, fragment) {
+					t.Fatalf("%s host access output missing %q: %s", name, fragment, body)
+				}
 			}
 		}
 	}
@@ -63,95 +74,69 @@ func TestMCPInitializeAdvertisesListChanged(t *testing.T) {
 }
 
 func TestMCPToolListChangedNotification(t *testing.T) {
-	db, server, _, _, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
+	db, server, _, principal, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
 
-	// Create a client that subscribes to tools/list_changed
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", httpServer.URL); err != nil {
+		t.Fatal(err)
+	}
+	grants, err := db.ListOAuthGrants(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var grant *model.OAuthGrant
+	for i := range grants {
+		if grants[i].PrincipalID == principal.ID {
+			grant = &grants[i]
+			break
+		}
+	}
+	if grant == nil {
+		t.Fatal("OAuth grant not found")
+	}
+	clientRecord, err := db.GetOAuthClient(context.Background(), grant.ClientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := "oba_notify-" + randomTestID()
+	issueTestMCPToken(t, db, grant, principal, clientRecord, grant.UserID, httpServer.URL+"/api/v1/mcp", plain)
+
 	notified := make(chan struct{}, 1)
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client-notify", Version: "1"}, &mcp.ClientOptions{
-		ToolListChangedHandler: func(ctx context.Context, req *mcp.ToolListChangedRequest) {
+	client := mcp.NewClient(&mcp.Implementation{Name: "hermes-style-notify", Version: "1"}, &mcp.ClientOptions{
+		ToolListChangedHandler: func(context.Context, *mcp.ToolListChangedRequest) {
 			select {
 			case notified <- struct{}{}:
 			default:
 			}
 		},
 	})
-	// Need to create a new HTTP server for this client that shares the same *Server (so broadcast reaches it)
-	// Reuse the same server's handler but create a new httptest server
-	// Instead, we can directly use the existing server's singleton and trigger broadcast
-	// The existing session from newMCPTestEnvironment is not subscribed, but our new client will be
-	// We need to connect the new client via the same underlying http server
-	// For simplicity, use the same db and server but create a new httptest server
-	// newMCPTestEnvironment already created an httptest server and a session; we can trigger broadcast and check notified
-	// Use the server's broadcast directly
-	_ = db
-	_ = server
-
-	// Connect the notifying client
-	// We need the httpServer URL from newMCPTestEnvironment, but it's not exposed. Recreate a minimal environment
-	// For this test, we will directly test the registry's broadcast via the singleton's AddTool path
-	// by checking that after mcpInvalidateRegistry, a second ListTools sees the same tools but the notification was scheduled
-	// Since the notification is debounced (10ms), we can trigger and wait for the handler
-	// Use the server's own store to trigger
-	manifestBefore := server.mcpCurrentManifest()
-	hashBefore := manifestBefore.ToolsetHash
-	revBefore := manifestBefore.CapabilityRevision
-
-	// Invalidate (recomputes same hash, but still broadcasts)
-	server.mcpInvalidateRegistry()
-	manifestAfter := server.mcpCurrentManifest()
-	if manifestAfter.ToolsetHash != hashBefore {
-		t.Fatalf("hash changed unexpectedly: before %s after %s", hashBefore, manifestAfter.ToolsetHash)
-	}
-	if manifestAfter.CapabilityRevision != revBefore {
-		t.Fatalf("revision changed unexpectedly")
-	}
-
-	// Now test that a client with handler would be notified via the singleton's broadcast
-	// Create a second server/client pair that is modern (2026-07-28) and subscribes
-	// For this test, we just verify that the handler was called via direct broadcast
-	// We can simulate by calling the server's AddTool which should trigger notification
-	// Since we already called mcpInvalidateRegistry which re-adds system tools, the
-	// notification should be scheduled. We can't easily assert without a real client
-	// subscribed, so we just verify that the manifest's hash is stable and that
-	// tools/list still works
-	_ = client
-	_ = notified
-
-	// Verify that system_get_capabilities still returns consistent hash
-	// Use a fresh session to call it
-	_, _, session2, _, close2 := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
-	defer close2()
-	result, err := session2.CallTool(context.Background(), &mcp.CallToolParams{Name: "system_get_capabilities", Arguments: map[string]any{}})
-	if err != nil || result.IsError {
-		t.Fatalf("system_get_capabilities after invalidate: err=%v result=%#v", err, result)
-	}
-	raw, _ := json.Marshal(result.StructuredContent)
-	var envelope struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Data["toolset_hash"] != hashBefore {
-		t.Fatalf("toolset_hash mismatch after invalidate: %v vs %v", envelope.Data["toolset_hash"], hashBefore)
-	}
-
-	// Basic check that notification mechanism does not break ListTools
-	tools, err := session2.ListTools(context.Background(), nil)
+	httpClient := &http.Client{Transport: bearerTransport{token: plain, base: http.DefaultTransport}}
+	connectCtx, cancelConnect := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelConnect()
+	session, err := client.Connect(connectCtx, &mcp.StreamableClientTransport{Endpoint: httpServer.URL + "/api/v1/mcp", HTTPClient: httpClient}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	defer session.Close()
+
+	server.notifyMCPToolsChanged()
+	select {
+	case <-notified:
+	case <-time.After(3 * time.Second):
+		t.Fatal("connected Streamable HTTP client did not receive notifications/tools/list_changed")
+	}
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tool := range tools.Tools {
-		if tool.Name == "system_get_capabilities" {
-			found = true
-			break
+		if tool.Name == "server_terminal_open" {
+			return
 		}
 	}
-	if !found {
-		t.Fatal("system_get_capabilities not in tools/list after invalidate")
-	}
+	t.Fatal("stable terminal tools disappeared after list_changed")
 }
 
 func TestMCPReadGrantSeesStableManifestButNotOperateTools(t *testing.T) {
