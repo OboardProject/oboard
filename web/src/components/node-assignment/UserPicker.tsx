@@ -33,29 +33,28 @@ export function UserPicker({ users, selected, onChange, maxHeight = 220 }: {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <div className="user-picker">
+      <div className="user-picker-toolbar">
         <Input
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="搜索用户（用户名 / 昵称）"
           aria-label="搜索用户"
-          style={{ flex: 1 }}
         />
-        <button type="button" className="ghost" style={{ fontSize: 12, padding: '4px 8px', whiteSpace: 'nowrap' }} onClick={selectAllVisible}>
+        <button type="button" className="ghost" onClick={selectAllVisible}>
           全选
         </button>
-        <button type="button" className="ghost" style={{ fontSize: 12, padding: '4px 8px', whiteSpace: 'nowrap' }} onClick={clearVisible}>
+        <button type="button" className="ghost" onClick={clearVisible}>
           清空
         </button>
       </div>
       <div className="card-custom" style={{ maxHeight, overflow: 'auto', padding: 6 }}>
         {visible.length === 0 && <p className="muted" style={{ padding: 8, margin: 0, textAlign: 'center', fontSize: 12 }}>没有匹配的用户</p>}
         {visible.map(u => (
-          <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', cursor: 'pointer', borderRadius: 8 }}>
+          <label key={u.id} className="user-picker-row">
             <input type="checkbox" checked={selected.has(u.id)} onChange={() => toggle(u.id)} aria-label={`选择用户 ${u.username}`} />
-            <span style={{ fontWeight: 600 }}>{u.username}</span>
-            {u.nickname ? <span className="muted" style={{ fontSize: 12 }}>{u.nickname}</span> : null}
+            <span className="user-picker-username">{u.username}</span>
+            {u.nickname ? <span className="muted user-picker-nickname">{u.nickname}</span> : null}
             {u.status === 'disabled' && <Badge variant="secondary">停用</Badge>}
           </label>
         ))}

@@ -308,18 +308,18 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
 
   return (
     <>
-      <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="lg">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Dialog isOpen={open} onClose={onClose} title={node ? `节点操作：${node.name}` : '节点操作'} size="lg" className="node-scope-action-dialog">
+        <div className="node-scope-action-body">
           {scopeBusy && <p className="muted" style={{ margin: 0, fontSize: 13 }}>正在解析节点范围...</p>}
           {scopeError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{scopeError}</p>}
           {preview && (
             <>
               {/* Scope summary */}
-              <div className="card-custom" style={{ padding: '10px 14px' }}>
-                <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                  <span style={{ fontWeight: 700, fontSize: 13 }}>已选择 {preview.count} 个节点</span>
+              <div className="card-custom node-scope-summary">
+                <div className="node-scope-summary-toolbar">
+                  <span className="node-scope-summary-count">已选择 {preview.count} 个节点</span>
                   <Badge variant="outline">{scopeName(preview)}</Badge>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginLeft: 'auto', cursor: 'pointer' }}>
+                  <label className="node-scope-summary-include">
                     <Switch size="sm" checked={includeDisabled} onChange={setIncludeDisabled} ariaLabel="包含已禁用节点" /> 包含已禁用节点
                   </label>
                 </div>
@@ -332,13 +332,13 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
               </div>
 
               {/* Section 1: 套餐 */}
-              <div className="card-custom" style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div className="card-custom node-scope-plan-card">
+                <div className="node-scope-section-head">
+                  <div className="node-scope-section-title">
                     <Package size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
-                    <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>所属套餐</h3>
+                    <h3>所属套餐</h3>
                   </div>
-                  <span className="muted" style={{ fontSize: 12 }}>
+                  <span className="muted node-scope-section-meta">
                     包含在 <strong>{assignedPlans.length}</strong> 个套餐中
                   </span>
                 </div>
@@ -360,10 +360,10 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                           borderBottom: index < assignedPlans.length - 1 ? '1px solid var(--border)' : 'none',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-strong)' }}>{p.name}</span>
+                        <div className="plan-assigned-row-copy">
+                          <span className="plan-assigned-row-name">{p.name}</span>
                           {p.display_group && (
-                            <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--muted)' }}>
+                            <span className="plan-assigned-row-group">
                               {p.display_group}
                             </span>
                           )}
@@ -384,11 +384,10 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                 )}
 
                 {/* Add to plan toolbar */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) minmax(110px, 140px) auto', gap: 8, alignItems: 'center', marginTop: 2 }}>
+                <div className="node-scope-plan-add">
                   <Select
                     value={selectedAddPlanID}
                     onChange={e => setSelectedAddPlanID(Number(e.target.value))}
-                    style={{ height: 34, fontSize: 12.5 }}
                     aria-label="选择要加入的套餐"
                   >
                     <option value={0}>选择要加入的套餐...</option>
@@ -398,7 +397,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                     value={addDisplayGroup}
                     onChange={e => setAddDisplayGroup(e.target.value)}
                     placeholder="展示分组（可选）"
-                    style={{ height: 34, fontSize: 12.5 }}
+                    aria-label="展示分组"
                   />
                   <Button
                     size="sm"
@@ -406,9 +405,8 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                     busy={addingPlan}
                     disabled={!selectedAddPlanID || planActionBusyId !== null}
                     onClick={() => void handleAddPlan()}
-                    style={{ height: 34, padding: '0 12px', fontSize: 12.5, whiteSpace: 'nowrap' }}
                   >
-                    <Plus size={14} style={{ marginRight: 4 }} />
+                    <Plus size={14} />
                     加入套餐
                   </Button>
                 </div>
@@ -420,23 +418,22 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
               </div>
 
               {/* Section 2: 授权用户 */}
-              <div className="card-custom" style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div className="card-custom node-scope-auth-card">
+                <div className="node-scope-section-title">
                   <UserCheck size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
-                  <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>用户授权</h3>
+                  <h3>用户授权</h3>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-                  <Info size={15} style={{ flexShrink: 0, marginTop: 1, color: 'var(--color-primary, #3b82f6)' }} />
+                <div className="node-scope-auth-hint">
+                  <Info size={15} aria-hidden="true" />
                   <span>
                     <strong>授权规则说明</strong>：用户可使用的节点为其<strong>所在套餐节点</strong>与<strong>单独授权节点</strong>的<strong>并集</strong>。即使套餐未包含此节点，在此授权后指定用户也能正常使用。
                   </span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <div className="node-scope-auth-trigger">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setUserAuthOpen(true)}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                   >
                     <UserCheck size={14} />
                     <span>授权用户</span>
@@ -446,7 +443,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
             </>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+          <div className="node-scope-dialog-footer">
             <Button variant="outline" onClick={onClose}>关闭</Button>
           </div>
         </div>
@@ -458,33 +455,34 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         onClose={() => setUserAuthOpen(false)}
         title={node ? `授权用户 · ${node.name}` : '授权用户'}
         size="default"
+        className="node-scope-auth-dialog"
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-            <Sparkles size={15} style={{ flexShrink: 0, marginTop: 1, color: 'var(--color-primary, #3b82f6)' }} />
+        <div className="node-scope-auth-body">
+          <div className="node-scope-auth-hint">
+            <Sparkles size={15} aria-hidden="true" />
             <span>为选定用户独立配置此节点的访问权限（允许或禁止），权限独立生效并与套餐取并集。留空时间则永久有效。</span>
           </div>
 
           <UserPicker users={users} selected={userIDs} onChange={setUserIDs} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 8, marginTop: 4 }}>
+          <div className="node-scope-auth-fields">
             <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权效果</label>
-              <Select value={effect} onChange={e => setEffect(e.target.value as 'allow' | 'deny')} style={{ width: '100%' }} aria-label="授权效果">
+              <label className="node-scope-field-label">授权效果</label>
+              <Select value={effect} onChange={e => setEffect(e.target.value as 'allow' | 'deny')} aria-label="授权效果">
                 <option value="allow">允许</option>
                 <option value="deny">禁止</option>
               </Select>
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>授权原因（可选）</label>
+              <label className="node-scope-field-label">授权原因（可选）</label>
               <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="例如：测试授权、VIP体验（可选）" />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>开始时间（可选）</label>
+              <label className="node-scope-field-label">开始时间（可选）</label>
               <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="立即生效" aria-label="开始时间" />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 3 }}>过期时间（可选）</label>
+              <label className="node-scope-field-label">过期时间（可选）</label>
               <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="永久有效" aria-label="过期时间" />
             </div>
           </div>
@@ -496,14 +494,14 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
           )}
 
           {exPreview && (
-            <div style={{ padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 'var(--radius-md)', fontSize: 12 }}>
+            <div className="node-scope-auth-preview">
               <p className="muted" style={{ margin: 0 }}>
                 将创建 <strong>{exPreview.created}</strong> 条、更新 <strong>{exPreview.updated}</strong> 条、跳过已有 <strong>{exPreview.skipped}</strong> 条 · 受影响用户 <strong>{exPreview.affected_users}</strong> 人
               </p>
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+          <div className="node-scope-auth-actions">
             <Button variant="ghost" onClick={() => setUserAuthOpen(false)}>取消</Button>
             {exPreview ? (
               <Button busy={exApplyBusy} onClick={() => void applyExceptionBatch()}>批量应用授权</Button>

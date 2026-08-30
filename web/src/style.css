@@ -17541,12 +17541,46 @@ button[aria-busy="true"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
   padding: 7px 12px;
   transition: background 0.12s ease;
 }
 
 .plan-assigned-row:hover {
   background: var(--surface-2);
+}
+
+.plan-assigned-row-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.plan-assigned-row-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-assigned-row-group {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plan-remove-icon-btn {
@@ -21573,8 +21607,10 @@ button.ui-btn-ghost:hover {
 .node-scope-menu-item {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   text-align: left;
   padding: 7px 10px;
   border: none;
@@ -21589,6 +21625,16 @@ button.ui-btn-ghost:hover {
   background: var(--surface-2) !important;
 }
 .node-scope-menu-item:disabled { cursor: not-allowed; opacity: 0.55; }
+.node-scope-menu-item-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.node-scope-menu-item-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .node-scope-menu-reason {
   display: block;
   font-size: 12px;
@@ -21606,6 +21652,284 @@ button.ui-btn-ghost:hover {
   padding-left: 6px;
 }
 .node-scope-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
+
+.node-scope-action-body,
+.node-scope-auth-body,
+.node-scope-plan-card,
+.node-scope-auth-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.node-scope-action-body { gap: 14px; }
+.node-scope-auth-body { gap: 12px; }
+.node-scope-summary { padding: 10px 14px; }
+.node-scope-plan-card,
+.node-scope-auth-card { padding: 14px; gap: 10px; }
+.node-scope-summary-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.node-scope-summary-count {
+  font-size: 13px;
+  font-weight: 700;
+}
+.node-scope-summary-include {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  cursor: pointer;
+}
+.node-scope-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.node-scope-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.node-scope-section-title h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.node-scope-section-meta {
+  flex: 0 0 auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.node-scope-plan-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 140px) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 2px;
+}
+.node-scope-plan-add > * { min-width: 0; }
+.node-scope-plan-add button {
+  justify-content: center;
+  white-space: nowrap;
+}
+.node-scope-auth-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.node-scope-auth-hint svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--color-primary, #3b82f6);
+}
+.node-scope-auth-trigger { display: flex; justify-content: flex-start; }
+.node-scope-auth-trigger button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.node-scope-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.node-scope-auth-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+.node-scope-field-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.node-scope-auth-preview {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.node-scope-auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.node-scope-auth-actions button { white-space: nowrap; }
+.dialog-panel.node-scope-action-dialog > div:first-child,
+.dialog-panel.node-scope-auth-dialog > div:first-child {
+  min-width: 0;
+}
+.dialog-panel.node-scope-action-dialog h3,
+.dialog-panel.node-scope-auth-dialog h3 {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+.dialog-panel.node-scope-action-dialog .dialog-close,
+.dialog-panel.node-scope-auth-dialog .dialog-close {
+  flex-shrink: 0;
+}
+
+.user-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.user-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.user-picker-toolbar .ui-input,
+.user-picker-toolbar input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.user-picker-toolbar button {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.user-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.user-picker-username {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-picker-nickname {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .dialog-panel.node-scope-action-dialog,
+  .dialog-panel.node-scope-auth-dialog {
+    padding: 16px 14px 12px;
+    max-height: min(92dvh, 100%);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .node-scope-summary-include {
+    width: 100%;
+    margin-left: 0;
+  }
+  .node-scope-section-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .node-scope-plan-add {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .node-scope-plan-add button,
+  .node-scope-auth-trigger button,
+  .node-scope-dialog-footer button {
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    min-height: 42px;
+    justify-content: center;
+    white-space: nowrap;
+  }
+  .node-scope-dialog-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .node-scope-auth-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .node-scope-auth-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 4px;
+  }
+  .node-scope-auth-actions button {
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    min-height: 42px;
+    justify-content: center;
+  }
+  .plan-remove-icon-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+  .user-picker-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .user-picker-toolbar .ui-input,
+  .user-picker-toolbar input {
+    grid-column: 1 / -1;
+  }
+  .user-picker-toolbar button {
+    width: 100%;
+    min-height: 42px;
+    justify-content: center;
+  }
+  .node-scope-menu {
+    left: max(8px, env(safe-area-inset-left, 0px)) !important;
+    right: max(8px, env(safe-area-inset-right, 0px)) !important;
+    top: auto !important;
+    bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: min(72dvh, calc(100dvh - 16px));
+    border-radius: 16px;
+  }
+  .node-scope-menu-title span:first-child {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+  .node-scope-menu-item {
+    min-height: 44px;
+    align-items: flex-start;
+    padding: 10px 12px;
+  }
+  .node-scope-menu-item-label,
+  .node-scope-menu-reason {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+}
 
 /* Subscription Plan Detail Animations & Overview Grid */
 @keyframes plan-detail-in {

@@ -41,7 +41,12 @@ export function NodeScopeMenu({ x, y, node, onSelect, onClose }: {
   React.useEffect(() => {
     if (!node) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    const onResize = () => onClose()
+    let width = window.innerWidth
+    const onResize = () => {
+      if (window.innerWidth === width) return
+      width = window.innerWidth
+      onClose()
+    }
     window.addEventListener('keydown', onKey)
     window.addEventListener('resize', onResize)
     return () => {
@@ -145,8 +150,8 @@ function MenuButton({ label, hint, reason, sub, disabled, onClick }: {
       onClick={onClick}
       title={reason}
     >
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span className="node-scope-menu-item-copy">
+        <span className="node-scope-menu-item-label">{label}</span>
         {(hint || reason) && <span className="node-scope-menu-reason">{hint || reason}</span>}
       </span>
       {sub && <ChevronRight size={14} className="muted" aria-hidden="true" />}
