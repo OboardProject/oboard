@@ -73,9 +73,30 @@
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
+| `controller-db-20260830-snell-server-psk` | Controller | SQLite data backfill | `dev-befb1492dc9f` | 待发布 | 生效中 | - |
 | `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-c4c3e44e42d9` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260830-snell-server-psk
+
+- **引入日期：** 2026-08-30
+- **引入提交：** `OboardProject/oboard@befb1492dc9f`（待发布前以开发通道计）
+- **引入版本：** `dev-befb1492dc9f`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/core`
+- **类别：** SQLite data backfill
+- **原因：** Snell 升级为多用户协议后，服务端 PSK 必须写进 `config_json.psk` 并保持稳定，不能再在生成配置时回落到用户密码。
+- **源状态：** Snell inbound 的 `config_json.psk` 为空或长度不合法；旧库可能仍有 `inbound_users`。
+- **目标状态：** 每个 Snell inbound 都有合法 `config_json.psk`。优先冻结 `inbound_users` 中第一个启用用户的 `proxy_password`，其次套餐绑定用户，否则生成随机值。
+- **实现位置：** `oboard/internal/store/store.go`（`migrateSnellServerPSK`）
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时先把全部 Snell inbound 读入内存并关闭游标，再查绑定密码并回写；该步骤必须在 `DROP TABLE inbound_users` 之前。启动迁移期间 `MaxOpenConns=1`，不得在未关闭的 `Query` 游标上再 `QueryRow`。
+- **数据影响：** 仅补写缺少或非法的 PSK；已合法的 PSK 不变。
+- **重复执行：** 已合法的 PSK 跳过；重复打开不改写。
+- **失败行为：** 迁移失败阻止打开数据库。此前在 `MaxOpenConns=1` 下对未关闭的 Snell 游标再 `QueryRow` 会导致 `all goroutines are asleep - deadlock!`，Controller 无法启动。
+- **回归测试：** `TestSnellServerPSKMigratesWithoutNestedQueryDeadlock`、`TestSnellServerPSKFreezesLegacyInboundUserPassword`
+- **移除条件：** 最老支持数据库与所有可恢复备份中的 Snell inbound 均已含合法 `config_json.psk`，且不再出现 `inbound_users`。
+- **移除状态：** 生效中
 
 ### controller-db-20260830-family-split-templates
 

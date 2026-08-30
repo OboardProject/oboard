@@ -1061,6 +1061,14 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateUserPlanBindingDeployTracking(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "inbounds", "advertise_port", `alter table inbounds add column advertise_port integer not null default 0`); err != nil {
+		return err
+	}
+	// Freeze Snell server PSKs before dropping inbound_users; that table is
+	// the pre-plan-revision source for the first bound user password.
+	if err := s.migrateSnellServerPSK(ctx); err != nil {
+		return err
+	}
 	// The legacy authorization tables are removed after the plan revision
 	// migration backfills subscription_plan_nodes into revision snapshots.
 	for _, legacyTable := range []string{"subscription_plan_nodes", "subscription_profiles", "subscription_assignments", "inbound_users", "inbound_access_grants", "external_outbound_access_grants"} {
@@ -1074,66 +1082,65 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureDefaultDNSLists(ctx); err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "inbounds", "advertise_port", `alter table inbounds add column advertise_port integer not null default 0`); err != nil {
-		return err
-	}
-	if err := s.migrateSnellServerPSK(ctx); err != nil {
-		return err
-	}
 	return s.SeedConnectivityHistory(ctx, time.Now().UTC())
 }
 
 func (s *Store) migrateSnellServerPSK(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `select id,config_json from inbounds where protocol='snell'`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
 	type pending struct {
 		id     int64
 		config string
 	}
-	var updates []pending
+	rows, err := s.db.QueryContext(ctx, `select id,config_json from inbounds where protocol='snell'`)
+	if err != nil {
+		return err
+	}
+	var items []pending
 	for rows.Next() {
-		var id int64
-		var raw string
-		if err := rows.Scan(&id, &raw); err != nil {
+		var item pending
+		if err := rows.Scan(&item.id, &item.config); err != nil {
+			_ = rows.Close()
 			return err
 		}
-		var cfg map[string]any
-		if err := json.Unmarshal([]byte(raw), &cfg); err != nil || cfg == nil {
-			cfg = map[string]any{}
+		items = append(items, item)
+	}
+	scanErr := rows.Err()
+	closeErr := rows.Close()
+	if scanErr != nil {
+		return scanErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	hasInboundUsers, err := s.tableExists(ctx, "inbound_users")
+	if err != nil {
+		return err
+	}
+	var updates []pending
+	for _, item := range items {
+		cfg := map[string]any{}
+		if strings.TrimSpace(item.config) != "" {
+			if err := json.Unmarshal([]byte(item.config), &cfg); err != nil || cfg == nil {
+				cfg = map[string]any{}
+			}
 		}
 		psk, _ := cfg["psk"].(string)
-		if strings.TrimSpace(psk) != "" {
-			if raw == "" {
-				raw = "{}"
-			}
-			var check map[string]any
-			_ = json.Unmarshal([]byte(raw), &check)
-			version := 4
-			if v, ok := check["version"].(float64); ok {
-				version = int(v)
-			} else if v, ok := check["version"].(int); ok {
-				version = v
-			}
-			if err := core.ValidateSnellPSKForVersion(psk, version); err == nil {
-				continue
-			}
+		psk = strings.TrimSpace(psk)
+		version := 4
+		switch v := cfg["version"].(type) {
+		case float64:
+			version = int(v)
+		case int:
+			version = v
 		}
-		frozen := ""
-		var legacyCount int
-		if err := s.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='table' and name='inbound_users'`).Scan(&legacyCount); err == nil && legacyCount > 0 {
-			var pw sql.NullString
-			if err := s.db.QueryRowContext(ctx, `select u.proxy_password from inbound_users iu join users u on u.id=iu.user_id where iu.inbound_id=? and iu.enabled=1 and u.proxy_password<>'' order by iu.id limit 1`, id).Scan(&pw); err == nil && pw.Valid && strings.TrimSpace(pw.String) != "" {
-				frozen = strings.TrimSpace(pw.String)
-			}
+		if psk != "" && core.ValidateSnellPSKForVersion(psk, version) == nil {
+			continue
 		}
-		if frozen == "" {
-			var pw2 sql.NullString
-			if err := s.db.QueryRowContext(ctx, `select u.proxy_password from subscription_plan_revision_nodes n join users u on u.id=n.node_id where n.node_type='inbound' and n.node_id=? and u.proxy_password<>'' limit 1`, id).Scan(&pw2); err == nil && pw2.Valid && strings.TrimSpace(pw2.String) != "" {
-				frozen = strings.TrimSpace(pw2.String)
-			}
+		frozen, err := s.snellLegacyBoundPassword(ctx, item.id, hasInboundUsers)
+		if err != nil {
+			return err
 		}
 		if frozen != "" {
 			cfg["psk"] = frozen
@@ -1148,10 +1155,7 @@ func (s *Store) migrateSnellServerPSK(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		updates = append(updates, pending{id: id, config: string(encoded)})
-	}
-	if err := rows.Err(); err != nil {
-		return err
+		updates = append(updates, pending{id: item.id, config: string(encoded)})
 	}
 	for _, up := range updates {
 		if _, err := s.db.ExecContext(ctx, `update inbounds set config_json=? where id=?`, up.config, up.id); err != nil {
@@ -1159,6 +1163,26 @@ func (s *Store) migrateSnellServerPSK(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) snellLegacyBoundPassword(ctx context.Context, inboundID int64, hasInboundUsers bool) (string, error) {
+	if hasInboundUsers {
+		var pw sql.NullString
+		if err := s.db.QueryRowContext(ctx, `select u.proxy_password from inbound_users iu join users u on u.id=iu.user_id where iu.inbound_id=? and iu.enabled=1 and u.proxy_password<>'' order by iu.id limit 1`, inboundID).Scan(&pw); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		} else if frozen := strings.TrimSpace(pw.String); pw.Valid && frozen != "" {
+			return frozen, nil
+		}
+	}
+	var pw sql.NullString
+	err := s.db.QueryRowContext(ctx, `select u.proxy_password from user_plan_bindings b join users u on u.id=b.user_id join subscription_plans p on p.id=b.plan_id join subscription_plan_revision_nodes n on n.revision_id=p.current_revision_id where n.node_type='inbound' and n.node_id=? and coalesce(b.status,'active')='active' and coalesce(b.enabled,1)=1 and u.proxy_password<>'' order by b.id limit 1`, inboundID).Scan(&pw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if frozen := strings.TrimSpace(pw.String); pw.Valid && frozen != "" {
+		return frozen, nil
+	}
+	return "", nil
 }
 
 func (s *Store) ensureNullableAuthChallengeUser(ctx context.Context) error {
