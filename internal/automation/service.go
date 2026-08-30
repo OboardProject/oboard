@@ -281,7 +281,7 @@ func (s *Service) Approve(ctx context.Context, principal application.Principal, 
 	if err := s.store.UpdateAutomationChangeset(ctx, item); err != nil {
 		return nil, err
 	}
-	return item, nil
+	return s.Apply(ctx, principal, id)
 }
 
 func (s *Service) Apply(ctx context.Context, principal application.Principal, id string) (*model.AutomationChangeset, error) {

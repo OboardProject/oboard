@@ -5615,6 +5615,31 @@ func (s *Store) SupersedePendingTasksByServerType(ctx context.Context, serverID 
 	return err
 }
 
+// SupersedePendingOperationalTasks fails queued diagnostics and host-ops tasks
+// so configuration deployments are not blocked behind long-running log
+// collection or network diagnosis work.
+func (s *Store) SupersedePendingOperationalTasks(ctx context.Context, serverID int64, reason string) error {
+	if reason == "" {
+		reason = "配置下发优先，诊断类任务已取消"
+	}
+	for _, taskType := range []string{
+		model.AgentTaskTypeDiagnoseNetwork,
+		model.AgentTaskTypeCollectLogs,
+		model.AgentTaskTypeManageLogs,
+		model.AgentTaskTypeListNetworkInterfaces,
+		model.AgentTaskTypeProbeInbounds,
+		model.AgentTaskTypeProbeInboundsExternal,
+		model.AgentTaskTypeProbePortForwards,
+		model.AgentTaskTypeProbeExternalEgress,
+		model.AgentTaskTypeProbeLatencyTargets,
+	} {
+		if err := s.SupersedePendingTasksByServerType(ctx, serverID, taskType, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SupersedePendingTask(ctx context.Context, taskID int64, reason string) error {
 	if taskID <= 0 {
 		return nil
@@ -5795,6 +5820,32 @@ func (s *Store) RequeueTaskIfRunning(ctx context.Context, id int64, result strin
 	return err
 }
 
+func agentTaskClaimPrioritySQL() string {
+	return `case type
+		when '` + model.AgentTaskTypeApplyDeployment + `' then 0
+		when '` + model.AgentTaskTypeApplyCoreConfig + `' then 1
+		when '` + model.AgentTaskTypeApplyTrafficPolicy + `' then 2
+		when '` + model.AgentTaskTypeUpdateAgentConfig + `' then 3
+		when '` + model.AgentTaskTypeCheckTime + `' then 4
+		when '` + model.AgentTaskTypeIssueCertificateHTTP + `' then 5
+		when '` + model.AgentTaskTypeUpdateAgent + `' then 6
+		when '` + model.AgentTaskTypeUninstallAgent + `' then 7
+		when '` + model.AgentTaskTypeDetectMTU + `' then 8
+		when '` + model.AgentTaskTypeBenchmarkDNS + `' then 9
+		when '` + model.AgentTaskTypeProbeExternalEgress + `' then 10
+		when '` + model.AgentTaskTypeProbeInbounds + `' then 11
+		when '` + model.AgentTaskTypeProbePortForwards + `' then 12
+		when '` + model.AgentTaskTypeProbeLatencyTargets + `' then 13
+		when '` + model.AgentTaskTypeCollectLogs + `' then 40
+		when '` + model.AgentTaskTypeManageLogs + `' then 41
+		when '` + model.AgentTaskTypeDiagnoseNetwork + `' then 42
+		when '` + model.AgentTaskTypeListNetworkInterfaces + `' then 43
+		when '` + model.AgentTaskTypeRemoteExec + `' then 44
+		when '` + model.AgentTaskTypeRemoteOperation + `' then 45
+		else 20
+	end`
+}
+
 // NextTask claims the oldest pending task of one server with a single atomic
 // statement: the UPDATE is conditioned on the task still being pending and
 // RETURNING returns the claimed row, so concurrent consumers (duplicate Agent
@@ -5805,7 +5856,7 @@ func (s *Store) NextTask(ctx context.Context, serverID int64) (*model.AgentTask,
 	var createdAt, updatedAt string
 	var completedAt sql.NullString
 	ts := now()
-	err := s.db.QueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
+	err := s.db.QueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by `+agentTaskClaimPrioritySQL()+`, id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}

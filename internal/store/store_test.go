@@ -1748,6 +1748,34 @@ func TestNextTaskDoubleConsumerClaimsOnce(t *testing.T) {
 	}
 }
 
+func TestNextTaskPrioritizesConfigurationTasks(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "priority-server", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []*model.AgentTask{
+		{ServerID: server.ID, Type: model.AgentTaskTypeCollectLogs, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", Nonce: "logs"},
+		{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", ConfigVersion: 42, Nonce: "deploy"},
+	} {
+		if err := s.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claimed, err := s.NextTask(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Type != model.AgentTaskTypeApplyDeployment {
+		t.Fatalf("claimed type=%q, want %q", claimed.Type, model.AgentTaskTypeApplyDeployment)
+	}
+}
+
 func TestLatestDeploymentTasksUsesLatestDeploymentVersion(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

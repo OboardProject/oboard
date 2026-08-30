@@ -1107,3 +1107,27 @@ func TestChainServicePublicRangeExhaustionFailsWithoutOverflow(t *testing.T) {
 		t.Fatalf("failed projection must not leave pending allocations: %#v", pending)
 	}
 }
+
+func TestValidateProxyPathStepInboundBindingRejectsConflictingChainProtocol(t *testing.T) {
+	inboundID := int64(77)
+	step := model.ProxyPathStep{
+		NodeType:  model.ProxyPathStepServerInbound,
+		InboundID: &inboundID,
+	}
+	inbound := model.Inbound{ID: inboundID, Protocol: model.ProtocolAnyTLS, Enabled: true}
+	if err := ValidateProxyPathStepInboundBinding(step, inbound, `{"chain_protocol":"shadowsocks"}`); err == nil {
+		t.Fatal("expected anytls inbound binding to reject chain_protocol")
+	}
+}
+
+func TestValidateProxyPathTransportSetRequiresInboundIDFromSnellEntry(t *testing.T) {
+	root := model.Inbound{ID: 10, ServerID: 1, Protocol: model.ProtocolSnell, Port: 11787, Enabled: true}
+	targetInbound := model.Inbound{ID: 20, ServerID: 2, Protocol: model.ProtocolAnyTLS, Port: 10787, Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "snell-anytls", InboundID: root.ID, Enabled: true}
+	targetID := int64(2)
+	step := model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
+	err := validateProxyPathTransportSet([]model.ProxyPath{path}, map[int64][]model.ProxyPathStep{path.ID: {step}}, map[int64]model.Inbound{root.ID: root, targetInbound.ID: targetInbound})
+	if err == nil {
+		t.Fatal("expected missing inbound_id to be rejected for snell -> anytls-only target")
+	}
+}

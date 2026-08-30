@@ -4393,6 +4393,9 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 		return task, nil
 	}
+	if taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig {
+		_ = s.store.SupersedePendingOperationalTasks(ctx, serverID, "配置下发优先，诊断类任务已取消")
+	}
 	if err := s.createTaskAndWake(ctx, &task); err != nil {
 		return model.AgentTask{}, err
 	}
@@ -10171,6 +10174,7 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *mode
 	if v.ConfigJSON == "" {
 		v.ConfigJSON = "{}"
 	}
+	rawConfig := v.ConfigJSON
 	var cfg map[string]any
 	if err := json.Unmarshal([]byte(v.ConfigJSON), &cfg); err != nil {
 		return fmt.Errorf("config_json: %w", err)
@@ -10217,6 +10221,9 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *mode
 			if err != nil {
 				return fmt.Errorf("inbound_id: %w", err)
 			}
+			if err := core.ValidateProxyPathStepInboundBinding(*v, inbound, rawConfig); err != nil {
+				return err
+			}
 			if v.ServerID != nil && *v.ServerID != 0 && *v.ServerID != inbound.ServerID {
 				return errors.New("server_id and inbound_id refer to different servers")
 			}
@@ -10251,10 +10258,22 @@ func (s *Server) normalizeProxyPathStepCandidate(ctx context.Context, path *mode
 				return err
 			}
 		default:
-			if err := normalizeProxyPathChainConfig(v, cfg); err != nil {
+			if v.InboundID != nil && *v.InboundID != 0 {
+				managed := map[string]any{}
+				if path != nil && path.Kind == model.ProxyPathKindFamilyBranch {
+					if err := mergeFamilyBranchBindFields(managed, cfg); err != nil {
+						return err
+					}
+				}
+				encoded, err := json.Marshal(managed)
+				if err != nil {
+					return err
+				}
+				v.ConfigJSON = string(encoded)
+			} else if err := normalizeProxyPathChainConfig(v, cfg); err != nil {
 				return err
 			}
-			if path != nil && path.Kind == model.ProxyPathKindFamilyBranch {
+			if path != nil && path.Kind == model.ProxyPathKindFamilyBranch && (v.InboundID == nil || *v.InboundID == 0) {
 				var managed map[string]any
 				if err := json.Unmarshal([]byte(v.ConfigJSON), &managed); err != nil {
 					return err

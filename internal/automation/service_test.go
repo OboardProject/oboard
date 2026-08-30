@@ -293,9 +293,6 @@ func TestWorkflowSynchronizesChangesetAndCancellationState(t *testing.T) {
 	if _, err := service.Approve(context.Background(), operator, changeset.ID, "approved for workflow test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Apply(context.Background(), operator, changeset.ID); err != nil {
-		t.Fatal(err)
-	}
 	workflow, err = service.GetWorkflow(context.Background(), machine, workflow.ID)
 	if err != nil || workflow.Status != model.WorkflowSucceeded || workflow.Steps[0].Status != "succeeded" || workflow.CompletedAt == nil {
 		t.Fatalf("completed workflow=%#v err=%v", workflow, err)
@@ -349,6 +346,33 @@ func openAutomationTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+func TestApproveAppliesChangeset(t *testing.T) {
+	db := openAutomationTestStore(t)
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(context.Background(), admin); err != nil {
+		t.Fatal(err)
+	}
+	principalModel := &model.APIPrincipal{ID: "prn_approve_apply", Name: "approve apply", Type: model.APIPrincipalServiceAccount, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage(`{}`), RateLimitPerMinute: 60, MaxConcurrency: 2}
+	if err := db.CreateAPIPrincipal(context.Background(), principalModel); err != nil {
+		t.Fatal(err)
+	}
+	machine := application.Principal{ID: principalModel.ID, Name: principalModel.Name, Type: principalModel.Type, Scopes: principalModel.Scopes, ResourceFilter: principalModel.ResourceFilter}
+	operator := application.HumanPrincipal(*admin, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	service := NewService(db, capability.NewCatalog())
+	registerAutomationTestCapability(service)
+	item := createAutomationTestChangeset(t, service, machine, "approve-apply", json.RawMessage(`{}`))
+	if _, err := service.Validate(context.Background(), machine, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	applied, err := service.Approve(context.Background(), operator, item.ID, "approved in test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.Status != model.ChangesetSucceeded {
+		t.Fatalf("approve status=%s, want succeeded", applied.Status)
+	}
 }
 
 func timePtr(value time.Time) *time.Time { return &value }

@@ -618,6 +618,60 @@ func ValidateProxyPathChainMethod(method string) error {
 	return nil
 }
 
+// ProxyPathProtocolRequiresInboundBinding reports protocols that cannot be
+// reached through the generated shared-chain listeners and must dial an
+// explicit managed inbound instead.
+func ProxyPathProtocolRequiresInboundBinding(protocol model.Protocol) bool {
+	switch protocol {
+	case model.ProtocolAnyTLS, model.ProtocolHY2, model.ProtocolSnell:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidateProxyPathStepInboundBinding rejects chain_protocol settings that
+// conflict with an explicit inbound binding. Shared-chain fields are ignored
+// at runtime once inbound_id is set, so storing them is misleading.
+func ValidateProxyPathStepInboundBinding(step model.ProxyPathStep, inbound model.Inbound, rawConfig string) error {
+	if step.NodeType != model.ProxyPathStepServerInbound {
+		return nil
+	}
+	if step.InboundID == nil || *step.InboundID == 0 {
+		return nil
+	}
+	if inbound.ID != *step.InboundID {
+		return fmt.Errorf("inbound_id does not match the provided inbound")
+	}
+	cfg := parseStepConfig(rawConfig)
+	chainProtocol := strings.ToLower(strings.TrimSpace(stringValue(cfg, "chain_protocol", "")))
+	if chainProtocol == "" {
+		return nil
+	}
+	if ProxyPathProtocolRequiresInboundBinding(inbound.Protocol) {
+		return fmt.Errorf("已绑定 %s 入口，不能再设置 chain_protocol；请移除 chain_protocol 并仅使用 inbound_id", inbound.Protocol)
+	}
+	switch inbound.Protocol {
+	case model.ProtocolSS:
+		if chainProtocol != string(model.ProtocolSS) {
+			return fmt.Errorf("已绑定 Shadowsocks 入口，chain_protocol 必须是 shadowsocks")
+		}
+	case model.ProtocolVLESS:
+		if chainProtocol != string(model.ProtocolVLESS) {
+			return fmt.Errorf("已绑定 VLESS 入口，chain_protocol 必须是 vless")
+		}
+	case model.ProtocolMieru:
+		if chainProtocol != string(model.ProtocolMieru) {
+			return fmt.Errorf("已绑定 Mieru 入口，chain_protocol 必须是 mieru")
+		}
+	case model.ProtocolSocks:
+		if chainProtocol != string(model.ProtocolSocks) {
+			return fmt.Errorf("已绑定 SOCKS5 入口，chain_protocol 必须是 socks")
+		}
+	}
+	return nil
+}
+
 func normalizeProxyPathChainMethod(method string) string {
 	method = strings.ToLower(strings.TrimSpace(method))
 	if method == "" {
@@ -1223,6 +1277,33 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 			continue
 		}
 		enabledByInbound[path.InboundID] = append(enabledByInbound[path.InboundID], path)
+		for index, step := range ordered {
+			if step.NodeType != model.ProxyPathStepServerInbound {
+				continue
+			}
+			if step.InboundID != nil && *step.InboundID != 0 {
+				continue
+			}
+			mode := step.TransportMode
+			if mode == "" {
+				mode = model.ProxyPathTransportSingBox
+			}
+			if mode != model.ProxyPathTransportSingBox || step.ServerID == nil || *step.ServerID == 0 {
+				continue
+			}
+			var bindingRequired []model.Inbound
+			for _, inbound := range inboundByID {
+				if inbound.ServerID == *step.ServerID && inbound.Enabled && ProxyPathProtocolRequiresInboundBinding(inbound.Protocol) {
+					bindingRequired = append(bindingRequired, inbound)
+				}
+			}
+			if len(bindingRequired) != 1 {
+				continue
+			}
+			if index == 0 && ProxyPathProtocolRequiresInboundBinding(root.Protocol) {
+				return fmt.Errorf("代理路径 %s 从 %s 入口链接到仅含 %s 入口的服务器时必须指定 inbound_id", path.Name, root.Protocol, bindingRequired[0].Protocol)
+			}
+		}
 		for _, step := range ordered {
 			if step.InboundID == nil || *step.InboundID == 0 {
 				continue
