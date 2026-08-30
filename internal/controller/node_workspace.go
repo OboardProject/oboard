@@ -810,16 +810,24 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy
 	}
-	oboardNodes, err := core.BuildSubscriptionNodes(user, data.Servers, data.Inbounds, opts)
+	oboardCandidates, err := core.BuildSubscriptionCandidates(user, data.Servers, data.Inbounds, opts)
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
 	for i := range groups {
 		if groups[i].Kind == model.NodeGroupOBoard {
-			groups[i].NodeCount = len(oboardNodes)
+			groups[i].NodeCount = len(oboardCandidates)
 		}
 	}
-	merged, deduplicatedCount, filterStats, err := s.mergeWorkspaceOutputNodesWithStats(ctx, user, output, oboardNodes)
+	merged, deduplicatedCount, filterStats, err := s.mergeWorkspaceOutputNodesWithStats(ctx, user, output, oboardCandidates)
+	if err != nil {
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
+	}
+	effectivePolicy := model.DefaultSubscriptionNodeOrderPolicy()
+	if orderPolicy != nil {
+		effectivePolicy = *orderPolicy
+	}
+	merged = core.OrderSubscriptionNodes(merged, effectivePolicy)
 	return merged, groups, deduplicatedCount, filterStats, err
 }
 

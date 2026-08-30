@@ -91,7 +91,7 @@ func GenerateSubscriptionWithOptions(user model.User, servers []model.Server, in
 	return renderSubscriptionTargetWithOptions(nodes, format, opts.Render)
 }
 
-func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
+func BuildSubscriptionCandidates(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
 	topologies, resolvedPaths, resolvedExternals, err := ResolveAssignableNodeTopologies(AssignableNodeCatalogInput{
 		Servers:           servers,
 		Inbounds:          inbounds,
@@ -261,6 +261,14 @@ func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []
 	for _, ref := range nameRefs {
 		nodes[ref.index].Name = RegionFlagEmoji(ref.regionCode) + " " + nodes[ref.index].Name
 		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
+	}
+	return nodes, nil
+}
+
+func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {
+	nodes, err := BuildSubscriptionCandidates(user, servers, inbounds, opts)
+	if err != nil {
+		return nil, err
 	}
 	policy := opts.NodeOrderPolicy
 	if strings.TrimSpace(string(policy.Mode)) == "" {

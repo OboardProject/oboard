@@ -368,7 +368,7 @@ func TestSSHSubscriptionTargetMappings(t *testing.T) {
 		})
 	}
 
-	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatShadowrocket, model.SubscriptionFormatV2RayURI} {
+	for _, format := range []model.SubscriptionFormat{model.SubscriptionFormatShadowrocket} {
 		output, err := renderSubscriptionTarget([]SubscriptionNode{node}, format)
 		if err != nil {
 			t.Fatal(err)
@@ -390,6 +390,8 @@ func TestSSHSubscriptionIsOmittedFromUnsupportedTargets(t *testing.T) {
 		model.SubscriptionFormatLoon,
 		model.SubscriptionFormatQX,
 		model.SubscriptionFormatSurfboard,
+		model.SubscriptionFormatV2Ray,
+		model.SubscriptionFormatV2RayURI,
 	}
 	for _, format := range formats {
 		t.Run(string(format), func(t *testing.T) {
@@ -476,9 +478,10 @@ func TestMieruYAMLPortMapping(t *testing.T) {
 		serverPorts []string
 		wantPort    int
 		wantRange   string
+		expectEmpty bool
 	}{
 		{name: "continuous", serverPorts: []string{"25251-25252"}, wantRange: "25250-25252"},
-		{name: "disjoint", serverPorts: []string{"25252-25253"}, wantPort: 25250},
+		{name: "disjoint", serverPorts: []string{"25252-25253"}, expectEmpty: true},
 	}
 	formats := []model.SubscriptionFormat{
 		model.SubscriptionFormatMihomo,
@@ -501,6 +504,12 @@ func TestMieruYAMLPortMapping(t *testing.T) {
 				}
 				if err := yaml.Unmarshal([]byte(output), &document); err != nil {
 					t.Fatal(err)
+				}
+				if test.expectEmpty {
+					if len(document.Proxies) != 0 {
+						t.Fatalf("discrete Mieru should be filtered for %s, got %d proxies:\n%s", format, len(document.Proxies), output)
+					}
+					return
 				}
 				if len(document.Proxies) != 1 {
 					t.Fatalf("proxy count = %d, want 1:\n%s", len(document.Proxies), output)

@@ -64,7 +64,12 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 	}
 	if proxy.Type == "mieru" {
 		switch format {
-		case model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket:
+		case model.SubscriptionFormatMihomo:
+			if mieruProxyHasDiscretePorts(proxy) {
+				return false
+			}
+			return true
+		case model.SubscriptionFormatShadowrocket:
 			return true
 		default:
 			return false
@@ -72,7 +77,7 @@ func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscript
 	}
 	if proxy.Type == "ssh" {
 		switch format {
-		case model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac, model.SubscriptionFormatV2Ray, model.SubscriptionFormatV2RayURI:
+		case model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatShadowrocket, model.SubscriptionFormatStash, model.SubscriptionFormatEgern, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac:
 			return true
 		default:
 			return false
@@ -232,6 +237,20 @@ func legacySSCipherSupported(method string) bool {
 
 func stashCipher(method string) bool {
 	return legacySSCipherSupported(method) || stringSetContains([]string{"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm"}, method)
+}
+
+func mieruProxyHasDiscretePorts(proxy subscriptionProxy) bool {
+	ports, err := mieruPortsFromValue(proxy.Port, proxy.ServerPorts)
+	if err != nil {
+		return true
+	}
+	if len(ports) < 2 {
+		return false
+	}
+	if _, ok := contiguousMieruPortRange(ports); ok {
+		return false
+	}
+	return true
 }
 
 func filterCompatibleSubscriptionProxies(proxies []subscriptionProxy, format model.SubscriptionFormat, opts SubscriptionRenderOptions) []subscriptionProxy {

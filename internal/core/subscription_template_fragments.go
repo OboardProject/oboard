@@ -124,10 +124,14 @@ func yamlListOrEmpty(encoded string) string {
 
 func subscriptionGroupPlan(proxies []subscriptionProxy) (string, []yamlSubscriptionGroup) {
 	grouped := map[string][]string{}
-	for _, proxy := range proxies {
+	firstSeen := map[string]int{}
+	for index, proxy := range proxies {
 		group := proxy.Group
 		if group == "" {
 			group = "default"
+		}
+		if _, ok := firstSeen[group]; !ok {
+			firstSeen[group] = index
 		}
 		grouped[group] = append(grouped[group], proxy.Name)
 	}
@@ -135,7 +139,7 @@ func subscriptionGroupPlan(proxies []subscriptionProxy) (string, []yamlSubscript
 	for name := range grouped {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool { return firstSeen[names[i]] < firstSeen[names[j]] })
 	out := make([]yamlSubscriptionGroup, 0, len(names))
 	for _, name := range names {
 		members := append([]string(nil), grouped[name]...)
