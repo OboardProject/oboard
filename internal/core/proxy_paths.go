@@ -630,6 +630,61 @@ func ProxyPathProtocolRequiresInboundBinding(protocol model.Protocol) bool {
 	}
 }
 
+// resolveImplicitProxyPathInboundBindings upgrades a server-only first hop to
+// an explicit inbound when the source protocol and target identify one unique
+// managed inbound. The stored topology stays unchanged, while every projection
+// uses the credentials and listener that the server node unambiguously means.
+func resolveImplicitProxyPathInboundBindings(paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) []model.ProxyPathStep {
+	out := append([]model.ProxyPathStep(nil), steps...)
+	rootByPath := make(map[int64]model.Inbound, len(paths))
+	inboundByID := make(map[int64]model.Inbound, len(inbounds))
+	for _, inbound := range inbounds {
+		inboundByID[inbound.ID] = inbound
+	}
+	for _, path := range paths {
+		if root, ok := inboundByID[path.InboundID]; ok {
+			rootByPath[path.ID] = root
+		}
+	}
+	stepIndexesByPath := make(map[int64][]int, len(paths))
+	for index := range out {
+		stepIndexesByPath[out[index].PathID] = append(stepIndexesByPath[out[index].PathID], index)
+	}
+	for pathID, indexes := range stepIndexesByPath {
+		sort.SliceStable(indexes, func(i, j int) bool {
+			left, right := out[indexes[i]], out[indexes[j]]
+			if left.Position == right.Position {
+				return left.ID < right.ID
+			}
+			return left.Position < right.Position
+		})
+		step := &out[indexes[0]]
+		root, ok := rootByPath[pathID]
+		if !ok || !ProxyPathProtocolRequiresInboundBinding(root.Protocol) || step.NodeType != model.ProxyPathStepServerInbound || (step.InboundID != nil && *step.InboundID != 0) || step.ServerID == nil || *step.ServerID == 0 {
+			continue
+		}
+		mode := step.TransportMode
+		if mode == "" {
+			mode = model.ProxyPathTransportSingBox
+		}
+		if mode != model.ProxyPathTransportSingBox || strings.TrimSpace(stringValue(parseStepConfig(step.ConfigJSON), "chain_protocol", "")) != "" {
+			continue
+		}
+		var candidateID int64
+		candidateCount := 0
+		for _, inbound := range inbounds {
+			if inbound.ServerID == *step.ServerID && inbound.Enabled && inbound.Protocol == root.Protocol {
+				candidateID = inbound.ID
+				candidateCount++
+			}
+		}
+		if candidateCount == 1 {
+			step.InboundID = &candidateID
+		}
+	}
+	return out
+}
+
 // ValidateProxyPathStepInboundBinding rejects chain_protocol settings that
 // conflict with an explicit inbound binding. Shared-chain fields are ignored
 // at runtime once inbound_id is set, so storing them is misleading.
@@ -976,6 +1031,7 @@ func BuildProxyPathPlansWithLedger(paths []model.ProxyPath, steps []model.ProxyP
 // from a seed, so a different occupancy set would silently yield a different
 // port and the derived forward would target a listener nobody owns.
 func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) ([]model.ProxyPathPlan, map[int64]model.Inbound, error) {
+	steps = resolveImplicitProxyPathInboundBindings(paths, steps, inbounds)
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -1297,11 +1353,11 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 					bindingRequired = append(bindingRequired, inbound)
 				}
 			}
-			if len(bindingRequired) != 1 {
+			if len(bindingRequired) == 0 {
 				continue
 			}
 			if index == 0 && ProxyPathProtocolRequiresInboundBinding(root.Protocol) {
-				return fmt.Errorf("代理路径 %s 从 %s 入口链接到仅含 %s 入口的服务器时必须指定 inbound_id", path.Name, root.Protocol, bindingRequired[0].Protocol)
+				return fmt.Errorf("代理路径 %s 从 %s 入口链接到含有需绑定入口的服务器时必须指定 inbound_id", path.Name, root.Protocol)
 			}
 		}
 		for _, step := range ordered {

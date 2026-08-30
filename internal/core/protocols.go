@@ -554,6 +554,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		opts.InboundUsers = opts.AccessSnapshot.InboundUserBindings()
 		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
 	}
+	opts.ProxyPathSteps = resolveImplicitProxyPathInboundBindings(opts.ProxyPaths, opts.ProxyPathSteps, opts.Inbounds)
 	users = ExpandDeviceUsers(users, opts.UserDevices)
 	pathInboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {

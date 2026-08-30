@@ -1120,7 +1120,56 @@ func TestValidateProxyPathStepInboundBindingRejectsConflictingChainProtocol(t *t
 	}
 }
 
-func TestValidateProxyPathTransportSetRequiresInboundIDFromSnellEntry(t *testing.T) {
+func TestProxyPathPlanResolvesUniqueAnyTLSInboundFromServerStep(t *testing.T) {
+	source := model.Server{ID: 1, Name: "source", PublicIPv4: "203.0.113.1", IPStack: model.IPStackIPv4Only}
+	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.2", IPStack: model.IPStackIPv4Only}
+	root := model.Inbound{ID: 10, ServerID: source.ID, Protocol: model.ProtocolAnyTLS, Port: 11787, Enabled: true}
+	targetInbound := model.Inbound{ID: 20, ServerID: target.ID, Protocol: model.ProtocolAnyTLS, Port: 10787, Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "anytls-anytls", InboundID: root.ID, Enabled: true}
+	targetID := target.ID
+	step := model.ProxyPathStep{ID: 2, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
+
+	plans, err := BuildProxyPathPlans([]model.ProxyPath{path}, []model.ProxyPathStep{step}, []model.Server{source, target}, []model.Inbound{root, targetInbound})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || len(plans[0].Steps) != 1 || plans[0].Steps[0].InboundID == nil || *plans[0].Steps[0].InboundID != targetInbound.ID {
+		t.Fatalf("resolved plan steps = %#v", plans)
+	}
+	if len(plans[0].RuntimeNodes) != 0 {
+		t.Fatalf("explicit AnyTLS binding created generated runtime nodes: %#v", plans[0].RuntimeNodes)
+	}
+}
+
+func TestServerStepToUniqueAnyTLSInboundGeneratesBoundOutbound(t *testing.T) {
+	source := model.Server{ID: 1, Name: "source", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only}
+	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only}
+	root := model.Inbound{ID: 10, ServerID: source.ID, Name: "source-anytls", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 11787, ConfigJSON: testInboundConfig(model.ProtocolAnyTLS), Enabled: true}
+	targetInbound := model.Inbound{ID: 20, ServerID: target.ID, Name: "target-anytls", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 10787, ConfigJSON: testInboundConfig(model.ProtocolAnyTLS), Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "anytls-anytls", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	targetID := target.ID
+	step := model.ProxyPathStep{ID: 2, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
+	opts := ConfigOptions{
+		Servers:        []model.Server{source, target},
+		Inbounds:       []model.Inbound{root, targetInbound},
+		ProxyPaths:     []model.ProxyPath{path},
+		ProxyPathSteps: []model.ProxyPathStep{step},
+		InboundUsers:   []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+	}
+
+	config := mustServerConfig(t, source, opts.Inbounds, []model.User{user}, opts)
+	outbound := findOutbound(config, proxyPathStepTag(path.ID, step.Position))
+	linkUser := proxyPathLinkUser(path, targetInbound)
+	if outbound["type"] != "anytls" || intFromAny(outbound["server_port"]) != targetInbound.Port || outbound["password"] != linkUser.ProxyPassword {
+		t.Fatalf("resolved AnyTLS outbound = %#v", outbound)
+	}
+	if generated := findOutbound(config, proxyPathChainServiceTag(proxyPathChainServiceKey{ServerID: target.ID, Protocol: model.ProtocolSS, Profile: DefaultProxyPathChainMethod})); generated != nil {
+		t.Fatalf("unique AnyTLS target fell back to generated chain service: %#v", generated)
+	}
+}
+
+func TestValidateProxyPathTransportSetRejectsMismatchedRequiredInbound(t *testing.T) {
 	root := model.Inbound{ID: 10, ServerID: 1, Protocol: model.ProtocolSnell, Port: 11787, Enabled: true}
 	targetInbound := model.Inbound{ID: 20, ServerID: 2, Protocol: model.ProtocolAnyTLS, Port: 10787, Enabled: true}
 	path := model.ProxyPath{ID: 1, Name: "snell-anytls", InboundID: root.ID, Enabled: true}
@@ -1128,6 +1177,19 @@ func TestValidateProxyPathTransportSetRequiresInboundIDFromSnellEntry(t *testing
 	step := model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
 	err := validateProxyPathTransportSet([]model.ProxyPath{path}, map[int64][]model.ProxyPathStep{path.ID: {step}}, map[int64]model.Inbound{root.ID: root, targetInbound.ID: targetInbound})
 	if err == nil {
-		t.Fatal("expected missing inbound_id to be rejected for snell -> anytls-only target")
+		t.Fatal("expected missing inbound_id to be rejected for mismatched snell -> anytls target")
+	}
+}
+
+func TestValidateProxyPathTransportSetRejectsAmbiguousAnyTLSInbound(t *testing.T) {
+	root := model.Inbound{ID: 10, ServerID: 1, Protocol: model.ProtocolAnyTLS, Port: 11787, Enabled: true}
+	targetA := model.Inbound{ID: 20, ServerID: 2, Protocol: model.ProtocolAnyTLS, Port: 10787, Enabled: true}
+	targetB := model.Inbound{ID: 21, ServerID: 2, Protocol: model.ProtocolAnyTLS, Port: 20787, Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "ambiguous-anytls", InboundID: root.ID, Enabled: true}
+	targetID := int64(2)
+	step := model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
+	_, err := BuildProxyPathPlans([]model.ProxyPath{path}, []model.ProxyPathStep{step}, nil, []model.Inbound{root, targetA, targetB})
+	if err == nil {
+		t.Fatal("expected ambiguous AnyTLS target to require inbound_id")
 	}
 }
