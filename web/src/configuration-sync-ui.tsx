@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react'
 import { AlertTriangle, Check, Info, RefreshCw } from 'lucide-react'
 
 import { Dialog } from './components/ui/dialog'
-import { configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, type ConfigurationSyncRow, type ConfigurationSyncServerRef } from './configuration-sync'
+import { configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailedRows, configurationSyncFailureIssues, configurationSyncPresentation, type ConfigurationSyncRow, type ConfigurationSyncServerRef } from './configuration-sync'
 
 type ConfigurationSyncServer = ConfigurationSyncServerRef
 type ConfigurationSyncInbound = { id: number; server_id: number; name?: string; protocol?: string; listen_ip?: string; port?: number }
@@ -27,9 +27,9 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
   const [detailsOpen, setDetailsOpen] = useState(false)
   const popoverID = useId()
   const presentation = configurationSyncPresentation(rows, saving, retrying, servers)
-  const failed = rows.filter(item => item.state === 'failed')
+  const failed = useMemo(() => configurationSyncFailedRows(rows, servers), [rows, servers])
   const busyRows = useMemo(() => configurationSyncBusyRows(rows, servers), [rows, servers])
-  const issues = useMemo(() => configurationSyncFailureIssues(failed), [rows])
+  const issues = useMemo(() => configurationSyncFailureIssues(failed), [failed])
   const serverNames = useMemo(() => new Map(servers.map(server => [Number(server.id), String(server.name || '').trim()])), [servers])
   const inboundByID = useMemo(() => new Map(inbounds.map(inbound => [Number(inbound.id), inbound])), [inbounds])
   const showBusyPopover = failed.length === 0 && busyRows.length > 0

@@ -53,7 +53,7 @@ func (s *Store) MarkConfigurationSyncPending(ctx context.Context, revision uint6
 		return nil, fmt.Errorf("configuration revision must be positive")
 	}
 	if len(serverIDs) == 0 {
-		rows, err := s.db.QueryContext(ctx, `select id from servers order by id`)
+		rows, err := s.db.QueryContext(ctx, `select id from servers where coalesce(agent_id,'')<>'' order by id`)
 		if err != nil {
 			return nil, err
 		}

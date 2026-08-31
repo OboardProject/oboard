@@ -98,6 +98,10 @@ export function configurationSyncBusyRows(rows: ConfigurationSyncRow[], servers:
   return rows.filter(item => (configurationSyncBusyStates as readonly string[]).includes(item.state) && configurationSyncAgentReachable(item, servers))
 }
 
+export function configurationSyncFailedRows(rows: ConfigurationSyncRow[], servers: ConfigurationSyncServerRef[] = []): ConfigurationSyncRow[] {
+  return rows.filter(item => item.state === 'failed' && configurationSyncAgentReachable(item, servers))
+}
+
 export function configurationSyncBusyStateLabel(state: string) {
   if (state === 'preparing') return '准备中'
   if (state === 'queued') return '排队中'
@@ -106,7 +110,7 @@ export function configurationSyncBusyStateLabel(state: string) {
 }
 
 export function configurationSyncPresentation(rows: ConfigurationSyncRow[], saving = false, retrying = false, servers: ConfigurationSyncServerRef[] = []): ConfigurationSyncPresentation {
-  const failed = rows.filter(item => item.state === 'failed')
+  const failed = configurationSyncFailedRows(rows, servers)
   const active = configurationSyncBusyRows(rows, servers)
   const reachable = rows.filter(item => configurationSyncAgentReachable(item, servers))
   const synced = reachable.length > 0 && reachable.every(item => item.state === 'synced')

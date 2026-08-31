@@ -271,27 +271,32 @@ func TestConfigurationWriteRespondsBeforeAsyncDeployment(t *testing.T) {
 	request(t, handler, "POST", "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 201)
 	login := request(t, handler, "POST", "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, 200)
 	token := login["token"].(string)
-	created := request(t, handler, "POST", "/api/v1/ui/servers", token, map[string]any{"name": "async-save", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 11000}, 201)
-	server := created["server"].(map[string]any)
-	serverID := int64(server["id"].(float64))
+	preEnrolled := &model.Server{Name: "pre-enrolled", AgentID: "pre-agent-1", AgentTokenHash: "hash", ChainSecret: "chain", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000}
+	if err := db.CreateServer(ctx, preEnrolled); err != nil {
+		t.Fatal(err)
+	}
+	created := request(t, handler, "POST", "/api/v1/ui/servers", token, map[string]any{"name": "async-save", "listen_ip": "0.0.0.0", "port_range_start": 12000, "port_range_end": 13000}, 201)
+	createdServer := created["server"].(map[string]any)
+	createdID := int64(createdServer["id"].(float64))
 	if created["desired_revision"] == nil {
 		t.Fatalf("save response missing desired_revision: %#v", created)
 	}
-	syncRows, ok := created["configuration_sync"].([]any)
-	if !ok || len(syncRows) != 1 || syncRows[0].(map[string]any)["state"] != "pending" || syncRows[0].(map[string]any)["agent_reachable"] != false {
-		t.Fatalf("save response sync metadata = %#v", created["configuration_sync"])
+	// The save response sync metadata is filtered to the affected server IDs (which is empty for a plain server create -> global broadcast).
+	// For a global broadcast, all enrolled servers get a pending row. Verify the new unenrolled server did NOT get one.
+	if _, err := db.ConfigurationSyncState(ctx, createdID); err == nil {
+		t.Fatalf("unenrolled server must not have a configuration_sync row, but one exists")
 	}
-	state, err := db.ConfigurationSyncState(ctx, serverID)
+	state, err := db.ConfigurationSyncState(ctx, preEnrolled.ID)
 	if err != nil || state.State != "pending" || state.LastTaskID != 0 {
-		t.Fatalf("save response did not leave pending desired state = %#v err=%v", state, err)
+		t.Fatalf("global change did not leave pending for enrolled server = %#v err=%v", state, err)
 	}
-	if tasks, err := db.ListTasksByServer(ctx, serverID, 10); err != nil || len(tasks) != 0 {
+	if tasks, err := db.ListTasksByServer(ctx, preEnrolled.ID, 10); err != nil || len(tasks) != 0 {
 		t.Fatalf("save response waited for or synchronously queued tasks = %#v err=%v", tasks, err)
 	}
 	go srv.StartConfigurationReconciler(ctx)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		state, err = db.ConfigurationSyncState(ctx, serverID)
+		state, err = db.ConfigurationSyncState(ctx, preEnrolled.ID)
 		if err == nil && state.State == "queued" && state.LastTaskID > 0 {
 			return
 		}
