@@ -23,24 +23,33 @@ describe('RemoteAccessSettings', () => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
   })
 
-  it('defaults remote control and WebSSH confirmation on while MCP control stays off', () => {
+  it('keeps WebSSH confirmation on the settings page', () => {
     act(() => root.render(<RemoteAccessSettings data={{ settings: {}, servers: [] }} client={{ request: vi.fn() }} load={vi.fn()} notify={vi.fn()} />))
 
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="启用远程控制"]')?.checked).toBe(true)
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="启用 MCP 控制"]')?.checked).toBe(false)
     expect(container.querySelector<HTMLInputElement>('input[aria-label="打开 WebSSH 前确认密码"]')?.checked).toBe(true)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="全局启用 Web 远程终端"]')).toBeNull()
     expect(container.textContent).not.toContain('Structured Exec')
-    expect(container.textContent).not.toContain('Raw Shell')
   })
 
-  it('enables MCP control', async () => {
-    const request = vi.fn(async () => ({}))
+  it('saves global MCP control from the server dialog', async () => {
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/settings' && init?.method === 'POST') return {}
+      return { remote_access: { server: { remote_terminal_enabled: true, mcp_enabled: false } } }
+    })
     act(() => root.render(<RemoteAccessSettings
-      data={{ settings: { remote_terminal_enabled: false, mcp_enabled: false } }}
+      data={{ settings: { remote_terminal_enabled: true, mcp_enabled: false }, servers: [{ id: 7, name: '上海节点', status: 'online' }] }}
       client={{ request }} load={vi.fn(async () => undefined)} notify={vi.fn()}
     />))
 
-    await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="启用 MCP 远程控制"]')?.click())
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('管理服务器'))?.click()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      document.querySelector<HTMLInputElement>('input[aria-label="全局启用 MCP 远程控制"]')?.click()
+      await Promise.resolve()
+    })
 
     expect(request).toHaveBeenCalledWith('/settings', {
       method: 'POST',
@@ -48,15 +57,31 @@ describe('RemoteAccessSettings', () => {
     })
   })
 
-  it('loads server policies and applies a bulk remote-control change', async () => {
+  it('disables per-server remote switches while global terminal is enabled', async () => {
+    const request = vi.fn(async () => ({ remote_access: { server: { remote_terminal_enabled: true, mcp_enabled: false } } }))
+    act(() => root.render(<RemoteAccessSettings data={{ settings: { remote_terminal_enabled: true, mcp_enabled: false }, servers: [{ id: 7, name: '上海节点', status: 'online' }] }} client={{ request }} load={vi.fn()} notify={vi.fn()} />))
+
+    await act(async () => {
+      Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('管理服务器'))?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const remoteSwitch = document.querySelector<HTMLInputElement>('input[aria-label="上海节点远程"]')
+    expect(remoteSwitch?.disabled).toBe(true)
+    expect(remoteSwitch?.checked).toBe(true)
+  })
+
+  it('loads server policies and applies a bulk remote-control change when global terminal is off', async () => {
     const request = vi.fn(async (path: string, init?: RequestInit) => {
       if (!init) return { remote_access: { server: { remote_terminal_enabled: true, mcp_enabled: false } } }
       return { remote_access: { server: { remote_terminal_enabled: false, mcp_enabled: false } } }
     })
-    act(() => root.render(<RemoteAccessSettings data={{ settings: {}, servers: [{ id: 7, name: '上海节点', status: 'online' }] }} client={{ request }} load={vi.fn()} notify={vi.fn()} />))
+    act(() => root.render(<RemoteAccessSettings data={{ settings: { remote_terminal_enabled: false, mcp_enabled: false }, servers: [{ id: 7, name: '上海节点', status: 'online' }] }} client={{ request }} load={vi.fn()} notify={vi.fn()} />))
 
     await act(async () => {
       Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('管理服务器'))?.click()
+      await Promise.resolve()
       await Promise.resolve()
     })
     const select = document.querySelector<HTMLInputElement>('input[aria-label="选择 上海节点"]')

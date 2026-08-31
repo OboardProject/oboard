@@ -24058,6 +24058,40 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   overflow: auto;
 }
 
+.remote-access-global-bar {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.remote-access-global-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.remote-access-global-item strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.remote-access-global-item span.muted {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.remote-access-server-row.is-global-locked > .ui-switch {
+  opacity: 0.45;
+}
+
 .remote-access-server-loading,
 .remote-access-server-empty {
   align-self: center;
