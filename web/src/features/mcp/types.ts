@@ -38,16 +38,20 @@ export interface OAuthGrant {
   effective_role?: 'admin' | 'operator' | 'viewer' | string
   resource_boundary?: ResourceBoundary
   approval_profile?: { auto_approve_risk: number } | null
+  principal_id?: string
   offline_access: boolean
   policy_version: number
   role_version: number
   consent_version: number
   status: string
   created_at: string
+  last_authorized_at?: string | null
   last_used_at: string | null
   expires_at: string | null
   revoked_at: string | null
   revoke_reason?: string
+  active_access_tokens?: number
+  active_refresh_families?: number
 }
 
 export type ToastTone = 'error' | 'success' | 'warning' | 'info'

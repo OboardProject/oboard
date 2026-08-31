@@ -233,6 +233,10 @@ const (
 	OAuthGrantRevoked        OAuthGrantStatus = "revoked"
 )
 
+// OAuthResourceKeyMCP is the stable logical audience for MCP authorization.
+// OAuth resource URLs remain on tokens and codes and are rewritten on base-path migration.
+const OAuthResourceKeyMCP = "mcp"
+
 type OAuthGrant struct {
 	ID          string `json:"id"`
 	ClientID    string `json:"client_id"`
@@ -254,11 +258,15 @@ type OAuthGrant struct {
 	RoleVersion          int                   `json:"role_version"`
 	ConsentVersion       int                   `json:"consent_version"`
 	Status               OAuthGrantStatus      `json:"status"`
+	ResourceKey          string                `json:"resource_key,omitempty"`
 	CreatedAt            time.Time             `json:"created_at"`
+	LastAuthorizedAt     *time.Time            `json:"last_authorized_at,omitempty"`
 	ExpiresAt            *time.Time            `json:"expires_at,omitempty"`
 	LastUsedAt           *time.Time            `json:"last_used_at,omitempty"`
 	RevokedAt            *time.Time            `json:"revoked_at,omitempty"`
 	RevokeReason         string                `json:"revoke_reason,omitempty"`
+	ActiveAccessTokens   int                   `json:"active_access_tokens,omitempty"`
+	ActiveRefreshFamilies int                  `json:"active_refresh_families,omitempty"`
 }
 
 type OAuthAuthorizationCode struct {
@@ -270,6 +278,7 @@ type OAuthAuthorizationCode struct {
 	RedirectURI   string
 	Resource      string
 	CodeChallenge string
+	Scopes        []string
 	ExpiresAt     time.Time
 	CreatedAt     time.Time
 }

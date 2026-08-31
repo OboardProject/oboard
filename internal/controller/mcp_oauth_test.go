@@ -989,6 +989,129 @@ func TestOAuthConsentPageRendersWithPreview(t *testing.T) {
 	}
 }
 
+func TestOAuthGrantReuseKeepsSingleLiveGrant(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	sessionToken := login["token"].(string)
+	client := testOAuthClient(t, db, "oc_reuse_"+randomTestID(), "Hermes reuse", []string{"https://client.example/callback"})
+	verifier := strings.Repeat("c", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	authorizeOnce := func(scope string) string {
+		t.Helper()
+		form := oauthTestAuthorizationForm(client, scope, challenge)
+		form.Set("decision", "approve")
+		req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("authorize status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		location, locErr := oauthSuccessRedirectURL(rec.Body.String())
+		if locErr != nil || location.Query().Get("code") == "" {
+			t.Fatal(locErr)
+		}
+		return location.Query().Get("code")
+	}
+	for i := 0; i < 3; i++ {
+		code := authorizeOnce("oboard:read offline_access")
+		values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/api/v1/mcp"}}
+		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"refresh_token":"obr_`) {
+			t.Fatalf("exchange %d status=%d body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
+	grants, err := db.ListOAuthGrants(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := 0
+	for _, item := range grants {
+		if item.RevokedAt == nil && item.Status != model.OAuthGrantRevoked {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("live grants=%d, want 1: %#v", live, grants)
+	}
+}
+
+func TestOAuthReauthorizeWithoutOfflineDoesNotIssueRefresh(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	sessionToken := login["token"].(string)
+	client := testOAuthClient(t, db, "oc_offline_"+randomTestID(), "Hermes offline", []string{"https://client.example/callback"})
+	verifier := strings.Repeat("e", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	exchange := func(code string) *httptest.ResponseRecorder {
+		values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/api/v1/mcp"}}
+		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	authorize := func(scope string) string {
+		form := oauthTestAuthorizationForm(client, scope, challenge)
+		form.Set("decision", "approve")
+		req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		location, locErr := oauthSuccessRedirectURL(rec.Body.String())
+		if locErr != nil {
+			t.Fatal(locErr)
+		}
+		return location.Query().Get("code")
+	}
+	first := exchange(authorize("oboard:read offline_access"))
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"refresh_token":"obr_`) {
+		t.Fatalf("offline exchange failed: %s", first.Body.String())
+	}
+	var firstPayload map[string]any
+	_ = json.Unmarshal(first.Body.Bytes(), &firstPayload)
+	refreshPlain, _ := firstPayload["refresh_token"].(string)
+	second := exchange(authorize("oboard:read"))
+	if second.Code != http.StatusOK || strings.Contains(second.Body.String(), `"refresh_token"`) {
+		t.Fatalf("online-only reauthorize should not return refresh token: %s", second.Body.String())
+	}
+	values := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshPlain}, "client_id": {client.ID}, "resource": {"https://panel.example.com/api/v1/mcp"}}
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"access_token":"oba_`) {
+		t.Fatalf("existing refresh family should still work: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMCPServerInstructionsStatic(t *testing.T) {
 	instructions := mcpServerInstructions
 	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate", "subscription_plan.delete", "explicit host-level diagnosis", "server_terminal_command", "native MCP names", "prefix or sanitize"} {

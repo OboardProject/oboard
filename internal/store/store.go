@@ -297,8 +297,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists api_tokens (id text primary key, principal_id text not null references api_principals(id) on delete cascade, token_hash text not null unique, prefix text not null, expires_at text not null, revoked_at text, last_used_at text, created_at text not null)`,
 		`create table if not exists oauth_clients (id text primary key, name text not null, redirect_uris_json text not null default '[]', identity_type text not null default 'preregistered', metadata_uri text not null default '', metadata_hash text not null default '', metadata_etag text not null default '', metadata_fetched_at text, client_metadata_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists oauth_approval_profiles (id text primary key, name text not null, auto_approve_risk integer not null default 0 check(auto_approve_risk between 0 and 3), created_at text not null, updated_at text not null)`,
-		`create table if not exists oauth_grants (id text primary key, client_id text not null references oauth_clients(id) on delete cascade, user_id integer not null references users(id) on delete cascade, principal_id text not null unique references api_principals(id) on delete cascade, access_level text not null default 'read', resource_boundary_v2_json text not null default '{}', approval_profile_id text not null references oauth_approval_profiles(id) on delete restrict, offline_access integer not null default 0, policy_version integer not null default 1, role_version integer not null default 1, consent_version integer not null default 1, status text not null default 'active', expires_at text, last_used_at text, revoked_at text, revoke_reason text not null default '', created_at text not null)`,
-		`create table if not exists oauth_authorization_codes (code_hash text primary key, grant_id text not null references oauth_grants(id) on delete cascade, client_id text not null references oauth_clients(id) on delete cascade, user_id integer not null references users(id) on delete cascade, principal_id text not null references api_principals(id) on delete cascade, redirect_uri text not null, resource text not null, code_challenge text not null, expires_at text not null, created_at text not null)`,
+		`create table if not exists oauth_grants (id text primary key, client_id text not null references oauth_clients(id) on delete cascade, user_id integer not null references users(id) on delete cascade, principal_id text not null unique references api_principals(id) on delete cascade, access_level text not null default 'read', resource_boundary_v2_json text not null default '{}', approval_profile_id text not null references oauth_approval_profiles(id) on delete restrict, offline_access integer not null default 0, policy_version integer not null default 1, role_version integer not null default 1, consent_version integer not null default 1, status text not null default 'active', resource_key text not null default 'mcp', expires_at text, last_used_at text, last_authorized_at text, revoked_at text, revoke_reason text not null default '', created_at text not null)`,
+		`create table if not exists oauth_authorization_codes (code_hash text primary key, grant_id text not null references oauth_grants(id) on delete cascade, client_id text not null references oauth_clients(id) on delete cascade, user_id integer not null references users(id) on delete cascade, principal_id text not null references api_principals(id) on delete cascade, redirect_uri text not null, resource text not null, code_challenge text not null, requested_scopes_json text not null default '[]', expires_at text not null, created_at text not null)`,
 		`create table if not exists oauth_access_tokens (token_hash text primary key, grant_id text not null references oauth_grants(id) on delete cascade, principal_id text not null references api_principals(id) on delete cascade, client_id text not null references oauth_clients(id) on delete cascade, user_id integer not null references users(id) on delete cascade, resource text not null, expires_at text not null, revoked_at text, created_at text not null)`,
 		`create table if not exists oauth_refresh_tokens (token_hash text primary key, family_id text not null, grant_id text not null references oauth_grants(id) on delete cascade, parent_token_hash text not null default '', principal_id text not null references api_principals(id) on delete cascade, client_id text not null references oauth_clients(id) on delete cascade, user_id integer not null references users(id) on delete cascade, resource text not null, expires_at text not null, consumed_at text, revoked_at text, reuse_detected_at text, created_at text not null)`,
 		`create table if not exists approval_policies (id text primary key, principal_id text not null references api_principals(id) on delete cascade, capability text not null, resource_filter_json text not null default '{}', mode text not null, allow_risk4 integer not null default 0, expires_at text, created_at text not null, updated_at text not null, unique(principal_id,capability))`,
@@ -754,6 +754,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"oauth_grants", "role_version", `alter table oauth_grants add column role_version integer not null default 1`},
 		{"oauth_grants", "status", `alter table oauth_grants add column status text not null default 'active'`},
 		{"oauth_grants", "revoke_reason", `alter table oauth_grants add column revoke_reason text not null default ''`},
+		{"oauth_grants", "resource_key", `alter table oauth_grants add column resource_key text not null default 'mcp'`},
+		{"oauth_grants", "last_authorized_at", `alter table oauth_grants add column last_authorized_at text`},
+		{"oauth_authorization_codes", "requested_scopes_json", `alter table oauth_authorization_codes add column requested_scopes_json text not null default '[]'`},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.sql); err != nil {
 			return err
@@ -761,6 +764,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	for _, stmt := range []string{
 		`create index if not exists idx_oauth_grants_user_client on oauth_grants(user_id,client_id,created_at desc)`,
+		`create unique index if not exists idx_oauth_grants_live_authorization on oauth_grants(client_id,user_id,resource_key) where revoked_at is null and status in ('active','needs_reconsent')`,
 		`create index if not exists idx_oauth_access_grant on oauth_access_tokens(grant_id,expires_at)`,
 		`create index if not exists idx_oauth_refresh_grant on oauth_refresh_tokens(grant_id,family_id)`,
 	} {
@@ -769,6 +773,15 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		}
 	}
 	if err := s.MigrateOAuthV2(ctx); err != nil {
+		return err
+	}
+	if err := s.BackfillOAuthGrantAuthorizationFields(ctx); err != nil {
+		return err
+	}
+	if err := s.MigrateOAuthGrantDedupe(ctx); err != nil {
+		return err
+	}
+	if err := s.EnsureOAuthGrantLiveUniqueIndex(ctx); err != nil {
 		return err
 	}
 	if err := s.DropLegacyOAuthScopeColumns(ctx); err != nil {

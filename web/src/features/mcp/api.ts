@@ -25,3 +25,7 @@ export function deleteClient(requestV2: RequestV2, id: string): Promise<{ delete
 export function revokeGrant(requestV2: RequestV2, id: string): Promise<{ revoked: boolean }> {
   return requestV2(`/oauth-grants/${id}`, { method: 'DELETE' })
 }
+
+export function revokeOfflineAccess(requestV2: RequestV2, id: string): Promise<{ offline_access: boolean }> {
+  return requestV2(`/oauth-grants/${id}/revoke-offline-access`, { method: 'POST' })
+}

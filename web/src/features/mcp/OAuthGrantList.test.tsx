@@ -76,8 +76,8 @@ describe('OAuthGrantList', () => {
 
     expect(requestV2).toHaveBeenCalledWith('/oauth-grants/grant-active', { method: 'DELETE' })
     expect(container.textContent).not.toContain('OpenCode Active')
-    expect(container.textContent).toContain('暂无 OAuth Grant')
-    expect(notify).toHaveBeenCalledWith('OAuth Grant 已撤销并移除', 'success')
+    expect(container.textContent).toContain('暂无已授权访问')
+    expect(notify).toHaveBeenCalledWith('授权已撤销', 'success')
     expect(requestV2.mock.calls.filter(([path]) => path === '/oauth-grants')).toHaveLength(1)
   })
 })

@@ -214,20 +214,36 @@ func (s *Server) oauthGrants(w http.ResponseWriter, r *http.Request) {
 			items[index].ResourceBoundaryJSON = boundary
 		}
 	}
+	_ = s.store.EnrichOAuthGrantStats(r.Context(), items, time.Now().UTC())
 	v2Write(w, r, http.StatusOK, items, map[string]any{"count": len(items)})
 }
 
 func (s *Server) oauthGrant(w http.ResponseWriter, r *http.Request) {
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/oauth-grants/"), "/")
-	if id == "" || strings.Contains(id, "/") {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/oauth-grants/"), "/")
+	if path == "" || strings.Contains(strings.TrimSuffix(path, "/revoke-offline-access"), "/") {
 		v2Error(w, r, http.StatusNotFound, "not_found", "OAuth Grant 不存在")
 		return
 	}
+	if strings.HasSuffix(path, "/revoke-offline-access") {
+		id := strings.TrimSuffix(path, "/revoke-offline-access")
+		if r.Method != http.MethodPost {
+			v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
+			return
+		}
+		if err := s.store.RevokeOAuthOfflineAccess(r.Context(), id, time.Now().UTC()); err != nil {
+			v2HandleError(w, r, err)
+			return
+		}
+		auditReq(s, r, "revoke_offline_access", "oauth_grant", id)
+		v2Write(w, r, http.StatusOK, map[string]any{"id": id, "offline_access": false}, nil)
+		return
+	}
+	id := path
 	if r.Method != http.MethodDelete {
 		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "请求方法不受支持")
 		return
 	}
-	if err := s.store.RevokeOAuthGrant(r.Context(), id, time.Now().UTC()); err != nil {
+	if err := s.store.RevokeOAuthAuthorization(r.Context(), id, time.Now().UTC()); err != nil {
 		v2HandleError(w, r, err)
 		return
 	}
@@ -351,7 +367,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusForbidden, "access_denied", err.Error())
 		return
 	}
-	grant, principal, err := s.createOAuthGrantV2(r, *user, *client, request.Scope)
+	grant, principal, profile, policies, err := s.buildOAuthGrantMaterial(r, *user, *client, request.Scope)
 	if err != nil {
 		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "invalid_consent", "scopes": request.Scope})
 		oauthError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -362,9 +378,30 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	code := &model.OAuthAuthorizationCode{CodeHash: security.HashAPISecret(s.sessionSecret, rawCode), GrantID: grant.ID, ClientID: client.ID, UserID: user.ID, PrincipalID: principal.ID, RedirectURI: request.RedirectURI, Resource: request.Resource, CodeChallenge: request.CodeChallenge, ExpiresAt: time.Now().UTC().Add(oauthAuthorizationCodeTTL)}
-	if err := s.store.CreateOAuthAuthorizationCode(r.Context(), code); err != nil {
-		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_grant", grant.ID, map[string]any{"client_id": client.ID, "reason": "code_issue_failed"})
+	code := &model.OAuthAuthorizationCode{
+		CodeHash: security.HashAPISecret(s.sessionSecret, rawCode), ClientID: client.ID, UserID: user.ID,
+		RedirectURI: request.RedirectURI, Resource: request.Resource, CodeChallenge: request.CodeChallenge,
+		Scopes: request.Scope, ExpiresAt: time.Now().UTC().Add(oauthAuthorizationCodeTTL),
+	}
+	_, offline, scopeErr := normalizeRequestedScopes(request.Scope)
+	if scopeErr != nil {
+		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_client", client.ID, map[string]any{"reason": "invalid_consent", "scopes": request.Scope})
+		oauthError(w, http.StatusBadRequest, "invalid_request", scopeErr.Error())
+		return
+	}
+	boundary := s.oauthRoleBoundary(mustEffectiveRole(r.Context(), s.store, *user))
+	grant, principal, err = s.store.AuthorizeOAuthClient(r.Context(), store.OAuthAuthorizeRequest{
+		ClientID: client.ID, UserID: user.ID, ResourceKey: model.OAuthResourceKeyMCP, ResourceURL: request.Resource,
+		RequestedScopes: request.Scope, RequestOffline: offline, AccessLevel: grant.AccessLevel,
+		BoundaryJSON: grant.ResourceBoundaryJSON, PrincipalResourceFilter: application.ResourceFilterFromBoundary(boundary),
+		NewGrant: grant, NewPrincipal: principal, NewProfile: profile, NewPolicies: policies, Code: code,
+	})
+	if err != nil {
+		target := ""
+		if grant != nil {
+			target = grant.ID
+		}
+		s.auditOAuthEvent(r, &user.ID, "oauth_authorization_denied", "oauth_grant", target, map[string]any{"client_id": client.ID, "reason": "authorize_failed"})
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
@@ -417,39 +454,38 @@ func normalizeRequestedScopes(requested []string) (mcpauth.AccessLevel, bool, er
 	return level, offline, nil
 }
 
-// createOAuthGrantV2 creates an OAuth identity whose business permissions are
-// inherited from the consenting user's current role. OAuth scopes only control
-// protocol features such as offline refresh; they never reduce or expand RBAC.
-func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client model.OAuthClient, scopes []string) (*model.OAuthGrant, *model.APIPrincipal, error) {
+// buildOAuthGrantMaterial prepares a new grant bundle for first-time authorization.
+// AuthorizeOAuthClient reuses an existing live grant instead of creating duplicates.
+func (s *Server) buildOAuthGrantMaterial(r *http.Request, user model.User, client model.OAuthClient, scopes []string) (*model.OAuthGrant, *model.APIPrincipal, *model.OAuthApprovalProfile, []model.ApprovalPolicy, error) {
 	_, offline, err := normalizeRequestedScopes(scopes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	role, err := s.store.EffectiveUserRole(r.Context(), user)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	accessLevel := mcpAccessLevelForRole(role)
 	if accessLevel == "" {
-		return nil, nil, errors.New("the current role does not permit MCP access")
+		return nil, nil, nil, nil, errors.New("the current role does not permit MCP access")
 	}
 	boundary := s.oauthRoleBoundary(role)
 	const autoRisk = 3
 	grantToken, err := security.RandomToken(18)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	principalToken, err := security.RandomToken(18)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	profileToken, err := security.RandomToken(18)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	boundaryJSON, err := json.Marshal(boundary.Normalized())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	appPrincipal := &model.APIPrincipal{ID: "oauth_" + principalToken, OwnerUserID: &user.ID, Name: client.Name + " / " + user.Username, Type: model.APIPrincipalOAuth, Enabled: true, Scopes: accessLevel.NormalizedScopes(offline), ResourceFilter: application.ResourceFilterFromBoundary(boundary), RateLimitPerMinute: 120, MaxConcurrency: 4}
 	profile := &model.OAuthApprovalProfile{ID: "oap_" + profileToken, Name: "OAuth grant approval", AutoApproveRisk: autoRisk}
@@ -457,7 +493,7 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 		ID: "grt_" + grantToken, ClientID: client.ID, ClientName: client.Name, UserID: user.ID, Username: user.Username,
 		PrincipalID: appPrincipal.ID, AccessLevel: string(accessLevel), ResourceBoundaryJSON: boundaryJSON,
 		ApprovalProfileID: profile.ID, OfflineAccess: offline, PolicyVersion: 1, RoleVersion: 1,
-		ConsentVersion: 2, Status: model.OAuthGrantActive,
+		ConsentVersion: 2, Status: model.OAuthGrantActive, ResourceKey: model.OAuthResourceKeyMCP,
 	}
 	principalForEval := application.Principal{ID: appPrincipal.ID, UserID: &user.ID, Name: user.Username, Type: model.APIPrincipalOAuth, Role: role, Scopes: accessLevel.NormalizedScopes(offline), ResourceFilter: appPrincipal.ResourceFilter, AccessLevel: accessLevel}
 	policies := []model.ApprovalPolicy{}
@@ -467,7 +503,7 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 		}
 		policyToken, randomErr := security.RandomToken(18)
 		if randomErr != nil {
-			return nil, nil, randomErr
+			return nil, nil, nil, nil, randomErr
 		}
 		mode := model.ApprovalRequired
 		if descriptor.RiskClass <= autoRisk && descriptor.RiskClass < 4 {
@@ -475,10 +511,29 @@ func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client mod
 		}
 		policies = append(policies, model.ApprovalPolicy{ID: "pol_" + policyToken, PrincipalID: appPrincipal.ID, Capability: descriptor.Name, ResourceFilter: json.RawMessage(`{}`), Mode: mode})
 	}
-	if err := s.store.CreateOAuthGrantV2(r.Context(), grant, appPrincipal, profile, policies); err != nil {
+	return grant, appPrincipal, profile, policies, nil
+}
+
+// createOAuthGrantV2 creates an OAuth identity whose business permissions are
+// inherited from the consenting user's current role. OAuth scopes only control
+// protocol features such as offline refresh; they never reduce or expand RBAC.
+func (s *Server) createOAuthGrantV2(r *http.Request, user model.User, client model.OAuthClient, scopes []string) (*model.OAuthGrant, *model.APIPrincipal, error) {
+	grant, principal, profile, policies, err := s.buildOAuthGrantMaterial(r, user, client, scopes)
+	if err != nil {
 		return nil, nil, err
 	}
-	return grant, appPrincipal, nil
+	if err := s.store.CreateOAuthGrantV2(r.Context(), grant, principal, profile, policies); err != nil {
+		return nil, nil, err
+	}
+	return grant, principal, nil
+}
+
+func mustEffectiveRole(ctx context.Context, db *store.Store, user model.User) model.Role {
+	role, err := db.EffectiveUserRole(ctx, user)
+	if err != nil {
+		return user.Role
+	}
+	return role
 }
 
 func mcpAccessLevelForRole(role model.Role) mcpauth.AccessLevel {
@@ -546,7 +601,7 @@ func (s *Server) oauthExchangeCode(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "authorization code is invalid")
 		return
 	}
-	s.issueOAuthTokens(w, r, "authorization_code", code.GrantID, code.PrincipalID, code.ClientID, code.UserID, code.Resource, "", "")
+	s.issueOAuthTokens(w, r, "authorization_code", code.GrantID, code.PrincipalID, code.ClientID, code.UserID, code.Resource, "", "", mcpauth.RequestsOffline(code.Scopes))
 }
 
 func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
@@ -571,10 +626,10 @@ func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is invalid")
 		return
 	}
-	s.issueOAuthTokens(w, r, "refresh_token", refresh.GrantID, refresh.PrincipalID, refresh.ClientID, refresh.UserID, refresh.Resource, refresh.FamilyID, refresh.TokenHash)
+	s.issueOAuthTokens(w, r, "refresh_token", refresh.GrantID, refresh.PrincipalID, refresh.ClientID, refresh.UserID, refresh.Resource, refresh.FamilyID, refresh.TokenHash, true)
 }
 
-func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, grantID, principalID, clientID string, userID int64, resource, familyID, parentTokenHash string) {
+func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, grantID, principalID, clientID string, userID int64, resource, familyID, parentTokenHash string, requestOffline bool) {
 	grant, err := s.store.GetOAuthGrant(r.Context(), grantID)
 	if err != nil || grant.RevokedAt != nil || grant.Status != model.OAuthGrantActive || grant.ExpiresAt != nil && !grant.ExpiresAt.After(time.Now().UTC()) || grant.PrincipalID != principalID || grant.ClientID != clientID || grant.UserID != userID {
 		s.auditOAuthEvent(r, &userID, "oauth_token_denied", "oauth_grant", grantID, map[string]any{"client_id": clientID, "flow": flow, "reason": "inactive_grant"})
@@ -609,7 +664,8 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, 
 	access := &model.OAuthToken{TokenHash: security.HashAPISecret(s.sessionSecret, accessPlain), GrantID: grantID, PrincipalID: principalID, ClientID: clientID, UserID: userID, Resource: resource, ExpiresAt: now.Add(oauthAccessTokenTTL)}
 	var refresh *model.OAuthToken
 	refreshPlain := ""
-	if grant.OfflineAccess {
+	issueRefresh := grant.OfflineAccess && (flow == "refresh_token" || requestOffline)
+	if issueRefresh {
 		refreshRaw, randomErr := security.RandomToken(32)
 		if randomErr != nil {
 			oauthError(w, http.StatusInternalServerError, "server_error", randomErr.Error())

@@ -75,15 +75,18 @@ func (s *Store) DropLegacyOAuthScopeColumns(ctx context.Context) error {
 				role_version integer not null default 1,
 				consent_version integer not null default 1,
 				status text not null default 'active',
+				resource_key text not null default 'mcp',
 				expires_at text,
 				last_used_at text,
+				last_authorized_at text,
 				revoked_at text,
 				revoke_reason text not null default '',
 				created_at text not null)`,
-			copy: `insert into oauth_grants_v2(id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,expires_at,last_used_at,revoked_at,revoke_reason,created_at)
-				select id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,expires_at,last_used_at,revoked_at,revoke_reason,created_at from oauth_grants`,
+			copy: `insert into oauth_grants_v2(id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,resource_key,expires_at,last_used_at,last_authorized_at,revoked_at,revoke_reason,created_at)
+				select id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,coalesce(resource_key,'mcp'),expires_at,last_used_at,coalesce(last_authorized_at,created_at),revoked_at,revoke_reason,created_at from oauth_grants`,
 			indexes: []string{
 				`create index if not exists idx_oauth_grants_user_client on oauth_grants(user_id,client_id,created_at desc)`,
+				`create unique index if not exists idx_oauth_grants_live_authorization on oauth_grants(client_id,user_id,resource_key) where revoked_at is null and status in ('active','needs_reconsent')`,
 			},
 		},
 		{
@@ -97,10 +100,11 @@ func (s *Store) DropLegacyOAuthScopeColumns(ctx context.Context) error {
 				redirect_uri text not null,
 				resource text not null,
 				code_challenge text not null,
+				requested_scopes_json text not null default '[]',
 				expires_at text not null,
 				created_at text not null)`,
-			copy: `insert into oauth_authorization_codes_v2(code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,expires_at,created_at)
-				select code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,expires_at,created_at from oauth_authorization_codes`,
+			copy: `insert into oauth_authorization_codes_v2(code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at)
+				select code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,coalesce(requested_scopes_json,'[]'),expires_at,created_at from oauth_authorization_codes`,
 		},
 		{
 			table: "oauth_access_tokens",
