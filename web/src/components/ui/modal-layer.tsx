@@ -36,6 +36,7 @@ type BodyStyleSnapshot = { overflow: string; paddingRight: string }
 
 let layers: LayerID[] = []
 let bodyStyleSnapshot: BodyStyleSnapshot | null = null
+let mainStyleSnapshot: string | null = null
 let stackFocusTarget: HTMLElement | null = null
 const listeners = new Set<() => void>()
 
@@ -58,6 +59,12 @@ function lockBodyScroll() {
     body.style.paddingRight = `${currentPadding + scrollbarWidth}px`
   }
   body.style.overflow = "hidden"
+
+  const main = document.querySelector<HTMLElement>('.main')
+  if (main) {
+    mainStyleSnapshot = main.style.overflowY
+    main.style.overflowY = "hidden"
+  }
 }
 
 function unlockBodyScroll() {
@@ -65,6 +72,12 @@ function unlockBodyScroll() {
   document.body.style.overflow = bodyStyleSnapshot.overflow
   document.body.style.paddingRight = bodyStyleSnapshot.paddingRight
   bodyStyleSnapshot = null
+
+  const main = document.querySelector<HTMLElement>('.main')
+  if (main && mainStyleSnapshot !== null) {
+    main.style.overflowY = mainStyleSnapshot
+    mainStyleSnapshot = null
+  }
 }
 
 function registerLayer(id: LayerID, initialFocusTarget: HTMLElement | null) {
