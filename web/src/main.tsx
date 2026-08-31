@@ -12028,6 +12028,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    void dialogs.alert({ title: '没有可用来源', message: '这台服务器没有可作为链路起点的入口或可继续路径。' })
 	    return Promise.resolve(null)
 	  }
+	  if (options.length === 1) return Promise.resolve(options.map(option => option.source))
 	  return new Promise<ProxyPathReuseSource[] | null>(resolve => setSourceSelectionRequest({ title, options, multiple, resolve }))
 	}
 	const graphSourceLabel = (source: ProxyPathReuseSource) => {
@@ -13676,17 +13677,40 @@ function GraphSourceSelectionDialog({ request, onCancel, onSubmit }: { request: 
 	const toggle = (key: string) => setSelected(current => request.multiple
 	  ? current.includes(key) ? current.filter(item => item !== key) : [...current, key]
 	  : current.includes(key) ? [] : [key])
+	const submitSelection = (keys: string[]) => {
+	  const sources = request.options.filter(option => keys.includes(option.key)).map(option => option.source)
+	  if (sources.length) onSubmit(sources)
+	}
 	return <MotionDialogPanel onCancel={onCancel} className="graph-source-dialog" aria-labelledby="graph-source-dialog-title">
 	  <header className="dialog-head"><div><h2 id="graph-source-dialog-title">选择来源</h2><p className="muted">{request.title}{request.multiple ? '' : ' · 选择一个分流位置'}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><X size={16} /></button></header>
 	  <div className="dialog-body">
 	    <div className="graph-source-options">
-	      {request.options.map(option => <label key={option.key} className={selected.includes(option.key) ? 'is-selected' : ''}>
-	        <Switch size="sm" checked={selected.includes(option.key)} onChange={() => toggle(option.key)} />
-	        <span><strong>{option.label}</strong><small>{option.detail}</small></span>
-	      </label>)}
+	      {request.options.map(option => {
+	        const active = selected.includes(option.key)
+	        return <div
+	          key={option.key}
+	          role={request.multiple ? 'checkbox' : 'radio'}
+	          aria-checked={active}
+	          tabIndex={0}
+	          className={active ? 'is-selected' : ''}
+	          onClick={() => {
+	            if (request.multiple) toggle(option.key)
+	            else submitSelection([option.key])
+	          }}
+	          onKeyDown={event => {
+	            if (event.key !== 'Enter' && event.key !== ' ') return
+	            event.preventDefault()
+	            if (request.multiple) toggle(option.key)
+	            else submitSelection([option.key])
+	          }}
+	        >
+	          <span onClick={event => event.stopPropagation()}><Switch size="sm" checked={active} onChange={() => { if (request.multiple) toggle(option.key); else submitSelection([option.key]) }} ariaLabel={option.label} /></span>
+	          <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+	        </div>
+	      })}
 	    </div>
 	  </div>
-	  <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" disabled={!selected.length} onClick={() => onSubmit(request.options.filter(option => selected.includes(option.key)).map(option => option.source))}>继续</button></footer>
+	  <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" disabled={!selected.length} onClick={() => submitSelection(selected)}>继续</button></footer>
 	</MotionDialogPanel>
 }
 

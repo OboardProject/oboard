@@ -17874,9 +17874,11 @@ button[aria-busy="true"] {
 
 .graph-source-dialog { width: min(520px, calc(100vw - 28px)); }
 .graph-source-options { display: grid; gap: 8px; max-height: min(420px, 55vh); overflow: auto; padding: 2px; }
-.graph-source-options label {
+.graph-source-options > div[role="checkbox"],
+.graph-source-options > div[role="radio"] {
+	box-sizing: border-box;
 	display: grid;
-	grid-template-columns: 20px minmax(0, 1fr);
+	grid-template-columns: 32px minmax(0, 1fr);
 	align-items: center;
 	gap: 10px;
 	padding: 11px 12px;
@@ -17885,8 +17887,12 @@ button[aria-busy="true"] {
 	background: var(--bg-card);
 	cursor: pointer;
 }
-.graph-source-options label.is-selected { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-card)); }
-.graph-source-options label > span { min-width: 0; display: grid; gap: 2px; }
+.graph-source-options > div[role="checkbox"].is-selected,
+.graph-source-options > div[role="radio"].is-selected { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-card)); }
+.graph-source-options > div[role="checkbox"] > span,
+.graph-source-options > div[role="radio"] > span { min-width: 0; display: grid; gap: 2px; }
+.graph-source-options > div[role="checkbox"]:focus-visible,
+.graph-source-options > div[role="radio"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent); outline-offset: 2px; }
 .graph-source-options strong, .graph-source-options small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .graph-source-options small { color: var(--text-secondary); }
 
