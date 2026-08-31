@@ -1,5 +1,9 @@
-import React, { useEffect, useState } from 'react'
-import { Dialog } from '../ui/dialog'
+import React, { useEffect, useMemo, useState } from 'react'
+import { ShieldAlert, X } from 'lucide-react'
+import { MotionDialogPanel } from '../ui/motion'
+import { FormField } from '../ui/form-field'
+import { Select } from '../ui/select'
+import { Switch } from '../ui/switch'
 import { StepUpAuth } from '../remote-access/StepUpAuth'
 import type { OAuthGrant, ToastTone } from '../../features/mcp/types'
 
@@ -21,6 +25,30 @@ type PrivilegedAccess = {
 const warning = '启用后，该 MCP 客户端可在授权服务器上以 OBoard Agent 的权限执行命令，执行期间不会逐次请求确认。'
 const interactiveWarning = '最高风险：允许 AI Agent 以 OBoard Agent 身份获得服务器交互式 shell。'
 
+function normalizeServers(payload: unknown): ServerItem[] {
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { servers?: unknown })?.servers)
+      ? (payload as { servers: unknown[] }).servers
+      : []
+  return items
+    .map((server: any) => ({ id: Number(server.id), name: String(server.name || `server-${server.id}`) }))
+    .filter(server => Number.isFinite(server.id) && server.id > 0)
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+}
+
+function readServerScope(item: PrivilegedAccess | null) {
+  const serverSel = item?.resource_boundary?.resources?.server
+  if (!serverSel?.selection) {
+    return { scope: 'all' as const, includeFuture: true, selected: [] as string[] }
+  }
+  return {
+    scope: serverSel.selection === 'all' ? 'all' as const : 'selected' as const,
+    includeFuture: Boolean(serverSel.include_future),
+    selected: (serverSel.ids || []).map(String),
+  }
+}
+
 export function MCPPrivilegedAccess({
   grant,
   request,
@@ -35,30 +63,41 @@ export function MCPPrivilegedAccess({
   onClose: () => void
 }) {
   const [current, setCurrent] = useState<PrivilegedAccess | null>(null)
-  const [scope, setScope] = useState<'selected' | 'all'>('selected')
-  const [includeFuture, setIncludeFuture] = useState(false)
+  const [scope, setScope] = useState<'selected' | 'all'>('all')
+  const [includeFuture, setIncludeFuture] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
   const [servers, setServers] = useState<ServerItem[]>([])
   const [ttl, setTtl] = useState<'until' | '1h' | '24h' | '7d' | '30d'>('until')
   const [stepUp, setStepUp] = useState(false)
   const [busy, setBusy] = useState('')
+  const [loading, setLoading] = useState(true)
 
-  const load = async () => {
-    const [access, listed] = await Promise.all([
-      request(`/mcp/grants/${grant.id}/privileged-access`),
-      request('/servers'),
-    ])
-    const item = access?.privileged_access as PrivilegedAccess | null
-    setCurrent(item)
-    const serverSel = item?.resource_boundary?.resources?.server
-    setScope(serverSel?.selection === 'all' ? 'all' : 'selected')
-    setIncludeFuture(Boolean(serverSel?.include_future))
-    setSelected(serverSel?.ids || [])
-    const items = Array.isArray(listed?.servers) ? listed.servers : (Array.isArray(listed) ? listed : [])
-    setServers(items.map((server: any) => ({ id: Number(server.id), name: server.name || `server-${server.id}` })))
-  }
-
-  useEffect(() => { void load().catch((error: any) => notify(error?.message || '无法读取敏感服务器访问', 'error')) }, [grant.id])
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setLoading(true)
+      try {
+        const [access, listed] = await Promise.all([
+          request(`/mcp/grants/${grant.id}/privileged-access`),
+          request('/servers'),
+        ])
+        if (cancelled) return
+        const item = access?.privileged_access as PrivilegedAccess | null
+        const nextScope = readServerScope(item)
+        setCurrent(item)
+        setScope(nextScope.scope)
+        setIncludeFuture(nextScope.includeFuture)
+        setSelected(nextScope.selected)
+        setServers(normalizeServers(listed))
+      } catch (error: any) {
+        if (!cancelled) notify(error?.message || '无法读取敏感服务器访问', 'error')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [grant.id, notify, request])
 
   const payload = () => {
     const capabilities = ['remote_operations', 'remote_exec', 'remote_shell', 'remote_interactive']
@@ -73,7 +112,7 @@ export function MCPPrivilegedAccess({
           server: {
             selection: scope,
             ids: scope === 'selected' ? selected : undefined,
-            include_future: includeFuture,
+            include_future: scope === 'all' ? includeFuture : false,
             allow_create: false,
           },
         },
@@ -82,13 +121,17 @@ export function MCPPrivilegedAccess({
   }
 
   const submit = async (stepUpToken?: string) => {
+    if (scope === 'selected' && selected.length === 0) {
+      notify('请至少选择一台服务器', 'error')
+      return
+    }
     setBusy('save')
     try {
       await request(`/mcp/grants/${grant.id}/privileged-access`, {
         method: 'PUT',
         body: JSON.stringify({ ...payload(), step_up_token: stepUpToken || '' }),
       })
-      notify('敏感服务器访问已更新', 'success')
+      notify(current ? '敏感服务器访问已更新' : '敏感服务器访问已启用', 'success')
       onClose()
     } catch (error: any) {
       if (String(error?.message || '').includes('step-up') || error?.code === 'terminal_auth_expired') {
@@ -116,43 +159,100 @@ export function MCPPrivilegedAccess({
     }
   }
 
+  const scopeSummary = useMemo(() => {
+    if (scope === 'all') return includeFuture ? '所有现有与未来服务器' : '所有现有服务器'
+    if (selected.length === 0) return '尚未选择服务器'
+    return `已选 ${selected.length} 台服务器`
+  }, [scope, includeFuture, selected.length])
+
+  const controlsLocked = Boolean(busy || loading)
+
   return (
     <>
-      <Dialog isOpen onClose={onClose} title={`${grant.client_name || grant.client_id} · 敏感服务器访问`} size="lg">
-        <p className="text-pretty text-sm text-muted-foreground">{warning}</p>
-        <p className="text-xs text-muted-foreground" style={{ marginTop: 8 }}>{interactiveWarning}</p>
-        <fieldset className="mt-4">
-          <legend>服务器范围</legend>
-          <label className="switch-form-row"><input type="radio" checked={scope === 'selected'} onChange={() => setScope('selected')} />指定服务器</label>
-          <label className="switch-form-row"><input type="radio" checked={scope === 'all'} onChange={() => setScope('all')} />所有服务器</label>
-          {scope === 'selected' ? (
-            <div className="mt-2 flex flex-col gap-1">
-              {servers.map(server => (
-                <label key={server.id} className="switch-form-row">
-                  <input type="checkbox" checked={selected.includes(String(server.id))} onChange={() => setSelected(current => current.includes(String(server.id)) ? current.filter(id => id !== String(server.id)) : [...current, String(server.id)])} />
-                  {server.name}
-                </label>
-              ))}
+      <MotionDialogPanel onCancel={onClose} className="mcp-privileged-dialog" aria-labelledby="mcp-privileged-title">
+        <header className="dialog-head">
+          <div>
+            <h2 id="mcp-privileged-title">{grant.client_name || grant.client_id} · 敏感服务器访问</h2>
+            <p className="muted">为 MCP 客户端配置可执行远程运维与交互式 shell 的服务器范围。</p>
+          </div>
+          <button type="button" className="ghost dialog-close icon-button" onClick={onClose} disabled={controlsLocked} aria-label="关闭" title="关闭"><X size={16} /></button>
+        </header>
+        <div className="dialog-body mcp-privileged-body">
+          <div className="mcp-privileged-warning">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <div>
+              <strong>高风险授权</strong>
+              <p>{warning}</p>
+              <p>{interactiveWarning}</p>
             </div>
-          ) : null}
-          <label className="switch-form-row" style={{ marginTop: 8 }}>
-            <input type="checkbox" checked={includeFuture} onChange={event => setIncludeFuture(event.target.checked)} />
-            包含未来服务器
-          </label>
-        </fieldset>
-        <fieldset className="mt-4">
-          <legend>授权有效期</legend>
-          {([['until', '直到手动撤销'], ['1h', '1 小时'], ['24h', '24 小时'], ['7d', '7 天'], ['30d', '30 天']] as const).map(([value, label]) => (
-            <label key={value} className="switch-form-row"><input type="radio" checked={ttl === value} onChange={() => setTtl(value)} />{label}</label>
-          ))}
-        </fieldset>
-        {current?.last_step_up_at ? <p className="muted" style={{ marginTop: 12 }}>最后认证 {current.last_step_up_at}</p> : null}
-        <div className="dialog-actions">
-          <button type="button" className="ghost" onClick={onClose}>取消</button>
-          {current ? <button type="button" className="ghost danger-text" disabled={Boolean(busy)} onClick={() => void revoke()}>立即撤销</button> : null}
-          <button type="button" disabled={Boolean(busy)} onClick={() => void submit()}>修改授权</button>
+          </div>
+          {loading ? <p className="muted mcp-privileged-loading">正在读取授权设置…</p> : <>
+            <FormField label="服务器范围" hint="默认允许访问全部服务器；仅在需要收窄权限时切换到指定服务器。" full>
+              <Select
+                variant="segmented"
+                className="full-width"
+                value={scope}
+                onChange={event => setScope(event.target.value as 'selected' | 'all')}
+                disabled={controlsLocked}
+                aria-label="服务器范围"
+              >
+                <option value="all">所有服务器</option>
+                <option value="selected">指定服务器</option>
+              </Select>
+            </FormField>
+            <div className="mcp-privileged-scope-summary">{scopeSummary}</div>
+            {scope === 'selected' ? (
+              <div className="mcp-privileged-server-list">
+                {servers.length === 0 ? <p className="muted">暂无服务器</p> : servers.map(server => (
+                  <label key={server.id} className="mcp-privileged-server-row">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(String(server.id))}
+                      disabled={controlsLocked}
+                      onChange={() => setSelected(current => current.includes(String(server.id))
+                        ? current.filter(id => id !== String(server.id))
+                        : [...current, String(server.id)])}
+                    />
+                    <span>{server.name}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="switch-form-row mcp-privileged-future-row">
+                <span className="switch-form-label">包含未来新增的服务器</span>
+                <Switch
+                  checked={includeFuture}
+                  disabled={controlsLocked}
+                  onChange={setIncludeFuture}
+                  ariaLabel="包含未来新增的服务器"
+                />
+              </div>
+            )}
+            <FormField label="授权有效期" hint="到期后会自动失效；也可选择直到手动撤销。" full>
+              <Select
+                variant="segmented"
+                className="full-width"
+                value={ttl}
+                onChange={event => setTtl(event.target.value as typeof ttl)}
+                disabled={controlsLocked}
+                aria-label="授权有效期"
+              >
+                <option value="until">直到撤销</option>
+                <option value="1h">1 小时</option>
+                <option value="24h">24 小时</option>
+                <option value="7d">7 天</option>
+                <option value="30d">30 天</option>
+              </Select>
+            </FormField>
+            {current?.last_step_up_at ? <p className="muted mcp-privileged-meta">最后认证 {current.last_step_up_at}</p> : null}
+          </>}
         </div>
-      </Dialog>
+        <footer className="dialog-actions">
+          <button type="button" className="ghost" onClick={onClose} disabled={controlsLocked}>取消</button>
+          {current ? <button type="button" className="ghost danger-text" disabled={controlsLocked} onClick={() => void revoke()}>立即撤销</button> : null}
+          <button type="button" disabled={controlsLocked} onClick={() => void submit()}>{current ? '保存授权' : '启用授权'}</button>
+        </footer>
+      </MotionDialogPanel>
       {stepUp ? (
         <StepUpAuth
           request={request}

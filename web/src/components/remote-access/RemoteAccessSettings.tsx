@@ -31,11 +31,22 @@ function snapshotServers(servers: unknown): ServerSummary[] {
   })).filter(server => Number.isFinite(server.id) && server.id > 0)
 }
 
+function normalizeServersResponse(payload: unknown): ServerSummary[] {
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { servers?: unknown })?.servers)
+      ? (payload as { servers: unknown[] }).servers
+      : []
+  return snapshotServers(items).sort((left, right) => {
+    const byName = (left.name || '').localeCompare(right.name || '', 'zh-CN')
+    return byName !== 0 ? byName : left.id - right.id
+  })
+}
+
 export function RemoteAccessSettings({ data, client, load, notify }: { data: any; client: { request: RequestFn }; load: () => Promise<void>; notify: (message: string, tone?: string) => void }) {
   const [passwordConfirmation, setPasswordConfirmation] = useState(settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled, true))
   const [saving, setSaving] = useState('')
   const [serversOpen, setServersOpen] = useState(false)
-  const [serverSnapshot, setServerSnapshot] = useState<ServerSummary[]>([])
 
   useEffect(() => {
     setPasswordConfirmation(settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled, true))
@@ -56,10 +67,7 @@ export function RemoteAccessSettings({ data, client, load, notify }: { data: any
     }
   }
 
-  const openServers = () => {
-    setServerSnapshot(snapshotServers(data.servers))
-    setServersOpen(true)
-  }
+  const openServers = () => setServersOpen(true)
 
   return (
     <>
@@ -82,7 +90,6 @@ export function RemoteAccessSettings({ data, client, load, notify }: { data: any
       </SettingsGroup>
       <AnimatePresence>
         {serversOpen ? <RemoteAccessServerDialog
-          servers={serverSnapshot}
           globalTerminal={settingEnabled(data.settings?.remote_terminal_enabled, true)}
           globalMcp={settingEnabled(data.settings?.mcp_enabled, false)}
           client={client}
@@ -96,7 +103,6 @@ export function RemoteAccessSettings({ data, client, load, notify }: { data: any
 }
 
 function RemoteAccessServerDialog({
-  servers,
   globalTerminal: initialGlobalTerminal,
   globalMcp: initialGlobalMcp,
   client,
@@ -104,7 +110,6 @@ function RemoteAccessServerDialog({
   notify,
   onClose,
 }: {
-  servers: ServerSummary[]
   globalTerminal: boolean
   globalMcp: boolean
   client: { request: RequestFn }
@@ -115,6 +120,7 @@ function RemoteAccessServerDialog({
   const [rows, setRows] = useState<ServerRemoteAccess[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [busy, setBusy] = useState(false)
   const [globalTerminal, setGlobalTerminal] = useState(initialGlobalTerminal)
   const [globalMcp, setGlobalMcp] = useState(initialGlobalMcp)
@@ -127,29 +133,42 @@ function RemoteAccessServerDialog({
 
   useEffect(() => {
     let cancelled = false
-    if (servers.length === 0) {
-      setRows([])
-      setLoading(false)
-      return () => { cancelled = true }
-    }
     const read = async () => {
       setLoading(true)
-      const loaded = await Promise.all(servers.map(async server => {
-        try {
-          const result = await client.request(`/servers/${server.id}/remote-access`)
-          return serverPolicy(result.remote_access, server)
-        } catch (error: any) {
-          return { ...server, remote: true, mcp: false, error: error?.message || '读取失败' }
+      setLoadError('')
+      try {
+        const listed = await client.request('/servers')
+        const servers = normalizeServersResponse(listed)
+        if (servers.length === 0) {
+          if (!cancelled) {
+            setRows([])
+            setLoading(false)
+          }
+          return
         }
-      }))
-      if (!cancelled) {
-        setRows(loaded)
-        setLoading(false)
+        const loaded = await Promise.all(servers.map(async server => {
+          try {
+            const result = await client.request(`/servers/${server.id}/remote-access`)
+            return serverPolicy(result.remote_access, server)
+          } catch (error: any) {
+            return { ...server, remote: true, mcp: false, error: error?.message || '读取失败' }
+          }
+        }))
+        if (!cancelled) {
+          setRows(loaded)
+          setLoading(false)
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          setRows([])
+          setLoadError(error?.message || '无法读取服务器列表')
+          setLoading(false)
+        }
       }
     }
     void read()
     return () => { cancelled = true }
-  }, [servers])
+  }, [client])
 
   const selectedRows = rows.filter(row => selected.has(row.id))
   const allSelected = rows.length > 0 && selected.size === rows.length
@@ -239,10 +258,10 @@ function RemoteAccessServerDialog({
             />
           </div>
         </div>
-        {loading ? <p className="muted remote-access-server-loading">正在读取服务器设置…</p> : rows.length === 0 ? <div className="remote-access-server-empty"><ServerIcon size={20} aria-hidden="true" /><p>暂无服务器</p></div> : <>
+        {loading ? <p className="muted remote-access-server-loading">正在读取服务器设置…</p> : loadError ? <div className="remote-access-server-empty"><ServerIcon size={20} aria-hidden="true" /><p>{loadError}</p></div> : rows.length === 0 ? <div className="remote-access-server-empty"><ServerIcon size={20} aria-hidden="true" /><p>暂无服务器</p></div> : <>
           <div className="remote-access-bulk-bar">
             <label><input type="checkbox" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))} disabled={controlsLocked} />全选</label>
-            <span>{selected.size > 0 ? `已选 ${selected.size} 台` : '选择服务器后批量设置'}</span>
+            <span>{selected.size > 0 ? `已选 ${selected.size} / ${rows.length} 台` : `共 ${rows.length} 台服务器`}</span>
             <div>
               <button type="button" className="ghost" disabled={controlsLocked || globalTerminal || selected.size === 0} onClick={() => void patchRows(selectedRows, { remote_terminal_enabled: true }, '已批量开启远程控制')}>开启远程</button>
               <button type="button" className="ghost" disabled={controlsLocked || globalTerminal || selected.size === 0} onClick={() => void patchRows(selectedRows, { remote_terminal_enabled: false }, '已批量关闭远程控制')}>关闭远程</button>

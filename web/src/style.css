@@ -24092,6 +24092,88 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   opacity: 0.45;
 }
 
+.mcp-privileged-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
+}
+
+.mcp-privileged-body {
+  display: grid;
+  gap: 14px;
+}
+
+.mcp-privileged-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning, #d97706) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning, #d97706) 8%, var(--surface-2));
+  color: var(--text-strong);
+}
+
+.mcp-privileged-warning strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.mcp-privileged-warning p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.mcp-privileged-warning p + p {
+  margin-top: 6px;
+}
+
+.mcp-privileged-loading,
+.mcp-privileged-meta,
+.mcp-privileged-scope-summary {
+  margin: 0;
+  font-size: 12px;
+}
+
+.mcp-privileged-scope-summary {
+  color: var(--muted);
+}
+
+.mcp-privileged-server-list {
+  display: grid;
+  gap: 0;
+  max-height: min(240px, 32vh);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.mcp-privileged-server-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+
+.mcp-privileged-server-row + .mcp-privileged-server-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.mcp-privileged-future-row {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
 .remote-access-server-loading,
 .remote-access-server-empty {
   align-self: center;
@@ -24144,7 +24226,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .remote-access-server-list {
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: min(420px, calc(100dvh - 360px));
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
