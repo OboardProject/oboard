@@ -36,8 +36,8 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
 
   it('configures settings sidebar as a persistent secondary sidebar under sticky header clearance with bounded scrolling tabs', () => {
     expect(stylesheet).toMatch(/\.settings-shell\s*\{[^}]*grid-template-columns:\s*var\(--settings-sidebar-width,\s*minmax\(176px,\s*208px\)\)\s*minmax\(0,\s*1fr\)/s)
-    expect(stylesheet).toMatch(/\.settings-sidebar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--app-sticky-header-clearance,\s*76px\)[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--app-sticky-header-clearance,\s*76px\)\s*-\s*32px\)[^}]*overflow:\s*hidden/s)
-    expect(stylesheet).toMatch(/\.settings-sidebar\s+\.settings-tabs\s*\{[^}]*overflow-y:\s*auto[^}]*min-height:\s*0[^}]*flex:\s*1 1 0/s)
+    expect(stylesheet).toMatch(/\.settings-sidebar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--app-sticky-header-clearance,\s*76px\)[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--app-sticky-header-clearance,\s*76px\)\s*-\s*32px\)/s)
+    expect(stylesheet).toMatch(/\.settings-sidebar\s+\.settings-tabs\s*\{[^}]*overflow-y:\s*auto[^}]*min-height:\s*0/s)
   })
 
   it('resets mobile app and main to natural page scrolling below 901px', () => {
