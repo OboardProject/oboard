@@ -63,23 +63,16 @@ type RemoteAccessReport struct {
 }
 
 type RemoteAccessLocalAllow struct {
-	RemoteTerminal       bool `json:"remote_terminal"`
-	MCPRemoteOperations  bool `json:"mcp_remote_operations"`
-	MCPStructuredExec    bool `json:"mcp_structured_exec"`
-	MCPRawShell          bool `json:"mcp_raw_shell"`
-	MCPInteractive       bool `json:"mcp_interactive_terminal"`
-	MCPInteractiveLegacy bool `json:"-"` // compat: old JSON may use mcp_interactive_terminal
+	RemoteTerminal bool `json:"remote_terminal"`
+	MCPEnabled     bool `json:"mcp_enabled"`
 }
 
 type ServerRemoteAccessPolicy struct {
-	ServerID                    int64     `json:"server_id"`
-	RemoteTerminalEnabled       bool      `json:"remote_terminal_enabled"`
-	MCPRemoteOperationsEnabled  bool      `json:"mcp_remote_operations_enabled"`
-	MCPStructuredExecEnabled    bool      `json:"mcp_structured_exec_enabled"`
-	MCPRawShellEnabled          bool      `json:"mcp_raw_shell_enabled"`
-	MCPInteractiveEnabled       bool      `json:"mcp_interactive_terminal_enabled"`
-	CreatedAt                   time.Time `json:"created_at"`
-	UpdatedAt                   time.Time `json:"updated_at"`
+	ServerID              int64     `json:"server_id"`
+	RemoteTerminalEnabled bool      `json:"remote_terminal_enabled"`
+	MCPEnabled            bool      `json:"mcp_enabled"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type ServerRemoteAccessStatus struct {

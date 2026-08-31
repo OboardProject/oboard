@@ -53,7 +53,7 @@ func TestRemoteAccessTablesMigrateFromPreviousSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.RemoteTerminalEnabled || policy.MCPRemoteOperationsEnabled || policy.MCPStructuredExecEnabled || policy.MCPRawShellEnabled {
+	if !policy.RemoteTerminalEnabled || policy.MCPEnabled {
 		t.Fatalf("remote control must default on while MCP control defaults off: %#v", policy)
 	}
 	status, err := s.GetServerRemoteAccessStatus(ctx, server.ID)

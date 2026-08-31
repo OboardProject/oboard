@@ -33,26 +33,25 @@ describe('RemoteAccessSettings', () => {
     expect(container.textContent).not.toContain('Raw Shell')
   })
 
-  it('enables remote control when MCP control is enabled', async () => {
+  it('enables MCP control', async () => {
     const request = vi.fn(async () => ({}))
     act(() => root.render(<RemoteAccessSettings
-      data={{ settings: { remote_terminal_enabled: false, mcp_remote_operations_enabled: false, mcp_structured_exec_enabled: false, mcp_raw_shell_enabled: false } }}
+      data={{ settings: { remote_terminal_enabled: false, mcp_enabled: false } }}
       client={{ request }} load={vi.fn(async () => undefined)} notify={vi.fn()}
     />))
 
-    await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="启用 MCP 控制"]')?.click())
+    await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="启用 MCP 远程控制"]')?.click())
 
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="启用远程控制"]')?.checked).toBe(true)
     expect(request).toHaveBeenCalledWith('/settings', {
       method: 'POST',
-      body: JSON.stringify({ mcp_remote_operations_enabled: true }),
+      body: JSON.stringify({ mcp_enabled: true }),
     })
   })
 
   it('loads server policies and applies a bulk remote-control change', async () => {
     const request = vi.fn(async (path: string, init?: RequestInit) => {
-      if (!init) return { remote_access: { server: { remote_terminal_enabled: true, mcp_remote_operations_enabled: false, mcp_structured_exec_enabled: false, mcp_raw_shell_enabled: false } } }
-      return { remote_access: { server: { remote_terminal_enabled: false, mcp_remote_operations_enabled: false, mcp_structured_exec_enabled: false, mcp_raw_shell_enabled: false } } }
+      if (!init) return { remote_access: { server: { remote_terminal_enabled: true, mcp_enabled: false } } }
+      return { remote_access: { server: { remote_terminal_enabled: false, mcp_enabled: false } } }
     })
     act(() => root.render(<RemoteAccessSettings data={{ settings: {}, servers: [{ id: 7, name: '上海节点', status: 'online' }] }} client={{ request }} load={vi.fn()} notify={vi.fn()} />))
 
@@ -70,7 +69,7 @@ describe('RemoteAccessSettings', () => {
 
     expect(request).toHaveBeenCalledWith('/servers/7/remote-access', {
       method: 'PATCH',
-      body: JSON.stringify({ remote_terminal_enabled: false, mcp_remote_operations_enabled: false }),
+      body: JSON.stringify({ remote_terminal_enabled: false }),
     })
   })
 })

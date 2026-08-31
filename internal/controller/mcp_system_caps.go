@@ -146,10 +146,10 @@ func (s *Server) mcpHostAccessCapabilities(ctx context.Context, principal applic
 		return result
 	}
 	return map[string]any{
-		"remote_operations":    state(model.PrivilegeRemoteOperations, settingMCPRemoteOperationsEnabled),
-		"structured_exec":      state(model.PrivilegeRemoteExec, settingMCPStructuredExecEnabled),
-		"raw_shell":            state(model.PrivilegeRemoteShell, settingMCPRawShellEnabled),
-		"interactive_terminal": state(model.PrivilegeRemoteInteractive, settingMCPInteractiveTerminalEnabled),
+		"remote_operations":    state(model.PrivilegeRemoteOperations, settingMCPEnabled),
+		"structured_exec":      state(model.PrivilegeRemoteExec, settingMCPEnabled),
+		"raw_shell":            state(model.PrivilegeRemoteShell, settingMCPEnabled),
+		"interactive_terminal": state(model.PrivilegeRemoteInteractive, settingMCPEnabled),
 	}
 }
 

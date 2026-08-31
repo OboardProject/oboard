@@ -26,7 +26,7 @@ describe('RemoteAccessStatus', () => {
   it('renders per-server switches without a terminal entry', async () => {
     const request = vi.fn(async () => ({
       remote_access: {
-        server: { remote_terminal_enabled: true, mcp_remote_operations_enabled: false, mcp_structured_exec_enabled: false, mcp_raw_shell_enabled: false },
+        server: { remote_terminal_enabled: true, mcp_enabled: false },
         effective: { remote_terminal: true },
         active_terminals: 1,
         unavailable_reasons: [],
@@ -37,8 +37,8 @@ describe('RemoteAccessStatus', () => {
       await Promise.resolve()
     })
 
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="在此服务器启用远程控制"]')?.checked).toBe(true)
-    expect(container.querySelector<HTMLInputElement>('input[aria-label="在此服务器启用 MCP 控制"]')?.checked).toBe(false)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="在此服务器启用Web 终端"]')?.checked).toBe(true)
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="在此服务器启用MCP 远程控制"]')?.checked).toBe(false)
     expect(container.textContent).toContain('活动终端 1 / 2')
     expect(container.textContent).not.toContain('打开终端')
   })

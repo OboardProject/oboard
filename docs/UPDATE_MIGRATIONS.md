@@ -72,6 +72,7 @@
 | `controller-db-20260826-hy2-salamander-presets` | Controller | SQLite seed / data backfill | `dev-c8f4a4dd07dd` | 待发布 | 生效中 | - |
 | `controller-db-20260827-remote-access` | Controller | SQLite schema | `dev-82937c69f06c` | 待发布 | 生效中 | - |
 | `controller-db-20260830-remote-interactive` | Controller | SQLite schema | `dev-61294b2468d3` | 待发布 | 生效中 | - |
+| `controller-db-20260831-mcp-single-switch-stream` | Controller / Web / Agent | SQLite schema / wire protocol / capability | `dev-2d6c2e245ee1` | 待发布 | 生效中 | - |
 | `controller-db-20260828-traffic-ledger-v2` | Controller | SQLite schema / wire protocol | `dev-5fedab310ae8` | 待发布 | 生效中 | - |
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
 | `controller-db-20260830-snell-server-psk` | Controller | SQLite data backfill | `dev-befb1492dc9f` | 待发布 | 生效中 | - |

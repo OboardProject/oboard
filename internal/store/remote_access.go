@@ -13,9 +13,9 @@ import (
 
 func (s *Store) GetServerRemoteAccessPolicy(ctx context.Context, serverID int64) (model.ServerRemoteAccessPolicy, error) {
 	var item model.ServerRemoteAccessPolicy
-	var terminal, operations, exec, shell, interactive int
+	var terminal, mcp int
 	var created, updated string
-	err := s.db.QueryRowContext(ctx, `select server_id,remote_terminal_enabled,mcp_remote_operations_enabled,mcp_structured_exec_enabled,mcp_raw_shell_enabled,coalesce(mcp_interactive_terminal_enabled,0),created_at,updated_at from server_remote_access_policies where server_id=?`, serverID).Scan(&item.ServerID, &terminal, &operations, &exec, &shell, &interactive, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `select server_id,remote_terminal_enabled,mcp_enabled,created_at,updated_at from server_remote_access_policies where server_id=?`, serverID).Scan(&item.ServerID, &terminal, &mcp, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.ServerRemoteAccessPolicy{ServerID: serverID, RemoteTerminalEnabled: true}, nil
 	}
@@ -23,10 +23,7 @@ func (s *Store) GetServerRemoteAccessPolicy(ctx context.Context, serverID int64)
 		return model.ServerRemoteAccessPolicy{}, err
 	}
 	item.RemoteTerminalEnabled = terminal != 0
-	item.MCPRemoteOperationsEnabled = operations != 0
-	item.MCPStructuredExecEnabled = exec != 0
-	item.MCPRawShellEnabled = shell != 0
-	item.MCPInteractiveEnabled = interactive != 0
+	item.MCPEnabled = mcp != 0
 	item.CreatedAt = parseTime(created)
 	item.UpdatedAt = parseTime(updated)
 	return item, nil
@@ -34,7 +31,7 @@ func (s *Store) GetServerRemoteAccessPolicy(ctx context.Context, serverID int64)
 
 func (s *Store) UpsertServerRemoteAccessPolicy(ctx context.Context, policy model.ServerRemoteAccessPolicy) (model.ServerRemoteAccessPolicy, error) {
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into server_remote_access_policies(server_id,remote_terminal_enabled,mcp_remote_operations_enabled,mcp_structured_exec_enabled,mcp_raw_shell_enabled,mcp_interactive_terminal_enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?) on conflict(server_id) do update set remote_terminal_enabled=excluded.remote_terminal_enabled,mcp_remote_operations_enabled=excluded.mcp_remote_operations_enabled,mcp_structured_exec_enabled=excluded.mcp_structured_exec_enabled,mcp_raw_shell_enabled=excluded.mcp_raw_shell_enabled,mcp_interactive_terminal_enabled=excluded.mcp_interactive_terminal_enabled,updated_at=excluded.updated_at`, policy.ServerID, boolInt(policy.RemoteTerminalEnabled), boolInt(policy.MCPRemoteOperationsEnabled), boolInt(policy.MCPStructuredExecEnabled), boolInt(policy.MCPRawShellEnabled), boolInt(policy.MCPInteractiveEnabled), ts, ts)
+	_, err := s.db.ExecContext(ctx, `insert into server_remote_access_policies(server_id,remote_terminal_enabled,mcp_enabled,created_at,updated_at) values(?,?,?, ?,?) on conflict(server_id) do update set remote_terminal_enabled=excluded.remote_terminal_enabled,mcp_enabled=excluded.mcp_enabled,updated_at=excluded.updated_at`, policy.ServerID, boolInt(policy.RemoteTerminalEnabled), boolInt(policy.MCPEnabled), ts, ts)
 	if err != nil {
 		return model.ServerRemoteAccessPolicy{}, err
 	}

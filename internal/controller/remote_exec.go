@@ -88,18 +88,7 @@ func (s *Server) waitRemoteExec(ctx context.Context, principal mcpauth.GrantPrin
 }
 
 func settingKeyForPrivilege(privilege string) string {
-	switch privilege {
-	case model.PrivilegeRemoteOperations:
-		return settingMCPRemoteOperationsEnabled
-	case model.PrivilegeRemoteExec:
-		return settingMCPStructuredExecEnabled
-	case model.PrivilegeRemoteShell:
-		return settingMCPRawShellEnabled
-	case model.PrivilegeRemoteInteractive:
-		return settingMCPInteractiveTerminalEnabled
-	default:
-		return settingMCPStructuredExecEnabled
-	}
+	return settingMCPEnabled
 }
 
 func containsString(items []string, want string) bool {

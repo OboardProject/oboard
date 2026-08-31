@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { Switch } from '../ui/switch'
 import { Dialog } from '../ui/dialog'
 import { StepUpAuth } from '../remote-access/StepUpAuth'
 import type { OAuthGrant, ToastTone } from '../../features/mcp/types'
@@ -36,10 +35,6 @@ export function MCPPrivilegedAccess({
   onClose: () => void
 }) {
   const [current, setCurrent] = useState<PrivilegedAccess | null>(null)
-  const [operations, setOperations] = useState(false)
-  const [exec, setExec] = useState(false)
-  const [shell, setShell] = useState(false)
-  const [interactive, setInteractive] = useState(false)
   const [scope, setScope] = useState<'selected' | 'all'>('selected')
   const [includeFuture, setIncludeFuture] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
@@ -55,11 +50,6 @@ export function MCPPrivilegedAccess({
     ])
     const item = access?.privileged_access as PrivilegedAccess | null
     setCurrent(item)
-    const caps = item?.capabilities || []
-    setOperations(caps.includes('remote_operations'))
-    setExec(caps.includes('remote_exec'))
-    setShell(caps.includes('remote_shell'))
-    setInteractive(caps.includes('remote_interactive'))
     const serverSel = item?.resource_boundary?.resources?.server
     setScope(serverSel?.selection === 'all' ? 'all' : 'selected')
     setIncludeFuture(Boolean(serverSel?.include_future))
@@ -71,12 +61,7 @@ export function MCPPrivilegedAccess({
   useEffect(() => { void load().catch((error: any) => notify(error?.message || '无法读取敏感服务器访问', 'error')) }, [grant.id])
 
   const payload = () => {
-    const capabilities = [
-      operations ? 'remote_operations' : '',
-      exec ? 'remote_exec' : '',
-      shell ? 'remote_shell' : '',
-      interactive ? 'remote_interactive' : '',
-    ].filter(Boolean)
+    const capabilities = ['remote_operations', 'remote_exec', 'remote_shell', 'remote_interactive']
     const expiresAt = ttl === 'until' ? undefined : new Date(Date.now() + ({ '1h': 3600, '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400 }[ttl] * 1000)).toISOString()
     return {
       capabilities,
@@ -135,10 +120,7 @@ export function MCPPrivilegedAccess({
     <>
       <Dialog isOpen onClose={onClose} title={`${grant.client_name || grant.client_id} · 敏感服务器访问`} size="lg">
         <p className="text-pretty text-sm text-muted-foreground">{warning}</p>
-        <div className="switch-form-row" style={{ marginTop: 16 }}><span className="switch-form-label">远程运维</span><Switch checked={operations} onChange={setOperations} ariaLabel="远程运维" /></div>
-        <div className="switch-form-row"><span className="switch-form-label">结构化命令执行</span><Switch checked={exec} onChange={setExec} ariaLabel="结构化命令执行" /></div>
-        <div className="switch-form-row"><span className="switch-form-label">原始 Shell</span><Switch checked={shell} onChange={setShell} ariaLabel="原始 Shell" /></div>
-        <div className="switch-form-row"><span className="switch-form-label">交互式终端</span><Switch checked={interactive} onChange={setInteractive} ariaLabel="交互式终端" /><span className="text-xs text-muted-foreground" style={{ marginLeft: 8 }}>{interactiveWarning}</span></div>
+        <p className="text-xs text-muted-foreground" style={{ marginTop: 8 }}>{interactiveWarning}</p>
         <fieldset className="mt-4">
           <legend>服务器范围</legend>
           <label className="switch-form-row"><input type="radio" checked={scope === 'selected'} onChange={() => setScope('selected')} />指定服务器</label>

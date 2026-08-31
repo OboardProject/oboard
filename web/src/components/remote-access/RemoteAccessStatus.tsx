@@ -61,10 +61,7 @@ export function RemoteAccessStatus({
 
   const caps: Array<{ key: string; label: string; global: boolean; server: boolean; effective: boolean; patchKey: string }> = [
     { key: 'remote_terminal', label: 'Web 终端', global: Boolean(view.global?.remote_terminal_enabled), server: Boolean(view.server?.remote_terminal_enabled), effective: Boolean(view.effective?.remote_terminal), patchKey: 'remote_terminal_enabled' },
-    { key: 'operations', label: 'MCP 操作', global: Boolean(view.global?.mcp_remote_operations_enabled), server: Boolean(view.server?.mcp_remote_operations_enabled), effective: Boolean(view.effective?.mcp_remote_operations), patchKey: 'mcp_remote_operations_enabled' },
-    { key: 'exec', label: 'MCP 执行', global: Boolean(view.global?.mcp_structured_exec_enabled), server: Boolean(view.server?.mcp_structured_exec_enabled), effective: Boolean(view.effective?.mcp_structured_exec), patchKey: 'mcp_structured_exec_enabled' },
-    { key: 'shell', label: 'MCP Shell', global: Boolean(view.global?.mcp_raw_shell_enabled), server: Boolean(view.server?.mcp_raw_shell_enabled), effective: Boolean(view.effective?.mcp_raw_shell), patchKey: 'mcp_raw_shell_enabled' },
-    { key: 'interactive', label: 'MCP 终端', global: Boolean(view.global?.mcp_interactive_terminal_enabled), server: Boolean(view.server?.mcp_interactive_terminal_enabled), effective: Boolean(view.effective?.mcp_interactive_terminal), patchKey: 'mcp_interactive_terminal_enabled' },
+    { key: 'mcp', label: 'MCP 远程控制', global: Boolean(view.global?.mcp_enabled), server: Boolean(view.server?.mcp_enabled), effective: Boolean(view.effective?.mcp_enabled), patchKey: 'mcp_enabled' },
   ]
 
   return (
@@ -100,11 +97,7 @@ export function RemoteAccessStatus({
               const agentGate = (() => {
                 if (view.agent?.local_mode !== 'hardened') return true
                 if (cap.key === 'remote_terminal') return Boolean(view.agent?.local_allow?.remote_terminal)
-                if (cap.key === 'operations') return Boolean(view.agent?.local_allow?.mcp_remote_operations)
-                if (cap.key === 'exec') return Boolean(view.agent?.local_allow?.mcp_structured_exec)
-                if (cap.key === 'shell') return Boolean(view.agent?.local_allow?.mcp_raw_shell)
-                if (cap.key === 'interactive') return Boolean(view.agent?.local_allow?.mcp_interactive_terminal)
-                return true
+                return Boolean(view.agent?.local_allow?.mcp_enabled)
               })()
               const agentEffective = agentCap && agentGate
               return (

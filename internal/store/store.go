@@ -530,7 +530,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_ssh_password_deployments_user on ssh_password_deployments(user_id, server_id)`,
 		`create index if not exists idx_connection_presence_events_time on connection_presence_events(event_at, user_id)`,
 		`create index if not exists idx_connection_presence_states_user on connection_presence_states(user_id, last_event_at)`,
-		`create table if not exists server_remote_access_policies (server_id integer primary key references servers(id) on delete cascade, remote_terminal_enabled integer not null default 1, mcp_remote_operations_enabled integer not null default 0, mcp_structured_exec_enabled integer not null default 0, mcp_raw_shell_enabled integer not null default 0, mcp_interactive_terminal_enabled integer not null default 0, created_at text not null, updated_at text not null)`,
+		`create table if not exists server_remote_access_policies (server_id integer primary key references servers(id) on delete cascade, remote_terminal_enabled integer not null default 1, mcp_enabled integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists server_remote_access_status (server_id integer primary key references servers(id) on delete cascade, capabilities_json text not null default '[]', local_mode text not null default 'standard', local_allow_json text not null default '{}', updated_at text not null)`,
 		`create table if not exists mcp_privileged_grants (id integer primary key autoincrement, oauth_grant_id text not null unique references oauth_grants(id) on delete cascade, oauth_client_id text not null, authorized_user_id integer not null references users(id) on delete cascade, capabilities_json text not null default '[]', resource_boundary_json text not null default '{}', expires_at text, revoked_at text, created_by_user_id integer not null references users(id) on delete restrict, created_at text not null, updated_at text not null, last_step_up_at text, revision integer not null default 1)`,
 		`create index if not exists idx_mcp_privileged_grants_client on mcp_privileged_grants(oauth_client_id,authorized_user_id)`,
@@ -848,7 +848,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureColumn(ctx, "servers", "port_policy_revision", `alter table servers add column port_policy_revision integer not null default 1`); err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "server_remote_access_policies", "mcp_interactive_terminal_enabled", `alter table server_remote_access_policies add column mcp_interactive_terminal_enabled integer not null default 0`); err != nil {
+	if err := s.ensureColumn(ctx, "server_remote_access_policies", "mcp_enabled", `alter table server_remote_access_policies add column mcp_enabled integer not null default 0`); err != nil {
 		return err
 	}
 	if err := s.migrateConfigurationRevisionTriggers(ctx); err != nil {

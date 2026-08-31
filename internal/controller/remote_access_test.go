@@ -37,13 +37,11 @@ func TestStepUpTokenCannotBeReusedOrCrossPurpose(t *testing.T) {
 }
 
 func TestNormalizeRemoteAccessSwitchesEnforcesMCPDependency(t *testing.T) {
-	// After fix, MCP switches are independent of human terminal and of each other.
 	on, off := true, false
 	remote, mcp, err := normalizeRemoteAccessSwitches(&on, &on, nil, nil)
 	if err != nil || remote == nil || !*remote || mcp == nil || !*mcp {
 		t.Fatalf("normalize with on must preserve on: remote=%v mcp=%v err=%v", remote, mcp, err)
 	}
-	// Disabling remote terminal must NOT affect MCP independently
 	remote, mcp, err = normalizeRemoteAccessSwitches(&off, nil, nil, nil)
 	if err != nil || remote == nil || *remote {
 		t.Fatalf("remote off should stay off: remote=%v err=%v", remote, err)
@@ -51,16 +49,11 @@ func TestNormalizeRemoteAccessSwitchesEnforcesMCPDependency(t *testing.T) {
 	if mcp != nil {
 		t.Fatalf("mcp should remain nil when not provided: mcp=%v", mcp)
 	}
-	// Split MCP values must be allowed (independent)
 	if _, _, err := normalizeRemoteAccessSwitches(&on, &on, &off, &on); err != nil {
 		t.Fatalf("split MCP control values must be allowed independently: %v", err)
 	}
-	// Verify independence via actual policy patch: each switch independent
 	patch := RemoteAccessPolicyPatch{
-		MCPRemoteOperationsEnabled: &on,
-		MCPStructuredExecEnabled:   &off,
-		MCPRawShellEnabled:         &on,
-		MCPInteractiveEnabled:      &off,
+		MCPEnabled: &on,
 	}
 	if err := normalizeRemoteAccessPatch(patch); err != nil {
 		t.Fatalf("independent patch must be valid: %v", err)
@@ -79,8 +72,8 @@ func TestRemoteAccessDefaults(t *testing.T) {
 	if settings[settingRemoteTerminalEnabled] != true || settings[settingRemoteTerminalPasswordConfirmationEnabled] != true {
 		t.Fatalf("remote control and password confirmation must default on: %#v", settings)
 	}
-	if settings[settingMCPRemoteOperationsEnabled] != false || settings[settingMCPStructuredExecEnabled] != false || settings[settingMCPRawShellEnabled] != false || settings[settingMCPInteractiveTerminalEnabled] != false {
-		t.Fatalf("MCP controls must default off: %#v", settings)
+	if settings[settingMCPEnabled] != false {
+		t.Fatalf("MCP control must default off: %#v", settings)
 	}
 }
 

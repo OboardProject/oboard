@@ -16,22 +16,15 @@ import (
 const (
 	settingRemoteTerminalEnabled                     = "remote_terminal_enabled"
 	settingRemoteTerminalPasswordConfirmationEnabled = "remote_terminal_password_confirmation_enabled"
-	settingMCPRemoteOperationsEnabled                = "mcp_remote_operations_enabled"
-	settingMCPStructuredExecEnabled                  = "mcp_structured_exec_enabled"
-	settingMCPRawShellEnabled                        = "mcp_raw_shell_enabled"
-	settingMCPInteractiveTerminalEnabled             = "mcp_interactive_terminal_enabled"
+	settingMCPEnabled                                = "mcp_enabled"
 )
 
 type remoteAccessView struct {
 	Global    RemoteAccessGlobalPolicy       `json:"global"`
 	Server    model.ServerRemoteAccessPolicy `json:"server"`
 	Effective struct {
-		RemoteTerminal       bool `json:"remote_terminal"`
-		MCPRemoteOperations  bool `json:"mcp_remote_operations"`
-		MCPStructuredExec    bool `json:"mcp_structured_exec"`
-		MCPRawShell          bool `json:"mcp_raw_shell"`
-		MCPInteractive       bool `json:"mcp_interactive_terminal"`
-		MCPInteractiveLegacy bool `json:"mcp_interactive_terminal_legacy,omitempty"`
+		RemoteTerminal bool `json:"remote_terminal"`
+		MCPEnabled     bool `json:"mcp_enabled"`
 	} `json:"effective"`
 	Agent           model.ServerRemoteAccessStatus `json:"agent"`
 	Reasons         []string                       `json:"unavailable_reasons,omitempty"`
@@ -39,19 +32,13 @@ type remoteAccessView struct {
 }
 
 type RemoteAccessGlobalPolicy struct {
-	RemoteTerminalEnabled       bool `json:"remote_terminal_enabled"`
-	MCPRemoteOperationsEnabled  bool `json:"mcp_remote_operations_enabled"`
-	MCPStructuredExecEnabled    bool `json:"mcp_structured_exec_enabled"`
-	MCPRawShellEnabled          bool `json:"mcp_raw_shell_enabled"`
-	MCPInteractiveEnabled       bool `json:"mcp_interactive_terminal_enabled"`
+	RemoteTerminalEnabled bool `json:"remote_terminal_enabled"`
+	MCPEnabled            bool `json:"mcp_enabled"`
 }
 
 type RemoteAccessPolicyPatch struct {
-	RemoteTerminalEnabled      *bool `json:"remote_terminal_enabled"`
-	MCPRemoteOperationsEnabled *bool `json:"mcp_remote_operations_enabled"`
-	MCPStructuredExecEnabled   *bool `json:"mcp_structured_exec_enabled"`
-	MCPRawShellEnabled         *bool `json:"mcp_raw_shell_enabled"`
-	MCPInteractiveEnabled      *bool `json:"mcp_interactive_terminal_enabled"`
+	RemoteTerminalEnabled *bool `json:"remote_terminal_enabled"`
+	MCPEnabled            *bool `json:"mcp_enabled"`
 }
 
 func (s *Server) globalRemoteAccessPolicy(r *http.Request) RemoteAccessGlobalPolicy {
@@ -61,11 +48,8 @@ func (s *Server) globalRemoteAccessPolicy(r *http.Request) RemoteAccessGlobalPol
 
 func globalRemoteAccessPolicyFromSettings(settings map[string]string) RemoteAccessGlobalPolicy {
 	return RemoteAccessGlobalPolicy{
-		RemoteTerminalEnabled:      settingBool(settings, settingRemoteTerminalEnabled, true),
-		MCPRemoteOperationsEnabled: settingBool(settings, settingMCPRemoteOperationsEnabled, false),
-		MCPStructuredExecEnabled:   settingBool(settings, settingMCPStructuredExecEnabled, false),
-		MCPRawShellEnabled:         settingBool(settings, settingMCPRawShellEnabled, false),
-		MCPInteractiveEnabled:      settingBool(settings, settingMCPInteractiveTerminalEnabled, false),
+		RemoteTerminalEnabled: settingBool(settings, settingRemoteTerminalEnabled, true),
+		MCPEnabled:            settingBool(settings, settingMCPEnabled, false),
 	}
 }
 
@@ -108,17 +92,8 @@ func (s *Server) serverRemoteAccess(w http.ResponseWriter, r *http.Request, serv
 		if req.RemoteTerminalEnabled != nil {
 			policy.RemoteTerminalEnabled = *req.RemoteTerminalEnabled
 		}
-		if req.MCPRemoteOperationsEnabled != nil {
-			policy.MCPRemoteOperationsEnabled = *req.MCPRemoteOperationsEnabled
-		}
-		if req.MCPStructuredExecEnabled != nil {
-			policy.MCPStructuredExecEnabled = *req.MCPStructuredExecEnabled
-		}
-		if req.MCPRawShellEnabled != nil {
-			policy.MCPRawShellEnabled = *req.MCPRawShellEnabled
-		}
-		if req.MCPInteractiveEnabled != nil {
-			policy.MCPInteractiveEnabled = *req.MCPInteractiveEnabled
+		if req.MCPEnabled != nil {
+			policy.MCPEnabled = *req.MCPEnabled
 		}
 		policy.ServerID = serverID
 		saved, err := s.store.UpsertServerRemoteAccessPolicy(r.Context(), policy)
@@ -150,10 +125,7 @@ func (s *Server) remoteAccessView(r *http.Request, server *model.Server) (remote
 	global := s.globalRemoteAccessPolicy(r)
 	view := remoteAccessView{Global: global, Server: policy, Agent: status, ActiveTerminals: s.terminalHub.countForServer(server.ID)}
 	view.Effective.RemoteTerminal = global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled
-	view.Effective.MCPRemoteOperations = global.MCPRemoteOperationsEnabled && policy.MCPRemoteOperationsEnabled
-	view.Effective.MCPStructuredExec = global.MCPStructuredExecEnabled && policy.MCPStructuredExecEnabled
-	view.Effective.MCPRawShell = global.MCPRawShellEnabled && policy.MCPRawShellEnabled
-	view.Effective.MCPInteractive = global.MCPInteractiveEnabled && policy.MCPInteractiveEnabled
+	view.Effective.MCPEnabled = global.MCPEnabled && policy.MCPEnabled
 	view.Reasons = s.remoteAccessUnavailableReasons(server, view, "remote_terminal")
 	return view, nil
 }
@@ -177,68 +149,24 @@ func (s *Server) remoteAccessUnavailableReasons(server *model.Server, view remot
 		if view.Agent.LocalMode == model.RemoteAccessModeHardened && !view.Agent.LocalAllow.RemoteTerminal {
 			reasons = append(reasons, "agent_local_gate_denied")
 		}
-	case "mcp_remote_operations", "remote_operations":
-		if !view.Global.MCPRemoteOperationsEnabled {
+	case "mcp_remote_operations", "remote_operations", "mcp_structured_exec", "remote_exec", "structured_exec", "mcp_raw_shell", "remote_shell", "raw_shell", "mcp_interactive_terminal", "remote_interactive", "interactive_terminal":
+		if !view.Global.MCPEnabled {
 			reasons = append(reasons, "remote_access_global_disabled")
 		}
-		if !view.Server.MCPRemoteOperationsEnabled {
+		if !view.Server.MCPEnabled {
 			reasons = append(reasons, "remote_access_server_disabled")
 		}
 		if server.Status != model.ServerOnline {
 			reasons = append(reasons, "agent_offline")
 		}
-		if !slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityExec) {
+		requiredCap := model.RemoteAccessCapabilityExec
+		if feature == "mcp_interactive_terminal" || feature == "remote_interactive" || feature == "interactive_terminal" {
+			requiredCap = model.RemoteAccessCapabilityInteractiveMCP
+		}
+		if !slices.Contains(view.Agent.Capabilities, requiredCap) {
 			reasons = append(reasons, "agent_upgrade_required")
 		}
-		if view.Agent.LocalMode == model.RemoteAccessModeHardened && !view.Agent.LocalAllow.MCPRemoteOperations {
-			reasons = append(reasons, "agent_local_gate_denied")
-		}
-	case "mcp_structured_exec", "remote_exec", "structured_exec":
-		if !view.Global.MCPStructuredExecEnabled {
-			reasons = append(reasons, "remote_access_global_disabled")
-		}
-		if !view.Server.MCPStructuredExecEnabled {
-			reasons = append(reasons, "remote_access_server_disabled")
-		}
-		if server.Status != model.ServerOnline {
-			reasons = append(reasons, "agent_offline")
-		}
-		if !slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityExec) {
-			reasons = append(reasons, "agent_upgrade_required")
-		}
-		if view.Agent.LocalMode == model.RemoteAccessModeHardened && !view.Agent.LocalAllow.MCPStructuredExec {
-			reasons = append(reasons, "agent_local_gate_denied")
-		}
-	case "mcp_raw_shell", "remote_shell", "raw_shell":
-		if !view.Global.MCPRawShellEnabled {
-			reasons = append(reasons, "remote_access_global_disabled")
-		}
-		if !view.Server.MCPRawShellEnabled {
-			reasons = append(reasons, "remote_access_server_disabled")
-		}
-		if server.Status != model.ServerOnline {
-			reasons = append(reasons, "agent_offline")
-		}
-		if !slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityExec) {
-			reasons = append(reasons, "agent_upgrade_required")
-		}
-		if view.Agent.LocalMode == model.RemoteAccessModeHardened && !view.Agent.LocalAllow.MCPRawShell {
-			reasons = append(reasons, "agent_local_gate_denied")
-		}
-	case "mcp_interactive_terminal", "remote_interactive", "interactive_terminal":
-		if !view.Global.MCPInteractiveEnabled {
-			reasons = append(reasons, "remote_access_global_disabled")
-		}
-		if !view.Server.MCPInteractiveEnabled {
-			reasons = append(reasons, "remote_access_server_disabled")
-		}
-		if server.Status != model.ServerOnline {
-			reasons = append(reasons, "agent_offline")
-		}
-		if !slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityInteractiveMCP) {
-			reasons = append(reasons, "agent_upgrade_required")
-		}
-		if view.Agent.LocalMode == model.RemoteAccessModeHardened && !view.Agent.LocalAllow.MCPInteractive {
+		if view.Agent.LocalMode == model.RemoteAccessModeHardened && !view.Agent.LocalAllow.MCPEnabled {
 			reasons = append(reasons, "agent_local_gate_denied")
 		}
 	default:
@@ -306,33 +234,12 @@ func (s *Server) assertRemotePrivilegeAllowed(ctx context.Context, server *model
 			return codedError("agent_local_gate_denied", "agent local security policy denied this operation")
 		}
 		return nil
-	case model.PrivilegeRemoteOperations, "mcp_remote_operations":
-		if !global.MCPRemoteOperationsEnabled {
-			return codedError("remote_access_global_disabled", "MCP remote operations are globally disabled")
+	case model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive, "mcp_remote_operations", "mcp_structured_exec", "mcp_raw_shell", "mcp_interactive_terminal":
+		if !global.MCPEnabled {
+			return codedError("remote_access_global_disabled", "MCP 远程控制已关闭")
 		}
-		if !policy.MCPRemoteOperationsEnabled {
-			return codedError("remote_access_server_disabled", "MCP remote operations are disabled on this server")
-		}
-	case model.PrivilegeRemoteExec, "mcp_structured_exec":
-		if !global.MCPStructuredExecEnabled {
-			return codedError("remote_access_global_disabled", "structured exec is globally disabled")
-		}
-		if !policy.MCPStructuredExecEnabled {
-			return codedError("remote_access_server_disabled", "structured exec is disabled on this server")
-		}
-	case model.PrivilegeRemoteShell, "mcp_raw_shell":
-		if !global.MCPRawShellEnabled {
-			return codedError("remote_access_global_disabled", "raw shell is globally disabled")
-		}
-		if !policy.MCPRawShellEnabled {
-			return codedError("remote_access_server_disabled", "raw shell is disabled on this server")
-		}
-	case model.PrivilegeRemoteInteractive, "mcp_interactive_terminal":
-		if !global.MCPInteractiveEnabled {
-			return codedError("remote_access_global_disabled", "interactive terminal is globally disabled")
-		}
-		if !policy.MCPInteractiveEnabled {
-			return codedError("remote_access_server_disabled", "interactive terminal is disabled on this server")
+		if !policy.MCPEnabled {
+			return codedError("remote_access_server_disabled", "该服务器的 MCP 远程控制已关闭")
 		}
 	}
 	// Common checks for MCP privileges
@@ -350,21 +257,8 @@ func (s *Server) assertRemotePrivilegeAllowed(ctx context.Context, server *model
 				return codedError("agent_upgrade_required", "agent does not advertise remote_interactive_mcp_v1")
 			}
 		}
-		if status.LocalMode == model.RemoteAccessModeHardened {
-			allowed := false
-			switch privilege {
-			case model.PrivilegeRemoteOperations, "mcp_remote_operations":
-				allowed = status.LocalAllow.MCPRemoteOperations
-			case model.PrivilegeRemoteExec, "mcp_structured_exec":
-				allowed = status.LocalAllow.MCPStructuredExec
-			case model.PrivilegeRemoteShell, "mcp_raw_shell":
-				allowed = status.LocalAllow.MCPRawShell
-			case model.PrivilegeRemoteInteractive, "mcp_interactive_terminal":
-				allowed = status.LocalAllow.MCPInteractive
-			}
-			if !allowed {
-				return codedError("agent_local_gate_denied", "agent local security policy denied this operation")
-			}
+		if status.LocalMode == model.RemoteAccessModeHardened && !status.LocalAllow.MCPEnabled {
+			return codedError("agent_local_gate_denied", "agent local security policy denied this operation")
 		}
 	}
 	return nil
@@ -510,33 +404,12 @@ var _ = mcpauth.ResourceBoundary{}
 func assertRemotePrivilegeAllowedFromSettings(settings map[string]string, policy model.ServerRemoteAccessPolicy, status model.ServerRemoteAccessStatus, server *model.Server, privilege string) error {
 	global := globalRemoteAccessPolicyFromSettings(settings)
 	switch privilege {
-	case model.PrivilegeRemoteInteractive:
-		if !global.MCPInteractiveEnabled {
-			return codedError("remote_access_global_disabled", "interactive terminal is globally disabled")
+	case model.PrivilegeRemoteInteractive, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteOperations:
+		if !global.MCPEnabled {
+			return codedError("remote_access_global_disabled", "MCP 远程控制已关闭")
 		}
-		if !policy.MCPInteractiveEnabled {
-			return codedError("remote_access_server_disabled", "interactive terminal is disabled on this server")
-		}
-	case model.PrivilegeRemoteExec:
-		if !global.MCPStructuredExecEnabled {
-			return codedError("remote_access_global_disabled", "structured exec is globally disabled")
-		}
-		if !policy.MCPStructuredExecEnabled {
-			return codedError("remote_access_server_disabled", "structured exec is disabled on this server")
-		}
-	case model.PrivilegeRemoteShell:
-		if !global.MCPRawShellEnabled {
-			return codedError("remote_access_global_disabled", "raw shell is globally disabled")
-		}
-		if !policy.MCPRawShellEnabled {
-			return codedError("remote_access_server_disabled", "raw shell is disabled on this server")
-		}
-	case model.PrivilegeRemoteOperations:
-		if !global.MCPRemoteOperationsEnabled {
-			return codedError("remote_access_global_disabled", "MCP remote operations are globally disabled")
-		}
-		if !policy.MCPRemoteOperationsEnabled {
-			return codedError("remote_access_server_disabled", "MCP remote operations are disabled on this server")
+		if !policy.MCPEnabled {
+			return codedError("remote_access_server_disabled", "该服务器的 MCP 远程控制已关闭")
 		}
 	}
 	return nil

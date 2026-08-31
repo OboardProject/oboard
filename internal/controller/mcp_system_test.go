@@ -35,9 +35,9 @@ func TestSettingsCapabilities(t *testing.T) {
 	if _, err := db.ClaimSubscriptionRelayEnrollment(ctx, security.HashSecret("enroll-token"), security.HashSecret("relay-token"), enrolledRelay); err != nil {
 		t.Fatal(err)
 	}
-	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_remote_operations_enabled": true, "remote_terminal_password_confirmation_enabled": false}})
+	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "traffic_enforcement_mode": "reject_new", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_enabled": true, "remote_terminal_password_confirmation_enabled": false}})
 	changed, err := server.settingsUpdateCandidate(ctx, updateInput, false)
-	if err != nil || !containsString(changed, settingMCPRemoteOperationsEnabled) {
+	if err != nil || !containsString(changed, settingMCPEnabled) {
 		t.Fatalf("MCP control must report its change: changed=%v err=%v", changed, err)
 	}
 	if containsString(changed, settingRemoteTerminalEnabled) {
@@ -48,11 +48,10 @@ func TestSettingsCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPRemoteOperationsEnabled] != "true" || settings[settingRemoteTerminalPasswordConfirmationEnabled] != "false" {
+	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["traffic_enforcement_mode"] != "reject_new" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPEnabled] != "true" || settings[settingRemoteTerminalPasswordConfirmationEnabled] != "false" {
 		t.Fatalf("settings not applied: %#v", settings)
 	}
-	// Ensure independent: other MCP flags remain not true
-	if settings[settingMCPStructuredExecEnabled] == "true" || settings[settingMCPRawShellEnabled] == "true" || settings[settingMCPInteractiveTerminalEnabled] == "true" {
+	if settings[settingMCPEnabled] != "true" {
 		t.Fatalf("independent MCP flags were incorrectly enabled together: %#v", settings)
 	}
 	invalidInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "http://subscriptions.example.com"}})

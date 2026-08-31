@@ -108,10 +108,10 @@ func TestHermesStableTerminalToolsAuthorizeWithoutRelist(t *testing.T) {
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetSetting(ctx, settingMCPInteractiveTerminalEnabled, "true"); err != nil {
+	if err := db.SetSetting(ctx, settingMCPEnabled, "true"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPInteractiveEnabled: true}); err != nil {
+	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertServerRemoteAccessStatus(ctx, node.ID, model.RemoteAccessReport{
@@ -173,18 +173,18 @@ func TestHermesStableTerminalToolsAuthorizeWithoutRelist(t *testing.T) {
 			t.Fatalf("terminal denial %s = %s", code, body)
 		}
 	}
-	if err := db.SetSetting(ctx, settingMCPInteractiveTerminalEnabled, "false"); err != nil {
+	if err := db.SetSetting(ctx, settingMCPEnabled, "false"); err != nil {
 		t.Fatal(err)
 	}
 	assertOpenDenied("remote_access_global_disabled")
-	if err := db.SetSetting(ctx, settingMCPInteractiveTerminalEnabled, "true"); err != nil {
+	if err := db.SetSetting(ctx, settingMCPEnabled, "true"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	assertOpenDenied("remote_access_server_disabled")
-	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPInteractiveEnabled: true}); err != nil {
+	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertServerRemoteAccessStatus(ctx, node.ID, model.RemoteAccessReport{Capabilities: []string{model.RemoteAccessCapabilityTerminalLoginEnv}, LocalMode: model.RemoteAccessModeStandard}); err != nil {
@@ -330,10 +330,10 @@ func TestServerTerminalCommandUsesMCPLoginPTY(t *testing.T) {
 	if err := db.CreateServer(ctx, node); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetSetting(ctx, settingMCPInteractiveTerminalEnabled, "true"); err != nil {
+	if err := db.SetSetting(ctx, settingMCPEnabled, "true"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPInteractiveEnabled: true}); err != nil {
+	if _, err := db.UpsertServerRemoteAccessPolicy(ctx, model.ServerRemoteAccessPolicy{ServerID: node.ID, RemoteTerminalEnabled: true, MCPEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.UpsertServerRemoteAccessStatus(ctx, node.ID, model.RemoteAccessReport{Capabilities: []string{model.RemoteAccessCapabilityInteractiveMCP, model.RemoteAccessCapabilityTerminalLoginEnv}, LocalMode: model.RemoteAccessModeStandard}); err != nil {

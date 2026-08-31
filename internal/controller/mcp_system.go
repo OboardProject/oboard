@@ -292,7 +292,7 @@ var settingsAutomationFields = map[string]bool{
 	"agent_update_max_concurrency":          true,
 	"managed_update_startup_quiet_seconds": true,
 	"registration_enabled":    true,
-	"remote_terminal_enabled": true, "mcp_remote_operations_enabled": true, "mcp_structured_exec_enabled": true, "mcp_raw_shell_enabled": true, "mcp_interactive_terminal_enabled": true,
+	"remote_terminal_enabled": true, "mcp_enabled": true,
 	"remote_terminal_password_confirmation_enabled": true,
 }
 
@@ -706,7 +706,7 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 			return nil, err
 		}
 	}
-	for _, key := range []string{settingRemoteTerminalEnabled, settingMCPRemoteOperationsEnabled, settingMCPStructuredExecEnabled, settingMCPRawShellEnabled, settingMCPInteractiveTerminalEnabled} {
+	for _, key := range []string{settingRemoteTerminalEnabled, settingMCPEnabled} {
 		if value, ok := fields[key]; ok {
 			var enabled bool
 			if err := json.Unmarshal(value, &enabled); err != nil {
