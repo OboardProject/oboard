@@ -764,7 +764,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	}
 	for _, stmt := range []string{
 		`create index if not exists idx_oauth_grants_user_client on oauth_grants(user_id,client_id,created_at desc)`,
-		`create unique index if not exists idx_oauth_grants_live_authorization on oauth_grants(client_id,user_id,resource_key) where revoked_at is null and status in ('active','needs_reconsent')`,
 		`create index if not exists idx_oauth_access_grant on oauth_access_tokens(grant_id,expires_at)`,
 		`create index if not exists idx_oauth_refresh_grant on oauth_refresh_tokens(grant_id,family_id)`,
 	} {

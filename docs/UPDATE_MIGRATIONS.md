@@ -77,8 +77,29 @@
 | `controller-db-20260829-plan-reconcile` | Controller | SQLite schema / runtime | `dev-a994c031245a` | 待发布 | 生效中 | - |
 | `controller-db-20260830-snell-server-psk` | Controller | SQLite data backfill | `dev-befb1492dc9f` | 待发布 | 生效中 | - |
 | `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-c4c3e44e42d9` | 待发布 | 生效中 | - |
+| `controller-db-20260901-oauth-grant-dedupe` | Controller | SQLite schema / data backfill | `dev-8d86ca5fdbb4` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### controller-db-20260901-oauth-grant-dedupe
+
+- **引入日期：** 2026-09-01
+- **引入提交：** `OboardProject/oboard@8d86ca5fdbb4c77a6867805ff5faa04e3395ca25`
+- **引入版本：** `dev-8d86ca5fdbb4`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/controller`、Web
+- **类别：** SQLite schema / data backfill
+- **原因：** 旧 OAuth 授权每次重新登录都会插入新的 live `oauth_grants` 行，导致同一 `(client_id,user_id,resource_key='mcp')` 出现多条未撤销记录；新模型要求 live grant 唯一，并复用单条授权。
+- **源状态：** `oauth_grants` 已含 `resource_key`、`last_authorized_at` 等 v2 列，但不存在 `idx_oauth_grants_live_authorization`；同一 MCP 客户端与用户对有多条 `revoked_at is null` 且 `status in ('active','needs_reconsent')` 的行。
+- **目标状态：** 每个 live `(client_id,user_id,resource_key)` 仅保留一条 canonical grant；其余重复行标记 `revoked` 并迁移 token 引用；存在 partial unique index `idx_oauth_grants_live_authorization`。
+- **实现位置：** `oboard/internal/store/store.go` 的 `Store.migrate`、`oauth_grant_dedupe.go`、`oauth_rebuild.go`
+- **更新脚本：** 无专用脚本；Controller `Open()` 依次执行 `BackfillOAuthGrantAuthorizationFields`、`MigrateOAuthGrantDedupe`、`EnsureOAuthGrantLiveUniqueIndex`。唯一索引必须在 dedupe 之后创建，不得在 dedupe 之前尝试建索引。
+- **数据影响：** 合并重复 live grant；非 canonical 行的 refresh/access token 改指向 canonical grant；重复 grant 上的 live privileged grant 撤销；不删除 OAuth 客户端或用户。
+- **重复执行：** `system.oauth_grant_dedupe_done=1` 跳过后续 dedupe；索引使用 `IF NOT EXISTS`；已撤销重复行不会再次参与分组。
+- **失败行为：** dedupe 或唯一索引创建失败会阻止 Controller 启动；不会部分留下“已建索引但未合并”的状态（索引创建在 dedupe 成功之后）。
+- **回归测试：** `TestMigrateOAuthGrantDedupeIsIdempotent`、`TestOpenMigratesDuplicateOAuthGrantsBeforeLiveUniqueIndex`
+- **移除条件：** 最老直接升级版本与可恢复备份均已包含唯一索引且不再可能出现 live 重复 grant；`AuthorizeOAuthClient` 已强制复用 canonical grant。
+- **移除状态：** 生效中
 
 ### controller-db-20260830-snell-server-psk
 

@@ -104,3 +104,76 @@ func TestMigrateOAuthGrantDedupeIsIdempotent(t *testing.T) {
 		t.Fatalf("refresh grant=%s, want %s", refreshGrantID, canonicalID)
 	}
 }
+
+func TestOpenMigratesDuplicateOAuthGrantsBeforeLiveUniqueIndex(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oauth-upgrade.sqlite")
+
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := &model.OAuthClient{ID: "oc_upgrade", Name: "Hermes", RedirectURIs: []string{"http://127.0.0.1/callback"}, IdentityType: "preregistered", ClientMetadata: json.RawMessage(`{}`), Enabled: true}
+	if err := first.CreateOAuthClient(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+
+	userID := int64(1)
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := raw.ExecContext(ctx, `insert into users(id,username,password_hash,role,status,proxy_uuid,proxy_password,subscription_token,created_at,updated_at) values(1,'noxsk','hash','admin','active','00000000-0000-4000-8000-000000000001','pw','sub',?,?)`, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `drop index if exists idx_oauth_grants_live_authorization`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `delete from app_settings where key=?`, oauthGrantDedupeSetting); err != nil {
+		t.Fatal(err)
+	}
+
+	seedDuplicate := func(id, principalID, profileID string) {
+		t.Helper()
+		if _, err := raw.ExecContext(ctx, `insert into api_principals(id,owner_user_id,name,type,enabled,scopes_json,resource_filter_json,allowed_cidrs_json,rate_limit_per_minute,max_concurrency,created_at,updated_at) values(?,1,?, 'oauth',1,'[]','{}','[]',120,4,?,?)`, principalID, id, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, `insert into oauth_approval_profiles(id,name,auto_approve_risk,created_at,updated_at) values(?,?,3,?,?)`, profileID, id, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := raw.ExecContext(ctx, `insert into oauth_grants(id,client_id,user_id,principal_id,access_level,resource_boundary_v2_json,approval_profile_id,offline_access,policy_version,role_version,consent_version,status,resource_key,created_at,last_authorized_at) values(?,?,?,?, 'operate','{}',?,1,1,1,2,'active','mcp',?,?)`, id, client.ID, userID, principalID, profileID, ts, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedDuplicate("grt_old_a", "oauth_old_a", "oap_old_a")
+	seedDuplicate("grt_old_b", "oauth_old_b", "oap_old_b")
+
+	second, err := Open(path)
+	if err != nil {
+		t.Fatalf("open after legacy duplicate oauth grants: %v", err)
+	}
+	defer second.Close()
+
+	var indexCount int
+	if err := second.db.QueryRowContext(ctx, `select count(*) from sqlite_master where type='index' and name='idx_oauth_grants_live_authorization'`).Scan(&indexCount); err != nil {
+		t.Fatal(err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("live authorization index count=%d, want 1", indexCount)
+	}
+
+	var activeCount int
+	if err := second.db.QueryRowContext(ctx, `select count(*) from oauth_grants where client_id=? and user_id=? and resource_key='mcp' and revoked_at is null and status in ('active','needs_reconsent')`, client.ID, userID).Scan(&activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("active grants=%d, want 1", activeCount)
+	}
+}
