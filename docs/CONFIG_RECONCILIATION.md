@@ -64,6 +64,10 @@ updated_at              text not null
 - Controller 在 hello/heartbeat 中可携带 `desired_config_revision` 和是否存在待同步状态；它只是提示，不能替代数据库任务。
 - Controller 收到 hello、heartbeat 或 health report 时，比较 desired 与 applied；若不一致则幂等唤醒该服务器的协调器/任务通知。丢失 WebSocket wake 时，通信检查仍能补发，重连也会完整重算。
 - Agent 启动、任务成功、幂等重放和本地 active 资产修复后都更新持久摘要；配置漂移、缺失或摘要不一致时，健康报告触发 Controller 重新准备最新状态。
+- Agent 侧「已应用」必须以运行中的 `oboard-sb` 为准，不能只以磁盘 `sing-box.json` 为准。Agent 通过内核 `GET /runtime/status` 取得运行中的 operational digest；不一致时先本地重启并复验，仍不一致才让任务失败。内核未通告 `runtime_config_digest_v1` 时保持原有基于文件的行为，以支持 Agent 先于内核升级的滚动发布。
+- 一次漂移只允许一次恢复：`MarkConfigurationSyncDrift` 只在服务器不处于 `failed`/`preparing`/`queued`/`running`、且不是已经处于 `agent_drift` 触发的 `pending` 时才新开恢复，并返回是否真的新开。心跳每次都上报同一漂移不得反复重开同一部署。
+- 刚刚 `synced` 的服务器在短时间内收到仍指向更旧 `config_version` 的收敛回报时，视为部署成功前产生的在途回报并忽略；只有稳定后仍不一致才算新的漂移。
+- 流量、连接审计和指标上报只做计费与运行策略协调，永远不得推进期望修订、创建 `config_version` 或派发 `apply_deployment` / `apply_core_config`。这一点由回归测试固定。
 - Controller 与 Agent 仍只通过 JSON wire contract 通信，双方模型、协议文档、测试和 release gate 必须同时更新。不得导入对方内部包。
 
 ## 6. Web 保存与实时反馈

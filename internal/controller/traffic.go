@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -69,9 +70,18 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	}
 	periods := map[int64]model.TrafficPeriod{}
 	reports := make([]model.TrafficReport, 0, len(req.Reports))
+	// Reports whose user, binding, inbound, or path is gone can never be
+	// accounted. They are answered as terminally rejected so the Agent drops
+	// them locally instead of resending the same failing batch forever.
+	rejected := make([]model.TrafficAcceptedReport, 0)
 	for _, item := range req.Reports {
 		report, period, err := s.validateAgentTrafficRangeItem(r, server, item, req.PeriodKey, access, planPolicies, loc)
 		if err != nil {
+			var rejection *trafficRejection
+			if errors.As(err, &rejection) {
+				rejected = append(rejected, model.TrafficAcceptedReport{ReportID: strings.TrimSpace(item.ReportID), Status: "rejected", Reason: rejection.Reason})
+				continue
+			}
 			status := 400
 			if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
 				status = 403
@@ -85,6 +95,12 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	streams := make([]model.TrafficStreamObservation, 0, len(req.Streams))
 	for _, stream := range req.Streams {
 		if err := access.validateStream(stream); err != nil {
+			var rejection *trafficRejection
+			if errors.As(err, &rejection) {
+				// The stream's owner is gone; skip the observation instead of
+				// failing the accounting batch it travels with.
+				continue
+			}
 			status := 400
 			if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
 				status = 403
@@ -131,13 +147,19 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.trafficPolicyRuntimeAppliesTotal.Add(1)
+	acceptedReports := result.AcceptedReports
+	if len(rejected) > 0 {
+		s.trafficReportsRejectedTotal.Add(uint64(len(rejected)))
+		log.Printf("traffic ledger rejected %d unaccountable report(s) from agent=%s first_reason=%s", len(rejected), server.AgentID, rejected[0].Reason)
+		acceptedReports = append(append(make([]model.TrafficAcceptedReport, 0, len(acceptedReports)+len(rejected)), acceptedReports...), rejected...)
+	}
 	revision, _ := s.store.TrafficPolicyRevision(r.Context())
 	write(w, 200, map[string]any{
 		"ok":                  true,
 		"policy_revision":     revision,
 		"stream_checkpoints":  result.StreamCheckpoints,
-		"accepted_reports":    result.AcceptedReports,
-		"accepted_report_ids": acceptedReportIDs(result.AcceptedReports),
+		"accepted_reports":    acceptedReports,
+		"accepted_report_ids": acceptedReportIDs(acceptedReports),
 		"policies":            policies,
 	})
 }
@@ -145,23 +167,42 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 var errTrafficForbidden = errors.New("inbound does not belong to this agent")
 var errTrafficUnauthorized = errors.New("user is not authorized for this inbound")
 
+// trafficRejection marks a report that this Controller will never accept
+// because the entity it accounts against is gone or disabled. Failing the whole
+// request for these would make the Agent retry the same batch forever, so they
+// are answered per report with a terminal status instead.
+type trafficRejection struct {
+	Reason  string
+	Message string
+}
+
+func (e *trafficRejection) Error() string { return e.Message }
+
+func trafficReject(reason, message string) error {
+	return &trafficRejection{Reason: reason, Message: message}
+}
+
 type trafficReportAccess struct {
 	server      *model.Server
 	data        store.FullRoutingConfig
 	userByID    map[int64]model.User
 	inboundByID map[int64]model.Inbound
+	pathByID    map[int64]model.ProxyPath
 	allowed     map[trafficAccessPair]struct{}
 }
 
 type trafficAccessPair struct{ inboundID, userID, pathID int64 }
 
 func newTrafficReportAccess(server *model.Server, data store.FullRoutingConfig, snapshot *core.EffectiveAccessSnapshot) (trafficReportAccess, error) {
-	access := trafficReportAccess{server: server, data: data, userByID: map[int64]model.User{}, inboundByID: map[int64]model.Inbound{}, allowed: map[trafficAccessPair]struct{}{}}
+	access := trafficReportAccess{server: server, data: data, userByID: map[int64]model.User{}, inboundByID: map[int64]model.Inbound{}, pathByID: map[int64]model.ProxyPath{}, allowed: map[trafficAccessPair]struct{}{}}
 	for _, u := range data.Users {
 		access.userByID[u.ID] = u
 	}
 	for _, inbound := range data.Inbounds {
 		access.inboundByID[inbound.ID] = inbound
+	}
+	for _, path := range data.ProxyPaths {
+		access.pathByID[path.ID] = path
 	}
 	for _, binding := range snapshot.InboundUserBindings() {
 		if binding.Enabled {
@@ -176,18 +217,28 @@ func newTrafficReportAccess(server *model.Server, data store.FullRoutingConfig, 
 	return access, nil
 }
 
+// validateIdentity separates three outcomes. A malformed report is a client
+// error, a claim against another server's inbound or path is a security
+// violation, and an entity that has been deleted or disabled is terminal for
+// that single report only.
 func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pathID *int64) error {
 	if inboundID == nil {
 		return errors.New("traffic report must identify an inbound")
 	}
 	inbound, ok := a.inboundByID[*inboundID]
-	if !ok || !inbound.Enabled {
-		return errTrafficForbidden
+	if !ok {
+		return trafficReject("inbound_deleted", "traffic report inbound no longer exists")
+	}
+	if !inbound.Enabled {
+		return trafficReject("inbound_disabled", "traffic report inbound is disabled")
 	}
 	accountingLocation := inbound.ServerID == a.server.ID
 	if pathID != nil {
 		if *pathID <= 0 {
 			return errors.New("traffic report path_id must be positive")
+		}
+		if _, exists := a.pathByID[*pathID]; !exists {
+			return trafficReject("path_removed", "traffic report proxy path no longer exists")
 		}
 		accountingLocation = core.IsProxyPathAccountingLocation(a.server.ID, inbound.ID, *pathID, a.data.ProxyPaths, a.data.ProxyPathSteps, a.data.Inbounds)
 	} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, a.data.ProxyPaths, a.data.ProxyPathSteps, a.data.Inbounds) {
@@ -197,13 +248,20 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 		return errTrafficForbidden
 	}
 	u, ok := a.userByID[userID]
-	if !ok || u.Status != "active" {
-		return errors.New("user is invalid or inactive")
+	if !ok {
+		return trafficReject("user_deleted", "traffic report user no longer exists")
+	}
+	if u.Status != "active" {
+		return trafficReject("user_inactive", "traffic report user is not active")
 	}
 	resolvedPath := int64(0)
 	if pathID != nil {
 		resolvedPath = *pathID
 	}
+	// A user that is not bound to this inbound stays an authorization failure.
+	// Controller cannot tell a removed binding apart from a claim for access
+	// the user never had, so this boundary is not downgraded to a per-report
+	// rejection.
 	if _, ok := a.allowed[trafficAccessPair{inboundID: *inboundID, userID: userID, pathID: resolvedPath}]; !ok {
 		return errTrafficUnauthorized
 	}
@@ -227,8 +285,11 @@ func (a trafficReportAccess) validateStream(stream model.TrafficStreamObservatio
 		return a.validateIdentity(stream.UserID, &inboundID, pathID)
 	}
 	u, ok := a.userByID[stream.UserID]
-	if !ok || u.Status != "active" {
-		return errors.New("user is invalid or inactive")
+	if !ok {
+		return trafficReject("user_deleted", "traffic stream user no longer exists")
+	}
+	if u.Status != "active" {
+		return trafficReject("user_inactive", "traffic stream user is not active")
 	}
 	return nil
 }

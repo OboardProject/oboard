@@ -2706,8 +2706,14 @@ type TrafficStreamCheckpoint struct {
 }
 
 type TrafficAcceptedReport struct {
-	ReportID         string `json:"report_id"`
-	Status           string `json:"status"`
+	ReportID string `json:"report_id"`
+	Status   string `json:"status"`
+	// Reason is set for status "rejected" and names the terminal condition
+	// (user_deleted, user_inactive, inbound_deleted, inbound_disabled,
+	// path_removed) so the Agent can drop the report without treating it as a
+	// counter recovery event. An unauthorized user/inbound pair is not a
+	// rejection: it stays a 403 for the whole request.
+	Reason           string `json:"reason,omitempty"`
 	StreamID         string `json:"stream_id,omitempty"`
 	CounterEpoch     string `json:"counter_epoch,omitempty"`
 	PeriodKey        string `json:"period_key,omitempty"`

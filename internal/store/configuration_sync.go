@@ -144,13 +144,23 @@ func (s *Store) EnsureConfigurationSyncRevision(ctx context.Context, serverID in
 	return count > 0, err
 }
 
-func (s *Store) MarkConfigurationSyncDrift(ctx context.Context, serverID int64, revision uint64) error {
+// MarkConfigurationSyncDrift opens exactly one recovery for a server whose
+// running state no longer matches the last successful payload. A drift report
+// that arrives while a recovery is already preparing, queued, or running must
+// not reopen it: the Agent reports drift on every heartbeat until the recovery
+// lands, and reopening would rebuild the same deployment forever.
+// It reports whether a new recovery was opened.
+func (s *Store) MarkConfigurationSyncDrift(ctx context.Context, serverID int64, revision uint64) (bool, error) {
 	if serverID <= 0 || revision == 0 {
-		return fmt.Errorf("server id and configuration revision must be positive")
+		return false, fmt.Errorf("server id and configuration revision must be positive")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set wanted_revision=case when ?>wanted_revision then ? else wanted_revision end,wanted_digest=case when ?>wanted_revision then ? else wanted_digest end,state='pending',trigger_reason=?,next_retry_at=null,last_error='',changed_at=?,updated_at=? where server_id=? and state!='failed'`, revision, revision, revision, fmt.Sprintf("routing:%d", revision), ConfigurationSyncTriggerAgentDrift, now, now, serverID)
-	return err
+	result, err := s.db.ExecContext(ctx, `update configuration_sync_states set wanted_revision=case when ?>wanted_revision then ? else wanted_revision end,wanted_digest=case when ?>wanted_revision then ? else wanted_digest end,state='pending',trigger_reason=?,next_retry_at=null,last_error='',changed_at=?,updated_at=? where server_id=? and state not in ('failed','preparing','queued','running') and not (state='pending' and ifnull(trigger_reason,'')=?)`, revision, revision, revision, fmt.Sprintf("routing:%d", revision), ConfigurationSyncTriggerAgentDrift, now, now, serverID, ConfigurationSyncTriggerAgentDrift)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
 }
 
 // MarkConfigurationSyncWaiting returns a claimed desired state to the pending

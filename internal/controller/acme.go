@@ -141,7 +141,7 @@ func (s *Server) markCertificateServersForSync(ctx context.Context, certificateI
 		return
 	}
 	for _, serverID := range ids {
-		if err := s.store.MarkConfigurationSyncDrift(ctx, serverID, revision); err != nil {
+		if _, err := s.store.MarkConfigurationSyncDrift(ctx, serverID, revision); err != nil {
 			log.Printf("certificate %d: mark server %d configuration drift: %v", certificateID, serverID, err)
 		}
 	}

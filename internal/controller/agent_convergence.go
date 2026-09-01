@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -61,6 +62,13 @@ func (s *Server) reconcileAgentAppliedState(ctx context.Context, serverID int64,
 		}
 		s.markAgentConfigurationDrift(ctx, serverID)
 	case "synced":
+		// A convergence report that still names an older config version and
+		// arrives right after the deployment succeeded was produced before that
+		// deployment. Redeploying on it would restart a server that has just
+		// converged, so a settled state is required before it counts as drift.
+		if health.AppliedConfigVersion < state.LastConfigVersion && time.Since(state.UpdatedAt) < agentConfigurationDriftGrace {
+			return
+		}
 		s.markAgentConfigurationDrift(ctx, serverID)
 	case "failed":
 		return
@@ -68,6 +76,10 @@ func (s *Server) reconcileAgentAppliedState(ctx context.Context, serverID int64,
 		s.signalConfigurationReconcile()
 	}
 }
+
+// agentConfigurationDriftGrace is how long a freshly settled sync state ignores
+// convergence reports that were still in flight while it settled.
+const agentConfigurationDriftGrace = 45 * time.Second
 
 func isSemanticDigest(digest string) bool {
 	digest = strings.TrimSpace(digest)
@@ -82,8 +94,14 @@ func (s *Server) markAgentConfigurationDrift(ctx context.Context, serverID int64
 		}
 		return
 	}
-	if err := s.store.MarkConfigurationSyncDrift(context.WithoutCancel(ctx), serverID, revision); err != nil {
+	opened, err := s.store.MarkConfigurationSyncDrift(context.WithoutCancel(ctx), serverID, revision)
+	if err != nil {
 		log.Printf("mark Agent drift server=%d: %v", serverID, err)
+		return
+	}
+	if !opened {
+		// A recovery for this server is already preparing, queued, running, or
+		// pending. Repeated drift reports must not open a second one.
 		return
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")

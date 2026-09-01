@@ -203,6 +203,8 @@ type Server struct {
 
 	trafficReportsReceivedTotal      atomic.Uint64
 	trafficReportsAcceptedTotal      atomic.Uint64
+	trafficReportsRejectedTotal      atomic.Uint64
+	connectionAuditDiscardedTotal    atomic.Uint64
 	trafficPolicyUpdatesTotal        atomic.Uint64
 	trafficPolicyRuntimeAppliesTotal atomic.Uint64
 	configurationReconcileTotal      atomic.Uint64

@@ -78,8 +78,29 @@
 | `controller-db-20260830-snell-server-psk` | Controller | SQLite data backfill | `dev-befb1492dc9f` | 待发布 | 生效中 | - |
 | `controller-db-20260830-family-split-templates` | Controller | SQLite schema / data backfill | `dev-c4c3e44e42d9` | 待发布 | 生效中 | - |
 | `controller-db-20260901-oauth-grant-dedupe` | Controller | SQLite schema / data backfill | `dev-8d86ca5fdbb4` | 待发布 | 生效中 | - |
+| `agent-kernel-20260902-runtime-config-digest` | Agent / kernel | wire protocol / rolling upgrade | `dev-fa897b03f1f8` | 待发布 | 生效中 | - |
 
 ## 生效中的迁移
+
+### agent-kernel-20260902-runtime-config-digest
+
+- **引入日期：** 2026-09-02
+- **引入提交：** `OboardProject/oboard-agent@fa897b03f1f8`（待发布前以开发通道计）
+- **引入版本：** `dev-fa897b03f1f8`
+- **首次稳定版：** 待发布
+- **所有者：** Agent `internal/agent`、kernel `cmd/oboard-sb`、`internal/minibox`
+- **类别：** wire protocol / rolling upgrade compatibility
+- **原因：** 「部署成功」以前只代表 `sing-box.json` 写入磁盘，运行中的 `oboard-sb` 可能仍加载旧配置。Agent 现在向内核查询运行配置指纹后才判定收敛。Agent 与内核可以分别升级，因此需要一段容忍旧内核的兼容期。
+- **源状态：** `oboard-sb` 不通告 `runtime_config_digest_v1`，也不提供 `GET /runtime/status`（请求返回 404，或内核本地 API 完全不可达）。
+- **目标状态：** `oboard-sb` 通告 `runtime_config_digest_v1` 并在 `GET /runtime/status` 返回 `operational_config_sha256`，Agent 以此判定 `unchanged` / `runtime_policy_only` / 重启复验。
+- **实现位置：** Agent `oboard-agent/internal/agent/core_runtime.go`（`checkCoreRuntimeConfig` 的 `unsupported` 分支）、`oboard-agent/internal/agent/core_watchdog.go`；kernel `oboard-agent/kernel/oboard-sb/cmd/oboard-sb/main.go`、`internal/minibox/operational_digest.go`
+- **更新脚本：** 无。Agent 自更新与内核更新沿用现有签名发布流程。
+- **数据影响：** 无持久数据变更。`core-watchdog.json` 新增 `desired_digest`、`loaded_digest`、`runtime_verified`、`runtime_verification`、`last_runtime_check_at`、`last_restart_reason` 字段；旧文件缺字段时按零值读取。
+- **重复执行：** 每次配置应用与每次 watchdog 轮询都重新协商能力，无累积状态。
+- **失败行为：** 内核未通告能力时 `runtime_verification=unsupported`、`runtime_verified=false`，保持升级前基于文件的行为，绝不因此重启健康的旧内核。本地 API 不可达时为 `unavailable`，同样不判定为漂移。只有内核明确返回了不同指纹才重启并复验。
+- **回归测试：** `TestApplyCoreConfigToleratesKernelWithoutRuntimeDigest`、`TestCoreRuntimeCheckTreatsUnreachableKernelAsUnverified`、`TestApplyCoreConfigRestartsStaleKernelDespiteMatchingFile`、`TestApplyCoreConfigFailsWhenRestartDoesNotClearDrift`、`TestOperationalConfigDigestIgnoresRuntimePolicy`
+- **移除条件：** 最老支持直接升级的 Agent 与 `oboard-sb` 版本都已包含 `runtime_config_digest_v1`，且不存在 Agent 新于内核的滚动升级或回滚路径能再次产生源状态。
+- **移除状态：** 生效中
 
 ### controller-db-20260901-oauth-grant-dedupe
 
