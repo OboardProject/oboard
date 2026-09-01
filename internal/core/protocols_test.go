@@ -1280,7 +1280,7 @@ func TestSocks5InboundAllowsBlockedUDPMode(t *testing.T) {
 	}
 }
 
-func TestSocks5InboundUsesTCPOnlyWhenUDPBlocked(t *testing.T) {
+func TestSocks5InboundOmitsUnsupportedNetworkField(t *testing.T) {
 	user := model.User{Username: "alice", Status: "active", ProxyPassword: "socks-password"}
 	inbound := model.Inbound{ID: 7, ServerID: 1, Name: "SOCKS5", Protocol: model.ProtocolSocks, ListenIP: "0.0.0.0", Port: 1080, ConfigJSON: `{}`, Enabled: true}
 	for _, mode := range []model.UDPInboundMode{model.UDPInboundBlock, model.UDPInboundUoT} {
@@ -1294,8 +1294,11 @@ func TestSocks5InboundUsesTCPOnlyWhenUDPBlocked(t *testing.T) {
 			if err := json.Unmarshal([]byte(config), &parsed); err != nil {
 				t.Fatal(err)
 			}
-			if len(parsed.Inbounds) != 1 || parsed.Inbounds[0]["network"] != "tcp" {
-				t.Fatalf("SOCKS5 inbound = %#v, want network=tcp", parsed.Inbounds[0])
+			if len(parsed.Inbounds) != 1 {
+				t.Fatalf("inbounds = %#v", parsed.Inbounds)
+			}
+			if _, ok := parsed.Inbounds[0]["network"]; ok {
+				t.Fatalf("SOCKS5 inbound must not emit network: %#v", parsed.Inbounds[0])
 			}
 			node, err := (socksAdapter{}).SubscriptionNode(user, inbound, server)
 			if err != nil {

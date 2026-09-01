@@ -899,7 +899,7 @@ func applyServerNetworkPolicy(item map[string]any, server model.Server, protocol
 		applyDialDomainResolver(item, normalizeDNSStrategy("", EffectiveIPStack(server)))
 		return
 	}
-	if (protocol == model.ProtocolSS || protocol == model.ProtocolSocks) && (server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT) {
+	if protocol == model.ProtocolSS && (server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT) {
 		item["network"] = "tcp"
 	}
 }
