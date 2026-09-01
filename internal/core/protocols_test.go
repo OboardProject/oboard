@@ -1271,16 +1271,43 @@ func TestTransparentPortForwardProtocolsFollowUserInbound(t *testing.T) {
 	}
 }
 
-func TestSocks5InboundRequiresNativeUDPMode(t *testing.T) {
+func TestSocks5InboundAllowsBlockedUDPMode(t *testing.T) {
 	inbound := model.Inbound{Name: "SOCKS5", Protocol: model.ProtocolSocks}
-	for _, mode := range []model.UDPInboundMode{model.UDPInboundBlock, model.UDPInboundUoT} {
-		err := validateServerUDPForInbound(model.Server{Name: "edge", UDPInboundMode: mode}, inbound)
-		if err == nil || !strings.Contains(err.Error(), "SOCKS5") {
-			t.Fatalf("udp_inbound_mode=%s error = %v", mode, err)
+	for _, mode := range []model.UDPInboundMode{model.UDPInboundAllow, model.UDPInboundBlock, model.UDPInboundUoT} {
+		if err := validateServerUDPForInbound(model.Server{Name: "edge", UDPInboundMode: mode}, inbound); err != nil {
+			t.Fatalf("udp_inbound_mode=%s rejected SOCKS5: %v", mode, err)
 		}
 	}
-	if err := validateServerUDPForInbound(model.Server{Name: "edge", UDPInboundMode: model.UDPInboundAllow}, inbound); err != nil {
-		t.Fatalf("allow mode rejected SOCKS5: %v", err)
+}
+
+func TestSocks5InboundUsesTCPOnlyWhenUDPBlocked(t *testing.T) {
+	user := model.User{Username: "alice", Status: "active", ProxyPassword: "socks-password"}
+	inbound := model.Inbound{ID: 7, ServerID: 1, Name: "SOCKS5", Protocol: model.ProtocolSocks, ListenIP: "0.0.0.0", Port: 1080, ConfigJSON: `{}`, Enabled: true}
+	for _, mode := range []model.UDPInboundMode{model.UDPInboundBlock, model.UDPInboundUoT} {
+		t.Run(string(mode), func(t *testing.T) {
+			server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", UDPInboundMode: mode}
+			config, err := GenerateServerConfig(server, []model.Inbound{inbound}, nil, nil, []model.User{user})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed SingBoxConfig
+			if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Inbounds) != 1 || parsed.Inbounds[0]["network"] != "tcp" {
+				t.Fatalf("SOCKS5 inbound = %#v, want network=tcp", parsed.Inbounds[0])
+			}
+			node, err := (socksAdapter{}).SubscriptionNode(user, inbound, server)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if node["network"] != "tcp" {
+				t.Fatalf("subscription network = %#v, want tcp", node["network"])
+			}
+			if node["udp_over_tcp"] != nil {
+				t.Fatalf("SOCKS5 subscription must not advertise udp_over_tcp: %#v", node)
+			}
+		})
 	}
 }
 

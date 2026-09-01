@@ -891,9 +891,6 @@ func validateServerUDPForInbound(server model.Server, inbound model.Inbound) err
 	if inbound.Protocol == model.ProtocolMieru && MieruInboundTransport(inbound) == "UDP" {
 		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host UDP Mieru inbound %s", server.Name, server.UDPInboundMode, inbound.Name)
 	}
-	if inbound.Protocol == model.ProtocolSocks {
-		return fmt.Errorf("server %s udp_inbound_mode=%s cannot host SOCKS5 inbound %s because SOCKS5 exposes native UDP associate", server.Name, server.UDPInboundMode, inbound.Name)
-	}
 	return nil
 }
 
@@ -902,7 +899,7 @@ func applyServerNetworkPolicy(item map[string]any, server model.Server, protocol
 		applyDialDomainResolver(item, normalizeDNSStrategy("", EffectiveIPStack(server)))
 		return
 	}
-	if protocol == model.ProtocolSS && (server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT) {
+	if (protocol == model.ProtocolSS || protocol == model.ProtocolSocks) && (server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT) {
 		item["network"] = "tcp"
 	}
 }
@@ -4147,6 +4144,10 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 	extra := parseExtra(inbound.ConfigJSON)
 	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": "5", "username": user.Username, "password": user.ProxyPassword}
 	applyAllowed(node, extra, "network", "udp_over_tcp", "tcp_fast_open")
+	if server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT {
+		node["network"] = "tcp"
+		delete(node, "udp_over_tcp")
+	}
 	return node, nil
 }
 
