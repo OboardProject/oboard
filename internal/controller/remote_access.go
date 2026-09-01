@@ -84,30 +84,13 @@ func (s *Server) serverRemoteAccess(w http.ResponseWriter, r *http.Request, serv
 		if !decode(w, r, &req) {
 			return
 		}
-		policy, err := s.store.GetServerRemoteAccessPolicy(r.Context(), serverID)
+		// Use unified domain service so web and changeset share audit/revocation semantics
+		result, err := s.updateServerRemoteAccessPolicy(r.Context(), server, req, "user", clientIP(r), "")
 		if err != nil {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		if req.RemoteTerminalEnabled != nil {
-			policy.RemoteTerminalEnabled = *req.RemoteTerminalEnabled
-		}
-		if req.MCPEnabled != nil {
-			policy.MCPEnabled = *req.MCPEnabled
-		}
-		policy.ServerID = serverID
-		saved, err := s.store.UpsertServerRemoteAccessPolicy(r.Context(), policy)
-		if err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		_ = saved
-		view, err := s.remoteAccessView(r, server)
-		if err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		write(w, http.StatusOK, map[string]any{"remote_access": view})
+		write(w, http.StatusOK, map[string]any{"remote_access": result})
 	default:
 		method(w)
 	}
@@ -400,6 +383,342 @@ func (s *Server) enforceMCPTerminalsForGrant(grantID string, grant *model.MCPPri
 
 // ensure mcpauth import for enforce
 var _ = mcpauth.ResourceBoundary{}
+
+// RemoteAccessMachineView is the machine-readable status for GET /api/v1/servers/:id/remote-access
+type RemoteAccessMachineView struct {
+	ServerID   int64                       `json:"server_id"`
+	ServerName string                      `json:"server_name"`
+	Configured RemoteAccessConfiguredView   `json:"configured"`
+	Global     RemoteAccessGlobalPolicy     `json:"global"`
+	Effective  RemoteAccessEffectiveView    `json:"effective"`
+	Agent      model.ServerRemoteAccessStatus `json:"agent"`
+	MCPExecution RemoteAccessMCPExecution   `json:"mcp_execution"`
+}
+
+type RemoteAccessConfiguredView struct {
+	RemoteTerminalEnabled bool `json:"remote_terminal_enabled"`
+	MCPEnabled            bool `json:"mcp_enabled"`
+}
+
+type RemoteAccessEffectiveView struct {
+	RemoteTerminal bool `json:"remote_terminal_enabled"`
+	MCPEnabled     bool `json:"mcp_enabled"`
+}
+
+type RemoteAccessMCPExecution struct {
+	Available bool                     `json:"available"`
+	Blockers  []RemoteAccessBlocker    `json:"blockers,omitempty"`
+}
+
+type RemoteAccessBlocker struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Scope   string `json:"scope,omitempty"`
+}
+
+// RemoteAccessDiagnosticView is the MCP tool view for server_remote_access_get
+type RemoteAccessDiagnosticView struct {
+	Server               map[string]any `json:"server"`
+	GlobalMCPEnabled     bool           `json:"global_mcp_enabled"`
+	ServerMCPEnabled     bool           `json:"server_mcp_enabled"`
+	EffectiveMCPEnabled  bool           `json:"effective_mcp_enabled"`
+	GlobalTerminalEnabled bool          `json:"global_remote_terminal_enabled"`
+	ServerTerminalEnabled bool          `json:"server_remote_terminal_enabled"`
+	EffectiveTerminalEnabled bool       `json:"effective_remote_terminal_enabled"`
+	PrivilegedGrant      map[string]any `json:"privileged_grant,omitempty"`
+	Agent                map[string]any `json:"agent"`
+	Blockers             []string       `json:"blockers"`
+	Remediation          map[string]any `json:"remediation,omitempty"`
+}
+
+// updateServerRemoteAccessPolicy is the single domain service for policy mutation.
+// It is used by both the Web PATCH and the Changeset operation so that audit, revocation and effective computation stay consistent.
+func (s *Server) updateServerRemoteAccessPolicy(ctx context.Context, server *model.Server, patch RemoteAccessPolicyPatch, actorType, sourceIP, changesetID string) (remoteAccessView, error) {
+	before, err := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
+	if err != nil {
+		return remoteAccessView{}, err
+	}
+	next := before
+	next.ServerID = server.ID
+	if patch.RemoteTerminalEnabled != nil {
+		next.RemoteTerminalEnabled = *patch.RemoteTerminalEnabled
+	}
+	if patch.MCPEnabled != nil {
+		next.MCPEnabled = *patch.MCPEnabled
+	}
+	if next.RemoteTerminalEnabled == before.RemoteTerminalEnabled && next.MCPEnabled == before.MCPEnabled {
+		view, err := s.remoteAccessViewFromContext(ctx, server)
+		if err != nil {
+			return remoteAccessView{}, err
+		}
+		return view, nil
+	}
+	saved, err := s.store.UpsertServerRemoteAccessPolicy(ctx, next)
+	if err != nil {
+		return remoteAccessView{}, err
+	}
+	_ = saved
+	// Audit
+	changes := map[string]any{}
+	if before.RemoteTerminalEnabled != next.RemoteTerminalEnabled {
+		changes["remote_terminal_enabled"] = map[string]any{"old": before.RemoteTerminalEnabled, "new": next.RemoteTerminalEnabled}
+	}
+	if before.MCPEnabled != next.MCPEnabled {
+		changes["mcp_enabled"] = map[string]any{"old": before.MCPEnabled, "new": next.MCPEnabled}
+	}
+	metadata, _ := json.Marshal(map[string]any{"server_id": server.ID, "server_name": server.Name, "changes": changes, "changeset_id": changesetID})
+	// Actor type u for web is user; for changeset we will pass via principal. Use generic.
+	var actorUserID *int64
+	// Try to extract user from context if available (not required for machine)
+	if actorType == "user" {
+		// Leave nil, store will keep null; the audit event's ActorType distinguishes
+	}
+	event := model.RemoteAccessAuditEvent{
+		EventType: model.RemoteAccessAuditServerPolicyUpdated,
+		ActorType: actorType,
+		ActorUserID: actorUserID,
+		ServerID: &server.ID,
+		Capability: "server_remote_access",
+		Result: "updated",
+		SourceIP: sourceIP,
+		MetadataJSON: metadata,
+	}
+	_ = s.store.InsertRemoteAccessAudit(ctx, event)
+	// Revocation: if MCP was true -> false, close MCP sessions for that server. Web terminal revocation is isolated.
+	if before.MCPEnabled && !next.MCPEnabled {
+		s.closeMCPTerminalsForServer(server.ID)
+	}
+	if before.RemoteTerminalEnabled && !next.RemoteTerminalEnabled {
+		// For Web terminals, we could close human terminals similarly, but spec says MCP and Web are isolated.
+		// We keep Web revocation separate if needed in future; currently no Web session tracking beyond terminalHub human sessions.
+		// We intentionally do NOT close MCP when Web is disabled and vice versa.
+	}
+	view, err := s.remoteAccessViewFromContext(ctx, server)
+	if err != nil {
+		return remoteAccessView{}, err
+	}
+	return view, nil
+}
+
+func (s *Server) remoteAccessViewFromContext(ctx context.Context, server *model.Server) (remoteAccessView, error) {
+	policy, err := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
+	if err != nil {
+		return remoteAccessView{}, err
+	}
+	status, err := s.store.GetServerRemoteAccessStatus(ctx, server.ID)
+	if err != nil {
+		return remoteAccessView{}, err
+	}
+	global, err := s.globalRemoteAccessPolicyFromContext(ctx)
+	if err != nil {
+		return remoteAccessView{}, err
+	}
+	view := remoteAccessView{Global: global, Server: policy, Agent: status, ActiveTerminals: s.terminalHub.countForServer(server.ID)}
+	view.Effective.RemoteTerminal = global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled
+	view.Effective.MCPEnabled = global.MCPEnabled && policy.MCPEnabled
+	view.Reasons = s.remoteAccessUnavailableReasons(server, view, "remote_terminal")
+	return view, nil
+}
+
+func (s *Server) remoteAccessMachineView(ctx context.Context, server *model.Server) (RemoteAccessMachineView, error) {
+	policy, err := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
+	if err != nil {
+		return RemoteAccessMachineView{}, err
+	}
+	status, err := s.store.GetServerRemoteAccessStatus(ctx, server.ID)
+	if err != nil {
+		return RemoteAccessMachineView{}, err
+	}
+	global, err := s.globalRemoteAccessPolicyFromContext(ctx)
+	if err != nil {
+		return RemoteAccessMachineView{}, err
+	}
+	effectiveRemote := global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled
+	effectiveMCP := global.MCPEnabled && policy.MCPEnabled
+	view := RemoteAccessMachineView{
+		ServerID: server.ID,
+		ServerName: server.Name,
+		Configured: RemoteAccessConfiguredView{RemoteTerminalEnabled: policy.RemoteTerminalEnabled, MCPEnabled: policy.MCPEnabled},
+		Global: global,
+		Effective: RemoteAccessEffectiveView{RemoteTerminal: effectiveRemote, MCPEnabled: effectiveMCP},
+		Agent: status,
+	}
+	blockers := []RemoteAccessBlocker{}
+	if !global.MCPEnabled {
+		blockers = append(blockers, RemoteAccessBlocker{Code: "remote_access_global_disabled", Message: "MCP remote control is globally disabled", Scope: "global"})
+	}
+	if !policy.MCPEnabled {
+		blockers = append(blockers, RemoteAccessBlocker{Code: "remote_access_server_disabled", Message: "MCP remote control is disabled for this server", Scope: "server"})
+	}
+	if server.Status != model.ServerOnline {
+		blockers = append(blockers, RemoteAccessBlocker{Code: "agent_offline", Message: "Agent is offline", Scope: "agent"})
+	}
+	// capability / local gate blockers are reported separately via agent, but we include them for completeness
+	// For now we keep MCPExecution blockers as global/server only; agent blockers will be surfaced via mcp_execution evaluation when needed
+	view.MCPExecution = RemoteAccessMCPExecution{Available: len(blockers) == 0 && server.Status == model.ServerOnline, Blockers: blockers}
+	if len(blockers) == 0 {
+		view.MCPExecution.Blockers = nil
+	}
+	return view, nil
+}
+
+// remoteAccessDiagnosticView builds the MCP tool response for server_remote_access_get.
+// It includes global/server/effective, privileged grant capability matrix, agent liveness and blockers with remediation.
+func (s *Server) remoteAccessDiagnosticView(ctx context.Context, server *model.Server, grantPrincipal *mcpauth.GrantPrincipal) (RemoteAccessDiagnosticView, error) {
+	policy, err := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
+	if err != nil {
+		return RemoteAccessDiagnosticView{}, err
+	}
+	status, err := s.store.GetServerRemoteAccessStatus(ctx, server.ID)
+	if err != nil {
+		return RemoteAccessDiagnosticView{}, err
+	}
+	global, err := s.globalRemoteAccessPolicyFromContext(ctx)
+	if err != nil {
+		return RemoteAccessDiagnosticView{}, err
+	}
+	effectiveMCP := global.MCPEnabled && policy.MCPEnabled
+	effectiveTerminal := global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled
+	blockers := []string{}
+	if !global.MCPEnabled {
+		blockers = append(blockers, "remote_access_global_disabled")
+	}
+	if !policy.MCPEnabled {
+		blockers = append(blockers, "remote_access_server_disabled")
+	}
+	if server.Status != model.ServerOnline {
+		blockers = append(blockers, "agent_offline")
+	}
+	// Check privileged grant matrix if provided
+	privInfo := map[string]any{}
+	resourceAllowed := true
+	if grantPrincipal != nil && grantPrincipal.PrivilegedGrant != nil {
+		pg := grantPrincipal.PrivilegedGrant
+		privInfo["remote_operations"] = pg.HasCapability(model.PrivilegeRemoteOperations)
+		privInfo["remote_exec"] = pg.HasCapability(model.PrivilegeRemoteExec)
+		privInfo["remote_shell"] = pg.HasCapability(model.PrivilegeRemoteShell)
+		privInfo["remote_interactive"] = pg.HasCapability(model.PrivilegeRemoteInteractive)
+		privInfo["server_remote_access_manage"] = pg.HasCapability(model.PrivilegeServerRemoteAccessManage)
+		// Resource boundary check for this server
+		ref := mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(server.ID, 10)}
+		if denied := pg.ResourceBoundary.Denied([]mcpauth.ResourceRef{ref}); len(denied) > 0 {
+			resourceAllowed = false
+			blockers = append(blockers, "privileged_resource_denied")
+		}
+		// Also check OAuth grant boundary
+		if denied := grantPrincipal.Grant.ResourceBoundary.Denied([]mcpauth.ResourceRef{ref}); len(denied) > 0 {
+			resourceAllowed = false
+			if !slices.Contains(blockers, "privileged_resource_denied") {
+				blockers = append(blockers, "privileged_resource_denied")
+			}
+		}
+		if !pg.HasCapability(model.PrivilegeRemoteInteractive) && !pg.HasCapability(model.PrivilegeRemoteExec) && !pg.HasCapability(model.PrivilegeRemoteShell) && !pg.HasCapability(model.PrivilegeRemoteOperations) {
+			// If grant lacks any remote cap, surface as privileged_grant_required unless already blocked by global/server
+			// Keep blockers as is; MCP execution will also check capability
+		}
+		privInfo["resource_allowed"] = resourceAllowed
+	} else {
+		privInfo["remote_operations"] = false
+		privInfo["remote_exec"] = false
+		privInfo["remote_shell"] = false
+		privInfo["remote_interactive"] = false
+		privInfo["server_remote_access_manage"] = false
+		privInfo["resource_allowed"] = false
+		blockers = append(blockers, "privileged_grant_required")
+	}
+	agentInfo := map[string]any{
+		"online": server.Status == model.ServerOnline,
+		"status": string(server.Status),
+		"capabilities": status.Capabilities,
+		"local_mode": status.LocalMode,
+	}
+	if server.Status != model.ServerOnline {
+		agentInfo["remote_terminal_supported"] = false
+	} else {
+		agentInfo["remote_terminal_supported"] = slices.Contains(status.Capabilities, model.RemoteAccessCapabilityTerminal)
+		agentInfo["remote_exec_supported"] = slices.Contains(status.Capabilities, model.RemoteAccessCapabilityExec)
+		agentInfo["interactive_supported"] = slices.Contains(status.Capabilities, model.RemoteAccessCapabilityInteractiveMCP)
+	}
+	remediation := map[string]any(nil)
+	if slices.Contains(blockers, "remote_access_server_disabled") {
+		remediation = map[string]any{"type": "enable_server_remote_access", "requires_capability": model.PrivilegeServerRemoteAccessManage, "server_id": server.ID}
+	} else if slices.Contains(blockers, "remote_access_global_disabled") {
+		remediation = map[string]any{"type": "enable_global_remote_access", "scope": "global"}
+	}
+	out := RemoteAccessDiagnosticView{
+		Server: map[string]any{"id": server.ID, "name": server.Name},
+		GlobalMCPEnabled: global.MCPEnabled,
+		ServerMCPEnabled: policy.MCPEnabled,
+		EffectiveMCPEnabled: effectiveMCP,
+		GlobalTerminalEnabled: global.RemoteTerminalEnabled,
+		ServerTerminalEnabled: policy.RemoteTerminalEnabled,
+		EffectiveTerminalEnabled: effectiveTerminal,
+		PrivilegedGrant: privInfo,
+		Agent: agentInfo,
+		Blockers: blockers,
+		Remediation: remediation,
+	}
+	return out, nil
+}
+
+func (s *Server) closeAllMCPTerminals(reason string) {
+	if s.terminalHub == nil {
+		return
+	}
+	s.terminalHub.mu.Lock()
+	matching := []*terminalSession{}
+	for _, sess := range s.terminalHub.sessions {
+		if sess.OwnerType != InteractiveOwnerMCP {
+			continue
+		}
+		matching = append(matching, sess)
+	}
+	for _, sess := range matching {
+		delete(s.terminalHub.sessions, sess.ID)
+	}
+	s.terminalHub.mu.Unlock()
+	for _, sess := range matching {
+		sess.close(reason)
+		_ = s.sendAgentControl(sess.ServerID, map[string]any{"type": "interactive_close", "session_id": sess.ID})
+		if sess.ServerID != 0 {
+			s.recordRemoteAccessAuditWithContext(context.Background(), "", model.RemoteAccessAuditEvent{
+				EventType: model.RemoteAccessAuditMCPInteractiveClose, ServerID: &sess.ServerID, SessionID: sess.ID, OAuthGrantID: sess.OAuthGrantID, OAuthClientID: sess.OAuthClientID, Capability: model.PrivilegeRemoteInteractive, Result: reason,
+			})
+		}
+	}
+}
+
+func (s *Server) handleGlobalRemoteAccessChange(ctx context.Context, changedKeys []string, settings map[string]string) {
+	for _, key := range changedKeys {
+		if key == settingMCPEnabled {
+			enabled := settingBool(settings, settingMCPEnabled, false)
+			if !enabled {
+				s.closeAllMCPTerminals("remote_access_global_disabled")
+			}
+			audit := model.RemoteAccessAuditEvent{
+				EventType: "remote_access.global_policy.updated",
+				ActorType: "system",
+				Result: stringBool(enabled),
+				Capability: "mcp",
+				MetadataJSON: json.RawMessage(`{"setting":"mcp_enabled","enabled":`+stringBoolJSON(enabled)+`}`),
+			}
+			_ = s.store.InsertRemoteAccessAudit(ctx, audit)
+		}
+	}
+}
+
+func stringBool(v bool) string {
+	if v {
+		return "enabled"
+	}
+	return "disabled"
+}
+func stringBoolJSON(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
 
 func assertRemotePrivilegeAllowedFromSettings(settings map[string]string, policy model.ServerRemoteAccessPolicy, status model.ServerRemoteAccessStatus, server *model.Server, privilege string) error {
 	global := globalRemoteAccessPolicyFromSettings(settings)

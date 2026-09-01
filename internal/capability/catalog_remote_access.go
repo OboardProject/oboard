@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	PrivilegeRemoteOperations     = model.PrivilegeRemoteOperations
-	PrivilegeRemoteExec           = model.PrivilegeRemoteExec
-	PrivilegeRemoteShell          = model.PrivilegeRemoteShell
-	PrivilegeRemoteInteractive    = model.PrivilegeRemoteInteractive
-	ApprovalPrivilegedGrant       = model.ApprovalPolicyPrivilegedGrant
-	PermissionServersRemoteAccess = "servers.remote_access"
+	PrivilegeRemoteOperations          = model.PrivilegeRemoteOperations
+	PrivilegeRemoteExec                = model.PrivilegeRemoteExec
+	PrivilegeRemoteShell               = model.PrivilegeRemoteShell
+	PrivilegeRemoteInteractive         = model.PrivilegeRemoteInteractive
+	PrivilegeServerRemoteAccessManage = model.PrivilegeServerRemoteAccessManage
+	ApprovalPrivilegedGrant            = model.ApprovalPolicyPrivilegedGrant
+	PermissionServersRemoteAccess      = "servers.remote_access"
 )
 
 func remoteAccessDescriptors(positiveID map[string]any, stringValue, boolValue map[string]any) []Descriptor {
@@ -54,6 +55,18 @@ func remoteAccessDescriptors(positiveID map[string]any, stringValue, boolValue m
 		privileged("node.run_diagnostics", "对授权服务器运行网络诊断", PrivilegeRemoteOperations, serverIDInput, rawSchema(map[string]any{"type": "object"}), 2, false),
 		privileged("node.exec", "以 argv 在授权服务器上执行程序，不经过 shell", PrivilegeRemoteExec, execInput, execOutput, 3, true),
 		privileged("node.exec_shell", "以 /bin/sh -c 在授权服务器上执行 shell 表达式", PrivilegeRemoteShell, shellInput, execOutput, 3, true),
+		privilegedManage("server.remote_access.update", "更新服务器的远程访问策略（Web 远程终端与 MCP 远程控制开关），需显式 server_remote_access_manage 授权，危险等级高于普通远程执行", schemaObject(map[string]any{"server_id": positiveID, "remote_terminal_enabled": boolValue, "mcp_enabled": boolValue}, "server_id"), rawSchema(map[string]any{"type": "object"}), 3),
+	}
+}
+
+func privilegedManage(name, description string, input, output []byte, risk int) Descriptor {
+	return Descriptor{
+		Name: name, Description: description, InputSchema: input, OutputSchema: output,
+		RequiredScopes: []string{"servers:write"}, ResourceTypes: []string{"server"},
+		ResourceEvaluator: "server_ids", RiskClass: risk, ApprovalPolicy: ApprovalPrivilegedGrant,
+		Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true,
+		ReadOnly: false, MinimumAccess: mcpauth.AccessOperate, PrivilegeClass: PrivilegeServerRemoteAccessManage,
+		RBACPermission: PermissionServersRemoteAccess, ResolveResourceRefs: serverRefFromServerID,
 	}
 }
 

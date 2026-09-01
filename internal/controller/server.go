@@ -1486,6 +1486,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		if len(changed) > 0 {
+			s.handleGlobalRemoteAccessChange(r.Context(), changed, items)
+		}
 		if req.TrustedProxyCIDRs != nil {
 			s.refreshSecureSessionCookie(w, r)
 		}

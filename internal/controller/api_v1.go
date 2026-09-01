@@ -373,11 +373,9 @@ func (s *Server) apiV1Servers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "服务器变更必须通过 Changeset")
-		return
-	}
-	id, err := application.ParseID(strings.TrimPrefix(r.URL.Path, "/api/v1/servers/"))
+	raw := strings.TrimPrefix(r.URL.Path, "/api/v1/servers/")
+	parts := strings.SplitN(raw, "/", 2)
+	id, err := application.ParseID(parts[0])
 	if err != nil {
 		v2HandleError(w, r, err)
 		return
@@ -385,6 +383,33 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 	principal, _ := apiPrincipal(r)
 	if !principal.HasScope("servers:read") {
 		v2Error(w, r, http.StatusForbidden, "scope_denied", "缺少 servers:read 权限")
+		return
+	}
+	// Machine remote-access read: GET /api/v1/servers/:id/remote-access
+	if len(parts) == 2 && parts[1] == "remote-access" {
+		if r.Method != http.MethodGet {
+			v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
+			return
+		}
+		server, err := s.store.GetServer(r.Context(), id)
+		if err != nil {
+			v2HandleError(w, r, err)
+			return
+		}
+		if !principal.AllowsInt64("server_ids", id) {
+			v2Error(w, r, http.StatusForbidden, "resource_denied", "无权访问该服务器")
+			return
+		}
+		view, err := s.remoteAccessMachineView(r.Context(), server)
+		if err != nil {
+			v2HandleError(w, r, err)
+			return
+		}
+		v2Write(w, r, http.StatusOK, view, nil)
+		return
+	}
+	if r.Method != http.MethodGet {
+		v2Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "服务器变更必须通过 Changeset")
 		return
 	}
 	item, err := s.application.GetServer(r.Context(), principal, id)
@@ -730,6 +755,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerSystemAutomationOperations()
 	s.registerNodeIncidentAutomationOperations()
 	s.registerNodeWorkspaceAutomationOperations()
+	s.registerRemoteAccessPolicyOperation()
 	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
 			UserID int64  `json:"user_id"`

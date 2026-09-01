@@ -6,10 +6,11 @@ const (
 	RemoteAccessModeStandard = "standard"
 	RemoteAccessModeHardened = "hardened"
 
-	PrivilegeRemoteOperations  = "remote_operations"
-	PrivilegeRemoteExec        = "remote_exec"
-	PrivilegeRemoteShell       = "remote_shell"
-	PrivilegeRemoteInteractive = "remote_interactive"
+	PrivilegeRemoteOperations          = "remote_operations"
+	PrivilegeRemoteExec                = "remote_exec"
+	PrivilegeRemoteShell               = "remote_shell"
+	PrivilegeRemoteInteractive         = "remote_interactive"
+	PrivilegeServerRemoteAccessManage = "server_remote_access_manage"
 
 	ApprovalPolicyPrivilegedGrant = "privileged_grant"
 
@@ -54,6 +55,7 @@ const (
 	RemoteAccessAuditPrivilegedGrantUpdated  = "privileged_grant_updated"
 	RemoteAccessAuditPrivilegedGrantRevoked  = "privileged_grant_revoked"
 	RemoteAccessAuditAgentLocalGateDenied    = "agent_local_gate_denied"
+	RemoteAccessAuditServerPolicyUpdated     = "remote_access.server_policy.updated"
 )
 
 type RemoteAccessReport struct {

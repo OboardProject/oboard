@@ -272,6 +272,10 @@ func (s *Server) mcpAllowedToolNames(principal application.Principal) map[string
 		allowed["server_terminal_close"] = true
 		allowed["server_terminal_resize"] = true
 	}
+	// Remote access diagnostic is always visible to readers (does not require privileged grant)
+	if s.grantAllowsAccess(principal, mcpauth.AccessRead) {
+		allowed["server_remote_access_get"] = true
+	}
 	// Ordinary capability tools remain filtered by the current principal.
 	for _, desc := range s.capabilities.ListMCP(principal) {
 		if !desc.MCPEnabled || desc.PrivilegeClass != "" {

@@ -126,32 +126,49 @@ func (s *Server) deletePrivilegedAccess(w http.ResponseWriter, r *http.Request, 
 }
 
 func normalizePrivilegedGrantInput(grant *model.OAuthGrant, actorID int64, req privilegedAccessInput) (model.MCPPrivilegedGrant, error) {
-	caps := []string{}
+	remoteCaps := map[string]bool{}
 	seen := map[string]bool{}
-	hasExplicit := false
+	hasExplicitAll := false
+	manageRequested := false
 	for _, item := range req.Capabilities {
 		v := strings.TrimSpace(item)
 		if v == "" {
 			continue
 		}
 		if v == "mcp_enabled" || v == "mcp_remote_control" || v == "all" {
-			hasExplicit = true
+			hasExplicitAll = true
 			continue
 		}
 		switch v {
 		case model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive:
 			if !seen[v] {
-				caps = append(caps, v)
+				remoteCaps[v] = true
 				seen[v] = true
+			}
+		case model.PrivilegeServerRemoteAccessManage:
+			if !seen[v] {
+				seen[v] = true
+				manageRequested = true
 			}
 		default:
 			return model.MCPPrivilegedGrant{}, errors.New("unsupported privileged capability")
 		}
 	}
-	if hasExplicit || len(caps) == 0 && len(req.Capabilities) == 0 {
+	// Build caps list: remote operations bundle remains, manage is independent
+	caps := []string{}
+	if hasExplicitAll || len(remoteCaps) == 0 && !manageRequested && len(req.Capabilities) == 0 {
 		caps = []string{model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive}
-	} else if len(caps) > 0 && len(caps) < 4 {
+	} else if len(remoteCaps) > 0 && len(remoteCaps) < 4 {
 		caps = []string{model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive}
+	} else {
+		for _, c := range []string{model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive} {
+			if remoteCaps[c] {
+				caps = append(caps, c)
+			}
+		}
+	}
+	if manageRequested {
+		caps = append(caps, model.PrivilegeServerRemoteAccessManage)
 	}
 	boundary := mcpauth.ResourceBoundary{Version: mcpauth.ResourceBoundaryVersion, Resources: map[string]mcpauth.ResourceSelection{
 		"server": {Selection: mcpauth.SelectionNone, IncludeFuture: false, AllowCreate: false},
