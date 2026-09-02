@@ -52,7 +52,9 @@ func egernProxyMap(proxy subscriptionProxy) map[string]any {
 		out["host_keys"] = append([]string(nil), proxy.HostKeys...)
 	case "snell":
 		out["psk"] = proxy.PSK
-		out["userkey"] = proxy.UserKey
+		// Only imported multi-user nodes carry a userkey; OBoard's own Snell
+		// nodes authenticate with the PSK alone.
+		setNonEmpty(out, "userkey", proxy.UserKey)
 		out["version"] = proxy.Version
 		out["udp_relay"] = true
 		if proxy.Reuse {

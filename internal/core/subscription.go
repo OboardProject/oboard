@@ -37,6 +37,11 @@ type SubscriptionOptions struct {
 	// AlwaysUseDomainHost forces the subscription server/host field to the
 	// managed DNS domain even for static single-stack inbounds.
 	AlwaysUseDomainHost bool
+	// PortLedger supplies the persisted ports of generated listeners. Snell
+	// gives every identity its own listener, so its nodes cannot be rendered
+	// without it. Rendering only ever reads the ledger; allocation belongs to
+	// the deployment projection.
+	PortLedger *ProxyPathPortLedger
 }
 
 type SubscriptionNode struct {
@@ -199,9 +204,12 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 				continue
 			}
 			group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeInbound, inbound.ID), defaultGroup)
-			raw, err := adapter.SubscriptionNode(user, inbound, server)
+			raw, ok, err := subscriptionRawForInbound(opts, user, inbound, server, adapter, 0)
 			if err != nil {
 				return nil, err
+			}
+			if !ok {
+				continue
 			}
 			raw["oboard_group"] = group
 			topo := topologies[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)]
@@ -212,9 +220,12 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 		}
 		for _, path := range branches {
 			branchUser := proxyPathBranchUser(path, inbound, user)
-			raw, err := adapter.SubscriptionNode(branchUser, inbound, server)
+			raw, ok, err := subscriptionRawForInbound(opts, branchUser, inbound, server, adapter, path.ID)
 			if err != nil {
 				return nil, err
+			}
+			if !ok {
+				continue
 			}
 			branchName := strings.TrimSpace(path.Name)
 			if branchName == "" {
@@ -264,6 +275,26 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 		nodes[ref.index].Raw["tag"] = nodes[ref.index].Name
 	}
 	return nodes, nil
+}
+
+// subscriptionRawForInbound renders one node. Most protocols expose a single
+// shared listener and go through the adapter, but Snell gives every identity
+// its own listener with its own port and PSK, so its node has to be read from
+// the port ledger instead. ok=false means this identity has no deployed
+// listener yet and the node must be skipped rather than guessed.
+func subscriptionRawForInbound(opts SubscriptionOptions, user model.User, inbound model.Inbound, server model.Server, adapter Adapter, pathID int64) (map[string]any, bool, error) {
+	if inbound.Protocol != model.ProtocolSnell {
+		raw, err := adapter.SubscriptionNode(user, inbound, server)
+		if err != nil {
+			return nil, false, err
+		}
+		return raw, true, nil
+	}
+	// The kernel derives each PSK from the credential-scoped identity, so the
+	// subscription has to scope the user the same way or the two disagree for
+	// device-bound users.
+	credential := UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSnell)
+	return SnellSubscriptionNode(opts.PortLedger, credential, inbound, server, pathID)
 }
 
 func BuildSubscriptionNodes(user model.User, servers []model.Server, inbounds []model.Inbound, opts SubscriptionOptions) ([]SubscriptionNode, error) {

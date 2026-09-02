@@ -1597,6 +1597,10 @@ const (
 	ProxyPathPortKindTunnelSSH = "tunnel_ssh_loopback"
 	// ScopeKey is the derived tunnel ID; the UDP listener lives on the target.
 	ProxyPathPortKindTunnelWG = "tunnel_wireguard"
+	// ScopeKey is "inbound:<id>:user:<id>:path:<id>". Snell has no usable
+	// multi-user mode across clients, so each authorized identity gets its own
+	// single-user listener on its own port.
+	ProxyPathPortKindSnellUser = "snell_user_inbound"
 )
 
 // Port pools. Public listeners are reachable from other devices or servers and

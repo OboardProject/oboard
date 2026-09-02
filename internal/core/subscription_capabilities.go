@@ -192,7 +192,7 @@ func snellFormatSupports(format model.SubscriptionFormat, proxy subscriptionProx
 	if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
 		return false
 	}
-	if proxy.PSK == "" || proxy.UserKey == "" {
+	if proxy.PSK == "" {
 		return false
 	}
 	switch format {

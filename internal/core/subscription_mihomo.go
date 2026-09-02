@@ -135,7 +135,9 @@ func mihomoStyleProxyMap(proxy subscriptionProxy, format model.SubscriptionForma
 	case "snell":
 		out["type"] = "snell"
 		out["psk"] = proxy.PSK
-		out["userkey"] = proxy.UserKey
+		// Only imported multi-user nodes carry a userkey; OBoard's own Snell
+		// nodes authenticate with the PSK alone.
+		setNonEmpty(out, "userkey", proxy.UserKey)
 		out["version"] = proxy.Version
 		out["udp"] = true
 		if proxy.Reuse {

@@ -592,6 +592,17 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		dns["rules"] = dnsRules
 	}
 	config.Route["default_domain_resolver"] = defaultDomainResolver(dns, server)
+	// Snell fans out into one single-user listener per identity, so its ports
+	// must be claimed before anything else derives a generated listener:
+	// proxy path hops allocate from the same server range and only see
+	// conflicts through the inbound set they are handed.
+	snellPlan, snellReservations, err := planSnellUserListeners(configProjectionInbounds(inbounds, opts.Inbounds), configProjectionServers(server, opts.Servers), users, opts)
+	if err != nil {
+		return "", err
+	}
+	if len(snellReservations) > 0 {
+		opts.Inbounds = append(append([]model.Inbound{}, opts.Inbounds...), snellReservations...)
+	}
 	for _, inbound := range inbounds {
 		if inbound.ServerID != server.ID || !inbound.Enabled {
 			continue
@@ -611,21 +622,27 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		if err != nil {
 			return "", err
 		}
-		baseInboundUsers := usersForInbound(inbound, users, opts.InboundUsers)
-		inboundUsers := baseInboundUsers
-		if branchUsers := proxyPathBranchUsersForInbound(inbound, users, opts.InboundUsers, opts.ProxyPathUsers, opts.ProxyPaths, opts.ProxyPathSteps); len(branchUsers) > 0 {
-			inboundUsers = branchUsers
+		accountedUsers, inboundUsers, err := resolveInboundUsers(inbound, users, opts, server.ChainSecret)
+		if err != nil {
+			return "", err
 		}
-		inboundUsers = credentialUsersForInbound(inboundUsers, inbound)
-		addRuntimeLimitsForInbound(&config, inbound, inboundUsers, opts)
-		inboundUsers = append(inboundUsers, pathLinkUsersForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)...)
-		if len(inboundUsers) == 0 {
-			placeholderUsers, err := placeholderUsersForInbound(inbound, server.ChainSecret)
-			if err != nil {
-				return "", err
+		// Snell does not have one listener with a user table: each identity
+		// owns a dedicated single-user listener rendered from the plan above,
+		// and each carries its own runtime limit keyed by its own tag.
+		if inbound.Protocol == model.ProtocolSnell {
+			for _, listener := range snellPlan[inbound.ID] {
+				item, err := snellListenerInbound(inbound, listener)
+				if err != nil {
+					return "", err
+				}
+				item["listen"] = EffectiveListenIP(server, inbound.ListenIP)
+				applyServerNetworkPolicy(item, server, inbound.Protocol, true)
+				addRuntimeLimitsForInboundTag(&config, inbound, []model.User{listener.User}, opts, listener.Tag)
+				config.Inbounds = append(config.Inbounds, item)
 			}
-			inboundUsers = placeholderUsers
+			continue
 		}
+		addRuntimeLimitsForInbound(&config, inbound, accountedUsers, opts)
 		if !InboundSupportsMultipleUsers(inbound) && len(inboundUsers) > 1 {
 			return "", fmt.Errorf("inbound %s supports only one user", inbound.Name)
 		}
@@ -1225,7 +1242,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 		isDirect := path.Kind == model.ProxyPathKindDirect
 		var root model.Inbound
 		activeServerID := int64(0)
-		activeInboundTag := ""
+		var activeInboundTags []string
 		var activeAuthUsers []string
 		var activeStageStepID *int64
 		previousTag := ""
@@ -1245,7 +1262,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 				continue
 			}
 			activeServerID = targetServerID
-			activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, first, model.Inbound{}, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+			activeInboundTags, activeAuthUsers = proxyPathStepInboundIdentity(path, first, model.Inbound{}, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 			stepID := first.ID
 			activeStageStepID = &stepID
 			steps = steps[1:]
@@ -1264,7 +1281,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 				}
 			}
 			activeServerID = root.ServerID
-			activeInboundTag = tag("in", root.ID)
+			activeInboundTags = rootInboundRoutingTags(root, path, users, opts)
 			activeAuthUsers = routingAuthUsersForProtocol(root.Protocol, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers)))
 		}
 		for _, step := range steps {
@@ -1274,7 +1291,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			if step.TransportMode == model.ProxyPathTransportPortForward {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+					activeInboundTags, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 					stepID := step.ID
 					activeStageStepID = &stepID
 					previousTag = ""
@@ -1298,7 +1315,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			if activeServerID != server.ID {
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+					activeInboundTags, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 					stepID := step.ID
 					activeStageStepID = &stepID
 					previousTag = ""
@@ -1332,20 +1349,16 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			previousTag = stepTag
 			if step.NodeType == model.ProxyPathStepServerInbound {
 				if previousTag != "" {
-					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 					if err != nil {
 						return nil, nil, err
 					}
 					rules = append(rules, stageRules...)
-					rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
-					if len(activeAuthUsers) > 0 {
-						rule["auth_user"] = activeAuthUsers
-					}
-					rules = append(rules, rule)
+					rules = appendPathRoutingRule(rules, activeInboundTags, activeAuthUsers, previousTag)
 				}
 				if targetServerID, _, ok := proxyPathStepTargetServer(step, inboundByID); ok {
 					activeServerID = targetServerID
-					activeInboundTag, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
+					activeInboundTags, activeAuthUsers = proxyPathStepInboundIdentity(path, step, root, targetServerID, inboundByID, users, opts, chainServices, transparentGroups[path.ID])
 					stepID := step.ID
 					activeStageStepID = &stepID
 					previousTag = ""
@@ -1357,32 +1370,24 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 				return nil, nil, fmt.Errorf("直接出口分支 %s 必须结束于可控服务器", path.Name)
 			}
 			if activeServerID == server.ID {
-				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 				if err != nil {
 					return nil, nil, err
 				}
 				rules = append(rules, stageRules...)
-				rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": "direct"}
-				if len(activeAuthUsers) > 0 {
-					rule["auth_user"] = activeAuthUsers
-				}
-				rules = append(rules, rule)
+				rules = appendPathRoutingRule(rules, activeInboundTags, activeAuthUsers, "direct")
 			}
 			continue
 		}
 		if previousTag != "" && activeServerID == server.ID {
-			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 			if err != nil {
 				return nil, nil, err
 			}
 			rules = append(rules, stageRules...)
-			rule := map[string]any{"inbound": []string{activeInboundTag}, "action": "route", "outbound": previousTag}
-			if len(activeAuthUsers) > 0 {
-				rule["auth_user"] = activeAuthUsers
-			}
-			rules = append(rules, rule)
+			rules = appendPathRoutingRule(rules, activeInboundTags, activeAuthUsers, previousTag)
 		} else if previousTag == "" && activeStageStepID != nil && activeServerID == server.ID {
-			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTag, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1458,20 +1463,61 @@ func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps 
 	return nil
 }
 
-func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup) (string, []string) {
+func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup) ([]string, []string) {
 	if transparentGroup != nil && step.Position == transparentGroup.PrefixLength {
-		return proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength), proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+		return []string{proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength)}, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 	}
 	if step.InboundID != nil && *step.InboundID != 0 {
 		inbound := inboundByID[*step.InboundID]
 		user := proxyPathLinkUser(path, inbound)
-		return tag("in", *step.InboundID), routingAuthUsersForProtocol(inbound.Protocol, []string{protocolAuthUsername(inbound.Protocol, user)})
+		return stepInboundRoutingTags(inbound, user), routingAuthUsersForProtocol(inbound.Protocol, []string{protocolAuthUsername(inbound.Protocol, user)})
 	}
 	if service, ok := proxyPathChainServiceForStep(services, step, targetServerID); ok {
 		user := proxyPathInternalUser(path, step)
-		return service.Tag, []string{protocolAuthUsername(service.Inbound.Protocol, user)}
+		return []string{service.Tag}, []string{protocolAuthUsername(service.Inbound.Protocol, user)}
 	}
-	return proxyPathInternalInboundTag(path.ID, step.Position), proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+	return []string{proxyPathInternalInboundTag(path.ID, step.Position)}, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+}
+
+// appendPathRoutingRule adds one proxy path routing rule. An empty inbound tag
+// set means the stage has no listener on this server — a Snell branch with no
+// authorized users, for instance — and must not produce a rule: sing-box would
+// read the empty `inbound` list as "match anything".
+func appendPathRoutingRule(rules []map[string]any, inboundTags, authUsers []string, outbound string) []map[string]any {
+	if len(inboundTags) == 0 {
+		return rules
+	}
+	rule := map[string]any{"inbound": inboundTags, "action": "route", "outbound": outbound}
+	if len(authUsers) > 0 {
+		rule["auth_user"] = authUsers
+	}
+	return append(rules, rule)
+}
+
+// rootInboundRoutingTags names the listeners a branch's traffic arrives on.
+// Most protocols share one listener and separate users with auth_user. Snell
+// gives every identity its own single-user listener, so the branch is
+// identified by the set of those tags and there is no auth_user to match.
+func rootInboundRoutingTags(root model.Inbound, path model.ProxyPath, users []model.User, opts ConfigOptions) []string {
+	if root.Protocol != model.ProtocolSnell {
+		return []string{tag("in", root.ID)}
+	}
+	branchUsers := proxyPathBranchUsersForPath(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+	out := make([]string, 0, len(branchUsers))
+	for _, user := range branchUsers {
+		out = append(out, snellUserInboundTag(root.ID, user.ID, runtimePathIDFromUsername(user.Username)))
+	}
+	return out
+}
+
+// stepInboundRoutingTags names the listeners a chain hop lands on when the hop
+// targets a real inbound. A Snell target accepts the hop on the dedicated
+// listener of the path's link identity.
+func stepInboundRoutingTags(inbound model.Inbound, linkUser model.User) []string {
+	if inbound.Protocol != model.ProtocolSnell {
+		return []string{tag("in", inbound.ID)}
+	}
+	return []string{snellUserInboundTag(inbound.ID, linkUser.ID, runtimePathIDFromUsername(linkUser.Username))}
 }
 
 func proxyPathBranchUsernames(path model.ProxyPath, root model.Inbound, users []model.User) []string {
@@ -1656,13 +1702,29 @@ func proxyPathStepOutbound(path model.ProxyPath, step model.ProxyPathStep, sourc
 		if step.InboundID == nil || *step.InboundID == 0 {
 			user = proxyPathInternalUser(path, step)
 		}
-		adapter, err := AdapterFor(inbound.Protocol)
-		if err != nil {
-			return nil, err
-		}
-		item, err := adapter.SubscriptionNode(user, inbound, targetServer)
-		if err != nil {
-			return nil, err
+		var item map[string]any
+		if inbound.Protocol == model.ProtocolSnell {
+			// The hop dials the dedicated single-user listener of this path's
+			// link identity, whose port the Snell projection already recorded
+			// in the ledger earlier in this run.
+			pathID := runtimePathIDFromUsername(user.Username)
+			node, ok, err := SnellSubscriptionNode(ledger, user, inbound, targetServer, pathID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, markInvalidDesiredState(fmt.Errorf("代理链目标入口 %s 是 Snell，但尚未为该链路分配监听端口，请先部署该入口", inbound.Name))
+			}
+			item = node
+		} else {
+			adapter, err := AdapterFor(inbound.Protocol)
+			if err != nil {
+				return nil, err
+			}
+			item, err = adapter.SubscriptionNode(user, inbound, targetServer)
+			if err != nil {
+				return nil, err
+			}
 		}
 		item["tag"] = outboundTag
 		applyServerNetworkPolicy(item, sourceServer, inbound.Protocol, false)
@@ -2042,7 +2104,12 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 	return out, nil
 }
 
-func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTag string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) ([]map[string]any, error) {
+func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTags []string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) ([]map[string]any, error) {
+	// No listener on this server means no stage to attach rules to. Emitting
+	// them with an empty inbound list would make sing-box match every inbound.
+	if len(inboundTags) == 0 {
+		return nil, nil
+	}
 	filtered := make([]model.RoutingRule, 0)
 	for _, rule := range rules {
 		if !rule.Enabled || rule.Scope != model.RoutingRuleScopePathStage || rule.ProxyPathID == nil || *rule.ProxyPathID != path.ID || rule.ServerID != server.ID || !sameOptionalID(rule.StageStepID, stageStepID) {
@@ -2069,7 +2136,7 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 				return nil, fmt.Errorf("routing rule %s match_json: %w", rule.Name, err)
 			}
 		}
-		item["inbound"] = []string{inboundTag}
+		item["inbound"] = append([]string(nil), inboundTags...)
 		if len(authUsers) > 0 {
 			item["auth_user"] = append([]string(nil), authUsers...)
 		} else {
@@ -3240,6 +3307,59 @@ func usersForInbound(inbound model.Inbound, users []model.User, bindings []model
 	return out
 }
 
+// resolveInboundUsers derives the identities one inbound serves. It returns
+// the accounted users — the authorized users whose traffic and limits belong to
+// this inbound — and the full listener set, which additionally carries the
+// proxy path link identities and falls back to a placeholder when nothing is
+// authorized. Both the generated core config and the Snell listener projection
+// call it so the two can never disagree about who an inbound serves.
+func resolveInboundUsers(inbound model.Inbound, users []model.User, opts ConfigOptions, serverSecret string) ([]model.User, []model.User, error) {
+	accounted := usersForInbound(inbound, users, opts.InboundUsers)
+	if branchUsers := proxyPathBranchUsersForInbound(inbound, users, opts.InboundUsers, opts.ProxyPathUsers, opts.ProxyPaths, opts.ProxyPathSteps); len(branchUsers) > 0 {
+		accounted = branchUsers
+	}
+	accounted = credentialUsersForInbound(accounted, inbound)
+	listeners := append(append([]model.User{}, accounted...), pathLinkUsersForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)...)
+	if len(listeners) == 0 {
+		placeholderUsers, err := placeholderUsersForInbound(inbound, serverSecret)
+		if err != nil {
+			return nil, nil, err
+		}
+		listeners = placeholderUsers
+	}
+	return accounted, listeners, nil
+}
+
+// configProjectionInbounds unions the inbounds a generation call was given with
+// the full topology in ConfigOptions. Callers that only pass one of the two
+// (fixtures pass the positional list, Controller passes both) must still see
+// every inbound when a projection has to reason across servers.
+func configProjectionInbounds(inbounds []model.Inbound, optsInbounds []model.Inbound) []model.Inbound {
+	seen := map[int64]bool{}
+	out := make([]model.Inbound, 0, len(inbounds)+len(optsInbounds))
+	for _, group := range [][]model.Inbound{inbounds, optsInbounds} {
+		for _, inbound := range group {
+			if seen[inbound.ID] {
+				continue
+			}
+			seen[inbound.ID] = true
+			out = append(out, inbound)
+		}
+	}
+	return out
+}
+
+// configProjectionServers guarantees the server being generated is present even
+// when a fixture supplies no server topology.
+func configProjectionServers(server model.Server, servers []model.Server) []model.Server {
+	for _, item := range servers {
+		if item.ID == server.ID {
+			return servers
+		}
+	}
+	return append(append([]model.Server{}, servers...), server)
+}
+
 func placeholderUsersForInbound(inbound model.Inbound, serverSecret string) ([]model.User, error) {
 	var uuid, password string
 	if serverSecret = strings.TrimSpace(serverSecret); serverSecret != "" {
@@ -3455,7 +3575,11 @@ func AuthCapabilities(inbound model.Inbound) InboundAuthCapabilities {
 	case model.ProtocolMieru:
 		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSnell:
-		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: true, HasUserCredential: true}
+		// Snell has no cross-client multi-user mode, so one panel inbound is
+		// projected into one single-user listener per identity. Each listener
+		// authenticates with its own PSK and carries no user table, which also
+		// means route rules match it by inbound tag instead of auth_user.
+		return InboundAuthCapabilities{MultiUser: false, RoutingAuthUser: false, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSocks:
 		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSSH:
@@ -4162,11 +4286,15 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 //   - Version 5 is never emitted to clients: sing-box upstream does not
 //     implement a v5 outbound, so v5 nodes would not be usable.
 //
-// Snell is a multi-user protocol with a server PSK and per-user userkeys:
-// `config_json.psk` is the stable server credential, while each bound OBoard
-// user contributes a `users[].userkey` derived from their ProxyPassword and
-// `users[].name` derived from protocolAuthUsername. Branch users are emitted
-// as distinct identities in the same users set.
+// Snell is a single-user protocol at the client boundary. sing-box does accept
+// a `users[]` table, but the AEAD key still derives from the server PSK alone
+// and the per-user `userkey` is only an identity tag; worse, no client except
+// sing-box has a userkey field, so a multi-user listener rejects Surge, Mihomo,
+// Egern, Shadowrocket and Surfboard outright. One panel Snell inbound is
+// therefore projected into one single-user listener per identity, each on its
+// own port with its own PSK derived from `config_json.psk`. See
+// snell_listeners.go for the projection; the adapter below only renders the
+// non-user-specific shape and the client-facing node.
 //
 // UDP relay rides on the established TCP stream, not on a native UDP
 // listener, so Snell inbounds remain TCP-only listeners and stay valid
@@ -4298,21 +4426,10 @@ func snellPSK(extra map[string]any, users []model.User) (string, error) {
 	return psk, nil
 }
 
-func snellUsers(users []model.User) []map[string]any {
-	out := make([]map[string]any, 0, len(users))
-	for _, user := range users {
-		if strings.TrimSpace(user.ProxyPassword) == "" {
-			continue
-		}
-		name := protocolAuthUsername(model.ProtocolSnell, user)
-		if strings.TrimSpace(name) == "" {
-			continue
-		}
-		out = append(out, map[string]any{"name": name, "userkey": user.ProxyPassword})
-	}
-	return out
-}
-
+// snellUserKey is the userkey an OBoard outbound presents when dialing a
+// third-party Snell server that runs in multi-user mode. OBoard's own Snell
+// inbounds never run that way — see snell_listeners.go — so nothing on the
+// inbound side calls this.
 func snellUserKey(user model.User) string {
 	return strings.TrimSpace(user.ProxyPassword)
 }
@@ -4403,39 +4520,18 @@ func (snellAdapter) ValidateOutbound(v model.Outbound) error {
 	}
 	return validateSnellOptions(parseExtra(v.ConfigJSON), transportSideOutbound)
 }
+
+// Inbound is not how Snell listeners are produced. A Snell inbound expands
+// into one single-user listener per identity, each with its own port and PSK,
+// which needs the port ledger and therefore lives in planSnellUserListeners.
+// Returning an error here keeps any other generated-listener path — proxy path
+// transparent processing is the one that can reach it — from silently
+// producing a multi-user listener no client can connect to.
 func (a snellAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
 		return nil, err
 	}
-	extra := parseExtra(v.ConfigJSON)
-	panelVersion, err := snellPanelVersion(extra)
-	if err != nil {
-		return nil, err
-	}
-	serverVersion, err := SnellServerVersion(panelVersion)
-	if err != nil {
-		return nil, err
-	}
-	psk, err := snellServerPSK(extra)
-	if err != nil {
-		return nil, err
-	}
-	item := map[string]any{"type": "snell", "tag": tag("in", v.ID), "listen": v.ListenIP, "listen_port": v.Port, "version": serverVersion, "psk": psk, "users": snellUsers(users)}
-	if panelVersion == SnellVersionV4 {
-		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
-			return nil, err
-		} else if obfs != "none" {
-			item["obfs_mode"] = obfs
-		}
-	} else {
-		if mode, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
-			return nil, err
-		} else if mode != "default" {
-			item["mode"] = mode
-		}
-	}
-	applyAllowed(item, extra, "tcp_fast_open")
-	return item, nil
+	return nil, fmt.Errorf("入口 %s 是 Snell：每个用户使用独立端口和独立 PSK，无法在此处生成共享监听；Snell 暂不支持代理链的透明处理节点，请改用 VLESS/HY2 等协议承载该链路", v.Name)
 }
 func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]any, error) {
 	if err := a.ValidateOutbound(v); err != nil {
@@ -4504,49 +4600,18 @@ func (a snellAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 	applyAllowed(item, extra, "network", "tcp_fast_open", "domain_resolver", "network_strategy", "fallback_delay")
 	return item, nil
 }
+
+// SubscriptionNode is not how Snell nodes are rendered. Each identity connects
+// to its own listener on its own port with its own derived PSK, which requires
+// the port ledger, so subscription rendering goes through
+// SnellSubscriptionNode instead. Failing loudly here keeps a caller from
+// emitting a node pointing at the inbound's declared port, which nothing
+// listens on.
 func (a snellAdapter) SubscriptionNode(user model.User, inbound model.Inbound, server model.Server) (map[string]any, error) {
 	if err := a.ValidateInbound(inbound); err != nil {
 		return nil, err
 	}
-	extra := parseExtra(inbound.ConfigJSON)
-	panelVersion, err := snellPanelVersion(extra)
-	if err != nil {
-		return nil, err
-	}
-	clientVersion, err := SnellClientVersion(panelVersion)
-	if err != nil {
-		return nil, err
-	}
-	psk, err := snellServerPSK(extra)
-	if err != nil {
-		return nil, err
-	}
-	userkey := snellUserKey(user)
-	if userkey == "" {
-		return nil, errors.New("snell userkey required (user proxy password)")
-	}
-	node := map[string]any{"type": "snell", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": clientVersion, "psk": psk, "userkey": userkey}
-	if clientVersion == SnellVersionV4 {
-		if obfs, err := normalizeSnellObfsMode(stringValue(extra, "obfs_mode", "none")); err != nil {
-			return nil, err
-		} else if obfs != "none" {
-			node["obfs_mode"] = obfs
-			if host := strings.TrimSpace(stringValue(extra, "obfs_host", "")); host != "" {
-				node["obfs_host"] = host
-			}
-		}
-	} else {
-		if mode, err := normalizeSnellV6Mode(stringValue(extra, "mode", "default")); err != nil {
-			return nil, err
-		} else if mode != "default" {
-			node["mode"] = mode
-		}
-	}
-	if snellReuse(extra) {
-		node["reuse"] = true
-	}
-	applyAllowed(node, extra, "tcp_fast_open")
-	return node, nil
+	return nil, fmt.Errorf("入口 %s 是 Snell：订阅节点需要按用户解析端口与 PSK，请使用 SnellSubscriptionNode", inbound.Name)
 }
 
 type ssAdapter struct{}

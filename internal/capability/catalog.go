@@ -772,9 +772,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//   shadowsocks 2022: method + password (generated when omitted).
 		//   mieru: transport/multiplexing defaults are filled automatically.
 		//   socks: authenticated SOCKS5 using each authorized user's credentials.
-		//   snell: single-PSK protocol; version 4/6 with optional
-		//     obfs_mode/obfs_host (v4) or mode (v6), reusable via
-		//     config_json.snell_profile_id.
+		//   snell: version 4/6 with optional obfs_mode/obfs_host (v4) or mode
+		//     (v6), reusable via config_json.snell_profile_id. One Snell
+		//     inbound listens on one auto-allocated port per authorized user,
+		//     each with its own derived PSK, because no client except sing-box
+		//     supports Snell multi-user. config_json.psk is the seed those
+		//     per-user PSKs derive from, not a key any client uses directly,
+		//     and NAT advertise_port is rejected for Snell.
 		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws require an operator-owned dns_domain and default to dns_sync_enabled=true plus certificate_mode=auto: a covering dns_credential_id is required (a single tenant DNS credential or bootstrap default_dns_credential_id is filled automatically; otherwise create/update fail before ready with code missing_dns_credential and available_credentials [{id,name,provider}]); omit certificate_domain to follow dns_domain; changing dns_domain deletes the previous DNS records, writes the new ones, follows SNI unless a custom SNI was already set, immediately binds a ready covering certificate when one exists, and otherwise issues it on the next deploy; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,

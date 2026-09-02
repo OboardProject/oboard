@@ -806,7 +806,7 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	for key, item := range metadata {
 		globalNames[key] = item.DisplayNameOverride
 	}
-	opts := core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, RoutingRules: data.RoutingRules, ProxyPathEgressResults: data.ProxyPathEgressResults, ExternalOutbounds: data.ExternalOutbounds, SSHServerHostKeys: sshServerHostKeys, EffectiveNodes: snapshot.EffectiveNodeKeys(user.ID), EffectiveNodeGroups: snapshot.EffectiveNodeGroups(user.ID), NodeOrderPositions: orderPositions, GlobalNodeNames: globalNames, PlanNodeNames: planNodeNames, AlwaysUseDomainHost: s.subscriptionAlwaysUseDomainHost(ctx)}
+	opts := core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, RoutingRules: data.RoutingRules, ProxyPathEgressResults: data.ProxyPathEgressResults, ExternalOutbounds: data.ExternalOutbounds, SSHServerHostKeys: sshServerHostKeys, EffectiveNodes: snapshot.EffectiveNodeKeys(user.ID), EffectiveNodeGroups: snapshot.EffectiveNodeGroups(user.ID), NodeOrderPositions: orderPositions, GlobalNodeNames: globalNames, PlanNodeNames: planNodeNames, AlwaysUseDomainHost: s.subscriptionAlwaysUseDomainHost(ctx), PortLedger: core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)}
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy
 	}

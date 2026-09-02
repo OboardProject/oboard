@@ -46,12 +46,21 @@ const mihomoSnellUserKeyThreshold = "99.99.99"
 var mihomoVersionPattern = regexp.MustCompile(`(?i)(?:mihomo|clash[-_ ]?meta|clash)[/\s]v?([0-9]+\.[0-9]+\.[0-9]+)`)
 
 // RequiredFeaturesForProxy returns the features a normalized proxy requires
-// from the target client. For Snell the server is always multi-user
-// (psk + per-user userkey) and the renderer must not strip or demote it.
+// from the target client.
+//
+// snell_multi_user_userkey is required only by a node that actually carries a
+// userkey. OBoard's own Snell nodes never do — every user gets a dedicated
+// single-user listener with its own PSK — so they render to every client that
+// supports the protocol version. An imported third-party node running sing-box
+// multi-user mode still needs the feature, and the renderer must not strip or
+// demote its userkey.
 func RequiredFeaturesForProxy(proxy subscriptionProxy) []ProtocolFeature {
 	switch proxy.Type {
 	case "snell":
-		features := []ProtocolFeature{FeatureSnell, FeatureSnellMultiUserUserKey}
+		features := []ProtocolFeature{FeatureSnell}
+		if proxy.UserKey != "" {
+			features = append(features, FeatureSnellMultiUserUserKey)
+		}
 		if proxy.Version == SnellVersionV4 {
 			features = append(features, FeatureSnellV4)
 		} else if proxy.Version == SnellVersionV6 {
@@ -68,13 +77,15 @@ func RequiredFeaturesForProxy(proxy subscriptionProxy) []ProtocolFeature {
 
 // RequiredFeaturesForInbound returns the features a Snell inbound requires.
 // It is used by MCP form validation without constructing a full proxy.
+// snell_multi_user_userkey is never among them: an OBoard Snell inbound is
+// projected into single-user listeners, so its nodes carry no userkey.
 func RequiredFeaturesForInbound(inbound model.Inbound) []ProtocolFeature {
 	if inbound.Protocol != model.ProtocolSnell {
 		return nil
 	}
 	extra := parseExtra(inbound.ConfigJSON)
 	version, _ := snellPanelVersion(extra)
-	features := []ProtocolFeature{FeatureSnell, FeatureSnellMultiUserUserKey}
+	features := []ProtocolFeature{FeatureSnell}
 	if version == SnellVersionV4 {
 		features = append(features, FeatureSnellV4)
 	} else if version == SnellVersionV6 {

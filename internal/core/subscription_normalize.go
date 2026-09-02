@@ -219,9 +219,10 @@ func validateNormalizedSubscriptionProxy(proxy subscriptionProxy) error {
 		if proxy.PSK == "" {
 			return missing("snell psk")
 		}
-		if proxy.UserKey == "" {
-			return missing("snell userkey")
-		}
+		// userkey is optional. OBoard's own Snell nodes never carry one: each
+		// user gets a dedicated single-user listener authenticated by its own
+		// PSK. Only an imported third-party node running sing-box multi-user
+		// mode still supplies one, and it is passed through untouched.
 		if proxy.Version != SnellVersionV4 && proxy.Version != SnellVersionV6 {
 			return fmt.Errorf("subscription node %s has unsupported snell version %d", proxy.Name, proxy.Version)
 		}

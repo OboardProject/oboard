@@ -388,6 +388,32 @@ func generationInPhase(state, phase string) bool {
 	}
 }
 
+// LookupActive reads the active port of one owner without ever allocating.
+// resolve() and ResolveForPhase() both fall through to allocation when an owner
+// has no row yet, which is correct while projecting a deployment but wrong for
+// read-only consumers such as subscription rendering: a port invented there is
+// never persisted, so the client would be handed something the kernel does not
+// listen on. Callers treat "not found" as "this listener has not been deployed
+// yet" and omit the node.
+func (l *ProxyPathPortLedger) LookupActive(kind, scopeKey string, serverID int64) (int, bool) {
+	if l == nil {
+		return 0, false
+	}
+	owner, ok := l.owners[proxyPathPortKey{Kind: kind, ScopeKey: scopeKey, ServerID: serverID}]
+	if !ok {
+		return 0, false
+	}
+	gen := owner.activeGeneration()
+	if gen == nil {
+		return 0, false
+	}
+	item, ok := gen.primaryRow()
+	if !ok || item.Port <= 0 {
+		return 0, false
+	}
+	return item.Port, true
+}
+
 // ResolveForPhase returns the port a consumer should dial during one migration
 // phase. Prepare leaves consumers on the active generation, switch moves them
 // to the preparing generation, and retire keeps them on the (new) active
