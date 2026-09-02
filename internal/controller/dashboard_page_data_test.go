@@ -64,6 +64,28 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 	}
 }
 
+// TestServersPageDataReusesLoadedSnapshots guards the per-request reuse of
+// server and settings data across the visible page payload and shared status.
+func TestServersPageDataReusesLoadedSnapshots(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, token := loginTestAdmin(t, db)
+
+	before := db.SQLStatementCount()
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
+	used := db.SQLStatementCount() - before
+	// Authentication, servers + telemetry, settings/defaults, DNS data,
+	// deployment status and configuration sync all fit in this budget. Loading
+	// servers again just to decorate configuration-sync rows adds three more
+	// statements and fails this regression guard.
+	if used > 17 {
+		t.Fatalf("servers page-data SQL statements = %d, want <= 17", used)
+	}
+}
+
 // TestDashboardPageDataSendsServerTiming proves the instrumentation header is
 // present and shaped like "stage;dur=..., total;dur=..." without payload data.
 func TestDashboardPageDataSendsServerTiming(t *testing.T) {

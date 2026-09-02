@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { PageDataRequestCoordinator } from './page-data'
+import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData } from './page-data'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -77,5 +77,45 @@ describe('PageDataRequestCoordinator', () => {
     expect(requests.pending('prefetch')).toBeUndefined()
     expect(requests.pending('background')).toBe(backgroundRequest)
     expect(requests.pending('foreground')).toBe(foregroundRequest)
+  })
+
+  it('keeps the target prefetch while cancelling unrelated speculative requests', () => {
+    const requests = new PageDataRequestCoordinator<string>()
+    const target = deferred<string>()
+    const unrelated = deferred<string>()
+    const signals: AbortSignal[] = []
+    const targetRequest = requests.request('servers', signal => { signals[0] = signal; return target.promise }, { priority: 'prefetch' })
+    requests.request('audit', signal => { signals[1] = signal; return unrelated.promise }, { priority: 'prefetch' })
+
+    requests.cancelPrefetches('servers')
+
+    expect(signals[0].aborted).toBe(false)
+    expect(signals[1].aborted).toBe(true)
+    expect(requests.pending('servers')).toBe(targetRequest)
+    expect(requests.pending('audit')).toBeUndefined()
+  })
+})
+
+describe('page-data cache freshness', () => {
+  it('revalidates only dirty, missing or expired cache entries', () => {
+    const now = 20_000
+    expect(shouldRevalidatePageData(15_000, false, 12_000, now)).toBe(false)
+    expect(shouldRevalidatePageData(7_999, false, 12_000, now)).toBe(true)
+    expect(shouldRevalidatePageData(15_000, true, 12_000, now)).toBe(true)
+    expect(shouldRevalidatePageData(undefined, false, 12_000, now)).toBe(true)
+  })
+})
+
+describe('idle page-data prefetch', () => {
+  it('warms only common next pages instead of downloading every admin page', () => {
+    expect(idlePrefetchPages('admin', 'dashboard')).toEqual(['servers', 'proxy-paths', 'users', 'tasks'])
+    expect(idlePrefetchPages('admin', 'servers')).toEqual(['proxy-paths', 'users', 'tasks'])
+    expect(idlePrefetchPages('admin', 'dashboard')).not.toContain('audit')
+    expect(idlePrefetchPages('admin', 'dashboard')).not.toContain('settings')
+  })
+
+  it('keeps self-service prefetch scoped for non-operator roles', () => {
+    expect(idlePrefetchPages('none', 'dashboard')).toEqual(['nodes', 'account'])
+    expect(idlePrefetchPages('viewer', 'nodes')).toEqual(['notifications', 'account'])
   })
 })

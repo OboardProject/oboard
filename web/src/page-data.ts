@@ -4,6 +4,18 @@ export type PageDataResponse<T> = {
 }
 
 export type RequestPriority = 'foreground' | 'prefetch' | 'background'
+export type PageDataRole = 'admin' | 'operator' | 'viewer' | 'none'
+
+const IDLE_PREFETCH_PAGES: Record<PageDataRole, string[]> = {
+  none: ['nodes', 'account'],
+  viewer: ['nodes', 'notifications', 'account'],
+  operator: ['servers', 'proxy-paths', 'tasks'],
+  admin: ['servers', 'proxy-paths', 'users', 'tasks'],
+}
+
+export function idlePrefetchPages(role: PageDataRole, activePage: string) {
+  return IDLE_PREFETCH_PAGES[role].filter(page => page !== activePage)
+}
 
 type PendingRequest<T> = {
   promise: Promise<PageDataResponse<T>>
@@ -14,6 +26,10 @@ type PendingRequest<T> = {
 export type PageDataRequestOptions = {
   forceFresh?: boolean
   priority?: RequestPriority
+}
+
+export function shouldRevalidatePageData(fetchedAt: number | undefined, dirty: boolean, ttlMS: number, now = Date.now()) {
+  return dirty || !fetchedAt || now - fetchedAt >= ttlMS
 }
 
 export class PageDataRequestCoordinator<T> {
@@ -91,10 +107,12 @@ export class PageDataRequestCoordinator<T> {
     this.requests.delete(page)
   }
 
-  // cancelPrefetches aborts only warm-up requests when the panel is hidden.
-  cancelPrefetches() {
+  // cancelPrefetches aborts warm-up requests that would compete with a
+  // foreground navigation. The target page can be retained so its in-flight
+  // request is promoted and reused instead of restarted.
+  cancelPrefetches(exceptPage?: string) {
     Array.from(this.requests.entries()).forEach(([page, pending]) => {
-      if (pending.priority !== 'prefetch') return
+      if (pending.priority !== 'prefetch' || page === exceptPage) return
       pending.controller.abort()
       this.requests.delete(page)
     })

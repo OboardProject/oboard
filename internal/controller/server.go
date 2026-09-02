@@ -1796,19 +1796,38 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	}
 	timing := newPageStageTimer(page)
 	ctx := r.Context()
-	addServerSnapshot := func() error {
-		items, err := s.store.ListServers(ctx)
-		if err != nil {
-			return err
+	var serverSnapshot []model.Server
+	serverSnapshotLoaded := false
+	var settingsSnapshot map[string]string
+	settingsSnapshotLoaded := false
+	loadSettingsSnapshot := func() (map[string]string, error) {
+		if !settingsSnapshotLoaded {
+			items, err := s.store.ListSettings(ctx)
+			if err != nil {
+				return nil, err
+			}
+			settingsSnapshot = items
+			settingsSnapshotLoaded = true
 		}
-		out["servers"] = items
+		return settingsSnapshot, nil
+	}
+	addServerSnapshot := func() error {
+		if !serverSnapshotLoaded {
+			items, err := s.store.ListServers(ctx)
+			if err != nil {
+				return err
+			}
+			serverSnapshot = items
+			serverSnapshotLoaded = true
+		}
+		out["servers"] = serverSnapshot
 		return nil
 	}
 	addServers := func() error {
 		return addServerSnapshot()
 	}
 	addSettings := func() error {
-		items, err := s.store.ListSettings(ctx)
+		items, err := loadSettingsSnapshot()
 		if err != nil {
 			return err
 		}
@@ -1825,7 +1844,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	addServerCreationDefaults := func() error {
-		settings, err := s.store.ListSettings(ctx)
+		settings, err := loadSettingsSnapshot()
 		if err != nil {
 			return err
 		}
@@ -1934,7 +1953,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return err
 		}
-		paths = core.ResolveProxyPathNames(paths, steps, out["servers"].([]model.Server), inbounds, externals)
+		paths = core.ResolveProxyPathNames(paths, steps, serverSnapshot, inbounds, externals)
 		if err := timing.run("egress", func() error {
 			var listErr error
 			egressResults, listErr = s.store.ListProxyPathEgressResults(ctx)
@@ -1942,7 +1961,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return err
 		}
-		paths, externals = core.ResolveProxyPathExitRegions(paths, steps, out["servers"].([]model.Server), inbounds, externals, egressResults)
+		paths, externals = core.ResolveProxyPathExitRegions(paths, steps, serverSnapshot, inbounds, externals, egressResults)
 		if err := timing.run("forwards", func() error {
 			var listErr error
 			forwards, listErr = s.store.ListPortForwards(ctx)
@@ -2042,7 +2061,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				if listErr != nil {
 					return listErr
 				}
-				settings, listErr := s.store.ListSettings(ctx)
+				settings, listErr := loadSettingsSnapshot()
 				if listErr != nil {
 					return listErr
 				}
@@ -2722,7 +2741,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			fail(w, syncErr, http.StatusInternalServerError)
 			return
 		}
-		out["configuration_sync"] = s.configurationSyncViews(ctx, configurationStates)
+		if serverSnapshotLoaded {
+			out["configuration_sync"] = configurationSyncViews(configurationStates, serverSnapshot)
+		} else {
+			out["configuration_sync"] = s.configurationSyncViews(ctx, configurationStates)
+		}
 	}
 	w.Header().Set("Server-Timing", timing.serverTiming())
 	timing.logSlowIfNeeded()

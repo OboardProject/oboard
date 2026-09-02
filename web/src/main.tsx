@@ -147,7 +147,7 @@ import surfboardClientIcon from './assets/subscription-clients/surfboard.png'
 import egernClientIcon from './assets/subscription-clients/egern.jpg'
 import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
-import { PageDataRequestCoordinator, shouldRevalidatePageData } from './page-data'
+import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData } from './page-data'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { usePausedInterval } from './visibility'
@@ -1516,16 +1516,6 @@ const tabMinimumRole: Record<string, Role> = {
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
-// Idle prefetch is deliberately limited to the most likely next pages. Heavy
-// topology, audit and settings payloads are still warmed immediately on
-// pointer/focus intent, but are not all downloaded after every login.
-const preloadTabsByRole: Record<Role, string[]> = {
-	none: ['nodes', 'account'],
-	viewer: ['nodes', 'notifications', 'account'],
-  operator: ['servers', 'proxy-paths', 'tasks'],
-  admin: ['servers', 'proxy-paths', 'users', 'tasks'],
-}
-
 // PAGE_CACHE_FRESH_TTL_MS: switching back inside this window issues no
 // page-data request at all. Realtime invalidation always overrides the TTL.
 const PAGE_CACHE_FRESH_TTL_MS = 12_000
@@ -2598,7 +2588,7 @@ export function App() {
     }
     const scheduler = new PagePrefetchScheduler(guard, { maxConcurrency: MAX_PREFETCH_CONCURRENCY })
     prefetchSchedulerRef.current = scheduler
-    const pages = preloadTabsByRole[sessionUser.role].filter(page => page !== 'automation' && page !== tab)
+    const pages = idlePrefetchPages(sessionUser.role, tab)
     pages.forEach(page => {
       if (pageCacheRef.current[page]) return
       scheduler.enqueue(page, 'idle', () => warmPage(page))
