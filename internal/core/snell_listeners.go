@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -120,9 +122,14 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 		if err != nil {
 			return nil, nil, fmt.Errorf("snell inbound %s: %w", inbound.Name, err)
 		}
-		_, listenerUsers, err := resolveInboundUsers(inbound, users, opts, host.ChainSecret)
+		accountedUsers, listenerUsers, err := resolveInboundUsers(inbound, users, opts, host.ChainSecret)
 		if err != nil {
 			return nil, nil, err
+		}
+		if inbound.AdvertisePort > 0 && len(accountedUsers) > 1 {
+			return nil, nil, markInvalidDesiredState(fmt.Errorf(
+				"snell 入站 %s 配置了对外端口 %d，但当前有 %d 个可订阅的逐用户或逐分支实例；一个对外端口只能映射一个客户端运行端口",
+				inbound.Name, inbound.AdvertisePort, len(accountedUsers)))
 		}
 		listenIP := EffectiveListenIP(host, inbound.ListenIP)
 		start, end := proxyPathServerPortRange(host)
@@ -242,14 +249,45 @@ func snellUserPortScopeKey(inboundID, userID, pathID int64) string {
 }
 
 // SnellSubscriptionNode renders the client-facing node for one identity on one
-// branch. It reads the port from the ledger without allocating, so a user whose
-// listener has not been deployed yet yields ok=false and is omitted from the
-// subscription rather than handed a port that does not exist.
+// branch. The generated listener still runs on its ledger port, but an explicit
+// advertise_port is the public NAT/forwarding entry and therefore replaces only
+// the client-facing server_port. It reads the ledger without allocating, so a
+// user whose listener has not been deployed yet yields ok=false and is omitted
+// rather than handed a port that does not exist.
 //
 // The caller must pass the same identity the config projection used — the
 // branch user for a proxy path branch, and in both cases the credential-scoped
 // user from UserCredentialForRoute — otherwise the derived PSK will not match.
 func SnellSubscriptionNode(ledger *ProxyPathPortLedger, user model.User, inbound model.Inbound, server model.Server, pathID int64) (map[string]any, bool, error) {
+	if inbound.AdvertisePort > 0 && activeSnellClientListenerCount(ledger, inbound) > 1 {
+		return nil, false, markInvalidDesiredState(fmt.Errorf(
+			"snell 入站 %s 的对外端口 %d 对应多个客户端运行端口，请先收敛为单个用户或分支并重新部署",
+			inbound.Name, inbound.AdvertisePort))
+	}
+	return snellUserNode(ledger, user, inbound, server, pathID)
+}
+
+func activeSnellClientListenerCount(ledger *ProxyPathPortLedger, inbound model.Inbound) int {
+	if ledger == nil {
+		return 0
+	}
+	prefix := fmt.Sprintf("inbound:%d:user:", inbound.ID)
+	count := 0
+	for key, owner := range ledger.owners {
+		if key.Kind != model.ProxyPathPortKindSnellUser || key.ServerID != inbound.ServerID || !strings.HasPrefix(key.ScopeKey, prefix) || owner.activeGeneration() == nil {
+			continue
+		}
+		userPart := strings.TrimPrefix(key.ScopeKey, prefix)
+		userPart, _, _ = strings.Cut(userPart, ":path:")
+		userID, err := strconv.ParseInt(userPart, 10, 64)
+		if err == nil && userID > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.Inbound, server model.Server, pathID int64) (map[string]any, bool, error) {
 	extra := parseExtra(inbound.ConfigJSON)
 	panelVersion, err := snellPanelVersion(extra)
 	if err != nil {
@@ -263,15 +301,19 @@ func SnellSubscriptionNode(ledger *ProxyPathPortLedger, user model.User, inbound
 	if err != nil {
 		return nil, false, err
 	}
-	port, ok := ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellUserPortScopeKey(inbound.ID, user.ID, pathID), inbound.ServerID)
+	runtimePort, ok := ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellUserPortScopeKey(inbound.ID, user.ID, pathID), inbound.ServerID)
 	if !ok {
 		return nil, false, nil
+	}
+	serverPort := runtimePort
+	if inbound.AdvertisePort > 0 {
+		serverPort = inbound.AdvertisePort
 	}
 	node := map[string]any{
 		"type":        "snell",
 		"tag":         inbound.Name,
 		"server":      server.EntryAddress,
-		"server_port": port,
+		"server_port": serverPort,
 		"version":     clientVersion,
 		"psk":         snellUserPSK(secret, inbound, user, pathID),
 	}

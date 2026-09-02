@@ -335,6 +335,67 @@ func TestSnellSubscriptionMatchesKernelListener(t *testing.T) {
 	}
 }
 
+func TestSnellSubscriptionUsesAdvertisePortWithoutChangingRuntimeListener(t *testing.T) {
+	server := snellTestServer()
+	server.PortRangeStart, server.PortRangeEnd = 9131, 9131
+	inbound := snellTestInbound()
+	inbound.Port = 3005
+	inbound.AdvertisePort = 2627
+	user := snellTestUsers(1)[0]
+	ledger := NewProxyPathPortLedger(nil)
+	listeners := snellListenersFromConfig(t, mustSnellConfig(t, server, inbound, []model.User{user}, ledger))
+	listener := listeners[snellUserInboundTag(inbound.ID, user.ID, 0)]
+	runtimePort := int(listener["listen_port"].(float64))
+	if runtimePort != 9131 {
+		t.Fatalf("runtime listener port = %d, want 9131", runtimePort)
+	}
+
+	renderLedger := NewProxyPathPortLedger(ledger.Pending())
+	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+		Format:         model.SubscriptionFormatSingBox,
+		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
+		PortLedger:     renderLedger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("subscription rendered %d nodes, want 1", len(nodes))
+	}
+	if got := nodes[0].Raw["server_port"]; got != inbound.AdvertisePort {
+		t.Fatalf("subscription port = %v, want advertise port %d (runtime %d)", got, inbound.AdvertisePort, runtimePort)
+	}
+}
+
+func TestSnellAdvertisePortRejectsMultipleClientListeners(t *testing.T) {
+	server := snellTestServer()
+	inbound := snellTestInbound()
+	inbound.AdvertisePort = 2627
+	_, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(2), ConfigOptions{
+		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: NewProxyPathPortLedger(nil),
+	})
+	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
+		t.Fatalf("multiple advertised snell listeners error = %v, want invalid desired state", err)
+	}
+	if !containsSubstring(err.Error(), "一个对外端口只能映射一个客户端运行端口") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSnellSubscriptionRejectsStaleAmbiguousAdvertisePort(t *testing.T) {
+	server := snellTestServer()
+	inbound := snellTestInbound()
+	users := snellTestUsers(2)
+	ledger := NewProxyPathPortLedger(nil)
+	mustSnellConfig(t, server, inbound, users, ledger)
+	inbound.AdvertisePort = 2627
+
+	_, _, err := SnellSubscriptionNode(NewProxyPathPortLedger(ledger.Pending()), users[0], inbound, server, 0)
+	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
+		t.Fatalf("ambiguous subscription error = %v, want invalid desired state", err)
+	}
+}
+
 // A user whose listener was never deployed has no port to advertise. Guessing
 // one would hand the client a dead endpoint, so the node is omitted instead.
 func TestSnellSubscriptionSkipsUndeployedListener(t *testing.T) {

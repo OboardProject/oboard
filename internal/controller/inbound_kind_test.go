@@ -124,6 +124,21 @@ func TestMergeInboundPresetConfigSkipsHY2BandwidthAndObfsPassword(t *testing.T) 
 	}
 }
 
+func TestValidateInboundAllowsSnellAdvertisePort(t *testing.T) {
+	inbound := normalizeInbound(model.Inbound{
+		ServerID:      1,
+		Name:          "snell",
+		Protocol:      model.ProtocolSnell,
+		Port:          3005,
+		AdvertisePort: 2627,
+		ConfigJSON:    `{"version":4,"psk":"inbound-seed-psk-1234"}`,
+		Enabled:       true,
+	})
+	if err := validateInbound(inbound); err != nil {
+		t.Fatalf("single-listener Snell advertise_port rejected: %v", err)
+	}
+}
+
 func TestInboundRequiresOwnDomainForManagedTLS(t *testing.T) {
 	hy2 := normalizeInbound(model.Inbound{ServerID: 1, Name: "hy2", Protocol: model.ProtocolHY2, Port: 443, TLS: true, ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
 	if !inboundRequiresOwnDomain(hy2) || !hy2.DNSSyncEnabled {

@@ -16112,7 +16112,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <div className="switch-setting-row">
                 <span className="switch-setting-label">
                   NAT 端口映射
-                  <FieldHelp label="NAT 端口映射" hint="监听端口与对外端口分离。例如本机监听 443，网关对外 8443。关闭则两者一致。" />
+                  <FieldHelp label="NAT 端口映射" hint={protocol === 'snell' ? 'Snell 仅在当前授权生成一个客户端运行实例时可用；公网入口需转发到部署后分配的逐用户运行端口。' : '监听端口与对外端口分离。例如本机监听 443，网关对外 8443。关闭则两者一致。'} />
                 </span>
                 <Switch checked={natEnabled} onChange={checked => {
                   if (checked) {
@@ -16127,7 +16127,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 }} ariaLabel="NAT 端口映射" />
               </div>
               {natEnabled && (
-                <FormField label="对外端口" required hint="NAT 网关对外的公网端口，客户端通过此端口连接。">
+                <FormField label="对外端口" required hint={protocol === 'snell' ? '客户端订阅使用此端口；公网入口必须转发到部署后分配的唯一 Snell 逐用户运行端口。' : 'NAT 网关对外的公网端口，客户端通过此端口连接。'}>
                   <input value={draft.advertise_port || ''} onChange={e => update({ advertise_port: Number(e.target.value) || 0 })} inputMode="numeric" placeholder={String(draft.port || 443)} />
                   {Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
                 </FormField>

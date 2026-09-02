@@ -7090,11 +7090,10 @@ func validateInbound(v model.Inbound) error {
 				return errors.New("NAT 端口映射暂不支持多端口 Mieru 入口，请先移除额外 listen_ports")
 			}
 		}
-		// A Snell inbound listens on one auto-allocated port per user, so a
-		// single advertised port cannot represent it.
-		if v.Protocol == model.ProtocolSnell {
-			return errors.New("NAT 端口映射不支持 Snell 入口：每个用户占用一个自动分配的独立端口，请改为直接放行服务器的自动端口段")
-		}
+		// Snell may use one advertised NAT/forwarding port when the
+		// deployment resolves to exactly one generated listener. The full
+		// projection enforces that cardinality because it owns the effective
+		// user, device and proxy-path identities.
 	}
 	if v.EntryIPMode == "" {
 		v.EntryIPMode = model.EntryIPModeAuto

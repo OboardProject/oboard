@@ -203,6 +203,9 @@ func TestInboundSchemaCarriesProtocolGuidance(t *testing.T) {
 	if !strings.Contains(description, "certificate_mode=auto") || !strings.Contains(description, "must not wait for a ready certificate") || !strings.Contains(description, "must not send the operator to the panel") {
 		t.Fatalf("inbounds.create schema lacks managed-certificate guidance: %q", description)
 	}
+	if !strings.Contains(string(descriptor.InputSchema), "Snell 仅在当前授权解析为单个客户端运行实例时支持一个对外端口") {
+		t.Fatalf("inbounds.create schema lacks Snell advertise_port boundary: %s", descriptor.InputSchema)
+	}
 	if !strings.Contains(descriptor.Description, "创建不等待证书就绪") {
 		t.Fatalf("inbounds.create description lacks async certificate guidance: %q", descriptor.Description)
 	}
