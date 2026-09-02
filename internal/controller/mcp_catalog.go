@@ -56,6 +56,8 @@ When a Workflow reports failed, read its error message first. For access_change 
 
 Deleting a subscription plan unbinds users from that plan and keeps their accounts. Fast Path intent ` + "`subscription_plan.delete`" + ` maps to ` + "`subscription_plans.delete`" + ` with ` + "`confirm=true`" + `. Bound users wait for the access_change Workflow; an empty plan deletes immediately. Do not call ` + "`users.delete`" + `. A goal that also names nodes is plan-node management, not plan deletion.
 
+Manage direct per-user node access with ` + "`user_node_authorizations.list/set/revoke`" + ` or Fast Path intent ` + "`user_node_authorization.manage`" + `. Allow authorizations are unioned with the user's active plan nodes without duplicates; ` + "`plan_includes=true`" + ` means revoking the direct allow does not remove plan-derived access. Deny authorizations take precedence. Set and revoke always follow the access_change Workflow.
+
 Keep the requested blast radius as small as possible. Explain required approvals, external actions, unresolved assumptions, rollback considerations, and recovery actions.
 
 Panel path changes keep both prefixes until enrolled Agents update. Unenrolled servers are skipped. Offline Agents can be retried, force-completed, or revoked; revoke only rolls back Agents that already received the new controller URL.

@@ -1351,6 +1351,10 @@ func (s *Server) createExceptionChange(ctx context.Context, r *http.Request, dat
 // become visible at activation and targetStatus is applied to each of them.
 // The batch always produces exactly one access change.
 func (s *Server) createExceptionChanges(ctx context.Context, r *http.Request, data store.FullRoutingConfig, before, after []model.UserNodeException, exceptionIDs []int64, targetStatus model.UserNodeExceptionStatus, affectedUserCount int, at time.Time) (*model.AccessChange, error) {
+	return s.createExceptionChangesForActor(ctx, r, nil, data, before, after, exceptionIDs, targetStatus, affectedUserCount, at)
+}
+
+func (s *Server) createExceptionChangesForActor(ctx context.Context, r *http.Request, actorID *int64, data store.FullRoutingConfig, before, after []model.UserNodeException, exceptionIDs []int64, targetStatus model.UserNodeExceptionStatus, affectedUserCount int, at time.Time) (*model.AccessChange, error) {
 	effective, err := s.store.ListEffectiveUserPlanBindings(ctx, time.Now())
 	if err != nil {
 		return nil, err
@@ -1376,6 +1380,7 @@ func (s *Server) createExceptionChanges(ctx context.Context, r *http.Request, da
 		prepareProjection:  prepare,
 		finalizeProjection: finalize,
 		serverIDs:          servers,
+		createdBy:          actorID,
 	})
 	if err != nil {
 		return nil, err

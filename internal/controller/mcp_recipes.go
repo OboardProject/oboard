@@ -49,6 +49,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "server.metrics.query", Version: mcpRecipeVersion, Aliases: []string{"server.metrics.query", "server query", "server metrics", "服务器指标", "看流量", "查看流量", "查询流量", "连接数", "延迟", "负载"}, Verbs: []string{"view", "read", "query", "show", "check", "查看", "看", "查询", "读取", "检查"}, Nouns: []string{"server metrics", "server traffic", "traffic", "latency", "connection count", "resource metrics", "指标", "流量", "延迟", "连接数", "负载", "资源"}, Prepare: s.prepareServerMetricsQueryRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
+		{ID: "user_node_authorization.manage", Version: mcpRecipeVersion, Aliases: []string{"user_node_authorization.manage", "node user authorization", "节点用户授权", "授权用户", "用户节点授权"}, Verbs: []string{"allow", "deny", "authorize", "revoke", "remove", "允许", "拒绝", "授权", "撤销", "移除"}, Nouns: []string{"node authorization", "user authorization", "节点授权", "用户授权", "授权用户"}, Prepare: s.prepareUserNodeAuthorizationRecipe},
 		{ID: "subscription_plan.delete", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.delete", "delete subscription plan", "删除套餐", "删除订阅套餐"}, Verbs: []string{"delete", "remove", "删除"}, Nouns: []string{"subscription plan", "套餐", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanDeleteRecipe},
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},
 		{ID: "deployment.apply", Version: mcpRecipeVersion, Aliases: []string{"deployment.apply", "deploy all", "apply deployment", "部署全部", "部署所有", "下发修改", "重新应用配置"}, Verbs: []string{"deploy", "apply", "redeploy", "部署", "下发", "应用"}, Nouns: []string{"deployment", "configuration", "changes", "部署", "配置", "修改"}, Prepare: s.prepareDeploymentRecipe},
@@ -96,6 +97,10 @@ func (s *Server) matchMCPRecipe(input mcpTaskInput) (mcpRecipe, []MCPResourceRef
 		if found {
 			refTypes[resourceType] = true
 		}
+	}
+	if (refTypes["inbound"] || refTypes["proxy_path"] || refTypes["external_outbound"]) && (refTypes["user"] || hasUserNodeAuthorizationParams(input.Params) || containsAnyFold(input.Goal, "用户授权", "授权用户", "节点授权", "node authorization")) {
+		recipe, _ := s.mcpRecipeByID("user_node_authorization.manage")
+		return recipe, nil, true
 	}
 	if refTypes["inbound"] || refTypes["proxy_path"] || refTypes["external_outbound"] {
 		if refTypes["subscription_plan"] || hasSubscriptionPlanParams(input.Params) || containsAnyFold(input.Goal, "套餐", "subscription plan", "plan node") {
@@ -207,6 +212,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		{"host_ops.manage", []string{"诊断", "diagnose", "日志", "logs", "升级 agent", "卸载 agent", "uninstall agent", "拉取", "网卡", "网络接口", "network interface"}},
 		{"outbound.manage", []string{"出口", "outbound"}},
 		{"subscription_plan.nodes.manage", []string{"套餐节点", "订阅套餐节点", "plan node", "plan nodes"}},
+		{"user_node_authorization.manage", []string{"节点用户授权", "用户节点授权", "授权用户", "用户授权", "node user authorization", "node authorization"}},
 	}
 	type scored struct {
 		recipe mcpRecipe
@@ -258,6 +264,15 @@ func hasServerManageParams(params map[string]any) bool {
 		"latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_regions", "latency_probe_max_targets",
 		"delete", "confirm", "reset_traffic",
 	} {
+		if _, ok := params[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUserNodeAuthorizationParams(params map[string]any) bool {
+	for _, key := range []string{"user_id", "user_ids", "users", "effect", "revoke", "authorization_ids"} {
 		if _, ok := params[key]; ok {
 			return true
 		}

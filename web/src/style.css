@@ -21980,6 +21980,7 @@ button.ui-btn-ghost:hover {
   }
   .node-scope-plan-add button,
   .node-scope-auth-trigger button,
+  .node-scope-auth-card .node-scope-section-head > button,
   .node-scope-dialog-footer button {
     width: 100%;
     min-width: 0;

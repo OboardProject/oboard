@@ -454,6 +454,7 @@ func defaultDescriptors() []Descriptor {
 		})
 	}
 	descriptors = append(descriptors, usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, userNodeAuthorizationDescriptors(positiveID, stringValue, boolValue, nullableString)...)
 	descriptors = append(descriptors, trafficLedgerDescriptors(positiveID, stringValue)...)
 	descriptors = append(descriptors, trafficDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, externalOutboundDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
@@ -619,6 +620,10 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return subscriptionPlanNodesUpdateRefs
 	case "subscription_plans.delete":
 		return subscriptionPlanDeleteRefs
+	case "user_node_authorizations.set":
+		return userNodeAuthorizationSetRefs
+	case "user_node_authorizations.revoke":
+		return userNodeAuthorizationRevokeRefs
 	default:
 		return noRefs
 	}

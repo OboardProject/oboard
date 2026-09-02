@@ -119,7 +119,10 @@ func (d *planAssignmentData) effectiveUsersByNode() (map[string][]int64, map[str
 	allowCount := map[string]int{}
 	denyCount := map[string]int{}
 	for _, ex := range d.exceptions {
-		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(d.now()) {
+		if ex.Status != "" && ex.Status != model.UserNodeExceptionActive && ex.Status != model.UserNodeExceptionPending {
+			continue
+		}
+		if ex.StartsAt != nil && ex.StartsAt.After(d.now()) || ex.ExpiresAt != nil && !ex.ExpiresAt.After(d.now()) {
 			continue
 		}
 		key := core.NodeKeyOf(ex.NodeType, ex.NodeID)
@@ -341,6 +344,83 @@ type assignableNodeUserView struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+type assignableNodeAuthorizationView struct {
+	ID           int64                         `json:"id"`
+	UserID       int64                         `json:"user_id"`
+	Username     string                        `json:"username"`
+	Nickname     string                        `json:"nickname,omitempty"`
+	Effect       model.UserNodeExceptionEffect `json:"effect"`
+	Status       model.UserNodeExceptionStatus `json:"status"`
+	Reason       string                        `json:"reason,omitempty"`
+	StartsAt     *time.Time                    `json:"starts_at,omitempty"`
+	ExpiresAt    *time.Time                    `json:"expires_at,omitempty"`
+	Effective    bool                          `json:"effective"`
+	PlanIncludes bool                          `json:"plan_includes"`
+	PlanID       int64                         `json:"plan_id,omitempty"`
+	PlanName     string                        `json:"plan_name,omitempty"`
+}
+
+func (d *planAssignmentData) nodeAuthorizationViews(nodeType model.AssignableNodeType, nodeID int64) []assignableNodeAuthorizationView {
+	key := core.NodeKeyOf(nodeType, nodeID)
+	userByID := map[int64]model.User{}
+	for _, user := range d.users {
+		userByID[user.ID] = user
+	}
+	bindingByUser := map[int64]model.UserPlanBinding{}
+	for _, binding := range d.bindings {
+		bindingByUser[binding.UserID] = binding
+	}
+	planByID := map[int64]model.SubscriptionPlan{}
+	for _, plan := range d.plans {
+		planByID[plan.ID] = plan
+	}
+	planHasNode := map[int64]bool{}
+	for _, item := range d.planNodes {
+		if item.Enabled && item.NodeType == nodeType && item.NodeID == nodeID {
+			planHasNode[item.PlanID] = true
+		}
+	}
+	now := d.now()
+	views := []assignableNodeAuthorizationView{}
+	for _, ex := range d.exceptions {
+		if ex.NodeType != nodeType || ex.NodeID != nodeID {
+			continue
+		}
+		if ex.Status != model.UserNodeExceptionActive && ex.Status != model.UserNodeExceptionPending {
+			continue
+		}
+		if ex.ExpiresAt != nil && !ex.ExpiresAt.After(now) {
+			continue
+		}
+		user, ok := userByID[ex.UserID]
+		if !ok || user.Status != "active" {
+			continue
+		}
+		view := assignableNodeAuthorizationView{
+			ID: ex.ID, UserID: ex.UserID, Username: user.Username, Nickname: user.Nickname,
+			Effect: ex.Effect, Status: ex.Status, Reason: ex.Reason, StartsAt: ex.StartsAt, ExpiresAt: ex.ExpiresAt,
+		}
+		if _, ok := d.snapshot.UserNodes[ex.UserID][key]; ok {
+			view.Effective = true
+		}
+		if binding, ok := bindingByUser[ex.UserID]; ok && planHasNode[binding.PlanID] {
+			view.PlanIncludes = true
+			view.PlanID = binding.PlanID
+			if plan, found := planByID[binding.PlanID]; found {
+				view.PlanName = plan.Name
+			}
+		}
+		views = append(views, view)
+	}
+	sort.SliceStable(views, func(i, j int) bool {
+		if views[i].UserID == views[j].UserID {
+			return views[i].ID < views[j].ID
+		}
+		return views[i].UserID < views[j].UserID
+	})
+	return views
+}
+
 func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 	parts := pathParts(r.URL.Path, "/api/v1/assignable-nodes/")
 	if len(parts) == 3 && parts[2] == "metadata" {
@@ -432,7 +512,13 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 		users = append(users, view)
 	}
 	for _, ex := range data.exceptions {
-		if ex.NodeType != nodeType || ex.NodeID != nodeID || (ex.ExpiresAt != nil && !ex.ExpiresAt.After(now)) {
+		if ex.Status != "" && ex.Status != model.UserNodeExceptionActive {
+			continue
+		}
+		if ex.Effect != model.UserNodeExceptionDeny || ex.NodeType != nodeType || ex.NodeID != nodeID {
+			continue
+		}
+		if ex.StartsAt != nil && ex.StartsAt.After(now) || ex.ExpiresAt != nil && !ex.ExpiresAt.After(now) {
 			continue
 		}
 		user, ok := userByID[ex.UserID]
@@ -450,12 +536,19 @@ func (s *Server) assignableNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 	activeExceptions := []model.UserNodeException{}
 	for _, ex := range data.exceptions {
+		if ex.Status != "" && ex.Status != model.UserNodeExceptionActive && ex.Status != model.UserNodeExceptionPending {
+			continue
+		}
 		if ex.NodeType == nodeType && ex.NodeID == nodeID && (ex.ExpiresAt == nil || ex.ExpiresAt.After(now)) {
 			activeExceptions = append(activeExceptions, ex)
 		}
 	}
 	sort.Slice(activeExceptions, func(i, j int) bool { return activeExceptions[i].ID < activeExceptions[j].ID })
-	write(w, 200, map[string]any{"node": node, "plans": planViews, "users": users, "exceptions": activeExceptions, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+	write(w, 200, map[string]any{
+		"node": node, "plans": planViews, "users": users, "exceptions": activeExceptions,
+		"authorizations":             data.nodeAuthorizationViews(nodeType, nodeID),
+		"runtime_authorization_mode": s.authorizationMode(r.Context()),
+	})
 }
 
 func planViewForNode(plan *model.SubscriptionPlan, node model.SubscriptionPlanNode, globalName string) assignableNodePlanView {

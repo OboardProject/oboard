@@ -604,7 +604,7 @@ func (s *Server) submitPreparedOperations(ctx context.Context, principal applica
 			kind = "server_onboarding"
 		} else if operation.Capability == "deployments.apply" {
 			kind = "deployment"
-		} else if operation.Capability == "subscription_plans.nodes.update" || operation.Capability == "subscription_plans.delete" {
+		} else if operation.Capability == "subscription_plans.nodes.update" || operation.Capability == "subscription_plans.delete" || operation.Capability == "user_node_authorizations.set" || operation.Capability == "user_node_authorizations.revoke" {
 			kind = "access_change"
 		}
 	}

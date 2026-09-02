@@ -40,6 +40,22 @@ type AssignedPlan = {
   display_group?: string
 }
 
+type AssignedAuthorization = {
+  id: number
+  user_id: number
+  username: string
+  nickname?: string
+  effect: 'allow' | 'deny'
+  status: 'pending' | 'active'
+  reason?: string
+  starts_at?: string
+  expires_at?: string
+  effective: boolean
+  plan_includes: boolean
+  plan_id?: number
+  plan_name?: string
+}
+
 const SCOPE_LABELS: Record<string, string> = {
   node: '仅此节点',
   entry_inbound: '同一入口',
@@ -87,6 +103,13 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [addingPlan, setAddingPlan] = React.useState(false)
   const [planMessage, setPlanMessage] = React.useState<{ text: string; tone: 'success' | 'error' } | null>(null)
 
+  // Direct user authorization state
+  const [assignedAuthorizations, setAssignedAuthorizations] = React.useState<AssignedAuthorization[]>([])
+  const [loadingAuthorizations, setLoadingAuthorizations] = React.useState(false)
+  const [authorizationToDelete, setAuthorizationToDelete] = React.useState<AssignedAuthorization | null>(null)
+  const [revokingAuthorizationIDs, setRevokingAuthorizationIDs] = React.useState<Set<number>>(new Set())
+  const [authorizationMessage, setAuthorizationMessage] = React.useState<{ text: string; tone: 'success' | 'error' } | null>(null)
+
   // Secondary User Auth Dialog state
   const [userAuthOpen, setUserAuthOpen] = React.useState(false)
   const [userIDs, setUserIDs] = React.useState<Set<number>>(new Set())
@@ -117,22 +140,26 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }, [node, scope, includeDisabled, client])
 
-  const loadNodePlans = React.useCallback(async () => {
+  const loadNodeDetail = React.useCallback(async () => {
     if (!node) return
     setLoadingPlans(true)
+    setLoadingAuthorizations(true)
     try {
-      const res = await client.request<{ plans?: AssignedPlan[] }>(`/assignable-nodes/${node.type}/${node.id}`)
+      const res = await client.request<{ plans?: AssignedPlan[]; authorizations?: AssignedAuthorization[] }>(`/assignable-nodes/${node.type}/${node.id}`)
       if (res?.plans) {
         setAssignedPlans(res.plans)
       } else if ((node as any).plans) {
         setAssignedPlans((node as any).plans)
       }
+      setAssignedAuthorizations(res?.authorizations || [])
     } catch {
       if ((node as any).plans) {
         setAssignedPlans((node as any).plans)
       }
+      setAssignedAuthorizations([])
     } finally {
       setLoadingPlans(false)
+      setLoadingAuthorizations(false)
     }
   }, [node, client])
 
@@ -141,6 +168,9 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       setPreview(null)
       setScopeError('')
       setPlanMessage(null)
+      setAuthorizationMessage(null)
+      setAuthorizationToDelete(null)
+      setRevokingAuthorizationIDs(new Set())
       setSelectedAddPlanID(0)
       setAddDisplayGroup('')
       setUserAuthOpen(false)
@@ -151,9 +181,9 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       setExPreview(null)
       setExMessage('')
       void loadScope()
-      void loadNodePlans()
+      void loadNodeDetail()
     }
-  }, [open, node, loadScope, loadNodePlans])
+  }, [open, node, loadScope, loadNodeDetail])
 
   // Add node to a plan
   const handleAddPlan = async () => {
@@ -191,7 +221,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       }
       setSelectedAddPlanID(0)
       setAddDisplayGroup('')
-      await loadNodePlans()
+      await loadNodeDetail()
       await onDone()
     } catch (e: any) {
       const msg = e?.message || String(e)
@@ -230,7 +260,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       } else {
         notify?.(`已从套餐【${planName}】移出该节点`, 'success')
       }
-      await loadNodePlans()
+      await loadNodeDetail()
       await onDone()
     } catch (e: any) {
       const msg = e?.message || String(e)
@@ -296,11 +326,34 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       }
       setExPreview(null)
       setUserAuthOpen(false)
+      await loadNodeDetail()
       await onDone()
     } catch (e: any) {
       setExMessage('操作失败：' + (e?.message || String(e)))
     } finally {
       setExApplyBusy(false)
+    }
+  }
+
+  const revokeAuthorization = async () => {
+    const authorization = authorizationToDelete
+    if (!authorization || revokingAuthorizationIDs.has(authorization.id)) return
+    setAuthorizationToDelete(null)
+    setAuthorizationMessage(null)
+    setRevokingAuthorizationIDs(current => new Set(current).add(authorization.id))
+    try {
+      const res = await client.request<{ access_change_id?: number; access_change_status?: string }>(`/user-node-exceptions/${authorization.id}`, { method: 'DELETE' })
+      setAuthorizationMessage({ text: res.access_change_id ? `撤销已提交：变更 #${res.access_change_id}（${res.access_change_status || '处理中'}）` : '授权已撤销', tone: 'success' })
+      notify?.(res.access_change_id ? `已提交撤销授权：变更 #${res.access_change_id}` : '授权已撤销', 'success')
+      await loadNodeDetail()
+      await onDone()
+    } catch (e: any) {
+      setRevokingAuthorizationIDs(current => {
+        const next = new Set(current)
+        next.delete(authorization.id)
+        return next
+      })
+      setAuthorizationMessage({ text: '撤销失败：' + (e?.message || String(e)), tone: 'error' })
     }
   }
 
@@ -419,32 +472,94 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
 
               {/* Section 2: 授权用户 */}
               <div className="card-custom node-scope-auth-card">
-                <div className="node-scope-section-title">
-                  <UserCheck size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
-                  <h3>用户授权</h3>
+                <div className="node-scope-section-head">
+                  <div className="node-scope-section-title">
+                    <UserCheck size={15} style={{ color: 'var(--color-primary, #3b82f6)' }} />
+                    <h3>用户授权</h3>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setUserAuthOpen(true)}>
+                    <Plus size={14} />
+                    <span>添加用户</span>
+                  </Button>
                 </div>
                 <div className="node-scope-auth-hint">
                   <Info size={15} aria-hidden="true" />
                   <span>
-                    <strong>授权规则说明</strong>：用户可使用的节点为其<strong>所在套餐节点</strong>与<strong>单独授权节点</strong>的<strong>并集</strong>。即使套餐未包含此节点，在此授权后指定用户也能正常使用。
+                    <strong>授权规则说明</strong>：单独授权与用户套餐包含的节点取<strong>并集</strong>，同一节点不会重复。拒绝授权优先于套餐和允许授权。
                   </span>
                 </div>
-                <div className="node-scope-auth-trigger">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setUserAuthOpen(true)}
-                  >
-                    <UserCheck size={14} />
-                    <span>授权用户</span>
-                  </Button>
-                </div>
+                {loadingAuthorizations ? (
+                  <p className="muted" style={{ margin: '4px 0', fontSize: 12 }}>正在加载已授权用户...</p>
+                ) : assignedAuthorizations.length === 0 ? (
+                  <div className="node-scope-auth-empty">尚未添加单独用户授权</div>
+                ) : (
+                  <div className="node-authorization-list">
+                    {assignedAuthorizations.map(authorization => {
+                      const revoking = revokingAuthorizationIDs.has(authorization.id)
+                      return (
+                        <div className="node-authorization-row" key={authorization.id}>
+                          <div className="node-authorization-copy">
+                            <div className="node-authorization-user-line">
+                              <strong>{authorization.nickname || authorization.username}</strong>
+                              {authorization.nickname && <span className="muted">@{authorization.username}</span>}
+                              <Badge variant={authorization.effect === 'allow' ? 'success' : 'destructive'}>{authorization.effect === 'allow' ? '允许' : '拒绝'}</Badge>
+                              {authorization.status === 'pending' && <Badge variant="warning">待生效</Badge>}
+                              {authorization.plan_includes && <Badge variant="secondary" title={authorization.plan_name ? `套餐“${authorization.plan_name}”也包含此节点` : '用户套餐也包含此节点'}>套餐也包含</Badge>}
+                            </div>
+                            <div className="node-authorization-meta">
+                              <span>{authorization.reason || '无备注'}</span>
+                              <span>{authorization.expires_at ? `到期 ${new Date(authorization.expires_at).toLocaleString()}` : '永久有效'}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={revoking}
+                            onClick={() => setAuthorizationToDelete(authorization)}
+                            className="plan-remove-icon-btn"
+                            title={`撤销 ${authorization.username} 的单独授权`}
+                            aria-label={`撤销 ${authorization.username} 的单独授权`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {authorizationMessage && (
+                  <p style={{ margin: 0, fontSize: 12, color: authorizationMessage.tone === 'error' ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>
+                    {authorizationMessage.text}
+                  </p>
+                )}
               </div>
             </>
           )}
 
           <div className="node-scope-dialog-footer">
             <Button variant="outline" onClick={onClose}>关闭</Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog
+        isOpen={authorizationToDelete !== null}
+        onClose={() => setAuthorizationToDelete(null)}
+        title="撤销单独授权"
+        size="default"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ margin: 0 }}>
+            确定撤销 <strong>{authorizationToDelete?.nickname || authorizationToDelete?.username}</strong> 的此节点单独授权吗？
+          </p>
+          {authorizationToDelete?.plan_includes && (
+            <div className="node-scope-auth-hint">
+              <Info size={15} aria-hidden="true" />
+              <span>该用户的套餐也包含此节点。撤销单独授权后，用户仍会通过套餐继续获得此节点。</span>
+            </div>
+          )}
+          <div className="node-scope-auth-actions">
+            <Button variant="ghost" onClick={() => setAuthorizationToDelete(null)}>取消</Button>
+            <Button variant="destructive" onClick={() => void revokeAuthorization()}>撤销授权</Button>
           </div>
         </div>
       </Dialog>

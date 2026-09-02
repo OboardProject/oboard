@@ -70,7 +70,23 @@ describe('NodeScopeActionDialog', () => {
         if (path === '/assignable-nodes/inbound/1') {
           return {
             plans: [{ plan_id: 1, name: '基础套餐', display_group: '香港' }],
+            authorizations: [{
+              id: 501,
+              user_id: 101,
+              username: 'alice',
+              nickname: '爱丽丝',
+              effect: 'allow',
+              status: 'active',
+              reason: '测试授权',
+              effective: true,
+              plan_includes: true,
+              plan_id: 1,
+              plan_name: '基础套餐',
+            }],
           }
+        }
+        if (path === '/user-node-exceptions/501') {
+          return { access_change_id: 88, access_change_status: 'preparing' }
         }
         return {}
       }),
@@ -111,15 +127,29 @@ describe('NodeScopeActionDialog', () => {
     expect(document.body.textContent).toContain('授权规则说明')
     expect(document.body.textContent).toContain('并集')
 
-    // 4. Click '授权用户' button to open secondary modal
-    const authBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('授权用户'))
+    // 4. Existing direct authorization is listed and marks plan overlap.
+    expect(document.body.textContent).toContain('爱丽丝')
+    expect(document.body.textContent).toContain('套餐也包含')
+    expect(document.body.textContent).toContain('测试授权')
+    const revokeButton = document.querySelector('button[aria-label="撤销 alice 的单独授权"]') as HTMLButtonElement | null
+    expect(revokeButton).toBeTruthy()
+
+    // 5. Revoking explains that plan access remains, then calls the existing two-phase delete API.
+    act(() => revokeButton?.click())
+    await flushEffects()
+    expect(document.body.textContent).toContain('撤销单独授权')
+    expect(document.body.textContent).toContain('仍会通过套餐继续获得此节点')
+    const confirmRevoke = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('撤销授权'))
+    act(() => confirmRevoke?.click())
+    await flushEffects()
+    expect(client.request).toHaveBeenCalledWith('/user-node-exceptions/501', { method: 'DELETE' })
+
+    // 6. Click the add button to open the secondary authorization modal.
+    const authBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('添加用户'))
     expect(authBtn).toBeTruthy()
-    act(() => {
-      authBtn?.click()
-    })
+    act(() => authBtn?.click())
     await flushEffects()
 
-    // 5. Verify secondary modal opened with user search
     expect(document.body.textContent).toContain('授权用户 · 🇭🇰 香港 01')
     const searchInput = document.querySelector('input[placeholder="搜索用户（用户名 / 昵称）"]')
     expect(searchInput).toBeTruthy()

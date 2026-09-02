@@ -747,6 +747,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerInboundAutomationOperations()
 	s.registerProxyPathAutomationOperations()
 	s.registerSubscriptionPlanAutomationOperations()
+	s.registerUserNodeAuthorizationAutomationOperations()
 	s.registerUserAutomationOperations()
 	s.registerTrafficAutomationOperations()
 	s.registerNetworkAutomationOperations()

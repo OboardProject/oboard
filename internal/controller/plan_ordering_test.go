@@ -526,6 +526,44 @@ func TestUserNodeExceptionsBatchAPI(t *testing.T) {
 	_ = keyP1
 }
 
+func TestNodeAuthorizationDetailMarksPlanOverlapAndDeleteKeepsPlanAccess(t *testing.T) {
+	h, srv, token, ids := setupOrderingTestTopology(t)
+	user := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "overlap-user", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)["user"].(map[string]any)
+	userID := int64(user["id"].(float64))
+	assigned := request(t, h, http.MethodPost, "/api/v1/ui/users/plan-assignment/apply", token, map[string]any{"user_ids": []int64{userID}, "plan_id": ids["plan"]}, http.StatusOK)
+	driveAccessChange(t, srv, token, int64(assigned["access_change_id"].(float64)))
+
+	created := request(t, h, http.MethodPost, "/api/v1/ui/user-node-exceptions", token, map[string]any{
+		"user_id": userID, "node_type": "proxy_path", "node_id": ids["p1"], "effect": "allow", "reason": "重复来源标记",
+	}, http.StatusCreated)
+	exceptionID := int64(created["user_node_exception"].(map[string]any)["id"].(float64))
+	driveAccessChange(t, srv, token, int64(created["access_change_id"].(float64)))
+
+	detail := request(t, h, http.MethodGet, "/api/v1/ui/assignable-nodes/proxy_path/"+itoa(ids["p1"]), token, nil, http.StatusOK)
+	authorizations := detail["authorizations"].([]any)
+	if len(authorizations) != 1 {
+		t.Fatalf("authorizations = %#v", authorizations)
+	}
+	authorization := authorizations[0].(map[string]any)
+	if authorization["plan_includes"] != true || authorization["plan_name"] != "ordering-plan" || authorization["effective"] != true {
+		t.Fatalf("overlap authorization = %#v", authorization)
+	}
+	if users := detail["users"].([]any); len(users) != 1 {
+		t.Fatalf("effective users should remain deduplicated: %#v", users)
+	}
+
+	revoked := request(t, h, http.MethodDelete, "/api/v1/ui/user-node-exceptions/"+itoa(exceptionID), token, nil, http.StatusOK)
+	driveAccessChange(t, srv, token, int64(revoked["access_change_id"].(float64)))
+	detail = request(t, h, http.MethodGet, "/api/v1/ui/assignable-nodes/proxy_path/"+itoa(ids["p1"]), token, nil, http.StatusOK)
+	if authorizations := detail["authorizations"].([]any); len(authorizations) != 0 {
+		t.Fatalf("revoked authorization still listed: %#v", authorizations)
+	}
+	users := detail["users"].([]any)
+	if len(users) != 1 || users[0].(map[string]any)["source"] != "plan" {
+		t.Fatalf("plan access must remain after direct authorization revoke: %#v", users)
+	}
+}
+
 func TestPlanVersionChangeClassification(t *testing.T) {
 	h, srv, token, ids := setupOrderingTestTopology(t)
 	planID := ids["plan"]

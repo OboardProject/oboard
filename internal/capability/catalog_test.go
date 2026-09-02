@@ -64,6 +64,29 @@ func TestSubscriptionPlanCapabilitiesAreManagementOnlyAndExecutable(t *testing.T
 	}
 }
 
+func TestUserNodeAuthorizationCapabilitiesAreMCPExecutableAndManagementOnly(t *testing.T) {
+	catalog := NewCatalog()
+	for _, name := range []string{"user_node_authorizations.list", "user_node_authorizations.set", "user_node_authorizations.revoke"} {
+		descriptor, ok := catalog.Get(name)
+		if !ok || !descriptor.MCPEnabled || descriptor.RBACPermission != "admin.settings" {
+			t.Fatalf("invalid user node authorization capability %s: %#v", name, descriptor)
+		}
+	}
+	list, _ := catalog.Get("user_node_authorizations.list")
+	if !list.ReadOnly || list.Executable || list.MinimumAccess != mcpauth.AccessRead {
+		t.Fatalf("unsafe authorization list metadata: %#v", list)
+	}
+	for _, name := range []string{"user_node_authorizations.set", "user_node_authorizations.revoke"} {
+		descriptor, _ := catalog.Get(name)
+		if descriptor.ReadOnly || !descriptor.Executable || descriptor.ApprovalPolicy != "required" || descriptor.MinimumAccess != mcpauth.AccessOperate {
+			t.Fatalf("unsafe authorization write metadata %s: %#v", name, descriptor)
+		}
+	}
+	if revoke, _ := catalog.Get("user_node_authorizations.revoke"); revoke.Destructive {
+		t.Fatalf("authorization revoke must remain reversible through a later set, not globally destructive: %#v", revoke)
+	}
+}
+
 func TestDefaultMCPCatalogSchemasAreClosedAndTyped(t *testing.T) {
 	catalog := NewCatalog()
 	principal := application.Principal{Scopes: []string{"*"}}

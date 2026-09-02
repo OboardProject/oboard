@@ -64,6 +64,8 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		return map[string]any{"devices": items, "count": len(items)}, nil
 	case "node_library.list", "node_groups.list", "node_sources.list", "subscription_outputs.list", "subscription_outputs.preview":
 		return s.queryNodeWorkspaceCapability(ctx, principal, capabilityName, input)
+	case "user_node_authorizations.list":
+		return s.queryUserNodeAuthorizations(ctx, principal, input)
 	case "node_incidents.list":
 		var request struct {
 			Status string `json:"status"`

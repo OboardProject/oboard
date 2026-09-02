@@ -939,7 +939,7 @@ func (s *Server) planBatchUserExceptions(ctx context.Context, req batchUserExcep
 			}
 			seenPairs[key] = true
 			row, exists := byKey[key]
-			if exists && row.Effect == req.Effect {
+			if exists && row.Effect == req.Effect && (row.Status == "" || row.Status == model.UserNodeExceptionActive || row.Status == model.UserNodeExceptionPending) {
 				out.Skipped = append(out.Skipped, key)
 				continue
 			}
