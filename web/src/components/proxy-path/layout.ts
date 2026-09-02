@@ -72,10 +72,15 @@ export const GRAPH_LAYOUT_EXIT_NODE_HEIGHT = 130
 
 // v6 coordinates were restored unconditionally over the computed layout, so a
 // canvas whose topology had changed since the last visit always reopened with
-// stale ranks and detoured edges. v7 starts from the layout and only restores
-// the nodes the operator pinned by dragging them.
-const POSITIONS_KEY = 'oboard.proxyGraph.positions.v7'
-const LEGACY_POSITIONS_KEY = 'oboard.proxyGraph.positions.v6'
+// stale ranks and detoured edges. v7 started from the layout and only restored
+// pinned nodes, but the structural signature that decides whether to relayout
+// does not cover per-node width — so when the server-card width formula itself
+// changed (slot-count based instead of fixed), v7 coordinates kept being reused
+// under a now-different width and cards drifted off their connection points.
+// v8 forces one full recompute for that formula change; the drift is not a
+// bug an operator can fix by dragging, so it has to be an automatic reset.
+const POSITIONS_KEY = 'oboard.proxyGraph.positions.v8'
+const LEGACY_POSITIONS_KEYS = ['oboard.proxyGraph.positions.v6', 'oboard.proxyGraph.positions.v7']
 const PINNED_KEY = 'oboard.proxyGraph.pinnedNodes.v1'
 const SIGNATURE_KEY = 'oboard.proxyGraph.layoutSignature.v1'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'
@@ -84,7 +89,7 @@ const LEGACY_DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
 
 export function loadGraphPositions(): Record<string, GraphPosition> {
   try {
-    localStorage.removeItem(LEGACY_POSITIONS_KEY)
+    LEGACY_POSITIONS_KEYS.forEach(key => localStorage.removeItem(key))
     return JSON.parse(localStorage.getItem(POSITIONS_KEY) || '{}')
   } catch {
     return {}

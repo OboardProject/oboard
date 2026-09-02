@@ -147,7 +147,7 @@ import surfboardClientIcon from './assets/subscription-clients/surfboard.png'
 import egernClientIcon from './assets/subscription-clients/egern.jpg'
 import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
-import { PageDataRequestCoordinator } from './page-data'
+import { PageDataRequestCoordinator, shouldRevalidatePageData } from './page-data'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { usePausedInterval } from './visibility'
@@ -1516,11 +1516,14 @@ const tabMinimumRole: Record<string, Role> = {
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
 
+// Idle prefetch is deliberately limited to the most likely next pages. Heavy
+// topology, audit and settings payloads are still warmed immediately on
+// pointer/focus intent, but are not all downloaded after every login.
 const preloadTabsByRole: Record<Role, string[]> = {
-	none: ['dashboard', 'nodes', 'account'],
-	viewer: ['dashboard', 'nodes', 'account', 'notifications'],
-  operator: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
-  admin: ['servers', 'proxy-paths', 'users', 'plans', 'nodes', 'dns', 'dns-records', 'tasks', 'audit', 'automation', 'settings'],
+	none: ['nodes', 'account'],
+	viewer: ['nodes', 'notifications', 'account'],
+  operator: ['servers', 'proxy-paths', 'tasks'],
+  admin: ['servers', 'proxy-paths', 'users', 'tasks'],
 }
 
 // PAGE_CACHE_FRESH_TTL_MS: switching back inside this window issues no
@@ -2626,10 +2629,8 @@ export function App() {
       setData((old: any) => ({ ...old, ...entry.data, load_errors: [] }))
       setLoading(false)
       const dirty = dirtyPagesRef.current.delete(tab)
-      if (dirty) {
-        void load(tab, { background: true, forceFresh: true })
-      } else if (Date.now() - entry.fetchedAt >= PAGE_CACHE_FRESH_TTL_MS) {
-        void load(tab, { background: true })
+      if (shouldRevalidatePageData(entry.fetchedAt, dirty, PAGE_CACHE_FRESH_TTL_MS)) {
+        void load(tab, { background: true, forceFresh: dirty })
       }
       return
     }
@@ -2702,9 +2703,11 @@ export function App() {
       setIsSidebarOpen(false)
       return
     }
-    // Foreground navigation wins over background prefetch: no new low-priority
-    // preloads start until the entered page has settled.
+    // Foreground navigation wins over background prefetch. Keep a warm-up for
+    // the target page so request coordination can promote/reuse it, but abort
+    // unrelated speculative requests that would compete for HTTP/SQLite work.
     prefetchSchedulerRef.current?.pauseIdle()
+    pageRequestsRef.current.cancelPrefetches(next)
     // Seed the visible data from cache before React commits the new tab, so the
     // entering MotionPage paints with content rather than an empty shell.
     const cached = pageCacheRef.current[next]
@@ -17455,14 +17458,20 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       if (canonicalStep.node_type === 'imported' && canonicalStep.external_outbound_id) {
         const imported = (data.external_outbounds || []).find((item: ExternalOutbound) => item.id === canonicalStep.external_outbound_id) as ExternalOutbound | undefined
         if (!imported) return
-	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={continuationByNode.get(id) || []} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+        const importedPathSources = continuationByNode.get(id) || []
+        const importedWidth = graphServerNodeWidth(Math.max(1, importedPathSources.length))
+	        nodes.push({ id, className: 'graph-node imported-graph-node proxy-path-instance-node', position, style: { width: importedWidth }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="导入节点" title={imported.name} meta={`${labelProtocol(imported.protocol)} · ${formatHostPort(imported.target_address, imported.target_port)} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={importedPathSources} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
         return
       }
       const serverID = graphStepServerID(canonicalStep, inboundByID)
       const server = (data.servers || []).find((item: Server) => item.id === serverID) as Server | undefined
       if (!server) return
+      // A relay's own downstream branches are its only sources here — unlike a
+      // root server it has no separate inbounds — so the slot count is just how
+      // many further hops continue from this step.
       const pathSources = continuationByNode.get(id) || []
-	      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity, pathIDs: sharedPathIDs, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+      const stepWidth = graphServerNodeWidth(Math.max(1, pathSources.length))
+	      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: stepWidth }, data: { entity, pathIDs: sharedPathIDs, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
 	    })
 	  })
 	  const routingStageSourceNodeID = (stage: GraphRoutingStage) => {
