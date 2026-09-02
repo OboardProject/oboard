@@ -14,11 +14,16 @@ const (
 	// must not allocate a new config_version.
 	ConfigurationSyncTriggerRevision = "revision"
 	// ConfigurationSyncTriggerOperatorRetry is an explicit retry of a failed
-	// sync. The same payload may be requeued at the existing config_version.
+	// sync. The same payload may be requeued, but never at the old
+	// config_version: every delivery must advance the Agent's watermark.
 	ConfigurationSyncTriggerOperatorRetry = "operator_retry"
 	// ConfigurationSyncTriggerAgentDrift means a previously synced Agent no
 	// longer matches the last successful payload and must be redeployed.
 	ConfigurationSyncTriggerAgentDrift = "agent_drift"
+	// ConfigurationSyncTriggerSuperseded means the Agent skipped the queued task
+	// because it already holds a newer configuration. Planning restarts from the
+	// projection rather than from the outcome of that obsolete task.
+	ConfigurationSyncTriggerSuperseded = "superseded"
 	// ConfigurationSyncMaxPreparationRetries bounds automatic retries of
 	// prepare-time failures that never queued an Agent task. A task that
 	// already ran and failed stays failed until the operator retries or the
@@ -294,6 +299,22 @@ func (s *Store) MarkConfigurationSyncResult(ctx context.Context, serverID, confi
 		resultError = resultError[:2000]
 	}
 	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='failed',retry_count=?,next_retry_at=?,last_error=?,updated_at=? where server_id=? and last_config_version=? and state in ('queued','running')`, retryCount, now.Add(backoff).Format(time.RFC3339Nano), strings.TrimSpace(resultError), now.Format(time.RFC3339Nano), serverID, configVersion)
+	return err
+}
+
+// MarkConfigurationSyncSuperseded reopens a sync whose task the Agent skipped
+// because it already holds a newer configuration. The state cannot stay pinned
+// to a version that will never be applied, and recording a failure would be
+// wrong twice over: nothing is broken, and a failed state can only be left by
+// an operator retry, which would rebuild the very task that was obsolete. It
+// returns to pending so the next reconcile pass decides from the current
+// desired projection whether anything still has to be sent.
+func (s *Store) MarkConfigurationSyncSuperseded(ctx context.Context, serverID, configVersion int64) error {
+	if serverID <= 0 || configVersion <= 0 {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',trigger_reason=?,retry_count=0,next_retry_at=null,last_error='',updated_at=? where server_id=? and last_config_version=? and state in ('queued','running')`, ConfigurationSyncTriggerSuperseded, now, serverID, configVersion)
 	return err
 }
 

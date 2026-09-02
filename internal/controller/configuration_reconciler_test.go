@@ -898,7 +898,7 @@ func TestUnchangedRevisionAfterFailedDeployDoesNotCreateConfig(t *testing.T) {
 	}
 }
 
-func TestOperatorRetryRequeuesSameConfigVersion(t *testing.T) {
+func TestOperatorRetryRequeuesWithAdvancingConfigVersion(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -925,11 +925,91 @@ func TestOperatorRetryRequeuesSameConfigVersion(t *testing.T) {
 	if err != nil || latest == nil {
 		t.Fatalf("operator retry missing task err=%v", err)
 	}
-	if latest.ID == first.ID || latest.ConfigVersion != first.ConfigVersion || latest.Status != "pending" {
-		t.Fatalf("operator retry task = %#v, first = %#v", latest, first)
+	// The payload is unchanged, but the delivery is new and must carry a version
+	// the Agent's monotonic guard will accept. Reusing the failed task's version
+	// made every retry unrunnable once anything else had advanced that guard.
+	if latest.ID == first.ID || latest.ConfigVersion <= first.ConfigVersion || latest.Status != "pending" {
+		t.Fatalf("operator retry task id=%d version=%d status=%q, first id=%d version=%d", latest.ID, latest.ConfigVersion, latest.Status, first.ID, first.ConfigVersion)
+	}
+	if latest.PayloadJSON != first.PayloadJSON {
+		t.Fatalf("operator retry changed the payload of an unchanged projection")
 	}
 	state, err := db.ConfigurationSyncState(ctx, server.ID)
-	if err != nil || state.State != "queued" || state.LastTaskID != latest.ID || state.LastConfigVersion != first.ConfigVersion {
+	if err != nil || state.State != "queued" || state.LastTaskID != latest.ID || state.LastConfigVersion != latest.ConfigVersion {
 		t.Fatalf("operator retry sync state = %#v err=%v", state, err)
+	}
+}
+
+// TestOperatorRetryClearsWatermarkRaisedByCoreRefresh reproduces the deadlock
+// this guard used to create: a fleet core-config refresh raises the Agent's
+// shared applied-version watermark while a deployment sits failed, and the
+// retry must then out-version that refresh instead of replaying beneath it.
+func TestOperatorRetryClearsWatermarkRaisedByCoreRefresh(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "watermark-node", AgentID: "watermark-agent", AgentTokenHash: security.HashSecret("watermark-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 10443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
+	srv.reconcileConfiguration(ctx)
+	first := failLatestApplyDeployment(t, db, server.ID)
+
+	refreshVersion, err := db.NextConfigVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.queueAgentTask(ctx, server.ID, model.AgentTaskTypeApplyCoreConfig, model.ApplyCoreConfigTaskPayload{Config: "{}", Reason: "test_refresh"}, refreshVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RetryFailedConfigurationSync(ctx, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileConfiguration(ctx)
+	latest, err := db.LatestTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
+	if err != nil || latest == nil {
+		t.Fatalf("retry missing task err=%v", err)
+	}
+	if latest.ID == first.ID || latest.ConfigVersion <= refreshVersion {
+		t.Fatalf("retry version %d must exceed the core refresh version %d", latest.ConfigVersion, refreshVersion)
+	}
+}
+
+// TestCreateAgentTaskRejectsNonAdvancingConfigVersion keeps any future caller
+// from reintroducing a reused version: the Agent would skip such a task and the
+// sync state would pin itself to a version it can never reach.
+func TestCreateAgentTaskRejectsNonAdvancingConfigVersion(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "guard-node", AgentID: "guard-agent", AgentTokenHash: security.HashSecret("guard-token"), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	version, err := db.NextConfigVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.createAgentTask(ctx, server.ID, model.AgentTaskTypeApplyDeployment, "{}", version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.createAgentTask(ctx, server.ID, model.AgentTaskTypeApplyCoreConfig, "{}", version); err == nil {
+		t.Fatal("queueing a guarded task at an already used config version must fail")
+	}
+	if _, err := srv.createAgentTask(ctx, server.ID, model.AgentTaskTypeApplyDeployment, "{}", version-1); err == nil {
+		t.Fatal("queueing a guarded task below the last version must fail")
 	}
 }

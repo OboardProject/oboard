@@ -1873,6 +1873,84 @@ func TestNextConfigVersionIsMonotonicAndUnique(t *testing.T) {
 	}
 }
 
+// TestNextConfigVersionIgnoresUnguardedTaskVersions pins the sequence to the
+// tasks that actually consume it. Probe and benchmark tasks store unrelated
+// correlation values in config_version — historically raw UnixNano — and
+// letting those into the floor drags the sequence onto a foreign scale.
+func TestNextConfigVersionIgnoresUnguardedTaskVersions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "edge"}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := s.NextConfigVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeProbeLatencyTargets, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", ConfigVersion: baseline * 1000, Nonce: "probe-nonce"}
+	if err := s.CreateTask(ctx, probe); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.NextConfigVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next <= baseline || next >= probe.ConfigVersion {
+		t.Fatalf("next config version %d must advance past %d without following the probe value %d", next, baseline, probe.ConfigVersion)
+	}
+}
+
+// TestSupersedeStaleGuardedTasksSpansBothConfigTypes covers the cross-type
+// retirement: both guarded types share one applied watermark on the Agent, so a
+// queued task below the newest version can never run whatever its type.
+func TestSupersedeStaleGuardedTasksSpansBothConfigTypes(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "edge"}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	staleDeployment := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", ConfigVersion: 100, Nonce: "n1"}
+	staleCore := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyCoreConfig, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", ConfigVersion: 101, Nonce: "n2"}
+	keptProbe := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeProbeInbounds, PayloadJSON: "{}", Status: "pending", ResultJSON: "{}", ConfigVersion: 102, Nonce: "n3"}
+	for _, task := range []*model.AgentTask{staleDeployment, staleCore, keptProbe} {
+		if err := s.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SupersedeStaleGuardedTasks(ctx, server.ID, 200, "取代"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		task   *model.AgentTask
+		status string
+	}{{staleDeployment, "failed"}, {staleCore, "failed"}, {keptProbe, "pending"}} {
+		got, err := s.GetTask(ctx, want.task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != want.status {
+			t.Fatalf("task %d type %s status = %q, want %q", got.ID, got.Type, got.Status, want.status)
+		}
+	}
+	maximum, err := s.MaxGuardedConfigVersion(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maximum != 101 {
+		t.Fatalf("max guarded config version = %d, want 101 (the probe value must not count)", maximum)
+	}
+}
+
 func TestLastSuccessfulConfigTaskUsesCoreRefreshBaseline(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

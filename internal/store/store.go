@@ -464,6 +464,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`drop index if exists idx_tasks_server_status`,
 		`create index if not exists idx_tasks_status_updated on agent_tasks(status, updated_at)`,
 		`create index if not exists idx_tasks_config_version on agent_tasks(config_version desc)`,
+		`create index if not exists idx_tasks_server_type_version on agent_tasks(server_id, type, config_version desc)`,
 		`create index if not exists idx_controller_backups_created on controller_backups(created_at desc)`,
 		`create index if not exists idx_traffic_server on traffic_stats(server_id, created_at)`,
 		`create index if not exists idx_traffic_reports_user_period on traffic_reports(user_id, period_key)`,
@@ -1758,6 +1759,15 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
+// guardedConfigTaskTypesSQL lists the task types an Agent runs behind its
+// monotonic applied-version watermark. Only these belong to the config version
+// sequence: probe and benchmark tasks store unrelated correlation values in the
+// same column, and letting those into the floor drags the sequence onto a
+// foreign scale that no longer means anything.
+func guardedConfigTaskTypesSQL() string {
+	return `'` + model.AgentTaskTypeApplyDeployment + `','` + model.AgentTaskTypeApplyCoreConfig + `'`
+}
+
 // NextConfigVersion allocates one process- and database-wide monotonic version.
 // A single UPSERT keeps concurrent deployment and core-refresh requests from
 // reusing a version, while the task-table floor handles databases created by
@@ -1766,7 +1776,7 @@ func (s *Store) NextConfigVersion(ctx context.Context) (int64, error) {
 	candidate := time.Now().UnixMilli()
 	var raw string
 	err := s.db.QueryRowContext(ctx, `insert into app_settings(key,value,updated_at)
-		values(?,cast(max(?,coalesce((select max(config_version)+1 from agent_tasks where config_version>0),?)) as text),?)
+		values(?,cast(max(?,coalesce((select max(config_version)+1 from agent_tasks where config_version>0 and type in (`+guardedConfigTaskTypesSQL()+`)),?)) as text),?)
 		on conflict(key) do update set
 			value=cast(max(cast(app_settings.value as integer)+1,cast(excluded.value as integer)) as text),
 			updated_at=excluded.updated_at
@@ -5640,6 +5650,41 @@ func (s *Store) SupersedePendingTasksByServerType(ctx context.Context, serverID 
 	return err
 }
 
+// SupersedeStaleGuardedTasks cancels queued configuration tasks that a newer
+// one has overtaken. Both guarded types share the Agent's single applied
+// watermark, so a lower-versioned task of either type would be skipped on
+// arrival anyway; retiring it here keeps the queue and the task list honest
+// about what will actually run.
+func (s *Store) SupersedeStaleGuardedTasks(ctx context.Context, serverID, keepFromVersion int64, reason string) error {
+	if serverID <= 0 || keepFromVersion <= 0 {
+		return nil
+	}
+	if reason == "" {
+		reason = "已被更新的配置下发取代"
+	}
+	result, err := json.Marshal(map[string]any{"message": reason, "error": reason})
+	if err != nil {
+		return err
+	}
+	ts := now()
+	_, err = s.db.ExecContext(ctx, `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where server_id=? and status='pending' and config_version>0 and config_version<? and type in (`+guardedConfigTaskTypesSQL()+`)`, string(result), ts, ts, serverID, keepFromVersion)
+	return err
+}
+
+// MaxGuardedConfigVersion reports the highest config version already recorded
+// for one server across the version-guarded task types. Callers assert against
+// it so a task that cannot advance the Agent's watermark is never queued.
+func (s *Store) MaxGuardedConfigVersion(ctx context.Context, serverID int64) (int64, error) {
+	if serverID <= 0 {
+		return 0, nil
+	}
+	var version sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `select max(config_version) from agent_tasks where server_id=? and type in (`+guardedConfigTaskTypesSQL()+`)`, serverID).Scan(&version); err != nil {
+		return 0, err
+	}
+	return version.Int64, nil
+}
+
 // SupersedePendingOperationalTasks fails queued diagnostics and host-ops tasks
 // so configuration deployments are not blocked behind long-running log
 // collection or network diagnosis work.
@@ -5871,6 +5916,18 @@ func agentTaskClaimPrioritySQL() string {
 	end`
 }
 
+// guardedClaimOrderSQL sorts the two configuration types ahead of everything
+// else and drains them in config version order. Type priority alone can hand an
+// Agent a newer deployment before an older core refresh, and because both share
+// one applied watermark the loser is then skipped as superseded — correct, but
+// wasted work and a confusing task list. Non-guarded types tie here and fall
+// through to agentTaskClaimPrioritySQL unchanged.
+func guardedClaimOrderSQL() string {
+	guarded := guardedConfigTaskTypesSQL()
+	return `case when type in (` + guarded + `) then 0 else 1 end,
+		case when type in (` + guarded + `) then config_version else 0 end`
+}
+
 // NextTask claims the oldest pending task of one server with a single atomic
 // statement: the UPDATE is conditioned on the task still being pending and
 // RETURNING returns the claimed row, so concurrent consumers (duplicate Agent
@@ -5881,7 +5938,7 @@ func (s *Store) NextTask(ctx context.Context, serverID int64) (*model.AgentTask,
 	var createdAt, updatedAt string
 	var completedAt sql.NullString
 	ts := now()
-	err := s.db.QueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by `+agentTaskClaimPrioritySQL()+`, id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
+	err := s.db.QueryRowContext(ctx, `update agent_tasks set status='running', updated_at=? where id=(select id from agent_tasks where server_id=? and status='pending' order by `+guardedClaimOrderSQL()+`, `+agentTaskClaimPrioritySQL()+`, id limit 1) returning id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at`, ts, serverID).Scan(&task.ID, &task.ServerID, &task.Type, &task.PayloadJSON, &task.Status, &task.ResultJSON, &task.ConfigVersion, &task.Nonce, &createdAt, &updatedAt, &completedAt)
 	if err != nil {
 		return nil, err
 	}

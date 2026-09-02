@@ -606,9 +606,15 @@ func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store
 		case "succeeded":
 			plan.noop = append(plan.noop, state)
 		case "failed", "rollback_failed":
-			if strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerOperatorRetry {
+			switch {
+			case strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerOperatorRetry:
 				plan.retrySame = append(plan.retrySame, state)
-			} else {
+			case isVersionConflictError(state.LastError):
+				// The projection is fine; only the version was stale. Sending it
+				// again at a fresh version converges, whereas keeping the failure
+				// would need an operator retry to leave this state at all.
+				plan.changed[state.ServerID] = true
+			default:
 				plan.keepFailed = append(plan.keepFailed, state)
 			}
 		default:
@@ -646,11 +652,19 @@ func (s *Server) requeueUnchangedDeployment(ctx context.Context, state store.Con
 	if last.Status == "pending" || last.Status == "running" {
 		return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, last.ConfigVersion, last.ID, configurationTaskPayloadDigest(*last))
 	}
-	task, err := s.createAgentTask(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment, last.PayloadJSON, last.ConfigVersion)
+	// The payload is unchanged but this is a fresh delivery, so it needs a fresh
+	// version. Reusing the old one made the retry unrunnable whenever anything
+	// had advanced the Agent's watermark in the meantime — most often a fleet
+	// core-config refresh, which shares that watermark with deployments.
+	version, err := s.store.NextConfigVersion(ctx)
 	if err != nil {
 		return err
 	}
-	return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, last.ConfigVersion, task.ID, configurationTaskPayloadDigest(task))
+	task, err := s.createAgentTask(ctx, state.ServerID, model.AgentTaskTypeApplyDeployment, last.PayloadJSON, version)
+	if err != nil {
+		return err
+	}
+	return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task))
 }
 
 func (s *Server) lastApplyDeploymentError(ctx context.Context, serverID int64) string {
@@ -665,6 +679,21 @@ func (s *Server) lastApplyDeploymentError(ctx context.Context, serverID int64) s
 		return "Agent 配置任务失败"
 	}
 	return "配置未变化，沿用上次失败结果"
+}
+
+// supersededTaskResult reports whether an Agent skipped a configuration task
+// because it already runs a newer version, and which version that is. Skipping
+// is a correct outcome, not a deployment failure: treating it as one pins the
+// sync state to a version the Agent has already moved past.
+func supersededTaskResult(resultJSON string) (int64, bool) {
+	var result struct {
+		Superseded     bool  `json:"superseded"`
+		AppliedVersion int64 `json:"applied_version"`
+	}
+	if json.Unmarshal([]byte(resultJSON), &result) != nil || !result.Superseded {
+		return 0, false
+	}
+	return result.AppliedVersion, true
 }
 
 func configurationTaskResultMessage(resultJSON string) string {
@@ -796,8 +825,43 @@ func (s *Server) serverExpectedPayloadDigest(ctx context.Context, serverID, last
 	return configurationTaskPayloadDigest(*lastTask)
 }
 
+// supersededTaskApplied reports the version an Agent said it already holds when
+// it skipped a configuration task as obsolete.
+func supersededTaskApplied(resultJSON string) (int64, bool) {
+	var result struct {
+		Superseded     bool  `json:"superseded"`
+		AppliedVersion int64 `json:"applied_version"`
+	}
+	if json.Unmarshal([]byte(resultJSON), &result) != nil || !result.Superseded {
+		return 0, false
+	}
+	return result.AppliedVersion, true
+}
+
+// isVersionConflictError matches the rejection an Agent that predates the
+// superseded verdict still reports. Such a task is obsolete rather than broken,
+// so it must not pin the sync state to a version it can never reach.
+func isVersionConflictError(message string) bool {
+	return strings.Contains(message, "is older than last applied version")
+}
+
 func (s *Server) recordConfigurationTaskResult(ctx context.Context, task model.AgentTask, status, resultJSON string) {
 	if task.Type != model.AgentTaskTypeApplyDeployment && task.Type != model.AgentTaskTypeApplyCoreConfig {
+		return
+	}
+	applied, superseded := supersededTaskApplied(resultJSON)
+	if !superseded && status != "succeeded" && isVersionConflictError(configurationTaskResultMessage(resultJSON)) {
+		// An Agent old enough to still fail on a stale version. Treat it the
+		// same way, so a mixed-build fleet converges without operator retries.
+		superseded = true
+	}
+	if superseded {
+		if err := s.store.MarkConfigurationSyncSuperseded(ctx, task.ServerID, task.ConfigVersion); err != nil {
+			logConfigurationError("record superseded task", err)
+		}
+		log.Printf("configuration task superseded server=%d task=%d version=%d agent_applied=%d", task.ServerID, task.ID, task.ConfigVersion, applied)
+		s.signalConfigurationReconcile()
+		s.publishRealtime("configuration", "deployments", "tasks")
 		return
 	}
 	succeeded := status == "succeeded"

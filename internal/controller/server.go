@@ -4390,9 +4390,29 @@ func (s *Server) queueAgentTask(ctx context.Context, serverID int64, taskType st
 	return s.createAgentTask(ctx, serverID, taskType, string(payloadJSON), configVersion)
 }
 
+// versionGuardedTaskType reports whether an Agent runs this task type behind
+// its monotonic applied-version watermark. Both types share one watermark, so
+// they form a single totally ordered stream per server.
+func versionGuardedTaskType(taskType string) bool {
+	return taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig
+}
+
 func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, payloadJSON string, configVersion int64) (model.AgentTask, error) {
 	if configVersion == 0 {
 		configVersion = time.Now().Unix()
+	}
+	if versionGuardedTaskType(taskType) {
+		// A guarded task that does not advance the watermark is skipped on
+		// arrival, leaving the sync state pinned to a version it can never
+		// reach. Refuse it here, where the caller can still allocate a fresh
+		// version, instead of discovering it a round trip later.
+		previous, err := s.store.MaxGuardedConfigVersion(ctx, serverID)
+		if err != nil {
+			return model.AgentTask{}, err
+		}
+		if configVersion <= previous {
+			return model.AgentTask{}, fmt.Errorf("refusing to queue %s for server %d at config_version %d: not newer than the last queued version %d", taskType, serverID, configVersion, previous)
+		}
 	}
 	nonce, err := security.RandomToken(12)
 	if err != nil {
@@ -4421,8 +4441,13 @@ func (s *Server) createAgentTask(ctx context.Context, serverID int64, taskType, 
 		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
 		return task, nil
 	}
-	if taskType == model.AgentTaskTypeApplyDeployment || taskType == model.AgentTaskTypeApplyCoreConfig {
+	if versionGuardedTaskType(taskType) {
 		_ = s.store.SupersedePendingOperationalTasks(ctx, serverID, "配置下发优先，诊断类任务已取消")
+		// Anything still queued below this version lost its meaning the moment
+		// this task was allocated. Retiring both guarded types together matters
+		// because they share one watermark: a stale core refresh behind a newer
+		// deployment would otherwise sit in the queue only to be skipped.
+		_ = s.store.SupersedeStaleGuardedTasks(ctx, serverID, configVersion, "已被更新的配置下发取代")
 	}
 	if err := s.createTaskAndWake(ctx, &task); err != nil {
 		return model.AgentTask{}, err
