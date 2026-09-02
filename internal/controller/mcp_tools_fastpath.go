@@ -149,6 +149,12 @@ func (s *Server) prepareMCPTask(ctx context.Context, principal application.Princ
 	if err != nil {
 		return fastPathError("invalid_operations", err.Error(), false, "fallback")
 	}
+	// Enforce unified form validation for node-mutation Fast Path before
+	// creating the prepared plan, even if the LLM never called
+	// oboard_validate_form. This reuses the shared domain validators.
+	if err := s.enforceFormValidationForFastPath(ctx, principal, prepared.Operations); err != nil {
+		return fastPathError("validation_failed", err.Error(), true, "change_parameters")
+	}
 	approvalMode := "automatic"
 	for _, operation := range prepared.Operations {
 		decision := s.authorizePlanOperation(ctx, operation.Capability, operation.Input)

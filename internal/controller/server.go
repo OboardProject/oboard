@@ -7245,6 +7245,16 @@ func applyInboundConfigDefaults(protocol model.Protocol, raw string) (string, er
 		if _, exists := cfg["version"]; !exists {
 			cfg["version"] = float64(core.SnellVersionV4)
 		}
+		if psk := strings.TrimSpace(fmt.Sprint(cfg["psk"])); psk == "" {
+			secret, err := security.RandomToken(18)
+			if err != nil {
+				return "", err
+			}
+			cfg["psk"] = secret
+		}
+		if stringFromMap(cfg, "obfs_mode") == "" {
+			cfg["obfs_mode"] = "none"
+		}
 	}
 	b, err := json.Marshal(cfg)
 	if err != nil {
@@ -13953,6 +13963,8 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	renderOpts.Template = templateContent
 	renderOpts.TemplateDigest = templateDigest
+	renderOpts.UserAgent = r.UserAgent()
+	renderOpts.RequestedFormat = resolution.Requested
 	sub, err := core.RenderSubscriptionNodesWithOptions(selectedNodes, format, renderOpts)
 	if err != nil {
 		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, "subscription generation failed")

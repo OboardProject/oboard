@@ -30,7 +30,7 @@ func subscriptionCapability(format model.SubscriptionFormat, proxy subscriptionP
 		return SubscriptionCapability{Route: SubscriptionRouteUnsupported}
 	}
 	if format == model.SubscriptionFormatSurgeMac {
-		native, viaMihomo := surgeMacRoute(proxy, opts.SurgeMac)
+		native, viaMihomo := surgeMacRouteWithOpts(proxy, opts)
 		switch {
 		case native:
 			return SubscriptionCapability{Supported: true, Route: SubscriptionRouteNative}
@@ -40,10 +40,24 @@ func subscriptionCapability(format model.SubscriptionFormat, proxy subscriptionP
 			return SubscriptionCapability{Route: SubscriptionRouteUnsupported}
 		}
 	}
-	if subscriptionTargetSupports(format, proxy) {
+	if subscriptionTargetSupportsWithOptions(format, proxy, opts) {
 		return SubscriptionCapability{Supported: true, Route: SubscriptionRouteNative}
 	}
 	return SubscriptionCapability{Route: SubscriptionRouteUnsupported}
+}
+
+func surgeMacRouteWithOpts(proxy subscriptionProxy, opts SubscriptionRenderOptions) (bool, bool) {
+	native, viaMihomo := surgeMacRoute(proxy, opts.SurgeMac)
+	if viaMihomo {
+		// Mihomo bridge also needs to pass feature gating for Mihomo target
+		caps := ResolveTargetCapabilities(model.SubscriptionFormatMihomo, opts.UserAgent)
+		for _, feature := range RequiredFeaturesForProxy(proxy) {
+			if !IsFeatureSupported(caps, feature) {
+				return native, false
+			}
+		}
+	}
+	return native, viaMihomo
 }
 
 func subscriptionTargetSupports(format model.SubscriptionFormat, proxy subscriptionProxy) bool {
@@ -254,13 +268,47 @@ func mieruProxyHasDiscretePorts(proxy subscriptionProxy) bool {
 }
 
 func filterCompatibleSubscriptionProxies(proxies []subscriptionProxy, format model.SubscriptionFormat, opts SubscriptionRenderOptions) []subscriptionProxy {
+	compatible, _ := filterCompatibleSubscriptionProxiesWithDiagnostics(proxies, format, opts)
+	return compatible
+}
+
+func filterCompatibleSubscriptionProxiesWithDiagnostics(proxies []subscriptionProxy, format model.SubscriptionFormat, opts SubscriptionRenderOptions) ([]subscriptionProxy, []FilteredNode) {
 	compatible := make([]subscriptionProxy, 0, len(proxies))
-	for _, proxy := range proxies {
+	filtered := []FilteredNode{}
+	for idx, proxy := range proxies {
 		if subscriptionCapability(format, proxy, opts).Supported {
 			compatible = append(compatible, proxy)
+		} else {
+			reason := "unsupported_format"
+			feature := ""
+			if proxy.Type == "snell" {
+				caps := ResolveTargetCapabilities(format, opts.UserAgent)
+				for _, f := range RequiredFeaturesForProxy(proxy) {
+					if !IsFeatureSupported(caps, f) {
+						reason = "unsupported_feature"
+						feature = string(f)
+						break
+					}
+				}
+				if reason == "unsupported_format" && !snellFormatSupports(format, proxy) {
+					reason = "unsupported_feature"
+					if proxy.Version == SnellVersionV6 {
+						feature = string(FeatureSnellV6)
+					} else if proxy.Version == SnellVersionV4 {
+						feature = string(FeatureSnell)
+					}
+				}
+			}
+			filtered = append(filtered, FilteredNode{
+				NodeID:   int64(idx + 1),
+				Protocol: proxy.Type,
+				Format:   string(format),
+				Reason:   reason,
+				Feature:  feature,
+			})
 		}
 	}
-	return compatible
+	return compatible, filtered
 }
 
 func assertConcreteSubscriptionFormat(format model.SubscriptionFormat) error {

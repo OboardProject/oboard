@@ -189,7 +189,7 @@ func TestSpecialProtocolCapabilityMatrixIsFrozen(t *testing.T) {
 		want   []string
 		deny   []string
 	}{
-		{format: model.SubscriptionFormatMihomo, want: []string{"SSH Managed", "Snell v4", "Mieru Multiport"}, deny: []string{"Snell v6"}},
+		{format: model.SubscriptionFormatMihomo, want: []string{"SSH Managed", "Mieru Multiport"}, deny: []string{"Snell v4", "Snell v6"}},
 		{format: model.SubscriptionFormatSurge, want: []string{"SSH Managed", "Snell v4", "Snell v6"}, deny: []string{"Mieru Multiport"}},
 		{format: model.SubscriptionFormatShadowrocket, want: []string{"SSH Managed", "Snell v4", "Snell v6", "Mieru Multiport"}},
 		{format: model.SubscriptionFormatSingBox, want: []string{"SSH Managed", "Snell v4", "Snell v6"}, deny: []string{"Mieru Multiport"}},

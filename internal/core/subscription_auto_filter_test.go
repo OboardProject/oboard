@@ -13,7 +13,7 @@ func TestAutoResolutionFiltersByResolvedFormat(t *testing.T) {
 		want   []string
 		deny   []string
 	}{
-		{ua: "mihomo/1.19.0", want: []string{"SSH Managed", "Snell v4", "Mieru Multiport"}, deny: []string{"Snell v6"}},
+		{ua: "mihomo/1.19.0", want: []string{"SSH Managed", "Mieru Multiport"}, deny: []string{"Snell v4", "Snell v6"}},
 		{ua: "Surge iOS/5.8.0", want: []string{"SSH Managed", "Snell v4", "Snell v6"}, deny: []string{"Mieru Multiport"}},
 		{ua: "Shadowrocket/2.2", want: []string{"SSH Managed", "Snell v4", "Snell v6", "Mieru Multiport"}},
 	}

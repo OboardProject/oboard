@@ -111,12 +111,23 @@ func (s *Server) subscriptionTemplatePreview(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	rendered, err := core.RenderSubscriptionTemplatePreview(format, content)
+	// Use preview with diagnostics: include filtered nodes for compatibility warnings
+	previewNodes := core.SubscriptionTemplatePreviewNodes()
+	preview, err := core.PreviewSubscriptionNodesWithOptions(previewNodes, format, core.SubscriptionRenderOptions{Template: content, UserAgent: r.UserAgent()})
 	if err != nil {
 		fail(w, err, 400)
 		return
 	}
-	write(w, 200, map[string]any{"content": rendered, "format": format})
+	// Fallback to legacy render if preview fails to keep content field
+	rendered := preview.Content
+	if rendered == "" {
+		rendered, err = core.RenderSubscriptionTemplatePreview(format, content)
+		if err != nil {
+			fail(w, err, 400)
+			return
+		}
+	}
+	write(w, 200, map[string]any{"content": rendered, "format": format, "filtered_nodes": preview.FilteredNodes, "filtered_count": preview.FilteredCount})
 }
 
 func (s *Server) subscriptionTemplateReset(w http.ResponseWriter, r *http.Request, format model.SubscriptionFormat) {

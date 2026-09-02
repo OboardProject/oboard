@@ -383,7 +383,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists dns_lists (id integer primary key autoincrement, name text not null unique, kind text not null, revision integer not null default 1, candidates_json text not null, enabled integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists snell_profiles (id integer primary key autoincrement, name text not null unique, version integer not null default 4, psk text not null default '', obfs_mode text not null default 'none', obfs_host text not null default '', mode text not null default 'default', reuse integer not null default 0, tcp_fast_open integer not null default 1, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_snell_profiles_name on snell_profiles(name)`,
-		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 标准',4,'','none','','default',0,'v4 基础参数，无混淆；psk 为空时取绑定用户密码',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 标准',4,'','none','','default',0,'Snell v4 参数模板。Server PSK 由入口独立持有；未指定时创建入口时自动生成并持久化。每个用户的 UserKey 来自其代理凭据。',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 HTTP 混淆',4,'','http','','default',0,'v4 搭配 HTTP 型混淆，需填写混淆 Host',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 标准（测试）',6,'','none','','default',0,'v6 标准模式；测试版协议，客户端需 Surge iOS 5.20+/Mac 6.7+',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 unshaped（测试）',6,'','none','','unshaped',0,'v6 无整形模式；测试版协议',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
@@ -1084,6 +1084,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateSnellServerPSK(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateSnellProfileRemark(ctx); err != nil {
+		return err
+	}
 	// The legacy authorization tables are removed after the plan revision
 	// migration backfills subscription_plan_nodes into revision snapshots.
 	for _, legacyTable := range []string{"subscription_plan_nodes", "subscription_profiles", "subscription_assignments", "inbound_users", "inbound_access_grants", "external_outbound_access_grants"} {
@@ -1198,6 +1201,13 @@ func (s *Store) snellLegacyBoundPassword(ctx context.Context, inboundID int64, h
 		return frozen, nil
 	}
 	return "", nil
+}
+
+func (s *Store) migrateSnellProfileRemark(ctx context.Context) error {
+	const oldRemark = "v4 基础参数，无混淆；psk 为空时取绑定用户密码"
+	const newRemark = "Snell v4 参数模板。Server PSK 由入口独立持有；未指定时创建入口时自动生成并持久化。每个用户的 UserKey 来自其代理凭据。"
+	_, err := s.db.ExecContext(ctx, `update snell_profiles set remark=?, updated_at=? where builtin=1 and remark=?`, newRemark, time.Now().UTC().Format(time.RFC3339Nano), oldRemark)
+	return err
 }
 
 func (s *Store) ensureNullableAuthChallengeUser(ctx context.Context) error {

@@ -330,22 +330,100 @@ func (s *Server) addMCPValidateDesiredStateTool(server *mcp.Server, principal ap
 
 type mcpValidateFormInput struct {
 	Capability string         `json:"capability"`
+	FormID     string         `json:"form_id"`
 	Input      map[string]any `json:"input"`
+	Mode       string         `json:"mode"`
 }
 
 func (s *Server) addMCPValidateFormTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_validate_form", Title: "Validate Form", Description: "Validate a management form against the same defaults as the panel create UI. Omitted fields receive panel defaults; explicit false/zero stays authoritative. Use before a fallback servers.onboard submit so newly added default-on switches are not JSON-false. servers.update is a patch and is not filled with create defaults.",
+		Name: "oboard_validate_form", Title: "Validate Form", Description: "Validate a management form against the same defaults as the panel create UI. Omitted fields receive panel defaults; explicit false/zero stays authoritative. Use before a fallback submit so newly added default-on switches are not JSON-false. Update forms are strict PATCH and never fill create defaults.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
-			"capability": map[string]any{"type": "string", "enum": []string{"servers.onboard"}},
+			"capability": map[string]any{"type": "string"},
+			"form_id":    map[string]any{"type": "string"},
 			"input":      map[string]any{"type": "object"},
-		}, "capability", "input")),
+			"mode":       map[string]any{"type": "string", "enum": []string{"create", "update"}},
+		}, "input")),
 		OutputSchema: mustRawSchema(map[string]any{"type": "object"}), Annotations: mcpAnnotations(true, true),
 	}, func(ctx context.Context, request *mcp.CallToolRequest, input mcpValidateFormInput) (*mcp.CallToolResult, any, error) {
 		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
+		// Prefer form_id when supplied, otherwise fall back to capability for backward compatibility
+		formID := strings.TrimSpace(input.FormID)
 		capabilityName := normalizeValidateFormCapability(input.Capability)
-		if capabilityName != "servers.onboard" {
-			return mcpPlainFailureResult("", "oboard_validate_form currently supports servers.onboard"), nil, nil
+		if formID != "" {
+			def, ok := s.formRegistry()[formID]
+			if !ok {
+				// Try to resolve via capability name as alias
+				found := false
+				for _, candidate := range s.formRegistry() {
+					if candidate.Capability == capabilityName || candidate.ID == capabilityName {
+						def = candidate
+						formID = candidate.ID
+						found = true
+						break
+					}
+				}
+				if !found {
+					return mcpPlainFailureResult("", fmt.Sprintf("unknown form %q", formID)), nil, nil
+				}
+			}
+			rawInput, err := json.Marshal(input.Input)
+			if err != nil {
+				return mcpPlainFailureResult("", "input must be a JSON object"), nil, nil
+			}
+			normalized, applied, warnings, errs, revisions, err := def.Validate(ctx, principal, rawInput)
+			if err != nil {
+				return mcpPlainFailureResult("", err.Error()), nil, nil
+			}
+			valid := len(errs) == 0
+			digest := formValidationDigest(def.ID, normalized, revisions)
+			s.recordToolCall(ctx, principal, "forms.validate", input, "succeeded", capability.DataInternal)
+			return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", map[string]any{
+				"valid":              valid,
+				"form_id":            def.ID,
+				"mode":               string(def.Mode),
+				"normalized_values":  normalized,
+				"applied_defaults":   applied,
+				"warnings":           warnings,
+				"errors":             errs,
+				"validation_context": revisions,
+				"validation_digest":  digest,
+				"submit_capability":  def.Capability,
+			}), nil
+		}
+		if capabilityName != "servers.onboard" && capabilityName != "" {
+			// Try to find form by capability
+			for _, def := range s.formRegistry() {
+				if def.Capability == capabilityName {
+					rawInput, err := json.Marshal(input.Input)
+					if err != nil {
+						return mcpPlainFailureResult("", "input must be a JSON object"), nil, nil
+					}
+					normalized, applied, warnings, errs, revisions, err := def.Validate(ctx, principal, rawInput)
+					if err != nil {
+						return mcpPlainFailureResult("", err.Error()), nil, nil
+					}
+					valid := len(errs) == 0
+					digest := formValidationDigest(def.ID, normalized, revisions)
+					s.recordToolCall(ctx, principal, "forms.validate", input, "succeeded", capability.DataInternal)
+					return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", map[string]any{
+						"valid":              valid,
+						"form_id":            def.ID,
+						"mode":               string(def.Mode),
+						"normalized_values":  normalized,
+						"applied_defaults":   applied,
+						"warnings":           warnings,
+						"errors":             errs,
+						"validation_context": revisions,
+						"validation_digest":  digest,
+						"submit_capability":  def.Capability,
+					}), nil
+				}
+			}
+		}
+		// Fallback to legacy server onboard path
+		if capabilityName != "servers.onboard" && capabilityName != "" {
+			return mcpPlainFailureResult("", "oboard_validate_form currently supports servers.onboard, inbounds.create, inbounds.update, external_outbounds.create, external_outbounds.update"), nil, nil
 		}
 		if !principal.AllowsCreate("server") {
 			return mcpPlainFailureResult("", "resource filter does not allow creating servers"), nil, nil
@@ -358,15 +436,24 @@ func (s *Server) addMCPValidateFormTool(server *mcp.Server, principal applicatio
 		if err != nil {
 			return mcpPlainFailureResult("", err.Error()), nil, nil
 		}
+		// Wrap legacy response in new unified format as well
+		revisions := map[string]string{}
+		digest := formValidationDigest("server-create", normalized, revisions)
 		s.recordToolCall(ctx, principal, "forms.validate", input, "succeeded", capability.DataInternal)
 		return &mcp.CallToolResult{}, newToolEnvelope("succeeded", "", map[string]any{
-			"valid":             true,
-			"capability":        capabilityName,
-			"normalized_input":  normalized,
-			"applied_defaults":  applied,
-			"warnings":          warnings,
-			"submit_capability": "servers.onboard",
-			"notes":             []string{"Commit through oboard_task when possible. If fallback is required, submit normalized_input rather than reconstructing omitted booleans as false."},
+			"valid":              true,
+			"form_id":            "server-create",
+			"mode":               "create",
+			"normalized_values":  normalized,
+			"applied_defaults":   applied,
+			"warnings":           warnings,
+			"errors":             []formValidationError{},
+			"validation_context": revisions,
+			"validation_digest":  digest,
+			"capability":         "servers.onboard",
+			"normalized_input":   normalized,
+			"submit_capability":  "servers.onboard",
+			"notes":              []string{"Commit through oboard_task when possible. If fallback is required, submit normalized_input rather than reconstructing omitted booleans as false."},
 		}), nil
 	})
 }

@@ -4368,6 +4368,12 @@ func validateSnellOptions(extra map[string]any, side transportSide) error {
 			return errors.New("snell reuse must be boolean")
 		}
 	}
+	if _, exists := extra["userkey"]; exists {
+		return errors.New("snell userkey is derived from user proxy credentials (managed_field)")
+	}
+	if _, exists := extra["user_key"]; exists {
+		return errors.New("snell userkey is derived from user proxy credentials (managed_field)")
+	}
 	if psk := strings.TrimSpace(stringValue(extra, "psk", "")); psk != "" {
 		if err := validateSnellPSKLength(psk, version); err != nil {
 			return err

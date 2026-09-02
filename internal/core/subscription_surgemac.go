@@ -51,6 +51,8 @@ type SubscriptionRenderOptions struct {
 	SurgeMac       SurgeMacOptions
 	Template       string
 	TemplateDigest string
+	UserAgent      string
+	RequestedFormat model.SubscriptionFormat
 }
 
 func defaultSurgeMacOptions() SurgeMacOptions {
@@ -150,6 +152,22 @@ func renderSubscriptionTargetWithOptions(nodes []SubscriptionNode, format model.
 }
 
 func subscriptionTargetSupportsWithOptions(format model.SubscriptionFormat, proxy subscriptionProxy, opts SubscriptionRenderOptions) bool {
+	if proxy.Type == "snell" {
+		caps := ResolveTargetCapabilities(format, opts.UserAgent)
+		// For SurgeMac, also check Mihomo bridge gating
+		if normalizeSubscriptionFormat(format) == model.SubscriptionFormatSurgeMac {
+			// SurgeMac native vs Mihomo bridge already handles version checks,
+			// but still need to gate snell_multi_user_userkey for Mihomo path.
+			// Use the shared surgeMacRouteWithOpts path instead.
+			native, viaMihomo := surgeMacRouteWithOpts(proxy, opts)
+			return native || viaMihomo
+		}
+		for _, feature := range RequiredFeaturesForProxy(proxy) {
+			if !IsFeatureSupported(caps, feature) {
+				return false
+			}
+		}
+	}
 	if normalizeSubscriptionFormat(format) == model.SubscriptionFormatSurgeMac {
 		return surgeMacSupports(proxy, opts.SurgeMac)
 	}

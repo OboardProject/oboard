@@ -478,6 +478,7 @@ type SubscriptionPreview struct {
 	Content        string             `json:"content"`
 	Nodes          []SubscriptionNode `json:"nodes"`
 	FilteredCount  int                `json:"filtered_count"`
+	FilteredNodes  []FilteredNode     `json:"filtered_nodes,omitempty"`
 	InvalidReasons []string           `json:"invalid_reasons"`
 }
 
@@ -487,7 +488,7 @@ func PreviewSubscriptionNodes(nodes []SubscriptionNode, format model.Subscriptio
 
 func PreviewSubscriptionNodesWithOptions(nodes []SubscriptionNode, format model.SubscriptionFormat, opts SubscriptionRenderOptions) (SubscriptionPreview, error) {
 	format = normalizeSubscriptionFormat(format)
-	preview := SubscriptionPreview{Nodes: []SubscriptionNode{}, InvalidReasons: []string{}}
+	preview := SubscriptionPreview{Nodes: []SubscriptionNode{}, InvalidReasons: []string{}, FilteredNodes: []FilteredNode{}}
 	for _, node := range nodes {
 		proxy, err := normalizeSubscriptionNode(node)
 		if err != nil {
@@ -498,6 +499,38 @@ func PreviewSubscriptionNodesWithOptions(nodes []SubscriptionNode, format model.
 			preview.Nodes = append(preview.Nodes, node)
 		} else {
 			preview.FilteredCount++
+			reason := "unsupported_format"
+			feature := ""
+			if proxy.Type == "snell" {
+				caps := ResolveTargetCapabilities(format, opts.UserAgent)
+				for _, f := range RequiredFeaturesForProxy(proxy) {
+					if !IsFeatureSupported(caps, f) {
+						reason = "unsupported_feature"
+						feature = string(f)
+						break
+					}
+				}
+				if reason == "unsupported_format" && !snellFormatSupports(format, proxy) {
+					reason = "unsupported_feature"
+					if proxy.Version == SnellVersionV6 {
+						feature = string(FeatureSnellV6)
+					} else {
+						feature = string(FeatureSnell)
+					}
+				}
+			}
+			filtered := FilteredNode{
+				NodeID:   node.NodeID,
+				Protocol: proxy.Type,
+				Format:   string(format),
+				Reason:   reason,
+				Feature:  feature,
+			}
+			// For synthetic nodes without NodeID, use index as fallback
+			if filtered.NodeID == 0 {
+				filtered.NodeID = int64(len(preview.FilteredNodes) + 1)
+			}
+			preview.FilteredNodes = append(preview.FilteredNodes, filtered)
 		}
 	}
 	content, err := renderSubscriptionTargetWithOptions(preview.Nodes, format, opts)

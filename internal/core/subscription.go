@@ -33,6 +33,7 @@ type SubscriptionOptions struct {
 	GlobalNodeNames    map[string]*string
 	PlanNodeNames      map[string]*string
 	Render             SubscriptionRenderOptions
+	UserAgent          string
 	// AlwaysUseDomainHost forces the subscription server/host field to the
 	// managed DNS domain even for static single-stack inbounds.
 	AlwaysUseDomainHost bool
