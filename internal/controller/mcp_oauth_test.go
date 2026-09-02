@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -742,11 +743,31 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 		t.Fatalf("refresh rotation status=%d body=%s", rotated.Code, rotated.Body.String())
 	}
 	var rotatedTokens struct {
+		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedTokens); err != nil {
 		t.Fatal(err)
 	}
+	replayed := rotate(refreshRaw)
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("refresh replay inside grace status=%d body=%s", replayed.Code, replayed.Body.String())
+	}
+	var replayedTokens struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(replayed.Body.Bytes(), &replayedTokens); err != nil {
+		t.Fatal(err)
+	}
+	if replayedTokens.AccessToken != rotatedTokens.AccessToken || replayedTokens.RefreshToken != rotatedTokens.RefreshToken {
+		t.Fatalf("refresh replay returned a different token pair: %#v vs %#v", replayedTokens, rotatedTokens)
+	}
+	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", rotatedTokens.AccessToken), "https://panel.example.com/api/v1/mcp", time.Now().UTC()); err != nil {
+		t.Fatalf("rotated access token invalid after replay: %v", err)
+	}
+	// Outside the grace window the same token is genuine reuse.
+	server.oauthRefreshGrace = 0
 	reuse := rotate(refreshRaw)
 	if reuse.Code != http.StatusBadRequest || !strings.Contains(reuse.Body.String(), "reuse") {
 		t.Fatalf("refresh reuse status=%d body=%s", reuse.Code, reuse.Body.String())
@@ -757,6 +778,138 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 	}
 	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", accessRaw), "https://panel.example.com/api/v1/mcp", time.Now().UTC()); err == nil {
 		t.Fatal("access token remained valid after refresh reuse")
+	}
+}
+
+// TestOAuthConcurrentRefreshServesOnePairAndKeepsFamily covers the multi-process
+// client race: a Gateway, a CLI and a manual request may all present the same
+// stored refresh token. Every caller must get the winning pair and the grant
+// must survive, otherwise the client is forced through a full reauthorization.
+func TestOAuthConcurrentRefreshServesOnePairAndKeepsFamily(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := testOAuthClient(t, db, "oc_concurrent", "Concurrent refresh", []string{"https://client.example/callback"})
+	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read", "oboard:operate", "offline_access"})
+
+	now := time.Now().UTC()
+	refreshRaw := "obr_concurrent-refresh"
+	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", "oba_concurrent-access"), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/api/v1/mcp", ExpiresAt: now.Add(time.Hour)}
+	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", refreshRaw), FamilyID: "family-concurrent", GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/api/v1/mcp", ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateOAuthTokens(context.Background(), access, refresh); err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 4
+	bodies := make([]struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}, callers)
+	codes := make([]int, callers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for index := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshRaw}, "client_id": {client.ID}, "resource": {"https://panel.example.com/api/v1/mcp"}}.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			out := httptest.NewRecorder()
+			<-start
+			handler.ServeHTTP(out, req)
+			codes[index] = out.Code
+			_ = json.Unmarshal(out.Body.Bytes(), &bodies[index])
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	for index, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("concurrent refresh %d status=%d", index, code)
+		}
+		if bodies[index] != bodies[0] {
+			t.Fatalf("concurrent refresh %d returned %#v, want %#v", index, bodies[index], bodies[0])
+		}
+	}
+	if _, _, _, _, err := server.store.AuthenticateMCPAccessToken(context.Background(), security.HashAPISecret("test-secret", bodies[0].AccessToken), "https://panel.example.com/api/v1/mcp", time.Now().UTC()); err != nil {
+		t.Fatalf("access token from concurrent refresh invalid: %v", err)
+	}
+	reloaded, err := db.GetOAuthGrant(context.Background(), grant.ID)
+	if err != nil || reloaded.RevokedAt != nil || reloaded.Status != model.OAuthGrantActive {
+		t.Fatalf("grant after concurrent refresh=%#v error=%v", reloaded, err)
+	}
+}
+
+// TestOAuthRefreshReplayWithoutCachedPairKeepsFamily covers a Controller restart
+// inside the grace window: the losing request fails alone instead of revoking
+// the family, so the winner's session keeps working.
+func TestOAuthRefreshReplayWithoutCachedPairKeepsFamily(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	user, err := db.GetUserByUsername(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := testOAuthClient(t, db, "oc_replay_gap", "Replay gap", []string{"https://client.example/callback"})
+	grant, principal := createTestGrant(t, server, *user, client, []string{"oboard:read", "offline_access"})
+
+	now := time.Now().UTC()
+	refreshRaw := "obr_replay-gap-refresh"
+	access := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", "oba_replay-gap-access"), GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/api/v1/mcp", ExpiresAt: now.Add(time.Hour)}
+	refresh := &model.OAuthToken{TokenHash: security.HashAPISecret("test-secret", refreshRaw), FamilyID: "family-replay-gap", GrantID: grant.ID, PrincipalID: principal.ID, ClientID: client.ID, UserID: user.ID, Resource: "https://panel.example.com/api/v1/mcp", ExpiresAt: now.Add(time.Hour)}
+	if err := db.CreateOAuthTokens(context.Background(), access, refresh); err != nil {
+		t.Fatal(err)
+	}
+	rotate := func(refreshToken string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "client_id": {client.ID}, "resource": {"https://panel.example.com/api/v1/mcp"}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		return out
+	}
+	rotated := rotate(refreshRaw)
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("refresh rotation status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	var rotatedTokens struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(rotated.Body.Bytes(), &rotatedTokens); err != nil {
+		t.Fatal(err)
+	}
+	server.oauthRefreshMu.Lock()
+	server.oauthRefreshReplays = nil
+	server.oauthRefreshMu.Unlock()
+
+	replayed := rotate(refreshRaw)
+	if replayed.Code != http.StatusBadRequest || !strings.Contains(replayed.Body.String(), "already rotated") {
+		t.Fatalf("replay without cached pair status=%d body=%s", replayed.Code, replayed.Body.String())
+	}
+	survivor := rotate(rotatedTokens.RefreshToken)
+	if survivor.Code != http.StatusOK {
+		t.Fatalf("winning refresh token after replay gap status=%d body=%s", survivor.Code, survivor.Body.String())
 	}
 }
 

@@ -7,12 +7,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -27,6 +29,11 @@ const (
 	oauthAuthorizationCodeTTL = 5 * time.Minute
 	oauthAccessTokenTTL       = 15 * time.Minute
 	oauthRefreshTokenTTL      = 30 * 24 * time.Hour
+	// oauthRefreshReplayGrace is how long a rotated refresh token keeps
+	// returning the token pair it produced. Multi-process clients routinely
+	// present the same stored refresh token twice; replaying the winning pair
+	// keeps that race out of reuse detection.
+	oauthRefreshReplayGrace = 30 * time.Second
 
 	oauthAuthorizationMetadataPath = "/.well-known/oauth-authorization-server"
 	oauthProtectedResourcePath     = "/.well-known/oauth-protected-resource"
@@ -604,21 +611,106 @@ func (s *Server) oauthExchangeCode(w http.ResponseWriter, r *http.Request) {
 	s.issueOAuthTokens(w, r, "authorization_code", code.GrantID, code.PrincipalID, code.ClientID, code.UserID, code.Resource, "", "", mcpauth.RequestsOffline(code.Scopes))
 }
 
+// oauthRefreshGate serializes rotations that present the same refresh token.
+// waiters keeps the gate alive while requests are queued behind it.
+type oauthRefreshGate struct {
+	mu      sync.Mutex
+	waiters int
+}
+
+// oauthRefreshReplay is the token pair one refresh token produced, kept for the
+// replay grace window so a client that lost the rotation race can still be
+// answered with the credentials that actually won.
+type oauthRefreshReplay struct {
+	response  map[string]any
+	clientID  string
+	resource  string
+	expiresAt time.Time
+}
+
+func (s *Server) lockOAuthRefresh(tokenHash string) func() {
+	s.oauthRefreshMu.Lock()
+	if s.oauthRefreshGates == nil {
+		s.oauthRefreshGates = map[string]*oauthRefreshGate{}
+	}
+	gate := s.oauthRefreshGates[tokenHash]
+	if gate == nil {
+		gate = &oauthRefreshGate{}
+		s.oauthRefreshGates[tokenHash] = gate
+	}
+	gate.waiters++
+	s.oauthRefreshMu.Unlock()
+	gate.mu.Lock()
+	return func() {
+		gate.mu.Unlock()
+		s.oauthRefreshMu.Lock()
+		gate.waiters--
+		if gate.waiters == 0 {
+			delete(s.oauthRefreshGates, tokenHash)
+		}
+		s.oauthRefreshMu.Unlock()
+	}
+}
+
+func (s *Server) rememberOAuthRefreshReplay(tokenHash, clientID, resource string, response map[string]any, at time.Time) {
+	if tokenHash == "" || s.oauthRefreshGrace <= 0 {
+		return
+	}
+	s.oauthRefreshMu.Lock()
+	defer s.oauthRefreshMu.Unlock()
+	if s.oauthRefreshReplays == nil {
+		s.oauthRefreshReplays = map[string]oauthRefreshReplay{}
+	}
+	for hash, entry := range s.oauthRefreshReplays {
+		if !entry.expiresAt.After(at) {
+			delete(s.oauthRefreshReplays, hash)
+		}
+	}
+	s.oauthRefreshReplays[tokenHash] = oauthRefreshReplay{response: maps.Clone(response), clientID: clientID, resource: resource, expiresAt: at.Add(s.oauthRefreshGrace)}
+}
+
+func (s *Server) oauthRefreshReplayResponse(tokenHash, clientID, resource string, at time.Time) (map[string]any, bool) {
+	s.oauthRefreshMu.Lock()
+	defer s.oauthRefreshMu.Unlock()
+	entry, ok := s.oauthRefreshReplays[tokenHash]
+	if !ok {
+		return nil, false
+	}
+	if !entry.expiresAt.After(at) {
+		delete(s.oauthRefreshReplays, tokenHash)
+		return nil, false
+	}
+	if entry.clientID != clientID || entry.resource != resource {
+		return nil, false
+	}
+	return maps.Clone(entry.response), true
+}
+
 func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
-	refresh, err := s.store.ConsumeOAuthRefreshToken(r.Context(), security.HashAPISecret(s.sessionSecret, r.Form.Get("refresh_token")), time.Now().UTC())
+	tokenHash := security.HashAPISecret(s.sessionSecret, r.Form.Get("refresh_token"))
+	clientID, resource := r.Form.Get("client_id"), r.Form.Get("resource")
+	// Serialize rotations of one refresh token so a second caller observes a
+	// finished rotation and its cached result instead of a half-written one.
+	defer s.lockOAuthRefresh(tokenHash)()
+	at := time.Now().UTC()
+	refresh, err := s.store.ConsumeOAuthRefreshToken(r.Context(), tokenHash, at, s.oauthRefreshGrace)
+	if errors.Is(err, store.ErrOAuthRefreshReplay) {
+		s.oauthReplayRefresh(w, r, refresh, tokenHash, clientID, resource, at)
+		return
+	}
 	if errors.Is(err, store.ErrOAuthRefreshReuse) {
 		var actor *int64
 		target := ""
 		if refresh != nil {
 			actor, target = &refresh.UserID, refresh.GrantID
 		}
-		s.auditOAuthEvent(r, actor, "oauth_refresh_reuse", "oauth_grant", target, map[string]any{"client_id": boundedOAuthAuditValue(r.Form.Get("client_id")), "reason": "token_family_revoked"})
+		s.auditOAuthEvent(r, actor, "oauth_refresh_reuse", "oauth_grant", target, map[string]any{"client_id": boundedOAuthAuditValue(clientID), "reason": "token_family_revoked"})
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token reuse detected; token family revoked")
 		return
 	}
-	if err != nil || refresh.ClientID != r.Form.Get("client_id") || refresh.Resource != r.Form.Get("resource") {
+	if err != nil || refresh.ClientID != clientID || refresh.Resource != resource {
 		var actor *int64
-		target := boundedOAuthAuditValue(r.Form.Get("client_id"))
+		target := boundedOAuthAuditValue(clientID)
 		if refresh != nil {
 			actor, target = &refresh.UserID, refresh.GrantID
 		}
@@ -627,6 +719,33 @@ func (s *Server) oauthExchangeRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.issueOAuthTokens(w, r, "refresh_token", refresh.GrantID, refresh.PrincipalID, refresh.ClientID, refresh.UserID, refresh.Resource, refresh.FamilyID, refresh.TokenHash, true)
+}
+
+// oauthReplayRefresh answers a refresh token that was already rotated inside the
+// grace window. A cached pair is returned verbatim; without one the single
+// request fails while the family stays intact, so the process that won the
+// rotation keeps its session and the loser can retry with the newest token.
+func (s *Server) oauthReplayRefresh(w http.ResponseWriter, r *http.Request, refresh *model.OAuthToken, tokenHash, clientID, resource string, at time.Time) {
+	if refresh == nil || refresh.ClientID != clientID || refresh.Resource != resource {
+		var actor *int64
+		target := boundedOAuthAuditValue(clientID)
+		if refresh != nil {
+			actor, target = &refresh.UserID, refresh.GrantID
+		}
+		s.auditOAuthEvent(r, actor, "oauth_token_denied", "oauth_grant", target, map[string]any{"flow": "refresh_token", "reason": "invalid_grant"})
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is invalid")
+		return
+	}
+	response, ok := s.oauthRefreshReplayResponse(tokenHash, clientID, resource, at)
+	if !ok {
+		s.auditOAuthEvent(r, &refresh.UserID, "oauth_token_denied", "oauth_grant", refresh.GrantID, map[string]any{"client_id": boundedOAuthAuditValue(clientID), "flow": "refresh_token", "reason": "refresh_replay_unavailable"})
+		oauthError(w, http.StatusBadRequest, "invalid_grant", "refresh token was already rotated; retry with the newest refresh token")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	s.auditOAuthEvent(r, &refresh.UserID, "oauth_refresh_replayed", "oauth_grant", refresh.GrantID, map[string]any{"client_id": boundedOAuthAuditValue(clientID), "flow": "refresh_token", "resource": resource})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, grantID, principalID, clientID string, userID int64, resource, familyID, parentTokenHash string, requestOffline bool) {
@@ -692,6 +811,7 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, flow, 
 	action := "oauth_token_issued"
 	if flow == "refresh_token" {
 		action = "oauth_token_refreshed"
+		s.rememberOAuthRefreshReplay(parentTokenHash, clientID, resource, response, now)
 	}
 	s.auditOAuthEvent(r, &userID, action, "oauth_grant", grantID, map[string]any{"client_id": clientID, "flow": flow, "offline_access": refreshPlain != "", "resource": resource, "scope": strings.Join(scopes, " ")})
 	writeJSON(w, http.StatusOK, response)

@@ -200,6 +200,14 @@ type Server struct {
 	planReconcileWake chan struct{}
 	nodeRefreshSem    chan struct{}
 	nodeRefreshMu     sync.Mutex
+	// oauthRefreshMu guards the per-token rotation gates and the replay cache.
+	// Concurrent clients sharing one refresh token are serialized and the losers
+	// receive the winning token pair, so a benign race no longer looks like
+	// refresh token reuse and no longer revokes the token family.
+	oauthRefreshMu      sync.Mutex
+	oauthRefreshGates   map[string]*oauthRefreshGate
+	oauthRefreshReplays map[string]oauthRefreshReplay
+	oauthRefreshGrace   time.Duration
 
 	trafficReportsReceivedTotal      atomic.Uint64
 	trafficReportsAcceptedTotal      atomic.Uint64
@@ -239,6 +247,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	}
 	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
+	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64]chan any{}
 	s.remoteExecHub = newRemoteExecResultHub()
 	s.terminalHub = newTerminalSessionHub()

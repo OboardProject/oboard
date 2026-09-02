@@ -181,6 +181,7 @@ function auditTitle(log: AuditLogRow, actor: string, target: { type: string; lab
   }
   if (action === 'oauth_client_created') return copy(`${actor} 创建了 ${client || 'OAuth 应用'}`)
   if (action === 'oauth_refresh_reuse') return copy(`${actor} 的刷新令牌被重复使用，相关授权已撤销`)
+  if (action === 'oauth_refresh_replayed') return copy(`${actor} 的${possessiveClient(client)}并发刷新已复用同一组令牌`)
   if (action === 'node_incident_resolved') return copy(`${actor} 恢复了节点故障`)
   if (action === 'node_incident_action_succeeded') return copy(`${actor} 完成了节点故障处置`)
   if (action === 'node_incident_action_failed') return copy(`${actor} 的节点故障处置失败`)
@@ -278,7 +279,7 @@ export function auditActionLabel(action: string) {
     notify: '通知', notify_failed: '通知失败', notification_broadcast: '群发通知', agent_enroll: '接入',
     oauth_token_refreshed: '刷新令牌', oauth_token_issued: '签发令牌', oauth_token_denied: '拒绝令牌',
     oauth_token_revoked: '撤销令牌', oauth_authorization_granted: '授权应用', oauth_authorization_denied: '拒绝授权',
-    oauth_client_created: '创建应用', oauth_refresh_reuse: '令牌复用',
+    oauth_client_created: '创建应用', oauth_refresh_reuse: '令牌复用', oauth_refresh_replayed: '并发刷新',
     node_incident_resolved: '节点恢复', node_incident_action_succeeded: '处置完成', node_incident_action_failed: '处置失败',
     node_publication_isolate: '隔离发布', node_publication_restore: '恢复发布',
   }
@@ -307,7 +308,7 @@ function auditActionTone(action: string): AuditTone {
   if (['update', 'apply', 'dismiss', 'diagnose', 'detect', 'rotate', 'revoke', 'disable', 'oauth_token_revoked', 'node_publication_isolate', 'check', 'channel', 'cancel', 'inspect', 'refresh', 'probe', 'collect_logs', 'ordering', 'place'].includes(action)) return 'warning'
   if ([
     'create', 'grant', 'bootstrap', 'auto_admin', 'login', 'login_totp', 'login_passkey', 'logout', 'enable', 'agent_enroll', 'notify',
-    'oauth_token_issued', 'oauth_token_refreshed', 'oauth_authorization_granted', 'oauth_client_created',
+    'oauth_token_issued', 'oauth_token_refreshed', 'oauth_refresh_replayed', 'oauth_authorization_granted', 'oauth_client_created',
     'node_incident_resolved', 'node_incident_action_succeeded', 'node_publication_restore', 'register', 'renew',
     'install', 'resume',
   ].includes(action)) return 'success'
@@ -433,6 +434,7 @@ function oauthReasonLabel(reason: string) {
     token_issue_failed: '令牌签发失败',
     invalid_grant: '授权无效',
     token_family_revoked: '令牌族已撤销',
+    refresh_replay_unavailable: '刷新令牌已轮换，需使用最新令牌重试',
     inactive_grant: '授权已失效',
     disabled_client: '应用已停用',
     user_not_authorized: '用户无权访问',

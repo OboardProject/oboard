@@ -11,7 +11,13 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-var ErrOAuthRefreshReuse = errors.New("oauth refresh token reuse detected")
+var (
+	ErrOAuthRefreshReuse = errors.New("oauth refresh token reuse detected")
+	// ErrOAuthRefreshReplay reports a refresh token that was already rotated
+	// inside the replay grace window. The token family stays intact so a client
+	// that lost a concurrent rotation keeps a working session.
+	ErrOAuthRefreshReplay = errors.New("oauth refresh token replayed inside grace window")
+)
 
 func (s *Store) CreateOAuthClient(ctx context.Context, item *model.OAuthClient) error {
 	redirects, err := json.Marshal(item.RedirectURIs)
@@ -433,7 +439,12 @@ func (s *Store) ResolveActiveGrant(ctx context.Context, grantID string, at time.
 	return &grant, effectiveRole, true, nil
 }
 
-func (s *Store) ConsumeOAuthRefreshToken(ctx context.Context, tokenHash string, at time.Time) (*model.OAuthToken, error) {
+// ConsumeOAuthRefreshToken rotates a refresh token. A token that was already
+// consumed within grace, and whose family is still intact, is reported as
+// ErrOAuthRefreshReplay without any state change so a racing client can be
+// served the winning rotation; anything else is genuine reuse and revokes the
+// family plus every access token of the grant.
+func (s *Store) ConsumeOAuthRefreshToken(ctx context.Context, tokenHash string, at time.Time, grace time.Duration) (*model.OAuthToken, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -447,6 +458,13 @@ func (s *Store) ConsumeOAuthRefreshToken(ctx context.Context, tokenHash string, 
 	}
 	item.ConsumedAt, item.RevokedAt, item.ReuseDetectedAt = nullableTime(consumed), nullableTime(revoked), nullableTime(reuseDetected)
 	if item.ConsumedAt != nil {
+		if grace > 0 && item.RevokedAt == nil && item.ReuseDetectedAt == nil && !item.ConsumedAt.Add(grace).Before(at) {
+			item.ExpiresAt, item.CreatedAt = parseTime(expires), parseTime(created)
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return &item, ErrOAuthRefreshReplay
+		}
 		ts := at.UTC().Format(time.RFC3339Nano)
 		_, _ = tx.ExecContext(ctx, `update oauth_refresh_tokens set revoked_at=coalesce(revoked_at,?),reuse_detected_at=case when token_hash=? then ? else reuse_detected_at end where family_id=?`, ts, tokenHash, ts, item.FamilyID)
 		_, _ = tx.ExecContext(ctx, `update oauth_access_tokens set revoked_at=? where grant_id=? and revoked_at is null`, ts, item.GrantID)
