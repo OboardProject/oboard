@@ -70,13 +70,21 @@ export const ROUTING_MIN_CHANNEL_HEIGHT = 90
 export const GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT = 180
 export const GRAPH_LAYOUT_EXIT_NODE_HEIGHT = 130
 
-const POSITIONS_KEY = 'oboard.proxyGraph.positions.v6'
+// v6 coordinates were restored unconditionally over the computed layout, so a
+// canvas whose topology had changed since the last visit always reopened with
+// stale ranks and detoured edges. v7 starts from the layout and only restores
+// the nodes the operator pinned by dragging them.
+const POSITIONS_KEY = 'oboard.proxyGraph.positions.v7'
+const LEGACY_POSITIONS_KEY = 'oboard.proxyGraph.positions.v6'
+const PINNED_KEY = 'oboard.proxyGraph.pinnedNodes.v1'
+const SIGNATURE_KEY = 'oboard.proxyGraph.layoutSignature.v1'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'
 const DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v2'
 const LEGACY_DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
 
 export function loadGraphPositions(): Record<string, GraphPosition> {
   try {
+    localStorage.removeItem(LEGACY_POSITIONS_KEY)
     return JSON.parse(localStorage.getItem(POSITIONS_KEY) || '{}')
   } catch {
     return {}
@@ -85,6 +93,48 @@ export function loadGraphPositions(): Record<string, GraphPosition> {
 
 export function saveGraphPositions(positions: Record<string, GraphPosition>) {
   localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions))
+}
+
+/** Node IDs the operator dragged. Auto layout leaves these where they are. */
+export function loadPinnedGraphNodes(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(PINNED_KEY) || '[]')
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export function savePinnedGraphNodes(nodeIDs: Iterable<string>) {
+  localStorage.setItem(PINNED_KEY, JSON.stringify(Array.from(new Set(nodeIDs)).sort()))
+}
+
+export function loadGraphLayoutSignatures(): Record<string, string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(SIGNATURE_KEY) || '{}')
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+export function saveGraphLayoutSignature(rootServerID: number, signature: string) {
+  const current = loadGraphLayoutSignatures()
+  localStorage.setItem(SIGNATURE_KEY, JSON.stringify({ ...current, [String(rootServerID)]: signature }))
+}
+
+/** Structural fingerprint of one canvas: which nodes exist and how the primary
+ *  chain connects them. Coordinates deliberately do not participate, so moving
+ *  a card never asks for a relayout while adding a hop always does. */
+export function graphLayoutSignature(
+  nodeIDs: Iterable<string>,
+  primaryEdges: Iterable<{ source: string; target: string; sourceHandle?: string }>,
+): string {
+  const nodes = Array.from(new Set(nodeIDs)).sort()
+  const edges = Array.from(new Set(
+    Array.from(primaryEdges).map(edge => `${edge.source}${edge.sourceHandle || ''}>${edge.target}`),
+  )).sort()
+  return `${nodes.join(',')}|${edges.join(',')}`
 }
 
 export function loadGraphToolboxPosition(): GraphPosition {
@@ -117,6 +167,16 @@ export function saveGraphDirectExitInstances(instances: GraphDirectExitInstance[
 
 export function snapGraphPosition(position: GraphPosition): GraphPosition {
   return { x: Math.round(position.x), y: Math.round(position.y) }
+}
+
+/** Pointer drags land on arbitrary sub-pixel offsets. Quantising them keeps a
+ *  card that looks aligned actually aligned, so the router can still draw the
+ *  straight vertical segment instead of a two-bend jog. */
+export const GRAPH_DRAG_SNAP_GRID = 4
+
+export function snapDraggedGraphPosition(position: GraphPosition, grid = GRAPH_DRAG_SNAP_GRID): GraphPosition {
+  const size = grid > 0 ? grid : 1
+  return { x: Math.round(position.x / size) * size, y: Math.round(position.y / size) * size }
 }
 
 function compareLayoutEdges(left: ProxyLayoutEdge, right: ProxyLayoutEdge) {
@@ -378,13 +438,22 @@ export function minimizeGraphLayerCrossings(
   return ordered
 }
 
-export function graphServerNodeWidth(_entryCount: number) {
-	return GRAPH_ENTRY_NODE_WIDTH
+// Every source on a server card owns one slot as wide as the card that hangs
+// under it. That makes the entry card above a handle, the handle itself and the
+// first hop below it share one vertical line; anything narrower forces the
+// router into a jog no layout pass can remove, because the children are wider
+// than the span the handles are squeezed into.
+export const GRAPH_SERVER_SLOT_WIDTH = GRAPH_ENTRY_NODE_WIDTH + PRIMARY_SUBTREE_GAP
+
+export function graphServerNodeWidth(sourceCount: number) {
+  return Math.max(1, sourceCount) * GRAPH_SERVER_SLOT_WIDTH
 }
 
+/** Horizontal centre of one source slot, as a CSS percentage of card width. */
 export function graphPathHandleLeft(index: number, count: number) {
-  if (count <= 1) return '50%'
-  return `${20 + (index * 60) / (count - 1)}%`
+  const slots = Math.max(1, count)
+  const slot = Math.max(0, Math.min(index, slots - 1))
+  return `${((slot + 0.5) / slots) * 100}%`
 }
 
 export function graphEntryHandleLeft(index: number, count: number, _reserveCenter = false) {
@@ -399,14 +468,18 @@ export function defaultImportedGraphPosition(index: number): GraphPosition {
   return { x: 630, y: 670 + index * 370 }
 }
 
-// Entry cards fan out above a fixed-width server card.
+// An entry card sits centred on its own slot, directly above the handle it
+// feeds, so the belongs-to edge is a straight drop. `slotCount` is the number of
+// sources the card carries — entries plus path continuations — not just entries.
 export function defaultEntryGraphPosition(
   serverPosition: GraphPosition,
   index: number,
-  total = 1,
-  serverWidth = graphServerNodeWidth(total),
+  slotCount = 1,
+  serverWidth = graphServerNodeWidth(slotCount),
 ): GraphPosition {
-	const centerX = serverPosition.x + serverWidth / 2 + (index - (total - 1) / 2) * (GRAPH_ENTRY_NODE_WIDTH + 40)
+  const slots = Math.max(1, slotCount)
+  const slot = Math.max(0, Math.min(index, slots - 1))
+  const centerX = serverPosition.x + ((slot + 0.5) / slots) * serverWidth
   return { x: Math.round(centerX - GRAPH_ENTRY_NODE_WIDTH / 2), y: serverPosition.y - 170 }
 }
 

@@ -181,4 +181,49 @@ describe('global proxy graph routing', () => {
     expect(result.routes['belongs-2'].points.every(p => p.y <= 300)).toBe(true)
     expect(routeCrossingCount(result.routes['belongs-1'].points, result.routes['belongs-2'].points)).toBe(0)
   })
+
+  it('draws a straight line when a dragged card is only a few pixels off centre', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'source', rect: { left: 0, top: 0, right: 200, bottom: 100 } },
+        { id: 'target', rect: { left: 3, top: 300, right: 203, bottom: 400 } },
+      ],
+      edges: [{ id: 'edge', source: 'source', target: 'target', routingClass: 'primary', pathIDs: [1], sourceRank: 0, targetRank: 1 }],
+    }
+    const result = expectClean(input)
+    expect(result.routes.edge.points).toHaveLength(2)
+    expect(result.routes.edge.points[0].x).toBe(result.routes.edge.points[1].x)
+  })
+
+  it('crosses over halfway down for a lone branch instead of hugging the source card', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'source', rect: { left: 0, top: 0, right: 200, bottom: 100 } },
+        { id: 'target', rect: { left: 400, top: 400, right: 600, bottom: 500 } },
+      ],
+      edges: [{ id: 'edge', source: 'source', target: 'target', routingClass: 'primary', pathIDs: [1], sourceRank: 0, targetRank: 1 }],
+    }
+    const result = expectClean(input)
+    const [start, corner] = result.routes.edge.points
+    expect(result.routes.edge.quality).toBe('preferred')
+    expect(corner.y - start.y).toBeGreaterThan(100)
+  })
+
+  it('skips obstacle avoidance and diagnostics in fast mode', () => {
+    const input: GraphRoutingInput = {
+      nodes: [
+        { id: 'source', rect: { left: 0, top: 0, right: 200, bottom: 100 } },
+        { id: 'blocker', rect: { left: 230, top: 130, right: 330, bottom: 260 } },
+        { id: 'target', rect: { left: 500, top: 300, right: 700, bottom: 400 } },
+      ],
+      edges: [{ id: 'edge', source: 'source', target: 'target', routingClass: 'primary', pathIDs: [1], sourceRank: 0, targetRank: 1 }],
+      layerChannels: [{ sourceRank: 0, targetRank: 1, top: 180, bottom: 220, tracks: { edge: 190 } }],
+    }
+    const fast = routeProxyGraph({ ...input, avoidObstacles: false, collectDiagnostics: false })
+    expect(fast.routes.edge.quality).toBe('preferred')
+    expect(fast.diagnostics.failedEdgeIDs).toEqual([])
+    expect(fast.diagnostics.nodeIntersectionEdgeIDs).toEqual([])
+    // The full pass still detours around the blocker the fast pass ignores.
+    expect(routeProxyGraph(input).routes.edge.quality).toBe('pathfinder')
+  })
 })

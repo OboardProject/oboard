@@ -1,29 +1,43 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, sortServerEntriesForGraph } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
 
 describe('proxy graph server layout', () => {
-  it('keeps server cards fixed width regardless of inbound count', () => {
-    expect(graphServerNodeWidth(0)).toBe(GRAPH_ENTRY_NODE_WIDTH)
-    expect(graphServerNodeWidth(1)).toBe(GRAPH_ENTRY_NODE_WIDTH)
-    expect(graphServerNodeWidth(8)).toBe(GRAPH_ENTRY_NODE_WIDTH)
+  it('gives every server source one card-wide slot', () => {
+    expect(graphServerNodeWidth(0)).toBe(GRAPH_SERVER_SLOT_WIDTH)
+    expect(graphServerNodeWidth(1)).toBe(GRAPH_SERVER_SLOT_WIDTH)
+    expect(graphServerNodeWidth(3)).toBe(GRAPH_SERVER_SLOT_WIDTH * 3)
+    // A slot has to hold the card that hangs under it plus the sibling gap,
+    // otherwise children cannot line up with their own handle.
+    expect(GRAPH_SERVER_SLOT_WIDTH).toBeGreaterThanOrEqual(GRAPH_ENTRY_NODE_WIDTH)
   })
 
-  it('fans multiple entry cards around the fixed-width server center', () => {
+  it('centres each entry card on its own slot above the server', () => {
     const server = { x: 500, y: 300 }
-    const left = defaultEntryGraphPosition(server, 0, 3)
-    const middle = defaultEntryGraphPosition(server, 1, 3)
-    const right = defaultEntryGraphPosition(server, 2, 3)
+    const width = graphServerNodeWidth(3)
+    const cards = [0, 1, 2].map(index => defaultEntryGraphPosition(server, index, 3, width))
+    const centres = cards.map(card => card.x + GRAPH_ENTRY_NODE_WIDTH / 2)
 
-    expect(middle.x).toBe(server.x)
-    expect(left.x).toBeLessThan(middle.x)
-    expect(right.x).toBeGreaterThan(middle.x)
-    expect(left.y).toBe(130)
-    expect(right.y).toBe(130)
+    expect(centres[1]).toBe(server.x + width / 2)
+    expect(centres[1] - centres[0]).toBe(GRAPH_SERVER_SLOT_WIDTH)
+    expect(centres[2] - centres[1]).toBe(GRAPH_SERVER_SLOT_WIDTH)
+    cards.forEach(card => expect(card.y).toBe(130))
   })
 
-  it('spaces independent entry handles evenly across the card width', () => {
-    expect(graphEntryHandleLeft(0, 2)).toBe('20%')
-    expect(graphEntryHandleLeft(1, 2)).toBe('80%')
+  it('puts each entry card centre exactly over its own handle', () => {
+    const server = { x: 500, y: 300 }
+    const count = 4
+    const width = graphServerNodeWidth(count)
+    for (let index = 0; index < count; index++) {
+      const handleX = server.x + width * (Number.parseFloat(graphEntryHandleLeft(index, count)) / 100)
+      const cardCentre = defaultEntryGraphPosition(server, index, count, width).x + GRAPH_ENTRY_NODE_WIDTH / 2
+      expect(cardCentre).toBe(handleX)
+    }
+  })
+
+  it('spaces independent entry handles on slot centres', () => {
+    expect(graphEntryHandleLeft(0, 1)).toBe('50%')
+    expect(graphEntryHandleLeft(0, 2)).toBe('25%')
+    expect(graphEntryHandleLeft(1, 2)).toBe('75%')
   })
 
   it('orders server handles by entry card position instead of port', () => {
@@ -107,5 +121,38 @@ describe('proxy graph server layout', () => {
     // The target handle on routing node is at: routingLeft + childWidth / 2
     const targetHandleX = routingLeft + childWidth / 2
     expect(targetHandleX).toBe(sourceHandleX)
+  })
+})
+
+describe('proxy graph layout signature', () => {
+  it('ignores node and edge ordering', () => {
+    const first = graphLayoutSignature(
+      ['server-1', 'entry-2', 'proxy-server-step-9'],
+      [{ source: 'server-1', target: 'proxy-server-step-9', sourceHandle: 'entry-2' }],
+    )
+    const second = graphLayoutSignature(
+      ['proxy-server-step-9', 'server-1', 'entry-2'],
+      [{ source: 'server-1', target: 'proxy-server-step-9', sourceHandle: 'entry-2' }],
+    )
+    expect(first).toBe(second)
+  })
+
+  it('changes when a hop is added or rewired but not when a card moves', () => {
+    const nodes = ['server-1', 'proxy-server-step-9']
+    const base = graphLayoutSignature(nodes, [{ source: 'server-1', target: 'proxy-server-step-9' }])
+
+    expect(graphLayoutSignature(nodes, [{ source: 'server-1', target: 'proxy-server-step-9' }])).toBe(base)
+    expect(graphLayoutSignature([...nodes, 'proxy-server-step-10'], [
+      { source: 'server-1', target: 'proxy-server-step-9' },
+      { source: 'proxy-server-step-9', target: 'proxy-server-step-10' },
+    ])).not.toBe(base)
+    expect(graphLayoutSignature(nodes, [{ source: 'server-1', target: 'proxy-server-step-9', sourceHandle: 'entry-2' }])).not.toBe(base)
+  })
+})
+
+describe('drag snapping', () => {
+  it('quantises pointer drops so aligned cards stay aligned', () => {
+    expect(snapDraggedGraphPosition({ x: 631.4, y: 299.8 })).toEqual({ x: 632, y: 300 })
+    expect(snapDraggedGraphPosition({ x: 632, y: 300 })).toEqual({ x: 632, y: 300 })
   })
 })

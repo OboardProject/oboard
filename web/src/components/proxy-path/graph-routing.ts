@@ -58,6 +58,9 @@ export type GraphRoutingInput = {
   branchBands?: Record<string, GraphBranchBand>
   layerChannels?: GraphLayerChannel[]
   avoidObstacles?: boolean
+  /** Cross-checking every routed pair is O(E²) segment intersection. Callers on
+   *  a render hot path opt out; tests and dev builds keep it on. */
+  collectDiagnostics?: boolean
 }
 
 export type GraphRoutingDiagnostics = {
@@ -101,10 +104,14 @@ export const ROUTING_TRACK_GAP = 14
 export const BRANCH_STUB_LENGTH = 28
 export const OUTER_GUTTER = 60
 export const OUTER_TRACK_GAP = 16
-export const BEND_COST = 40
+export const BEND_COST = 120
 export const CROSSING_COST = 5000
 export const NODE_PROXIMITY_COST = 6
 export const ABOVE_SOURCE_COST = 4000
+/** Cards that read as vertically aligned are rarely aligned to the half-pixel.
+ *  Within this tolerance the edge is drawn as one straight segment instead of
+ *  degenerating into a stub, a few-pixel jog and a second stub. */
+export const STRAIGHT_SNAP_TOLERANCE = 6
 
 function sortedPair(left: string, right: string): [string, string] {
   return left < right ? [left, right] : [right, left]
@@ -337,9 +344,15 @@ function preferredRoute(
   outerLaneIndex: number,
   belongsTracks?: Map<string, number>,
   busYByGroup?: Map<string, number>,
+  sharedBusGroups?: Set<string>,
 ): GraphPoint[] {
-  const source = sourcePort.point
+  const rawSource = sourcePort.point
   const target = targetPort.point
+  // Snapping the port instead of inserting a jog keeps the stroke inside the
+  // card it leaves from while removing the visual kink entirely.
+  const source = Math.abs(rawSource.x - target.x) <= STRAIGHT_SNAP_TOLERANCE
+    ? { x: target.x, y: rawSource.y }
+    : rawSource
   if (edge.routingClass === 'auxiliary') {
     const bounds = graphBounds(input.nodes)
     const y = routingCoordinate(bounds.bottom + OUTER_GUTTER + outerLaneIndex * OUTER_TRACK_GAP)
@@ -352,8 +365,16 @@ function preferredRoute(
     return normalizeOrthogonalPoints([source, { x: source.x, y: trackY }, { x: target.x, y: trackY }, target])
   }
   const stubY = routingCoordinate(source.y + BRANCH_STUB_LENGTH)
-  const dropY = busYByGroup?.get(branchGroupKey(edge)) ?? stubY
-  const busY = Math.max(dropY, stubY)
+  const groupKey = branchGroupKey(edge)
+  const dropY = busYByGroup?.get(groupKey) ?? stubY
+  // Siblings leaving the same handle must share one bus lane so they can fan
+  // out together. A lone branch has nothing to share with, so its crossover
+  // sits halfway down the gap and reads as a symmetric S instead of a corner
+  // pinned against the source card.
+  const midY = routingCoordinate(source.y + (target.y - source.y) / 2)
+  const busY = sharedBusGroups?.has(groupKey) === false && midY > stubY
+    ? midY
+    : Math.max(dropY, stubY)
   if (busY <= target.y) {
     return normalizeOrthogonalPoints([source, { x: source.x, y: busY }, { x: target.x, y: busY }, target])
   }
@@ -709,6 +730,9 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
     const key = branchGroupKey(edge)
     primaryByGroup.set(key, [...(primaryByGroup.get(key) || []), edge])
   })
+  const sharedBusGroups = new Set(Array.from(primaryByGroup.entries())
+    .filter(([, groupEdges]) => groupEdges.length > 1)
+    .map(([key]) => key))
   primaryByGroup.forEach((groupEdges, key) => {
     const sourcePort = sourcePorts.get(groupEdges[0].id)
     if (!sourcePort) return
@@ -728,12 +752,13 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
       return
     }
     const ignored = branchSiblingIDs(edge, edges)
-    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, belongsTracks, busYByGroup)
+    const preferred = preferredRoute(edge, sourcePort, targetPort, routingInput, auxiliaryIndex, belongsTracks, busYByGroup, sharedBusGroups)
     if (edge.routingClass === 'auxiliary') auxiliaryIndex++
-    const preferredValidation = validateRouteCandidate(edge, preferred, routingInput.nodes, reservations, ignored)
     let points: GraphPoint[] | undefined
     let quality: GraphRouteQuality = 'preferred'
-    if (preferredValidation.valid || input.avoidObstacles === false) {
+    // Obstacle avoidance is the expensive half of routing. Callers that need a
+    // route on every animation frame skip it and take the direct candidate.
+    if (input.avoidObstacles === false || validateRouteCandidate(edge, preferred, routingInput.nodes, reservations, ignored).valid) {
       points = preferred
       if (edge.routingClass === 'auxiliary') quality = 'outer-gutter'
     } else {
@@ -753,6 +778,8 @@ export function routeProxyGraph(input: GraphRoutingInput): GraphRoutingResult {
   routingInput.edges.forEach(edge => {
     if (!routes[edge.id]) routes[edge.id] = { points: [], quality: 'failed' }
   })
-  const diagnostics = validateGraphRoutes(routingInput, routes)
+  const diagnostics = input.collectDiagnostics === false
+    ? { failedEdgeIDs: [], nodeIntersectionEdgeIDs: [], overlappingEdgePairs: [], crossingPrimaryPairs: [] }
+    : validateGraphRoutes(routingInput, routes)
   return { routes, diagnostics }
 }

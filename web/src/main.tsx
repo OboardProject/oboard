@@ -37,18 +37,25 @@ import {
   GRAPH_LAYOUT_EXIT_NODE_HEIGHT,
   GRAPH_LAYER_SECONDARY_OFFSET_Y,
   GRAPH_LAYER_SIBLING_GAP,
+  ROUTING_MIN_CHANNEL_HEIGHT,
   defaultEntryGraphPosition,
   defaultImportedGraphPosition,
   defaultServerGraphPosition,
   graphEntryHandleLeft,
+  graphLayoutSignature,
   graphServerNodeWidth,
   layoutProxyGraphTopology,
   loadGraphDirectExitInstances,
+  loadGraphLayoutSignatures,
   loadGraphPositions,
   loadGraphToolboxPosition,
+  loadPinnedGraphNodes,
   saveGraphPositions,
   saveGraphDirectExitInstances,
+  saveGraphLayoutSignature,
   saveGraphToolboxPosition,
+  savePinnedGraphNodes,
+  snapDraggedGraphPosition,
   snapGraphPosition,
   sortServerEntriesForGraph,
 } from './components/proxy-path/layout'
@@ -11381,10 +11388,20 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const pendingServerSafeFit = useRef(0)
   const serverSafeFitTimer = useRef<number | null>(null)
   const [initialViewportReady, setInitialViewportReady] = useState(false)
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => ({
-    ...autoLayoutProxyGraphPositions(data, selected?.id || servers[0]?.id || 0),
-    ...loadGraphPositions(),
-  }))
+  // Coordinates the operator set by hand. Auto layout owns everything else, so
+  // a canvas whose topology changed since the last visit reopens tidy instead
+  // of restoring ranks that no longer match the chain.
+  const pinnedGraphNodes = useRef<Set<string>>(new Set(loadPinnedGraphNodes()))
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => {
+    const saved = loadGraphPositions()
+    const laidOut = autoLayoutProxyGraphPositions(data, selected?.id || servers[0]?.id || 0)
+    if (!Object.keys(laidOut).length) return saved
+    const next: Record<string, GraphPosition> = { ...saved, ...laidOut }
+    pinnedGraphNodes.current.forEach(nodeID => { if (saved[nodeID]) next[nodeID] = saved[nodeID] })
+    return next
+  })
+  const positionsRef = useRef(positions)
+  positionsRef.current = positions
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
 	const [canvasImportedIDs, setCanvasImportedIDs] = useState<number[]>([])
 	const [canvasServerInstances, setCanvasServerInstances] = useState<CanvasServerInstance[]>([])
@@ -11404,17 +11421,56 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    .slice()
 	    .sort((left, right) => left.id - right.id)
 	}, [data.proxy_paths, entries, selected?.id])
-	const builtFlow = useMemo(() => editableProxyFlow(data, positions, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances, canvasDetachedChains), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.routing_rules, data.port_forwards, data.tunnels, positions, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasRoutingInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasDetachedChains])
-  const graphTopologyFingerprint = builtFlow.edges
-    .map(edge => `${edge.id}:${edge.source}:${edge.sourceHandle || ''}>${edge.target}:${edge.targetHandle || ''}`)
-    .sort()
-    .join('|')
-  const graphTopologyFingerprintRef = useRef(graphTopologyFingerprint)
-  const autoArrangeGraphRef = useRef<() => void>(() => undefined)
-  const connectionArrangeTimer = useRef<number | null>(null)
-  graphTopologyFingerprintRef.current = graphTopologyFingerprint
+	// Every node label is a whole card element, so rebuilding the flow on each
+	// coordinate change re-created the entire canvas while dragging. Content is
+	// memoised on the data that shapes it — `sortServerEntriesForGraph` is the
+	// only consumer of coordinates, and it only reads the entry cards' x.
+	const entryCardOrderKey = useMemo(() => Object.entries(positions)
+	  .filter(([nodeID]) => nodeID.startsWith('entry-'))
+	  .map(([nodeID, position]) => `${nodeID}:${position.x}`)
+	  .sort()
+	  .join('|'), [positions])
+	const builtFlowContent = useMemo(() => editableProxyFlow(data, positionsRef.current, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances, canvasDetachedChains), [data.servers, data.inbounds, data.external_outbounds, data.warp_profiles, data.proxy_paths, data.proxy_path_steps, data.routing_rules, data.port_forwards, data.tunnels, entryCardOrderKey, selected?.id, canvasImportedIDs.join(','), canvasServerInstances.map(item => `${item.instance_id}:${item.server_id}`).join(','), canvasDirectExitInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasWARPInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasRoutingInstances.map(item => `${item.instance_id}:${item.root_server_id}`).join(','), canvasDetachedChains])
+	const builtFlow = useMemo(() => ({
+	  nodes: builtFlowContent.nodes.map(node => {
+	    const saved = positions[node.id]
+	    return saved && (saved.x !== node.position.x || saved.y !== node.position.y) ? { ...node, position: saved } : node
+	  }),
+	  edges: builtFlowContent.edges,
+	}), [builtFlowContent, positions])
+  // Structure only: adding a hop asks for a relayout, moving a card never does.
+  const graphStructureSignature = useMemo(() => graphLayoutSignature(
+    builtFlowContent.nodes.map(node => node.id),
+    builtFlowContent.edges
+      .filter(edge => (edge.data as GraphTransportEdgeData | undefined)?.routingClass === 'primary')
+      .map(edge => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle || undefined })),
+  ), [builtFlowContent])
+  const graphStructureSignatureRef = useRef(graphStructureSignature)
+  graphStructureSignatureRef.current = graphStructureSignature
   const [nodes, setNodes] = useState<Node[]>(builtFlow.nodes)
   const [edges, setEdges] = useState<Edge[]>(builtFlow.edges)
+  const [graphDragging, setGraphDragging] = useState(false)
+  // Immediate feedback for canvas writes: the affected cards show they are busy
+  // and a dragged connection leaves a provisional stroke behind, both from the
+  // moment the request goes out rather than when it comes back.
+  const [pendingGraphNodeIDs, setPendingGraphNodeIDs] = useState<string[]>([])
+  const [provisionalEdges, setProvisionalEdges] = useState<Array<{ id: string; source: string; target: string; sourceHandle?: string; targetHandle?: string }>>([])
+  const withGraphPending = async <T,>(nodeIDs: string[], run: () => Promise<T>): Promise<T> => {
+    const marked = nodeIDs.filter(Boolean)
+    if (marked.length) setPendingGraphNodeIDs(current => [...current, ...marked])
+    try {
+      return await run()
+    } finally {
+      if (marked.length) setPendingGraphNodeIDs(current => {
+        const next = current.slice()
+        marked.forEach(nodeID => {
+          const index = next.indexOf(nodeID)
+          if (index >= 0) next.splice(index, 1)
+        })
+        return next
+      })
+    }
+  }
   const [serverDraft, setServerDraft] = useState<ReturnType<typeof defaultServerDraft> | null>(null)
   const serverDraftPosition = useRef<GraphPosition | null>(null)
   const [entryDraft, setEntryDraft] = useState<any | null>(null)
@@ -11593,17 +11649,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   const activeGraphFocusKey = activeGraphFocus?.kind === 'paths'
     ? `paths:${activeGraphFocus.pathIDs.join(',')}`
     : activeGraphFocus ? `direct-entry:${activeGraphFocus.entryID}:${activeGraphFocus.serverID}` : ''
+  const pendingGraphNodeKey = pendingGraphNodeIDs.slice().sort().join('|')
   const displayNodes = useMemo(() => {
-    if (!activeGraphFocus) return nodes
+    const pending = new Set(pendingGraphNodeIDs)
+    if (!activeGraphFocus && !pending.size) return nodes
     return nodes.map(node => {
       const pathIDs = (node.data?.pathIDs || []) as number[]
-      const focusState = graphFocusState({ id: node.id, pathIDs }, activeGraphFocus)!
-      return {
-        ...node,
-        className: `${node.className || ''} path-focus-${focusState}`.trim(),
-      }
+      const focusState = activeGraphFocus ? graphFocusState({ id: node.id, pathIDs }, activeGraphFocus)! : ''
+      const className = [
+        node.className || '',
+        focusState ? `path-focus-${focusState}` : '',
+        pending.has(node.id) ? 'graph-node-pending' : '',
+      ].filter(Boolean).join(' ')
+      return className === (node.className || '') ? node : { ...node, className }
     })
-  }, [nodes, activeGraphFocusKey])
+  }, [nodes, activeGraphFocusKey, pendingGraphNodeKey])
   const nodeRoutingGeometryKey = useMemo(() => nodes.map(node => [
     node.id,
     node.positionAbsolute?.x ?? node.position.x,
@@ -11615,9 +11675,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const data = edge.data as GraphTransportEdgeData | undefined
     return [edge.id, edge.source, edge.target, edge.sourceHandle || '', edge.targetHandle || '', data?.routingClass || ''].join(':')
   }).sort().join('|'), [edges])
+  // Obstacle avoidance and the O(E²) cross-check are too slow to run on every
+  // drag frame. While a card is moving the strokes stay attached through the
+  // cheap direct route; the full pass runs again as soon as it is dropped.
   const routedEdges = useMemo(
-    () => applyProxyGraphRouting(nodes, edges),
-    [nodeRoutingGeometryKey, edgeRoutingKey, edges],
+    () => applyProxyGraphRouting(nodes, edges, { fast: graphDragging }),
+    [nodeRoutingGeometryKey, edgeRoutingKey, edges, graphDragging],
   )
   const displayEdges = useMemo(() => {
     return routedEdges.map(edge => {
@@ -11642,6 +11705,22 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       }
     })
   }, [routedEdges, activeGraphFocusKey])
+  // Provisional strokes use React Flow's built-in edge so they appear the frame
+  // the drag ends, without waiting for the orthogonal router or the response.
+  const displayEdgesWithProvisional = useMemo(() => (provisionalEdges.length
+    ? [...displayEdges, ...provisionalEdges.map(edge => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        className: 'proxy-edge-provisional',
+        animated: true,
+        selectable: false,
+        focusable: false,
+        zIndex: 5,
+      }))]
+    : displayEdges), [displayEdges, provisionalEdges])
   useEffect(() => {
     if (!selectedServer && servers[0]) setSelectedServer(servers[0].id)
     if (selectedServer && !servers.some(s => s.id === selectedServer) && servers[0]) setSelectedServer(servers[0].id)
@@ -11731,7 +11810,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   useEffect(() => () => {
     if (initialSafeFitFrame.current !== null) window.cancelAnimationFrame(initialSafeFitFrame.current)
     if (serverSafeFitTimer.current !== null) window.clearTimeout(serverSafeFitTimer.current)
-    if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
     if (pathFocusTimer.current !== null) window.clearTimeout(pathFocusTimer.current)
     if (inboundFocusTimer.current !== null) window.clearTimeout(inboundFocusTimer.current)
   }, [])
@@ -11811,38 +11889,40 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (toolboxWasDragged.current) return
     setIsToolbarCollapsed(value => !value)
   }
+  const relayoutGraph = (preservePinned: boolean, rootServerID = selected?.id || 0) => {
+    const laidOut = autoLayoutProxyGraphPositions(data, rootServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances)
+    if (!Object.keys(laidOut).length) return false
+    setPositions(current => {
+      const next = { ...current, ...laidOut }
+      if (preservePinned) pinnedGraphNodes.current.forEach(nodeID => { if (current[nodeID]) next[nodeID] = current[nodeID] })
+      saveGraphPositions(next)
+      return next
+    })
+    return true
+  }
+  // The toolbox action is a deliberate reset: it drops every pin so the whole
+  // canvas returns to the computed layout.
   const autoArrangeGraph = () => {
-    const laidOut = autoLayoutProxyGraphPositions(data, selected?.id || 0, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances)
-    if (!Object.keys(laidOut).length) return
-    const next = { ...positions, ...laidOut }
-    setPositions(next)
-    saveGraphPositions(next)
+    pinnedGraphNodes.current = new Set()
+    savePinnedGraphNodes([])
+    if (!relayoutGraph(false)) return
+    if (selected?.id) saveGraphLayoutSignature(selected.id, graphStructureSignatureRef.current)
     window.setTimeout(() => fitGraphToSafeArea(280), 40)
   }
-  autoArrangeGraphRef.current = autoArrangeGraph
-  const normalizeConnectedGraph = (previousFingerprint: string, attempt = 0) => {
-    if (graphTopologyFingerprintRef.current !== previousFingerprint) {
-      autoArrangeGraphRef.current()
-      connectionArrangeTimer.current = null
-      return
-    }
-    if (attempt >= 24) {
-      connectionArrangeTimer.current = null
-      return
-    }
-    connectionArrangeTimer.current = window.setTimeout(() => normalizeConnectedGraph(previousFingerprint, attempt + 1), 40)
-  }
+  // Reopening the page, switching root server or gaining a hop all land here.
+  // Nothing runs while only coordinates changed, so a tidy canvas stays still.
+  useEffect(() => {
+    const rootServerID = selected?.id || 0
+    if (!rootServerID || !builtFlowContent.nodes.length) return
+    if (loadGraphLayoutSignatures()[String(rootServerID)] === graphStructureSignature) return
+    relayoutGraph(true)
+    saveGraphLayoutSignature(rootServerID, graphStructureSignature)
+  }, [selected?.id, graphStructureSignature])
   const selectEntryServer = (value: string | number) => {
     const nextServerID = Number(value)
     if (!nextServerID || nextServerID === selected?.id) return
 	setFocusedPathID(0)
 	setHoveredGraphFocus(undefined)
-    const laidOut = autoLayoutProxyGraphPositions(data, nextServerID, canvasImportedIDs, canvasServerInstances, canvasDirectExitInstances, canvasWARPInstances, canvasRoutingInstances)
-    if (Object.keys(laidOut).length) {
-      const next = { ...positions, ...laidOut }
-      setPositions(next)
-      saveGraphPositions(next)
-    }
     pendingServerSafeFit.current = nextServerID
     setSelectedServer(nextServerID)
   }
@@ -11855,15 +11935,22 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     const next = applyNodeChanges(changes, nds)
     return next
   })
+	const onNodeDragStart = () => setGraphDragging(true)
 	const onNodeDragStop = (_: React.MouseEvent, node: Node) => {
+	  setGraphDragging(false)
+	  const dropped = snapDraggedGraphPosition({ x: node.position.x, y: node.position.y })
 	  const detached = detachedChainStepFromNodeID(node.id)
 	  if (detached) {
 	    setCanvasDetachedChains(chains => chains.map(chain => chain.instance_id !== detached.chainID
 	      ? chain
-	      : { ...chain, steps: chain.steps.map((item, index) => index === detached.stepIndex ? { ...item, position: { x: node.position.x, y: node.position.y } } : item) }))
+	      : { ...chain, steps: chain.steps.map((item, index) => index === detached.stepIndex ? { ...item, position: dropped } : item) }))
 	    return
 	  }
-	  const next = { ...positions, [node.id]: { x: node.position.x, y: node.position.y } }
+	  // Dragging a card is what pins it: auto layout will leave it alone from
+	  // here until the operator resets the layout from the toolbox.
+	  pinnedGraphNodes.current.add(node.id)
+	  savePinnedGraphNodes(pinnedGraphNodes.current)
+	  const next = { ...positions, [node.id]: dropped }
 	  setPositions(next)
 	  saveGraphPositions(next)
 	}
@@ -11914,8 +12001,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  const visWidth = Math.max(300, bottomRight.x - topLeft.x)
 	  const visHeight = Math.max(300, bottomRight.y - topLeft.y)
-	  const startY = topLeft.y + visHeight * 0.55
-	  const centerX = topLeft.x + (visWidth - width) / 2
 	  const occupied = nodes.map(node => ({
 	    x: node.position.x,
 	    y: node.position.y,
@@ -11928,15 +12013,37 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    pos.y + height + 20 <= rect.y ||
 	    rect.y + rect.height + 20 <= pos.y
 	  ))
-	  const xSteps = [0, 280, -280, 560, -560]
-	  const ySteps = [0, 150, -150, 300, -300]
-	  for (const dy of ySteps) {
-	    for (const dx of xSteps) {
-	      const candidate = snapGraphPosition({ x: centerX + dx, y: startY + dy })
-	      if (isOpen(candidate)) return candidate
+	  // A new block belongs under the chain it is about to join, not wherever the
+	  // canvas happens to be panned. The topology anchor is only abandoned when it
+	  // would drop the block outside what the operator can currently see.
+	  const viewportCenterX = topLeft.x + (visWidth - width) / 2
+	  const viewportStartY = topLeft.y + visHeight * 0.55
+	  const graphAnchor = occupied.length
+	    ? {
+	        x: (Math.min(...occupied.map(rect => rect.x)) + Math.max(...occupied.map(rect => rect.x + rect.width))) / 2 - width / 2,
+	        y: Math.max(...occupied.map(rect => rect.y + rect.height)) + 90,
+	      }
+	    : null
+	  const anchorVisible = Boolean(graphAnchor
+	    && graphAnchor.x + width > topLeft.x && graphAnchor.x < bottomRight.x
+	    && graphAnchor.y + height > topLeft.y && graphAnchor.y < bottomRight.y)
+	  const origin = anchorVisible && graphAnchor ? graphAnchor : { x: viewportCenterX, y: viewportStartY }
+	  const columnStep = width + GRAPH_LAYER_SIBLING_GAP
+	  const rowStep = height + 60
+	  // Outward spiral: straight below the anchor first, then alternating sides,
+	  // then the next row down.
+	  for (let row = 0; row < 6; row++) {
+	    for (let column = 0; column <= row + 2; column++) {
+	      for (const direction of column === 0 ? [1] : [1, -1]) {
+	        const candidate = snapGraphPosition({
+	          x: origin.x + direction * column * columnStep,
+	          y: origin.y + row * rowStep,
+	        })
+	        if (isOpen(candidate)) return candidate
+	      }
 	    }
 	  }
-	  return snapGraphPosition({ x: centerX, y: startY })
+	  return snapGraphPosition(origin)
 	}
 
 	const putImportedOnCanvas = (node: ExternalOutbound) => {
@@ -12627,11 +12734,20 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   // React Flow does not await onConnect, so a rejected request would otherwise
   // surface only as an unhandled rejection in the console.
   const onConnect = (conn: Connection) => {
-    if (connectionArrangeTimer.current !== null) window.clearTimeout(connectionArrangeTimer.current)
-    void connect(conn)
+    if (!conn.source || !conn.target) return
+    const provisionalID = `provisional-${conn.source}-${conn.sourceHandle || ''}-${conn.target}-${Date.now()}`
+    setProvisionalEdges(current => [...current, {
+      id: provisionalID,
+      source: conn.source!,
+      target: conn.target!,
+      sourceHandle: conn.sourceHandle || undefined,
+      targetHandle: conn.targetHandle || undefined,
+    }])
+    void withGraphPending([conn.source, conn.target], () => connect(conn))
       .catch(async (error: any) => {
         await dialogs.alert({ title: '连接失败', message: localizeErrorMessage(error?.message || error) })
       })
+      .finally(() => setProvisionalEdges(current => current.filter(edge => edge.id !== provisionalID)))
   }
   const addServer = (position?: GraphPosition) => {
     serverDraftPosition.current = position || getPreferredViewportNewNodePosition(280, 160)
@@ -13386,16 +13502,27 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  if (pathFocusTimer.current !== null) window.clearTimeout(pathFocusTimer.current)
 	  pathFocusTimer.current = window.setTimeout(() => fitAttempt(), 50)
 	}
+  // The confirm dialog closes long before the request settles, so the affected
+  // card carries the busy state for the rest of the round trip.
+  const graphEntityNodeIDs = (entity?: GraphEntity) => {
+    if (!entity) return []
+    if (entity.node_id) return [entity.node_id]
+    if (entity.type === 'entry') return [`entry-${entity.id}`]
+    if (entity.type === 'server') return [`server-${entity.id}`]
+    if (entity.type === 'imported') return [`imported-${entity.id}`]
+    if (entity.type === 'proxy-path-step') return [`proxy-server-step-${entity.id}`, `proxy-imported-step-${entity.id}`, `proxy-warp-step-${entity.id}`]
+    return []
+  }
   const deleteGraphMenuEntity = async () => {
     const entity = graphMenu?.entity
     setGraphMenu(null)
-    if (entity) await deleteGraphEntity(entity)
+    if (entity) await withGraphPending(graphEntityNodeIDs(entity), () => deleteGraphEntity(entity))
   }
 	const disconnectGraphMenuEdge = async () => {
 	  const entity = graphMenu?.entity
 	  const pathIDs = graphMenu?.pathIDs || []
 	  setGraphMenu(null)
-	  if (entity) await disconnectGraphEdge(entity, pathIDs)
+	  if (entity) await withGraphPending(graphEntityNodeIDs(entity), () => disconnectGraphEdge(entity, pathIDs))
 	}
   const graphMenuStep = graphMenu?.entity.type === 'proxy-path-step' ? ((data.proxy_path_steps || []) as ProxyPathStep[]).find(step => step.id === graphMenu.entity.id) : undefined
   const graphMenuPrimaryLabel = graphMenu ? graphEntityPrimaryActionLabel(graphMenu.entity, graphMenuStep) : ''
@@ -13549,12 +13676,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         <div className={`flow proxy-flow ${initialViewportReady ? 'initial-viewport-ready' : 'initial-viewport-pending'}`} onDragOver={onToolDragOver} onDrop={onToolDrop}>
         <ReactFlow 
 		  nodes={displayNodes}
-		  edges={displayEdges}
+		  edges={displayEdgesWithProvisional}
           nodeTypes={proxyGraphNodeTypes}
           edgeTypes={proxyGraphEdgeTypes}
-          onInit={initializeFlow} 
-          onNodesChange={onNodesChange} 
-          onNodeDragStop={onNodeDragStop} 
+          onInit={initializeFlow}
+          onNodesChange={onNodesChange}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDragStop={onNodeDragStop}
 		  onNodeClick={onNodeClick}
 		  onNodeMouseEnter={(_, node) => previewGraphPaths(node)}
 		  onNodeMouseLeave={stopPreviewingGraphPaths}
@@ -14042,9 +14170,9 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
       <div className="graph-toolbox-section">
         <span className="graph-toolbox-label">画布</span>
         <div className="graph-toolbox-actions">
-          <button type="button" className="ghost" onClick={onAutoArrange} disabled={!canAutoArrange} title="按链路拓扑重新排列节点">
+          <button type="button" className="ghost" onClick={onAutoArrange} disabled={!canAutoArrange} title="按链路拓扑重新排列全部节点，并清除手动摆放的位置">
             <Sliders size={14} />
-            <span>自动归位</span>
+            <span>重置布局</span>
           </button>
           <button type="button" className="ghost" onClick={onToggleInspector} title={inspectorOpen ? '收起链路详情' : '打开链路详情'}>
             <Workflow size={14} />
@@ -15878,6 +16006,11 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       </header>
       <div className="dialog-body">
         <div className="entry-form labeled-form">
+          {/* Left column: what this inbound is. Protocol parameters follow the
+              protocol choice directly instead of sitting below the certificate
+              block, so Reality's handshake domain or Mieru's port ranges are
+              visible without scrolling past sections the protocol never uses. */}
+          <div className="entry-form-column">
           <EntryFormSection icon={<ServerIcon size={16} aria-hidden="true" />} title="基础信息" description="选择服务器并命名这个入口。">
             <div className="entry-form-grid">
               <FormField label="服务器" required hint="入口会部署到这台服务器的 Agent。" placement="bottom">
@@ -15889,7 +16022,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </div>
           </EntryFormSection>
 
-          <EntryFormSection icon={<Layers size={16} aria-hidden="true" />} title="协议" description="先选大类，再选具体形态。">
+          {ownDomainRequired && <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="自有域名" description="必须填写域名服务账号和解析域名。保存后会删除旧解析、写入新解析；已有覆盖证书会立刻绑定，否则部署时申请。">
+            {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能创建此协议。</span></div>}
+            {dnsRecordFields}
+          </EntryFormSection>}
+
+          <EntryFormSection icon={<Layers size={16} aria-hidden="true" />} title="协议" description="先选大类，再选具体形态；预设可以一次填好这一类的默认参数。">
             <div className="entry-form-grid">
               <FormField label="协议大类" required hint="决定入口使用的传输协议。" placement="bottom">
                 <Select value={presetProtocol} onChange={e => changePresetProtocol(e.target.value as Protocol)}>{protocols.map(p => <option key={p} value={p}>{labelProtocol(p)}</option>)}</Select>
@@ -15897,6 +16035,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <FormField label="具体类型" required hint="同协议下的传输与伪装组合，保存后按类型生成配置。" placement="bottom">
                 <Select value={presetID} onChange={e => applyPreset(e.target.value)}>{presetOptions.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</Select>
               </FormField>
+              {protocol !== 'ssh' && <InboundNodePresetPicker presetID={presetID} config={cfg} updateConfig={updateConfig} nodePresets={data.node_presets || []} />}
               <div className="preset-help">
                 <Shield size={16} aria-hidden="true" />
                 <div>
@@ -15908,17 +16047,17 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </div>
           </EntryFormSection>
 
+          {protocol !== 'ssh' && inboundPresetHasFields(presetID) && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
+
 		  {protocol === 'anytls' && <AnyTLSPaddingSection mode={mode} draft={draft} update={update} data={data} client={client} onUpdated={result => {
 			const inbound = result.inbound as Inbound | undefined
 			if (inbound?.config_json) update({ config_json: inbound.config_json })
 			onPaddingUpdated?.(result)
 		  }} />}
+          </div>
 
-          {ownDomainRequired && <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="自有域名" description="必须填写域名服务账号和解析域名。保存后会删除旧解析、写入新解析；已有覆盖证书会立刻绑定，否则部署时申请。">
-            {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能创建此协议。</span></div>}
-            {dnsRecordFields}
-          </EntryFormSection>}
-
+          {/* Right column: where it listens and how clients reach it. */}
+          <div className="entry-form-column">
           <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="连接地址" description="客户端订阅里看到的入口地址。">
             <div className="entry-form-grid">
               <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。自动模式跟随服务器检测结果。" placement="bottom">
@@ -15953,7 +16092,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
 
           <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description="Agent 在本机打开的地址和端口。">
             <div className="entry-form-grid">
-              <FormField label="监听端口" required hint={draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}>
+              <FormField label="监听端口" required hint={`${draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}${protocol === 'mieru' ? '这是 Mieru 的主端口；「额外端口范围」在上方协议参数里单独填写。' : ''}`}>
                 <div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div>
               </FormField>
               <FormField label="状态" hint="禁用后保留配置，但不再对外提供这个入口。">
@@ -16026,7 +16165,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </>}
           </EntryFormDisclosure>}
 
-          {protocol !== 'ssh' && <InboundPresetFields presetID={presetID} config={cfg} updateConfig={updateConfig} showTLSServerName={!certificateRequired} onRotateRealityKey={() => update({ __rotate_reality_key: true })} realityKeyRotationPending={Boolean(draft.__rotate_reality_key)} createMode={mode === 'create'} mieruUDPAllowed={!server || !server.udp_inbound_mode || server.udp_inbound_mode === 'allow'} snellProfiles={data.snell_profiles || []} nodePresets={data.node_presets || []} />}
           {hasTransport && <EntryFormDisclosure
             icon={<Zap size={15} aria-hidden="true" />}
             title="连接优化"
@@ -16036,6 +16174,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           >
             <InboundTransportFields protocol={protocol} config={cfg} updateConfig={updateConfig} server={server} />
           </EntryFormDisclosure>}
+          </div>
         </div>
         <details className="advanced-config">
           <summary><FileText size={15} aria-hidden="true" /><span>生成配置</span><small>一般不需要手动修改</small></summary>
@@ -16119,6 +16258,49 @@ function InboundTransportFields({ protocol, config, updateConfig, server }: { pr
   </div>
 }
 
+// Presets answer "what should this inbound look like", so the picker belongs
+// next to the protocol choice rather than at the bottom of the form where the
+// operator only meets it after filling everything in by hand.
+function matchingInboundNodePresets(presetID: string, nodePresets: NodePreset[] = []) {
+  return nodePresets.filter(item => item.enabled !== false && item.kind === presetID)
+}
+
+function InboundNodePresetPicker({ presetID, config, updateConfig, nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; nodePresets?: NodePreset[] }) {
+  const matchingPresets = matchingInboundNodePresets(presetID, nodePresets)
+  if (!matchingPresets.length) return null
+  const applyNodePreset = (presetIDValue: number) => {
+    if (!presetIDValue) {
+      updateConfig({ node_preset_id: undefined })
+      return
+    }
+    const preset = nodePresets.find(item => item.id === presetIDValue)
+    if (!preset) return
+    const merged = mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config)
+    if (preset.kind === 'hy2-salamander') ensureHY2SalamanderObfs(merged, String(objectConfig(config.obfs).password || ''))
+    if (preset.kind === 'hy2-tls') delete merged.obfs
+    updateConfig({ ...merged, node_preset_id: preset.id })
+  }
+  return <FormField label="套用节点预设" hint="默认配置来自设置中的节点预设；密钥仍由当前入口单独生成。">
+    <Select value={Number(config.node_preset_id || 0) || ''} onChange={event => applyNodePreset(Number(event.target.value))}>
+      <option value="">不使用预设</option>
+      {matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}{item.usage_count > 0 ? `（${item.usage_count} 个入口）` : ''}</option>)}
+    </Select>
+  </FormField>
+}
+
+/** Whether a preset contributes protocol parameters beyond the preset picker. */
+function inboundPresetHasFields(presetID: string) {
+  return presetID === 'vless-reality'
+    || presetID === 'vless-ws'
+    || presetID === 'vless-tls-vision'
+    || isHY2Preset(presetID)
+    || presetID.startsWith('anytls-')
+    || presetID.startsWith('ss-')
+    || presetID === 'mieru-basic'
+    || presetID === 'snell-v4'
+    || presetID === 'snell-v6'
+}
+
 function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName = true, onRotateRealityKey, realityKeyRotationPending = false, createMode = false, mieruUDPAllowed = true, snellProfiles = [], nodePresets = [] }: { presetID: string; config: Record<string, any>; updateConfig: (patch: Record<string, any>) => void; showTLSServerName?: boolean; onRotateRealityKey?: () => void; realityKeyRotationPending?: boolean; createMode?: boolean; mieruUDPAllowed?: boolean; snellProfiles?: SnellProfile[]; nodePresets?: NodePreset[] }) {
   const tls = objectConfig(config.tls)
   const transport = objectConfig(config.transport)
@@ -16135,30 +16317,17 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     const serverName = trimmed || defaultVLESSRealityServerName
     setTLS({ server_name: serverName, reality: { ...reality, handshake: { ...handshake, server: serverName } } })
   }
-  const matchingPresets = nodePresets.filter(item => item.enabled !== false && item.kind === presetID)
+  const matchingPresets = matchingInboundNodePresets(presetID, nodePresets)
   const presetActive = Boolean(config.node_preset_id && matchingPresets.some(item => item.id === Number(config.node_preset_id)))
   const activePreset = presetActive ? nodePresets.find(item => item.id === Number(config.node_preset_id)) : null
   const presetHintSuffix = presetActive && activePreset ? `（已由预设「${activePreset.name}」提供，可覆盖）` : ''
   const presetFieldClass = presetActive ? ' is-preset-applied' : ''
   const [realityCustomForced, setRealityCustomForced] = useState(false)
+  // Switching preset rewrites the handshake domain, so the custom-SNI escape
+  // hatch closes again whichever direction the operator switched.
   useEffect(() => {
-    if (!presetActive) setRealityCustomForced(false)
-  }, [presetActive])
-  const applyNodePreset = (presetIDValue: number) => {
-    if (!presetIDValue) {
-      setRealityCustomForced(false)
-      updateConfig({ node_preset_id: undefined })
-      return
-    }
-    const preset = nodePresets.find(item => item.id === presetIDValue)
-    if (!preset) return
     setRealityCustomForced(false)
-    const merged = mergeInboundTemplate(parseNodePresetConfig(preset.config_json), config)
-    if (preset.kind === 'hy2-salamander') ensureHY2SalamanderObfs(merged, String(objectConfig(config.obfs).password || ''))
-    if (preset.kind === 'hy2-tls') delete merged.obfs
-    updateConfig({ ...merged, node_preset_id: preset.id })
-  }
-  const nodePresetPicker = matchingPresets.length > 0 ? <FormField label="套用节点预设" hint="默认配置来自设置中的节点预设；密钥仍由当前入口单独生成。"><Select value={Number(config.node_preset_id || 0) || ''} onChange={event => applyNodePreset(Number(event.target.value))}><option value="">不使用预设</option>{matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}{item.usage_count > 0 ? `（${item.usage_count} 个入口）` : ''}</option>)}</Select></FormField> : null
+  }, [Number(config.node_preset_id || 0)])
   if (presetID === 'vless-reality') {
     const presetRealityDomains = (() => {
       const selected = config.node_preset_id ? nodePresets.find(item => item.id === Number(config.node_preset_id)) : null
@@ -16178,7 +16347,6 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
     const showCustomSNI = isCustomRealityDomain || realityCustomForced
     return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
       <div className="form-section-title"><Shield size={14} aria-hidden="true" />TCP / Reality / Vision 设置</div>
-      {nodePresetPicker}
       <div className="access-note compact"><strong>协议形态</strong><span>默认 TCP，自动使用 Vision flow（xtls-rprx-vision）。</span></div>
       <FormField label="SNI / 握手域名" hint={`同时用于客户端 SNI 和 Reality 伪装站点；可从预设选择或输入自定义域名。模板首项 ${presetRealityDomains[0] || defaultVLESSRealityServerName} 为默认。${presetHintSuffix}`} className={presetActive ? 'is-preset-applied' : ''}>
         <Select value={showCustomSNI ? '__custom__' : realityServerName} onChange={event => {
@@ -16216,14 +16384,12 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   }
   if (presetID === 'vless-ws') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title"><Globe size={14} aria-hidden="true" />WebSocket / TLS 设置</div>
-    {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     <FormField label="WebSocket 路径" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(transport.path || '')} onChange={e => setTransport({ path: e.target.value })} placeholder="/vless" /></FormField>
     <FormField label="Host 头" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(headers.Host || '')} onChange={e => setTransport({ headers: { ...headers, Host: e.target.value } })} placeholder="example.com" /></FormField>
   </div>
   if (presetID === 'vless-tls-vision' || isHY2Preset(presetID) || presetID === 'anytls-basic' || presetID === 'anytls-large-padding') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title"><Lock size={14} aria-hidden="true" />TLS 设置</div>
-    {nodePresetPicker}
     {showTLSServerName && <FormField label="SNI 域名" className={presetFieldClass} hint={presetHintSuffix || undefined}><input value={String(tls.server_name || '')} onChange={e => setTLS({ server_name: e.target.value })} placeholder="例如 entry.example.com" /></FormField>}
     {isHY2Preset(presetID) && <>
       <FormField label="上传带宽 Mbps" hint="入口协商带宽上限，不属于节点预设。"><input value={Number(config.up_mbps || 1000)} onChange={e => updateConfig({ up_mbps: Number(e.target.value) })} inputMode="numeric" /></FormField>
@@ -16236,15 +16402,13 @@ function InboundPresetFields({ presetID, config, updateConfig, showTLSServerName
   </div>
   if (presetID.startsWith('ss-')) return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title"><Key size={14} aria-hidden="true" />SS 设置</div>
-    {nodePresetPicker}
     <FormField label="加密方法" className={presetFieldClass} hint={presetHintSuffix || undefined}><Select value={String(config.method || '2022-blake3-aes-128-gcm')} onChange={e => updateConfig({ method: e.target.value })}>{shadowsocksMethods.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}</Select></FormField>
     {!String(config.method || '').startsWith('2022-') && <div className="access-note compact"><strong>单用户入口</strong><span>多人使用请选择 SS 2022 或其他多用户协议。</span></div>}
   </div>
-  if (presetID === 'mieru-basic') return <div className={`preset-fields${presetActive ? ' is-preset' : ''}`}>
-    {nodePresetPicker}
-    <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint presetApplied={presetActive} presetHint={presetHintSuffix || undefined} />
-  </div>
-  if (presetID === 'vless-tcp' || presetID === 'socks5-auth') return nodePresetPicker ? <div className="preset-fields">{nodePresetPicker}</div> : null
+  if (presetID === 'mieru-basic') return <MieruConfigFields config={config} updateConfig={updateConfig} rangeKey="listen_ports" udpAllowed={mieruUDPAllowed} showUserHint presetApplied={presetActive} presetHint={presetHintSuffix || undefined} />
+  // VLESS TCP and SOCKS5 have no protocol parameters of their own; their preset
+  // picker lives in the protocol section like every other preset's.
+  if (presetID === 'vless-tcp' || presetID === 'socks5-auth') return null
   if (presetID === 'snell-v4') return <SnellPresetFields config={config} updateConfig={updateConfig} version={4} snellProfiles={snellProfiles} />
   if (presetID === 'snell-v6') return <SnellPresetFields config={config} updateConfig={updateConfig} version={6} snellProfiles={snellProfiles} />
   return null
@@ -16741,8 +16905,10 @@ function nodeHandles(node: Node, rect: GraphRect): Record<string, GraphPoint> {
   return handles
 }
 
-function applyProxyGraphRouting(nodes: Node[], edges: Edge[]): Edge[] {
+function applyProxyGraphRouting(nodes: Node[], edges: Edge[], options: { fast?: boolean } = {}): Edge[] {
   const input = {
+    avoidObstacles: options.fast ? false : undefined,
+    collectDiagnostics: !options.fast && import.meta.env.DEV,
     nodes: nodes.map(node => {
       const rect = routingRectForNode(node)
       return { id: node.id, rect, handles: nodeHandles(node, rect) }
@@ -17159,7 +17325,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   visibleEntries.forEach(x => visibleEntryCountByServer.set(x.server_id, (visibleEntryCountByServer.get(x.server_id) || 0) + 1))
   const serverPositions = new Map<number, GraphPosition>()
   const serverWidths = new Map<number, number>()
-  const serverEntryCounts = new Map<number, number>()
+  const serverSlotCounts = new Map<number, number>()
   const serverEntryIndexes = new Map<number, number>()
 	visibleServers.forEach((s: Server, i: number) => {
     const id = `server-${s.id}`
@@ -17167,12 +17333,16 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverPositions.set(s.id, position)
     const serverEntries = entries.filter(x => x.server_id === s.id && x.enabled !== false)
     const portOrderedEntries = serverEntries.slice().sort((a, b) => (a.port - b.port) || (a.id - b.id))
-    serverEntryCounts.set(s.id, Math.max(1, portOrderedEntries.length))
     portOrderedEntries.forEach((entry, index) => serverEntryIndexes.set(entry.id, index))
-    const serverWidth = graphServerNodeWidth(serverEntries.length)
+	    const pathSources = continuationByNode.get(id) || []
+    // Entries and path continuations share one handle row, so both count
+    // towards the card's slots — otherwise the handles and the cards hanging
+    // off them drift apart as soon as a chain continues from this server.
+    const slotCount = Math.max(1, serverEntries.length + pathSources.length)
+    const serverWidth = graphServerNodeWidth(slotCount)
+    serverSlotCounts.set(s.id, slotCount)
     serverWidths.set(s.id, serverWidth)
 	    const entrySources = sortServerEntriesForGraph(serverEntries, positions, position, serverWidth).map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
-	    const pathSources = continuationByNode.get(id) || []
 	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], entryHandles: entrySources, pathHandles: pathSources, sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
   canvasServerInstances.forEach((instance, index) => {
@@ -17192,8 +17362,8 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     entryIndexesByServer.set(x.server_id, fallbackIndex + 1)
     const entryIndex = serverEntryIndexes.get(x.id) ?? fallbackIndex
     const serverPosition = serverPositions.get(x.server_id) || defaultServerGraphPosition(i)
-    const entryCount = serverEntryCounts.get(x.server_id) || visibleEntryCountByServer.get(x.server_id) || 1
-    const position = positions[id] || defaultEntryGraphPosition(serverPosition, entryIndex, entryCount, serverWidths.get(x.server_id) || graphServerNodeWidth(entryCount))
+    const slotCount = serverSlotCounts.get(x.server_id) || visibleEntryCountByServer.get(x.server_id) || 1
+    const position = positions[id] || defaultEntryGraphPosition(serverPosition, entryIndex, slotCount, serverWidths.get(x.server_id) || graphServerNodeWidth(slotCount))
     const probe = latestInboundProbeSummary(data, x.id)
 	    nodes.push({ id, className: `graph-node entry-graph-node probe-${probe.tone}`, position, style: { width: GRAPH_ENTRY_NODE_WIDTH }, data: { entity: { type: 'entry', id: x.id, label: x.name || `入口 ${x.id}` } as GraphEntity, pathIDs: pathIDsByEntry.get(x.id) || [], label: <GraphNode kind="一级入口" title={x.name} meta="" pathHandles={continuationByNode.get(id) || []} entryPathInfo={entryPathInfo.get(x.id)} entryDetails={{ protocol: labelProtocol(x.protocol), address: formatInboundDisplayEndpoint(data, x), probe: probe.label, access: inboundAccessSummary(data, x), dns: x.dns_sync_enabled ? `DNS ${x.dns_sync_error ? '同步失败' : '已同步'}` : '' }} /> } })
     edges.push({
@@ -17226,6 +17396,32 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   })
   let pathStepNodeIndex = 0
   const renderedStepNodeIDs = new Set<string>()
+  // A hop that has never been positioned lands directly under the node it
+  // continues from. Parking it in a fixed column, as this used to, made every
+  // freshly created relay arrive far away with a long diagonal attached.
+  const childCountByParent = new Map<string, number>()
+  const renderedPosition = (nodeID: string) => positions[nodeID] || nodes.find(node => node.id === nodeID)?.position
+  const stepFallbackPosition = (
+    nodeID: string,
+    step: ProxyPathStep,
+    orderedPathSteps: ProxyPathStep[],
+    path: ProxyPath,
+  ): GraphPosition | undefined => {
+    const stepPosition = orderedPathSteps.findIndex(item => item.id === step.id)
+    const previous = stepPosition > 0 ? orderedPathSteps[stepPosition - 1] : undefined
+    const parentNodeID = previous
+      ? stepNodeID(previous)
+      : path.inbound_id ? `entry-${path.inbound_id}` : ''
+    const parent = parentNodeID ? renderedPosition(parentNodeID) : undefined
+    if (!parent) return undefined
+    const sibling = childCountByParent.get(parentNodeID) || 0
+    childCountByParent.set(parentNodeID, sibling + 1)
+    if (nodeID) childCountByParent.set(nodeID, childCountByParent.get(nodeID) || 0)
+    return snapGraphPosition({
+      x: parent.x + sibling * (GRAPH_ENTRY_NODE_WIDTH + GRAPH_LAYER_SIBLING_GAP),
+      y: parent.y + GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT + ROUTING_MIN_CHANNEL_HEIGHT,
+    })
+  }
   visiblePaths.forEach(path => {
     if (collapsedDirectSourceByPath.has(path.id)) return
     const pathSteps = (stepsByPath.get(path.id) || []).slice().sort((a, b) => (a.position - b.position) || (a.id - b.id))
@@ -17244,7 +17440,9 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
         return member === memberSteps[memberSteps.length - 1]
       })
       const stepIndex = pathStepNodeIndex++
-      const position = positions[id] || defaultServerGraphPosition(visibleServers.length + canvasServerInstances.length + stepIndex)
+      const position = positions[id]
+        || stepFallbackPosition(id, canonicalStep, canonicalPathSteps, canonicalPath)
+        || defaultServerGraphPosition(visibleServers.length + canvasServerInstances.length + stepIndex)
       const entity = { type: 'proxy-path-step', id: canonicalStep.id, path_id: canonicalPath.id, label: `${canonicalPath.name || `代理路径 ${canonicalPath.id}`} / 第 ${canonicalStep.position} 跳` } as GraphEntity
       if (canonicalStep.node_type === 'warp') {
         const serverID = graphWARPServerID(canonicalPath, canonicalPathSteps, canonicalStep, inboundByID)
@@ -17924,37 +18122,66 @@ function autoLayoutProxyGraphPositions(
   )
   const positions: Record<string, GraphPosition> = { ...layout.positions }
 
-  const primaryRight = primaryNodes.length
-    ? Math.max(...primaryNodes.map(node => positions[node.id].x + node.width))
-    : 760 + GRAPH_ENTRY_NODE_WIDTH / 2
-  const infrastructure = flow.nodes
-    .filter(node => !primaryNodeIDs.has(node.id) && !node.id.startsWith('entry-'))
-    .slice()
-    .sort((left, right) => left.id.localeCompare(right.id))
-  const infrastructureStartX = primaryRight + 240
-  const infrastructureColumns = 3
-  const infrastructureColumnWidth = GRAPH_ENTRY_NODE_WIDTH + 80
-  const infrastructureRowHeight = GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT + 64
-  infrastructure.forEach((node, index) => {
-    positions[node.id] = snapGraphPosition({
-      x: infrastructureStartX + (index % infrastructureColumns) * infrastructureColumnWidth,
-      y: 300 + Math.floor(index / infrastructureColumns) * infrastructureRowHeight,
+  // Entry cards belong to their server, not to the chain, so they sit above the
+  // card they feed in the same left-to-right order the inbound handles use.
+  // Anything else out of order draws the belongs-to X the operator sees.
+  const renderedEntryNodeIDs = new Set(flow.nodes.filter(node => node.id.startsWith('entry-')).map(node => node.id))
+  flow.nodes.forEach(node => {
+    if (!node.id.startsWith('server-')) return
+    const serverID = Number(node.id.slice(7))
+    const serverPosition = positions[node.id]
+    if (!serverID || !serverPosition) return
+    // Same ordering and slot count `editableProxyFlow` falls back to, so the
+    // layout and the fallback never disagree about which card sits above which
+    // handle. Slots cover path continuations too, not just entries.
+    const serverEntries = entries
+      .filter(entry => entry.server_id === serverID && entry.enabled !== false)
+      .slice()
+      .sort((left, right) => left.port - right.port || left.id - right.id)
+    const nodeData = node.data as { entryHandles?: unknown[]; pathHandles?: unknown[] } | undefined
+    const slotCount = Math.max(1, (nodeData?.entryHandles?.length || serverEntries.length) + (nodeData?.pathHandles?.length || 0))
+    const serverWidth = primaryNodes.find(item => item.id === node.id)?.width
+      || numericNodeStyle(node, 'width')
+      || graphServerNodeWidth(slotCount)
+    serverEntries.forEach((entry, index) => {
+      const entryNodeID = `entry-${entry.id}`
+      if (!renderedEntryNodeIDs.has(entryNodeID)) return
+      positions[entryNodeID] = defaultEntryGraphPosition(serverPosition, index, slotCount, serverWidth)
     })
   })
 
-  const rootEntries = entries
-    .filter(entry => entry.server_id === rootID && entry.enabled !== false)
+  // Everything not yet attached to a chain goes into a staging band under the
+  // deepest rank, centred on the graph. The old grid parked it far to the right
+  // of the tree, which turned the first connection into a long diagonal.
+  const placedNodeIDs = new Set(Object.keys(positions))
+  const staging = flow.nodes
+    .filter(node => !placedNodeIDs.has(node.id))
     .slice()
-    .sort((left, right) => left.port - right.port || left.id - right.id)
-  const rootPosition = positions[rootNodeID]
-  if (rootPosition) rootEntries.forEach((entry, index) => {
-    positions[`entry-${entry.id}`] = defaultEntryGraphPosition(
-      rootPosition,
-      index,
-      Math.max(1, rootEntries.length),
-      primaryNodes.find(node => node.id === rootNodeID)?.width || GRAPH_ENTRY_NODE_WIDTH,
-    )
-  })
+    .sort((left, right) => left.id.localeCompare(right.id))
+  if (staging.length) {
+    const placed = flow.nodes.filter(node => placedNodeIDs.has(node.id))
+    const placedRects = placed.map(node => ({
+      left: positions[node.id].x,
+      right: positions[node.id].x + (node.width ?? numericNodeStyle(node, 'width') ?? GRAPH_ENTRY_NODE_WIDTH),
+      bottom: positions[node.id].y + (node.height ?? numericNodeStyle(node, 'height') ?? estimatedGraphNodeHeight(node)),
+    }))
+    const centerX = placedRects.length
+      ? (Math.min(...placedRects.map(rect => rect.left)) + Math.max(...placedRects.map(rect => rect.right))) / 2
+      : 760
+    const stagingTop = (placedRects.length ? Math.max(...placedRects.map(rect => rect.bottom)) : 300)
+      + GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT
+    const columnWidth = GRAPH_ENTRY_NODE_WIDTH + GRAPH_LAYER_SIBLING_GAP
+    const columns = Math.max(1, Math.min(4, staging.length))
+    const rowHeight = GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT + 64
+    staging.forEach((node, index) => {
+      const column = index % columns
+      const row = Math.floor(index / columns)
+      positions[node.id] = snapGraphPosition({
+        x: centerX - (columns * columnWidth) / 2 + column * columnWidth,
+        y: stagingTop + row * rowHeight,
+      })
+    })
+  }
   return positions
 }
 
