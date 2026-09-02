@@ -442,7 +442,10 @@ func TestChangesetConfigurationObserverExcludesCommandOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, user.ID)
-	server := &model.Server{Name: "observer-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	// The observer queues a sync only for servers an Agent is bound to: a
+	// server with no agent has nowhere to deploy, so MarkConfigurationSyncPending
+	// skips it and no sync row would ever appear.
+	server := &model.Server{Name: "observer-node", AgentID: "observer-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}

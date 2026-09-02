@@ -281,6 +281,11 @@ func (s *Service) Approve(ctx context.Context, principal application.Principal, 
 	if err := s.store.UpdateAutomationChangeset(ctx, item); err != nil {
 		return nil, err
 	}
+	// Approve executes immediately and on purpose: leaving an approved
+	// changeset queued stalled workflows that expected approval to be the last
+	// human step. Apply still re-resolves base revisions first, so a changeset
+	// whose state moved after validation becomes `superseded` here instead of
+	// silently applying a stale plan.
 	return s.Apply(ctx, principal, id)
 }
 

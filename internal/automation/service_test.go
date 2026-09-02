@@ -185,16 +185,29 @@ func TestApprovedChangesetIsSupersededWhenBaseRevisionChanges(t *testing.T) {
 	if err != nil || validated.Status != model.ChangesetAwaitingApproval {
 		t.Fatalf("validate status=%v err=%v", validated.Status, err)
 	}
-	if _, err := service.Approve(context.Background(), principal, item.ID, "approved test plan"); err != nil {
-		t.Fatal(err)
-	}
+	// Approve executes the changeset, so the window in which state can drift is
+	// between validation and approval. Apply still re-resolves the base
+	// revisions before running anything, and a drifted revision must supersede
+	// the plan rather than apply it.
 	currentRevision = "revision-2"
-	superseded, err := service.Apply(context.Background(), principal, item.ID)
-	if err == nil || superseded.Status != model.ChangesetSuperseded {
-		t.Fatalf("apply status=%v err=%v", superseded.Status, err)
+	superseded, err := service.Approve(context.Background(), principal, item.ID, "approved test plan")
+	if err == nil || superseded == nil || superseded.Status != model.ChangesetSuperseded {
+		t.Fatalf("approve status=%v err=%v", superseded, err)
 	}
 	if applied {
-		t.Fatal("mutation handler ran after the approved base revision changed")
+		t.Fatal("mutation handler ran after the validated base revision changed")
+	}
+	// A superseded changeset is terminal: it must not be resurrected by a
+	// later apply, and the handler must still never run.
+	if _, err := service.Apply(context.Background(), principal, item.ID); err == nil {
+		t.Fatal("apply must refuse a superseded changeset")
+	}
+	stored, err := service.Get(context.Background(), item.ID)
+	if err != nil || stored.Status != model.ChangesetSuperseded {
+		t.Fatalf("stored status=%v err=%v", stored, err)
+	}
+	if applied {
+		t.Fatal("mutation handler ran for a superseded changeset")
 	}
 }
 
@@ -238,12 +251,13 @@ func TestChangesetApplyCannotExecuteTwiceConcurrently(t *testing.T) {
 	if _, err := service.Validate(context.Background(), principal, item.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Approve(context.Background(), principal, item.ID, "approved"); err != nil {
-		t.Fatal(err)
-	}
+	// Approve is what executes the changeset, so the first execution runs
+	// inside it. Hold the handler open there and race a second apply against
+	// it: the changeset is already `applying`, so the second caller must be
+	// turned away instead of running the mutation again.
 	firstResult := make(chan error, 1)
 	go func() {
-		_, err := service.Apply(context.Background(), principal, item.ID)
+		_, err := service.Approve(context.Background(), principal, item.ID, "approved")
 		firstResult <- err
 	}()
 	<-started
