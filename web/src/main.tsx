@@ -42,6 +42,7 @@ import {
   defaultImportedGraphPosition,
   defaultServerGraphPosition,
   graphEntryHandleLeft,
+  graphHopFallbackPosition,
   graphLayoutSignature,
   graphServerNodeWidth,
   layoutProxyGraphTopology,
@@ -11907,9 +11908,21 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
   useEffect(() => {
     const rootServerID = selected?.id || 0
     if (!rootServerID || !builtFlowContent.nodes.length) return
-    if (loadGraphLayoutSignatures()[String(rootServerID)] === graphStructureSignature) return
-    relayoutGraph(true)
-    saveGraphLayoutSignature(rootServerID, graphStructureSignature)
+    // A matching signature only says the structure is unchanged. It says nothing
+    // about whether the coordinates still exist: a storage-version bump, cleared
+    // site data or a node that never got one all leave the canvas relying on
+    // per-node fallbacks, which stack cards on top of each other. Relayout
+    // whenever the structural nodes are not all positioned.
+    const structuralNodeIDs = new Set<string>([`server-${rootServerID}`])
+    builtFlowContent.nodes.forEach(node => { if (node.id.startsWith('entry-')) structuralNodeIDs.add(node.id) })
+    builtFlowContent.edges.forEach(edge => {
+      if ((edge.data as GraphTransportEdgeData | undefined)?.routingClass !== 'primary') return
+      structuralNodeIDs.add(edge.source)
+      structuralNodeIDs.add(edge.target)
+    })
+    const everyStructuralNodePositioned = Array.from(structuralNodeIDs).every(nodeID => positionsRef.current[nodeID])
+    if (loadGraphLayoutSignatures()[String(rootServerID)] === graphStructureSignature && everyStructuralNodePositioned) return
+    if (relayoutGraph(true)) saveGraphLayoutSignature(rootServerID, graphStructureSignature)
   }, [selected?.id, graphStructureSignature])
   const selectEntryServer = (value: string | number) => {
     const nextServerID = Number(value)
@@ -17394,6 +17407,24 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   // freshly created relay arrive far away with a long diagonal attached.
   const childCountByParent = new Map<string, number>()
   const renderedPosition = (nodeID: string) => positions[nodeID] || nodes.find(node => node.id === nodeID)?.position
+  // Distance from a parent card's left edge to the handle this edge leaves
+  // from, so the hop can be centred on it rather than on the card.
+  const sourceHandleOffsetX = (parentNodeID: string, handleID: string): number | undefined => {
+    if (parentNodeID.startsWith('server-')) {
+      const serverID = Number(parentNodeID.slice(7))
+      const width = serverWidths.get(serverID)
+      const slots = serverSlotCounts.get(serverID)
+      if (!width || !slots) return undefined
+      const inboundID = inboundIDFromServerHandle(handleID)
+      const slot = inboundID ? serverEntryIndexes.get(inboundID) ?? 0 : 0
+      return width * ((slot + 0.5) / slots)
+    }
+    const continuations = continuationByNode.get(parentNodeID) || []
+    const slots = Math.max(1, continuations.length)
+    const stepID = pathStepIDFromHandle(handleID)
+    const slot = Math.max(0, continuations.findIndex(item => item.step_id === stepID))
+    return graphServerNodeWidth(slots) * ((slot + 0.5) / slots)
+  }
   const stepFallbackPosition = (
     nodeID: string,
     step: ProxyPathStep,
@@ -17402,17 +17433,26 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
   ): GraphPosition | undefined => {
     const stepPosition = orderedPathSteps.findIndex(item => item.id === step.id)
     const previous = stepPosition > 0 ? orderedPathSteps[stepPosition - 1] : undefined
+    const inbound = path.inbound_id ? inboundByID.get(path.inbound_id) : undefined
+    // The first hop continues from the *server* card, not from the entry card.
+    // Anchoring it to the entry — which sits a layer above the server — dropped
+    // every freshly rendered first hop straight on top of that server.
     const parentNodeID = previous
       ? stepNodeID(previous)
-      : path.inbound_id ? `entry-${path.inbound_id}` : ''
+      : inbound ? `server-${inbound.server_id}` : ''
+    const handleID = previous
+      ? pathStepHandleID(previous.id)
+      : inbound ? serverEntryHandleID(inbound.id) : ''
     const parent = parentNodeID ? renderedPosition(parentNodeID) : undefined
     if (!parent) return undefined
+    const childWidth = graphServerNodeWidth(Math.max(1, (continuationByNode.get(nodeID) || []).length))
     const sibling = childCountByParent.get(parentNodeID) || 0
     childCountByParent.set(parentNodeID, sibling + 1)
-    if (nodeID) childCountByParent.set(nodeID, childCountByParent.get(nodeID) || 0)
-    return snapGraphPosition({
-      x: parent.x + sibling * (GRAPH_ENTRY_NODE_WIDTH + GRAPH_LAYER_SIBLING_GAP),
-      y: parent.y + GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT + ROUTING_MIN_CHANNEL_HEIGHT,
+    return graphHopFallbackPosition({
+      parent,
+      parentHandleOffsetX: sourceHandleOffsetX(parentNodeID, handleID) ?? GRAPH_ENTRY_NODE_WIDTH / 2,
+      childWidth,
+      siblingIndex: sibling,
     })
   }
   visiblePaths.forEach(path => {

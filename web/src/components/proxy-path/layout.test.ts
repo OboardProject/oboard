@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GRAPH_ENTRY_NODE_WIDTH, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
+import { GRAPH_ENTRY_NODE_WIDTH, GRAPH_LAYOUT_ALGORITHM_VERSION, GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT, GRAPH_SERVER_SLOT_WIDTH, ROUTING_MIN_CHANNEL_HEIGHT, defaultEntryGraphPosition, graphEntryHandleLeft, graphHopFallbackPosition, graphLayoutSignature, graphServerNodeWidth, layoutProxyGraphTopology, minimizeGraphLayerCrossings, snapDraggedGraphPosition, sortServerEntriesForGraph } from './layout'
 
 describe('proxy graph server layout', () => {
   it('gives every server source one card-wide slot', () => {
@@ -147,6 +147,43 @@ describe('proxy graph layout signature', () => {
       { source: 'proxy-server-step-9', target: 'proxy-server-step-10' },
     ])).not.toBe(base)
     expect(graphLayoutSignature(nodes, [{ source: 'server-1', target: 'proxy-server-step-9', sourceHandle: 'entry-2' }])).not.toBe(base)
+  })
+})
+
+describe('unpositioned hop fallback', () => {
+  // Reproduces the reported first-load overlap: WAWO (root server) with one
+  // AnyTLS entry chaining to ATC. The hop used to be anchored to the entry card,
+  // which sits a layer *above* the server, so it landed on the server itself.
+  const server = { x: 630, y: 300 }
+  const slots = 1
+  const serverWidth = graphServerNodeWidth(slots)
+  const handleOffsetX = serverWidth * 0.5
+
+  it('drops the first hop clear of the server it continues from', () => {
+    const hop = graphHopFallbackPosition({ parent: server, parentHandleOffsetX: handleOffsetX, childWidth: serverWidth })
+    const serverBottom = server.y + GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT
+    expect(hop.y).toBeGreaterThanOrEqual(serverBottom)
+  })
+
+  it('centres the hop on the handle so the edge is one straight segment', () => {
+    const hop = graphHopFallbackPosition({ parent: server, parentHandleOffsetX: handleOffsetX, childWidth: serverWidth })
+    expect(hop.x + serverWidth / 2).toBe(server.x + handleOffsetX)
+  })
+
+  it('fans extra hops off the same handle instead of stacking them', () => {
+    const first = graphHopFallbackPosition({ parent: server, parentHandleOffsetX: handleOffsetX, childWidth: serverWidth, siblingIndex: 0 })
+    const second = graphHopFallbackPosition({ parent: server, parentHandleOffsetX: handleOffsetX, childWidth: serverWidth, siblingIndex: 1 })
+    expect(second.x - first.x).toBeGreaterThanOrEqual(serverWidth)
+    expect(second.y).toBe(first.y)
+  })
+})
+
+describe('layout signature versioning', () => {
+  it('changes when the layout algorithm version changes', () => {
+    // The signature has to carry the algorithm version: a width-formula change
+    // leaves the topology identical, so a purely structural fingerprint would
+    // keep reusing coordinates computed by the previous formula.
+    expect(graphLayoutSignature(['server-1'], [])).toContain(`v${GRAPH_LAYOUT_ALGORITHM_VERSION}`)
   })
 })
 

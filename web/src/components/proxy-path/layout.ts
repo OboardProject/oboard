@@ -128,6 +128,12 @@ export function saveGraphLayoutSignature(rootServerID: number, signature: string
   localStorage.setItem(SIGNATURE_KEY, JSON.stringify({ ...current, [String(rootServerID)]: signature }))
 }
 
+// Bump whenever the layout maths changes shape — card widths, slot pitch, layer
+// spacing. Stored signatures then stop matching and every canvas recomputes
+// once. A purely structural fingerprint cannot notice this on its own: the
+// topology is identical, only the geometry it should produce has changed.
+export const GRAPH_LAYOUT_ALGORITHM_VERSION = 2
+
 /** Structural fingerprint of one canvas: which nodes exist and how the primary
  *  chain connects them. Coordinates deliberately do not participate, so moving
  *  a card never asks for a relayout while adding a hop always does. */
@@ -139,7 +145,7 @@ export function graphLayoutSignature(
   const edges = Array.from(new Set(
     Array.from(primaryEdges).map(edge => `${edge.source}${edge.sourceHandle || ''}>${edge.target}`),
   )).sort()
-  return `${nodes.join(',')}|${edges.join(',')}`
+  return `v${GRAPH_LAYOUT_ALGORITHM_VERSION}|${nodes.join(',')}|${edges.join(',')}`
 }
 
 export function loadGraphToolboxPosition(): GraphPosition {
@@ -182,6 +188,34 @@ export const GRAPH_DRAG_SNAP_GRID = 4
 export function snapDraggedGraphPosition(position: GraphPosition, grid = GRAPH_DRAG_SNAP_GRID): GraphPosition {
   const size = grid > 0 ? grid : 1
   return { x: Math.round(position.x / size) * size, y: Math.round(position.y / size) * size }
+}
+
+export type GraphHopFallbackInput = {
+  /** Top-left of the card this hop continues from. */
+  parent: GraphPosition
+  /** Distance from the parent's left edge to the handle the edge leaves from. */
+  parentHandleOffsetX: number
+  parentHeight?: number
+  childWidth: number
+  /** Nth hop already placed under this same parent. */
+  siblingIndex?: number
+}
+
+/** Where a hop goes before anything has positioned it: centred on the handle it
+ *  leaves from and a full layer below the parent, so it never lands on the card
+ *  it continues from and the router can draw one straight segment. */
+export function graphHopFallbackPosition({
+  parent,
+  parentHandleOffsetX,
+  parentHeight = GRAPH_LAYOUT_DEFAULT_NODE_HEIGHT,
+  childWidth,
+  siblingIndex = 0,
+}: GraphHopFallbackInput): GraphPosition {
+  const anchorX = parent.x + parentHandleOffsetX
+  return snapGraphPosition({
+    x: anchorX - childWidth / 2 + Math.max(0, siblingIndex) * (childWidth + GRAPH_LAYER_SIBLING_GAP),
+    y: parent.y + parentHeight + ROUTING_MIN_CHANNEL_HEIGHT,
+  })
 }
 
 function compareLayoutEdges(left: ProxyLayoutEdge, right: ProxyLayoutEdge) {
