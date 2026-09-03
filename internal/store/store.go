@@ -391,7 +391,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists node_presets (id integer primary key autoincrement, name text not null unique, protocol text not null, kind text not null, config_json text not null default '{}', default_port integer not null default 443, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_node_presets_protocol_kind on node_presets(protocol,kind)`,
 		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer not null references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
-		`create table if not exists port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'auto', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, sample_rate real not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'realm', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null, check(backend='realm'), check(probe_mode in ('never','apply','periodic')))`,
 		`create table if not exists tunnels (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, type text not null, local_address text not null default '', peer_address text not null default '', listen_port integer not null default 0, target_endpoint text not null default '', target_port integer not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists agent_tasks (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, type text not null, payload_json text not null, status text not null, result_json text not null default '{}', config_version integer not null default 0, nonce text not null, created_at text not null, updated_at text not null, completed_at text)`,
 		`create table if not exists configuration_sync_states (server_id integer primary key references servers(id) on delete cascade, wanted_revision integer not null, wanted_digest text not null default '', state text not null check(state in ('pending','preparing','queued','running','synced','failed')), last_config_version integer not null default 0, last_task_id integer not null default 0, retry_count integer not null default 0, next_retry_at text, last_error text not null default '', trigger_reason text not null default '', sync_strategy text not null default '', changed_at text not null, updated_at text not null)`,
@@ -563,6 +563,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureNullablePortForwardTargetServer(ctx); err != nil {
+		return err
+	}
+	if err := s.migratePortForwardRealmOnlyBackend(ctx); err != nil {
 		return err
 	}
 	if err := s.seedNodePresets(ctx); err != nil {
@@ -1358,6 +1361,47 @@ func (s *Store) ensureNullablePortForwardTargetServer(ctx context.Context) error
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate nullable port forward target: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// migratePortForwardRealmOnlyBackend collapses the former auto/nft/builtin
+// backend choice onto Realm, drops the sampling column the removed builtin data
+// path fed, and releases the loopback ports the removed trusted-forward inner
+// listeners held.
+func (s *Store) migratePortForwardRealmOnlyBackend(ctx context.Context) error {
+	var sampleRate int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info('port_forwards') where name='sample_rate'`).Scan(&sampleRate); err != nil {
+		return err
+	}
+	var legacyBackends int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from port_forwards where backend<>'realm' or probe_mode not in ('never','apply','periodic')`).Scan(&legacyBackends); err != nil {
+		return err
+	}
+	var staleAllocations int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from proxy_path_port_allocations where kind='trusted_forward_inner'`).Scan(&staleAllocations); err != nil {
+		return err
+	}
+	if sampleRate == 0 && legacyBackends == 0 && staleAllocations == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`create table port_forwards_realm_only (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'realm', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null, check(backend='realm'), check(probe_mode in ('never','apply','periodic')))`,
+		`insert into port_forwards_realm_only(id,name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,priority,config_json,enabled,created_at,updated_at) select id,name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,'realm', case when probe_mode in ('sampled','periodic_sampled') then 'periodic' when probe_mode in ('never','apply','periodic') then probe_mode else 'apply' end, probe_interval_seconds,priority,config_json,enabled,created_at,updated_at from port_forwards`,
+		`drop table port_forwards`,
+		`alter table port_forwards_realm_only rename to port_forwards`,
+		`create index if not exists idx_port_forwards_source on port_forwards(source_server_id, enabled, priority)`,
+		`delete from proxy_path_port_allocations where kind='trusted_forward_inner'`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("migrate port forwards to realm-only backend: %w", err)
 		}
 	}
 	return tx.Commit()
@@ -5351,7 +5395,7 @@ func (s *Store) CreatePortForward(ctx context.Context, v *model.PortForward) err
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
-	res, err := s.db.ExecContext(ctx, `insert into port_forwards(name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,sample_rate,priority,config_json,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, v.SourceServerID, optionalPositiveID(v.TargetServerID), v.ListenIP, v.ListenPort, v.TargetAddress, v.TargetPort, v.Protocol, v.Backend, v.ProbeMode, v.ProbeIntervalSeconds, v.SampleRate, v.Priority, v.ConfigJSON, boolInt(v.Enabled), ts, ts)
+	res, err := s.db.ExecContext(ctx, `insert into port_forwards(name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,priority,config_json,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, v.SourceServerID, optionalPositiveID(v.TargetServerID), v.ListenIP, v.ListenPort, v.TargetAddress, v.TargetPort, v.Protocol, v.Backend, v.ProbeMode, v.ProbeIntervalSeconds, v.Priority, v.ConfigJSON, boolInt(v.Enabled), ts, ts)
 	if err != nil {
 		return err
 	}
@@ -5360,12 +5404,12 @@ func (s *Store) CreatePortForward(ctx context.Context, v *model.PortForward) err
 }
 
 func (s *Store) UpdatePortForward(ctx context.Context, v *model.PortForward) error {
-	_, err := s.db.ExecContext(ctx, `update port_forwards set name=?,source_server_id=?,target_server_id=?,listen_ip=?,listen_port=?,target_address=?,target_port=?,protocol=?,backend=?,probe_mode=?,probe_interval_seconds=?,sample_rate=?,priority=?,config_json=?,enabled=?,updated_at=? where id=?`, v.Name, v.SourceServerID, optionalPositiveID(v.TargetServerID), v.ListenIP, v.ListenPort, v.TargetAddress, v.TargetPort, v.Protocol, v.Backend, v.ProbeMode, v.ProbeIntervalSeconds, v.SampleRate, v.Priority, v.ConfigJSON, boolInt(v.Enabled), now(), v.ID)
+	_, err := s.db.ExecContext(ctx, `update port_forwards set name=?,source_server_id=?,target_server_id=?,listen_ip=?,listen_port=?,target_address=?,target_port=?,protocol=?,backend=?,probe_mode=?,probe_interval_seconds=?,priority=?,config_json=?,enabled=?,updated_at=? where id=?`, v.Name, v.SourceServerID, optionalPositiveID(v.TargetServerID), v.ListenIP, v.ListenPort, v.TargetAddress, v.TargetPort, v.Protocol, v.Backend, v.ProbeMode, v.ProbeIntervalSeconds, v.Priority, v.ConfigJSON, boolInt(v.Enabled), now(), v.ID)
 	return err
 }
 
 func (s *Store) ListPortForwards(ctx context.Context) ([]model.PortForward, error) {
-	rows, err := s.db.QueryContext(ctx, `select id,name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,sample_rate,priority,config_json,enabled,created_at,updated_at from port_forwards order by priority asc,id desc`)
+	rows, err := s.db.QueryContext(ctx, `select id,name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,priority,config_json,enabled,created_at,updated_at from port_forwards order by priority asc,id desc`)
 	if err != nil {
 		return nil, err
 	}
@@ -5376,7 +5420,7 @@ func (s *Store) ListPortForwards(ctx context.Context) ([]model.PortForward, erro
 		var targetServerID sql.NullInt64
 		var en int
 		var ca, ua string
-		if err := rows.Scan(&v.ID, &v.Name, &v.SourceServerID, &targetServerID, &v.ListenIP, &v.ListenPort, &v.TargetAddress, &v.TargetPort, &v.Protocol, &v.Backend, &v.ProbeMode, &v.ProbeIntervalSeconds, &v.SampleRate, &v.Priority, &v.ConfigJSON, &en, &ca, &ua); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.SourceServerID, &targetServerID, &v.ListenIP, &v.ListenPort, &v.TargetAddress, &v.TargetPort, &v.Protocol, &v.Backend, &v.ProbeMode, &v.ProbeIntervalSeconds, &v.Priority, &v.ConfigJSON, &en, &ca, &ua); err != nil {
 			return nil, err
 		}
 		if targetServerID.Valid {

@@ -36,7 +36,6 @@ func TestPreviewServerPortPolicyChangePublicChangeIgnoresInternalPool(t *testing
 	next := model.Server{ID: 1, PortRangeStart: 20000, PortRangeEnd: 20100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999}
 	allocations := []model.ProxyPathPortAllocation{
 		// Loopback-only listeners keep working no matter what the public range is.
-		{Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1, Pool: model.PortPoolInternal, Port: 40010},
 		{Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "555", ServerID: 1, Pool: model.PortPoolInternal, Port: 40020},
 	}
 	preview := PreviewServerPortPolicyChange(current, next, allocations, nil)
@@ -51,10 +50,9 @@ func TestPreviewServerPortPolicyChangeInternalChangeExcludesLegacyLoopbackPort(t
 	allocations := []model.ProxyPathPortAllocation{
 		// Legacy rows predate the pool column; the kind classifies them.
 		{Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "555", ServerID: 1, Port: 40020},
-		{Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1, Port: 40010},
 	}
 	preview := PreviewServerPortPolicyChange(current, next, allocations, nil)
-	if !preview.RequiresMigration() || len(preview.AffectedManaged) != 2 {
+	if !preview.RequiresMigration() || len(preview.AffectedManaged) != 1 {
 		t.Fatalf("internal range change must flag loopback listeners: %#v", preview.AffectedManaged)
 	}
 }
@@ -98,7 +96,6 @@ func TestPreviewServerPortPolicyKindInvariantOverridesHistoricalPool(t *testing.
 	// legacy backfill stamped them with the generic 'public' pool.
 	next := model.Server{ID: 1, PortRangeStart: 20000, PortRangeEnd: 20100, InternalPortRangeStart: 30000, InternalPortRangeEnd: 59999}
 	allocations := []model.ProxyPathPortAllocation{
-		{Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1, Pool: model.PortPoolPublic, Port: 40010},
 		{Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "555", ServerID: 1, Pool: model.PortPoolPublic, Port: 40020},
 	}
 	preview := PreviewServerPortPolicyChange(current, next, allocations, nil)

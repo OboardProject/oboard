@@ -54,7 +54,9 @@ func TestMachineAutomaticApprovalRequiresMatchingPolicyFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if validated.Status != model.ChangesetApproved {
+	// A matching automatic policy approves and therefore executes the plan, so
+	// the terminal state is `succeeded` rather than a parked `approved`.
+	if validated.Status != model.ChangesetSucceeded {
 		t.Fatalf("matching policy status = %s", validated.Status)
 	}
 	nonmatching := createAutomationTestChangeset(t, service, principal, "nonmatching", json.RawMessage(`{"server_ids":[8]}`))
@@ -128,21 +130,20 @@ func TestMachineDeniedPolicyIsRecheckedWhenAdminApplies(t *testing.T) {
 	operator := application.HumanPrincipal(*admin, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
 	service := NewService(db, capability.NewCatalog())
 	registerAutomationTestCapability(service)
-	policy := &model.ApprovalPolicy{ID: "pol_later_denied", PrincipalID: machine.ID, Capability: "servers.onboard", ResourceFilter: json.RawMessage(`{}`), Mode: model.ApprovalAutomatic}
-	if err := db.UpsertApprovalPolicy(context.Background(), policy); err != nil {
-		t.Fatal(err)
-	}
 	item := createAutomationTestChangeset(t, service, machine, "later-denied", json.RawMessage(`{}`))
+	// No policy covers the capability yet, so the plan parks awaiting a human
+	// decision. That wait is the window in which a denial can still land.
 	validated, err := service.Validate(context.Background(), machine, item.ID)
-	if err != nil || validated.Status != model.ChangesetApproved {
-		t.Fatalf("automatic validation status=%v err=%v", validated.Status, err)
+	if err != nil || validated.Status != model.ChangesetAwaitingApproval {
+		t.Fatalf("validation status=%v err=%v", validated.Status, err)
 	}
-	policy.Mode = model.ApprovalDenied
-	if err := db.UpsertApprovalPolicy(context.Background(), policy); err != nil {
+	if err := db.UpsertApprovalPolicy(context.Background(), &model.ApprovalPolicy{ID: "pol_later_denied", PrincipalID: machine.ID, Capability: "servers.onboard", ResourceFilter: json.RawMessage(`{}`), Mode: model.ApprovalDenied}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Apply(context.Background(), operator, item.ID); err == nil || !strings.Contains(err.Error(), "denies") {
-		t.Fatalf("admin apply after deny err=%v", err)
+	// Approve executes, and Apply re-reads the policy, so an operator cannot
+	// push through a plan the machine principal is no longer allowed to run.
+	if _, err := service.Approve(context.Background(), operator, item.ID, "approved before the denial landed"); err == nil || !strings.Contains(err.Error(), "denies") {
+		t.Fatalf("admin approve after deny err=%v", err)
 	}
 }
 

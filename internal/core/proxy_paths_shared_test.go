@@ -54,7 +54,7 @@ func TestProxyPathPlanRuntimeNodesAreSharedAndCredentialFree(t *testing.T) {
 	}
 }
 
-func TestProxyPathPlanRuntimeNodesIncludeTrustedProcessingInbound(t *testing.T) {
+func TestProxyPathPlanRuntimeNodesIncludeTransparentProcessingInbound(t *testing.T) {
 	source := model.Server{ID: 1, Name: "source", ChainSecret: "source-secret", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100, InternalPortRangeStart: 50000, InternalPortRangeEnd: 50100}
 	target := model.Server{ID: 2, Name: "target", ChainSecret: "target-secret", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, InternalPortRangeStart: 51000, InternalPortRangeEnd: 51100}
 	root := model.Inbound{ID: 10, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
@@ -66,23 +66,19 @@ func TestProxyPathPlanRuntimeNodesIncludeTrustedProcessingInbound(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plans) != 1 || len(plans[0].RuntimeNodes) != 2 {
+	if len(plans) != 1 || len(plans[0].RuntimeNodes) != 1 {
 		t.Fatalf("runtime nodes = %#v", plans)
 	}
-	kinds := map[string]model.ProxyPathRuntimeNode{}
-	for _, node := range plans[0].RuntimeNodes {
-		kinds[node.Kind] = node
+	node := plans[0].RuntimeNodes[0]
+	if node.Kind != "shared_transparent_inbound" || node.ListenScope != "public" {
+		t.Fatalf("processing runtime node = %#v", node)
 	}
-	if kinds["shared_transparent_inbound"].ListenScope != "public" {
-		t.Fatalf("outer runtime node = %#v", kinds["shared_transparent_inbound"])
-	}
-	inner := kinds["trusted_processing_inbound"]
-	if inner.ListenScope != "loopback" || inner.ListenIP != "127.0.0.1" || inner.Protocol != model.ProtocolVLESS {
-		t.Fatalf("trusted processing node = %#v", inner)
+	if node.Port != plans[0].PortForwards[0].TargetPort {
+		t.Fatalf("processing node %#v does not own the forward target port %d", node, plans[0].PortForwards[0].TargetPort)
 	}
 }
 
-func TestProxyPathPlanRuntimeNodesReserveDistinctTrustedInnerPorts(t *testing.T) {
+func TestProxyPathPlanRuntimeNodesReserveDistinctTransparentPorts(t *testing.T) {
 	source := model.Server{ID: 1, Name: "source", ChainSecret: "source-secret", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
 	target := model.Server{ID: 2, Name: "target", ChainSecret: "target-secret", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100, InternalPortRangeStart: 51000, InternalPortRangeEnd: 51001}
 	roots := []model.Inbound{
@@ -106,13 +102,13 @@ func TestProxyPathPlanRuntimeNodesReserveDistinctTrustedInnerPorts(t *testing.T)
 	ports := map[int]bool{}
 	for _, plan := range plans {
 		for _, node := range plan.RuntimeNodes {
-			if node.Kind == "trusted_processing_inbound" {
+			if node.Kind == "shared_transparent_inbound" {
 				ports[node.Port] = true
 			}
 		}
 	}
 	if len(ports) != 2 || ports[0] {
-		t.Fatalf("trusted processing ports = %#v, plans = %#v", ports, plans)
+		t.Fatalf("transparent processing ports = %#v, plans = %#v", ports, plans)
 	}
 }
 
@@ -582,7 +578,7 @@ func TestTransparentPrefixBranchesShareForwardAndProcessingInbound(t *testing.T)
 		t.Fatalf("shared transparent plans = %#v", plans)
 	}
 	firstForward, secondForward := plans[0].PortForwards[0], plans[1].PortForwards[0]
-	if firstForward.ID != secondForward.ID || firstForward.ListenPort != root.Port || firstForward.TargetPort != secondForward.TargetPort || !sameTrustedForwardSender(firstForward.TrustedForward, secondForward.TrustedForward) {
+	if firstForward.ID != secondForward.ID || firstForward.ListenPort != root.Port || firstForward.TargetPort != secondForward.TargetPort {
 		t.Fatalf("transparent prefix was not shared: first=%#v second=%#v", firstForward, secondForward)
 	}
 	forwards, err := DerivedPortForwardsFromProxyPaths(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds)
@@ -603,7 +599,7 @@ func TestTransparentPrefixBranchesShareForwardAndProcessingInbound(t *testing.T)
 			processingCount++
 		}
 	}
-	if processingCount != 1 || parsed.OBoard == nil || parsed.OBoard.TrustedForward == nil || len(parsed.OBoard.TrustedForward.Receivers) != 1 {
+	if processingCount != 1 {
 		t.Fatalf("processor did not emit one shared processing surface: %s", processorConfig)
 	}
 	chainUser := proxyPathBranchUser(chain, root, user).Username
@@ -619,7 +615,7 @@ func TestTransparentPrefixBranchesShareForwardAndProcessingInbound(t *testing.T)
 	}
 
 	singleForwards, err := DerivedPortForwardsFromProxyPaths([]model.ProxyPath{chain}, steps[:2], opts.Servers, opts.Inbounds)
-	if err != nil || len(singleForwards) != 1 || singleForwards[0].ID != forwards[0].ID || singleForwards[0].TargetPort != forwards[0].TargetPort || !sameTrustedForwardSender(singleForwards[0].TrustedForward, forwards[0].TrustedForward) {
+	if err != nil || len(singleForwards) != 1 || singleForwards[0].ID != forwards[0].ID || singleForwards[0].TargetPort != forwards[0].TargetPort {
 		t.Fatalf("shared resource changed after removing one branch: before=%#v after=%#v err=%v", forwards, singleForwards, err)
 	}
 }
@@ -761,12 +757,8 @@ func TestTransparentPathForwardTargetsGeneratedProcessingPort(t *testing.T) {
 	if err := json.Unmarshal([]byte(configBack), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed.OBoard == nil || parsed.OBoard.TrustedForward == nil || len(parsed.OBoard.TrustedForward.Receivers) != 1 {
-		t.Fatalf("trusted receiver missing from processing server: %s", configBack)
-	}
-	receiver := parsed.OBoard.TrustedForward.Receivers[0]
-	if receiver.ListenPort != forwards[0].TargetPort || receiver.TargetPort != intFromAny(processing["listen_port"]) {
-		t.Fatalf("forward target %d does not match trusted receiver %#v and inner listener %#v", forwards[0].TargetPort, receiver, processing)
+	if intFromAny(processing["listen_port"]) != forwards[0].TargetPort {
+		t.Fatalf("forward target %d does not match the processing listener %#v", forwards[0].TargetPort, processing)
 	}
 	// The front server must not keep a user-protocol listener on that port.
 	if front := mustServerConfig(t, front, opts.Inbounds, users, opts); findInbound(front, tag("in", root.ID)) != nil {
@@ -991,7 +983,7 @@ func TestSSHTunnelIdentityStaysStableWhenTargetGainsInbound(t *testing.T) {
 	}
 }
 
-func TestTrustedForwardIsEmittedOnlyByPublicEntryHop(t *testing.T) {
+func TestTransparentForwardGroupCoversEveryPrefixServer(t *testing.T) {
 	entry := model.Server{ID: 1, Name: "entry", ChainSecret: "entry-secret", PublicIPv4: "198.51.100.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
 	relay := model.Server{ID: 2, Name: "relay", ChainSecret: "relay-secret", PublicIPv4: "198.51.100.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 31000, PortRangeEnd: 31100}
 	processor := model.Server{ID: 3, Name: "processor", ChainSecret: "processor-secret", PublicIPv4: "198.51.100.3", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 32000, PortRangeEnd: 32100}
@@ -1009,12 +1001,9 @@ func TestTrustedForwardIsEmittedOnlyByPublicEntryHop(t *testing.T) {
 	if len(plans) != 1 || len(plans[0].PortForwards) != 2 {
 		t.Fatalf("plans = %#v", plans)
 	}
-	if plans[0].PortForwards[0].TrustedForward == nil || plans[0].PortForwards[1].TrustedForward != nil {
-		t.Fatalf("trusted sender must exist only on public entry hop: %#v", plans[0].PortForwards)
-	}
-	required := TrustedForwardServerIDs([]model.ProxyPath{path}, steps, []model.Inbound{root})
+	required := TransparentForwardServerIDs([]model.ProxyPath{path}, steps, []model.Inbound{root})
 	if !required[entry.ID] || !required[relay.ID] || !required[processor.ID] || len(required) != 3 {
-		t.Fatalf("trusted forward build gate servers = %#v", required)
+		t.Fatalf("transparent forward group servers = %#v", required)
 	}
 }
 
@@ -1042,10 +1031,10 @@ func TestLedgerRecordsPoolAndNetworkMetadata(t *testing.T) {
 }
 
 func TestLedgerConvergesLegacyRowMetadataWithoutMovingPort(t *testing.T) {
-	stored := []model.ProxyPathPortAllocation{{ID: 9, Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1, Port: 40010}}
+	stored := []model.ProxyPathPortAllocation{{ID: 9, Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "7:2", ServerID: 1, Port: 40010}}
 	ledger := NewProxyPathPortLedger(stored)
 	port := ledger.resolve(PortRequirement{
-		Kind: model.ProxyPathPortKindTrustedInner, ScopeKey: "7:2", ServerID: 1,
+		Kind: model.ProxyPathPortKindTunnelSSH, ScopeKey: "7:2", ServerID: 1,
 		Pool: model.PortPoolInternal, ListenIP: "127.0.0.1", Network: model.ForwardProtocolTCP,
 		Allocate: func() int { t.Fatal("stored port must not reallocate"); return 0 },
 	})

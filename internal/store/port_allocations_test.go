@@ -39,7 +39,6 @@ func TestProxyPathPortAllocationsUpgradeRebuildsLegacyUniqueKey(t *testing.T) {
 		legacyProxyPathPortAllocationSchema,
 		`insert into proxy_path_port_allocations(kind,scope_key,server_id,port,created_at,updated_at) values('chain_service','2022-blake3-aes-128-gcm',1,41001,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert into proxy_path_port_allocations(kind,scope_key,server_id,port,created_at,updated_at) values('internal_inbound','7:2',1,41002,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
-		`insert into proxy_path_port_allocations(kind,scope_key,server_id,port,created_at,updated_at) values('trusted_forward_inner','7:3',1,42001,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert into proxy_path_port_allocations(kind,scope_key,server_id,port,created_at,updated_at) values('tunnel_ssh_loopback','555',1,42002,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert into proxy_path_port_allocations(kind,scope_key,server_id,port,created_at,updated_at) values('tunnel_wireguard','556',1,41003,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 	} {
@@ -76,8 +75,8 @@ func TestProxyPathPortAllocationsUpgradeRebuildsLegacyUniqueKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(allocations) != 5 {
-		t.Fatalf("upgrade changed allocation count: got %d want 5", len(allocations))
+	if len(allocations) != 4 {
+		t.Fatalf("upgrade changed allocation count: got %d want 4", len(allocations))
 	}
 	byKind := map[string]model.ProxyPathPortAllocation{}
 	for _, item := range allocations {
@@ -88,9 +87,6 @@ func TestProxyPathPortAllocationsUpgradeRebuildsLegacyUniqueKey(t *testing.T) {
 	}
 	if got := byKind["internal_inbound"]; got.Pool != model.PortPoolPublic || got.Network != "tcp_udp" || got.Port != 41002 {
 		t.Fatalf("internal_inbound backfill = %#v", got)
-	}
-	if got := byKind["trusted_forward_inner"]; got.Pool != model.PortPoolInternal || got.ListenIP != "127.0.0.1" || got.Network != "tcp_udp" || got.Port != 42001 {
-		t.Fatalf("trusted_forward_inner backfill = %#v", got)
 	}
 	if got := byKind["tunnel_ssh_loopback"]; got.Pool != model.PortPoolInternal || got.ListenIP != "127.0.0.1" || got.Network != "tcp" || got.Port != 42002 {
 		t.Fatalf("tunnel_ssh_loopback backfill = %#v", got)

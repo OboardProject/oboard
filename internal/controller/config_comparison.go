@@ -172,7 +172,6 @@ func portForwardIdentity(plan model.PortForwardPlan) any {
 		TargetPort     int    `json:"target_port"`
 		Protocol       string `json:"protocol"`
 		Backend        string `json:"backend"`
-		TrustedForward any    `json:"trusted_forward,omitempty"`
 		Enabled        bool   `json:"enabled"`
 		SourceServerID int64  `json:"source_server_id"`
 		TargetServerID int64  `json:"target_server_id"`
@@ -183,7 +182,7 @@ func portForwardIdentity(plan model.PortForwardPlan) any {
 		out = append(out, rule{
 			ID: item.ID, ListenIP: item.ListenIP, ListenPort: item.ListenPort,
 			TargetAddress: item.TargetAddress, TargetPort: item.TargetPort, Protocol: string(item.Protocol),
-			Backend: string(item.Backend), TrustedForward: item.TrustedForward, Enabled: item.Enabled,
+			Backend: string(item.Backend), Enabled: item.Enabled,
 			SourceServerID: item.SourceServerID, TargetServerID: item.TargetServerID, ConfigJSON: item.ConfigJSON,
 		})
 	}

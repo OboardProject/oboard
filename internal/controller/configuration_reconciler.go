@@ -562,7 +562,7 @@ func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store
 	if derived, err := core.DerivedTunnelsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger); err == nil {
 		tunnels = append(tunnels, derived...)
 	}
-	trusted := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
+	grouped := core.TransparentForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, data.Inbounds)
 	for _, state := range claimed {
 		server, ok := serverByID(data.Servers, state.ServerID)
 		if !ok {
@@ -622,9 +622,9 @@ func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store
 		}
 	}
 	if len(plan.changed) > 0 {
-		for serverID := range trusted {
+		for serverID := range grouped {
 			if plan.changed[serverID] {
-				for memberID := range trusted {
+				for memberID := range grouped {
 					plan.changed[memberID] = true
 				}
 				break
@@ -762,19 +762,19 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 		validServerIDs[state.ServerID] = true
 	}
 	filteredData := routingConfigWithoutProxyPaths(data, ignoredPathIDs)
-	trustedServers := core.TrustedForwardServerIDs(filteredData.ProxyPaths, filteredData.ProxyPathSteps, filteredData.Inbounds)
-	trustedBlocked := false
-	for serverID := range trustedServers {
+	groupedServers := core.TransparentForwardServerIDs(filteredData.ProxyPaths, filteredData.ProxyPathSteps, filteredData.Inbounds)
+	groupBlocked := false
+	for serverID := range groupedServers {
 		if affectedServerIDs[serverID] {
-			trustedBlocked = true
+			groupBlocked = true
 			break
 		}
 	}
-	if trustedBlocked {
-		for serverID := range trustedServers {
+	if groupBlocked {
+		for serverID := range groupedServers {
 			delete(validServerIDs, serverID)
 			if state, ok := claimedByServer[serverID]; ok && !affectedServerIDs[serverID] {
-				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "关联的可信透明转发成员存在配置问题；修复该成员后会成组重试")
+				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "关联的透明转发成员存在配置问题；修复该成员后会成组重试")
 			}
 		}
 	}

@@ -518,7 +518,10 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 		return 0, err
 	}
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
-	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
+	// Resolving derived forwards seeds the ledger with the ports the generated
+	// listeners already own, so the config below reuses them instead of picking
+	// new ones.
+	_, err = core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
 	if err != nil {
 		return 0, err
 	}
@@ -560,13 +563,6 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 				return 0, err
 			}
 			continue
-		}
-		forwardPlan, err := core.BuildPortForwardPlan(0, server, data.Servers, derivedForwards)
-		if err != nil {
-			return 0, err
-		}
-		if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
-			return 0, err
 		}
 		reason := "access_change_" + string(change.ChangeType) + "_" + phase
 		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, Assets: generated.Assets}})

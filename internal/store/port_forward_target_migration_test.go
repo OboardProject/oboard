@@ -24,7 +24,7 @@ func TestPortForwardTargetServerBecomesNullable(t *testing.T) {
 	if err := db.CreateServer(ctx, target); err != nil {
 		t.Fatal(err)
 	}
-	legacy := &model.PortForward{Name: "legacy", SourceServerID: source.ID, TargetServerID: target.ID, ListenPort: 10000, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, ProbeMode: "never", ProbeIntervalSeconds: 300, Priority: 100, ConfigJSON: "{}", Enabled: true}
+	legacy := &model.PortForward{Name: "legacy", SourceServerID: source.ID, TargetServerID: target.ID, ListenPort: 10000, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, ProbeMode: "never", ProbeIntervalSeconds: 300, Priority: 100, ConfigJSON: "{}", Enabled: true}
 	if err := db.CreatePortForward(ctx, legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestPortForwardTargetServerBecomesNullable(t *testing.T) {
 		`drop index idx_port_forwards_source`,
 		`alter table port_forwards rename to port_forwards_nullable`,
 		`create table port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'auto', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, sample_rate real not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
-		`insert into port_forwards select * from port_forwards_nullable`,
+		`insert into port_forwards(id,name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,priority,config_json,enabled,created_at,updated_at) select id,name,source_server_id,target_server_id,listen_ip,listen_port,target_address,target_port,protocol,backend,probe_mode,probe_interval_seconds,priority,config_json,enabled,created_at,updated_at from port_forwards_nullable`,
 		`drop table port_forwards_nullable`,
 		`create index idx_port_forwards_source on port_forwards(source_server_id, enabled, priority)`,
 	} {
@@ -65,7 +65,7 @@ func TestPortForwardTargetServerBecomesNullable(t *testing.T) {
 	if err != nil || storedLegacy.TargetServerID != target.ID {
 		t.Fatalf("legacy forward was not preserved: %#v err=%v", storedLegacy, err)
 	}
-	external := &model.PortForward{Name: "external", SourceServerID: source.ID, ListenPort: 10001, TargetAddress: "203.0.113.80", TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, ProbeMode: "never", ProbeIntervalSeconds: 300, Priority: 100, ConfigJSON: "{}", Enabled: true}
+	external := &model.PortForward{Name: "external", SourceServerID: source.ID, ListenPort: 10001, TargetAddress: "203.0.113.80", TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, ProbeMode: "never", ProbeIntervalSeconds: 300, Priority: 100, ConfigJSON: "{}", Enabled: true}
 	if err := db.CreatePortForward(ctx, external); err != nil {
 		t.Fatal(err)
 	}

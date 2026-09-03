@@ -648,6 +648,18 @@
 
 .traffic-forwarding-switch-field > span { color: var(--text-secondary); font-size: 11px; }
 
+.traffic-forwarding-static-value {
+  min-height: var(--control-height);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
 .traffic-forwarding-form-note {
   display: flex;
   align-items: flex-start;

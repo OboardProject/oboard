@@ -26,7 +26,7 @@ func TestListenAddressOverlapIsSymmetricForWildcards(t *testing.T) {
 
 func TestValidatePortForwardsHandlesTransportAndWildcardOverlap(t *testing.T) {
 	servers := []model.Server{{ID: 1}, {ID: 2}}
-	base := model.PortForward{ID: 1, Name: "tcp", SourceServerID: 1, TargetServerID: 2, ListenIP: "0.0.0.0", ListenPort: 443, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendBuiltin, Enabled: true}
+	base := model.PortForward{ID: 1, Name: "tcp", SourceServerID: 1, TargetServerID: 2, ListenIP: "0.0.0.0", ListenPort: 443, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, Enabled: true}
 	udp := base
 	udp.ID = 2
 	udp.Name = "udp"

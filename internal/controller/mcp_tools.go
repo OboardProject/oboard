@@ -647,6 +647,8 @@ func (s *Server) submitPreparedOperations(ctx context.Context, principal applica
 		result.NextAction = map[string]any{"type": "redeem_external_action", "action_id": actionID, "workflow_id": workflow.ID, "sensitive": true, "must_not_log": true}
 	} else if workflow.Status == model.WorkflowApprovalRequired {
 		result.NextAction = map[string]any{"type": "open_approval", "changeset_id": item.ID}
+	} else if workflow.Status == model.WorkflowQueued {
+		result.NextAction = map[string]any{"type": "apply_changeset", "changeset_id": item.ID}
 	}
 	return result, nil
 }

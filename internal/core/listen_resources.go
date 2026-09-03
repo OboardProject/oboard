@@ -150,26 +150,6 @@ func singBoxListenResources(serverID int64, inbounds []map[string]any) []listenR
 	return resources
 }
 
-func trustedForwardListenResources(serverID int64, trusted *OBoardTrustedForward) []listenResource {
-	if trusted == nil {
-		return nil
-	}
-	resources := make([]listenResource, 0, len(trusted.Receivers))
-	for _, receiver := range trusted.Receivers {
-		if !validPort(receiver.ListenPort) {
-			continue
-		}
-		resources = append(resources, listenResource{
-			serverID: serverID,
-			address:  normalizeListenAddress(receiver.Listen),
-			port:     receiver.ListenPort,
-			protocol: portForwardListenTransport(model.ForwardProtocol(receiver.Network)),
-			owner:    fmt.Sprintf("trusted forward receiver %q", receiver.ID),
-		})
-	}
-	return resources
-}
-
 // inboundListenResource converts one persisted inbound into the same listen
 // resource model deployment validation uses, so allocation and final
 // validation share one conflict predicate (address scope, port, TCP/UDP).
@@ -325,9 +305,6 @@ func ValidateDeploymentListenResources(serverID int64, configJSON string, forwar
 		return fmt.Errorf("decode generated core config for listen validation: %w", err)
 	}
 	resources := singBoxListenResources(serverID, config.Inbounds)
-	if config.OBoard != nil {
-		resources = append(resources, trustedForwardListenResources(serverID, config.OBoard.TrustedForward)...)
-	}
 	resources = append(resources, portForwardListenResources(forwards.Rules)...)
 	resources = append(resources, tunnelListenResources(serverID, tunnels.Tunnels)...)
 	resources = append(resources, sshInboundListenResources(serverID, sshInbounds)...)

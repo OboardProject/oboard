@@ -82,11 +82,19 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 				rejected = append(rejected, model.TrafficAcceptedReport{ReportID: strings.TrimSpace(item.ReportID), Status: "rejected", Reason: rejection.Reason})
 				continue
 			}
-			status := 400
-			if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
-				status = 403
+			// An unauthorized claim is answered per report rather than by
+			// failing the batch. Refusing the whole request never protected
+			// anything - nothing unauthorized is ever credited either way -
+			// but it did let one stale report block every other report and,
+			// with them, the policy response that renews traffic leases. A
+			// server would keep serving until each user spent their current
+			// lease and then go silently dark.
+			if reason := unauthorizedTrafficReason(err); reason != "" {
+				log.Printf("traffic ledger refused an unauthorized report agent=%s server_id=%d user_id=%d reason=%s", server.AgentID, server.ID, item.UserID, reason)
+				rejected = append(rejected, model.TrafficAcceptedReport{ReportID: strings.TrimSpace(item.ReportID), Status: "rejected", Reason: reason})
+				continue
 			}
-			fail(w, err, status)
+			fail(w, err, 400)
 			return
 		}
 		reports = append(reports, report)
@@ -101,11 +109,11 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 				// failing the accounting batch it travels with.
 				continue
 			}
-			status := 400
-			if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
-				status = 403
+			if reason := unauthorizedTrafficReason(err); reason != "" {
+				log.Printf("traffic ledger refused an unauthorized stream agent=%s server_id=%d user_id=%d reason=%s", server.AgentID, server.ID, stream.UserID, reason)
+				continue
 			}
-			fail(w, err, status)
+			fail(w, err, 400)
 			return
 		}
 		streams = append(streams, stream)
@@ -166,6 +174,21 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 
 var errTrafficForbidden = errors.New("inbound does not belong to this agent")
 var errTrafficUnauthorized = errors.New("user is not authorized for this inbound")
+
+// unauthorizedTrafficReason maps the two authorization boundaries onto per
+// report rejection reasons. The Agent treats both as terminal and drops the
+// report, so an entry that this Controller will never account cannot keep
+// being resent, and cannot hold the rest of the ledger hostage.
+func unauthorizedTrafficReason(err error) string {
+	switch {
+	case errors.Is(err, errTrafficForbidden):
+		return "forbidden"
+	case errors.Is(err, errTrafficUnauthorized):
+		return "unauthorized"
+	default:
+		return ""
+	}
+}
 
 // trafficRejection marks a report that this Controller will never accept
 // because the entity it accounts against is gone or disabled. Failing the whole

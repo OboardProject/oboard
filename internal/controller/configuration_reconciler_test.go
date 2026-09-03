@@ -126,7 +126,7 @@ func TestConfigurationMutationAffectedServerScope(t *testing.T) {
 	if got := srv.configurationMutationServerIDs(ctx, "/api/v1/ui/servers/"+itoa(first.ID), "DELETE"); got != nil {
 		t.Fatalf("server delete scope = %v, want all", got)
 	}
-	forward := &model.PortForward{Name: "scope-forward", SourceServerID: first.ID, TargetServerID: second.ID, ListenPort: 12000, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, ProbeMode: "never", ProbeIntervalSeconds: 300, ConfigJSON: "{}", Enabled: true}
+	forward := &model.PortForward{Name: "scope-forward", SourceServerID: first.ID, TargetServerID: second.ID, ListenPort: 12000, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, ProbeMode: "never", ProbeIntervalSeconds: 300, ConfigJSON: "{}", Enabled: true}
 	if err := db.CreatePortForward(ctx, forward); err != nil {
 		t.Fatal(err)
 	}

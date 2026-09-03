@@ -10,7 +10,7 @@ import (
 
 func TestValidateTopologyDAGRejectsTunnelCycle(t *testing.T) {
 	servers := []model.Server{{ID: 1, Name: "a"}, {ID: 2, Name: "b"}, {ID: 3, Name: "c"}}
-	forwards := []model.PortForward{{ID: 1, Name: "a-b", SourceServerID: 1, TargetServerID: 2, ListenPort: 443, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, Enabled: true}, {ID: 2, Name: "b-c", SourceServerID: 2, TargetServerID: 3, ListenPort: 8443, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, Enabled: true}}
+	forwards := []model.PortForward{{ID: 1, Name: "a-b", SourceServerID: 1, TargetServerID: 2, ListenPort: 443, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, Enabled: true}, {ID: 2, Name: "b-c", SourceServerID: 2, TargetServerID: 3, ListenPort: 8443, TargetPort: 443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, Enabled: true}}
 	tunnels := []model.Tunnel{{ID: 3, Name: "c-a", SourceServerID: 3, TargetServerID: 1, Type: model.TunnelTypeWireGuard, Enabled: true}}
 	if err := ValidateTopologyDAG(servers, forwards, tunnels); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected tunnel to participate in cycle detection, got %v", err)
@@ -19,7 +19,7 @@ func TestValidateTopologyDAGRejectsTunnelCycle(t *testing.T) {
 
 func TestValidateTopologyDAGIgnoresExternalPortForwardTargets(t *testing.T) {
 	servers := []model.Server{{ID: 1, Name: "source"}}
-	forwards := []model.PortForward{{ID: 1, Name: "external", SourceServerID: 1, TargetAddress: "203.0.113.80", ListenPort: 443, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, Enabled: true}}
+	forwards := []model.PortForward{{ID: 1, Name: "external", SourceServerID: 1, TargetAddress: "203.0.113.80", ListenPort: 443, TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, Enabled: true}}
 	if err := ValidateTopologyDAG(servers, forwards, nil); err != nil {
 		t.Fatalf("external target must not become a managed topology edge: %v", err)
 	}

@@ -1048,7 +1048,7 @@ func TestStoreCRUDAndDashboard(t *testing.T) {
 	if !storedInbound.DNSSyncEnabled || storedInbound.DNSRecordTypes != "both" || storedInbound.DNSSyncStatus != "A 已新建" || storedInbound.DNSLastSyncedAt == nil {
 		t.Fatalf("cloudflare fields not persisted: %#v", storedInbound)
 	}
-	forward := &model.PortForward{Name: "s1-to-s2", SourceServerID: server.ID, TargetServerID: server2.ID, ListenIP: "0.0.0.0", ListenPort: 443, TargetAddress: "203.0.113.2", TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendAuto, Priority: 100, ConfigJSON: "{}", Enabled: true}
+	forward := &model.PortForward{Name: "s1-to-s2", SourceServerID: server.ID, TargetServerID: server2.ID, ListenIP: "0.0.0.0", ListenPort: 443, TargetAddress: "203.0.113.2", TargetPort: 8443, Protocol: model.ForwardProtocolTCP, Backend: model.ForwardBackendRealm, ProbeMode: "periodic", ProbeIntervalSeconds: 300, Priority: 100, ConfigJSON: "{}", Enabled: true}
 	if err := s.CreatePortForward(ctx, forward); err != nil {
 		t.Fatal(err)
 	}
@@ -1060,7 +1060,7 @@ func TestStoreCRUDAndDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if storedForward.TargetPort != 9443 || storedForward.Backend != model.ForwardBackendAuto {
+	if storedForward.TargetPort != 9443 || storedForward.Backend != model.ForwardBackendRealm {
 		t.Fatalf("bad port forward: %#v", storedForward)
 	}
 	now := time.Now().UTC()

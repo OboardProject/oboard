@@ -277,23 +277,21 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 	return nodes, nil
 }
 
-// subscriptionRawForInbound renders one node. Most protocols expose a single
-// shared listener and go through the adapter, but Snell gives every identity
-// its own listener with its own port and PSK, so its node has to be read from
-// the port ledger instead. ok=false means this identity has no deployed
-// listener yet and the node must be skipped rather than guessed.
+// subscriptionRawForInbound renders one node. Device-bound credentials are
+// scoped by inbound, path and protocol in the deployed listener, so every
+// subscription protocol must use that same identity. Snell additionally gives
+// every identity its own listener port and reads it from the port ledger.
+// ok=false means this identity has no deployed listener yet and the node must
+// be skipped rather than guessed.
 func subscriptionRawForInbound(opts SubscriptionOptions, user model.User, inbound model.Inbound, server model.Server, adapter Adapter, pathID int64) (map[string]any, bool, error) {
+	credential := UserCredentialForRoute(user, inbound.ID, pathID, inbound.Protocol)
 	if inbound.Protocol != model.ProtocolSnell {
-		raw, err := adapter.SubscriptionNode(user, inbound, server)
+		raw, err := adapter.SubscriptionNode(credential, inbound, server)
 		if err != nil {
 			return nil, false, err
 		}
 		return raw, true, nil
 	}
-	// The kernel derives each PSK from the credential-scoped identity, so the
-	// subscription has to scope the user the same way or the two disagree for
-	// device-bound users.
-	credential := UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSnell)
 	return SnellSubscriptionNode(opts.PortLedger, credential, inbound, server, pathID)
 }
 

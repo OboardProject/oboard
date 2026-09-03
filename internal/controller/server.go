@@ -4319,7 +4319,6 @@ func (s *Server) serverTasks(w http.ResponseWriter, r *http.Request, id int64) {
 
 const (
 	agentBuildMinDiagnosticsTask   = "20260706000116"
-	agentBuildMinTrustedForward    = "20260729000000"
 	agentBuildMinSSHPathRelay      = "20260804000000"
 	agentBuildMinNetworkInterfaces = "20260804155957"
 	agentBuildMinLatencyProbe      = "20260812000000"
@@ -5202,9 +5201,6 @@ func publicProxyPathSteps(steps []model.ProxyPathStep) []model.ProxyPathStep {
 }
 
 func publicProxyPathPlan(plan model.ProxyPathPlan) model.ProxyPathPlan {
-	for i := range plan.PortForwards {
-		plan.PortForwards[i].TrustedForward = nil
-	}
 	for i := range plan.Tunnels {
 		plan.Tunnels[i].ConfigJSON = scrubManagedTunnelSecretsJSON(plan.Tunnels[i].ConfigJSON)
 	}
@@ -5455,8 +5451,6 @@ func serverPortPolicyConflictMessage(preview core.ServerPortPolicyChangePreview)
 			label = "共享链路服务"
 		case model.ProxyPathPortKindInternal:
 			label = "链路内部入口"
-		case model.ProxyPathPortKindTrustedInner:
-			label = "可信转发内层入口"
 		case model.ProxyPathPortKindTunnelSSH:
 			label = "SSH 本地转发"
 		case model.ProxyPathPortKindTunnelWG:
@@ -10429,17 +10423,6 @@ func normalizedProxyPathChainFields(cfg map[string]any) (map[string]any, error) 
 // under Controller port allocation so plan and core config agree.
 func normalizeProxyPathForwardConfig(v *model.ProxyPathStep, cfg map[string]any) error {
 	managed := map[string]any{}
-	if raw, ok := cfg["backend"]; ok {
-		backend := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
-		if backend != "" && backend != "<nil>" {
-			switch model.ForwardBackend(backend) {
-			case model.ForwardBackendAuto, model.ForwardBackendRealm, model.ForwardBackendNFT, model.ForwardBackendBuiltin:
-				managed["backend"] = backend
-			default:
-				return errors.New("端口转发后端必须是 auto、realm、nft 或 builtin")
-			}
-		}
-	}
 	if raw, ok := cfg["listen_ip"]; ok {
 		listenIP := strings.TrimSpace(fmt.Sprint(raw))
 		if listenIP != "" && listenIP != "<nil>" {
@@ -11978,9 +11961,7 @@ func normalizePortForward(v *model.PortForward) {
 	if v.Protocol == "" {
 		v.Protocol = model.ForwardProtocolTCP
 	}
-	if v.Backend == "" {
-		v.Backend = model.ForwardBackendAuto
-	}
+	v.Backend = model.ForwardBackendRealm
 	if v.ProbeMode == "" {
 		v.ProbeMode = "periodic"
 	}
@@ -11993,7 +11974,6 @@ func normalizePortForward(v *model.PortForward) {
 	if v.ConfigJSON == "" {
 		v.ConfigJSON = "{}"
 	}
-	v.TrustedForward = nil
 }
 
 func validatePortForward(v model.PortForward) error {
@@ -12029,20 +12009,11 @@ func validatePortForward(v model.PortForward) error {
 	if err := core.ValidateForwardBackend(v.Backend); err != nil {
 		return err
 	}
-	if v.Backend == model.ForwardBackendBuiltin && v.Protocol != model.ForwardProtocolTCP {
-		return errors.New("builtin forward backend currently supports tcp only")
-	}
 	if err := core.ValidateForwardProbeMode(v.ProbeMode); err != nil {
 		return err
 	}
 	if v.ProbeIntervalSeconds < 300 {
 		return errors.New("probe_interval_seconds must be >= 300")
-	}
-	if v.SampleRate < 0 || v.SampleRate > 1 {
-		return errors.New("sample_rate must be between 0 and 1")
-	}
-	if (v.ProbeMode == "sampled" || v.ProbeMode == "periodic_sampled") && v.SampleRate <= 0 {
-		return errors.New("sampled probe modes require sample_rate > 0")
 	}
 	return validJSONObject(v.ConfigJSON)
 }
@@ -12284,14 +12255,14 @@ func deploymentFail(status int, err error) error {
 
 // deployConfiguration prepares and queues apply_deployment tasks under the
 // deployment lock. selectedServerID==0 targets every server; otherwise only that
-// server. expandTrustedScope lets automatic pushes fall back to a full
+// server. expandTransparentScope lets automatic pushes fall back to a full
 // deployment when the selected server belongs to a trusted transparent
 // forwarding prefix, because those members must change together.
-func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64, expandTrustedScope bool) ([]model.AgentTask, int64, error) {
-	return s.deployConfigurationScoped(ctx, selectedServerID, expandTrustedScope, nil, nil)
+func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64, expandTransparentScope bool) ([]model.AgentTask, int64, error) {
+	return s.deployConfigurationScoped(ctx, selectedServerID, expandTransparentScope, nil, nil)
 }
 
-func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID int64, expandTrustedScope bool, allowedServerIDs, ignoredPathIDs map[int64]bool) ([]model.AgentTask, int64, error) {
+func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID int64, expandTransparentScope bool, allowedServerIDs, ignoredPathIDs map[int64]bool) ([]model.AgentTask, int64, error) {
 	// Preparation repairs stored topology, refreshes derived roles and allocates
 	// one monotonic config version. Serialize it so two concurrent applies cannot
 	// interleave those writes or queue overlapping desired state.
@@ -12333,20 +12304,20 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			return nil, 0, deploymentFail(http.StatusConflict, fmt.Errorf("服务器 %s 的 Agent 不支持 SSH 链式代理；请先更新 Agent", name))
 		}
 	}
-	trustedServers := core.TrustedForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
+	groupedServers := core.TransparentForwardServerIDs(data.ProxyPaths, data.ProxyPathSteps, in)
 	effectiveScope := selectedServerID
 	if allowedServerIDs != nil {
 		for serverID := range allowedServerIDs {
-			if !expandTrustedScope || !trustedServers[serverID] {
+			if !expandTransparentScope || !groupedServers[serverID] {
 				continue
 			}
-			for trustedServerID := range trustedServers {
-				allowedServerIDs[trustedServerID] = true
+			for groupedServerID := range groupedServers {
+				allowedServerIDs[groupedServerID] = true
 			}
 			break
 		}
 		effectiveScope = 0
-	} else if expandTrustedScope && effectiveScope != 0 && trustedServers[effectiveScope] {
+	} else if expandTransparentScope && effectiveScope != 0 && groupedServers[effectiveScope] {
 		effectiveScope = 0
 	}
 	externalEgressTargetsByServer := map[int64][]model.ExternalEgressProbeTarget{}
@@ -12388,10 +12359,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 	if err != nil {
 		return nil, 0, deploymentFail(500, err)
 	}
-	if err := validateTrustedForwardAgentBuilds(servers, trustedServers); err != nil {
-		return nil, 0, deploymentFail(http.StatusConflict, err)
-	}
-	if err := validateTrustedForwardDeploymentSelection(effectiveScope, allowedServerIDs, trustedServers); err != nil {
+	if err := validateTransparentForwardDeploymentSelection(effectiveScope, allowedServerIDs, groupedServers); err != nil {
 		return nil, 0, deploymentFail(http.StatusConflict, err)
 	}
 	forwards, err := s.store.ListPortForwards(ctx)
@@ -12588,20 +12556,20 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		}
 		prepared = append(prepared, preparedDeployment{serverID: server.ID, payload: payload})
 	}
-	// Trusted-forward members must move together. If one member is waiting for a
-	// certificate, hold the complete trusted-forward scope while still allowing
+	// Transparent-forward members must move together. If one member is waiting
+	// for a certificate, hold the complete transparent scope while still allowing
 	// unrelated servers in this reconciliation batch to proceed.
-	trustedScopeWaiting := false
+	groupedScopeWaiting := false
 	for serverID := range waitingForCertificate {
-		if trustedServers[serverID] {
-			trustedScopeWaiting = true
+		if groupedServers[serverID] {
+			groupedScopeWaiting = true
 			break
 		}
 	}
-	if trustedScopeWaiting {
+	if groupedScopeWaiting {
 		filtered := prepared[:0]
 		for _, item := range prepared {
-			if trustedServers[item.serverID] {
+			if groupedServers[item.serverID] {
 				waitingForCertificate[item.serverID] = true
 				continue
 			}
@@ -12638,39 +12606,30 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 	return tasks, version, nil
 }
 
-func validateTrustedForwardAgentBuilds(servers []model.Server, required map[int64]bool) error {
-	for _, server := range servers {
-		if required[server.ID] && !agentBuildSupportsTask(server.AgentBuild, agentBuildMinTrustedForward) {
-			return fmt.Errorf("服务器 %s 的 Agent 不支持可信透明转发；请先更新所有相关 Agent 后重试", server.Name)
-		}
-	}
-	return nil
-}
-
-func validateTrustedForwardDeploymentScope(selectedServerID int64, required map[int64]bool) error {
+func validateTransparentForwardDeploymentScope(selectedServerID int64, required map[int64]bool) error {
 	if selectedServerID != 0 && required[selectedServerID] {
-		return errors.New("可信透明转发涉及多台服务器；请执行完整部署，不能仅部署其中一台服务器")
+		return errors.New("透明转发涉及多台服务器；请执行完整部署，不能仅部署其中一台服务器")
 	}
 	return nil
 }
 
-func validateTrustedForwardDeploymentSelection(selectedServerID int64, allowed, required map[int64]bool) error {
+func validateTransparentForwardDeploymentSelection(selectedServerID int64, allowed, required map[int64]bool) error {
 	if allowed == nil {
-		return validateTrustedForwardDeploymentScope(selectedServerID, required)
+		return validateTransparentForwardDeploymentScope(selectedServerID, required)
 	}
-	selectedTrusted := false
+	selectedGrouped := false
 	for serverID := range allowed {
 		if required[serverID] {
-			selectedTrusted = true
+			selectedGrouped = true
 			break
 		}
 	}
-	if !selectedTrusted {
+	if !selectedGrouped {
 		return nil
 	}
 	for serverID := range required {
 		if !allowed[serverID] {
-			return errors.New("可信透明转发涉及多台服务器；必须同步完整成员集合")
+			return errors.New("透明转发涉及多台服务器；必须同步完整成员集合")
 		}
 	}
 	return nil
@@ -13419,11 +13378,6 @@ type generatedServerCoreConfig struct {
 	TrafficPolicies map[int64]model.TrafficRuntimePolicy
 }
 
-type trustedForwardDeploymentFootprint struct {
-	Senders   []string `json:"senders,omitempty"`
-	Receivers []string `json:"receivers,omitempty"`
-}
-
 // deploymentConfigErrorStatus separates desired state the operator can correct
 // from genuine server faults, so a listener conflict does not surface as a 500.
 func deploymentConfigErrorStatus(err error) int {
@@ -13644,7 +13598,10 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 		return err
 	}
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
-	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
+	// Resolving derived forwards seeds the ledger with the ports the generated
+	// listeners already own, so the config below reuses them instead of picking
+	// new ones.
+	_, err = core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
 	if err != nil {
 		return err
 	}
@@ -13674,13 +13631,6 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 		if unchanged {
 			continue
 		}
-		forwardPlan, err := core.BuildPortForwardPlan(0, server, data.Servers, derivedForwards)
-		if err != nil {
-			return err
-		}
-		if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
-			return err
-		}
 		payload := model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, PrunedUserID: userID, Assets: generated.Assets}
 		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: payload})
 	}
@@ -13698,101 +13648,6 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 		s.applyCoreConfigCreatedTotal.Add(1)
 	}
 	return nil
-}
-
-func (s *Server) requireTrustedForwardDeploymentBaseline(ctx context.Context, server model.Server, config string, forwardPlan model.PortForwardPlan) error {
-	expected, required, err := trustedForwardFootprint(config, forwardPlan)
-	if err != nil || !required {
-		return err
-	}
-	last, err := s.store.LastSuccessfulTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("服务器 %s 的可信透明转发尚未完成首次完整部署；请先执行完整部署", server.Name)
-		}
-		return err
-	}
-	var payload model.DeploymentTaskPayload
-	if err := json.Unmarshal([]byte(last.PayloadJSON), &payload); err != nil {
-		return fmt.Errorf("服务器 %s 的可信透明转发缺少有效的完整部署基线；请重新执行完整部署", server.Name)
-	}
-	actual, _, err := trustedForwardFootprint(payload.Config.Config, payload.PortForwards)
-	if err != nil || actual != expected {
-		return fmt.Errorf("服务器 %s 的可信透明转发已变更；请先执行完整部署再刷新核心配置", server.Name)
-	}
-	return nil
-}
-
-func trustedForwardFootprint(config string, forwardPlan model.PortForwardPlan) (string, bool, error) {
-	footprint := trustedForwardDeploymentFootprint{}
-	for _, rule := range forwardPlan.Rules {
-		if rule.TrustedForward == nil {
-			continue
-		}
-		signature, err := json.Marshal(struct {
-			RuleID        int64                       `json:"rule_id"`
-			ListenIP      string                      `json:"listen_ip"`
-			ListenPort    int                         `json:"listen_port"`
-			TargetAddress string                      `json:"target_address"`
-			TargetPort    int                         `json:"target_port"`
-			Protocol      model.ForwardProtocol       `json:"protocol"`
-			Sender        *model.TrustedForwardSender `json:"sender"`
-		}{rule.ID, rule.ListenIP, rule.ListenPort, rule.TargetAddress, rule.TargetPort, rule.Protocol, rule.TrustedForward})
-		if err != nil {
-			return "", false, err
-		}
-		footprint.Senders = append(footprint.Senders, string(signature))
-	}
-	if strings.TrimSpace(config) != "" {
-		var runtime struct {
-			OBoard struct {
-				TrustedForward struct {
-					Receivers []struct {
-						Version             int    `json:"version"`
-						ID                  string `json:"id"`
-						PathID              int64  `json:"path_id"`
-						InboundTag          string `json:"inbound_tag"`
-						Network             string `json:"network"`
-						Listen              string `json:"listen"`
-						ListenPort          int    `json:"listen_port"`
-						Target              string `json:"target"`
-						TargetPort          int    `json:"target_port"`
-						Key                 string `json:"key"`
-						MaxClockSkewSeconds int    `json:"max_clock_skew_seconds"`
-					} `json:"receivers"`
-				} `json:"trusted_forward"`
-			} `json:"_oboard"`
-		}
-		if err := json.Unmarshal([]byte(config), &runtime); err != nil {
-			return "", false, err
-		}
-		for _, receiver := range runtime.OBoard.TrustedForward.Receivers {
-			// path_id identifies one current branch for diagnostics, but a shared
-			// transparent receiver can outlive that branch. It does not change the
-			// listener, framing, key, or target and therefore is not topology.
-			signature, err := json.Marshal(struct {
-				Version             int    `json:"version"`
-				ID                  string `json:"id"`
-				InboundTag          string `json:"inbound_tag"`
-				Network             string `json:"network"`
-				Listen              string `json:"listen"`
-				ListenPort          int    `json:"listen_port"`
-				Target              string `json:"target"`
-				TargetPort          int    `json:"target_port"`
-				Key                 string `json:"key"`
-				MaxClockSkewSeconds int    `json:"max_clock_skew_seconds"`
-			}{receiver.Version, receiver.ID, receiver.InboundTag, receiver.Network, receiver.Listen, receiver.ListenPort, receiver.Target, receiver.TargetPort, receiver.Key, receiver.MaxClockSkewSeconds})
-			if err != nil {
-				return "", false, err
-			}
-			footprint.Receivers = append(footprint.Receivers, string(signature))
-		}
-	}
-	sort.Strings(footprint.Senders)
-	sort.Strings(footprint.Receivers)
-	required := len(footprint.Senders) > 0 || len(footprint.Receivers) > 0
-	encoded, err := json.Marshal(footprint)
-	return string(encoded), required, err
 }
 
 func findWARPProfileForServer(items []model.WARPProfile, serverID int64) (model.WARPProfile, bool) {
@@ -15136,7 +14991,10 @@ func (s *Server) queueDNSBenchmarkCoreApply(ctx context.Context, server model.Se
 		return err
 	}
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
-	derivedForwards, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
+	// Resolving derived forwards seeds the ledger with the ports the generated
+	// listeners already own, so the config below reuses them instead of picking
+	// new ones.
+	_, err = core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger)
 	if err != nil {
 		return err
 	}
@@ -15153,13 +15011,6 @@ func (s *Server) queueDNSBenchmarkCoreApply(ctx context.Context, server model.Se
 	}
 	if unchanged {
 		return s.store.UpdateDNSBenchmarkRunApply(ctx, requestID, nil, "applied", "")
-	}
-	forwardPlan, err := core.BuildPortForwardPlan(0, server, data.Servers, derivedForwards)
-	if err != nil {
-		return err
-	}
-	if err := s.requireTrustedForwardDeploymentBaseline(ctx, server, generated.Config, forwardPlan); err != nil {
-		return err
 	}
 	version, err := s.store.NextConfigVersion(ctx)
 	if err != nil {

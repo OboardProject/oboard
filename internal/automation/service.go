@@ -248,7 +248,14 @@ func (s *Service) Validate(ctx context.Context, principal application.Principal,
 	if err := s.store.UpdateAutomationChangeset(ctx, item); err != nil {
 		return nil, err
 	}
-	if item.AutoApply && item.Status == model.ChangesetApproved {
+	// A pre-approval policy is itself the decision, so validation executes as
+	// soon as it grants approval regardless of AutoApply. Honouring AutoApply
+	// here stranded plans in `approved`: the policy had already skipped the
+	// approval card, Approve rejects anything that is not `awaiting_approval`,
+	// and nothing else consumes approved changesets, so the workflow reported
+	// `queued` forever with an empty next_action. AutoApply now only records
+	// the preference the submitter expressed.
+	if item.Status == model.ChangesetApproved {
 		return s.Apply(ctx, principal, item.ID)
 	}
 	return item, nil
@@ -784,6 +791,15 @@ func workflowNextAction(changeset *model.AutomationChangeset, externalAction boo
 	}
 	if changeset.Status == model.ChangesetAwaitingApproval {
 		return mustJSON(map[string]any{"type": "open_approval", "changeset_id": changeset.ID})
+	}
+	// Validation applies a pre-approved plan itself, so a changeset only rests
+	// in `approved` when that apply could not run - a concurrent claim, or a
+	// policy error raised between approval and execution. Naming the action
+	// keeps the workflow recoverable instead of reporting `queued` against an
+	// empty next_action, which reads as "a worker will pick this up" when no
+	// such worker exists.
+	if changeset.Status == model.ChangesetApproved {
+		return mustJSON(map[string]any{"type": "apply_changeset", "changeset_id": changeset.ID})
 	}
 	return json.RawMessage(`{}`)
 }

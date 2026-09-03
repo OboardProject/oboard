@@ -1174,30 +1174,6 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 					continue
 				}
 				plan.PortForwards = append(plan.PortForwards, f)
-				if path.Enabled && step.ProcessingRole {
-					processingInbound := root
-					processingInbound.ID = plannedInbound.ID
-					processingInbound.ServerID = targetServerID
-					processingInbound.Name = fmt.Sprintf("%s / 处理加解密", firstNonEmpty(path.Name, root.Name))
-					group := transparentGroups[path.ID]
-					resourceKey := fmt.Sprintf("trusted-inner:path:%d:step:%d", path.ID, step.Position)
-					shared := false
-					if group != nil {
-						processingInbound.Name = fmt.Sprintf("%s / 共享处理加解密", firstNonEmpty(root.Name, fmt.Sprintf("入口 %d", root.ID)))
-						processingInbound = proxyPathSharedTrustedInnerInbound(group.InboundID, group.PrefixLength, serverByID[targetServerID], processingInbound, inboundByID, ledger)
-						resourceKey = fmt.Sprintf("trusted-inner:inbound:%d:step:%d", group.InboundID, group.PrefixLength)
-						shared = true
-					} else {
-						processingInbound = proxyPathTrustedInnerInbound(path, step, serverByID[targetServerID], processingInbound, inboundByID, ledger)
-					}
-					// Keep the loopback listener in the projection's occupancy set. The
-					// outer transparent listener keeps its generated ID, so reserve a
-					// disjoint internal ID for collision checks performed by later paths.
-					processingReservation := processingInbound
-					processingReservation.ID = processingInbound.ID - (int64(1) << 44)
-					inboundByID[processingReservation.ID] = processingReservation
-					plan.RuntimeNodes = append(plan.RuntimeNodes, proxyPathRuntimeNode(resourceKey, step.ID, "trusted_processing_inbound", processingInbound, "", shared))
-				}
 				sourceListenPort = plannedInbound.Port
 			case model.ProxyPathTransportTunnel:
 				if !targetOK {
@@ -1230,33 +1206,6 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 			}
 		}
 		_ = processingCount // processing_role is an internal marker for a transparent prefix.
-		if path.Enabled && processingCount == 1 && len(plan.PortForwards) > 0 {
-			for _, step := range pathSteps {
-				if !step.ProcessingRole {
-					continue
-				}
-				processingServerID, _, ok := proxyPathStepTargetServer(step, inboundByID)
-				entryServer, entryOK := serverByID[root.ServerID]
-				processingServer, processingOK := serverByID[processingServerID]
-				if !ok || !entryOK || !processingOK {
-					return nil, nil, fmt.Errorf("代理路径 %s 无法生成可信转发凭据", path.Name)
-				}
-				group := transparentGroups[path.ID]
-				receiverID := proxyPathTrustedForwardReceiverID(path.ID, step.ID)
-				key := proxyPathTrustedForwardKey(entryServer, processingServer, path.ID, step.ID)
-				if group != nil {
-					receiverID = proxyPathSharedTrustedForwardReceiverID(group.InboundID, group.PrefixLength)
-					key = proxyPathSharedTrustedForwardKey(entryServer, processingServer, group.InboundID, group.PrefixLength)
-				}
-				plan.PortForwards[0].TrustedForward = &model.TrustedForwardSender{
-					Version:             1,
-					ReceiverID:          receiverID,
-					Key:                 key,
-					MaxClockSkewSeconds: 120,
-				}
-				break
-			}
-		}
 		out = append(out, plan)
 	}
 	finalizeProxyPathRuntimeNodeReferences(out)
@@ -1743,7 +1692,12 @@ func IsProxyPathAccountingLocation(serverID, inboundID, pathID int64, paths []mo
 	return ok && accountingServerID == serverID
 }
 
-func TrustedForwardServerIDs(paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) map[int64]bool {
+// TransparentForwardServerIDs returns the servers that make up a transparent
+// forward prefix ending in a processing node. The entry forward and the
+// processing listener agree on one generated port, so those servers must
+// deploy as a group; converging only part of the group leaves the prefix
+// pointing at a port the processing server has not opened.
+func TransparentForwardServerIDs(paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound) map[int64]bool {
 	inboundByID := make(map[int64]model.Inbound, len(inbounds))
 	for _, inbound := range inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -1759,7 +1713,7 @@ func TrustedForwardServerIDs(paths []model.ProxyPath, steps []model.ProxyPathSte
 			continue
 		}
 		ordered := orderedProxyPathSteps(stepsByPath[path.ID])
-		usesTrustedForward := false
+		usesProcessing := false
 		pathServers := map[int64]bool{root.ServerID: true}
 		for _, step := range ordered {
 			mode := step.TransportMode
@@ -1777,11 +1731,11 @@ func TrustedForwardServerIDs(paths []model.ProxyPath, steps []model.ProxyPathSte
 				}
 			}
 			if step.ProcessingRole {
-				usesTrustedForward = true
+				usesProcessing = true
 				break
 			}
 		}
-		if usesTrustedForward {
+		if usesProcessing {
 			for id := range pathServers {
 				required[id] = true
 			}
@@ -2095,7 +2049,7 @@ func DerivedPortForwardsFromProxyPathsWithLedger(paths []model.ProxyPath, steps 
 		}
 		for _, forward := range plan.PortForwards {
 			if previous, ok := seen[forward.ID]; ok {
-				if previous.SourceServerID != forward.SourceServerID || previous.TargetServerID != forward.TargetServerID || previous.ListenIP != forward.ListenIP || previous.ListenPort != forward.ListenPort || previous.TargetAddress != forward.TargetAddress || previous.TargetPort != forward.TargetPort || previous.Protocol != forward.Protocol || previous.Backend != forward.Backend || !sameTrustedForwardSender(previous.TrustedForward, forward.TrustedForward) {
+				if previous.SourceServerID != forward.SourceServerID || previous.TargetServerID != forward.TargetServerID || previous.ListenIP != forward.ListenIP || previous.ListenPort != forward.ListenPort || previous.TargetAddress != forward.TargetAddress || previous.TargetPort != forward.TargetPort || previous.Protocol != forward.Protocol || previous.Backend != forward.Backend {
 					return nil, fmt.Errorf("共享透明转发资源 %d 的投影不一致", forward.ID)
 				}
 				continue
@@ -2105,13 +2059,6 @@ func DerivedPortForwardsFromProxyPathsWithLedger(paths []model.ProxyPath, steps 
 		}
 	}
 	return out, nil
-}
-
-func sameTrustedForwardSender(left, right *model.TrustedForwardSender) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	return *left == *right
 }
 
 func DerivedTunnelsFromProxyPaths(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound) ([]model.Tunnel, error) {
@@ -2169,10 +2116,7 @@ func proxyPathManagedPortForward(path model.ProxyPath, step model.ProxyPathStep,
 	if !ok {
 		return model.PortForward{}, fmt.Errorf("路径 %s 第 %d 跳源服务器不存在", path.Name, step.Position)
 	}
-	backend := model.ForwardBackendAuto
-	if v := stringValue(parseStepConfig(step.ConfigJSON), "backend", ""); v != "" {
-		backend = model.ForwardBackend(v)
-	}
+	backend := model.ForwardBackendRealm
 	protocol := transparentForwardProtocol(root)
 	targetAddress, err := proxyPathReachableServerAddress(source, target)
 	if err != nil {
@@ -2464,12 +2408,12 @@ func serverPortPolicyRevision(server model.Server) int64 {
 }
 
 // PortAllocationPoolForKind classifies legacy allocation rows whose pool column
-// predates the pool metadata. Loopback-only listeners (trusted forward inner
-// receivers, SSH -L forwards) belong to the internal pool no matter where an old
-// allocator happened to pick their port.
+// predates the pool metadata. Loopback-only listeners (SSH -L forwards) belong
+// to the internal pool no matter where an old allocator happened to pick their
+// port.
 func PortAllocationPoolForKind(kind string) string {
 	switch kind {
-	case model.ProxyPathPortKindTrustedInner, model.ProxyPathPortKindTunnelSSH:
+	case model.ProxyPathPortKindTunnelSSH:
 		return model.PortPoolInternal
 	default:
 		return model.PortPoolPublic

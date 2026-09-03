@@ -160,7 +160,7 @@ func TestEnrollmentQueuesDeploymentForExistingTopology(t *testing.T) {
 	}
 }
 
-func TestRecoveryOfTrustedForwardMemberExpandsToFullDeployment(t *testing.T) {
+func TestRecoveryOfTransparentForwardMemberExpandsToFullDeployment(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -169,8 +169,8 @@ func TestRecoveryOfTrustedForwardMemberExpandsToFullDeployment(t *testing.T) {
 	ctx := context.Background()
 	srv := newTestServer(db, "test-secret", "")
 
-	root := &model.Server{Name: "root", AgentID: "agent-root", AgentTokenHash: security.HashSecret("token-root"), AgentBuild: agentBuildMinTrustedForward, EntryAddress: "203.0.113.1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOffline}
-	processing := &model.Server{Name: "processing", AgentID: "agent-processing", AgentTokenHash: security.HashSecret("token-processing"), AgentBuild: agentBuildMinTrustedForward, EntryAddress: "203.0.113.2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20010, Status: model.ServerOnline}
+	root := &model.Server{Name: "root", AgentID: "agent-root", AgentTokenHash: security.HashSecret("token-root"), AgentBuild: agentBuildMinSSHPathRelay, EntryAddress: "203.0.113.1", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOffline}
+	processing := &model.Server{Name: "processing", AgentID: "agent-processing", AgentTokenHash: security.HashSecret("token-processing"), AgentBuild: agentBuildMinSSHPathRelay, EntryAddress: "203.0.113.2", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20010, Status: model.ServerOnline}
 	for _, server := range []*model.Server{root, processing} {
 		if err := db.CreateServer(ctx, server); err != nil {
 			t.Fatal(err)

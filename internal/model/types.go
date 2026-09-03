@@ -1591,8 +1591,6 @@ const (
 	ProxyPathPortKindChainService = "chain_service"
 	// ScopeKey is "<pathID>:<position>".
 	ProxyPathPortKindInternal = "internal_inbound"
-	// ScopeKey is "<pathID>:<position>" for the loopback-only decrypted protocol listener.
-	ProxyPathPortKindTrustedInner = "trusted_forward_inner"
 	// ScopeKey is the derived tunnel ID; the loopback listener lives on the source.
 	ProxyPathPortKindTunnelSSH = "tunnel_ssh_loopback"
 	// ScopeKey is the derived tunnel ID; the UDP listener lives on the target.
@@ -1878,10 +1876,7 @@ type MTUDetectionResult struct {
 type ForwardBackend string
 
 const (
-	ForwardBackendAuto    ForwardBackend = "auto"
-	ForwardBackendRealm   ForwardBackend = "realm"
-	ForwardBackendNFT     ForwardBackend = "nft"
-	ForwardBackendBuiltin ForwardBackend = "builtin"
+	ForwardBackendRealm ForwardBackend = "realm"
 )
 
 type ForwardProtocol string
@@ -1901,24 +1896,15 @@ type PortForward struct {
 	ListenPort           int                   `json:"listen_port"`
 	TargetAddress        string                `json:"target_address"`
 	TargetPort           int                   `json:"target_port"`
-	Protocol             ForwardProtocol       `json:"protocol"`
-	Backend              ForwardBackend        `json:"backend"`
-	ProbeMode            string                `json:"probe_mode"`
-	ProbeIntervalSeconds int                   `json:"probe_interval_seconds"`
-	SampleRate           float64               `json:"sample_rate"`
-	Priority             int                   `json:"priority"`
-	ConfigJSON           string                `json:"config_json"`
-	TrustedForward       *TrustedForwardSender `json:"trusted_forward,omitempty"`
-	Enabled              bool                  `json:"enabled"`
-	CreatedAt            time.Time             `json:"created_at"`
-	UpdatedAt            time.Time             `json:"updated_at"`
-}
-
-type TrustedForwardSender struct {
-	Version             int    `json:"version"`
-	ReceiverID          string `json:"receiver_id"`
-	Key                 string `json:"key"`
-	MaxClockSkewSeconds int    `json:"max_clock_skew_seconds"`
+	Protocol             ForwardProtocol `json:"protocol"`
+	Backend              ForwardBackend  `json:"backend"`
+	ProbeMode            string          `json:"probe_mode"`
+	ProbeIntervalSeconds int             `json:"probe_interval_seconds"`
+	Priority             int             `json:"priority"`
+	ConfigJSON           string          `json:"config_json"`
+	Enabled              bool            `json:"enabled"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 type TunnelType string

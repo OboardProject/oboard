@@ -825,7 +825,7 @@ func automationDNSRecordView(record model.DNSRecord, zoneName string) map[string
 var portForwardAutomationFields = map[string]bool{
 	"name": true, "source_server_id": true, "target_server_id": true, "listen_ip": true,
 	"listen_port": true, "target_address": true, "target_port": true, "protocol": true,
-	"backend": true, "probe_mode": true, "probe_interval_seconds": true, "sample_rate": true,
+	"backend": true, "probe_mode": true, "probe_interval_seconds": true,
 	"priority": true, "config_json": true, "enabled": true,
 }
 
@@ -974,9 +974,6 @@ func mergePortForwardPatch(current model.PortForward, patch model.PortForward, f
 	if _, ok := fields["probe_interval_seconds"]; ok {
 		merged.ProbeIntervalSeconds = patch.ProbeIntervalSeconds
 	}
-	if _, ok := fields["sample_rate"]; ok {
-		merged.SampleRate = patch.SampleRate
-	}
 	if _, ok := fields["priority"]; ok {
 		merged.Priority = patch.Priority
 	}
@@ -1053,7 +1050,7 @@ func automationPortForwardResult(forward model.PortForward, changed []string) (a
 		"listen_ip": forward.ListenIP, "listen_port": forward.ListenPort,
 		"target_address": forward.TargetAddress, "target_port": forward.TargetPort,
 		"protocol": forward.Protocol, "backend": forward.Backend, "probe_mode": forward.ProbeMode,
-		"probe_interval_seconds": forward.ProbeIntervalSeconds, "sample_rate": forward.SampleRate,
+		"probe_interval_seconds": forward.ProbeIntervalSeconds,
 		"priority": forward.Priority, "enabled": forward.Enabled,
 		"created_at": forward.CreatedAt, "updated_at": forward.UpdatedAt,
 	}

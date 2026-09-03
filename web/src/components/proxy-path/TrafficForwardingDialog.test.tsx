@@ -84,7 +84,7 @@ describe('TrafficForwardingDialog', () => {
       target_server_id: 0,
       target_address: '203.0.113.80',
       protocol: 'tcp',
-      backend: 'auto',
+      backend: 'realm',
       probe_mode: 'periodic',
       probe_interval_seconds: 300,
       config_json: '{}',
@@ -121,10 +121,9 @@ describe('TrafficForwardingDialog', () => {
       target_address: '',
       target_port: 443,
       protocol: 'tcp',
-      backend: 'auto',
+      backend: 'realm',
       probe_mode: 'periodic',
       probe_interval_seconds: 300,
-      sample_rate: 0,
       priority: 100,
       config_json: '{}',
       enabled: true,
@@ -192,15 +191,15 @@ describe('traffic forwarding draft helpers', () => {
     expect(validateTrafficForwardDraft(draft)).toContain('目标地址')
   })
 
-  it('normalizes the full payload and rejects invalid backend/probe combinations', () => {
+  it('normalizes the full payload and validates the remaining fields', () => {
     const base = emptyTrafficForwardDraft(servers, forwards, 1)
     expect(trafficForwardPayload({ ...base, name: '  转发  ', target_address: ' edge.example.com ', config_json: '  {}  ' })).toEqual(expect.objectContaining({
       name: '转发',
       target_address: 'edge.example.com',
       config_json: '{}',
     }))
-    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25', protocol: 'udp', backend: 'builtin' })).toContain('只支持 TCP')
-    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25', probe_mode: 'sampled', sample_rate: 0 })).toContain('大于 0')
+    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25', probe_interval_seconds: 60 })).toContain('300 秒')
+    expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25', protocol: 'udp' })).toBe('')
     expect(validateTrafficForwardDraft({ ...base, target_server_id: 2 })).toBe('')
     expect(validateTrafficForwardDraft({ ...base, target_address: '198.51.100.25' })).toBe('')
   })
@@ -240,10 +239,9 @@ function forward(patch: Partial<TrafficForward>): TrafficForward {
     target_address: '',
     target_port: 443,
     protocol: 'tcp',
-    backend: 'auto',
+    backend: 'realm',
     probe_mode: 'periodic',
     probe_interval_seconds: 300,
-    sample_rate: 0,
     priority: 100,
     config_json: '{}',
     enabled: true,

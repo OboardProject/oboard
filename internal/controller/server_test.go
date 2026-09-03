@@ -2321,7 +2321,7 @@ func TestProxyPathServerOnlyStepsPlanAndValidation(t *testing.T) {
 		t.Fatalf("bad proxy path plan: %#v", plan)
 	}
 	runtimeNodes := plan["plan"].(map[string]any)["runtime_nodes"].([]any)
-	if len(runtimeNodes) != 3 {
+	if len(runtimeNodes) != 2 {
 		t.Fatalf("bad proxy path runtime nodes: %#v", plan)
 	}
 	allowedRuntimeFields := map[string]bool{
@@ -3755,98 +3755,30 @@ func TestProxyPathStepDeletePreservesRootRoutingRulesAsDirectPath(t *testing.T) 
 	request(t, h, http.MethodPost, "/api/v1/ui/deployments/apply", token, map[string]any{}, http.StatusAccepted)
 }
 
-func TestTrustedForwardAgentBuildGateAndSecretScrubbing(t *testing.T) {
-	servers := []model.Server{
-		{ID: 1, Name: "entry", AgentBuild: agentBuildMinTrustedForward},
-		{ID: 2, Name: "processor", AgentBuild: "20260728000000"},
+func TestTransparentForwardDeploymentScopeAndSecretScrubbing(t *testing.T) {
+	if err := validateTransparentForwardDeploymentScope(1, map[int64]bool{1: true, 2: true}); err == nil {
+		t.Fatal("single-server deployment was allowed for a transparent prefix")
 	}
-	if err := validateTrustedForwardAgentBuilds(servers, map[int64]bool{1: true, 2: true}); err == nil {
-		t.Fatal("old processing Agent passed trusted-forward build gate")
-	}
-	servers[1].AgentBuild = agentBuildMinTrustedForward
-	if err := validateTrustedForwardAgentBuilds(servers, map[int64]bool{1: true, 2: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateTrustedForwardDeploymentScope(1, map[int64]bool{1: true, 2: true}); err == nil {
-		t.Fatal("single-server deployment was allowed for a trusted transparent prefix")
-	}
-	if err := validateTrustedForwardDeploymentScope(3, map[int64]bool{1: true, 2: true}); err != nil {
+	if err := validateTransparentForwardDeploymentScope(3, map[int64]bool{1: true, 2: true}); err != nil {
 		t.Fatalf("unrelated single-server deployment was rejected: %v", err)
 	}
-	if err := validateTrustedForwardDeploymentScope(0, map[int64]bool{1: true, 2: true}); err != nil {
+	if err := validateTransparentForwardDeploymentScope(0, map[int64]bool{1: true, 2: true}); err != nil {
 		t.Fatalf("full deployment was rejected: %v", err)
 	}
-	if err := validateTrustedForwardDeploymentSelection(0, map[int64]bool{1: true}, map[int64]bool{1: true, 2: true}); err == nil {
-		t.Fatal("partial trusted-forward member selection was allowed")
+	if err := validateTransparentForwardDeploymentSelection(0, map[int64]bool{1: true}, map[int64]bool{1: true, 2: true}); err == nil {
+		t.Fatal("partial transparent member selection was allowed")
 	}
-	if err := validateTrustedForwardDeploymentSelection(0, map[int64]bool{1: true, 2: true}, map[int64]bool{1: true, 2: true}); err != nil {
-		t.Fatalf("complete trusted-forward member selection was rejected: %v", err)
+	if err := validateTransparentForwardDeploymentSelection(0, map[int64]bool{1: true, 2: true}, map[int64]bool{1: true, 2: true}); err != nil {
+		t.Fatalf("complete transparent member selection was rejected: %v", err)
 	}
-	if err := validateTrustedForwardDeploymentSelection(0, map[int64]bool{3: true}, map[int64]bool{1: true, 2: true}); err != nil {
+	if err := validateTransparentForwardDeploymentSelection(0, map[int64]bool{3: true}, map[int64]bool{1: true, 2: true}); err != nil {
 		t.Fatalf("unrelated isolated server was rejected: %v", err)
 	}
 
-	raw := `{"port_forwards":{"rules":[{"trusted_forward":{"version":1,"receiver_id":"one","key":"sender-secret","max_clock_skew_seconds":120}}]},"config":"{\"_oboard\":{\"trusted_forward\":{\"receivers\":[{\"version\":1,\"id\":\"one\",\"target_port\":1234,\"key\":\"receiver-secret\",\"max_clock_skew_seconds\":120}]}}}"}`
-	scrubbed := scrubManagedTunnelSecretsJSON(raw)
-	if strings.Contains(scrubbed, "sender-secret") || strings.Contains(scrubbed, "receiver-secret") || strings.Count(scrubbed, "redacted") < 2 {
-		t.Fatalf("trusted-forward secrets were not scrubbed: %s", scrubbed)
-	}
 	sshPayload := `{"ssh_inbounds":{"inbounds":[{"users":[{"user_id":7,"username":"oboard-7","password":"proxy-secret","enabled":true}]}]}}`
 	sshScrubbed := scrubManagedTunnelSecretsJSON(sshPayload)
 	if strings.Contains(sshScrubbed, "proxy-secret") || !strings.Contains(sshScrubbed, "redacted") {
 		t.Fatalf("SSH inbound password was not scrubbed: %s", sshScrubbed)
-	}
-}
-
-func TestTrustedForwardCoreRefreshRequiresMatchingFullDeployment(t *testing.T) {
-	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	ctx := context.Background()
-	server := &model.Server{Name: "entry", AgentID: "agent-1", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
-	if err := db.CreateServer(ctx, server); err != nil {
-		t.Fatal(err)
-	}
-	sender := &model.TrustedForwardSender{Version: 1, ReceiverID: "path-1", Key: "0123456789012345678901234567890123456789012", MaxClockSkewSeconds: 120}
-	plan := model.PortForwardPlan{Rules: []model.PortForward{{ID: -1, ListenIP: "0.0.0.0", ListenPort: 443, TargetAddress: "203.0.113.2", TargetPort: 31000, Protocol: model.ForwardProtocolTCP, TrustedForward: sender}}}
-	srv := newTestServer(db, "test-secret", "")
-	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, plan); err == nil {
-		t.Fatal("trusted core refresh passed without a full deployment baseline")
-	}
-	payload, err := json.Marshal(model.DeploymentTaskPayload{Config: model.ApplyCoreConfigTaskPayload{Config: `{}`}, PortForwards: plan})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payload), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: 1, Nonce: "trusted-baseline"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, plan); err != nil {
-		t.Fatal(err)
-	}
-	changed := plan
-	changed.Rules = append([]model.PortForward(nil), plan.Rules...)
-	changed.Rules[0].TrustedForward = &model.TrustedForwardSender{Version: 1, ReceiverID: "path-2", Key: sender.Key, MaxClockSkewSeconds: 120}
-	if err := srv.requireTrustedForwardDeploymentBaseline(ctx, *server, `{}`, changed); err == nil {
-		t.Fatal("trusted core refresh passed with a stale full deployment baseline")
-	}
-}
-
-func TestTrustedForwardFootprintIgnoresSharedReceiverOwnerPath(t *testing.T) {
-	config := func(pathID int64) string {
-		return fmt.Sprintf(`{"_oboard":{"trusted_forward":{"receivers":[{"version":1,"id":"inbound-17-transparent-step-1","path_id":%d,"inbound_tag":"oboard-inbound-17-transparent-step-1-in","network":"tcp","listen":"0.0.0.0","listen_port":31050,"target":"127.0.0.1","target_port":31051,"key":"receiver-key","max_clock_skew_seconds":120}]}}}`, pathID)
-	}
-	first, required, err := trustedForwardFootprint(config(29), model.PortForwardPlan{})
-	if err != nil || !required {
-		t.Fatalf("first shared receiver footprint = %q, required=%v, err=%v", first, required, err)
-	}
-	second, required, err := trustedForwardFootprint(config(30), model.PortForwardPlan{})
-	if err != nil || !required {
-		t.Fatalf("second shared receiver footprint = %q, required=%v, err=%v", second, required, err)
-	}
-	if first != second {
-		t.Fatalf("shared receiver owner path changed topology footprint: first=%s second=%s", first, second)
 	}
 }
 

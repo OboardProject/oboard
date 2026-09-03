@@ -355,10 +355,10 @@ type ServerDNSPolicy = { server_id: number; encrypted_list_id: number; bootstrap
 type DNSBenchmarkItem = { tag: string; latency_ms: number; error?: string }
 type DNSBenchmarkGroup = { items: DNSBenchmarkItem[] | null; best_tags: string[] | null }
 type DNSBenchmarkResult = { id: number; report_id: string; request_id?: string; server_id: number; policy_revision: number; encrypted_list_id: number; encrypted_list_revision: number; bootstrap_list_id: number; bootstrap_list_revision: number; encrypted: DNSBenchmarkGroup; bootstrap: DNSBenchmarkGroup; status: string; error: string; created_at: string }
-type ForwardBackend = 'auto' | 'realm' | 'nft' | 'builtin'
+type ForwardBackend = 'realm'
 type ForwardProtocol = 'tcp' | 'udp' | 'tcp_udp'
-type ProbeMode = 'never' | 'apply' | 'periodic' | 'sampled' | 'periodic_sampled'
-type PortForward = { id: number; name: string; source_server_id: number; target_server_id?: number; listen_ip: string; listen_port: number; target_address: string; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; probe_mode: ProbeMode; probe_interval_seconds: number; sample_rate: number; priority: number; config_json: string; enabled: boolean }
+type ProbeMode = 'never' | 'apply' | 'periodic'
+type PortForward = { id: number; name: string; source_server_id: number; target_server_id?: number; listen_ip: string; listen_port: number; target_address: string; target_port: number; protocol: ForwardProtocol; backend: ForwardBackend; probe_mode: ProbeMode; probe_interval_seconds: number; priority: number; config_json: string; enabled: boolean }
 type InboundProbeResult = { id: number; inbound_id: number; server_id: number; config_version: number; mode: string; transport: string; endpoint: string; available: boolean; confirmed: boolean; latency_ms: number; min_latency_ms: number; p95_latency_ms: number; jitter_ms: number; sample_count: number; success_count: number; error: string; result_json: string; created_at: string }
 type PortForwardProbeResult = { id: number; port_forward_id: number; server_id: number; mode: string; available: boolean; latency_ms: number; sample_count: number; error: string; result_json: string; created_at: string }
 type TunnelType = 'wireguard' | 'ssh'
@@ -462,8 +462,7 @@ const protocols: Protocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru',
 const proxyProtocols: Exclude<Protocol, 'ssh'>[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks']
 const externalProtocols: ExternalProtocol[] = ['vless', 'hy2', 'anytls', 'shadowsocks', 'mieru', 'snell', 'socks']
 const forwardProtocols: ForwardProtocol[] = ['tcp', 'udp', 'tcp_udp']
-const forwardBackends: ForwardBackend[] = ['auto', 'realm', 'nft', 'builtin']
-const probeModes: ProbeMode[] = ['never', 'apply', 'periodic', 'sampled', 'periodic_sampled']
+const probeModes: ProbeMode[] = ['never', 'apply', 'periodic']
 const tunnelTypes: TunnelType[] = ['wireguard', 'ssh']
 const proxyPathChainMethods = [
   { value: '2022-blake3-aes-128-gcm', label: 'SS 2022-128' },
@@ -1620,7 +1619,7 @@ const fieldLabels: Record<string, string> = {
   pending_tasks: '等待任务', running_tasks: '执行中任务', failed_tasks: '失败任务', last_config_version: '最新配置版本',
   final: '最终策略', transport: '传输', preset: '预设', address: '地址', encrypted: '加密解析', bootstrap: '基础解析', strategy: 'IP 类型', auto_test: '自动检查', test_interval_seconds: '检查间隔', last_egress_ip: '上次出口 IP',
   encrypted_list: '加密解析服务', bootstrap_list: '基础解析服务', encrypted_selected: '加密解析结果', bootstrap_selected: '基础解析结果',
-  backend: '后端', probe_mode: '探测模式', probe_interval_seconds: '探测间隔秒', sample_rate: '采样率',
+  backend: '后端', probe_mode: '探测模式', probe_interval_seconds: '探测间隔秒',
   local_address: '本地地址', peer_address: '对端地址', interface_name: '网卡', current_mtu: '当前 MTU', path_mtu: '路径 MTU', recommended_mtu: '建议 MTU', applied_mtu: '已应用 MTU', confidence: '可信度', error: '错误',
   format: '格式', group_name: '分组名', description: '描述', subscription_format: '订阅格式', subscription_url: '订阅链接', outbound_tag: '出口标签', family_split_template_id: '双栈模板', family_dns_strategy: '域名家族优先级',
   created_at: '创建时间', updated_at: '更新时间', completed_at: '完成时间', last_success_at: '最近成功时间', last_attempt_at: '最近检查时间', config_version: '配置版本', task_id: '任务 ID', payload_json: '任务内容 JSON', nonce: '随机数', result: '结果',
@@ -16812,7 +16811,6 @@ function runtimeNodeKindLabel(kind: string) {
     shared_chain_inbound: '共享链式入站',
     path_internal_inbound: '路径内部入站',
     shared_transparent_inbound: '透明转发接收入口',
-    trusted_processing_inbound: '可信转发处理入口',
   }
   return labels[kind] || '内部节点'
 }
@@ -20254,7 +20252,7 @@ function MTU({ data, client, load, notify }: any) {
 
 function PortForwards({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
-	const [f, setF] = useState({ name: 'forward-1', source_server_id: 0, target_server_id: 0, listen_ip: '0.0.0.0', listen_port: 443, target_address: '', target_port: 443, protocol: 'tcp' as ForwardProtocol, backend: 'auto' as ForwardBackend, probe_mode: 'periodic' as ProbeMode, probe_interval_seconds: 300, sample_rate: 0, priority: 100, config_json: '{}', enabled: true })
+	const [f, setF] = useState({ name: 'forward-1', source_server_id: 0, target_server_id: 0, listen_ip: '0.0.0.0', listen_port: 443, target_address: '', target_port: 443, protocol: 'tcp' as ForwardProtocol, backend: 'realm' as ForwardBackend, probe_mode: 'periodic' as ProbeMode, probe_interval_seconds: 300, priority: 100, config_json: '{}', enabled: true })
   const submit = async () => { await client.request('/port-forwards', { method: 'POST', body: JSON.stringify(f) }) }
   const forwardRows = (data.port_forwards || []).map((forward: PortForward) => {
     const probe = latestForwardProbe(data, forward.id)
@@ -20265,7 +20263,7 @@ function PortForwards({ data, client, load, notify }: any) {
     const forward = (data.port_forwards || []).find((x: PortForward) => x.id === probe.port_forward_id)
     return { id: probe.id, name: forward?.name || `转发 ${probe.port_forward_id}`, mode: probe.mode, probe_status: probe.available ? '正常' : '异常', latency_ms: probe.latency_ms, p95_latency_ms: details.p95, jitter_ms: details.jitter, success_count: details.successCount, sample_count: probe.sample_count, checked_at: probe.created_at, error: probe.error }
   })
-  return <Panel title="端口转发"><p className="muted">下发后自动检查源端监听，并从 A 节点连续 5 次连接 B 节点目标端口，回报平均延迟、P95、抖动和成功率。周期模式默认每 5 分钟复检；内置后端还可以采样真实连接的目标建立延迟。</p><div className="form"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={f.listen_ip} onChange={e => setF({ ...f, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /><input value={f.target_address} onChange={e => setF({ ...f, target_address: e.target.value })} placeholder="目标地址，可选" /><input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /><Select variant="segmented" value={f.protocol} onChange={e => setF({ ...f, protocol: e.target.value as ForwardProtocol })}>{forwardProtocols.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><Select value={f.backend} onChange={e => setF({ ...f, backend: e.target.value as ForwardBackend })}>{forwardBackends.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><Select value={f.probe_mode} onChange={e => setF({ ...f, probe_mode: e.target.value as ProbeMode })}>{probeModes.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><input value={f.probe_interval_seconds} onChange={e => setF({ ...f, probe_interval_seconds: Number(e.target.value) })} placeholder="探测间隔秒" /><input value={f.sample_rate} onChange={e => setF({ ...f, sample_rate: Number(e.target.value) })} placeholder="采样率 0-1" /><input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div><Table rows={forwardRows} actions={(r: any) => <><button onClick={() => void probeForwardNow(client, r._raw, load, notify)}>立即探测</button><button onClick={() => remove(client, `/port-forwards/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /><h3>探测结果</h3><Table rows={probeRows} /></Panel>
+  return <Panel title="端口转发"><p className="muted">下发后自动检查源端监听，并从 A 节点连续 5 次连接 B 节点目标端口，回报平均延迟、P95、抖动和成功率。周期模式默认每 5 分钟复检。转发由源服务器上的 Realm 执行。</p><div className="form"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} placeholder="名称" /><Select value={f.source_server_id} onChange={e => setF({ ...f, source_server_id: Number(e.target.value) })}><option value={0}>源服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><Select value={f.target_server_id} onChange={e => setF({ ...f, target_server_id: Number(e.target.value) })}><option value={0}>目标服务器</option>{(data.servers || []).map((s: Server) => <option value={s.id} key={s.id}>{s.name}</option>)}</Select><input value={f.listen_ip} onChange={e => setF({ ...f, listen_ip: e.target.value })} placeholder="监听 IP" /><input value={f.listen_port} onChange={e => setF({ ...f, listen_port: Number(e.target.value) })} placeholder="监听端口" /><input value={f.target_address} onChange={e => setF({ ...f, target_address: e.target.value })} placeholder="目标地址，可选" /><input value={f.target_port} onChange={e => setF({ ...f, target_port: Number(e.target.value) })} placeholder="目标端口" /><Select variant="segmented" value={f.protocol} onChange={e => setF({ ...f, protocol: e.target.value as ForwardProtocol })}>{forwardProtocols.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><Select value={f.probe_mode} onChange={e => setF({ ...f, probe_mode: e.target.value as ProbeMode })}>{probeModes.map(p => <option key={p} value={p}>{labelValue(p)}</option>)}</Select><input value={f.probe_interval_seconds} onChange={e => setF({ ...f, probe_interval_seconds: Number(e.target.value) })} placeholder="探测间隔秒" /><input value={f.priority} onChange={e => setF({ ...f, priority: Number(e.target.value) })} placeholder="优先级" /><input value={f.config_json} onChange={e => setF({ ...f, config_json: e.target.value })} placeholder="JSON 配置" /><button onClick={submit}>创建</button></div><Table rows={forwardRows} actions={(r: any) => <><button onClick={() => void probeForwardNow(client, r._raw, load, notify)}>立即探测</button><button onClick={() => remove(client, `/port-forwards/${r._raw.id}`, load, dialogs, r._raw)}>删除</button></>} /><h3>探测结果</h3><Table rows={probeRows} /></Panel>
 }
 
 function Tunnels({ data, client, load }: any) {

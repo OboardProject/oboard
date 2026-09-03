@@ -20,7 +20,7 @@ func ValidateForwardProtocol(v model.ForwardProtocol) error {
 
 func ValidateForwardBackend(v model.ForwardBackend) error {
 	switch v {
-	case model.ForwardBackendAuto, model.ForwardBackendRealm, model.ForwardBackendNFT, model.ForwardBackendBuiltin:
+	case "", model.ForwardBackendRealm:
 		return nil
 	default:
 		return fmt.Errorf("unsupported forward backend %q", v)
@@ -29,7 +29,7 @@ func ValidateForwardBackend(v model.ForwardBackend) error {
 
 func ValidateForwardProbeMode(v string) error {
 	switch v {
-	case "", "never", "apply", "periodic", "sampled", "periodic_sampled":
+	case "", "never", "apply", "periodic":
 		return nil
 	default:
 		return fmt.Errorf("unsupported forward probe_mode %q", v)
@@ -52,6 +52,7 @@ func BuildPortForwardPlan(version int64, server model.Server, servers []model.Se
 		if err := ValidateForwardBackend(f.Backend); err != nil {
 			return model.PortForwardPlan{}, err
 		}
+		f.Backend = model.ForwardBackendRealm
 		if err := ValidateListenIP(f.ListenIP); err != nil {
 			return model.PortForwardPlan{}, err
 		}

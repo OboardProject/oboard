@@ -860,7 +860,6 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"tunnel_type":            map[string]any{"type": "string", "enum": []string{"ssh", "wireguard"}},
 			"ssh_port":               map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
 			"persistent_keepalive":   map[string]any{"type": "integer", "minimum": 0, "maximum": 65535},
-			"backend":                map[string]any{"type": "string", "enum": []string{"auto", "realm", "nft", "builtin"}},
 			"listen_ip":              map[string]any{"type": "string", "maxLength": 255},
 		}
 		stepOutput := closedObject(map[string]any{"id": positiveID, "revision": stringValue, "path_id": positiveID, "position": map[string]any{"type": "integer"}, "node_type": stringValue, "transport_mode": stringValue, "server_id": nullableInteger(), "inbound_id": nullableInteger(), "external_outbound_id": nullableInteger()})

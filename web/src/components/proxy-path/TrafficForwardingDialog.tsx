@@ -28,8 +28,8 @@ import { Switch } from '../ui/switch'
 import './TrafficForwardingDialog.css'
 
 export type ForwardProtocol = 'tcp' | 'udp' | 'tcp_udp'
-export type ForwardBackend = 'auto' | 'realm' | 'nft' | 'builtin'
-export type ProbeMode = 'never' | 'apply' | 'periodic' | 'sampled' | 'periodic_sampled'
+export type ForwardBackend = 'realm'
+export type ProbeMode = 'never' | 'apply' | 'periodic'
 
 export type TrafficForward = {
   id: number
@@ -44,7 +44,6 @@ export type TrafficForward = {
   backend: ForwardBackend
   probe_mode: ProbeMode
   probe_interval_seconds: number
-  sample_rate: number
   priority: number
   config_json: string
   enabled: boolean
@@ -69,24 +68,17 @@ export type TrafficForwardDraft = Omit<TrafficForward, 'id' | 'target_server_id'
 
 type Notice = { tone: 'success' | 'danger'; message: string }
 
+const forwardBackendLabel = 'Realm'
+
 const protocolOptions: Array<{ value: ForwardProtocol; label: string }> = [
   { value: 'tcp', label: 'TCP' },
   { value: 'udp', label: 'UDP' },
   { value: 'tcp_udp', label: 'TCP + UDP' },
 ]
 
-const backendOptions: Array<{ value: ForwardBackend; label: string; description: string }> = [
-  { value: 'auto', label: '自动选择', description: '按服务器能力选择最合适的实现。' },
-  { value: 'realm', label: 'Realm', description: '适合常规 TCP / UDP 转发。' },
-  { value: 'nft', label: 'nftables', description: '使用内核转发，适合高吞吐场景。' },
-  { value: 'builtin', label: '内置转发', description: '支持真实连接采样，目前仅限 TCP。' },
-]
-
 const probeOptions: Array<{ value: ProbeMode; label: string; description: string }> = [
   { value: 'periodic', label: '周期检查', description: '部署时检查，并按间隔持续复检。' },
   { value: 'apply', label: '部署时检查', description: '仅在配置下发后检查一次。' },
-  { value: 'sampled', label: '连接采样', description: '按采样率记录真实连接建立延迟。' },
-  { value: 'periodic_sampled', label: '周期 + 采样', description: '同时启用周期检查和真实连接采样。' },
   { value: 'never', label: '关闭自动检查', description: '仍可从列表手动发起检查。' },
 ]
 
@@ -368,10 +360,8 @@ function TrafficForwardEditor({
   const update = (patch: Partial<TrafficForwardDraft>) => onChange({ ...draft, ...patch })
   const source = servers.find(server => server.id === draft.source_server_id)
   const target = servers.find(server => server.id === draft.target_server_id)
-  const backend = backendOptions.find(option => option.value === draft.backend)
   const probe = probeOptions.find(option => option.value === draft.probe_mode)
-  const sampled = draft.probe_mode === 'sampled' || draft.probe_mode === 'periodic_sampled'
-  const periodic = draft.probe_mode === 'periodic' || draft.probe_mode === 'periodic_sampled'
+  const periodic = draft.probe_mode === 'periodic'
   const fieldErrors = trafficForwardFieldErrors(draft)
   const validationIssue = validateTrafficForwardDraft(draft)
 
@@ -394,7 +384,7 @@ function TrafficForwardEditor({
         <section className="traffic-forwarding-route-preview" aria-label="转发路径预览">
           <RoutePoint eyebrow="第一层入口" title={source?.name || '选择入口服务器'} detail={`${effectiveListenLabel(draft.listen_ip)}:${draft.listen_port || '—'}`} />
           <span className="traffic-forwarding-route-arrow" aria-hidden="true"><ArrowRight size={17} /></span>
-          <RoutePoint eyebrow="流量转发" title={protocolLabel(draft.protocol)} detail={backend?.label || draft.backend} active />
+          <RoutePoint eyebrow="流量转发" title={protocolLabel(draft.protocol)} detail={forwardBackendLabel} active />
           <span className="traffic-forwarding-route-arrow" aria-hidden="true"><ArrowRight size={17} /></span>
           <RoutePoint eyebrow="目标端点" title={target?.name || draft.target_address.trim() || '填写目标地址'} detail={`${draft.target_address.trim() || (target ? '自动解析服务器' : '等待填写')}:${draft.target_port || '—'}`} />
         </section>
@@ -433,20 +423,15 @@ function TrafficForwardEditor({
         </section>
 
         <section className="traffic-forwarding-form-section">
-          <div className="traffic-forwarding-section-head"><SlidersHorizontal size={16} aria-hidden="true" /><div><h4>转发策略</h4><p>选择传输协议、执行后端和健康检查方式。</p></div></div>
+          <div className="traffic-forwarding-section-head"><SlidersHorizontal size={16} aria-hidden="true" /><div><h4>转发策略</h4><p>选择传输协议和健康检查方式，转发由源服务器上的 Realm 执行。</p></div></div>
           <div className="traffic-forwarding-form-grid">
             <FormField label="传输协议" required full>
-              <Select required variant="segmented" value={draft.protocol} onChange={event => {
-                const protocol = event.target.value as ForwardProtocol
-                update({ protocol, backend: draft.backend === 'builtin' && protocol !== 'tcp' ? 'auto' : draft.backend })
-              }} aria-label="传输协议">
+              <Select required variant="segmented" value={draft.protocol} onChange={event => update({ protocol: event.target.value as ForwardProtocol })} aria-label="传输协议">
                 {protocolOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </Select>
             </FormField>
-            <FormField label="转发后端" required hint={backend?.description}>
-              <><Select required value={draft.backend} onChange={event => update({ backend: event.target.value as ForwardBackend })} aria-label="转发后端" aria-describedby={fieldErrorDescription(fieldErrors, 'backend')}>
-                {backendOptions.map(option => <option key={option.value} value={option.value} disabled={option.value === 'builtin' && draft.protocol !== 'tcp'}>{option.label}</option>)}
-              </Select><ForwardFieldError errors={fieldErrors} field="backend" /></>
+            <FormField label="转发后端" hint="适合常规 TCP / UDP 转发，需要源服务器已安装 realm。">
+              <output className="traffic-forwarding-static-value" aria-label="转发后端">{forwardBackendLabel}</output>
             </FormField>
             <FormField label="检查方式" required hint={probe?.description}>
               <Select required value={draft.probe_mode} onChange={event => update({ probe_mode: event.target.value as ProbeMode })} aria-label="检查方式">
@@ -454,7 +439,6 @@ function TrafficForwardEditor({
               </Select>
             </FormField>
             {periodic && <FormField label="检查间隔（秒）" required hint="最短 300 秒。"><><input type="number" min={300} step={60} inputMode="numeric" required aria-label="检查间隔" aria-invalid={Boolean(fieldErrors.probe_interval_seconds)} aria-describedby={fieldErrorDescription(fieldErrors, 'probe_interval_seconds')} value={draft.probe_interval_seconds || ''} onChange={event => update({ probe_interval_seconds: Number(event.target.value) })} /><ForwardFieldError errors={fieldErrors} field="probe_interval_seconds" /></></FormField>}
-            {sampled && <FormField label="真实连接采样率" required hint="填写 0 到 1，例如 0.1 表示抽取 10% 的连接。"><><input type="number" min={0.01} max={1} step={0.01} inputMode="decimal" required aria-label="真实连接采样率" aria-invalid={Boolean(fieldErrors.sample_rate)} aria-describedby={fieldErrorDescription(fieldErrors, 'sample_rate')} value={draft.sample_rate || ''} onChange={event => update({ sample_rate: Number(event.target.value) })} /><ForwardFieldError errors={fieldErrors} field="sample_rate" /></></FormField>}
           </div>
         </section>
 
@@ -503,7 +487,7 @@ function TrafficForwardRow({
     <article className="traffic-forwarding-row" data-enabled={forward.enabled}>
       <div className="traffic-forwarding-row-primary">
         <span className="traffic-forwarding-protocol">{protocolLabel(forward.protocol)}</span>
-        <div><strong title={forward.name}>{forward.name}</strong><small>优先级 <span className="tabular-nums">{forward.priority}</span> · {backendLabel(forward.backend)}</small></div>
+        <div><strong title={forward.name}>{forward.name}</strong><small>优先级 <span className="tabular-nums">{forward.priority}</span> · {forwardBackendLabel}</small></div>
       </div>
       <div className="traffic-forwarding-row-route">
         <span><small>{source?.name || `服务器 ${forward.source_server_id}`}</small><strong>{effectiveListenLabel(forward.listen_ip)}:{forward.listen_port}</strong></span>
@@ -565,10 +549,9 @@ export function emptyTrafficForwardDraft(servers: Server[], forwards: TrafficFor
     target_address: '',
     target_port: 443,
     protocol: 'tcp',
-    backend: 'auto',
+    backend: 'realm',
     probe_mode: 'periodic',
     probe_interval_seconds: 300,
-    sample_rate: 0,
     priority: 100,
     config_json: '{}',
     enabled: true,
@@ -594,7 +577,7 @@ export function validateTrafficForwardDraft(draft: TrafficForwardDraft): string 
   return Object.values(trafficForwardFieldErrors(draft))[0] || ''
 }
 
-type TrafficForwardField = 'name' | 'source_server_id' | 'target_server_id' | 'listen_port' | 'target_address' | 'target_port' | 'priority' | 'backend' | 'probe_interval_seconds' | 'sample_rate' | 'config_json'
+type TrafficForwardField = 'name' | 'source_server_id' | 'target_server_id' | 'listen_port' | 'target_address' | 'target_port' | 'priority' | 'probe_interval_seconds' | 'config_json'
 
 export function trafficForwardFieldErrors(draft: TrafficForwardDraft): Partial<Record<TrafficForwardField, string>> {
   const errors: Partial<Record<TrafficForwardField, string>> = {}
@@ -605,10 +588,7 @@ export function trafficForwardFieldErrors(draft: TrafficForwardDraft): Partial<R
   if (!validPort(draft.listen_port)) errors.listen_port = '监听端口必须是 1 到 65535 的整数。'
   if (!validPort(draft.target_port)) errors.target_port = '目标端口必须是 1 到 65535 的整数。'
   if (!Number.isInteger(draft.priority) || draft.priority < 1) errors.priority = '优先级必须是大于 0 的整数。'
-  if (draft.backend === 'builtin' && draft.protocol !== 'tcp') errors.backend = '内置转发后端目前只支持 TCP。'
   if (!Number.isInteger(draft.probe_interval_seconds) || draft.probe_interval_seconds < 300) errors.probe_interval_seconds = '检查间隔不能少于 300 秒。'
-  if (!Number.isFinite(draft.sample_rate) || draft.sample_rate < 0 || draft.sample_rate > 1) errors.sample_rate = '真实连接采样率必须在 0 到 1 之间。'
-  else if ((draft.probe_mode === 'sampled' || draft.probe_mode === 'periodic_sampled') && draft.sample_rate <= 0) errors.sample_rate = '连接采样模式需要填写大于 0 的采样率。'
   if (!draft.target_server_id && !draft.target_address.trim()) errors.target_address = '未选择目标服务器时，请填写目标地址。'
   else if (/\s/.test(draft.target_address.trim())) errors.target_address = '目标地址不能包含空格。'
   try {
@@ -688,10 +668,6 @@ function validPort(value: number) {
 
 function protocolLabel(value: ForwardProtocol) {
   return protocolOptions.find(option => option.value === value)?.label || value
-}
-
-function backendLabel(value: ForwardBackend) {
-  return backendOptions.find(option => option.value === value)?.label || value
 }
 
 function probeModeLabel(value: ProbeMode) {
