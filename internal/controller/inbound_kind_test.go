@@ -137,6 +137,10 @@ func TestValidateInboundAllowsSnellAdvertisePort(t *testing.T) {
 	if err := validateInbound(inbound); err != nil {
 		t.Fatalf("single-listener Snell advertise_port rejected: %v", err)
 	}
+	inbound.AdvertisePort = inbound.Port
+	if err := validateInbound(inbound); err != nil {
+		t.Fatalf("Snell advertise_port matching its logical port rejected: %v", err)
+	}
 }
 
 func TestInboundRequiresOwnDomainForManagedTLS(t *testing.T) {

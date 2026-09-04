@@ -96,6 +96,29 @@ func TestSnellGeneratesPerUserSingleUserListeners(t *testing.T) {
 	}
 }
 
+func TestSnellRuntimeProbePortsFollowCurrentProjection(t *testing.T) {
+	server := snellTestServer()
+	inbound := snellTestInbound()
+	users := snellTestUsers(1)
+	ledger := NewProxyPathPortLedger([]model.ProxyPathPortAllocation{{
+		Kind: model.ProxyPathPortKindSnellUser, ScopeKey: snellUserPortScopeKey(inbound.ID, 99, 0),
+		ServerID: server.ID, Port: 40099, State: model.PortAllocationStateActive, Generation: 1,
+	}})
+	if _, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: ledger,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projected := SnellRuntimeProbePorts(ledger, inbound, true)
+	if len(projected) != 1 || projected[0] == 40099 {
+		t.Fatalf("projected probe ports must exclude a stale listener: %v", projected)
+	}
+	active := SnellRuntimeProbePorts(ledger, inbound, false)
+	if len(active) != 2 || active[1] != 40099 {
+		t.Fatalf("read-only probe ports must include persisted active listeners: %v", active)
+	}
+}
+
 // Each user's listener carries that user's own runtime limit, keyed by its own
 // inbound tag. This is what replaces the per-user accounting the multi-user
 // users table used to provide.
@@ -219,6 +242,27 @@ func TestSnellBranchesAllocateOnePortPerUserAndBranch(t *testing.T) {
 			}
 			ports[port] = true
 		}
+	}
+}
+
+func TestSnellAdvertisePortRejectsMultiplePathLinkListeners(t *testing.T) {
+	server := snellTestServer()
+	inbound := snellTestInbound()
+	inbound.AdvertisePort = 2627
+	exitB := model.Server{ID: 2, Name: "exit-b", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 41000, PortRangeEnd: 41100}
+	exitC := model.Server{ID: 3, Name: "exit-c", PublicIPv4: "203.0.113.30", ListenIP: "0.0.0.0", PortRangeStart: 42000, PortRangeEnd: 42100}
+	exitBID, exitCID, inboundID := exitB.ID, exitC.ID, inbound.ID
+	pathA := model.ProxyPath{ID: 50, Name: "branch-a", InboundID: 90, Secret: "secret-a", Enabled: true}
+	pathB := model.ProxyPath{ID: 51, Name: "branch-b", InboundID: 91, Secret: "secret-b", Enabled: true}
+	stepA := model.ProxyPathStep{ID: 101, PathID: pathA.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitBID, InboundID: &inboundID}
+	stepB := model.ProxyPathStep{ID: 102, PathID: pathB.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitCID, InboundID: &inboundID}
+	_, _, err := planSnellUserListeners([]model.Inbound{inbound}, []model.Server{server, exitB, exitC}, nil, ConfigOptions{
+		Servers: []model.Server{server, exitB, exitC}, Inbounds: []model.Inbound{inbound},
+		ProxyPaths: []model.ProxyPath{pathA, pathB}, ProxyPathSteps: []model.ProxyPathStep{stepA, stepB},
+		PortLedger: NewProxyPathPortLedger(nil),
+	})
+	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
+		t.Fatalf("multiple path-link listeners with one advertise port error = %v", err)
 	}
 }
 

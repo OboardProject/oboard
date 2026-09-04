@@ -503,20 +503,27 @@ func (s *Server) registerProbeOperations() {
 		if err != nil {
 			return nil, err
 		}
+		allocations, err := s.store.ListProxyPathPortAllocations(ctx)
+		if err != nil {
+			return nil, err
+		}
 		version := time.Now().Unix()
-		plan := buildInboundProbePlan(version, *server, []model.Inbound{*inbound})
-		if len(plan.EntryTargets) == 0 {
-			return nil, errors.New("inbound has no probeable endpoint")
+		localPlan, externalPlan := buildInboundProbePlans(version, *server, []model.Inbound{*inbound}, core.NewProxyPathPortLedger(allocations), false)
+		if len(localPlan.EntryTargets) == 0 {
+			if inbound.Protocol == model.ProtocolSnell {
+				return nil, errors.New("Snell 当前没有已部署的逐用户监听端口；请先完成用户授权和部署")
+			}
+			return nil, errors.New("入口没有可探测的端口")
 		}
-		localTask, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeProbeInbounds, plan, version)
+		localTask, err := s.queueAgentTask(ctx, server.ID, model.AgentTaskTypeProbeInbounds, localPlan, version)
 		if err != nil {
 			return nil, err
 		}
-		externalTask, err := s.createControllerInboundProbeTask(ctx, 0, 0, plan)
+		externalTask, err := s.createControllerInboundProbeTask(ctx, 0, 0, externalPlan)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"task_ids": []int64{localTask.ID, externalTask.ID}, "entry_target_count": len(plan.EntryTargets)}, nil
+		return map[string]any{"task_ids": []int64{localTask.ID, externalTask.ID}, "entry_target_count": len(localPlan.EntryTargets)}, nil
 	})
 
 	s.automation.RegisterValidator("proxy_paths.probe_egress", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {

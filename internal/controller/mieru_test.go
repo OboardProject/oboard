@@ -57,7 +57,7 @@ func TestBuildInboundProbePlanExpandsMieruPorts(t *testing.T) {
 		ID: 2, ServerID: server.ID, Name: "Mieru", Protocol: model.ProtocolMieru,
 		Port: 8964, ListenIP: "0.0.0.0", EntryIPMode: model.EntryIPModeIPv4, ConfigJSON: `{"transport":"UDP","listen_ports":["8965-8966"]}`, Enabled: true,
 	}
-	plan := buildInboundProbePlan(10, server, []model.Inbound{inbound})
+	plan, _ := buildInboundProbePlans(10, server, []model.Inbound{inbound}, nil, false)
 	if len(plan.EntryTargets) != 3 {
 		t.Fatalf("probe targets = %#v", plan.EntryTargets)
 	}

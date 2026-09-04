@@ -122,14 +122,14 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 		if err != nil {
 			return nil, nil, fmt.Errorf("snell inbound %s: %w", inbound.Name, err)
 		}
-		accountedUsers, listenerUsers, err := resolveInboundUsers(inbound, users, opts, host.ChainSecret)
+		_, listenerUsers, err := resolveInboundUsers(inbound, users, opts, host.ChainSecret)
 		if err != nil {
 			return nil, nil, err
 		}
-		if inbound.AdvertisePort > 0 && len(accountedUsers) > 1 {
+		if inbound.AdvertisePort > 0 && len(listenerUsers) > 1 {
 			return nil, nil, markInvalidDesiredState(fmt.Errorf(
-				"snell 入站 %s 配置了对外端口 %d，但当前有 %d 个可订阅的逐用户或逐分支实例；一个对外端口只能映射一个客户端运行端口",
-				inbound.Name, inbound.AdvertisePort, len(accountedUsers)))
+				"snell 入站 %s 配置了对外端口 %d，但当前有 %d 个逐用户或逐分支运行实例；一个对外端口只能映射一个客户端运行端口",
+				inbound.Name, inbound.AdvertisePort, len(listenerUsers)))
 		}
 		listenIP := EffectiveListenIP(host, inbound.ListenIP)
 		start, end := proxyPathServerPortRange(host)
@@ -246,6 +246,40 @@ func snellListenerInbound(inbound model.Inbound, listener snellUserListener) (ma
 // subscription would advertise a port the kernel does not listen on.
 func snellUserPortScopeKey(inboundID, userID, pathID int64) string {
 	return fmt.Sprintf("inbound:%d:user:%d:path:%d", inboundID, userID, pathID)
+}
+
+// SnellRuntimeProbePorts returns the actual ports occupied by a fanned-out
+// Snell inbound. The panel inbound's Port is only its stable logical port and
+// is not rendered into sing-box. During deployment projectedOnly excludes
+// active allocations that the new projection no longer uses; read-only probes
+// use all currently active persisted allocations.
+func SnellRuntimeProbePorts(ledger *ProxyPathPortLedger, inbound model.Inbound, projectedOnly bool) []int {
+	if ledger == nil || inbound.Protocol != model.ProtocolSnell {
+		return nil
+	}
+	prefix := fmt.Sprintf("inbound:%d:user:", inbound.ID)
+	ports := make([]int, 0)
+	seen := map[int]bool{}
+	for key, owner := range ledger.owners {
+		if key.Kind != model.ProxyPathPortKindSnellUser || key.ServerID != inbound.ServerID || !strings.HasPrefix(key.ScopeKey, prefix) {
+			continue
+		}
+		if projectedOnly && !ledger.used[key] {
+			continue
+		}
+		gen := owner.activeGeneration()
+		if gen == nil {
+			continue
+		}
+		row, ok := gen.primaryRow()
+		if !ok || row.Port <= 0 || seen[row.Port] {
+			continue
+		}
+		seen[row.Port] = true
+		ports = append(ports, row.Port)
+	}
+	sort.Ints(ports)
+	return ports
 }
 
 // SnellSubscriptionNode renders the client-facing node for one identity on one

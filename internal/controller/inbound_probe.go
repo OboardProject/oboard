@@ -25,11 +25,14 @@ const (
 	inboundProbePeriod   = 5 * time.Minute
 )
 
-func buildInboundProbePlan(version int64, server model.Server, inbounds []model.Inbound) model.InboundProbePlan {
-	plan := model.InboundProbePlan{
-		Version: version, ServerID: server.ID, SampleCount: inboundProbeSamples,
-		IntervalMS: int(inboundProbeInterval / time.Millisecond), TimeoutMS: int(inboundProbeTimeout / time.Millisecond),
+func buildInboundProbePlans(version int64, server model.Server, inbounds []model.Inbound, ledger *core.ProxyPathPortLedger, projectedOnly bool) (model.InboundProbePlan, model.InboundProbePlan) {
+	newPlan := func() model.InboundProbePlan {
+		return model.InboundProbePlan{
+			Version: version, ServerID: server.ID, SampleCount: inboundProbeSamples,
+			IntervalMS: int(inboundProbeInterval / time.Millisecond), TimeoutMS: int(inboundProbeTimeout / time.Millisecond),
+		}
 	}
+	localPlan, externalPlan := newPlan(), newPlan()
 	for _, inbound := range inbounds {
 		// SSH restricted-proxy inbounds are served by the Agent's dedicated
 		// listener, not sing-box. They must not be probed as regular inbounds.
@@ -37,23 +40,47 @@ func buildInboundProbePlan(version int64, server model.Server, inbounds []model.
 			continue
 		}
 		host := strings.TrimSpace(core.ResolveEntryAddress(inbound, server))
-		ports, err := core.MieruInboundPorts(inbound)
-		if host == "" || err != nil {
+		if host == "" {
 			continue
 		}
-		for index, port := range ports {
-			sampleCount := 1
-			if index == 0 {
-				sampleCount = inboundProbeSamples
-			}
-			plan.EntryTargets = append(plan.EntryTargets, model.InboundProbeTarget{
-				InboundID: inbound.ID, Name: inbound.Name, Protocol: inbound.Protocol, Host: host,
-				ListenIP: inbound.ListenIP, Port: port, Transport: controllerProbeTransport(inbound),
-				SampleCount: sampleCount,
-			})
+		ports, err := core.MieruInboundPorts(inbound)
+		if inbound.Protocol == model.ProtocolSnell {
+			ports = core.SnellRuntimeProbePorts(ledger, inbound, projectedOnly)
 		}
+		if err != nil || len(ports) == 0 {
+			continue
+		}
+		listenIP := core.EffectiveListenIP(server, inbound.ListenIP)
+		appendTargets := func(plan *model.InboundProbePlan, targetPorts []int) {
+			for index, port := range targetPorts {
+				sampleCount := 1
+				if index == 0 {
+					sampleCount = inboundProbeSamples
+				}
+				plan.EntryTargets = append(plan.EntryTargets, model.InboundProbeTarget{
+					InboundID: inbound.ID, Name: inbound.Name, Protocol: inbound.Protocol, Host: host,
+					ListenIP: listenIP, Port: port, Transport: controllerProbeTransport(inbound),
+					SampleCount: sampleCount,
+				})
+			}
+		}
+		appendTargets(&localPlan, ports)
+		externalPorts := []int{core.InboundSubscriptionPort(inbound)}
+		switch inbound.Protocol {
+		case model.ProtocolMieru:
+			externalPorts, err = core.MieruInboundSubscriptionPorts(inbound)
+			if err != nil {
+				continue
+			}
+		case model.ProtocolSnell:
+			externalPorts = ports
+			if inbound.AdvertisePort > 0 {
+				externalPorts = []int{inbound.AdvertisePort}
+			}
+		}
+		appendTargets(&externalPlan, externalPorts)
 	}
-	return plan
+	return localPlan, externalPlan
 }
 
 func controllerProbeTransport(inbound model.Inbound) string {
@@ -335,18 +362,27 @@ func (s *Server) inboundProbeNow(w http.ResponseWriter, r *http.Request, inbound
 		fail(w, err, 404)
 		return
 	}
-	version := time.Now().Unix()
-	plan := buildInboundProbePlan(version, *server, []model.Inbound{*inbound})
-	if len(plan.EntryTargets) == 0 {
-		fail(w, errors.New("inbound has no probeable endpoint"), 400)
-		return
-	}
-	localTask, err := s.queueAgentTask(r.Context(), server.ID, model.AgentTaskTypeProbeInbounds, plan, version)
+	allocations, err := s.store.ListProxyPathPortAllocations(r.Context())
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	externalTask, err := s.createControllerInboundProbeTask(r.Context(), 0, 0, plan)
+	version := time.Now().Unix()
+	localPlan, externalPlan := buildInboundProbePlans(version, *server, []model.Inbound{*inbound}, core.NewProxyPathPortLedger(allocations), false)
+	if len(localPlan.EntryTargets) == 0 {
+		message := "入口没有可探测的端口"
+		if inbound.Protocol == model.ProtocolSnell {
+			message = "Snell 当前没有已部署的逐用户监听端口；请先完成用户授权和部署"
+		}
+		fail(w, errors.New(message), 400)
+		return
+	}
+	localTask, err := s.queueAgentTask(r.Context(), server.ID, model.AgentTaskTypeProbeInbounds, localPlan, version)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	externalTask, err := s.createControllerInboundProbeTask(r.Context(), 0, 0, externalPlan)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -404,6 +440,11 @@ func (s *Server) schedulePeriodicInboundProbes(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	allocations, err := s.store.ListProxyPathPortAllocations(ctx)
+	if err != nil {
+		return
+	}
+	ledger := core.NewProxyPathPortLedger(allocations)
 	latest := map[int64]time.Time{}
 	for _, result := range recent {
 		if !strings.HasPrefix(result.Mode, "controller_external") {
@@ -429,7 +470,11 @@ func (s *Server) schedulePeriodicInboundProbes(ctx context.Context) {
 		if len(due) == 0 || !s.beginServerProbe(server.ID) {
 			continue
 		}
-		plan := buildInboundProbePlan(time.Now().Unix(), server, due)
+		_, plan := buildInboundProbePlans(time.Now().Unix(), server, due, ledger, false)
+		if len(plan.EntryTargets) == 0 {
+			s.endServerProbe(server.ID)
+			continue
+		}
 		go func(probeParent context.Context, serverID int64, plan model.InboundProbePlan) {
 			defer s.endServerProbe(serverID)
 			probeCtx, cancel := context.WithTimeout(probeParent, 90*time.Second)

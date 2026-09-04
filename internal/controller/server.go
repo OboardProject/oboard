@@ -7124,7 +7124,7 @@ func validateInbound(v model.Inbound) error {
 		if err := core.ValidatePort(v.AdvertisePort); err != nil {
 			return fmt.Errorf("advertise_port: %w", err)
 		}
-		if v.AdvertisePort == v.Port {
+		if v.AdvertisePort == v.Port && v.Protocol != model.ProtocolSnell {
 			return errors.New("advertise_port must differ from listen port; disable NAT mapping to use the same port")
 		}
 		if v.Protocol == model.ProtocolMieru {
@@ -12484,12 +12484,14 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			return nil, 0, deploymentFail(400, err)
 		}
 
-		inboundProbePlan := buildInboundProbePlan(version, server, in)
+		inboundProbePlan, externalInboundProbePlan := buildInboundProbePlans(version, server, in, ledger, true)
 		var inboundProbe *model.InboundProbePlan
 		var externalInboundProbe *model.InboundProbePlan
 		if len(inboundProbePlan.EntryTargets) > 0 {
 			inboundProbe = &inboundProbePlan
-			externalInboundProbe = &inboundProbePlan
+		}
+		if len(externalInboundProbePlan.EntryTargets) > 0 {
+			externalInboundProbe = &externalInboundProbePlan
 		}
 
 		var forwardProbe *model.PortForwardPlan
@@ -13636,6 +13638,30 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 	}
 	if len(prepared) == 0 {
 		return nil
+	}
+	preparedServerIDs := make(map[int64]bool, len(prepared))
+	for _, item := range prepared {
+		preparedServerIDs[item.serverID] = true
+	}
+	pendingAllocations := make([]model.ProxyPathPortAllocation, 0)
+	for _, allocation := range ledger.Pending() {
+		if preparedServerIDs[allocation.ServerID] {
+			pendingAllocations = append(pendingAllocations, allocation)
+		}
+	}
+	staleCandidates := core.StaleProxyPathPortAllocationIDs(data.ProxyPathPortAllocations, ledger)
+	staleCandidateSet := make(map[int64]bool, len(staleCandidates))
+	for _, id := range staleCandidates {
+		staleCandidateSet[id] = true
+	}
+	staleAllocationIDs := make([]int64, 0, len(staleCandidates))
+	for _, allocation := range data.ProxyPathPortAllocations {
+		if preparedServerIDs[allocation.ServerID] && staleCandidateSet[allocation.ID] {
+			staleAllocationIDs = append(staleAllocationIDs, allocation.ID)
+		}
+	}
+	if err := s.store.SaveProxyPathPortAllocations(ctx, pendingAllocations, staleAllocationIDs); err != nil {
+		return err
 	}
 	version, err := s.store.NextConfigVersion(ctx)
 	if err != nil {
