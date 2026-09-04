@@ -125,7 +125,7 @@ import { NetworkInterfacePicker } from './components/NetworkInterfacePicker'
 import { AgentSettingsPanel } from './components/AgentSettingsPanel'
 import { RemoteAccessSettings } from './components/remote-access/RemoteAccessSettings'
 import { RemoteAccessStatus } from './components/remote-access/RemoteAccessStatus'
-import { RemoteTerminal } from './components/remote-access/RemoteTerminal'
+import { TerminalWorkspace } from './components/remote-access/TerminalWorkspace'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
 import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel'
 import { SubscriptionTemplatesPanel } from './components/SubscriptionTemplatesPanel'
@@ -7761,7 +7761,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [basicServer, setBasicServer] = useState<Server | null>(null)
   const [systemServer, setSystemServer] = useState<{ server: Server; tab: 'overview' | 'agent' | 'settings' | 'logs' } | null>(null)
   const [tasksServer, setTasksServer] = useState<Server | null>(null)
-  const [terminalServer, setTerminalServer] = useState<Server | null>(null)
+  const [terminalWorkspace, setTerminalWorkspace] = useState<{ serverId: number | null } | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [view, setViewState] = useState<'grid' | 'list'>(() => {
@@ -7830,7 +7830,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       else if(panel==='network') setNetworkServer({ server: target, tab: (tab as any) || 'overview' })
       else if(panel==='system') setSystemServer({ server: target, tab: (tab as any) || 'overview' })
       else if(panel==='tasks') setTasksServer(target)
-      else if(panel==='terminal') setTerminalServer(target)
+      else if(panel==='terminal') setTerminalWorkspace({ serverId: target.id })
     } catch {}
     // only on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7877,8 +7877,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   useEffect(()=>{ if(networkServer) syncURLPanel(networkServer.server.id,'network', networkServer.tab) }, [networkServer?.server.id, networkServer?.tab])
   useEffect(()=>{ if(systemServer) syncURLPanel(systemServer.server.id,'system', systemServer.tab) }, [systemServer?.server.id, systemServer?.tab])
   useEffect(()=>{ if(tasksServer) syncURLPanel(tasksServer.id,'tasks',null) }, [tasksServer?.id])
-  useEffect(()=>{ if(terminalServer) syncURLPanel(terminalServer.id,'terminal',null) }, [terminalServer?.id])
-  useEffect(()=>{ if(!aboutServer && !basicServer && !networkServer && !systemServer && !tasksServer && !terminalServer) syncURLPanel(null,null,null) }, [aboutServer, basicServer, networkServer, systemServer, tasksServer, terminalServer])
+  useEffect(()=>{ if(terminalWorkspace?.serverId) syncURLPanel(terminalWorkspace.serverId,'terminal',null) }, [terminalWorkspace?.serverId])
+  useEffect(()=>{ if(!aboutServer && !basicServer && !networkServer && !systemServer && !tasksServer && !terminalWorkspace) syncURLPanel(null,null,null) }, [aboutServer, basicServer, networkServer, systemServer, tasksServer, terminalWorkspace])
   useEffect(() => { saveServerListPreferences(listPreferences) }, [listPreferences])
   useEffect(() => {
     setListPreferences(current => {
@@ -8267,7 +8267,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'about' || type === 'details') { clearServerWorkspaces(); setAboutServer(s) }
     else if (type === 'basic-settings' || type === 'edit') { clearServerWorkspaces(); setBasicServer(s) }
-    else if (type === 'terminal') setTerminalServer(s)
+    else if (type === 'terminal') setTerminalWorkspace({ serverId: s.id })
     else if (type === 'resource-details') setConnectivityServer({ server: s })
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
@@ -8360,17 +8360,24 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
           {serverRefreshedTime ? <time dateTime={serverRefreshedAt?.toISOString()}>更新于 {serverRefreshedTime}</time> : null}
         </div>
       </div>
-      <div className="section-actions">
-        <div className="server-action-group">
-          <button
-            type="button"
-            className="server-add-button"
-            onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}
-          >
-            <Plus size={15} />
-            <span>添加服务器</span>
-          </button>
-        </div>
+      <div className="section-actions server-toolbar-actions">
+        <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
+        {hasManagementAccess(role) && (() => {
+          const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
+          return (
+            <button
+              type="button"
+              className="ghost server-toolbar-tool server-terminal-button"
+              disabled={connectableCount === 0}
+              onClick={() => setTerminalWorkspace({ serverId: null })}
+              aria-label="打开远程终端"
+              title={connectableCount ? `打开远程终端，可连接 ${connectableCount} 台在线服务器并批量执行命令` : '没有在线的已接入服务器'}
+            >
+              <SquareTerminal size={15} />
+              <span className="server-toolbar-tool-label">终端</span>
+            </button>
+          )
+        })()}
         {hasManagementAccess(role) && (() => {
           const hasExpected = Boolean(expectedBuildForBadge && expectedBuildForBadge.toLowerCase() !== 'dev')
           const badgeCount = hasExpected ? outdatedCount : enrolledCount
@@ -8398,21 +8405,32 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
           return (
             <button
               type="button"
-              className="ghost server-update-agents-button"
+              className="ghost server-toolbar-tool server-update-agents-button"
               disabled={buttonDisabled}
               onClick={() => void updateAllAgents()}
               aria-label={ariaLabel}
               title={title}
             >
               <ArrowUpCircle size={15} />
-              <span className="server-update-agents-label">一键更新 Agent</span>
+              <span className="server-toolbar-tool-label server-update-agents-label">更新 Agent</span>
               {badgeCountForDisplay > 0 && <span className="server-update-agents-badge">{badgeCountForDisplay}</span>}
             </button>
           )
         })()}
+        </div>
         <div className="view-mode-toggle" role="radiogroup" aria-label="显示方式">
           <button type="button" role="radio" aria-checked={view === 'grid'} className={view === 'grid' ? 'active' : ''} onClick={() => setView('grid')} aria-label="平铺模式" title="平铺模式"><GridViewIcon /></button>
           <button type="button" role="radio" aria-checked={view === 'list'} className={view === 'list' ? 'active' : ''} onClick={() => setView('list')} aria-label="列表模式" title="列表模式"><ListViewIcon /></button>
+        </div>
+        <div className="server-action-group">
+          <button
+            type="button"
+            className="server-add-button"
+            onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}
+          >
+            <Plus size={15} />
+            <span>添加服务器</span>
+          </button>
         </div>
       </div>
     </div>
@@ -8490,7 +8508,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     <AnimatePresence>{networkServer && <ServerNetworkDialog server={networkServer.server} initialTab={networkServer.tab} data={data} client={client} notify={notify} role={role} onClose={() => setNetworkServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
     <AnimatePresence>{systemServer && <ServerSystemDialog server={systemServer.server} initialTab={systemServer.tab} data={data} client={client} notify={notify} controllerURL={effectiveControllerURL(data)} role={role} onClose={() => setSystemServer(null)} onUpdated={() => void refreshServers()} />}</AnimatePresence>
     <AnimatePresence>{tasksServer && <ServerTasksDialog server={tasksServer} client={client} onClose={() => setTasksServer(null)} />}</AnimatePresence>
-    {terminalServer ? <RemoteTerminal serverId={terminalServer.id} serverName={terminalServer.name || `server-${terminalServer.id}`} client={client} websocketURL={sessionId => appWebSocketURL(`/api/v1/ui/servers/${terminalServer.id}/terminal/ws/${sessionId}`)} passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)} onClose={() => setTerminalServer(null)} /> : null}
+    {terminalWorkspace ? <TerminalWorkspace
+      servers={servers}
+      initialServerId={terminalWorkspace.serverId}
+      client={client}
+      websocketURL={(serverId, sessionId) => appWebSocketURL(`/api/v1/ui/servers/${serverId}/terminal/ws/${sessionId}`)}
+      passwordConfirmationRequired={settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled)}
+      onClose={() => setTerminalWorkspace(null)}
+    /> : null}
     <AnimatePresence>{timeDetailServer && <ServerTimeDetailDialog
       server={timeDetailServer}
       role={role}

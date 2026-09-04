@@ -1,9 +1,13 @@
 package controller
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,7 +45,20 @@ func (s *Server) stepUpBegin(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("unsupported step-up purpose"), http.StatusBadRequest)
 		return
 	}
+	resourceType := strings.TrimSpace(req.Resource.Type)
 	resourceID := stringifyResourceID(req.Resource.ID)
+	if resourceType == stepUpServerSetResourceType {
+		if purpose != model.StepUpPurposeRemoteTerminal {
+			fail(w, errors.New("server_set step-up is only available for remote terminals"), http.StatusBadRequest)
+			return
+		}
+		canonical, err := canonicalStepUpServerSet(resourceID)
+		if err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		resourceID = canonical
+	}
 	nonce, err := security.RandomToken(18)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
@@ -55,7 +72,7 @@ func (s *Server) stepUpBegin(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	item := model.StepUpChallenge{
 		ID: "suc_" + challengeID, UserID: user.ID, SessionID: claims.SessionID, SessionVersion: claims.SessionVersion,
-		Purpose: purpose, ResourceType: strings.TrimSpace(req.Resource.Type), ResourceID: resourceID, Nonce: nonce,
+		Purpose: purpose, ResourceType: resourceType, ResourceID: resourceID, Nonce: nonce,
 		ExpiresAt: now.Add(2 * time.Minute), CreatedAt: now,
 	}
 	passkeys, _ := s.store.ListPasskeyCredentials(r.Context(), user.ID)
@@ -199,24 +216,32 @@ func (s *Server) finishStepUp(w http.ResponseWriter, r *http.Request, challengeI
 	write(w, http.StatusOK, map[string]any{"step_up_token": token, "expires_at": now.Add(security.StepUpTokenTTL), "purpose": challenge.Purpose})
 }
 
-func (s *Server) consumeStepUp(r *http.Request, token, purpose, resourceType, resourceID string) error {
+func (s *Server) verifyStepUpToken(r *http.Request, token, purpose string) (security.StepUpTokenClaims, error) {
 	user := currentUser(r)
 	claims, ok := r.Context().Value(claimsKey).(security.TokenClaims)
 	if user == nil || !ok {
-		return codedError("terminal_auth_expired", "invalid session")
+		return security.StepUpTokenClaims{}, codedError("terminal_auth_expired", "invalid session")
 	}
 	parsed, err := security.VerifyStepUpToken(s.sessionSecret, token, time.Now().UTC())
 	if err != nil {
 		if strings.Contains(err.Error(), "expired") {
-			return codedError("terminal_auth_expired", err.Error())
+			return security.StepUpTokenClaims{}, codedError("terminal_auth_expired", err.Error())
 		}
-		return codedError("terminal_auth_expired", "invalid step-up token")
+		return security.StepUpTokenClaims{}, codedError("terminal_auth_expired", "invalid step-up token")
 	}
 	if parsed.UserID != user.ID || parsed.SessionID != claims.SessionID || parsed.SessionVersion != claims.SessionVersion {
-		return codedError("terminal_auth_expired", "step-up token does not match this session")
+		return security.StepUpTokenClaims{}, codedError("terminal_auth_expired", "step-up token does not match this session")
 	}
 	if parsed.Purpose != purpose {
-		return codedError("terminal_auth_expired", "step-up token purpose mismatch")
+		return security.StepUpTokenClaims{}, codedError("terminal_auth_expired", "step-up token purpose mismatch")
+	}
+	return parsed, nil
+}
+
+func (s *Server) consumeStepUp(r *http.Request, token, purpose, resourceType, resourceID string) error {
+	parsed, err := s.verifyStepUpToken(r, token, purpose)
+	if err != nil {
+		return err
 	}
 	if resourceType != "" && parsed.ResourceType != resourceType {
 		return codedError("terminal_auth_expired", "step-up token resource mismatch")
@@ -224,11 +249,99 @@ func (s *Server) consumeStepUp(r *http.Request, token, purpose, resourceType, re
 	if resourceID != "" && parsed.ResourceID != resourceID {
 		return codedError("terminal_auth_expired", "step-up token resource mismatch")
 	}
-	if err := s.store.ConsumeStepUpToken(r.Context(), security.StepUpTokenHash(token), parsed.ExpiresAt); err != nil {
+	return s.consumeStepUpKey(r, security.StepUpTokenHash(token), parsed.ExpiresAt)
+}
+
+// consumeStepUpForServer consumes a step-up token that authorizes an operation on one server.
+// A `server` token authorizes exactly that server and is consumed once, as before. A
+// `server_set` token authorizes every server listed in the token and is consumed once per
+// server, so one authentication can open a batch of terminals without letting any single
+// server slot be replayed.
+func (s *Server) consumeStepUpForServer(r *http.Request, token, purpose string, serverID int64) error {
+	parsed, err := s.verifyStepUpToken(r, token, purpose)
+	if err != nil {
+		return err
+	}
+	if parsed.ResourceType == stepUpServerSetResourceType {
+		ids, err := parseStepUpServerSet(parsed.ResourceID)
+		if err != nil || !slices.Contains(ids, serverID) {
+			return codedError("terminal_auth_expired", "step-up token resource mismatch")
+		}
+		return s.consumeStepUpKey(r, stepUpServerScopeHash(token, serverID), parsed.ExpiresAt)
+	}
+	if parsed.ResourceType != "server" || parsed.ResourceID != serverIDString(serverID) {
+		return codedError("terminal_auth_expired", "step-up token resource mismatch")
+	}
+	return s.consumeStepUpKey(r, security.StepUpTokenHash(token), parsed.ExpiresAt)
+}
+
+func (s *Server) consumeStepUpKey(r *http.Request, key string, expiresAt time.Time) error {
+	if err := s.store.ConsumeStepUpToken(r.Context(), key, expiresAt); err != nil {
 		return codedError("terminal_auth_expired", "step-up token already used")
 	}
 	return nil
 }
+
+// stepUpServerScopeHash derives the replay key for one server slot of a server_set token.
+// It is derived from the token hash so the raw token never reaches storage.
+func stepUpServerScopeHash(token string, serverID int64) string {
+	sum := sha256.Sum256([]byte(security.StepUpTokenHash(token) + "|server=" + serverIDString(serverID)))
+	return hex.EncodeToString(sum[:])
+}
+
+func parseStepUpServerSet(value string) ([]int64, error) {
+	fields := strings.Split(strings.TrimSpace(value), ",")
+	if len(fields) == 0 || strings.TrimSpace(value) == "" {
+		return nil, errors.New("server_set must list at least one server")
+	}
+	if len(fields) > stepUpServerSetMax {
+		return nil, fmt.Errorf("server_set cannot exceed %d servers", stepUpServerSetMax)
+	}
+	ids := make([]int64, 0, len(fields))
+	for _, field := range fields {
+		id, err := strconv.ParseInt(strings.TrimSpace(field), 10, 64)
+		if err != nil || id <= 0 {
+			return nil, errors.New("server_set contains an invalid server id")
+		}
+		if slices.Contains(ids, id) {
+			return nil, errors.New("server_set contains a duplicate server id")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func canonicalStepUpServerSet(value string) (string, error) {
+	fields := strings.Split(strings.TrimSpace(value), ",")
+	if strings.TrimSpace(value) == "" {
+		return "", errors.New("server_set must list at least one server")
+	}
+	ids := make([]int64, 0, len(fields))
+	for _, field := range fields {
+		id, err := strconv.ParseInt(strings.TrimSpace(field), 10, 64)
+		if err != nil || id <= 0 {
+			return "", errors.New("server_set contains an invalid server id")
+		}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > stepUpServerSetMax {
+		return "", fmt.Errorf("server_set cannot exceed %d servers", stepUpServerSetMax)
+	}
+	slices.Sort(ids)
+	parts := make([]string, len(ids))
+	for index, id := range ids {
+		parts[index] = strconv.FormatInt(id, 10)
+	}
+	return strings.Join(parts, ","), nil
+}
+
+// stepUpServerSetResourceType scopes one remote-terminal step-up to an explicit set of
+// servers so a batch command run needs a single authentication instead of one per server.
+const stepUpServerSetResourceType = "server_set"
+
+const stepUpServerSetMax = 64
 
 func validStepUpPurpose(purpose string) bool {
 	switch purpose {

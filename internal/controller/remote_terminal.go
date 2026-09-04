@@ -24,7 +24,7 @@ const (
 	terminalAbsoluteLifetime = time.Hour
 	terminalMaxMessage       = 64 << 10
 	terminalMaxPerServer     = 2
-	terminalMaxPerUser       = 4
+	terminalMaxPerUser       = 16
 	terminalMaxCols          = 400
 	terminalMaxRows          = 150
 
@@ -480,7 +480,7 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	if settingBool(s.runtimeSettings(r.Context()), settingRemoteTerminalPasswordConfirmationEnabled, true) {
-		if err := s.consumeStepUp(r, req.StepUpToken, model.StepUpPurposeRemoteTerminal, "server", serverIDString(serverID)); err != nil {
+		if err := s.consumeStepUpForServer(r, req.StepUpToken, model.StepUpPurposeRemoteTerminal, serverID); err != nil {
 			fail(w, err, http.StatusForbidden)
 			return
 		}
