@@ -26,7 +26,8 @@ function dnsPolicyDraft(policy?: ServerDNSPolicy, lists: DNSList[]=[]){
   const encFallback = lists.find(l=> l.kind==='encrypted' && l.enabled)?.id || lists.find(l=> l.kind==='encrypted')?.id || 0
   const bootFallback = lists.find(l=> l.kind==='bootstrap' && l.enabled)?.id || lists.find(l=> l.kind==='bootstrap')?.id || 0
   return {
-    encryptedListID: policy?.encrypted_list_id || encFallback,
+    // 0 是「不使用加密解析」，不能回落到默认列表。
+    encryptedListID: policy ? policy.encrypted_list_id : encFallback,
     bootstrapListID: policy?.bootstrap_list_id || bootFallback,
     strategy: policy?.strategy || 'auto',
     hourlyTest: policy?.auto_test==='periodic',
@@ -34,7 +35,7 @@ function dnsPolicyDraft(policy?: ServerDNSPolicy, lists: DNSList[]=[]){
 }
 function DNSGroupStatus({ title, selected, group }: { title:string; selected:any[]|null; group?: any }){
   const best = group?.best_tags?.join(' · ') || '—'
-  return <div className="dns-group-status"><strong>{title}</strong><span>当前首选：{selected && selected.length ? selected.map((c:any)=>c.tag||c.server).join(' · ') : '—'}</span><span>检测推荐：{best}</span></div>
+  return <div className="dns-group-status"><strong>{title}</strong><span>当前首选：{selected && selected.length ? selected.map((c:any)=>c.tag||c.server).join(' · ') : '—'}</span><span>测试推荐：{best}</span></div>
 }
 
 export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notify, disabled, disabledReason }: { server: Server; policy?: ServerDNSPolicy; lists: DNSList[]; benchmarks: DNSBenchmarkResult[]; client:any; notify?:(m:string,t?:string)=>void; disabled?:boolean; disabledReason?:string }) {
@@ -66,11 +67,11 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
         const result = await client.request(`/servers/${server.id}/dns-test`, { method:'POST', body: JSON.stringify({ action })})
         if(result.task?.status==='failed'){
           const f = JSON.parse(result.task.result_json||'{}')
-          throw new Error(f?.error||f?.message||'检查失败')
+          throw new Error(f?.error||f?.message||'暂时无法测试解析服务')
         }
-        notify?.(action==='test' ? '解析服务检查已开始':'解析服务检查已开始，成功后会自动应用','success')
+        notify?.(action==='test' ? '解析测试已开始':'解析测试已开始，成功后会自动应用配置','success')
       } else {
-        notify?.('服务器解析设置已保存','success')
+        notify?.('服务器 DNS 策略已保存','success')
       }
     } catch(e:any){ notify?.(e?.message||String(e),'error') } finally{ setWorking('') }
   }
@@ -78,17 +79,19 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
   return (
     <div className="server-dns-tab">
       <div className="dns-status-strip">
-        <span><strong>{stale ? '等待重新检查' : policy?.last_success_at ? '解析服务正常' : '尚未检查'}</strong><small>{policy?.last_success_at ? formatTableTime(policy.last_success_at) : '保存后会使用当前列表'}</small></span>
-        <span><strong>{draft.hourlyTest ? '每小时检查' : '关闭自动检查'}</strong><small>自动检查不会直接修改配置</small></span>
-        <span className={policy?.last_error ? 'has-error':''}><strong>{policy?.last_error ? '最近检查失败' : latest?.status==='stale' ? '检查结果已过期':'状态正常'}</strong><small>{policy?.last_error || latest?.error || '—'}</small></span>
+        <span><strong>{stale ? '等待重新测试' : policy?.last_success_at ? '正常' : '等待首次测试'}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span>
+        <span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改配置</small></span>
+        <span className={policy?.last_error ? 'has-error':''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status==='stale' ? '测试结果已过期':'无异常'}</strong><small>{policy?.last_error || latest?.error || '—'}</small></span>
       </div>
-      {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新检查</strong><span>旧的检查结果已停止使用。</span></div>}
-      <div className="dns-group-grid"><DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected||[]} group={latest?.encrypted} /><DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected||[]} group={latest?.bootstrap} /></div>
+      {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
+      <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected||[]} group={latest?.encrypted} /> : <div className="dns-group-status"><strong>加密解析</strong><span>未启用</span><span>仅使用普通解析</span></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected||[]} group={latest?.bootstrap} /></div>
       <div className="form dns-settings-form labeled-form">
         <FormField label="加密解析服务列表" full>
           <Select value={draft.encryptedListID} onChange={e=> setDraft({...draft, encryptedListID:Number(e.target.value)})} disabled={disabled}>
+            <option value={0}>不使用加密解析（仅普通解析）</option>
             {lists.filter(l=> l.kind==='encrypted' && (l.enabled || l.id===policy?.encrypted_list_id)).map(l=> <option key={l.id} value={l.id}>{l.name} · {l.candidates.length} 项</option>)}
           </Select>
+          {draft.encryptedListID===0 && <small className="muted">服务器将只用普通解析查询域名，查询内容在链路上不加密。</small>}
         </FormField>
         <FormField label="基础解析服务列表" full>
           <Select value={draft.bootstrapListID} onChange={e=> setDraft({...draft, bootstrapListID:Number(e.target.value)})} disabled={disabled}>
@@ -104,16 +107,16 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
             <option value="ipv6_only">仅 IPv6</option>
           </Select>
         </FormField>
-        <FormField label="每小时自动检查">
-          <Switch checked={draft.hourlyTest} onChange={checked=> setDraft({...draft, hourlyTest: checked})} ariaLabel="每小时自动检查" />
+        <FormField label="每小时自动测试">
+          <Switch checked={draft.hourlyTest} onChange={checked=> setDraft({...draft, hourlyTest: checked})} ariaLabel="每小时自动测试" />
         </FormField>
         <div className="dns-list-preview"><span>{encryptedList?.candidates.map((c:any)=> dnsTransportLabel(c.transport)).join(' · ')}</span><span>{bootstrapList?.candidates.map((c:any)=> dnsTransportLabel(c.transport)).join(' · ')}</span></div>
         {disabled && <small className="muted">{disabledReason}</small>}
       </div>
       <div className="server-workspace-actions">
         <button className="ghost" disabled={Boolean(working) || disabled} onClick={()=> void run('save')}>{working==='save'? '保存中...':'仅保存'}</button>
-        <button className="ghost" disabled={Boolean(working) || disabled} onClick={()=> void run('test')}>{working==='test'? '检查中...':'仅检查'}</button>
-        <button disabled={Boolean(working) || disabled} onClick={()=> void run('test_and_apply')}>{working==='test_and_apply'? '检查中...':'检查并应用'}</button>
+        <button className="ghost" disabled={Boolean(working) || disabled} onClick={()=> void run('test')}>{working==='test'? '测试中...':'重新测试'}</button>
+        <button disabled={Boolean(working) || disabled} onClick={()=> void run('test_and_apply')}>{working==='test_and_apply'? '测试中...':'测试并应用'}</button>
       </div>
     </div>
   )

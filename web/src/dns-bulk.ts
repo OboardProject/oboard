@@ -60,7 +60,7 @@ function errorText(error: unknown, stage: 'save' | 'test') {
   if (isTransportError(error)) {
     return stage === 'save'
       ? '无法连接控制器，请检查网络后重试'
-      : '与控制器的连接中断，请先查看检查日志'
+      : '与控制器的连接中断，请先查看测试记录'
   }
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
@@ -76,13 +76,13 @@ function immediateTaskFailure(task: any) {
         ? result.error
         : typeof result?.message === 'string' && result.message
           ? result.message
-          : '暂时无法检查解析服务'
+          : '暂时无法测试解析服务'
       return { message, unavailable: result?.offline === true }
     } catch {
       // Fall through to the bounded generic message.
     }
   }
-  return { message: '暂时无法检查解析服务', unavailable: false }
+  return { message: '暂时无法测试解析服务', unavailable: false }
 }
 
 async function runForPolicy(
@@ -130,12 +130,12 @@ async function runForPolicy(
     })
     const failure = immediateTaskFailure(response?.task)
     if (failure?.unavailable) {
-      return { serverID: policy.server_id, status: 'skipped', message: `DNS 设置已保存，检查已跳过：${failure.message}` }
+      return { serverID: policy.server_id, status: 'skipped', message: `DNS 策略已保存，测试已跳过：${failure.message}` }
     }
-    if (failure) return { serverID: policy.server_id, status: 'failed', message: `检查失败：${failure.message}` }
+    if (failure) return { serverID: policy.server_id, status: 'failed', message: `测试失败：${failure.message}` }
     return { serverID: policy.server_id, status: 'succeeded', message: '' }
   } catch (error) {
-    return { serverID: policy.server_id, status: 'failed', message: `检查状态未知：${errorText(error, 'test')}` }
+    return { serverID: policy.server_id, status: 'failed', message: `测试状态未知：${errorText(error, 'test')}` }
   }
 }
 

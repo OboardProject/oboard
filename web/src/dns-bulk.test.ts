@@ -52,7 +52,7 @@ describe('DNS bulk settings', () => {
     expect(calls).not.toContain('/servers/1/dns-test')
     expect(results).toEqual([
       { serverID: 1, status: 'failed', message: '保存失败：列表不可用' },
-      { serverID: 2, status: 'failed', message: '检查失败：Agent 离线' },
+      { serverID: 2, status: 'failed', message: '测试失败：Agent 离线' },
     ])
     expect(failedDNSBulkServerIDs(results)).toEqual([1, 2])
   })
@@ -126,7 +126,7 @@ describe('DNS bulk settings', () => {
     expect(results).toEqual([{
       serverID: 1,
       status: 'failed',
-      message: '检查状态未知：与控制器的连接中断，请先查看检查日志',
+      message: '测试状态未知：与控制器的连接中断，请先查看测试记录',
     }])
   })
 
@@ -135,13 +135,13 @@ describe('DNS bulk settings', () => {
     const results = await runDNSBulkAction([policy(1)], { hourlyTest: true }, 'test', async path => {
       calls.push(path)
       return {}
-    }, () => '服务器离线，DNS 设置已保存，检查已跳过')
+    }, () => '服务器离线，DNS 策略已保存，测试已跳过')
 
     expect(calls).toEqual(['/servers/1/dns-policy'])
     expect(results).toEqual([{
       serverID: 1,
       status: 'skipped',
-      message: '服务器离线，DNS 设置已保存，检查已跳过',
+      message: '服务器离线，DNS 策略已保存，测试已跳过',
     }])
     expect(failedDNSBulkServerIDs(results)).toEqual([])
   })
@@ -157,7 +157,7 @@ describe('DNS bulk settings', () => {
     expect(results).toEqual([{
       serverID: 1,
       status: 'skipped',
-      message: 'DNS 设置已保存，检查已跳过：服务器离线，任务无法下发',
+      message: 'DNS 策略已保存，测试已跳过：服务器离线，任务无法下发',
     }])
     expect(failedDNSBulkServerIDs(results)).toEqual([])
   })

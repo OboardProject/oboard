@@ -137,6 +137,7 @@ import { ServerNetworkDialog } from './components/server/ServerNetworkDialog'
 import { ServerSystemDialog } from './components/server/ServerSystemDialog'
 import { ServerTasksDialog } from './components/server/ServerTasksDialog'
 import { ServerActionMenu } from './components/server/ServerActionMenu'
+import { OverflowMenu, type OverflowMenuGroup } from './components/ui/overflow-menu'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
 import stashClientIcon from './assets/subscription-clients/stash.jpg'
@@ -178,6 +179,18 @@ import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain,
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
+import {
+  compareDNSPolicyStatus,
+  dnsPolicyStatus,
+  dnsPolicyStatusLabel,
+  dnsPolicyStatusTone,
+  dnsRelativeTime,
+  filterDNSPolicyRows,
+  latestDNSSuccessAt,
+  summarizeDNSPolicyStatuses,
+  type DNSPolicyStatus,
+  type DNSPolicyStatusFilter,
+} from './dns-status'
 import {
   automationConnectArtifacts,
   normalizeAutomationControllerURL,
@@ -19926,16 +19939,60 @@ function DNSListSettings({ data, client, load, notify }: any) {
     if (!ok) return
     try { await client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }); notify?.('解析服务列表已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
+  const listMenuGroups = (list: DNSList): OverflowMenuGroup[] => [
+    {
+      key: 'edit',
+      items: [
+        { key: 'edit', label: '编辑列表', icon: Edit3, onSelect: () => edit(list) },
+        { key: 'copy', label: '复制列表', icon: Copy, onSelect: () => copy(list) },
+      ],
+    },
+    {
+      key: 'state',
+      items: [
+        {
+          key: 'default',
+          label: '设为默认',
+          icon: Star,
+          disabled: list.protected || !list.enabled,
+          title: list.protected ? '已经是默认列表' : list.enabled ? '设为默认' : '启用后才能设为默认',
+          onSelect: () => void setDefault(list),
+        },
+        {
+          key: 'toggle',
+          label: list.enabled ? '停用列表' : '启用列表',
+          icon: CheckSquare,
+          disabled: list.protected,
+          title: list.protected ? '默认列表始终启用' : list.enabled ? '停用列表' : '启用列表',
+          onSelect: () => void toggle(list),
+        },
+      ],
+    },
+    {
+      key: 'danger',
+      items: [
+        {
+          key: 'delete',
+          label: '删除列表',
+          icon: Trash2,
+          danger: true,
+          disabled: list.protected,
+          title: list.protected ? '默认列表不能删除' : '删除列表',
+          onSelect: () => void removeList(list),
+        },
+      ],
+    },
+  ]
   const visible = lists.filter(list => list.kind === filter)
   return <section className="settings-card dns-lists-card">
-    <div className="settings-card-head"><div><h3>解析服务列表</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务；标星列表是新建服务器默认使用的列表。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建列表</button></div>
+    <div className="settings-card-head"><div><h3>解析服务</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务；标记为默认的列表会被新建服务器直接使用。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建解析列表</button></div>
     <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></div>
     <div className="dns-record-list">{visible.length ? visible.map(list => <div className="dns-record-row dns-list-row" key={list.id}>
         <span className="record-type">{list.kind === 'encrypted' ? '加密' : '基础'}</span>
-        <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用{list.protected ? ' · 新建服务器默认使用' : ''}</small></div>
-        <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '禁用'}</span>
+        <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small></div>
+        <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '停用'}</span>
         {list.protected && <span className="status-pill managed">默认</span>}
-        <div className="record-actions">{!list.protected && <button type="button" className="ghost icon-button" onClick={() => void setDefault(list)} disabled={!list.enabled} aria-label={list.enabled ? '设为默认' : '启用后才能设为默认'} title={list.enabled ? '设为默认' : '启用后才能设为默认'}><Star size={14} /></button>}<button type="button" className="ghost icon-button" onClick={() => copy(list)} aria-label="复制" title="复制"><Copy size={14} /></button><button type="button" className="ghost icon-button" onClick={() => edit(list)} aria-label="编辑" title="编辑"><Edit3 size={14} /></button><button type="button" className="ghost icon-button" onClick={() => void toggle(list)} disabled={list.protected} aria-label={list.protected ? '默认列表始终启用' : list.enabled ? '禁用' : '启用'} title={list.protected ? '默认列表始终启用' : list.enabled ? '禁用' : '启用'}><CheckSquare size={14} /></button><button type="button" className="ghost icon-button danger-text" onClick={() => void removeList(list)} disabled={list.protected} aria-label={list.protected ? '默认列表不能删除' : '删除'} title={list.protected ? '默认列表不能删除' : '删除'}><Trash2 size={14} /></button></div>
+        <div className="record-actions"><OverflowMenu groups={listMenuGroups(list)} label={`${list.name} 的操作`} /></div>
       </div>) : <div className="empty-inline">暂无{filter === 'encrypted' ? '加密解析' : '基础解析'}列表</div>}</div>
     <AnimatePresence>{editorOpen && <DNSListDialog draft={draft} setDraft={setDraft} editing={editing} saving={working === 'save'} onCancel={closeEditor} onSave={() => void save()} />}</AnimatePresence>
   </section>
@@ -19944,24 +20001,18 @@ function DNSListSettings({ data, client, load, notify }: any) {
 function dnsPolicyDraft(policy: ServerDNSPolicy | undefined, lists: DNSList[]) {
   const fallbackListID = (kind: DNSListKind) => lists.find(list => list.kind === kind && list.enabled && list.protected)?.id || lists.find(list => list.kind === kind && list.enabled)?.id || 0
   return {
-    encryptedListID: Number(policy?.encrypted_list_id || fallbackListID('encrypted')),
+    // 0 是「不使用加密解析」，已保存的策略不能回落到默认列表。
+    encryptedListID: policy ? Number(policy.encrypted_list_id) : Number(fallbackListID('encrypted')),
     bootstrapListID: Number(policy?.bootstrap_list_id || fallbackListID('bootstrap')),
     strategy: policy?.strategy || 'auto',
     hourlyTest: policy?.auto_test === 'periodic',
   }
 }
 
-function isDNSPolicyStale(policy: ServerDNSPolicy | undefined, lists: DNSList[]) {
-  if (!policy?.last_success_at) return false
-  const encryptedRevision = lists.find(list => list.id === policy.encrypted_list_id)?.revision
-  const bootstrapRevision = lists.find(list => list.id === policy.bootstrap_list_id)?.revision
-  return policy.encrypted_selection_revision !== encryptedRevision || policy.bootstrap_selection_revision !== bootstrapRevision
-}
-
 function DNSGroupStatus({ title, selected, group }: { title: string; selected: DNSCandidate[]; group?: DNSBenchmarkGroup }) {
   const tags = group?.best_tags?.length ? group.best_tags : selected.map(candidate => candidate.tag)
   const itemByTag = new Map((group?.items || []).map(item => [item.tag, item]))
-  return <div className="dns-group-status"><header><strong>{title}</strong><span>{tags.length ? `${tags.length} 个可用` : '等待检查'}</span></header>{[0, 1].map(index => {
+  return <div className="dns-group-status"><header><strong>{title}</strong><span>{tags.length ? `${tags.length} 个可用` : '等待测试'}</span></header>{[0, 1].map(index => {
     const tag = tags[index]
     const item = tag ? itemByTag.get(tag) : undefined
     return <div key={index}><small>{index === 0 ? '第一名' : '第二名'}</small><strong>{tag || '—'}</strong><span>{item && !item.error ? `${item.latency_ms} ms` : item?.error || ''}</span></div>
@@ -19974,7 +20025,8 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
   const latest = benchmarks[0]
   const encryptedList = lists.find(list => list.id === draft.encryptedListID)
   const bootstrapList = lists.find(list => list.id === draft.bootstrapListID)
-  const stale = isDNSPolicyStale(policy, lists)
+  const status = dnsPolicyStatus(policy, lists)
+  const stale = status === 'stale'
   useEffect(() => setDraft(dnsPolicyDraft(policy, lists)), [policy?.revision, lists.length])
   const save = async () => {
     const response = await client.request(`/servers/${server.id}/dns-policy`, { method: 'PUT', body: JSON.stringify({
@@ -19996,32 +20048,32 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
         const result = await client.request(`/servers/${server.id}/dns-test`, { method: 'POST', body: JSON.stringify({ action }) })
         if (result.task?.status === 'failed') {
           const failure = parseJSONLoose(result.task.result_json)
-          throw new Error(failure?.error || failure?.message || '暂时无法检查解析服务')
+          throw new Error(failure?.error || failure?.message || '暂时无法测试解析服务')
         }
-        notify?.(action === 'test' ? '解析服务检查已开始' : '解析服务检查已开始，成功后会自动应用', 'success')
+        notify?.(action === 'test' ? '解析测试已开始' : '解析测试已开始，成功后会自动应用配置', 'success')
       } else {
-        notify?.('服务器解析设置已保存', 'success')
+        notify?.('服务器 DNS 策略已保存', 'success')
       }
       if (action !== 'test') onClose()
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') } finally { setWorking('') }
   }
   const body = <>
-    {!embedded && <header className="dialog-head"><div><h2>DNS 设置</h2><p className="muted">{server.name}</p></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>}
+    {!embedded && <header className="dialog-head"><div><h2>{server.name}</h2><p className="muted">DNS 策略</p></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>}
     <div className="dialog-body dns-settings-body">
-      <div className="dns-status-strip"><span><strong>{stale ? '等待重新检查' : policy?.last_success_at ? '解析服务正常' : '尚未检查'}</strong><small>{policy?.last_success_at ? formatTableTime(policy.last_success_at) : '保存后会使用当前列表'}</small></span><span><strong>{draft.hourlyTest ? '每小时检查' : '关闭自动检查'}</strong><small>自动检查不会直接修改服务器配置</small></span><span className={policy?.last_error ? 'has-error' : ''}><strong>{policy?.last_error ? '最近检查失败' : latest?.status === 'stale' ? '检查结果已过期' : '状态正常'}</strong><small>{policy?.last_error || latest?.error || '—'}</small></span></div>
-      {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新检查</strong><span>旧的检查结果已停止使用。</span></div>}
-      <div className="dns-group-grid"><DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected || []} group={latest?.encrypted} /><DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected || []} group={latest?.bootstrap} /></div>
+      <div className="dns-status-strip"><span><strong>{dnsPolicyStatusLabel(status)}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span><span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改服务器配置</small></span><span className={policy?.last_error ? 'has-error' : ''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status === 'stale' ? '测试结果已过期' : '无异常'}</strong><small>{policy?.last_error || latest?.error || (policy?.last_attempt_at ? `最后尝试 ${formatTableTime(policy.last_attempt_at)}` : '—')}</small></span></div>
+      {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
+      <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected || []} group={latest?.encrypted} /> : <div className="dns-group-status"><header><strong>加密解析</strong><span>未启用</span></header><div><small>说明</small><strong>仅普通解析</strong><span /></div></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected || []} group={latest?.bootstrap} /></div>
       <div className="form dns-settings-form labeled-form">
-        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => setDraft({ ...draft, encryptedListID: Number(event.target.value) })}>{lists.filter(list => list.kind === 'encrypted' && (list.enabled || list.id === policy?.encrypted_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => setDraft({ ...draft, encryptedListID: Number(event.target.value) })}><option value={0}>不使用加密解析（仅普通解析）</option>{lists.filter(list => list.kind === 'encrypted' && (list.enabled || list.id === policy?.encrypted_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select>{draft.encryptedListID === 0 && <small className="muted">服务器将只用普通解析查询域名，查询内容在链路上不加密。</small>}</FormField>
         <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => setDraft({ ...draft, bootstrapListID: Number(event.target.value) })}>{lists.filter(list => list.kind === 'bootstrap' && (list.enabled || list.id === policy?.bootstrap_list_id)).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => setDraft({ ...draft, strategy: event.target.value })}><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
-        <FormField label="每小时自动检查">
-          <Switch checked={draft.hourlyTest} onChange={checked => setDraft({ ...draft, hourlyTest: checked })} ariaLabel="启用每小时自动检查" />
+        <FormField label="每小时自动测试">
+          <Switch checked={draft.hourlyTest} onChange={checked => setDraft({ ...draft, hourlyTest: checked })} ariaLabel="启用每小时自动测试" />
         </FormField>
         <div className="dns-list-preview"><span>{encryptedList?.candidates.map(candidate => dnsTransportLabel(candidate.transport)).join(' · ')}</span><span>{bootstrapList?.candidates.map(candidate => dnsTransportLabel(candidate.transport)).join(' · ')}</span></div>
       </div>
     </div>
-    <footer className="dialog-actions dns-dialog-actions"><button className="ghost" disabled={Boolean(working)} onClick={() => void run('save')}>{working === 'save' ? '保存中...' : '仅保存'}</button><button className="ghost" disabled={Boolean(working)} onClick={() => void run('test')}><Gauge size={15} />{working === 'test' ? '检查中...' : '仅检查'}</button><button disabled={Boolean(working)} onClick={() => void run('test_and_apply')}><RefreshCw size={15} />{working === 'test_and_apply' ? '检查中...' : '检查并应用'}</button></footer>
+    <footer className="dialog-actions dns-dialog-actions"><button className="ghost" disabled={Boolean(working)} onClick={() => void run('save')}>{working === 'save' ? '保存中...' : '仅保存'}</button><button className="ghost" disabled={Boolean(working)} onClick={() => void run('test')}><Gauge size={15} />{working === 'test' ? '测试中...' : '重新测试'}</button><button disabled={Boolean(working)} onClick={() => void run('test_and_apply')}><RefreshCw size={15} />{working === 'test_and_apply' ? '测试中...' : '测试并应用'}</button></footer>
   </>
   if (embedded) return body
   return <MotionDialogPanel onCancel={onClose} className="dns-settings-dialog">{body}</MotionDialogPanel>
@@ -20075,8 +20127,8 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
   }
   const checkAvailability = (serverID: number) => {
     const server = serverByID.get(serverID)
-    if (!server?.agent_id?.trim()) return 'Agent 未接入，DNS 设置已保存，检查已跳过'
-    if (String(server.status || '').toLowerCase() === 'offline') return '服务器离线，DNS 设置已保存，检查已跳过'
+    if (!server?.agent_id?.trim()) return 'Agent 未接入，DNS 策略已保存，测试已跳过'
+    if (String(server.status || '').toLowerCase() === 'offline') return '服务器离线，DNS 策略已保存，测试已跳过'
     return ''
   }
   const run = async (action: DNSBulkAction) => {
@@ -20093,15 +20145,15 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
       if (!failedIDs.length) {
         onSelectionChange([])
         if (action === 'save') {
-          notify?.(`已保存 ${succeeded} 台服务器的解析设置`, 'success')
+          notify?.(`已保存 ${succeeded} 台服务器的 DNS 策略`, 'success')
         } else {
           const started = succeeded > 0
             ? action === 'test'
-              ? `已为 ${succeeded} 台服务器开始解析检查`
-              : `已为 ${succeeded} 台服务器开始解析检查，成功后会自动应用`
-            : '未启动解析检查'
+              ? `已为 ${succeeded} 台服务器开始解析测试`
+              : `已为 ${succeeded} 台服务器开始解析测试，成功后会自动应用配置`
+            : '未启动解析测试'
           const skippedSummary = skippedResults.length
-            ? `，${skippedResults.length} 台暂不可用，DNS 设置已保存并跳过检查`
+            ? `，${skippedResults.length} 台暂不可用，DNS 策略已保存并跳过测试`
             : ''
           notify?.(`${started}${skippedSummary}`, skippedResults.length ? 'warning' : 'success')
         }
@@ -20122,7 +20174,7 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
 
   return <MotionDialogPanel onCancel={working ? () => undefined : onClose} className="dns-bulk-settings-dialog">
     <header className="dialog-head">
-      <div><h2>批量 DNS 设置</h2><p className="muted">{policies.length} 台服务器</p></div>
+      <div><h2>批量修改 DNS 策略</h2><p className="muted">{policies.length} 台服务器</p></div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body dns-bulk-settings-body">
@@ -20135,20 +20187,20 @@ function DNSBulkSettingsDialog({ policies, servers, lists, client, onClose, onSe
         <ul>{failures.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{localizeErrorMessage(result.message)}</small></li>)}</ul>
       </div>}
       {skipped.length > 0 && <div className="dns-bulk-skipped" role="status">
-        <strong>{skipped.length} 台服务器已跳过检查</strong>
+        <strong>{skipped.length} 台服务器已跳过测试</strong>
         <ul>{skipped.map(result => <li key={result.serverID}><span>{serverNames.get(result.serverID) || `服务器 #${result.serverID}`}</span><small>{result.message}</small></li>)}</ul>
       </div>}
       <div className="form dns-settings-form dns-bulk-settings-form labeled-form">
-        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => updateDraft({ encryptedListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'encrypted' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
+        <FormField label="加密解析服务列表" full><Select value={draft.encryptedListID} onChange={event => updateDraft({ encryptedListID: event.target.value })}><option value="">保持各服务器当前设置</option><option value="0">不使用加密解析（仅普通解析）</option>{lists.filter(list => list.kind === 'encrypted' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="基础解析服务列表" full><Select value={draft.bootstrapListID} onChange={event => updateDraft({ bootstrapListID: event.target.value })}><option value="">保持各服务器当前设置</option>{lists.filter(list => list.kind === 'bootstrap' && list.enabled).map(list => <option key={list.id} value={list.id}>{list.name} · {list.candidates.length} 项</option>)}</Select></FormField>
         <FormField label="IP 类型"><Select value={draft.strategy} onChange={event => updateDraft({ strategy: event.target.value })}><option value="">保持各服务器当前设置</option><option value="auto">跟随服务器</option><option value="prefer_ipv4">优先 IPv4</option><option value="prefer_ipv6">优先 IPv6</option><option value="ipv4_only">仅 IPv4</option><option value="ipv6_only">仅 IPv6</option></Select></FormField>
-        <FormField label="自动检查"><Select value={draft.autoTest} onChange={event => updateDraft({ autoTest: event.target.value })}><option value="">保持各服务器当前设置</option><option value="periodic">每小时自动检查</option><option value="first_apply">关闭自动检查</option></Select></FormField>
+        <FormField label="自动测试"><Select value={draft.autoTest} onChange={event => updateDraft({ autoTest: event.target.value })}><option value="">保持各服务器当前设置</option><option value="periodic">每小时自动测试</option><option value="first_apply">关闭自动测试</option></Select></FormField>
       </div>
     </div>
     <footer className="dialog-actions dns-dialog-actions">
       <button type="button" className="ghost" disabled={Boolean(working) || !hasPatch} onClick={() => void run('save')}>{working === 'save' ? '保存中...' : '仅保存'}</button>
-      <button type="button" className="ghost" disabled={Boolean(working)} onClick={() => void run('test')}><Gauge size={15} />{working === 'test' ? '检查中...' : '仅检查'}</button>
-      <button type="button" disabled={Boolean(working)} onClick={() => void run('test_and_apply')}><RefreshCw size={15} />{working === 'test_and_apply' ? '检查中...' : '检查并应用'}</button>
+      <button type="button" className="ghost" disabled={Boolean(working)} onClick={() => void run('test')}><Gauge size={15} />{working === 'test' ? '测试中...' : '立即测试'}</button>
+      <button type="button" disabled={Boolean(working)} onClick={() => void run('test_and_apply')}><RefreshCw size={15} />{working === 'test_and_apply' ? '测试中...' : '测试并应用'}</button>
     </footer>
   </MotionDialogPanel>
 }
@@ -20184,22 +20236,22 @@ function DNSBenchmarkHistoryDialog({ servers, client, onClose }: { servers: Serv
   const groups = useMemo(() => groupDNSBenchmarkResults(records, servers), [records, servers])
   const visibleGroups = useMemo(() => filterDNSBenchmarkGroups(groups, query), [groups, query])
   const subtitle = loading && !records.length
-    ? '正在加载检查记录'
+    ? '正在加载测试记录'
     : `${records.length} 条记录 · ${groups.length} 台服务器`
 
   return <MotionDialogPanel onCancel={onClose} className="dns-benchmark-history-dialog">
     <header className="dialog-head">
-      <div><h2>检查日志</h2><p className="muted">{subtitle}</p></div>
+      <div><h2>测试记录</h2><p className="muted">{subtitle}</p></div>
       <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body dns-benchmark-history-body">
       <div className="dns-benchmark-history-toolbar">
         <label className="log-search dns-benchmark-search"><Search size={15} aria-hidden="true" /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索服务器" aria-label="搜索服务器" /></label>
         <span>{query.trim() ? `${visibleGroups.length} / ${groups.length} 台服务器` : `${groups.length} 台服务器`}</span>
-        <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={loading} aria-label="刷新检查日志" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+        <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={loading} aria-label="刷新测试记录" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
       </div>
       {loadError && <div className="dns-benchmark-load-error" role="alert"><span>{loadError}</span><button type="button" className="ghost" onClick={() => setRefreshRevision(value => value + 1)}>重试</button></div>}
-      {loading && !records.length ? <TableSkeleton /> : !groups.length ? <div className="dns-benchmark-empty">暂无检查记录</div> : !visibleGroups.length ? <div className="dns-benchmark-empty">未找到匹配的服务器</div> : <div className="dns-benchmark-server-groups">
+      {loading && !records.length ? <TableSkeleton /> : !groups.length ? <div className="dns-benchmark-empty">暂无测试记录</div> : !visibleGroups.length ? <div className="dns-benchmark-empty">未找到匹配的服务器</div> : <div className="dns-benchmark-server-groups">
         {visibleGroups.map(group => {
           const rows = group.records.map(result => ({
             id: result.id,
@@ -20225,55 +20277,268 @@ function DNSBenchmarkHistoryDialog({ servers, client, onClose }: { servers: Serv
   </MotionDialogPanel>
 }
 
-function DNS({ data, client, load, notify }: any) {
-  const servers: Server[] = data.servers || []
-  const lists: DNSList[] = data.dns_lists || []
-  const policies: ServerDNSPolicy[] = data.server_dns_policies || []
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [bulkOpen, setBulkOpen] = useState(false)
+type DNSPolicyRow = {
+  serverID: number
+  serverName: string
+  server?: Server
+  policy: ServerDNSPolicy
+  status: DNSPolicyStatus
+  encryptedListID: number
+  bootstrapListID: number
+  encryptedListName: string
+  bootstrapListName: string
+}
+
+function buildDNSPolicyRows(policies: ServerDNSPolicy[], servers: Server[], lists: DNSList[]): DNSPolicyRow[] {
+  const serverByID = new Map(servers.map(server => [Number(server.id), server]))
+  const listByID = new Map(lists.map(list => [Number(list.id), list]))
+  return policies.map(policy => {
+    const serverID = Number(policy.server_id)
+    const server = serverByID.get(serverID)
+    return {
+      serverID,
+      server,
+      serverName: server?.name || `服务器 #${serverID}`,
+      policy,
+      status: dnsPolicyStatus(policy, lists),
+      encryptedListID: Number(policy.encrypted_list_id || 0),
+      bootstrapListID: Number(policy.bootstrap_list_id || 0),
+      encryptedListName: listByID.get(Number(policy.encrypted_list_id))?.name || '不使用加密解析',
+      bootstrapListName: listByID.get(Number(policy.bootstrap_list_id))?.name || '未选择',
+    }
+  }).sort((a, b) => compareDNSPolicyStatus(a.status, b.status) || a.serverName.localeCompare(b.serverName, 'zh-Hans-CN'))
+}
+
+function dnsPolicyAttentionReason(row: DNSPolicyRow) {
+  if (row.status === 'failed') return localizeErrorMessage(row.policy.last_error) || '最近一次解析测试失败'
+  if (row.status === 'stale') return '解析服务列表已更新，需要重新测试'
+  if (row.status === 'untested') return '尚未测试，服务器暂时按列表顺序使用解析服务'
+  return ''
+}
+
+function dnsAutoTestLabel(policy: ServerDNSPolicy) {
+  return policy.auto_test === 'periodic' ? '每小时自动测试' : '仅首次应用时测试'
+}
+
+function DNSAttentionCard({ row, busy, onTest, onOpen }: { row: DNSPolicyRow; busy: boolean; onTest: () => void; onOpen: () => void }) {
+  const attempted = dnsRelativeTime(row.policy.last_attempt_at || row.policy.last_success_at)
+  return <article className="dns-attention-card">
+    <button type="button" className="dns-attention-main" onClick={onOpen} aria-label={`查看 ${row.serverName} 的 DNS 策略`}>
+      <span className="dns-attention-card-head">
+        <strong>{row.serverName}</strong>
+        <span className={`status-pill ${dnsPolicyStatusTone(row.status)}`}>{dnsPolicyStatusLabel(row.status)}</span>
+      </span>
+      <span className="dns-attention-lists">加密解析 · {row.encryptedListName}<i aria-hidden="true" />基础解析 · {row.bootstrapListName}</span>
+      <span className="dns-attention-reason">{dnsPolicyAttentionReason(row)}</span>
+    </button>
+    <div className="dns-attention-actions">
+      <span>{attempted ? `最后尝试 ${attempted}` : '尚无测试记录'}</span>
+      <button type="button" className="ghost" disabled={busy} onClick={onTest}><Gauge size={14} />{busy ? '测试中...' : row.status === 'untested' ? '立即测试' : '重新测试'}</button>
+    </div>
+  </article>
+}
+
+function DNSPolicyManagerDialog({ rows, servers, lists, client, initialStatus, onClose, onOpenDetail, onChanged, notify }: {
+  rows: DNSPolicyRow[]
+  servers: Server[]
+  lists: DNSList[]
+  client: ReturnType<typeof api>
+  initialStatus: DNSPolicyStatusFilter
+  onClose: () => void
+  onOpenDetail: (serverID: number) => void
+  onChanged: () => Promise<void>
+  notify?: (message: string, tone?: ToastKind) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<DNSPolicyStatusFilter>(initialStatus)
+  const [encryptedListID, setEncryptedListID] = useState(0)
+  const [bootstrapListID, setBootstrapListID] = useState(0)
+  const [selectionMode, setSelectionMode] = useState(false)
   const [selectedServerIDs, setSelectedServerIDs] = useState<number[]>([])
-  const policyIDKey = policies.map(policy => policy.server_id).join(',')
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const availableKey = rows.map(row => row.serverID).join(',')
   useEffect(() => {
-    const available = new Set(policies.map(policy => Number(policy.server_id)))
+    const available = new Set(rows.map(row => row.serverID))
     setSelectedServerIDs(current => {
       const next = current.filter(serverID => available.has(serverID))
       return next.length === current.length ? current : next
     })
-  }, [policyIDKey])
-  const selectedPolicies = policies.filter(policy => selectedServerIDs.includes(Number(policy.server_id)))
-  const rows = policies.map(policy => ({
-    id: policy.server_id,
-    server: servers.find(server => server.id === policy.server_id)?.name || `#${policy.server_id}`,
-    encrypted_list: lists.find(list => list.id === policy.encrypted_list_id)?.name || '—',
-    bootstrap_list: lists.find(list => list.id === policy.bootstrap_list_id)?.name || '—',
-    encrypted_selected: dnsSelectionLabel(policy.encrypted_selected),
-    bootstrap_selected: dnsSelectionLabel(policy.bootstrap_selected),
-    status: isDNSPolicyStale(policy, lists) ? '等待重新检查' : policy.last_error ? '失败' : policy.last_success_at ? '正常' : '尚未检查',
-    last_success_at: policy.last_success_at || '',
-    _policy: policy,
-  }))
-  const test = async (policy: ServerDNSPolicy) => { await client.request(`/servers/${policy.server_id}/dns-test`, { method: 'POST', body: JSON.stringify({ action: 'test' }) }); await load() }
-  return <div className="dns-settings-page">
-    <DNSListSettings data={data} client={client} load={load} notify={notify} />
-    <Panel title="服务器解析设置">
-      <div className="section-toolbar">
-        <div><h3>服务器解析策略</h3><p className="muted">每台服务器可以选择一组加密解析服务和一组基础解析服务。</p></div>
-        <div className="section-actions">
-          <button type="button" className="ghost" onClick={() => setHistoryOpen(true)}><ClipboardList size={15} />检查日志</button>
-          <button type="button" className="ghost" onClick={() => goTab('servers')}><ServerIcon size={15} />打开服务器设置</button>
-        </div>
+  }, [availableKey])
+  const visible = filterDNSPolicyRows(rows, { query, status, encryptedListID, bootstrapListID })
+  const visibleIDs = visible.map(row => row.serverID)
+  const selectedVisible = visibleIDs.filter(serverID => selectedServerIDs.includes(serverID))
+  const selectedPolicies = rows.filter(row => selectedServerIDs.includes(row.serverID)).map(row => row.policy)
+  const toggleServer = (serverID: number) => setSelectedServerIDs(current => current.includes(serverID) ? current.filter(id => id !== serverID) : [...current, serverID])
+  const toggleAllVisible = () => setSelectedServerIDs(current => selectedVisible.length === visibleIDs.length
+    ? current.filter(serverID => !visibleIDs.includes(serverID))
+    : Array.from(new Set([...current, ...visibleIDs])))
+  const exitSelection = () => { setSelectionMode(false); setSelectedServerIDs([]) }
+  const filtered = query.trim() || status !== 'all' || encryptedListID || bootstrapListID
+  return <MotionDialogPanel onCancel={onClose} className="dns-policy-manager-dialog">
+    <header className="dialog-head">
+      <div><h2>服务器 DNS 策略</h2><p className="muted">{filtered ? `${visible.length} / ${rows.length} 台服务器` : `${rows.length} 台服务器`}</p></div>
+      <button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body dns-policy-manager-body">
+      <div className="dns-policy-manager-toolbar">
+        <label className="log-search dns-policy-manager-search"><Search size={15} aria-hidden="true" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索服务器" aria-label="搜索服务器" /></label>
+        <Select value={status} onChange={event => setStatus(event.target.value as DNSPolicyStatusFilter)} aria-label="按状态筛选">
+          <option value="all">全部状态</option>
+          <option value="attention">需要处理</option>
+          <option value="ok">正常</option>
+          <option value="pending">等待测试</option>
+          <option value="failed">测试失败</option>
+        </Select>
+        <Select value={encryptedListID} onChange={event => setEncryptedListID(Number(event.target.value))} aria-label="按加密解析列表筛选">
+          <option value={0}>全部加密解析</option>
+          {lists.filter(list => list.kind === 'encrypted').map(list => <option key={list.id} value={list.id}>{list.name}</option>)}
+        </Select>
+        <Select value={bootstrapListID} onChange={event => setBootstrapListID(Number(event.target.value))} aria-label="按基础解析列表筛选">
+          <option value={0}>全部基础解析</option>
+          {lists.filter(list => list.kind === 'bootstrap').map(list => <option key={list.id} value={list.id}>{list.name}</option>)}
+        </Select>
+        <button type="button" className={selectionMode ? '' : 'ghost'} onClick={() => selectionMode ? exitSelection() : setSelectionMode(true)}><CheckSquare size={14} />{selectionMode ? '退出批量' : '批量操作'}</button>
       </div>
-      <div className="dns-policy-selection-toolbar" role="toolbar" aria-label="批量 DNS 设置">
+      {selectionMode && <div className="dns-policy-selection-toolbar" role="toolbar" aria-label="批量修改 DNS 策略">
         <span>已选 <strong>{selectedServerIDs.length}</strong> 台</span>
         <div>
+          <button type="button" className="ghost" onClick={toggleAllVisible} disabled={!visibleIDs.length}>{selectedVisible.length === visibleIDs.length && visibleIDs.length > 0 ? '取消本页' : '选择本页'}</button>
           {selectedServerIDs.length > 0 && <button type="button" className="ghost" onClick={() => setSelectedServerIDs([])}><Eraser size={14} />清空</button>}
           <button type="button" onClick={() => setBulkOpen(true)} disabled={!selectedServerIDs.length}><Settings2 size={14} />批量设置</button>
         </div>
+      </div>}
+      {!visible.length ? <div className="dns-benchmark-empty">{rows.length ? '没有符合条件的服务器' : '暂无已配置 DNS 策略的服务器'}</div> : <div className="dns-policy-rows">
+        {visible.map(row => {
+          const selected = selectedServerIDs.includes(row.serverID)
+          return <div className={selected ? 'dns-policy-row is-selected' : 'dns-policy-row'} key={row.serverID}>
+            {selectionMode && <TableSelectionCheckbox checked={selected} onChange={() => toggleServer(row.serverID)} label={row.serverName} />}
+            <button type="button" className="dns-policy-row-main" onClick={() => selectionMode ? toggleServer(row.serverID) : onOpenDetail(row.serverID)}>
+              <span className="dns-policy-row-head">
+                <strong>{row.serverName}</strong>
+                <span className={`status-pill ${dnsPolicyStatusTone(row.status)}`}>{dnsPolicyStatusLabel(row.status)}</span>
+              </span>
+              <span className="dns-policy-row-lists">{row.encryptedListName}<i aria-hidden="true" />{row.bootstrapListName}</span>
+              <span className="dns-policy-row-meta">{dnsAutoTestLabel(row.policy)} · 当前 {dnsSelectionLabel(row.policy.encrypted_selected)} / {dnsSelectionLabel(row.policy.bootstrap_selected)}</span>
+            </button>
+            {!selectionMode && <ChevronRight size={16} className="dns-policy-row-chevron" aria-hidden="true" />}
+          </div>
+        })}
+      </div>}
+    </div>
+    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+    <AnimatePresence>{bulkOpen && selectedPolicies.length > 0 && <DNSBulkSettingsDialog policies={selectedPolicies} servers={servers} lists={lists} client={client} onClose={() => setBulkOpen(false)} onSelectionChange={setSelectedServerIDs} onChanged={onChanged} notify={notify} />}</AnimatePresence>
+  </MotionDialogPanel>
+}
+
+const dnsAttentionPreviewLimit = 4
+
+function DNS({ data, client, load, notify }: any) {
+  const servers: Server[] = data.servers || []
+  const lists: DNSList[] = data.dns_lists || []
+  const policies: ServerDNSPolicy[] = data.server_dns_policies || []
+  const benchmarks: DNSBenchmarkResult[] = data.dns_benchmarks || []
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [managerStatus, setManagerStatus] = useState<DNSPolicyStatusFilter | ''>('')
+  const [detailServerID, setDetailServerID] = useState(0)
+  const [testingServerID, setTestingServerID] = useState(0)
+
+  const rows = useMemo(() => buildDNSPolicyRows(policies, servers, lists), [policies, servers, lists])
+  const summary = useMemo(() => summarizeDNSPolicyStatuses(rows.map(row => row.status)), [rows])
+  const attention = rows.filter(row => row.status !== 'ok')
+  const defaultEncrypted = lists.find(list => list.kind === 'encrypted' && list.protected)
+  const defaultBootstrap = lists.find(list => list.kind === 'bootstrap' && list.protected)
+  const lastSuccess = dnsRelativeTime(latestDNSSuccessAt(policies))
+  const detailRow = rows.find(row => row.serverID === detailServerID)
+
+  const test = async (row: DNSPolicyRow) => {
+    if (testingServerID) return
+    setTestingServerID(row.serverID)
+    try {
+      const result = await client.request(`/servers/${row.serverID}/dns-test`, { method: 'POST', body: JSON.stringify({ action: 'test' }) })
+      if (result.task?.status === 'failed') {
+        const failure = parseJSONLoose(result.task.result_json)
+        throw new Error(failure?.error || failure?.message || '暂时无法测试解析服务')
+      }
+      notify?.(`已为 ${row.serverName} 开始解析测试`, 'success')
+      await load()
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    } finally {
+      setTestingServerID(0)
+    }
+  }
+
+  const stat = (key: DNSPolicyStatusFilter, value: number, label: string, tone = '') => <button
+    type="button"
+    className={`dns-overview-stat${tone ? ` ${tone}` : ''}`}
+    onClick={() => setManagerStatus(key)}
+    disabled={!rows.length}
+  >
+    <strong>{value}</strong>
+    <small>{label}</small>
+  </button>
+
+  return <div className="dns-settings-page">
+    <DNSListSettings data={data} client={client} load={load} notify={notify} />
+    <Panel title="服务器 DNS">
+      <div className="section-toolbar">
+        <div><h3>解析状态</h3><p className="muted">每台服务器使用一组加密解析服务和一组基础解析服务；测试只更新排序结果，应用才会下发配置。</p></div>
+        <div className="section-actions">
+          <button type="button" className="ghost" onClick={() => setManagerStatus('all')}><Settings2 size={15} />管理服务器策略</button>
+          <button type="button" className="ghost" onClick={() => setHistoryOpen(true)}><ClipboardList size={15} />测试记录</button>
+        </div>
       </div>
-      <Table rows={rows} selection={{ selectedIDs: selectedServerIDs, onChange: setSelectedServerIDs, getRowID: (row: any) => Number(row.id), getRowLabel: (row: any) => String(row.server) }} actions={(row: any) => <button onClick={() => void test(row._policy)}><Gauge size={14} />重新检查</button>} />
+      <div className="dns-overview-stats">
+        {stat('all', summary.total, '已配置')}
+        {stat('ok', summary.ok, '正常', 'ok')}
+        {stat('pending', summary.pending, '待测试', 'warning')}
+        {stat('failed', summary.failed, '异常', 'danger')}
+      </div>
+      <div className="dns-overview-defaults">
+        <span>默认策略</span>
+        <strong>加密解析 · {defaultEncrypted?.name || '未设置'}</strong>
+        <strong>基础解析 · {defaultBootstrap?.name || '未设置'}</strong>
+      </div>
+      {!rows.length ? <div className="dns-overview-empty">还没有服务器配置 DNS 策略。新建服务器会自动使用默认解析列表。</div>
+        : !attention.length ? <div className="dns-overview-healthy"><Check size={16} aria-hidden="true" /><span>所有 {summary.total} 台服务器 DNS 解析状态正常{lastSuccess ? `，最近一次成功测试 ${lastSuccess}` : ''}。</span></div>
+        : <section className="dns-attention" aria-label="需要处理的服务器">
+          <div className="dns-attention-head">
+            <h4>需要处理</h4>
+            {attention.length > dnsAttentionPreviewLimit && <button type="button" className="ghost" onClick={() => setManagerStatus('attention')}>查看全部 {attention.length} 台<ArrowRight size={14} /></button>}
+          </div>
+          <div className="dns-attention-list">
+            {attention.slice(0, dnsAttentionPreviewLimit).map(row => <DNSAttentionCard
+              key={row.serverID}
+              row={row}
+              busy={testingServerID === row.serverID}
+              onTest={() => void test(row)}
+              onOpen={() => setDetailServerID(row.serverID)}
+            />)}
+          </div>
+        </section>}
     </Panel>
     <AnimatePresence>{historyOpen && <DNSBenchmarkHistoryDialog servers={servers} client={client} onClose={() => setHistoryOpen(false)} />}</AnimatePresence>
-    <AnimatePresence>{bulkOpen && selectedPolicies.length > 0 && <DNSBulkSettingsDialog policies={selectedPolicies} servers={servers} lists={lists} client={client} onClose={() => setBulkOpen(false)} onSelectionChange={setSelectedServerIDs} onChanged={load} notify={notify} />}</AnimatePresence>
+    <AnimatePresence>{managerStatus && <DNSPolicyManagerDialog
+      rows={rows}
+      servers={servers}
+      lists={lists}
+      client={client}
+      initialStatus={managerStatus}
+      onClose={() => setManagerStatus('')}
+      onOpenDetail={setDetailServerID}
+      onChanged={load}
+      notify={notify}
+    />}</AnimatePresence>
+    <AnimatePresence>{detailRow && <DNSSettingsDialog
+      server={detailRow.server || ({ id: detailRow.serverID, name: detailRow.serverName } as Server)}
+      policy={detailRow.policy}
+      lists={lists}
+      benchmarks={benchmarks.filter(result => Number(result.server_id) === detailRow.serverID)}
+      client={client}
+      onClose={() => setDetailServerID(0)}
+      onChanged={load}
+      notify={notify}
+    />}</AnimatePresence>
   </div>
 }
 

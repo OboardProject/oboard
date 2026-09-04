@@ -9,5 +9,5 @@ export function dnsTagListLabel(tags: readonly string[] | null | undefined, fall
 
 export function dnsSelectionLabel(candidates: readonly DNSCandidateTag[] | null | undefined) {
   const tags = Array.isArray(candidates) ? candidates.map(candidate => candidate?.tag || '') : []
-  return dnsTagListLabel(tags, '等待检查')
+  return dnsTagListLabel(tags, '等待测试')
 }
