@@ -823,9 +823,64 @@ func TestAgentScriptsShareTheAgentCoreLifecycleLockFile(t *testing.T) {
 		if !strings.Contains(script, `core_lock_path="$STATE_DIR/core-lifecycle.lock"`) {
 			t.Fatalf("%s script does not take the Agent core lifecycle lock", name)
 		}
-		if !strings.Contains(script, "flock -w 120 9") {
+		if !strings.Contains(script, "until flock -n 9; do") {
 			t.Fatalf("%s script does not wait on the lock", name)
 		}
+		// BusyBox flock has no -w, and its usage error is indistinguishable from
+		// a busy lock, so an Alpine host would report a phantom deployment.
+		if strings.Contains(script, "flock -w") {
+			t.Fatalf("%s script waits with an option BusyBox flock rejects", name)
+		}
+	}
+}
+
+// A BusyBox host has flock(1), but only [-sxun]. The bounded retry loop must
+// still wait for a busy lock there instead of aborting the operator's update.
+func TestInstallerLockHelperWaitsWithBusyBoxFlock(t *testing.T) {
+	shell := testPOSIXShell(t)
+	script := testAgentInstallScript(t)
+	start := strings.Index(script, "\nCORE_LOCK_HELD=0")
+	if start < 0 {
+		t.Fatal("installer lock helper is missing")
+	}
+	end := strings.Index(script[start:], "\nservice_active() {")
+	if end <= 0 {
+		t.Fatal("installer lock helper block has no end")
+	}
+	helpers := script[start : start+end]
+
+	stub := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// BusyBox rejects -w outright; the first -n attempt reports the lock busy.
+	writeExecutable(t, filepath.Join(stub, "flock"), `#!/bin/sh
+case "$*" in
+  *-w*) echo "flock: unrecognized option: w" >&2; exit 1 ;;
+esac
+if [ ! -f "$STUB_STATE/tried" ]; then
+  : > "$STUB_STATE/tried"
+  exit 1
+fi
+exit 0
+`)
+
+	state := t.TempDir()
+	driver := "set -eu\nSTATE_DIR=" + t.TempDir() + "\n" + helpers + "\nacquire_core_lifecycle_lock\nrelease_core_lifecycle_lock\necho reached-end\n"
+	cmd := exec.Command(shell, "-c", driver)
+	cmd.Env = append(os.Environ(), "PATH="+stub+":"+os.Getenv("PATH"), "STUB_STATE="+state)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("lock helper aborted on a BusyBox host: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "reached-end") {
+		t.Fatalf("lock helper did not return: %s", out)
+	}
+	if strings.Contains(string(out), "另一个 OBoard 更新") {
+		t.Fatalf("lock helper reported a phantom concurrent deployment: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(state, "tried")); err != nil {
+		t.Fatalf("lock helper did not retry a busy lock: %v", err)
 	}
 }
 

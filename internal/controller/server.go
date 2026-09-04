@@ -15470,10 +15470,19 @@ acquire_core_lifecycle_lock() {
   fi
   chmod 0600 "$core_lock_path" 2>/dev/null || true
   exec 9>> "$core_lock_path"
-  if ! flock -w 120 9; then
-    echo "另一个 OBoard 更新或面板配置下发正在进行，请稍后重试。" >&2
-    exit 1
-  fi
+  # BusyBox flock accepts only [-sxun]: -w is a usage error there, and its
+  # non-zero exit is indistinguishable from a busy lock, so an Alpine host would
+  # report a phantom concurrent deployment. A bounded -n retry loop is the one
+  # wait util-linux and BusyBox both implement.
+  core_lock_waited=0
+  until flock -n 9; do
+    if [ "$core_lock_waited" -ge 120 ]; then
+      echo "另一个 OBoard 更新或面板配置下发正在进行，请稍后重试。" >&2
+      exit 1
+    fi
+    sleep 1
+    core_lock_waited=$((core_lock_waited + 1))
+  done
   CORE_LOCK_HELD=1
   printf 'installer %s\n' "$$" >&9 2>/dev/null || true
 }
@@ -17045,10 +17054,19 @@ acquire_core_lifecycle_lock() {
   fi
   chmod 0600 "$core_lock_path" 2>/dev/null || true
   exec 9>> "$core_lock_path"
-  if ! flock -w 120 9; then
-    echo "另一个 OBoard 更新或面板配置下发正在进行，请稍后重试。" >&2
-    exit 1
-  fi
+  # BusyBox flock accepts only [-sxun]: -w is a usage error there, and its
+  # non-zero exit is indistinguishable from a busy lock, so an Alpine host would
+  # report a phantom concurrent deployment. A bounded -n retry loop is the one
+  # wait util-linux and BusyBox both implement.
+  core_lock_waited=0
+  until flock -n 9; do
+    if [ "$core_lock_waited" -ge 120 ]; then
+      echo "另一个 OBoard 更新或面板配置下发正在进行，请稍后重试。" >&2
+      exit 1
+    fi
+    sleep 1
+    core_lock_waited=$((core_lock_waited + 1))
+  done
   CORE_LOCK_HELD=1
   printf 'self-update %s\n' "$$" >&9 2>/dev/null || true
 }
