@@ -6892,9 +6892,6 @@ func normalizeInbound(v model.Inbound) model.Inbound {
 	if v.CertificateMode != model.CertificateModeExternal && v.CertificateDomain == "" {
 		v.CertificateDomain = v.DNSDomain
 	}
-	if inboundRequiresOwnDomain(v) {
-		v.DNSSyncEnabled = true
-	}
 	if v.DDNSInterval == 0 {
 		v.DDNSInterval = 300
 	}
@@ -7183,9 +7180,6 @@ func validateInbound(v model.Inbound) error {
 	default:
 		return fmt.Errorf("invalid dns_record_types %q", v.DNSRecordTypes)
 	}
-	if inboundRequiresOwnDomain(v) && !isDNSDomainName(v.DNSDomain) {
-		return errors.New("此协议必须填写自有解析域名")
-	}
 	if v.DNSSyncEnabled {
 		if !isDNSDomainName(v.DNSDomain) {
 			return errors.New("启用 DNS 自动解析时需要填写有效的解析域名")
@@ -7212,11 +7206,11 @@ func validateInbound(v model.Inbound) error {
 	case model.CertificateModeExternal:
 	case model.CertificateModeAuto, model.CertificateModeExact, model.CertificateModeWildcard:
 		if !isDNSDomainName(v.CertificateDomain) {
-			return errors.New("托管证书需要有效的 SNI 域名")
+			return errors.New("托管证书需要有效的 SNI 域名；该域名不必解析到本机，客户端可以直接连接 IP")
 		}
 	case model.CertificateModeExplicit:
 		if !isDNSDomainName(v.CertificateDomain) {
-			return errors.New("指定证书需要有效的 SNI 域名")
+			return errors.New("指定证书需要有效的 SNI 域名；该域名不必解析到本机，客户端可以直接连接 IP")
 		}
 		if v.CertificateID == nil || *v.CertificateID <= 0 {
 			return errors.New("指定证书模式需要选择证书")

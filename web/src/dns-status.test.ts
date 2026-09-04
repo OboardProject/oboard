@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   compareDNSPolicyStatus,
+  dnsNoUsableCandidatesError,
+  dnsPolicyErrorText,
   dnsPolicyStatus,
   dnsPolicyStatusTone,
   dnsRelativeTime,
@@ -134,5 +136,24 @@ describe('DNS relative time', () => {
     expect(dnsRelativeTime('', now)).toBe('')
     expect(dnsRelativeTime(undefined, now)).toBe('')
     expect(dnsRelativeTime('not-a-time', now)).toBe('')
+  })
+})
+
+describe('DNS policy error text', () => {
+  it('names only the bootstrap group when the policy binds no encrypted list', () => {
+    expect(dnsPolicyErrorText(dnsNoUsableCandidatesError, { encrypted_list_id: 0 }))
+      .toBe('基础解析列表里没有可用的解析服务，服务器暂时改用系统解析')
+  })
+
+  it('names both groups when the policy binds an encrypted list', () => {
+    expect(dnsPolicyErrorText(dnsNoUsableCandidatesError, { encrypted_list_id: 3 }))
+      .toBe('加密解析和基础解析都需要至少一个可用的解析服务，服务器暂时改用系统解析')
+    expect(dnsPolicyErrorText(dnsNoUsableCandidatesError)).toContain('加密解析和基础解析')
+  })
+
+  it('passes other messages through unchanged', () => {
+    expect(dnsPolicyErrorText('dial tcp: timeout', { encrypted_list_id: 0 })).toBe('dial tcp: timeout')
+    expect(dnsPolicyErrorText('', { encrypted_list_id: 0 })).toBe('')
+    expect(dnsPolicyErrorText(undefined)).toBe('')
   })
 })

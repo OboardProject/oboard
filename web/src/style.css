@@ -6634,9 +6634,50 @@ body:has(.dialog-layer) .main {
   color: var(--text-secondary);
   font-size: 11px;
 }
-.related-path-error { align-items: flex-start; justify-content: space-between; color: var(--danger); }
-.related-path-error span { padding-top: 7px; overflow-wrap: anywhere; }
-.related-path-error button { min-height: 32px; flex: 0 0 auto; }
+.related-path-error {
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger-soft) 72%, var(--surface-solid));
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.related-path-error-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.related-path-error-main > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  stroke-width: 2.2;
+}
+.related-path-error-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.related-path-error-copy strong {
+  color: var(--text-strong);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.related-path-error-copy span {
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  overflow-wrap: anywhere;
+}
+.related-path-error button {
+  min-height: 32px;
+  flex: 0 0 auto;
+  margin-top: -2px;
+}
 .related-paths-empty {
   min-height: 150px;
   display: grid;
@@ -7046,7 +7087,7 @@ body:has(.dialog-layer) .main {
   max-width: min(680px, 100%);
   min-width: 0;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 9px 12px 9px 16px;
   color: var(--text-strong);
@@ -7104,6 +7145,7 @@ body:has(.dialog-layer) .main {
   flex: 0 0 auto;
   width: 20px;
   height: 20px;
+  margin-top: 1px;
   stroke-width: 2.2;
 }
 
@@ -7118,6 +7160,18 @@ body:has(.dialog-layer) .main {
   line-height: 1.55;
   font-weight: 650;
   letter-spacing: 0;
+  text-wrap: pretty;
+}
+
+.toast-message-multiline {
+  padding-top: 1px;
+  font-weight: 600;
+}
+
+.toast.toast-multiline {
+  border-radius: 16px;
+  padding-top: 11px;
+  padding-bottom: 11px;
 }
 
 .toast .toast-close {
@@ -7126,7 +7180,7 @@ body:has(.dialog-layer) .main {
   min-height: 32px;
   width: 32px;
   height: 32px;
-  margin: 0;
+  margin: -2px 0 0;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -7355,17 +7409,30 @@ body:has(.dialog-layer) .main {
 
 /* Compact system confirm/alert host (logout, deletes, etc.) */
 .dialog-host.dialog-host-compact {
-  width: min(360px, 100%);
+  width: min(420px, 100%);
 }
 .dialog-host .dialog-host-body {
   display: grid;
   gap: 10px;
 }
 .dialog-host .dialog-host-message {
+  display: grid;
+  gap: 6px;
   color: var(--text-secondary);
   font-size: 13.5px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-line;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.dialog-host .dialog-host-message strong {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.dialog-host .dialog-host-message span {
+  color: var(--text-secondary);
 }
 .telegram-binding-alert {
   display: grid;

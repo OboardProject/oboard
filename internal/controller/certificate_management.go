@@ -717,7 +717,7 @@ func certificateIssuanceDomain(mode, domain string) (string, error) {
 
 func (s *Server) ensureManagedCertificateIssue(ctx context.Context, inbound model.Inbound, selectionMode, domain string, certificates []model.Certificate, settings map[string]string) error {
 	if inbound.DNSCredentialID == nil || *inbound.DNSCredentialID <= 0 {
-		return errors.New("自动申请证书需要入口的域名服务账号")
+		return errors.New("自动申请证书需要为入口选择域名服务账号；也可以先在证书页签发覆盖该 SNI 的证书")
 	}
 	issuanceDomain, err := certificateIssuanceDomain(selectionMode, domain)
 	if err != nil {

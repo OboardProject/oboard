@@ -23,6 +23,22 @@ export type DNSStatusPolicy = {
   needs_benchmark?: boolean
 }
 
+// Controller stores one fixed marker whenever a bound resolver group produced no
+// usable candidate, and matches that exact string to fall the server back to
+// local DNS. It is a wire sentinel, not operator copy: its wording names both
+// groups even for a server that binds no encrypted list, which reads as if the
+// missing encrypted list were the failure. The panel always renders it through
+// dnsPolicyErrorText so the operator sees what actually has to be fixed.
+export const dnsNoUsableCandidatesError = 'both encrypted and bootstrap dns groups require at least one usable candidate'
+
+export function dnsPolicyErrorText(error: string | undefined, policy?: Pick<DNSStatusPolicy, 'encrypted_list_id'>) {
+  const raw = String(error || '').trim()
+  if (raw !== dnsNoUsableCandidatesError) return raw
+  return policy && !policy.encrypted_list_id
+    ? '基础解析列表里没有可用的解析服务，服务器暂时改用系统解析'
+    : '加密解析和基础解析都需要至少一个可用的解析服务，服务器暂时改用系统解析'
+}
+
 export const dnsPolicyStatusLabels: Record<DNSPolicyStatus, string> = {
   ok: '正常',
   failed: '测试失败',

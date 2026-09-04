@@ -143,21 +143,37 @@ func TestValidateInboundAllowsSnellAdvertisePort(t *testing.T) {
 	}
 }
 
-func TestInboundRequiresOwnDomainForManagedTLS(t *testing.T) {
+// A managed TLS inbound needs an SNI hostname its certificate covers, not a DNS
+// record: clients may dial the server IP and still complete TLS from that SNI.
+func TestManagedTLSInboundNeedsSNIWithoutDNSRecord(t *testing.T) {
 	hy2 := normalizeInbound(model.Inbound{ServerID: 1, Name: "hy2", Protocol: model.ProtocolHY2, Port: 443, TLS: true, ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
-	if !inboundRequiresOwnDomain(hy2) || !hy2.DNSSyncEnabled {
-		t.Fatalf("hy2 own-domain defaults: required=%v dns_sync=%v mode=%s", inboundRequiresOwnDomain(hy2), hy2.DNSSyncEnabled, hy2.CertificateMode)
+	if !inboundUsesManagedCertificate(hy2) || hy2.DNSSyncEnabled {
+		t.Fatalf("hy2 managed TLS defaults: managed=%v dns_sync=%v mode=%s", inboundUsesManagedCertificate(hy2), hy2.DNSSyncEnabled, hy2.CertificateMode)
 	}
-	if err := validateInbound(hy2); err == nil || !strings.Contains(err.Error(), "自有解析域名") {
-		t.Fatalf("hy2 without domain: %v", err)
+	if err := validateInbound(hy2); err == nil || !strings.Contains(err.Error(), "SNI 域名") {
+		t.Fatalf("hy2 without SNI: %v", err)
 	}
-	anytls := normalizeInbound(model.Inbound{ServerID: 1, Name: "anytls", Protocol: model.ProtocolAnyTLS, Port: 443, TLS: true, ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
-	if err := validateInbound(anytls); err == nil {
-		t.Fatal("anytls without domain was accepted")
+	hy2.CertificateDomain = "entry.example.com"
+	if err := validateInbound(hy2); err != nil {
+		t.Fatalf("hy2 with SNI but without a DNS record: %v", err)
+	}
+	anytls := normalizeInbound(model.Inbound{ServerID: 1, Name: "anytls", Protocol: model.ProtocolAnyTLS, Port: 443, TLS: true, CertificateDomain: "entry.example.com", ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
+	if anytls.DNSSyncEnabled {
+		t.Fatal("anytls must not force DNS record sync")
+	}
+	if err := validateInbound(anytls); err != nil {
+		t.Fatalf("anytls with SNI but without a DNS record: %v", err)
+	}
+	synced := normalizeInbound(model.Inbound{ServerID: 1, Name: "anytls-dns", Protocol: model.ProtocolAnyTLS, Port: 443, TLS: true, DNSSyncEnabled: true, DNSDomain: "entry.example.com", ConfigJSON: `{"tls":{"enabled":true}}`, Enabled: true})
+	if synced.CertificateDomain != "entry.example.com" {
+		t.Fatalf("synced SNI = %q, want it to follow dns_domain", synced.CertificateDomain)
+	}
+	if err := validateInbound(synced); err == nil || !strings.Contains(err.Error(), "DNS 凭据") {
+		t.Fatalf("dns sync without a credential: %v", err)
 	}
 	external := normalizeInbound(model.Inbound{ServerID: 1, Name: "anytls-ext", Protocol: model.ProtocolAnyTLS, Port: 443, CertificateMode: model.CertificateModeExternal, ConfigJSON: `{"tls":{"enabled":true,"certificate_path":"/tmp/cert.pem","key_path":"/tmp/key.pem"}}`, Enabled: true})
-	if inboundRequiresOwnDomain(external) {
-		t.Fatal("external AnyTLS should not require managed DNS")
+	if inboundUsesManagedCertificate(external) {
+		t.Fatal("external AnyTLS should not use a managed certificate")
 	}
 }
 

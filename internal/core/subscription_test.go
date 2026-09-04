@@ -482,6 +482,23 @@ func TestResolveEntryAddressHostUsesIPForStaticSingleStack(t *testing.T) {
 	}
 }
 
+// TLS inbounds do not need a resolvable entry hostname: the subscription Host
+// may be the server IP while the certificate domain carries the SNI.
+func TestSubscriptionTLSKeepsCertificateSNIWithoutDNSDomain(t *testing.T) {
+	server := model.Server{ID: 1, Name: "hk", PublicIPv4: "203.0.113.10"}
+	inbound := model.Inbound{ID: 5, ServerID: 1, Protocol: model.ProtocolAnyTLS, Port: 443, CertificateMode: model.CertificateModeAuto, CertificateDomain: "entry.example.com"}
+	if got := ResolveEntryAddressHost(inbound, server, false); got != "203.0.113.10" {
+		t.Fatalf("entry host = %q, want the public IP", got)
+	}
+	tls, ok := subscriptionTLSForInbound(inbound, map[string]any{"enabled": true}).(map[string]any)
+	if !ok {
+		t.Fatalf("subscription TLS is not an object: %#v", tls)
+	}
+	if tls["server_name"] != "entry.example.com" {
+		t.Fatalf("subscription SNI = %v, want the certificate domain", tls["server_name"])
+	}
+}
+
 func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) {
 	user := model.User{ID: 7, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	servers := []model.Server{{ID: 20, Name: "香港", PublicIPv4: "203.0.113.20"}, {ID: 10, Name: "香港", PublicIPv4: "203.0.113.10"}, {ID: 30, Name: "东京", PublicIPv4: "203.0.113.30"}}

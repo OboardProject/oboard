@@ -323,18 +323,18 @@ func encodeInboundJSON(value any) string {
 	return string(encoded)
 }
 
-// inboundRequiresOwnDomain is true for TLS kinds that must use an operator-owned
-// hostname (AnyTLS, HY2, VLESS WebSocket, leftover VLESS TLS). External and
-// explicit certificate modes keep their existing SNI/path workflow.
-func inboundRequiresOwnDomain(v model.Inbound) bool {
-	if v.CertificateMode == model.CertificateModeExternal || v.CertificateMode == model.CertificateModeExplicit {
+// inboundUsesManagedCertificate is true when Controller owns the certificate for
+// this inbound. Such an inbound needs an SNI hostname the certificate covers,
+// but not a DNS record pointing at the server: the client may dial the public IP
+// directly and still complete TLS from that SNI and the presented certificate.
+// External and explicit modes keep their own SNI/path workflow.
+func inboundUsesManagedCertificate(v model.Inbound) bool {
+	switch v.CertificateMode {
+	case model.CertificateModeAuto, model.CertificateModeExact, model.CertificateModeWildcard:
+		return true
+	default:
 		return false
 	}
-	kind := inferredInboundKind(v)
-	if inboundKindUsesManagedCertificate(kind) {
-		return true
-	}
-	return v.TLS && v.Protocol == model.ProtocolVLESS && kind != "vless-reality"
 }
 
 func inboundKindUsesManagedCertificate(kind string) bool {

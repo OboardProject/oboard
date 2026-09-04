@@ -133,16 +133,32 @@ func pickInboundDNSCredential(credentials []model.DNSCredential, domain string, 
 // A single tenant credential is used automatically; multiple credentials use
 // the bootstrap default. Remaining ambiguity returns missing_dns_credential
 // with available_credentials for a picker.
+//
+// A managed-certificate inbound without record sync still uses the credential
+// for DNS-01 issuance, but it may legitimately have none when the operator
+// already holds a covering certificate. That pass therefore only fills an
+// unambiguous credential and never fails the request.
 func (s *Server) resolveInboundDNSCredential(ctx context.Context, inbound *model.Inbound) error {
-	if inbound == nil || !inbound.DNSSyncEnabled {
+	if inbound == nil {
+		return nil
+	}
+	issuanceOnly := !inbound.DNSSyncEnabled
+	if issuanceOnly && !inboundUsesManagedCertificate(*inbound) {
 		return nil
 	}
 	credentials, err := s.store.ListDNSCredentials(ctx)
 	if err != nil {
 		return err
 	}
-	id, available, ok := pickInboundDNSCredential(credentials, inbound.DNSDomain, inbound.ServerID, inboundDNSCredentialID(*inbound))
+	domain := inbound.DNSDomain
+	if issuanceOnly {
+		domain = inboundCertificateDomain(*inbound)
+	}
+	id, available, ok := pickInboundDNSCredential(credentials, domain, inbound.ServerID, inboundDNSCredentialID(*inbound))
 	if !ok {
+		if issuanceOnly {
+			return nil
+		}
 		return missingDNSCredentialError{Available: available}
 	}
 	assignInboundDNSCredential(inbound, id)

@@ -1731,6 +1731,41 @@ const systemErrorMarkers: Array<[string, string]> = [
   ['device or resource busy', '设备或资源正忙'],
 ]
 
+function errorProtocolLabel(protocol: string) {
+  switch (String(protocol || '').trim().toLowerCase()) {
+    case 'shadowsocks': return 'SS'
+    case 'hy2': return 'HY2'
+    case 'anytls': return 'AnyTLS'
+    case 'mieru': return 'Mieru'
+    case 'vless': return 'VLESS'
+    case 'socks': return 'SOCKS'
+    case 'snell': return 'Snell'
+    case 'ssh': return 'SSH'
+    default: return String(protocol || '').trim() || '协议'
+  }
+}
+
+function localizeManagedPublicPortExhaustion(raw: string) {
+  const match = /^server (.+?) has no available port in the managed public range (\d+)-(\d+) for shared (.+?) chain service$/i.exec(raw)
+  if (!match) return null
+  const [, server, start, end, protocol] = match
+  return [
+    '公网端口不足',
+    `服务器「${server}」的公网端口范围 ${start}–${end} 已满，无法再分配共享 ${errorProtocolLabel(protocol)} 链式服务。`,
+    '请到该服务器设置中扩大公网端口范围后重试。',
+  ].join('\n')
+}
+
+function ErrorMessageCopy({ message, className }: { message: string; className?: string }) {
+  const lines = String(message || '').split('\n').map(line => line.trim()).filter(Boolean)
+  if (lines.length <= 1) return <span className={className}>{message}</span>
+  const [title, ...detail] = lines
+  return <div className={className}>
+    <strong>{title}</strong>
+    {detail.map((line, index) => <span key={`${index}-${line}`}>{line}</span>)}
+  </div>
+}
+
 function localizeErrorMessage(message: unknown) {
   const raw = String(message || '').trim()
   if (!raw) return '操作失败，请稍后重试'
@@ -1738,6 +1773,8 @@ function localizeErrorMessage(message: unknown) {
   for (const [marker, localized] of systemErrorMarkers) {
     if (lower.includes(marker)) return localized
   }
+  const portExhaustion = localizeManagedPublicPortExhaustion(raw)
+  if (portExhaustion) return portExhaustion
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
   if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
   if (raw.startsWith('config_json.tls.reality.dest:')) return 'Reality 不支持旧字段 dest，请改用握手域名和握手端口。'
@@ -1849,7 +1886,11 @@ function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: 
     >
       {(hasMessage || isPrompt) && (
         <div className="dialog-host-body">
-          {hasMessage && <div className="dialog-host-message">{renderedDialog.message}</div>}
+          {hasMessage && (
+            typeof renderedDialog.message === 'string'
+              ? <ErrorMessageCopy message={renderedDialog.message} className="dialog-host-message" />
+              : <div className="dialog-host-message">{renderedDialog.message}</div>
+          )}
           {isPrompt && (
             <div className="dialog-host-field">
               {renderedDialog.kind === 'prompt' && renderedDialog.choices?.length ? (
@@ -12818,22 +12859,16 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(e.message || e) })
     }
   }
-  const inboundDraftFromEntry = (entry: Inbound) => {
-    const presetID = inferInboundPreset(entry.protocol as Protocol, entry.config_json || '{}')
-    const requiresOwnDomain = presetRequiresCertificate(presetID)
-    const enabledCredentials = ((data.dns_credentials || []) as DNSCredential[]).filter(item => item.enabled)
-    const defaultCredentialID = enabledCredentials.length === 1
-      ? enabledCredentials[0].id
-      : (enabledCredentials.find(item => item.verified_at)?.id || enabledCredentials[0]?.id)
-    return {
-      ...entry,
-      __edit: true,
-      __graphPosition: null,
-      __custom_sni: Boolean(entry.certificate_domain && entry.certificate_domain !== entry.dns_domain),
-      dns_sync_enabled: requiresOwnDomain ? true : Boolean(entry.dns_sync_enabled),
-      dns_credential_id: requiresOwnDomain ? (entry.dns_credential_id || defaultCredentialID) : entry.dns_credential_id,
-    }
-  }
+  // TLS inbounds keep whatever DNS record choice they were saved with: the
+  // certificate SNI carries the handshake, so editing one must not switch
+  // record sync back on behind the operator.
+  const inboundDraftFromEntry = (entry: Inbound) => ({
+    ...entry,
+    __edit: true,
+    __graphPosition: null,
+    __custom_sni: Boolean(entry.certificate_domain && entry.certificate_domain !== entry.dns_domain),
+    dns_sync_enabled: Boolean(entry.dns_sync_enabled),
+  })
   const openEditEntry = (entry: Inbound) => setEditEntry(inboundDraftFromEntry(entry))
   const addEntry = async (position?: GraphPosition) => {
     const server = selected || servers[0]
@@ -15931,25 +15966,21 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
 		if (previous._oboard_padding !== undefined) next._oboard_padding = previous._oboard_padding
 		nextConfig = JSON.stringify(next, null, 2)
 	  }
-      const requiresOwnDomain = presetRequiresCertificate(preset.id)
-      const nextDNS = requiresOwnDomain
-        ? {
-            dns_sync_enabled: true,
-            dns_credential_id: old.dns_credential_id || defaultDNSCredentialID,
-            dns_record_types: old.dns_record_types === 'auto' || !old.dns_record_types ? 'a' : old.dns_record_types,
-          }
-        : {}
+      const nextSNI = presetRequiresCertificate(preset.id)
+        ? (old.__custom_sni
+            ? old.certificate_domain
+            : (String(old.certificate_domain || '').trim() || String(old.dns_domain || '').trim() || suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip)))
+        : ''
       return {
         ...old,
-        ...nextDNS,
         protocol: preset.protocol,
         port: nextPort,
         name: shouldRename ? autoInboundName(server, preset.protocol, nextPort) : old.name,
         config_json: nextConfig,
         tls: presetRequiresCertificate(preset.id),
         certificate_mode: presetRequiresCertificate(preset.id) ? (previousRequiresCertificate ? (old.certificate_mode || 'auto') : 'auto') : 'external',
-        certificate_domain: presetRequiresCertificate(preset.id) ? (old.__custom_sni ? old.certificate_domain : (requiresOwnDomain ? String(old.dns_domain || '') : suggestedSNI(old.certificate_id ? selectedCertificate : null, old.dns_domain, old.external_ip))) : '',
-        certificate_id: presetRequiresCertificate(preset.id) ? (requiresOwnDomain && old.certificate_mode !== 'explicit' && old.dns_domain && selectedCertificate && !certificateCoversSNI(selectedCertificate, String(old.dns_domain || '')) ? undefined : old.certificate_id) : undefined,
+        certificate_domain: nextSNI,
+        certificate_id: presetRequiresCertificate(preset.id) ? (old.certificate_mode !== 'explicit' && nextSNI && selectedCertificate && !certificateCoversSNI(selectedCertificate, String(nextSNI || '')) ? undefined : old.certificate_id) : undefined,
 		anytls_padding: preset.protocol === 'anytls' && mode === 'create' ? (old.anytls_padding || { preset_id: 'balanced_v1', auto_tune: true }) : undefined,
       }
     })
@@ -16010,13 +16041,16 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const transport = transportCapability(protocol, cfg)
   const hasTransport = protocol !== 'ssh' && (transport.genericMux || transport.tfo || Boolean(transport.nativeMux))
   const dnsSyncIncomplete = Boolean(draft.dns_sync_enabled) && !Number(draft.dns_credential_id || 0)
-  const ownDomainRequired = certificateRequired && draft.certificate_mode !== 'external'
-  const ownDomainIncomplete = ownDomainRequired && (!String(draft.dns_domain || '').trim() || !Number(draft.dns_credential_id || 0) || !hasDNSCredentials)
-  const submitBlocked = dnsSyncIncomplete || ownDomainIncomplete
-  const submitHint = ownDomainIncomplete
-    ? (hasDNSCredentials ? '此协议必须填写域名服务账号和解析域名' : '请先在「域名解析」创建并验证账号')
+  // A managed certificate needs an SNI hostname it covers, not a DNS record:
+  // clients may connect to the server IP and still complete TLS from that SNI.
+  const managedCertificateRequired = certificateRequired && draft.certificate_mode !== 'external'
+  const sniFollowsDNSDomain = Boolean(draft.dns_sync_enabled) && Boolean(String(draft.dns_domain || '').trim())
+  const sniIncomplete = managedCertificateRequired && !isDomainLike(String(draft.certificate_domain || ''))
+  const submitBlocked = dnsSyncIncomplete || sniIncomplete
+  const submitHint = sniIncomplete
+    ? 'TLS 入口需要填写证书使用的 SNI 域名'
     : dnsSyncIncomplete ? '启用 DNS 自动解析时需要选择 DNS 凭据' : undefined
-  const showDNSRecordFields = hasDNSCredentials && (ownDomainRequired || Boolean(draft.dns_sync_enabled))
+  const showDNSRecordFields = hasDNSCredentials && Boolean(draft.dns_sync_enabled)
   const dnsRecordFields = showDNSRecordFields ? <>
                 <FormField label="域名服务账号" required hint="使用已验证的域名解析账号。">
                   <Select required value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))} aria-required="true"><option value={0}>选择凭据</option>{enabledDNSCredentials.map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
@@ -16061,7 +16095,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   })()
   return <MotionDialogPanel onCancel={onCancel} className="entry-dialog">
       <header className="dialog-head">
-        <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">{ownDomainRequired ? '此协议必须使用自有域名。先填解析，再确认端口。' : '设置入口协议、地址和端口。'}</p></div>
+        <div><h2 id="entry-dialog-title">{mode === 'edit' ? '编辑入口协议' : '添加入口协议'}</h2><p className="muted">{managedCertificateRequired ? '此协议使用 TLS。填写证书 SNI 域名即可，入口地址可以直接用 IP。' : '设置入口协议、地址和端口。'}</p></div>
         <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="dialog-body">
@@ -16081,11 +16115,6 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               </FormField>
             </div>
           </EntryFormSection>
-
-          {ownDomainRequired && <EntryFormSection icon={<Globe size={16} aria-hidden="true" />} title="自有域名" description="必须填写域名服务账号和解析域名。保存后会删除旧解析、写入新解析；已有覆盖证书会立刻绑定，否则部署时申请。">
-            {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能创建此协议。</span></div>}
-            {dnsRecordFields}
-          </EntryFormSection>}
 
           <EntryFormSection icon={<Layers size={16} aria-hidden="true" />} title="协议" description="先选大类，再选具体形态；预设可以一次填好这一类的默认参数。">
             <div className="entry-form-grid">
@@ -16130,10 +16159,10 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 <input value={draft.external_ip || ''} onChange={e => changeExternalIP(e.target.value)} placeholder="例如 1.2.3.4 或 origin.example.net" />
               </FormField>}
             </div>
-            {!ownDomainRequired && <EntryFormDisclosure
+            <EntryFormDisclosure
               icon={<Globe size={15} aria-hidden="true" />}
               title="DNS 解析"
-              hint="下发前把当前入口地址写入所选域名；开启定时更新后按间隔刷新。"
+              hint="可选。开启后下发前把当前入口地址写入所选域名，订阅 Host 改用该域名；关闭时客户端直接连接入口 IP。"
               summary={draft.dns_sync_enabled ? (draft.dns_domain || '已开启') : '未开启'}
               defaultOpen={Boolean(draft.dns_sync_enabled)}
               tone={draft.dns_sync_enabled ? 'accent' : 'default'}
@@ -16147,7 +16176,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               </div>
               {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能开启自动同步。</span></div>}
               {dnsRecordFields}
-            </EntryFormDisclosure>}
+            </EntryFormDisclosure>
           </EntryFormSection>
 
           <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description={protocol === 'snell' ? 'Snell 从服务器公网端口池为每个授权用户分配独立运行端口。' : 'Agent 在本机打开的地址和端口。'}>
@@ -16198,9 +16227,9 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
           {certificateRequired && <EntryFormDisclosure
             icon={<Lock size={15} aria-hidden="true" />}
             title="证书与 SNI"
-            hint="TLS 入口默认自动匹配已签发证书。仅在需要指定证书、自定义 SNI 或使用 Agent 外部证书时展开。"
-            summary={certificateModeSummary(draft.certificate_mode)}
-            defaultOpen={(draft.certificate_mode && draft.certificate_mode !== 'auto') || Boolean(draft.__custom_sni)}
+            hint="SNI 域名决定 TLS 握手用哪张证书，不需要解析到本机；入口地址可以直接是服务器 IP。"
+            summary={sniIncomplete ? '待填写 SNI 域名' : `${certificateModeSummary(draft.certificate_mode)} · ${draft.certificate_domain}`}
+            defaultOpen={sniIncomplete || (draft.certificate_mode && draft.certificate_mode !== 'auto') || Boolean(draft.__custom_sni)}
           >
             <FormField label="证书模式" hint="自动匹配会按入口域名选择已签发证书。">
               <Select value={draft.certificate_mode || 'auto'} onChange={e => { const certificateMode = e.target.value as CertificateMode; update({ certificate_mode: certificateMode, certificate_domain: certificateMode === 'external' ? '' : (draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificateMode === 'explicit' ? selectedCertificate : null)), certificate_id: certificateMode === 'explicit' ? draft.certificate_id : undefined }) }}>
@@ -16213,10 +16242,10 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </FormField>
             {draft.certificate_mode === 'explicit' && <FormField label="指定证书" required hint="只列出已就绪的证书。"><Select value={Number(draft.certificate_id || 0)} onChange={e => { const certificateID = Number(e.target.value) || undefined; const certificate = certificates.find(item => item.id === certificateID); update({ certificate_id: certificateID, certificate_domain: draft.__custom_sni ? draft.certificate_domain : suggestedSNI(certificate || null) }) }}><option value={0}>选择证书</option>{certificates.filter(item => item.status === 'ready').map(item => <option key={item.id} value={item.id}>{item.name} · {item.domains.join(', ')}</option>)}</Select></FormField>}
             {draft.certificate_mode !== 'external' && <>
-              <FormField label="SNI 设置" hint="默认使用证书匹配的入口域名；需要连接其他域名时可自定义。"><Select variant="segmented" value={draft.__custom_sni ? 'custom' : 'certificate'} onChange={e => update({ __custom_sni: e.target.value === 'custom', certificate_domain: e.target.value === 'custom' ? draft.certificate_domain : followedSNI })}><option value="certificate">跟随证书域名</option><option value="custom">自定义 SNI</option></Select></FormField>
-              {draft.__custom_sni
-                ? <FormField label="自定义 SNI" required hint="该域名必须包含在所选证书中。"><input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField>
-                : <div className="access-note compact"><strong>当前 SNI</strong><span>{followedSNI || '选择解析域名或指定证书后自动填写。'}</span></div>}
+              {sniFollowsDNSDomain && <FormField label="SNI 设置" hint="默认使用证书匹配的入口域名；需要连接其他域名时可自定义。"><Select variant="segmented" value={draft.__custom_sni ? 'custom' : 'certificate'} onChange={e => update({ __custom_sni: e.target.value === 'custom', certificate_domain: e.target.value === 'custom' ? draft.certificate_domain : followedSNI })}><option value="certificate">跟随解析域名</option><option value="custom">自定义 SNI</option></Select></FormField>}
+              {sniFollowsDNSDomain && !draft.__custom_sni
+                ? <div className="access-note compact"><strong>当前 SNI</strong><span>{followedSNI || '选择解析域名或指定证书后自动填写。'}</span></div>
+                : <FormField label="SNI 域名" required hint="证书覆盖的域名。不需要解析到本机，客户端连接入口 IP 时也用它完成 TLS。"><input value={draft.certificate_domain || ''} onChange={e => update({ certificate_domain: e.target.value, __custom_sni: true })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField>}
             </>}
             {draft.certificate_mode === 'external' && <>
               <FormField label="SNI 域名" required hint="填写外部证书覆盖的域名。"><input value={String(tlsForReality.server_name || '')} onChange={e => updateConfig({ tls: { ...tlsForReality, server_name: e.target.value } })} placeholder="例如 entry.example.com" autoCapitalize="none" /></FormField>
@@ -16823,7 +16852,13 @@ function RelatedPathsInspector({ data, client, target, onLocate }: {
             </div>
             {isOpen && <div className="related-path-details" id={detailsID} aria-busy={loading}>
               {loading && <div className="related-path-loading" role="status"><Loader2 size={14} className="spin" aria-hidden="true" />正在投影运行节点</div>}
-              {error && <div className="related-path-error" role="alert"><span>{error}</span><button type="button" className="ghost" onClick={() => void loadPlan(path.id)}>重试</button></div>}
+              {error && <div className="related-path-error" role="alert">
+                <div className="related-path-error-main">
+                  <AlertTriangle size={15} aria-hidden="true" />
+                  <ErrorMessageCopy message={error} className="related-path-error-copy" />
+                </div>
+                <button type="button" className="ghost" onClick={() => void loadPlan(path.id)}>重试</button>
+              </div>}
               {plan && !loading && !error && <ProxyPathRuntimeDetails plan={plan} data={data} />}
             </div>}
           </article>
@@ -20061,7 +20096,7 @@ function DNSSettingsDialog({ server, policy, lists, benchmarks, client, onClose,
   const body = <>
     {!embedded && <header className="dialog-head"><div><h2>{server.name}</h2><p className="muted">DNS 策略</p></div><button className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>}
     <div className="dialog-body dns-settings-body">
-      <div className="dns-status-strip"><span><strong>{dnsPolicyStatusLabel(status)}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span><span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改服务器配置</small></span><span className={policy?.last_error ? 'has-error' : ''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status === 'stale' ? '测试结果已过期' : '无异常'}</strong><small>{policy?.last_error || latest?.error || (policy?.last_attempt_at ? `最后尝试 ${formatTableTime(policy.last_attempt_at)}` : '—')}</small></span></div>
+      <div className="dns-status-strip"><span><strong>{dnsPolicyStatusLabel(status)}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span><span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改服务器配置</small></span><span className={policy?.last_error ? 'has-error' : ''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status === 'stale' ? '测试结果已过期' : '无异常'}</strong><small>{dnsPolicyErrorText(policy?.last_error, policy) || dnsPolicyErrorText(latest?.error, policy) || (policy?.last_attempt_at ? `最后尝试 ${formatTableTime(policy.last_attempt_at)}` : '—')}</small></span></div>
       {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
       <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected || []} group={latest?.encrypted} /> : <div className="dns-group-status"><header><strong>加密解析</strong><span>未启用</span></header><div><small>说明</small><strong>仅普通解析</strong><span /></div></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected || []} group={latest?.bootstrap} /></div>
       <div className="form dns-settings-form labeled-form">
@@ -20311,7 +20346,10 @@ function buildDNSPolicyRows(policies: ServerDNSPolicy[], servers: Server[], list
 }
 
 function dnsPolicyAttentionReason(row: DNSPolicyRow) {
-  if (row.status === 'failed') return dnsPolicyErrorText(row.policy.last_error, row.policy) && localizeErrorMessage(dnsPolicyErrorText(row.policy.last_error, row.policy)) || '最近一次解析测试失败'
+  if (row.status === 'failed') {
+    const reason = dnsPolicyErrorText(row.policy.last_error, row.policy)
+    return reason ? localizeErrorMessage(reason) : '最近一次解析测试失败'
+  }
   if (row.status === 'stale') return '解析服务列表已更新，需要重新测试'
   if (row.status === 'untested') return '尚未测试，服务器暂时按列表顺序使用解析服务'
   return ''

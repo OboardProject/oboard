@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Select } from '../../ui/select'
 import { Switch } from '../../ui/switch'
 import { FormField } from '../../ui/form-field'
+import { dnsPolicyErrorText } from '../../../dns-status'
 import type { Server } from '../../proxy-path/types'
 
 type DNSList = { id:number; name:string; kind:string; revision:number; candidates:any[]; enabled:boolean }
@@ -81,7 +82,7 @@ export function NetworkDNSTab({ server, policy, lists, benchmarks, client, notif
       <div className="dns-status-strip">
         <span><strong>{stale ? '等待重新测试' : policy?.last_success_at ? '正常' : '等待首次测试'}</strong><small>{policy?.last_success_at ? `最后成功 ${formatTableTime(policy.last_success_at)}` : '保存后会按列表顺序使用'}</small></span>
         <span><strong>{draft.hourlyTest ? '每小时自动测试' : '关闭自动测试'}</strong><small>自动测试只更新测试结果，不会修改配置</small></span>
-        <span className={policy?.last_error ? 'has-error':''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status==='stale' ? '测试结果已过期':'无异常'}</strong><small>{policy?.last_error || latest?.error || '—'}</small></span>
+        <span className={policy?.last_error ? 'has-error':''}><strong>{policy?.last_error ? '最近一次测试失败' : latest?.status==='stale' ? '测试结果已过期':'无异常'}</strong><small>{dnsPolicyErrorText(policy?.last_error, policy) || dnsPolicyErrorText(latest?.error, policy) || '—'}</small></span>
       </div>
       {stale && <div className="access-note warning"><strong>解析服务列表已更新，需要重新测试</strong><span>旧的测试结果已停止使用。</span></div>}
       <div className="dns-group-grid">{policy?.encrypted_list_id ? <DNSGroupStatus title="加密解析" selected={policy?.encrypted_selected||[]} group={latest?.encrypted} /> : <div className="dns-group-status"><strong>加密解析</strong><span>未启用</span><span>仅使用普通解析</span></div>}<DNSGroupStatus title="基础解析" selected={policy?.bootstrap_selected||[]} group={latest?.bootstrap} /></div>

@@ -72,7 +72,7 @@ export function Toast({ message, kind = "info", onClose, duration }: ToastProps)
 
   return (
     <m.div
-      className={`toast toast-${kind}`}
+      className={`toast toast-${kind}${message.includes("\n") ? " toast-multiline" : ""}`}
       role={kind === "error" ? "alert" : "status"}
       aria-live={kind === "error" ? "assertive" : "polite"}
       aria-atomic="true"
@@ -91,7 +91,7 @@ export function Toast({ message, kind = "info", onClose, duration }: ToastProps)
         : { opacity: 0, y: -10, scale: 0.96, transition: { duration: 0.16, ease: [0.4, 0, 1, 1] } }}
     >
       <Icon className="toast-icon" aria-hidden="true" />
-      <span className="toast-message">{message}</span>
+      <span className={`toast-message${message.includes("\n") ? " toast-message-multiline" : ""}`}>{message}</span>
       <button
         type="button"
         onClick={close}
