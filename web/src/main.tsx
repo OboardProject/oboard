@@ -20425,22 +20425,34 @@ function DNSPolicyManagerDialog({ rows, servers, lists, client, initialStatus, o
       {!visible.length ? <div className="dns-benchmark-empty">{rows.length ? '没有符合条件的服务器' : '暂无已配置 DNS 策略的服务器'}</div> : <div className="dns-policy-rows">
         {visible.map(row => {
           const selected = selectedServerIDs.includes(row.serverID)
-          return <div className={selected ? 'dns-policy-row is-selected' : 'dns-policy-row'} key={row.serverID}>
-            {selectionMode && <TableSelectionCheckbox checked={selected} onChange={() => toggleServer(row.serverID)} label={row.serverName} />}
-            <button type="button" className="dns-policy-row-main" onClick={() => selectionMode ? toggleServer(row.serverID) : onOpenDetail(row.serverID)}>
+          return <div
+            className={selected ? 'dns-policy-row is-selected' : 'dns-policy-row'}
+            key={row.serverID}
+            role="button"
+            tabIndex={0}
+            onClick={() => selectionMode ? toggleServer(row.serverID) : onOpenDetail(row.serverID)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                selectionMode ? toggleServer(row.serverID) : onOpenDetail(row.serverID)
+              }
+            }}
+          >
+            {selectionMode && <div className="dns-policy-row-checkbox" onClick={e => e.stopPropagation()}><TableSelectionCheckbox checked={selected} onChange={() => toggleServer(row.serverID)} label={row.serverName} /></div>}
+            <div className="dns-policy-row-main">
               <span className="dns-policy-row-head">
                 <strong>{row.serverName}</strong>
                 <span className={`status-pill ${dnsPolicyStatusTone(row.status)}`}>{dnsPolicyStatusLabel(row.status)}</span>
               </span>
               <span className="dns-policy-row-lists">{row.encryptedListName}<i aria-hidden="true" />{row.bootstrapListName}</span>
               <span className="dns-policy-row-meta">{dnsAutoTestLabel(row.policy)} · 当前 {dnsSelectionLabel(row.policy.encrypted_selected)} / {dnsSelectionLabel(row.policy.bootstrap_selected)}</span>
-            </button>
+            </div>
             {!selectionMode && <ChevronRight size={16} className="dns-policy-row-chevron" aria-hidden="true" />}
           </div>
         })}
       </div>}
     </div>
-    <footer className="dialog-actions"><button type="button" onClick={onClose}>关闭</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
     <AnimatePresence>{bulkOpen && selectedPolicies.length > 0 && <DNSBulkSettingsDialog policies={selectedPolicies} servers={servers} lists={lists} client={client} onClose={() => setBulkOpen(false)} onSelectionChange={setSelectedServerIDs} onChanged={onChanged} notify={notify} />}</AnimatePresence>
   </MotionDialogPanel>
 }
