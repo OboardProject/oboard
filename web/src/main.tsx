@@ -3342,7 +3342,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'external-outbounds') return <ExternalOutbounds data={data} client={client} load={load} />
   if (tab === 'users') return <UserManagement data={data} client={client} load={load} notify={notify} />
   if (tab === 'plans') return <SubscriptionPlansPage data={data} client={client} load={load} notify={notify} />
-  if (tab === 'nodes') return <NodeWorkspacePage data={data} client={client} load={load} notify={notify} legacySubscriptions={hasManagementAccess(sessionUser?.role) ? <Subscriptions data={data} client={client} load={load} notify={notify} /> : <MySubscriptions data={data} client={client} load={load} notify={notify} />} />
+  if (tab === 'nodes') return <NodeWorkspacePage data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} legacySubscriptions={hasManagementAccess(data.session?.role || data.current_user?.role || sessionUser?.role) ? <Subscriptions data={data} client={client} load={load} notify={notify} /> : <MySubscriptions data={data} client={client} load={load} notify={notify} />} />
   if (tab === 'node-order-templates') return <NodeAssignmentsPage data={data} client={client} load={load} />
   if (tab === 'dns') return <DNS data={data} client={client} load={load} notify={notify} />
   if (tab === 'dns-records') return <ManagedDNSSettings data={data} client={client} load={load} notify={notify} />

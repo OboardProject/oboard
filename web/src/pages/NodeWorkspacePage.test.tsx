@@ -214,6 +214,41 @@ describe('NodeWorkspacePage', () => {
     expect(container.querySelector('[role="tablist"]')).toBeNull()
   })
 
+  it('never shows the platform-user layout before the administrator page data arrives', async () => {
+    const request = vi.fn(async (path: string) => {
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 50 }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    const load = vi.fn().mockResolvedValue(undefined)
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{}} client={{ request }} load={load} sessionUser={{ role: 'admin' }} />, dialogs)
+    })
+    await flushEffects()
+
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(request.mock.calls.every(([path]) => !String(path).startsWith('/node-workspace') && !String(path).startsWith('/node-library'))).toBe(true)
+
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'admin' }, current_user: { id: 1 }, users: [], servers: [], subscription_plans: [] }} client={{ request }} load={load} sessionUser={{ role: 'admin' }} />, dialogs)
+    })
+    await flushEffects()
+
+    expect(container.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
+  })
+
+  it('waits for the role instead of rendering the platform-user layout when it is unknown', async () => {
+    const request = vi.fn(async (path: string) => { throw new Error(`unexpected request: ${path}`) })
+    await act(async () => {
+      renderWithDialogs(root, <NodeWorkspacePage data={{ current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
+    })
+    await flushEffects()
+
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(container.textContent).toContain('正在加载节点')
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('edits node groups including remote subscription URLs and manual node links', async () => {
     const workspace = {
       subject: { id: 7, username: 'alice' },

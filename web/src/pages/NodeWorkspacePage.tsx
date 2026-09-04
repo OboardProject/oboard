@@ -14,29 +14,31 @@ type Workspace = { subject: { id: number; username: string; nickname?: string };
 
 const formats = ['auto', 'mihomo', 'stash', 'surge', 'surge-mac', 'loon', 'egern', 'shadowrocket', 'qx', 'surfboard', 'sing-box', 'v2ray', 'v2ray-uri']
 
-export function NodeWorkspacePage({ data, client, load, notify, legacySubscriptions }: { data: any; client: Client; load: () => Promise<void>; notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void; legacySubscriptions?: React.ReactNode }) {
-  const isAdmin = hasManagementAccess(data.session?.role)
-  const [mode, setMode] = React.useState<'global' | 'user'>(isAdmin ? 'global' : 'user')
+export function NodeWorkspacePage({ data, client, load, notify, legacySubscriptions, sessionUser }: { data: any; client: Client; load: () => Promise<void>; notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void; legacySubscriptions?: React.ReactNode; sessionUser?: { role?: string } | null }) {
+  // The role decides which workspace to mount, so it must be resolved before the
+  // first paint. Page data arrives asynchronously; fall back to the restored
+  // session so an administrator never sees the platform-user layout first.
+  const role: string | undefined = data.session?.role || data.current_user?.role || sessionUser?.role || undefined
+  const roleResolved = Boolean(role)
+  const isAdmin = hasManagementAccess(role)
+  const [modeOverride, setModeOverride] = React.useState<'global' | 'user' | null>(null)
+  const mode: 'global' | 'user' = isAdmin ? modeOverride || 'global' : 'user'
+  const setMode = (next: 'global' | 'user') => setModeOverride(next)
   const [userID, setUserID] = React.useState<number>(data.current_user?.id || data.account_user?.id || 0)
   const [tab, setTab] = React.useState<'library' | 'groups' | 'outputs'>('library')
   const [workspace, setWorkspace] = React.useState<Workspace | null>(null)
   const [nodes, setNodes] = React.useState<Node[]>([])
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
-  const previousIsAdmin = React.useRef(isAdmin)
   const subjectQuery = isAdmin && userID ? `?user_id=${userID}` : ''
   const users = (data.users || []).filter((user: any) => user.status === 'active')
 
-  React.useEffect(() => {
-    if (isAdmin && !previousIsAdmin.current) setMode('global')
-    previousIsAdmin.current = isAdmin
-  }, [isAdmin])
   React.useEffect(() => {
     if (!userID) setUserID(Number(data.current_user?.id || data.account_user?.id || 0))
   }, [data.current_user?.id, data.account_user?.id, userID])
 
   const refresh = React.useCallback(async () => {
-    if (mode === 'global' || (isAdmin && !userID)) return
+    if (!roleResolved || mode === 'global' || (isAdmin && !userID)) return
     setBusy(true)
     setError('')
     try {
@@ -51,7 +53,7 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
     } finally {
       setBusy(false)
     }
-  }, [client, mode, subjectQuery, isAdmin, userID])
+  }, [client, mode, subjectQuery, isAdmin, userID, roleResolved])
 
   React.useEffect(() => { void refresh() }, [refresh])
 
@@ -71,6 +73,8 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
       setBusy(false)
     }
   }
+
+  if (!roleResolved) return <div className="node-workspace"><div className="node-workspace-state">正在加载节点…</div></div>
 
   return <div className="node-workspace">
     {isAdmin && <div className="node-perspective-bar" aria-label="节点视角">
