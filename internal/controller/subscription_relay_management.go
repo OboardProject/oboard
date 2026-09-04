@@ -283,9 +283,23 @@ func (s *Server) subscriptionRelayHeartbeat(w http.ResponseWriter, r *http.Reque
 		if relay.LastUpdateError != "" {
 			relay.Status = "failed"
 		}
+	} else if relay.LastUpdateError != "" {
+		// A healthy heartbeat without a fresh update failure clears a stale
+		// update error so a still-serving relay is not stuck as "failed".
+		relay.LastUpdateError = ""
 	}
 	if err := s.store.UpdateSubscriptionRelayHeartbeat(r.Context(), relay); err != nil {
 		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	if relay.Status == "failed" {
+		// End this update attempt. Keeping update_requested_at would make the
+		// next healthy heartbeat clear the error and immediately re-dispatch.
+		if err := s.store.ClearSubscriptionRelayUpdateRequest(r.Context(), relay.ID); err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		write(w, http.StatusOK, map[string]any{"action": "none"})
 		return
 	}
 	if err := s.store.SetSubscriptionRelayActiveIfUnset(r.Context(), relay.PublicURL); err != nil {

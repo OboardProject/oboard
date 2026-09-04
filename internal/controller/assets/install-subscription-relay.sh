@@ -172,7 +172,11 @@ echo "[2/4] 从主控下载中继组件"
 echo "目标版本：$VERSION_VALUE"
 ARCHIVE=oboard-subscription-relay-linux-${ARCH}.tar.gz
 BASE_URL=${CONTROLLER_URL%/}/downloads
-TMP_DIR=$(mktemp -d /tmp/oboard-subscription-relay.XXXXXX)
+# Stage under the install directory, not /tmp. The managed updater runs with
+# PrivateTmp + ProtectSystem=strict; on some hosts extracting into that private
+# tmpfs fails with "Cannot mkdir: Function not implemented" (ENOSYS).
+install -d -m 0755 "$INSTALL_DIR"
+TMP_DIR=$(mktemp -d "$INSTALL_DIR/.update.XXXXXX") || fail "无法创建更新临时目录。"
 download_component "中继组件" "$BASE_URL/$ARCHIVE" "$TMP_DIR/$ARCHIVE" || fail "无法从主控下载 $ARCHIVE。"
 download_quiet "$BASE_URL/subscription-relay-sha256s.txt" "$TMP_DIR/sha256sums.txt" || fail "无法从主控下载订阅中继校验文件。"
 
@@ -184,9 +188,14 @@ else need_command shasum; actual=$(shasum -a 256 "$TMP_DIR/$ARCHIVE" | awk '{pri
 [ "$actual" = "$expected" ] || fail "发布包校验失败。"
 
 tar -tzf "$TMP_DIR/$ARCHIVE" | awk 'BEGIN {bad=0} /^\// || /(^|\/)\.\.($|\/)/ {bad=1} END {exit bad}' || fail "发布包包含不安全路径。"
-tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR" || fail "解压中继发布包失败。"
+# Managed updates only need the binary; unit files stay with the host. Manual
+# install/update still extracts deploy templates for first-time service setup.
+if [ "$MANAGED_UPDATE" = 1 ]; then
+	tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR" bin/oboard-subscription-relay || fail "解压中继发布包失败。"
+else
+	tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR" || fail "解压中继发布包失败。"
+fi
 [ -x "$TMP_DIR/bin/oboard-subscription-relay" ] || fail "发布包缺少订阅中继程序。"
-install -d -m 0755 "$INSTALL_DIR"
 install -m 0755 "$TMP_DIR/bin/oboard-subscription-relay" "$INSTALL_DIR/oboard-subscription-relay.new"
 # Transactional rollback: keep one backup during update.
 ROLLBACK_FILE="$INSTALL_DIR/oboard-subscription-relay.rollback"

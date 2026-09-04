@@ -170,6 +170,11 @@ func (s *Store) CompleteSubscriptionRelayUpdate(ctx context.Context, id int64) e
 	return err
 }
 
+func (s *Store) ClearSubscriptionRelayUpdateRequest(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `update subscription_relays set update_target_version='',update_target_build='',update_requested_at=NULL,updated_at=? where id=?`, now(), id)
+	return err
+}
+
 func (s *Store) MarkSubscriptionRelayUninstalled(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
