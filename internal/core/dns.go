@@ -20,6 +20,10 @@ const (
 	primaryBootstrapDNSTag = "bootstrap-primary"
 )
 
+// DNSConfigStateForServer resolves the lists a server's DNS policy binds. A
+// policy may deliberately bind no encrypted list (EncryptedListID == 0), which
+// means the server resolves through the plain bootstrap resolvers only; that
+// leaves EncryptedList nil without being an error.
 func DNSConfigStateForServer(serverID int64, lists []model.DNSList, policies []model.ServerDNSPolicy) (*DNSConfigState, error) {
 	var policy *model.ServerDNSPolicy
 	for i := range policies {
@@ -40,23 +44,28 @@ func DNSConfigStateForServer(serverID int64, lists []model.DNSList, policies []m
 			state.BootstrapList = &lists[i]
 		}
 	}
-	if state.EncryptedList == nil || state.BootstrapList == nil {
+	if state.BootstrapList == nil || (policy.EncryptedListID != 0 && state.EncryptedList == nil) {
 		return nil, fmt.Errorf("server %d dns policy references a missing list", serverID)
 	}
 	return state, nil
 }
 
 func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any, error) {
-	if state == nil || state.Policy == nil || state.EncryptedList == nil || state.BootstrapList == nil {
+	if state == nil || state.Policy == nil || state.BootstrapList == nil {
 		state = defaultDNSConfigState(server.ID)
 	}
-	if err := ValidateDNSList(*state.EncryptedList); err != nil {
-		return nil, fmt.Errorf("encrypted dns list: %w", err)
+	if state.EncryptedList != nil {
+		if err := ValidateDNSList(*state.EncryptedList); err != nil {
+			return nil, fmt.Errorf("encrypted dns list: %w", err)
+		}
+		if state.EncryptedList.Kind != model.DNSListEncrypted {
+			return nil, errors.New("dns policy list kinds do not match")
+		}
 	}
 	if err := ValidateDNSList(*state.BootstrapList); err != nil {
 		return nil, fmt.Errorf("bootstrap dns list: %w", err)
 	}
-	if state.EncryptedList.Kind != model.DNSListEncrypted || state.BootstrapList.Kind != model.DNSListBootstrap {
+	if state.BootstrapList.Kind != model.DNSListBootstrap {
 		return nil, errors.New("dns policy list kinds do not match")
 	}
 	if strings.TrimSpace(state.Policy.LastError) == model.DNSBenchmarkNoUsableCandidatesError {
@@ -67,9 +76,15 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 		}, nil
 	}
 
-	encrypted := selectedOrDraft(state.Policy.EncryptedSelected, state.Policy.EncryptedSelectionRevision, *state.EncryptedList)
+	var encrypted []model.DNSCandidate
+	if state.EncryptedList != nil {
+		encrypted = selectedOrDraft(state.Policy.EncryptedSelected, state.Policy.EncryptedSelectionRevision, *state.EncryptedList)
+		if len(encrypted) == 0 {
+			return nil, errors.New("dns policy has no usable draft candidates")
+		}
+	}
 	bootstrap := bootstrapSelectionForStack(state.Policy.BootstrapSelected, state.Policy.BootstrapSelectionRevision, *state.BootstrapList, EffectiveIPStack(server))
-	if len(encrypted) == 0 || len(bootstrap) == 0 {
+	if len(bootstrap) == 0 {
 		return nil, errors.New("dns policy has no usable draft candidates")
 	}
 
@@ -88,11 +103,39 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 		servers = append(servers, item)
 	}
 	servers = append(servers, map[string]any{"type": "local", "tag": "local"})
+	// Without an encrypted list there is no remote-* object to make final, so
+	// the plain bootstrap primary answers every query.
+	final := primaryRemoteDNSTag
+	if len(encrypted) == 0 {
+		final = primaryBootstrapDNSTag
+	}
 	return map[string]any{
 		"servers":  servers,
-		"final":    primaryRemoteDNSTag,
+		"final":    final,
 		"strategy": normalizeDNSStrategy(state.Policy.Strategy, EffectiveIPStack(server)),
 	}, nil
+}
+
+// ResolveDNSServerTag maps a requested sing-box DNS server tag onto a tag the
+// generated DNS configuration actually contains. A server bound to no encrypted
+// DNS list emits no remote-* objects, so a routing rule that still names one
+// must fall back to the configuration's final resolver instead of leaving the
+// kernel with an unresolvable reference.
+func ResolveDNSServerTag(dns map[string]any, requested string) string {
+	requested = strings.TrimSpace(requested)
+	available := map[string]bool{}
+	for _, item := range dnsServerItems(dns["servers"]) {
+		if tag, _ := item["tag"].(string); tag != "" {
+			available[tag] = true
+		}
+	}
+	if available[requested] {
+		return requested
+	}
+	if final, _ := dns["final"].(string); available[final] {
+		return final
+	}
+	return "local"
 }
 
 func selectedOrDraft(selected []model.DNSCandidate, selectedRevision int64, list model.DNSList) []model.DNSCandidate {
@@ -173,12 +216,21 @@ func bootstrapCandidatesForStack(items []model.DNSCandidate, stack model.IPStack
 	}
 }
 
-func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encrypted, bootstrap model.DNSList, stack model.IPStack, mode model.DNSAutoTestMode, requestID string) (*model.DNSBenchmarkPlan, error) {
-	if policy.EncryptedListID != encrypted.ID || policy.BootstrapListID != bootstrap.ID {
-		return nil, errors.New("dns benchmark lists do not match policy")
+// DNSBenchmarkPlanForPolicy builds the Agent benchmark plan for a policy. A nil
+// encrypted list is the plain-DNS-only policy: the plan carries an empty
+// encrypted group and the Agent benchmarks the bootstrap resolvers alone.
+func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encrypted *model.DNSList, bootstrap model.DNSList, stack model.IPStack, mode model.DNSAutoTestMode, requestID string) (*model.DNSBenchmarkPlan, error) {
+	encryptedID, encryptedRevision := int64(0), int64(0)
+	var encryptedCandidates []model.DNSCandidate
+	if encrypted != nil {
+		if err := ValidateDNSList(*encrypted); err != nil {
+			return nil, fmt.Errorf("encrypted dns list: %w", err)
+		}
+		encryptedID, encryptedRevision = encrypted.ID, encrypted.Revision
+		encryptedCandidates = append([]model.DNSCandidate(nil), encrypted.Candidates...)
 	}
-	if err := ValidateDNSList(encrypted); err != nil {
-		return nil, fmt.Errorf("encrypted dns list: %w", err)
+	if policy.EncryptedListID != encryptedID || policy.BootstrapListID != bootstrap.ID {
+		return nil, errors.New("dns benchmark lists do not match policy")
 	}
 	if err := ValidateDNSList(bootstrap); err != nil {
 		return nil, fmt.Errorf("bootstrap dns list: %w", err)
@@ -194,14 +246,14 @@ func DNSBenchmarkPlanForPolicy(version int64, policy model.ServerDNSPolicy, encr
 		Version:               version,
 		ServerID:              policy.ServerID,
 		PolicyRevision:        policy.Revision,
-		EncryptedListID:       encrypted.ID,
-		EncryptedListRevision: encrypted.Revision,
+		EncryptedListID:       encryptedID,
+		EncryptedListRevision: encryptedRevision,
 		BootstrapListID:       bootstrap.ID,
 		BootstrapListRevision: bootstrap.Revision,
 		Mode:                  mode,
 		IntervalSeconds:       interval,
 		RequestID:             requestID,
-		EncryptedCandidates:   append([]model.DNSCandidate(nil), encrypted.Candidates...),
+		EncryptedCandidates:   encryptedCandidates,
 		BootstrapCandidates:   append([]model.DNSCandidate(nil), bootstrapCandidatesForStack(bootstrap.Candidates, stack)...),
 	}, nil
 }

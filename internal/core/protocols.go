@@ -567,7 +567,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.DNS = dns
-	if dnsRules, err := buildDNSRules(server, opts.RoutingRules, opts.RoutingRuleSets); err != nil {
+	if dnsRules, err := buildDNSRules(server, opts.RoutingRules, opts.RoutingRuleSets, dns); err != nil {
 		return "", err
 	} else if len(dnsRules) > 0 {
 		dns["rules"] = dnsRules
@@ -694,7 +694,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	}
 	config.Outbounds = append(config.Outbounds, pathOutbounds...)
 	inheritedFamilyDNSStrategy, _ := dns["strategy"].(string)
-	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, plannedPathInbounds, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy)
+	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, plannedPathInbounds, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy, dns)
 	if err != nil {
 		return "", err
 	}
@@ -2326,7 +2326,7 @@ func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.Routin
 	return nil
 }
 
-func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOptions, pathOutbounds []map[string]any, plannedInbounds map[int64]model.Inbound, defaultResolver any, inheritedDNSStrategy string) ([]map[string]any, error) {
+func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOptions, pathOutbounds []map[string]any, plannedInbounds map[int64]model.Inbound, defaultResolver any, inheritedDNSStrategy string, dns map[string]any) ([]map[string]any, error) {
 	inboundByID := make(map[int64]model.Inbound, len(opts.Inbounds)+len(plannedInbounds))
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -2398,7 +2398,7 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		}
 		resolver := domainResolverMap(defaultResolver)
 		if strings.TrimSpace(rule.DNSResolver) != "" {
-			resolver["server"] = strings.TrimSpace(rule.DNSResolver)
+			resolver["server"] = ResolveDNSServerTag(dns, rule.DNSResolver)
 		}
 		resolver["strategy"] = strategy
 		selector["domain_resolver"] = resolver
@@ -2827,7 +2827,7 @@ func buildRouteRuleSets(server model.Server, rules []model.RoutingRule, sets []m
 	return result
 }
 
-func buildDNSRules(server model.Server, rules []model.RoutingRule, sets []model.RoutingRuleSet) ([]map[string]any, error) {
+func buildDNSRules(server model.Server, rules []model.RoutingRule, sets []model.RoutingRuleSet, dns map[string]any) ([]map[string]any, error) {
 	filtered := make([]model.RoutingRule, 0)
 	for _, rule := range rules {
 		if rule.ServerID == server.ID && rule.Enabled && strings.TrimSpace(rule.DNSResolver) != "" {
@@ -2872,7 +2872,7 @@ func buildDNSRules(server model.Server, rules []model.RoutingRule, sets []model.
 		if len(item) == 0 {
 			continue
 		}
-		item["server"] = strings.TrimSpace(rule.DNSResolver)
+		item["server"] = ResolveDNSServerTag(dns, rule.DNSResolver)
 		result = append(result, item)
 	}
 	return result, nil

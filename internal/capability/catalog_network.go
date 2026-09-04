@@ -53,15 +53,18 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		"server_id":   nullableInteger(),
 		"inbound_id":  nullableInteger(),
 	}, "dns_zone_id", "type", "name", "content")
+	// encrypted_list_id 0 binds no encrypted list: the server resolves through
+	// the plain bootstrap resolvers only.
+	optionalEncryptedListID := map[string]any{"type": "integer", "minimum": 0, "description": "加密解析列表 ID；0 表示不使用加密解析，仅使用普通解析"}
 	dnsPolicy := closedObject(map[string]any{
 		"server_id": positiveID, "revision": map[string]any{"type": "integer"},
-		"encrypted_list_id": positiveID, "bootstrap_list_id": positiveID,
+		"encrypted_list_id": optionalEncryptedListID, "bootstrap_list_id": positiveID,
 		"strategy": stringValue, "auto_test": stringValue, "test_interval_seconds": map[string]any{"type": "integer"},
 		"last_attempt_at": nullableString(), "last_success_at": nullableString(), "last_error": stringValue,
 		"needs_benchmark": boolValue, "updated_at": stringValue,
 	})
 	dnsPolicyFields := closedObject(map[string]any{
-		"encrypted_list_id":     positiveID,
+		"encrypted_list_id":     optionalEncryptedListID,
 		"bootstrap_list_id":     positiveID,
 		"strategy":              map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "prefer_ipv4", "prefer_ipv6"}},
 		"auto_test":             map[string]any{"type": "string", "enum": []string{"never", "first_apply", "periodic"}},

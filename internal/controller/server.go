@@ -5677,12 +5677,7 @@ func (s *Server) serverDNSTest(w http.ResponseWriter, r *http.Request, id int64)
 		fail(w, err, 500)
 		return
 	}
-	encrypted, err := s.store.GetDNSList(r.Context(), policy.EncryptedListID)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
-	bootstrap, err := s.store.GetDNSList(r.Context(), policy.BootstrapListID)
+	encrypted, bootstrap, err := s.dnsPolicyLists(r.Context(), *policy)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -5693,14 +5688,14 @@ func (s *Server) serverDNSTest(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 	version := time.Now().UnixNano()
-	plan, err := core.DNSBenchmarkPlanForPolicy(version, *policy, *encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestAlways, requestID)
+	plan, err := core.DNSBenchmarkPlanForPolicy(version, *policy, encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestAlways, requestID)
 	if err != nil {
 		fail(w, err, 400)
 		return
 	}
 	run := model.DNSBenchmarkRun{
 		RequestID: requestID, ServerID: server.ID, PolicyRevision: policy.Revision,
-		EncryptedListID: encrypted.ID, EncryptedListRevision: encrypted.Revision,
+		EncryptedListID: plan.EncryptedListID, EncryptedListRevision: plan.EncryptedListRevision,
 		BootstrapListID: bootstrap.ID, BootstrapListRevision: bootstrap.Revision,
 		Trigger: "manual", ApplyOnSuccess: request.Action == "test_and_apply", Status: "pending",
 	}
@@ -5722,6 +5717,25 @@ func (s *Server) serverDNSTest(w http.ResponseWriter, r *http.Request, id int64)
 	}
 	auditReq(s, r, request.Action, "dns", fmt.Sprint(server.ID))
 	write(w, 202, map[string]any{"task": task, "run": run})
+}
+
+// dnsPolicyLists resolves the lists a DNS policy binds. A policy with
+// EncryptedListID 0 resolves through the plain bootstrap resolvers only and
+// returns a nil encrypted list.
+func (s *Server) dnsPolicyLists(ctx context.Context, policy model.ServerDNSPolicy) (*model.DNSList, *model.DNSList, error) {
+	var encrypted *model.DNSList
+	if policy.EncryptedListID != 0 {
+		item, err := s.store.GetDNSList(ctx, policy.EncryptedListID)
+		if err != nil {
+			return nil, nil, err
+		}
+		encrypted = item
+	}
+	bootstrap, err := s.store.GetDNSList(ctx, policy.BootstrapListID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return encrypted, bootstrap, nil
 }
 
 func (s *Server) serverDNSPolicy(w http.ResponseWriter, r *http.Request, id int64) {
@@ -5748,8 +5762,9 @@ func (s *Server) serverDNSPolicy(w http.ResponseWriter, r *http.Request, id int6
 			return
 		}
 		policy.ServerID = id
-		if policy.EncryptedListID == 0 || policy.BootstrapListID == 0 {
-			fail(w, errors.New("encrypted_list_id and bootstrap_list_id are required"), 400)
+		// encrypted_list_id 0 means the server uses plain DNS only.
+		if policy.EncryptedListID < 0 || policy.BootstrapListID == 0 {
+			fail(w, errors.New("bootstrap_list_id is required and encrypted_list_id must not be negative"), 400)
 			return
 		}
 		if policy.Strategy == "" {
@@ -11793,15 +11808,11 @@ func (s *Server) queuePeriodicDNSBenchmarksForList(ctx context.Context, list mod
 		if err != nil {
 			continue
 		}
-		encrypted, err := s.store.GetDNSList(ctx, policy.EncryptedListID)
+		encrypted, bootstrap, err := s.dnsPolicyLists(ctx, policy)
 		if err != nil {
 			continue
 		}
-		bootstrap, err := s.store.GetDNSList(ctx, policy.BootstrapListID)
-		if err != nil {
-			continue
-		}
-		plan, err := core.DNSBenchmarkPlanForPolicy(time.Now().UnixNano(), policy, *encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestPeriodic, "")
+		plan, err := core.DNSBenchmarkPlanForPolicy(time.Now().UnixNano(), policy, encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestPeriodic, "")
 		if err != nil {
 			continue
 		}
@@ -12525,7 +12536,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		if err != nil {
 			return nil, 0, deploymentFail(400, err)
 		}
-		dnsPlan, err := core.DNSBenchmarkPlanForPolicy(version, *dnsState.Policy, *dnsState.EncryptedList, *dnsState.BootstrapList, core.EffectiveIPStack(server), dnsState.Policy.AutoTest, "")
+		dnsPlan, err := core.DNSBenchmarkPlanForPolicy(version, *dnsState.Policy, dnsState.EncryptedList, *dnsState.BootstrapList, core.EffectiveIPStack(server), dnsState.Policy.AutoTest, "")
 		if err != nil {
 			return nil, 0, deploymentFail(400, err)
 		}
@@ -15004,8 +15015,18 @@ func (s *Server) agentDNSBenchmarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ServerID = server.ID
-	if req.ReportID == "" || req.PolicyRevision == 0 || req.EncryptedListID == 0 || req.EncryptedListRevision == 0 || req.BootstrapListID == 0 || req.BootstrapListRevision == 0 {
+	if req.ReportID == "" || req.PolicyRevision == 0 || req.BootstrapListID == 0 || req.BootstrapListRevision == 0 {
 		fail(w, errors.New("dns benchmark report and revision snapshot are required"), 400)
+		return
+	}
+	// A plain-DNS-only policy reports no encrypted list, so both encrypted
+	// fields are zero together; one zero alone is a malformed snapshot.
+	if (req.EncryptedListID == 0) != (req.EncryptedListRevision == 0) {
+		fail(w, errors.New("dns benchmark encrypted list snapshot is inconsistent"), 400)
+		return
+	}
+	if req.EncryptedListID == 0 && len(req.Encrypted.Items) > 0 {
+		fail(w, errors.New("dns benchmark reported encrypted results without an encrypted list"), 400)
 		return
 	}
 	if len(req.Encrypted.Items) > 32 || len(req.Bootstrap.Items) > 32 || len(req.Encrypted.BestTags) > 2 || len(req.Bootstrap.BestTags) > 2 {

@@ -494,7 +494,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 unsafe-raw（测试）',6,'','none','','unsafe-raw',0,'v6 不安全原始模式；测试版协议',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`create table if not exists node_presets (id integer primary key autoincrement, name text not null unique, protocol text not null, kind text not null, config_json text not null default '{}', default_port integer not null default 443, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_node_presets_protocol_kind on node_presets(protocol,kind)`,
-		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer not null references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists port_forwards (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer references servers(id) on delete cascade, listen_ip text not null default '', listen_port integer not null, target_address text not null default '', target_port integer not null, protocol text not null default 'tcp', backend text not null default 'realm', probe_mode text not null default 'apply', probe_interval_seconds integer not null default 300, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null, check(backend='realm'), check(probe_mode in ('never','apply','periodic')))`,
 		`create table if not exists tunnels (id integer primary key autoincrement, name text not null, source_server_id integer not null references servers(id) on delete cascade, target_server_id integer not null references servers(id) on delete cascade, type text not null, local_address text not null default '', peer_address text not null default '', listen_port integer not null default 0, target_endpoint text not null default '', target_port integer not null default 0, priority integer not null default 100, config_json text not null default '{}', enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create table if not exists agent_tasks (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, type text not null, payload_json text not null, status text not null, result_json text not null default '{}', config_version integer not null default 0, nonce text not null, created_at text not null, updated_at text not null, completed_at text)`,
@@ -700,6 +700,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateFamilySplitTemplates(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureOptionalEncryptedDNSList(ctx); err != nil {
 		return err
 	}
 	for _, stmt := range []string{
@@ -5106,7 +5109,7 @@ func (s *Store) EnsureServerDNSPolicy(ctx context.Context, serverID int64) (*mod
 	return s.GetServerDNSPolicy(ctx, serverID)
 }
 
-const dnsPolicySelectSQL = `select server_id,encrypted_list_id,bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,encrypted_selected_json,bootstrap_selected_json,encrypted_selection_revision,bootstrap_selection_revision,last_attempt_at,last_success_at,last_error,needs_benchmark,created_at,updated_at from server_dns_policies`
+const dnsPolicySelectSQL = `select server_id,coalesce(encrypted_list_id,0),bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,encrypted_selected_json,bootstrap_selected_json,encrypted_selection_revision,bootstrap_selection_revision,last_attempt_at,last_success_at,last_error,needs_benchmark,created_at,updated_at from server_dns_policies`
 
 func scanDNSPolicy(scanner interface{ Scan(...any) error }) (*model.ServerDNSPolicy, error) {
 	var item model.ServerDNSPolicy
@@ -5162,18 +5165,28 @@ func (s *Store) UpdateServerDNSPolicy(ctx context.Context, v *model.ServerDNSPol
 	if err != nil {
 		return err
 	}
-	encrypted, err := s.GetDNSList(ctx, v.EncryptedListID)
-	if err != nil {
-		return err
+	// EncryptedListID 0 is the plain-DNS-only policy: the server resolves
+	// through the bootstrap resolvers alone and binds no encrypted list.
+	if v.EncryptedListID != 0 {
+		encrypted, err := s.GetDNSList(ctx, v.EncryptedListID)
+		if err != nil {
+			return err
+		}
+		if encrypted.Kind != model.DNSListEncrypted {
+			return errors.New("dns policy list kinds do not match")
+		}
+		if !encrypted.Enabled {
+			return errors.New("dns policy cannot select a disabled list")
+		}
 	}
 	bootstrap, err := s.GetDNSList(ctx, v.BootstrapListID)
 	if err != nil {
 		return err
 	}
-	if encrypted.Kind != model.DNSListEncrypted || bootstrap.Kind != model.DNSListBootstrap {
+	if bootstrap.Kind != model.DNSListBootstrap {
 		return errors.New("dns policy list kinds do not match")
 	}
-	if !encrypted.Enabled || !bootstrap.Enabled {
+	if !bootstrap.Enabled {
 		return errors.New("dns policy cannot select a disabled list")
 	}
 	if strings.TrimSpace(v.Strategy) == "" {
@@ -5217,7 +5230,7 @@ func (s *Store) UpdateServerDNSPolicy(ctx context.Context, v *model.ServerDNSPol
 	encJSON, _ := json.Marshal(v.EncryptedSelected)
 	bootstrapJSON, _ := json.Marshal(v.BootstrapSelected)
 	ts := now()
-	_, err = s.db.ExecContext(ctx, `update server_dns_policies set encrypted_list_id=?,bootstrap_list_id=?,revision=?,strategy=?,auto_test=?,test_interval_seconds=?,encrypted_selected_json=?,bootstrap_selected_json=?,encrypted_selection_revision=?,bootstrap_selection_revision=?,last_error=?,needs_benchmark=?,updated_at=? where server_id=?`, v.EncryptedListID, v.BootstrapListID, v.Revision, v.Strategy, v.AutoTest, v.TestIntervalSeconds, string(encJSON), string(bootstrapJSON), v.EncryptedSelectionRevision, v.BootstrapSelectionRevision, v.LastError, boolInt(v.NeedsBenchmark), ts, v.ServerID)
+	_, err = s.db.ExecContext(ctx, `update server_dns_policies set encrypted_list_id=?,bootstrap_list_id=?,revision=?,strategy=?,auto_test=?,test_interval_seconds=?,encrypted_selected_json=?,bootstrap_selected_json=?,encrypted_selection_revision=?,bootstrap_selection_revision=?,last_error=?,needs_benchmark=?,updated_at=? where server_id=?`, zeroToNull(v.EncryptedListID), v.BootstrapListID, v.Revision, v.Strategy, v.AutoTest, v.TestIntervalSeconds, string(encJSON), string(bootstrapJSON), v.EncryptedSelectionRevision, v.BootstrapSelectionRevision, v.LastError, boolInt(v.NeedsBenchmark), ts, v.ServerID)
 	v.CreatedAt = current.CreatedAt
 	v.UpdatedAt = parseTime(ts)
 	return err
@@ -5302,20 +5315,29 @@ func (s *Store) RecordDNSBenchmarkResult(ctx context.Context, v *model.DNSBenchm
 	}
 	var encryptedRevision, bootstrapRevision int64
 	var encryptedJSON, bootstrapJSON string
-	if err := tx.QueryRowContext(ctx, `select revision,candidates_json from dns_lists where id=?`, policy.EncryptedListID).Scan(&encryptedRevision, &encryptedJSON); err != nil {
-		return outcome, err
+	// A plain-DNS-only policy binds no encrypted list, so there is no encrypted
+	// revision to compare and no encrypted selection to canonicalize.
+	plainOnly := policy.EncryptedListID == 0
+	if !plainOnly {
+		if err := tx.QueryRowContext(ctx, `select revision,candidates_json from dns_lists where id=?`, policy.EncryptedListID).Scan(&encryptedRevision, &encryptedJSON); err != nil {
+			return outcome, err
+		}
 	}
 	if err := tx.QueryRowContext(ctx, `select revision,candidates_json from dns_lists where id=?`, policy.BootstrapListID).Scan(&bootstrapRevision, &bootstrapJSON); err != nil {
 		return outcome, err
 	}
 	outcome.Stale = policy.Revision != v.PolicyRevision || policy.EncryptedListID != v.EncryptedListID || encryptedRevision != v.EncryptedListRevision || policy.BootstrapListID != v.BootstrapListID || bootstrapRevision != v.BootstrapListRevision
-	encryptedSelected, encryptedErr := canonicalDNSSelection(encryptedJSON, v.Encrypted)
+	var encryptedSelected []model.DNSCandidate
+	var encryptedErr error
+	if !plainOnly {
+		encryptedSelected, encryptedErr = canonicalDNSSelection(encryptedJSON, v.Encrypted)
+	}
 	bootstrapSelected, bootstrapErr := canonicalDNSSelection(bootstrapJSON, v.Bootstrap)
 	resultError := strings.TrimSpace(v.Error)
 	if encryptedErr != nil || bootstrapErr != nil {
 		resultError = model.DNSBenchmarkNoUsableCandidatesError
 	}
-	outcome.Success = !outcome.Stale && resultError == "" && len(encryptedSelected) > 0 && len(bootstrapSelected) > 0
+	outcome.Success = !outcome.Stale && resultError == "" && len(bootstrapSelected) > 0 && (plainOnly || len(encryptedSelected) > 0)
 	outcome.PlainFallback = !outcome.Stale && resultError == model.DNSBenchmarkNoUsableCandidatesError
 	status := "failed"
 	if outcome.Stale {
@@ -5333,6 +5355,9 @@ func (s *Store) RecordDNSBenchmarkResult(ctx context.Context, v *model.DNSBenchm
 	}
 	if !outcome.Stale {
 		if outcome.Success {
+			if encryptedSelected == nil {
+				encryptedSelected = []model.DNSCandidate{}
+			}
 			encSelected, _ := json.Marshal(encryptedSelected)
 			bootSelected, _ := json.Marshal(bootstrapSelected)
 			if _, err := tx.ExecContext(ctx, `update server_dns_policies set encrypted_selected_json=?,bootstrap_selected_json=?,encrypted_selection_revision=?,bootstrap_selection_revision=?,last_attempt_at=?,last_success_at=?,last_error='',needs_benchmark=0,updated_at=? where server_id=?`, string(encSelected), string(bootSelected), encryptedRevision, bootstrapRevision, ts, ts, ts, v.ServerID); err != nil {

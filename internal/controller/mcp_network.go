@@ -308,8 +308,14 @@ func (s *Server) dnsPolicyAutomationCandidate(ctx context.Context, principal app
 		return nil, err
 	}
 	merged := mergeDNSPolicyPatch(*current, patch, fields)
-	if _, err := s.store.GetDNSList(ctx, merged.EncryptedListID); err != nil {
-		return nil, fmt.Errorf("encrypted_list_id: %w", err)
+	if merged.EncryptedListID < 0 {
+		return nil, errors.New("encrypted_list_id must not be negative")
+	}
+	// 0 keeps the server on plain DNS only and binds no encrypted list.
+	if merged.EncryptedListID != 0 {
+		if _, err := s.store.GetDNSList(ctx, merged.EncryptedListID); err != nil {
+			return nil, fmt.Errorf("encrypted_list_id: %w", err)
+		}
 	}
 	if _, err := s.store.GetDNSList(ctx, merged.BootstrapListID); err != nil {
 		return nil, fmt.Errorf("bootstrap_list_id: %w", err)
@@ -481,11 +487,7 @@ func (s *Server) applyDNSTestOperation(ctx context.Context, principal applicatio
 	if err != nil {
 		return nil, err
 	}
-	encrypted, err := s.store.GetDNSList(ctx, policy.EncryptedListID)
-	if err != nil {
-		return nil, err
-	}
-	bootstrap, err := s.store.GetDNSList(ctx, policy.BootstrapListID)
+	encrypted, bootstrap, err := s.dnsPolicyLists(ctx, *policy)
 	if err != nil {
 		return nil, err
 	}
@@ -494,13 +496,13 @@ func (s *Server) applyDNSTestOperation(ctx context.Context, principal applicatio
 		return nil, err
 	}
 	version := time.Now().UnixNano()
-	plan, err := core.DNSBenchmarkPlanForPolicy(version, *policy, *encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestAlways, requestID)
+	plan, err := core.DNSBenchmarkPlanForPolicy(version, *policy, encrypted, *bootstrap, core.EffectiveIPStack(*server), model.DNSAutoTestAlways, requestID)
 	if err != nil {
 		return nil, err
 	}
 	run := model.DNSBenchmarkRun{
 		RequestID: requestID, ServerID: server.ID, PolicyRevision: policy.Revision,
-		EncryptedListID: encrypted.ID, EncryptedListRevision: encrypted.Revision,
+		EncryptedListID: plan.EncryptedListID, EncryptedListRevision: plan.EncryptedListRevision,
 		BootstrapListID: bootstrap.ID, BootstrapListRevision: bootstrap.Revision,
 		Trigger: "manual", ApplyOnSuccess: action == "test_and_apply", Status: "pending",
 	}

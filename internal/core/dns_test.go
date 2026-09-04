@@ -334,7 +334,7 @@ func TestDNSBenchmarkPlanForPolicyFiltersBootstrapByStack(t *testing.T) {
 		{Tag: "cloudflare-udp-v6", Transport: model.DNSTransportUDP, Server: "2606:4700:4700::1111", Port: 53},
 		{Tag: "google-tcp-v6", Transport: model.DNSTransportTCP, Server: "2001:4860:4860::8888", Port: 53},
 	}
-	plan, err := DNSBenchmarkPlanForPolicy(42, *state.Policy, *state.EncryptedList, *state.BootstrapList, model.IPStackIPv6Only, model.DNSAutoTestFirstApply, "")
+	plan, err := DNSBenchmarkPlanForPolicy(42, *state.Policy, state.EncryptedList, *state.BootstrapList, model.IPStackIPv6Only, model.DNSAutoTestFirstApply, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,5 +348,87 @@ func TestDNSBenchmarkPlanForPolicyFiltersBootstrapByStack(t *testing.T) {
 	}
 	if len(plan.EncryptedCandidates) != 2 {
 		t.Fatalf("encrypted candidates = %#v, want unfiltered", plan.EncryptedCandidates)
+	}
+}
+
+func plainOnlyDNSState(serverID int64) *DNSConfigState {
+	state := testDNSState(serverID)
+	state.Policy.EncryptedListID = 0
+	state.EncryptedList = nil
+	return state
+}
+
+func TestBuildDNSConfigWithoutEncryptedListUsesBootstrapOnly(t *testing.T) {
+	dns, err := BuildDNSConfig(model.Server{ID: 1, IPStack: model.IPStackPreferIPv4}, plainOnlyDNSState(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := dns["servers"].([]map[string]any)
+	if len(servers) != 3 {
+		t.Fatalf("servers = %#v, want two bootstrap resolvers plus local", servers)
+	}
+	if servers[0]["tag"] != "bootstrap-primary" || servers[1]["tag"] != "bootstrap-secondary" || servers[2]["tag"] != "local" {
+		t.Fatalf("servers = %#v, want no remote-* objects", servers)
+	}
+	if dns["final"] != "bootstrap-primary" {
+		t.Fatalf("final = %v, want bootstrap-primary", dns["final"])
+	}
+	for _, item := range servers {
+		if item["type"] == "https" || item["type"] == "tls" || item["type"] == "quic" {
+			t.Fatalf("plain-only dns emitted an encrypted resolver: %#v", item)
+		}
+	}
+}
+
+func TestDNSConfigStateForServerAllowsMissingEncryptedList(t *testing.T) {
+	lists := []model.DNSList{{ID: 2, Name: "bootstrap", Kind: model.DNSListBootstrap, Revision: 1, Enabled: true}}
+	policies := []model.ServerDNSPolicy{{ServerID: 1, EncryptedListID: 0, BootstrapListID: 2, Revision: 1}}
+	state, err := DNSConfigStateForServer(1, lists, policies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.EncryptedList != nil {
+		t.Fatalf("encrypted list = %#v, want nil for a plain-only policy", state.EncryptedList)
+	}
+	policies[0].EncryptedListID = 9
+	if _, err := DNSConfigStateForServer(1, lists, policies); err == nil {
+		t.Fatal("a policy that binds a missing encrypted list must still fail")
+	}
+}
+
+func TestDNSBenchmarkPlanForPolicyWithoutEncryptedList(t *testing.T) {
+	state := plainOnlyDNSState(1)
+	plan, err := DNSBenchmarkPlanForPolicy(7, *state.Policy, nil, *state.BootstrapList, model.IPStackIPv4Only, model.DNSAutoTestFirstApply, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.EncryptedListID != 0 || plan.EncryptedListRevision != 0 || len(plan.EncryptedCandidates) != 0 {
+		t.Fatalf("plan encrypted group = %d/%d/%#v, want empty", plan.EncryptedListID, plan.EncryptedListRevision, plan.EncryptedCandidates)
+	}
+	if len(plan.BootstrapCandidates) == 0 {
+		t.Fatal("plan must still benchmark the bootstrap resolvers")
+	}
+	if _, err := DNSBenchmarkPlanForPolicy(7, *state.Policy, testDNSState(1).EncryptedList, *state.BootstrapList, model.IPStackIPv4Only, model.DNSAutoTestFirstApply, ""); err == nil {
+		t.Fatal("an encrypted list that the policy does not bind must be rejected")
+	}
+}
+
+func TestResolveDNSServerTagFallsBackToFinal(t *testing.T) {
+	dns, err := BuildDNSConfig(model.Server{ID: 1}, plainOnlyDNSState(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveDNSServerTag(dns, "remote-primary"); got != "bootstrap-primary" {
+		t.Fatalf("ResolveDNSServerTag(remote-primary) = %q, want bootstrap-primary", got)
+	}
+	if got := ResolveDNSServerTag(dns, "local"); got != "local" {
+		t.Fatalf("ResolveDNSServerTag(local) = %q, want local", got)
+	}
+	full, err := BuildDNSConfig(model.Server{ID: 1}, testDNSState(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveDNSServerTag(full, "remote-secondary"); got != "remote-secondary" {
+		t.Fatalf("ResolveDNSServerTag(remote-secondary) = %q, want remote-secondary", got)
 	}
 }

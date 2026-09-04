@@ -223,6 +223,108 @@ func TestServerDNSCanBeSavedTestedAndDeployedOnDemand(t *testing.T) {
 	}
 }
 
+func TestServerDNSPolicyCanDropEncryptedListForPlainDNSOnly(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := newTestServer(db, "test-secret", "").Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	ctx := context.Background()
+	node := &model.Server{Name: "plain-dns-edge", AgentID: "plain-dns-agent", AgentTokenHash: security.HashSecret("plain-dns-token"), ListenIP: "0.0.0.0", PortRangeStart: 12000, PortRangeEnd: 12100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	current, err := db.GetServerDNSPolicy(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := request(t, h, http.MethodPut, fmt.Sprintf("/api/v1/ui/servers/%d/dns-policy", node.ID), token, map[string]any{
+		"encrypted_list_id":     0,
+		"bootstrap_list_id":     current.BootstrapListID,
+		"strategy":              "auto",
+		"auto_test":             "first_apply",
+		"test_interval_seconds": 3600,
+	}, http.StatusOK)
+	if saved["dns_policy"].(map[string]any)["encrypted_list_id"].(float64) != 0 {
+		t.Fatalf("saved policy = %#v, want no encrypted list", saved["dns_policy"])
+	}
+	policy, err := db.GetServerDNSPolicy(ctx, node.ID)
+	if err != nil || policy.EncryptedListID != 0 {
+		t.Fatalf("stored policy = %#v, err=%v", policy, err)
+	}
+	bootstrap, err := db.GetDNSList(ctx, policy.BootstrapListID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	benchmark := request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/servers/%d/dns-test", node.ID), token, map[string]any{"action": "test_and_apply"}, http.StatusAccepted)
+	task := benchmark["task"].(map[string]any)
+	var plan model.DNSBenchmarkPlan
+	stored, err := db.GetTask(ctx, int64(task["id"].(float64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(stored.PayloadJSON), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.EncryptedListID != 0 || len(plan.EncryptedCandidates) != 0 || len(plan.BootstrapCandidates) == 0 {
+		t.Fatalf("plain-only benchmark plan = %#v", plan)
+	}
+
+	result := model.DNSBenchmarkResult{
+		ReportID: "plain-report", RequestID: benchmark["run"].(map[string]any)["request_id"].(string), PolicyRevision: policy.Revision,
+		BootstrapListID: bootstrap.ID, BootstrapListRevision: bootstrap.Revision,
+		Bootstrap: model.DNSBenchmarkGroup{
+			Items:    []model.DNSBenchmarkItem{{Tag: bootstrap.Candidates[0].Tag, LatencyMS: 7}},
+			BestTags: []string{bootstrap.Candidates[0].Tag},
+		},
+	}
+	body, _ := json.Marshal(result)
+	report := httptest.NewRequest(http.MethodPost, "/api/v1/agent/dns-benchmarks", bytes.NewReader(body))
+	report.Header.Set("content-type", "application/json")
+	report.Header.Set("X-Agent-ID", node.AgentID)
+	report.Header.Set("Authorization", "Bearer plain-dns-token")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, report)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("plain-only dns report status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	applied, err := db.GetServerDNSPolicy(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.LastError != "" || len(applied.BootstrapSelected) != 1 || len(applied.EncryptedSelected) != 0 {
+		t.Fatalf("plain-only selection = %#v", applied)
+	}
+
+	tasks, err := db.ListTasksByServer(ctx, node.ID, 10)
+	if err != nil || len(tasks) == 0 || tasks[0].Type != model.AgentTaskTypeApplyCoreConfig {
+		t.Fatalf("plain-only apply tasks = %#v, err=%v", tasks, err)
+	}
+	var payload model.ApplyCoreConfigTaskPayload
+	if err := json.Unmarshal([]byte(tasks[0].PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(payload.Config), &config); err != nil {
+		t.Fatal(err)
+	}
+	dns := config["dns"].(map[string]any)
+	if dns["final"] != "bootstrap-primary" {
+		t.Fatalf("plain-only dns final = %v, want bootstrap-primary", dns["final"])
+	}
+	for _, item := range dns["servers"].([]any) {
+		tag := item.(map[string]any)["tag"]
+		if tag == "remote-primary" || tag == "remote-secondary" {
+			t.Fatalf("plain-only dns still emitted %v", tag)
+		}
+	}
+}
+
 func TestDNSListCRUDValidationAndDefaultProtection(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
