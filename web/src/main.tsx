@@ -86,7 +86,7 @@ import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-t
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-binding'
-import { localizeManagedPublicPortExhaustion } from './error-localization'
+import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
@@ -1751,6 +1751,8 @@ function localizeErrorMessage(message: unknown) {
   }
   const portExhaustion = localizeManagedPublicPortExhaustion(raw)
   if (portExhaustion) return portExhaustion
+  const relayUpdate = localizeRelayUpdateFailure(raw)
+  if (relayUpdate) return relayUpdate
   if (raw.startsWith('invalid age public key:')) return 'Age 公钥格式无效'
   if (raw.startsWith('invalid trusted proxy address ')) return `受信代理地址无效：${raw.slice('invalid trusted proxy address '.length)}`
   if (raw.startsWith('config_json.tls.reality.dest:')) return 'Reality 不支持旧字段 dest，请改用握手域名和握手端口。'
@@ -3815,7 +3817,7 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
                 {platform && <span>{platform}</span>}
                 <span>{relay.last_seen_at ? `最后心跳 ${formatTableTime(relay.last_seen_at)}` : '尚未接入'}</span>
               </div>
-              {relay.last_update_error && <p className="subscription-relay-error"><AlertTriangle size={14} />{relay.last_update_error}</p>}
+              {relay.last_update_error && <div className="subscription-relay-error" role="alert"><AlertTriangle size={14} aria-hidden="true" /><ErrorMessageCopy message={localizeErrorMessage(relay.last_update_error)} className="subscription-relay-error-copy" /></div>}
               {!relay.enrolled && relay.install_command_preview && <div className="subscription-relay-install-preview"><code>{relay.install_command_preview}</code></div>}
             </div>
             <div className="subscription-relay-actions">

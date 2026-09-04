@@ -184,7 +184,7 @@ else need_command shasum; actual=$(shasum -a 256 "$TMP_DIR/$ARCHIVE" | awk '{pri
 [ "$actual" = "$expected" ] || fail "发布包校验失败。"
 
 tar -tzf "$TMP_DIR/$ARCHIVE" | awk 'BEGIN {bad=0} /^\// || /(^|\/)\.\.($|\/)/ {bad=1} END {exit bad}' || fail "发布包包含不安全路径。"
-tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR"
+tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR" || fail "解压中继发布包失败。"
 [ -x "$TMP_DIR/bin/oboard-subscription-relay" ] || fail "发布包缺少订阅中继程序。"
 install -d -m 0755 "$INSTALL_DIR"
 install -m 0755 "$TMP_DIR/bin/oboard-subscription-relay" "$INSTALL_DIR/oboard-subscription-relay.new"

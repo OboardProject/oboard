@@ -180,13 +180,54 @@ func installRelayUpdate(ctx context.Context, client *http.Client, controllerURL 
 	}
 	command := exec.CommandContext(ctx, "/bin/sh")
 	command.Stdin = bytes.NewReader(script)
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
 	command.Env = append(os.Environ(), "OBOARD_ACTION=update", "OBOARD_MANAGED_UPDATE=1", "OBOARD_CONTROLLER_URL="+strings.TrimRight(controllerURL.String(), "/"), "VERSION="+targetVersion)
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("relay update failed: %w", err)
+	output, err := command.CombinedOutput()
+	if len(output) > 0 {
+		_, _ = os.Stdout.Write(output)
+	}
+	if err != nil {
+		return fmt.Errorf("relay update failed: %w%s", err, relayUpdateOutputSuffix(output))
 	}
 	return nil
+}
+
+func relayUpdateOutputSuffix(output []byte) string {
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	useful := make([]string, 0, 4)
+	for i := len(lines) - 1; i >= 0 && len(useful) < 4; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || line == "----------------" || line == "------------------------" {
+			continue
+		}
+		if line == "OBoard 订阅中继" || line == "OBoard 订阅中继操作未完成。" || line == "请根据上方提示处理后重试。" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.Contains(line, "/4]") {
+			continue
+		}
+		if strings.HasPrefix(line, "主控地址：") || strings.HasPrefix(line, "安装目录：") || strings.HasPrefix(line, "监听地址：") || strings.HasPrefix(line, "目标版本：") || strings.HasPrefix(line, "环境：") {
+			continue
+		}
+		if line == "正在更新，现有接入配置将保留。" || line == "正在开始安装。" {
+			continue
+		}
+		useful = append(useful, line)
+	}
+	if len(useful) == 0 {
+		return ""
+	}
+	for left, right := 0, len(useful)-1; left < right; left, right = left+1, right-1 {
+		useful[left], useful[right] = useful[right], useful[left]
+	}
+	detail := strings.Join(useful, " · ")
+	if len(detail) > 360 {
+		detail = "…" + detail[len(detail)-359:]
+	}
+	return ": " + detail
 }
 
 func notifyUninstall(controllerURL, relayID, relayToken, relaySecret string) {

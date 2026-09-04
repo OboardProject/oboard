@@ -22,3 +22,22 @@ export function localizeManagedPublicPortExhaustion(raw: string) {
     '请到该服务器设置中扩大公网端口范围后重试。',
   ].join('\n')
 }
+
+export function localizeRelayUpdateFailure(raw: string) {
+  const match = /^relay update failed:\s*(.+)$/i.exec(raw)
+  if (!match) return null
+  const detail = match[1].trim()
+  if (!detail) return '订阅中继更新失败'
+  if (/^exit status \d+$/i.test(detail)) {
+    return [
+      '订阅中继更新失败',
+      `安装脚本异常退出（${detail}）。`,
+      '请到中继主机查看 updater 日志后重试，或先开启主控直连订阅恢复访问。',
+    ].join('\n')
+  }
+  return [
+    '订阅中继更新失败',
+    detail,
+    '可先开启主控直连订阅恢复访问，再根据上方原因处理后重试更新。',
+  ].join('\n')
+}

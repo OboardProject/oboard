@@ -10011,6 +10011,21 @@ body:has(.dialog-layer) .main {
   line-height: 1.5;
 }
 .subscription-relay-error svg { flex: 0 0 auto; margin-top: 1px; }
+.subscription-relay-error-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.subscription-relay-error-copy strong {
+  color: var(--text-strong);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.subscription-relay-error-copy span {
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  overflow-wrap: anywhere;
+}
 
 .subscription-relay-warning {
   display: flex;
