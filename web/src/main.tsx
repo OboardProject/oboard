@@ -86,6 +86,7 @@ import { proxyPathGeneratedReuseCountKey } from './components/proxy-path/reuse-t
 import { detachedPathSuffix, detachedStepCreateRequest, disconnectPathCandidates, proxyPathStepDeleteRemovals, type CanvasDetachedChain } from './components/proxy-path/detached-chain'
 import { mergeTopologyMutation, removeTopologyRows } from './components/proxy-path/mutation-data'
 import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-binding'
+import { localizeManagedPublicPortExhaustion } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
@@ -1730,31 +1731,6 @@ const systemErrorMarkers: Array<[string, string]> = [
   ['too many open files', '打开的文件过多'],
   ['device or resource busy', '设备或资源正忙'],
 ]
-
-function errorProtocolLabel(protocol: string) {
-  switch (String(protocol || '').trim().toLowerCase()) {
-    case 'shadowsocks': return 'SS'
-    case 'hy2': return 'HY2'
-    case 'anytls': return 'AnyTLS'
-    case 'mieru': return 'Mieru'
-    case 'vless': return 'VLESS'
-    case 'socks': return 'SOCKS'
-    case 'snell': return 'Snell'
-    case 'ssh': return 'SSH'
-    default: return String(protocol || '').trim() || '协议'
-  }
-}
-
-function localizeManagedPublicPortExhaustion(raw: string) {
-  const match = /^server (.+?) has no available port in the managed public range (\d+)-(\d+) for shared (.+?) chain service$/i.exec(raw)
-  if (!match) return null
-  const [, server, start, end, protocol] = match
-  return [
-    '公网端口不足',
-    `服务器「${server}」的公网端口范围 ${start}–${end} 已满，无法再分配共享 ${errorProtocolLabel(protocol)} 链式服务。`,
-    '请到该服务器设置中扩大公网端口范围后重试。',
-  ].join('\n')
-}
 
 function ErrorMessageCopy({ message, className }: { message: string; className?: string }) {
   const lines = String(message || '').split('\n').map(line => line.trim()).filter(Boolean)
