@@ -100,11 +100,7 @@ func (s *relay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowedPath(r.URL.Path, s.upstream.EscapedPath()) {
-		if subscriptionShapedPath(r.URL.Path) {
-			http.Error(w, "not found: subscription requests must use the relay public URL shown in the OBoard panel, which includes the Controller base path", http.StatusNotFound)
-			return
-		}
-		http.NotFound(w, r)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	if s.slots != nil {
@@ -176,10 +172,6 @@ func allowedPath(path, basePath string) bool {
 		return false
 	}
 	return strings.HasPrefix(relative, "/api/v1/subscriptions/") || strings.HasPrefix(relative, "/s/")
-}
-
-func subscriptionShapedPath(path string) bool {
-	return strings.Contains(path, "/api/v1/subscriptions/") || strings.Contains(path, "/s/")
 }
 
 func remoteIP(value string) (string, error) {

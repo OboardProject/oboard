@@ -220,11 +220,35 @@ func TestUnknownRoutesReturnStructuredJSON(t *testing.T) {
 	app := New(db, "test-secret", basePathTestStaticDir(t), "/qzq", nil)
 	defer app.Close()
 	handler := app.Handler()
-	for _, path := range []string{"/qzq/mcp", "/api/v2/oauth-clients", "/qzq/api/v1/does-not-exist"} {
+	for _, path := range []string{"/qzq/mcp", "/qzq/api/v2/oauth-clients", "/qzq/api/v1/does-not-exist"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil))
 		if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), `"request_id"`) || !strings.Contains(recorder.Body.String(), `"not_found"`) {
 			t.Fatalf("GET %s status=%d body=%s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestOutsideBasePathReturnsOpaqueNotFound(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := New(db, "test-secret", basePathTestStaticDir(t), "/qzq", nil)
+	defer app.Close()
+	handler := app.Handler()
+	for _, path := range []string{"/", "/healthz", "/api/v1/version", "/api/v2/oauth-clients", "/login", "/dashboard", "/qzqx/healthz", "//qzq/healthz"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status=%d; want 404", path, recorder.Code)
+		}
+		if body := recorder.Body.String(); body != "" {
+			t.Fatalf("GET %s body=%q; want empty opaque 404", path, body)
+		}
+		if ct := recorder.Header().Get("Content-Type"); ct != "" {
+			t.Fatalf("GET %s Content-Type=%q; want unset", path, ct)
 		}
 	}
 }

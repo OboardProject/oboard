@@ -602,7 +602,7 @@ func NormalizeBasePath(raw string) (string, error) {
 func (s *Server) withBasePath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ambiguousRequestPath(r.URL.Path, r.URL.RawPath) {
-			writeNotFoundJSON(w)
+			writeOpaqueNotFound(w)
 			return
 		}
 		if matched, target, ok := s.matchOAuthWellKnownPath(r.URL.Path); ok {
@@ -617,7 +617,7 @@ func (s *Server) withBasePath(next http.Handler) http.Handler {
 		}
 		matched, ok := s.matchBasePath(r.URL.Path)
 		if !ok {
-			writeNotFoundJSON(w)
+			writeOpaqueNotFound(w)
 			return
 		}
 		request := r.Clone(r.Context())
@@ -17592,6 +17592,13 @@ func failCode(w http.ResponseWriter, code, message string, status int) {
 	write(w, status, map[string]any{"error": message, "code": code})
 }
 func method(w http.ResponseWriter) { fail(w, errors.New("method not allowed"), 405) }
+// writeOpaqueNotFound returns a bare 404 with no body. Used when a request
+// misses the configured security base path so the response does not fingerprint
+// the Controller through structured error JSON or request IDs.
+func writeOpaqueNotFound(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
 func writeNotFoundJSON(w http.ResponseWriter) {
 	id, _ := security.RandomToken(18)
 	writeJSON(w, http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "404 page not found", "request_id": "req_" + id}})
