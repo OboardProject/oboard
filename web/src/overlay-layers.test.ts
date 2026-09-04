@@ -34,4 +34,18 @@ describe('global overlay layers', () => {
     expect(stylesheet).toMatch(/\.custom-select-menu\s*\{[^}]*z-index:\s*var\(--z-popover\)/s)
     expect(stylesheet).toMatch(/\.portal-loader\s*\{[^}]*z-index:\s*var\(--z-loading\)/s)
   })
+
+  it('optimizes mobile dialog touch-action and prevents mobile auto-zoom', () => {
+    expect(stylesheet).toMatch(/\.dialog-layer\s*\{[^}]*touch-action:\s*pan-y/s)
+    expect(stylesheet).toMatch(/\.dialog-backdrop\s*\{[^}]*touch-action:\s*manipulation/s)
+    expect(stylesheet).toMatch(/\.dialog\s*\{[^}]*touch-action:\s*pan-y/s)
+    expect(stylesheet).toMatch(/\.dialog-body\s*\{[^}]*touch-action:\s*pan-y/s)
+    expect(stylesheet).toMatch(/\.dialog-body\s*\{[^}]*overscroll-behavior:\s*contain/s)
+    expect(stylesheet).toMatch(/@media\s*\((?:max-width:\s*1024px\),\s*\(pointer:\s*coarse|\(pointer:\s*coarse\),\s*\(max-width:\s*1024px)\)[^}]*font-size:\s*16px\s*!important/s)
+  })
+
+  it('prevents text selection and touch callouts on proxy topology graph', () => {
+    expect(stylesheet).toMatch(/\.proxy-flow[^}]*user-select:\s*none\s*!important/s)
+    expect(stylesheet).toMatch(/\.proxy-flow[^}]*-webkit-touch-callout:\s*none\s*!important/s)
+  })
 })

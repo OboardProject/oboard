@@ -7184,6 +7184,7 @@ body:has(.dialog-layer) .main {
   place-items: center;
   padding: 20px;
   isolation: isolate;
+  touch-action: pan-y;
 }
 
 .dialog-layer[data-modal-top="false"],
@@ -7198,6 +7199,7 @@ body:has(.dialog-layer) .main {
   backdrop-filter: blur(8px);
   transition: background-color var(--duration-appica) var(--ease-appica-out),
               backdrop-filter var(--duration-appica) var(--ease-appica-out);
+  touch-action: manipulation;
 }
 
 .dialog-layer[data-modal-top="false"] .dialog-backdrop {
@@ -7208,6 +7210,8 @@ body:has(.dialog-layer) .main {
 .dialog-panel {
   position: relative;
   z-index: 1;
+  max-width: 100%;
+  touch-action: pan-y;
 }
 
 .dialog {
@@ -7221,6 +7225,7 @@ body:has(.dialog-layer) .main {
   border-radius: var(--radius-lg);
   background: var(--surface-solid);
   box-shadow: 0 28px 70px rgba(15, 23, 42, 0.28);
+  touch-action: pan-y;
 }
 
 .dialog-danger { border-color: color-mix(in srgb, var(--danger) 38%, var(--border)); }
@@ -7233,6 +7238,7 @@ body:has(.dialog-layer) .main {
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-solid);
+  touch-action: manipulation;
 }
 
 .dialog-head h2 {
@@ -7257,12 +7263,16 @@ body:has(.dialog-layer) .main {
   min-height: 34px;
   padding: 0;
   border-radius: 50%;
+  touch-action: manipulation;
 }
 
 .dialog-body {
   padding: 16px 18px;
   overflow: auto;
   line-height: 1.65;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .dialog-body p { margin: 0 0 10px; }
@@ -7297,6 +7307,28 @@ body:has(.dialog-layer) .main {
   border-top: 1px solid var(--border);
   background: var(--surface-solid);
   flex-wrap: wrap;
+  touch-action: manipulation;
+}
+
+.dialog-actions button,
+.dialog button,
+.dialog-panel button,
+.dialog-panel [role="button"],
+.dialog-panel input,
+.dialog-panel select,
+.dialog-panel textarea,
+.dialog-panel label,
+.dialog-panel .ui-switch {
+  touch-action: manipulation;
+}
+
+.dialog-body pre,
+.dialog-body code,
+.dialog-body .table,
+.dialog-body table,
+.dialog-body [data-horizontal-scroll],
+.dialog.remote-terminal-dialog .remote-terminal-body {
+  touch-action: pan-x pan-y;
 }
 
 .step-up-actions {
@@ -11289,8 +11321,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   }
   .form > button:last-child,
   .form button { justify-self: stretch; }
-  .dialog-layer { padding: 12px; align-items: end; }
-  .dialog { width: 100%; max-height: 90vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .dialog-layer { padding: 12px 12px 0; align-items: end; touch-action: pan-y; }
+  .dialog-panel { width: 100%; max-width: 100%; touch-action: pan-y; }
+  .dialog { width: 100%; max-width: 100%; max-height: 90vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; touch-action: pan-y; }
   .dialog-actions { display: grid; grid-template-columns: 1fr; }
   .copy-block,
   .command-copy { grid-template-columns: 1fr; }
@@ -21901,6 +21934,35 @@ button.ui-btn-ghost:hover {
 
 .entry-access-settings-body > .access-note { margin-top: 12px; }
 
+@media (max-width: 1024px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea,
+  .ui-input,
+  .custom-select-trigger,
+  .searchable-combobox > input,
+  .searchable-multi-select-search input,
+  .form-field input,
+  .form-field select,
+  .form-field textarea,
+  .server-dialog input,
+  .settings-row-control > input,
+  .settings-row-control > select,
+  .traffic-forwarding-search input,
+  .traffic-forwarding-advanced textarea,
+  .dialog input:not([type="checkbox"]):not([type="radio"]),
+  .dialog select,
+  .dialog textarea,
+  .dialog-panel input:not([type="checkbox"]):not([type="radio"]),
+  .dialog-panel select,
+  .dialog-panel textarea,
+  .dialog-host input:not([type="checkbox"]):not([type="radio"]),
+  .dialog-host select,
+  .dialog-host textarea {
+    font-size: 16px !important;
+  }
+}
+
 @media (max-width: 720px) {
   input:where(:not([type="checkbox"]):not([type="radio"])),
   select,
@@ -21938,11 +22000,22 @@ button.ui-btn-ghost:hover {
 
   .dialog-layer {
     padding: 8px 8px 0;
+    align-items: end;
+    touch-action: pan-y;
+  }
+
+  .dialog-panel {
+    width: 100%;
+    max-width: 100%;
+    touch-action: pan-y;
   }
 
   .dialog {
+    width: 100%;
+    max-width: 100%;
     max-height: calc(100dvh - 8px);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    touch-action: pan-y;
   }
 
   .dialog.remote-terminal-dialog,
@@ -26907,4 +26980,27 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 .flow .react-flow__node.server-graph-node .rf-node-body {
   padding-inline: 14px;
+}
+
+/* Proxy Topology Graph: Prevent text selection and mobile callout on long-press */
+.proxy-editor-workspace,
+.proxy-flow,
+.proxy-flow *,
+.flow.proxy-flow .react-flow,
+.flow.proxy-flow .react-flow *,
+.flow.proxy-flow .react-flow__pane,
+.flow.proxy-flow .react-flow__viewport,
+.flow.proxy-flow .react-flow__node,
+.flow.proxy-flow .react-flow__node *,
+.flow.proxy-flow .react-flow__edge,
+.flow.proxy-flow .react-flow__edge *,
+.flow.proxy-flow .rf-node-custom,
+.flow.proxy-flow .rf-node-custom *,
+.flow.proxy-flow .proxy-edge-label,
+.flow.proxy-flow .proxy-graph-node-wrapper {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
 }

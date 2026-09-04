@@ -817,3 +817,24 @@
   .traffic-forwarding-editor-footer { align-items: stretch; flex-direction: column; }
   .traffic-forwarding-editor-footer > div:last-child { display: grid; grid-template-columns: 1fr 1fr; }
 }
+
+@media (max-width: 1024px), (pointer: coarse) {
+  .dialog.traffic-forwarding-dialog,
+  .dialog.traffic-forwarding-dialog * {
+    touch-action: manipulation;
+  }
+  .traffic-forwarding-server-list,
+  .traffic-forwarding-list,
+  .traffic-forwarding-editor-scroll {
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .traffic-forwarding-search input,
+  .traffic-forwarding-advanced textarea,
+  .traffic-forwarding-form-grid input,
+  .traffic-forwarding-form-grid select,
+  .traffic-forwarding-form-grid textarea {
+    font-size: 16px !important;
+  }
+}

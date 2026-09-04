@@ -78,6 +78,11 @@ function unlockBodyScroll() {
     main.style.overflowY = mainStyleSnapshot
     mainStyleSnapshot = null
   }
+  if (typeof window !== "undefined" && typeof window.scrollTo === "function" && !navigator.userAgent.includes("jsdom")) {
+    try {
+      window.scrollTo(window.scrollX, window.scrollY)
+    } catch {}
+  }
 }
 
 function registerLayer(id: LayerID, initialFocusTarget: HTMLElement | null) {
@@ -242,9 +247,28 @@ export function ModalSurface({
     }
     document.addEventListener("keydown", handleKeyDown)
     document.addEventListener("focusin", handleFocusIn)
+    const panel = panelRef.current
+    const preventGesture = (event: Event) => {
+      event.preventDefault()
+    }
+    const preventMultiTouch = (event: TouchEvent) => {
+      if (event.touches.length > 1) {
+        event.preventDefault()
+      }
+    }
+    if (panel) {
+      panel.addEventListener("gesturestart", preventGesture as EventListener, { passive: false })
+      panel.addEventListener("gesturechange", preventGesture as EventListener, { passive: false })
+      panel.addEventListener("touchstart", preventMultiTouch as EventListener, { passive: false })
+    }
     return () => {
       document.removeEventListener("keydown", handleKeyDown)
       document.removeEventListener("focusin", handleFocusIn)
+      if (panel) {
+        panel.removeEventListener("gesturestart", preventGesture as EventListener)
+        panel.removeEventListener("gesturechange", preventGesture as EventListener)
+        panel.removeEventListener("touchstart", preventMultiTouch as EventListener)
+      }
       const previous = previousFocusRef.current
       if (!restoreOnUnmountRef.current || !previous?.isConnected) return
       window.requestAnimationFrame(() => {

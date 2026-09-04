@@ -181,6 +181,7 @@ import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRe
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   compareDNSPolicyStatus,
+  dnsPolicyErrorText,
   dnsPolicyStatus,
   dnsPolicyStatusLabel,
   dnsPolicyStatusTone,
@@ -17094,7 +17095,7 @@ function ProxyGraphEdge({
 const proxyGraphEdgeTypes = { proxyTransport: ProxyGraphEdge }
 
 function ProxyGraphNodeRenderer({ data }: { data: { label?: React.ReactNode } }) {
-  return <>{data.label || null}</>
+  return <div className="proxy-graph-node-wrapper">{data.label || null}</div>
 }
 
 const proxyGraphNodeTypes = { proxyGraphNode: ProxyGraphNodeRenderer }
@@ -20310,7 +20311,7 @@ function buildDNSPolicyRows(policies: ServerDNSPolicy[], servers: Server[], list
 }
 
 function dnsPolicyAttentionReason(row: DNSPolicyRow) {
-  if (row.status === 'failed') return localizeErrorMessage(row.policy.last_error) || '最近一次解析测试失败'
+  if (row.status === 'failed') return dnsPolicyErrorText(row.policy.last_error, row.policy) && localizeErrorMessage(dnsPolicyErrorText(row.policy.last_error, row.policy)) || '最近一次解析测试失败'
   if (row.status === 'stale') return '解析服务列表已更新，需要重新测试'
   if (row.status === 'untested') return '尚未测试，服务器暂时按列表顺序使用解析服务'
   return ''
