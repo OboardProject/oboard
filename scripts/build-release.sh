@@ -87,7 +87,7 @@ package_controller() {
   for f in "release-manifest.json" "release-manifest.json.sig"; do
     if [ -f "$OUT_DIR/agent-release/$f" ]; then cp "$OUT_DIR/agent-release/$f" "$stage/downloads/$f"; fi
   done
-  for f in "$OUT_DIR"/agent-release/oboard-agent-* "$OUT_DIR"/agent-release/oboard-sb-*; do
+  for f in "$OUT_DIR"/agent-release/oboard-agent-* "$OUT_DIR"/agent-release/oboard-sb-* "$OUT_DIR"/agent-release/oboard-realm-*; do
     if [ -f "$f" ]; then cp "$f" "$stage/downloads/"; fi
   done
   cp "$OUT_DIR"/relay-release/oboard-subscription-relay-*.tar.gz "$stage/downloads/"

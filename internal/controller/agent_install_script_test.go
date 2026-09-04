@@ -48,6 +48,40 @@ func TestAgentSelfUpdateRepairsEmptyCoreIdentity(t *testing.T) {
 	}
 }
 
+// realm ships with the Agent rather than being installed by the operator, so
+// both Controller-hosted scripts must download it, cover it with the signed
+// manifest check, install it atomically, and remove it on uninstall.
+func TestAgentScriptsInstallBundledRealm(t *testing.T) {
+	realmAsset := `realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"`
+	for name, script := range map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	} {
+		for _, want := range []string{
+			realmAsset,
+			`"$agent_name" "$core_name" "$realm_name"`,
+			`install -m 0755 "$tmp/$realm_name" "$INSTALL_DIR/oboard-realm.new"`,
+			`mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Fatalf("%s script is missing %q", name, want)
+			}
+		}
+		// A downloaded binary that never reaches the signed manifest check would
+		// be installed unverified.
+		if strings.Contains(script, `chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"`+"\n") {
+			t.Fatalf("%s script still prepares only the agent and kernel binaries", name)
+		}
+	}
+	installer := testAgentInstallScript(t)
+	if !strings.Contains(installer, `rm -f "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/oboard-sb" "$INSTALL_DIR/oboard-realm" "$INSTALL_DIR/obag"`) {
+		t.Fatal("uninstall branch leaves the bundled realm binary behind")
+	}
+	if !strings.Contains(installer, `--setenv=REALM_NAME="$realm_name"`) && !strings.Contains(testAgentSelfUpdateScript(t), `--setenv=REALM_NAME="$realm_name"`) {
+		t.Fatal("the systemd fallback install path does not receive the realm asset name")
+	}
+}
+
 func TestAgentInstallScriptBBRIsInstallOnly(t *testing.T) {
 	script := testAgentInstallScript(t)
 	for _, want := range []string{

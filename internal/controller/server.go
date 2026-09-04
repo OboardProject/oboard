@@ -15427,7 +15427,7 @@ if [ "$ACTION" = uninstall ]; then
     rc-update del oboard-sb default 2>/dev/null || true
     rm -f /etc/init.d/oboard-agent /etc/init.d/oboard-sb
   fi
-  rm -f "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/oboard-sb" "$INSTALL_DIR/obag"
+  rm -f "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/oboard-sb" "$INSTALL_DIR/oboard-realm" "$INSTALL_DIR/obag"
   obag_profile_path="${OBOARD_PROFILE_DIR:-/etc/profile.d}/oboard-agent.sh"
   if [ -f "$obag_profile_path" ] && grep -Fq "$INSTALL_DIR" "$obag_profile_path" 2>/dev/null; then
     rm -f "$obag_profile_path"
@@ -15865,6 +15865,11 @@ print_installed_versions() {
   else
     echo "- 内核: 未安装" >> "${INSTALL_LOG:-/dev/null}"
   fi
+  if [ -x "$INSTALL_DIR/oboard-realm" ]; then
+    echo "- 端口转发: $($INSTALL_DIR/oboard-realm -v 2>/dev/null | head -n1 || true)" >> "${INSTALL_LOG:-/dev/null}"
+  else
+    echo "- 端口转发: 未安装" >> "${INSTALL_LOG:-/dev/null}"
+  fi
 }
 
 verify_installed_versions() {
@@ -15972,23 +15977,28 @@ download_binaries() {
   UPDATE_TMP=$tmp
   agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
   core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
+  realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
   agent_url="${BASE_URL}/downloads/${agent_name}"
   core_url="${BASE_URL}/downloads/${core_name}"
+  realm_url="${BASE_URL}/downloads/${realm_name}"
   download_component "Agent" "$agent_url" "$tmp/$agent_name"
   download_component "优化内核" "$core_url" "$tmp/$core_name"
+  download_component "端口转发组件" "$realm_url" "$tmp/$realm_name"
   echo "[3/4] 校验并安装组件"
   download_quiet "${BASE_URL}/downloads/release-manifest.json" "$tmp/release-manifest.json"
   download_quiet "${BASE_URL}/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
-  verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" >> "$INSTALL_LOG" 2>&1
-  chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
+  verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
+  chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
   # Do not truncate an executable that may currently be running. Write beside it
   # and atomically rename; Linux keeps the old inode for the running process and
   # new restarts pick up the new binary.
   install -m 0755 "$tmp/$agent_name" "$INSTALL_DIR/oboard-agent.new"
   install -m 0755 "$tmp/$core_name" "$INSTALL_DIR/oboard-sb.new"
+  install -m 0755 "$tmp/$realm_name" "$INSTALL_DIR/oboard-realm.new"
   mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
   mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
+  mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"
   rm -f "$INSTALL_DIR/obag"
   ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"
   register_obag_path
@@ -16704,6 +16714,11 @@ print_installed_versions() {
   else
     echo "- 内核: 未安装"
   fi
+  if [ -x "$INSTALL_DIR/oboard-realm" ]; then
+    echo "- 端口转发: $($INSTALL_DIR/oboard-realm -v 2>/dev/null | head -n1 || true)"
+  else
+    echo "- 端口转发: 未安装"
+  fi
 }
 
 verify_installed_versions() {
@@ -16799,13 +16814,15 @@ trap cleanup EXIT
 
 agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
 core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
+realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
 echo "下载 Agent 组件"
 download_component "Agent" "$BASE_URL/downloads/$agent_name" "$tmp/$agent_name"
 download_component "优化内核" "$BASE_URL/downloads/$core_name" "$tmp/$core_name"
+download_component "端口转发组件" "$BASE_URL/downloads/$realm_name" "$tmp/$realm_name"
 download_quiet "$BASE_URL/downloads/release-manifest.json" "$tmp/release-manifest.json"
 download_quiet "$BASE_URL/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
-verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name"
-chmod 0755 "$tmp/$agent_name" "$tmp/$core_name"
+verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name"
+chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
 
 install_downloaded_binaries_direct() {
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
@@ -16814,8 +16831,10 @@ install_downloaded_binaries_direct() {
   # new restarts pick up the new binary.
   install -m 0755 "$tmp/$agent_name" "$INSTALL_DIR/oboard-agent.new"
   install -m 0755 "$tmp/$core_name" "$INSTALL_DIR/oboard-sb.new"
+  install -m 0755 "$tmp/$realm_name" "$INSTALL_DIR/oboard-realm.new"
   mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
   mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
+  mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"
   rm -f "$INSTALL_DIR/obag"
   ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"
 }
@@ -16867,8 +16886,10 @@ set -eu
 install -d -m 0755 -o root -g root "$INSTALL_DIR"
 install -m 0755 "$TMP_DIR/$AGENT_NAME" "$INSTALL_DIR/oboard-agent.new"
 install -m 0755 "$TMP_DIR/$CORE_NAME" "$INSTALL_DIR/oboard-sb.new"
+install -m 0755 "$TMP_DIR/$REALM_NAME" "$INSTALL_DIR/oboard-realm.new"
 mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
 mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
+mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"
 rm -f "$INSTALL_DIR/obag"
 ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"
 HELPER
@@ -16879,6 +16900,7 @@ HELPER
     --setenv=TMP_DIR="$tmp" \
     --setenv=AGENT_NAME="$agent_name" \
     --setenv=CORE_NAME="$core_name" \
+    --setenv=REALM_NAME="$realm_name" \
     /bin/sh "$helper"
 }
 
@@ -17076,7 +17098,7 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	name := urlpath.Base(r.URL.Path)
 	switch name {
-	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "release-manifest.json", "release-manifest.json.sig", "oboard-subscription-relay-linux-amd64.tar.gz", "oboard-subscription-relay-linux-arm64.tar.gz", "subscription-relay-sha256s.txt":
+	case "oboard-agent-linux-amd64", "oboard-agent-linux-arm64", "oboard-sb-linux-amd64", "oboard-sb-linux-arm64", "oboard-realm-linux-amd64", "oboard-realm-linux-arm64", "release-manifest.json", "release-manifest.json.sig", "oboard-subscription-relay-linux-amd64.tar.gz", "oboard-subscription-relay-linux-arm64.tar.gz", "subscription-relay-sha256s.txt":
 	default:
 		http.NotFound(w, r)
 		return

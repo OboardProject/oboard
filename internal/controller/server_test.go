@@ -319,6 +319,12 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(downloadDir, "oboard-subscription-relay-linux-amd64.tar.gz"), []byte("relay-package"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(downloadDir, "oboard-realm-linux-amd64"), []byte("realm-binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(downloadDir, "realm"), []byte("unlisted-binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("OBOARD_DOWNLOADS", downloadDir)
 	if err := db.SetSetting(context.Background(), "controller_url", "http://example.com/hidden-panel"); err != nil {
 		t.Fatal(err)
@@ -331,6 +337,8 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 		"/hidden-panel-other/healthz", "/hidden-panel//healthz",
 		"/hidden-panel/downloads", "/hidden-panel/api/v1/subscriptions",
 		"/hidden-panel/not-a-real-page",
+		// Present on disk but not on the download allowlist.
+		"/hidden-panel/downloads/realm",
 	} {
 		response := httptest.NewRecorder()
 		h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
@@ -356,6 +364,7 @@ func TestBasePathProtectsEveryControllerSurface(t *testing.T) {
 		{"/hidden-panel/install/agent.sh", http.StatusOK, "http://example.com/hidden-panel"},
 		{"/hidden-panel/downloads/release-manifest.json", http.StatusOK, `"version":"test"`},
 		{"/hidden-panel/downloads/oboard-subscription-relay-linux-amd64.tar.gz", http.StatusOK, "relay-package"},
+		{"/hidden-panel/downloads/oboard-realm-linux-amd64", http.StatusOK, "realm-binary"},
 	}
 	for _, check := range checks {
 		response := httptest.NewRecorder()

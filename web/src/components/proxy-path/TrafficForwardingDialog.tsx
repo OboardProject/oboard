@@ -68,7 +68,7 @@ export type TrafficForwardDraft = Omit<TrafficForward, 'id' | 'target_server_id'
 
 type Notice = { tone: 'success' | 'danger'; message: string }
 
-const forwardBackendLabel = 'Realm'
+const forwardBackendLabel = 'OBoard Realm'
 
 const protocolOptions: Array<{ value: ForwardProtocol; label: string }> = [
   { value: 'tcp', label: 'TCP' },
@@ -423,14 +423,14 @@ function TrafficForwardEditor({
         </section>
 
         <section className="traffic-forwarding-form-section">
-          <div className="traffic-forwarding-section-head"><SlidersHorizontal size={16} aria-hidden="true" /><div><h4>转发策略</h4><p>选择传输协议和健康检查方式，转发由源服务器上的 Realm 执行。</p></div></div>
+          <div className="traffic-forwarding-section-head"><SlidersHorizontal size={16} aria-hidden="true" /><div><h4>转发策略</h4><p>选择传输协议和健康检查方式，转发由源服务器上的 OBoard Realm 执行。</p></div></div>
           <div className="traffic-forwarding-form-grid">
             <FormField label="传输协议" required full>
               <Select required variant="segmented" value={draft.protocol} onChange={event => update({ protocol: event.target.value as ForwardProtocol })} aria-label="传输协议">
                 {protocolOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </Select>
             </FormField>
-            <FormField label="转发后端" hint="适合常规 TCP / UDP 转发，需要源服务器已安装 realm。">
+            <FormField label="转发后端" hint="适合常规 TCP / UDP 转发，随 Agent 一起安装，无需在服务器上单独部署。">
               <output className="traffic-forwarding-static-value" aria-label="转发后端">{forwardBackendLabel}</output>
             </FormField>
             <FormField label="检查方式" required hint={probe?.description}>

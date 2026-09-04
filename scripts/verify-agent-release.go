@@ -103,6 +103,8 @@ func main() {
 		"oboard-agent-linux-arm64": "agent",
 		"oboard-sb-linux-amd64":    "sb",
 		"oboard-sb-linux-arm64":    "sb",
+		"oboard-realm-linux-amd64": "realm",
+		"oboard-realm-linux-arm64": "realm",
 	}
 	seen := make(map[string]bool, len(required))
 	for _, file := range release.Files {
@@ -123,7 +125,7 @@ func main() {
 		}
 	}
 	if len(seen) != len(required) {
-		fatal(errors.New("manifest does not contain every required Linux Agent and kernel asset"))
+		fatal(errors.New("manifest does not contain every required Linux Agent, kernel, and realm asset"))
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	if err := encoder.Encode(release); err != nil {

@@ -157,6 +157,67 @@ func TestFetchLocalAgentDevelopmentReleaseDoesNotRequireExpectedCommit(t *testin
 	}
 }
 
+// realm is bundled by the Agent release, so a release that omits it would
+// produce Controller downloads that install a node unable to port forward.
+// Verification must reject it instead of shipping a partial fleet payload.
+func TestFetchAgentReleaseRejectsMissingRealmAssets(t *testing.T) {
+	root := controllerRepositoryRoot(t)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	commit := strings.Repeat("7", 40)
+	source := filepath.Join(temp, "source")
+	target := filepath.Join(temp, "target")
+	writeTestAgentRelease(t, source, commit, privateKey)
+	stripReleaseAsset(t, source, "oboard-realm-linux-arm64", privateKey)
+
+	output, err := runAgentReleaseFetch(t, root,
+		"OBOARD_AGENT_CHANNEL=dev",
+		"OBOARD_AGENT_EXPECTED_COMMIT=",
+		"OBOARD_AGENT_RELEASE_DIR="+source,
+		"OBOARD_AGENT_RELEASE_TARGET="+target,
+		"OBOARD_RELEASE_PUBLIC_KEY="+base64.RawStdEncoding.EncodeToString(publicKey),
+	)
+	if err == nil {
+		t.Fatalf("release without a realm asset unexpectedly succeeded:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(target, "release-metadata.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("incomplete release was promoted: %v", statErr)
+	}
+}
+
+// stripReleaseAsset removes one asset from a signed test release and re-signs
+// the manifest, producing a release that is internally consistent but no longer
+// carries every required component.
+func stripReleaseAsset(t *testing.T, directory, name string, privateKey ed25519.PrivateKey) {
+	t.Helper()
+	manifest := readTestAgentReleaseManifest(t, filepath.Join(directory, "release-manifest.json"))
+	kept := manifest.Files[:0]
+	for _, file := range manifest.Files {
+		if file.Name == name {
+			continue
+		}
+		kept = append(kept, file)
+	}
+	manifest.Files = kept
+	if err := os.Remove(filepath.Join(directory, name)); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "release-manifest.json"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signature := ed25519.Sign(privateKey, payload)
+	if err := os.WriteFile(filepath.Join(directory, "release-manifest.json.sig"), []byte(base64.RawStdEncoding.EncodeToString(signature)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFetchStableAgentReleaseDoesNotRetryVerificationFailure(t *testing.T) {
 	root := controllerRepositoryRoot(t)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -225,6 +286,8 @@ func writeTestAgentRelease(t *testing.T, directory, commit string, privateKey ed
 		{name: "oboard-agent-linux-arm64", component: "agent", arch: "arm64"},
 		{name: "oboard-sb-linux-amd64", component: "sb", arch: "amd64"},
 		{name: "oboard-sb-linux-arm64", component: "sb", arch: "arm64"},
+		{name: "oboard-realm-linux-amd64", component: "realm", arch: "amd64"},
+		{name: "oboard-realm-linux-arm64", component: "realm", arch: "arm64"},
 	}
 	manifest := testAgentReleaseManifest{
 		Version: "dev-" + commit[:12],
@@ -295,7 +358,7 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --dir ]; then destination=$2; shift 2; else shift; fi
 done
 test -n "$destination"
-for file in oboard-agent-linux-amd64 oboard-agent-linux-arm64 oboard-sb-linux-amd64 oboard-sb-linux-arm64 release-manifest.json release-manifest.json.sig; do
+for file in oboard-agent-linux-amd64 oboard-agent-linux-arm64 oboard-sb-linux-amd64 oboard-sb-linux-arm64 oboard-realm-linux-amd64 oboard-realm-linux-arm64 release-manifest.json release-manifest.json.sig; do
   cp "$source/$file" "$destination/$file"
 done
 `
