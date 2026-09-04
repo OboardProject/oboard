@@ -190,10 +190,13 @@ func TestAgentTrafficRejectsReportForInactiveUser(t *testing.T) {
 	assertTrafficRejection(t, response, "tr-inactive-user", "user_inactive")
 }
 
-// Terminal rejection must not reach the authorization boundary: Controller
-// cannot tell a removed binding apart from a claim for access the user never
-// had, so an unbound user↔inbound pair stays a 403 for the whole request.
-func TestAgentTrafficUnboundUserStillFailsWithForbidden(t *testing.T) {
+// An unbound pair on this server's own live inbound is a binding this
+// Controller removed while the Agent still held traffic for it. Cross-tenant
+// ownership was already refused earlier in validateIdentity, so this is
+// terminal for the one report rather than a reason to fail the batch: a 403
+// here would stall every other report and the policy response that renews
+// traffic leases, until every lease on the server ran out.
+func TestAgentTrafficUnboundUserIsRejectedPerReport(t *testing.T) {
 	db, server, inbound, _, h := trafficLedgerHTTPFixture(t)
 	defer db.Close()
 	ctx := context.Background()
@@ -201,7 +204,8 @@ func TestAgentTrafficUnboundUserStillFailsWithForbidden(t *testing.T) {
 	if err := db.CreateUser(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(other.ID, inbound.ID, "tr-unbound", 0, 100, 0, 200), http.StatusForbidden)
+	response := postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(other.ID, inbound.ID, "tr-unbound", 0, 100, 0, 200), http.StatusOK)
+	assertTrafficRejection(t, response, "tr-unbound", "binding_removed")
 }
 
 func TestAgentTrafficRejectsReportForDeletedInbound(t *testing.T) {

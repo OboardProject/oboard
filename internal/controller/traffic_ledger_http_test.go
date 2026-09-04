@@ -206,24 +206,25 @@ func postAgentTraffic(t *testing.T, h http.Handler, agentID, token string, body 
 	return response
 }
 
-// Ownership is a request-level boundary, and a batch that also carries valid
-// reports does not soften it. Answering an unauthorized pair per report would
-// tell the Agent to drop it silently, and Controller cannot tell a removed
-// binding apart from a claim for access the user never had.
-func TestAgentTrafficUnauthorizedReportFailsTheWholeBatch(t *testing.T) {
+// Cross-tenant ownership is a request-level boundary, and a batch that also
+// carries valid reports does not soften it: a correct Agent only ever holds the
+// configuration for its own server, so it can never produce one of these.
+func TestAgentTrafficCrossServerReportFailsTheWholeBatch(t *testing.T) {
 	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
 	defer db.Close()
 	ctx := context.Background()
-	other := &model.User{Username: "unbound-batch", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "55555555-5555-4555-8555-555555555555", ProxyPassword: "unbound-batch-password"}
-	if err := db.CreateUser(ctx, other); err != nil {
+	other := &model.Server{Name: "other-node", AgentID: "other-agent", AgentTokenHash: security.HashSecret("other-token"), ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	otherInbound := &model.Inbound{ServerID: other.ID, Name: "other-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 8443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, otherInbound); err != nil {
 		t.Fatal(err)
 	}
 	valid := ledgerTrafficBody(user.ID, inbound.ID, "tr-valid", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
-	unauthorized := ledgerTrafficBody(other.ID, inbound.ID, "tr-unauthorized", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
-	body := map[string]any{"reports": []map[string]any{valid, unauthorized}}
-	postAgentTraffic(t, h, server.AgentID, "token-a", body, http.StatusForbidden)
+	crossServer := ledgerTrafficBody(user.ID, otherInbound.ID, "tr-cross-server", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
+	postAgentTraffic(t, h, server.AgentID, "token-a", map[string]any{"reports": []map[string]any{valid, crossServer}}, http.StatusForbidden)
 
-	// Nothing in the batch may be billed when the request is refused.
 	stored, err := db.GetUser(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -233,17 +234,54 @@ func TestAgentTrafficUnauthorizedReportFailsTheWholeBatch(t *testing.T) {
 	}
 }
 
-// The per-report rejection vocabulary is limited to subjects that are gone.
-// Ownership failures must never appear there.
-func TestAgentTrafficRejectionReasonsExcludeOwnershipFailures(t *testing.T) {
-	for _, err := range []error{errTrafficForbidden, errTrafficUnauthorized} {
-		var rejection *trafficRejection
-		if errors.As(err, &rejection) {
-			t.Fatalf("%v is answered as a per-report rejection", err)
+// One unbound pair must not hold the rest of the ledger hostage: the valid
+// reports in the same batch are still accounted, and the response that carries
+// the traffic policies still lands.
+func TestAgentTrafficUnboundPairDoesNotPoisonTheBatch(t *testing.T) {
+	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
+	defer db.Close()
+	ctx := context.Background()
+	other := &model.User{Username: "unbound-batch", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "55555555-5555-4555-8555-555555555555", ProxyPassword: "unbound-batch-password"}
+	if err := db.CreateUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	valid := ledgerTrafficBody(user.ID, inbound.ID, "tr-valid", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
+	unbound := ledgerTrafficBody(other.ID, inbound.ID, "tr-unbound-batch", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
+	response := postAgentTraffic(t, h, server.AgentID, "token-a", map[string]any{"reports": []map[string]any{valid, unbound}}, http.StatusOK)
+	assertTrafficRejection(t, response, "tr-unbound-batch", "binding_removed")
+
+	accepted, _ := response["accepted_report_ids"].([]any)
+	found := false
+	for _, id := range accepted {
+		if id == "tr-valid" {
+			found = true
 		}
-		if got := trafficReportFailureStatus(err); got != http.StatusForbidden {
-			t.Fatalf("trafficReportFailureStatus(%v) = %d, want 403", err, got)
-		}
+	}
+	if !found {
+		t.Fatalf("the valid report in the batch was not accounted: %#v", response)
+	}
+	stored, err := db.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TrafficUsedBytes != 300 {
+		t.Fatalf("bound user billed %d bytes, want 300", stored.TrafficUsedBytes)
+	}
+	// The unbound pair is never billed, no matter which batch carries it.
+	unboundUser, err := db.GetUser(ctx, other.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unboundUser.TrafficUsedBytes != 0 {
+		t.Fatalf("unbound user billed %d bytes", unboundUser.TrafficUsedBytes)
+	}
+}
+
+// Only cross-tenant ownership fails the request; everything else is either a
+// per-report rejection or a malformed-report 400.
+func TestTrafficReportFailureStatusOnlyRefusesCrossTenantOwnership(t *testing.T) {
+	if got := trafficReportFailureStatus(errTrafficForbidden); got != http.StatusForbidden {
+		t.Fatalf("cross-server ownership status = %d, want 403", got)
 	}
 	if got := trafficReportFailureStatus(errors.New("malformed report")); got != http.StatusBadRequest {
 		t.Fatalf("a malformed report status = %d, want 400", got)

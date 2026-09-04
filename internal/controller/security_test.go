@@ -861,7 +861,7 @@ func TestAgentTrafficRequiresLocalInboundAuthorizationAndIsIdempotent(t *testing
 	}
 	grantTestPlanInboundNode(t, db, user.ID, inboundB.ID)
 	h := newTestServer(db, "test-secret", "").Handler()
-	report := func(inboundID *int64, reportID string, want int) {
+	report := func(inboundID *int64, reportID string, want int) map[string]any {
 		t.Helper()
 		report := map[string]any{
 			"report_id": reportID, "source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1",
@@ -883,11 +883,18 @@ func TestAgentTrafficRequiresLocalInboundAuthorizationAndIsIdempotent(t *testing
 		if rr.Code != want {
 			t.Fatalf("traffic inbound=%v status=%d want=%d body=%s", inboundID, rr.Code, want, rr.Body.String())
 		}
+		var response map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &response)
+		return response
 	}
 
 	report(nil, "missing-inbound", http.StatusBadRequest)
+	// Another server's inbound is the one boundary a correct Agent can never
+	// reach, so it refuses the whole request.
 	report(&inboundB.ID, "cross-server", http.StatusForbidden)
-	report(&inboundA.ID, "unauthorized-user", http.StatusForbidden)
+	// This server's own inbound with no binding is terminal for that report
+	// only; it must not take the rest of the ledger down with it.
+	assertTrafficRejection(t, report(&inboundA.ID, "unauthorized-user", http.StatusOK), "unauthorized-user", "binding_removed")
 	grantTestPlanInboundNode(t, db, user.ID, inboundA.ID)
 	report(&inboundA.ID, "authorized-report", http.StatusOK)
 	report(&inboundA.ID, "authorized-report", http.StatusOK)

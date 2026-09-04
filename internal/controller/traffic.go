@@ -79,6 +79,15 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			var rejection *trafficRejection
 			if errors.As(err, &rejection) {
+				// An unbound pair is the one rejection that is also the signal
+				// a misbehaving Agent would produce. A removed binding yields a
+				// bounded burst that drains; a sustained stream from one Agent
+				// does not, so the pair is logged rather than folded into the
+				// aggregate line below.
+				if rejection.Reason == "binding_removed" {
+					log.Printf("traffic ledger rejected an unbound pair agent=%s server_id=%d user_id=%d inbound_id=%v report_id=%s",
+						server.AgentID, server.ID, item.UserID, item.InboundID, strings.TrimSpace(item.ReportID))
+				}
 				rejected = append(rejected, model.TrafficAcceptedReport{ReportID: strings.TrimSpace(item.ReportID), Status: "rejected", Reason: rejection.Reason})
 				continue
 			}
@@ -157,19 +166,18 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 }
 
 var errTrafficForbidden = errors.New("inbound does not belong to this agent")
-var errTrafficUnauthorized = errors.New("user is not authorized for this inbound")
 
-// trafficReportFailureStatus keeps ownership at the request level.
+// trafficReportFailureStatus keeps cross-tenant ownership at the request level.
 //
-// A claim against another server's inbound or path, and a user that is not
-// authorized on the inbound, are security boundaries: Controller cannot tell a
-// removed binding apart from a claim for access the user never had. Answering
-// either per report would teach the Agent to drop it silently, so both fail the
-// whole request with 403 and stay visible. Only reports whose subject is gone
-// (`trafficRejection`) are answered per report, which is what keeps one
-// unaccountable entry from poisoning the batch it travels with.
+// A report against another server's inbound or path is the one authorization
+// boundary a correct Agent can never produce: it is only ever given the
+// configuration for its own server. Failing the whole request there is
+// fail-closed and cannot stall a healthy node, so it stays a 403.
+//
+// The narrower boundary - this server's own live inbound and live user with no
+// current binding - is answered per report instead; see validateIdentity.
 func trafficReportFailureStatus(err error) int {
-	if errors.Is(err, errTrafficForbidden) || errors.Is(err, errTrafficUnauthorized) {
+	if errors.Is(err, errTrafficForbidden) {
 		return http.StatusForbidden
 	}
 	return http.StatusBadRequest
@@ -266,12 +274,16 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 	if pathID != nil {
 		resolvedPath = *pathID
 	}
-	// A user that is not bound to this inbound stays an authorization failure.
-	// Controller cannot tell a removed binding apart from a claim for access
-	// the user never had, so this boundary is not downgraded to a per-report
-	// rejection.
+	// Reaching this point means the report is for this server's own live
+	// inbound and a live active user: cross-tenant ownership was refused above
+	// by errTrafficForbidden, and a deleted or disabled subject was answered
+	// per report. The only thing left is a binding this Controller removed
+	// while the Agent still held traffic for it, so it is terminal for this one
+	// report rather than a reason to fail the batch - failing it would stall
+	// every other report and the policy response that renews traffic leases,
+	// until every lease on the server ran out.
 	if _, ok := a.allowed[trafficAccessPair{inboundID: *inboundID, userID: userID, pathID: resolvedPath}]; !ok {
-		return errTrafficUnauthorized
+		return trafficReject("binding_removed", "traffic report user is not bound to this inbound")
 	}
 	return nil
 }
