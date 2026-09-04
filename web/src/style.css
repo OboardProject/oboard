@@ -11850,25 +11850,28 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .terminal-session-list li {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 2px;
+  width: 100%;
 }
 
 .terminal-session-item {
+  width: 100%;
   flex: 1 1 auto;
   min-width: 0;
-  display: flex;
-  align-items: center;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 6px 26px 6px 10px !important;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--remote-terminal-text);
   cursor: pointer;
-  text-align: left;
-  transition: background 0.15s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.5);
+  text-align: left !important;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.5);
 }
 
 .terminal-session-item:hover {
@@ -11888,13 +11891,15 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .terminal-session-item:active {
-  transform: scale(0.97) translateY(1px);
+  transform: scale(0.98) translateY(1px);
 }
 
 .terminal-session-dot {
-  flex: 0 0 auto;
+  flex: 0 0 7px;
   width: 7px;
   height: 7px;
+  min-width: 7px;
+  min-height: 7px;
   border-radius: 50%;
   background: #64748b;
 }
@@ -11907,43 +11912,84 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 .terminal-session-dot.is-closed { background: #64748b; }
 
 .terminal-session-text {
+  flex: 1 1 auto;
   min-width: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
   gap: 1px;
 }
 
 .terminal-session-name {
+  width: 100%;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12.5px;
+  font-weight: 500;
   color: inherit;
+  line-height: 1.25;
 }
 
 .terminal-session-status {
+  width: 100%;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--remote-terminal-text-muted);
   font-size: 11px;
+  line-height: 1.2;
 }
 
 .terminal-session-close {
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  min-height: 24px;
-  color: var(--remote-terminal-text-muted) !important;
-  background: transparent !important;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   border: none !important;
+  border-radius: var(--radius-sm, 4px) !important;
+  background: transparent !important;
   box-shadow: none !important;
-  border-radius: var(--radius-sm);
-  padding: 0;
+  color: var(--remote-terminal-text-muted) !important;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.terminal-session-list li:hover .terminal-session-close,
+.terminal-session-item.is-active ~ .terminal-session-close,
+.terminal-session-close:focus-visible {
+  opacity: 0.65;
 }
 
 .terminal-session-close:hover {
+  opacity: 1 !important;
   color: var(--danger) !important;
   background: var(--danger-soft) !important;
+  transform: translateY(-50%) scale(1.1);
+}
+
+.terminal-session-close:active {
+  transform: translateY(-50%) scale(0.95);
+}
+
+@media (hover: none) {
+  .terminal-session-close {
+    opacity: 0.65;
+  }
 }
 
 .terminal-workspace-main {
@@ -12090,6 +12136,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .terminal-workspace-form {
+  container-type: inline-size;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -12192,31 +12239,185 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   cursor: not-allowed;
 }
 
+.terminal-picker-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.terminal-picker-toolbar-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.terminal-picker-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.terminal-filter-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  background: var(--surface-2);
+  border-radius: var(--radius-full, 9999px);
+  border: 1px solid var(--remote-terminal-border);
+}
+
+.terminal-filter-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  min-height: 26px !important;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--remote-terminal-text-muted) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.terminal-filter-pill:hover {
+  color: var(--remote-terminal-text) !important;
+  background: transparent !important;
+}
+
+.terminal-filter-pill.is-active {
+  background: var(--surface-solid) !important;
+  color: var(--remote-terminal-text) !important;
+  font-weight: 600 !important;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05)) !important;
+}
+
+.terminal-filter-pill .pill-count {
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.terminal-region-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--remote-terminal-border);
+  border-radius: var(--radius-full, 9999px);
+  background: var(--remote-terminal-input-bg);
+  color: var(--remote-terminal-text-muted);
+  font-size: 12px;
+}
+
+.terminal-region-filter select {
+  border: none !important;
+  background: transparent !important;
+  color: var(--remote-terminal-text) !important;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  padding-right: 4px;
+}
+
+.terminal-picker-quick-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-picker-quick-actions button.ghost {
+  min-height: 30px !important;
+  padding: 0 10px !important;
+  font-size: 11.5px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+}
+
 .terminal-server-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 4px;
+  grid-template-columns: 1fr;
+  gap: 8px;
   min-height: 0;
   overflow-y: auto;
+}
+
+@container (min-width: 520px) {
+  .terminal-server-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 680px) {
+  .terminal-server-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.terminal-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.terminal-picker-checkbox {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  cursor: pointer;
+  margin: 0;
+}
+
+.terminal-picker-checkbox-empty {
+  flex: 0 0 16px;
+  width: 16px;
 }
 
 .terminal-server-option,
 .terminal-server-check {
   width: 100%;
-  display: flex;
-  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
   gap: 9px;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--remote-terminal-border);
   border-radius: var(--radius-md);
-  background: var(--remote-terminal-card-bg);
-  color: var(--remote-terminal-text);
+  background: var(--remote-terminal-card-bg) !important;
+  color: var(--remote-terminal-text) !important;
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+  box-shadow: none !important;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.5);
+}
+
+.terminal-server-flag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.terminal-server-flag .region-flag {
+  border-radius: 2px;
+  object-fit: cover;
+  vertical-align: middle;
 }
 
 .terminal-server-option svg {
@@ -12239,7 +12440,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .terminal-server-option:hover:not(:disabled),
 .terminal-server-check:hover {
-  background: var(--remote-terminal-card-hover);
+  background: var(--remote-terminal-card-hover) !important;
   border-color: var(--border-focus);
 }
 
@@ -12248,9 +12449,30 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   transform: scale(0.99) translateY(1px);
 }
 
+.terminal-picker-item.is-selected .terminal-server-option {
+  border-color: var(--primary) !important;
+  background: color-mix(in srgb, var(--primary) 8%, var(--remote-terminal-card-bg)) !important;
+}
+
+/* Offline / disabled server button in both light and dark mode */
 .terminal-server-option:disabled {
-  opacity: 0.5;
+  opacity: 0.72 !important;
   cursor: not-allowed;
+  background: var(--surface-2, rgba(148, 163, 184, 0.08)) !important;
+  border-color: var(--remote-terminal-border) !important;
+  color: var(--remote-terminal-text-muted) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.terminal-server-option:disabled .terminal-server-name {
+  color: var(--remote-terminal-text-muted) !important;
+  font-weight: 500;
+}
+
+.terminal-server-option:disabled .region-flag {
+  opacity: 0.65;
+  filter: grayscale(45%);
 }
 
 .terminal-server-name {
@@ -12265,6 +12487,82 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   flex: 0 0 auto;
   font-size: 11.5px;
   color: var(--remote-terminal-text-muted);
+}
+
+.terminal-server-option:disabled .terminal-server-hint {
+  color: var(--danger, #ef4444) !important;
+  background: var(--danger-soft, rgba(239, 68, 68, 0.12));
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
+  padding: 1px 7px;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.terminal-picker-batch-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  margin-top: 4px;
+  background: var(--surface-solid);
+  border: 1px solid var(--remote-terminal-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.1));
+}
+
+.terminal-batch-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--remote-terminal-text);
+}
+
+.terminal-batch-bar-info strong {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.batch-bar-warning {
+  font-size: 11.5px;
+  color: var(--warning, #f59e0b);
+}
+
+.terminal-batch-bar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-batch-bar-actions button.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.12s ease;
+}
+
+.terminal-batch-bar-actions button.primary:hover:not(:disabled) {
+  background: var(--primary-2);
+}
+
+.terminal-batch-bar-actions button.ghost {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .terminal-batch-actions {
@@ -18744,6 +19042,7 @@ button[aria-busy="true"] {
   font-family: var(--font-mono);
   font-size: 9.5px;
   text-align: right;
+  justify-self: end;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -26344,12 +26643,21 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   }
 }
 
-/* A server card is as wide as the slots it owns, so a card with several
-   inbounds spans its whole branch region. The plate carries the handle rail;
-   its text stays at a readable width instead of stretching across it. */
+/* When a server card owns multiple slots and its width expands, let the header
+   and body adapt smoothly across the card width so the status badge and details
+   track the card edges instead of being stranded in a narrow centered box. */
 .flow .react-flow__node.server-graph-node .rf-node-header,
 .flow .react-flow__node.server-graph-node .rf-node-body {
   width: 100%;
-  max-width: 340px;
-  margin-inline: auto;
+  max-width: none;
+  margin-inline: 0;
+  box-sizing: border-box;
+}
+
+.flow .react-flow__node.server-graph-node .rf-node-header {
+  padding-inline: 14px;
+}
+
+.flow .react-flow__node.server-graph-node .rf-node-body {
+  padding-inline: 14px;
 }

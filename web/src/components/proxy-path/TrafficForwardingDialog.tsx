@@ -23,6 +23,7 @@ import {
 import type { Server } from './types'
 import { FormField } from '../ui/form-field'
 import { MotionDialogPanel } from '../ui/motion'
+import { RegionFlag, serverRegionCode, regionLabel, regionFlagEmoji } from '../ui/RegionFlag'
 import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
 import './TrafficForwardingDialog.css'
@@ -244,10 +245,17 @@ export function TrafficForwardingDialog({
                   data-selected={server.id === sourceServerID}
                   aria-pressed={server.id === sourceServerID}
                   aria-label={`选择入口服务器 ${server.name}`}
+                  title={`${server.name}${serverRegionCode(server) ? ` · ${regionLabel(serverRegionCode(server))}` : ''}`}
                   disabled={Boolean(editor)}
                   onClick={() => chooseSourceServer(server.id)}
                 >
-                  <span className="traffic-forwarding-server-icon" data-online={isOnline} aria-hidden="true"><ServerIcon size={15} /></span>
+                  <span className="traffic-forwarding-server-icon" data-online={isOnline} aria-hidden="true">
+                    <RegionFlag
+                      code={serverRegionCode(server)}
+                      size={18}
+                      fallback={<ServerIcon size={15} />}
+                    />
+                  </span>
                   <span className="traffic-forwarding-server-copy">
                     <strong>{server.name}</strong>
                     <small>{serverAddress(server)} · {isOnline ? '在线' : '离线'}</small>
@@ -382,11 +390,29 @@ function TrafficForwardEditor({
 
       <fieldset className="traffic-forwarding-editor-scroll" disabled={saving}>
         <section className="traffic-forwarding-route-preview" aria-label="转发路径预览">
-          <RoutePoint eyebrow="第一层入口" title={source?.name || '选择入口服务器'} detail={`${effectiveListenLabel(draft.listen_ip)}:${draft.listen_port || '—'}`} />
+          <RoutePoint
+            eyebrow="第一层入口"
+            title={source ? (
+              <span className="traffic-forwarding-route-title-wrap">
+                {serverRegionCode(source) ? <RegionFlag code={serverRegionCode(source)} size={14} /> : null}
+                <span>{source.name}</span>
+              </span>
+            ) : '选择入口服务器'}
+            detail={`${effectiveListenLabel(draft.listen_ip)}:${draft.listen_port || '—'}`}
+          />
           <span className="traffic-forwarding-route-arrow" aria-hidden="true"><ArrowRight size={17} /></span>
           <RoutePoint eyebrow="流量转发" title={protocolLabel(draft.protocol)} detail={forwardBackendLabel} active />
           <span className="traffic-forwarding-route-arrow" aria-hidden="true"><ArrowRight size={17} /></span>
-          <RoutePoint eyebrow="目标端点" title={target?.name || draft.target_address.trim() || '填写目标地址'} detail={`${draft.target_address.trim() || (target ? '自动解析服务器' : '等待填写')}:${draft.target_port || '—'}`} />
+          <RoutePoint
+            eyebrow="目标端点"
+            title={target ? (
+              <span className="traffic-forwarding-route-title-wrap">
+                {serverRegionCode(target) ? <RegionFlag code={serverRegionCode(target)} size={14} /> : null}
+                <span>{target.name}</span>
+              </span>
+            ) : (draft.target_address.trim() || '填写目标地址')}
+            detail={`${draft.target_address.trim() || (target ? '自动解析服务器' : '等待填写')}:${draft.target_port || '—'}`}
+          />
         </section>
 
         <section className="traffic-forwarding-form-section">
@@ -405,13 +431,21 @@ function TrafficForwardEditor({
           <div className="traffic-forwarding-form-grid">
             <FormField label="入口服务器（第一层）" required>
               <><Select required value={draft.source_server_id} onChange={event => changeSource(Number(event.target.value))} aria-label="入口服务器" aria-describedby={fieldErrorDescription(fieldErrors, 'source_server_id')}>
-                {servers.map(server => <option value={server.id} key={server.id}>{server.name}{server.status === 'online' ? '' : '（离线）'}</option>)}
+                {servers.map(server => (
+                  <option value={server.id} key={server.id}>
+                    {serverRegionCode(server) ? `${regionFlagEmoji(serverRegionCode(server))} ` : ''}{server.name}{server.status === 'online' ? '' : '（离线）'}
+                  </option>
+                ))}
               </Select><ForwardFieldError errors={fieldErrors} field="source_server_id" /></>
             </FormField>
             <FormField label="目标服务器" hint="可选。选择后，目标地址留空即可自动解析该服务器。">
               <><Select value={draft.target_server_id} onChange={event => update({ target_server_id: Number(event.target.value) })} aria-label="目标服务器" aria-invalid={Boolean(fieldErrors.target_server_id)} aria-describedby={fieldErrorDescription(fieldErrors, 'target_server_id')}>
                 <option value={0}>不选择（填写目标地址）</option>
-                {servers.filter(server => server.id !== draft.source_server_id).map(server => <option value={server.id} key={server.id}>{server.name}{server.status === 'online' ? '' : '（离线）'}</option>)}
+                {servers.filter(server => server.id !== draft.source_server_id).map(server => (
+                  <option value={server.id} key={server.id}>
+                    {serverRegionCode(server) ? `${regionFlagEmoji(serverRegionCode(server))} ` : ''}{server.name}{server.status === 'online' ? '' : '（离线）'}
+                  </option>
+                ))}
               </Select><ForwardFieldError errors={fieldErrors} field="target_server_id" /></>
             </FormField>
             <FormField label="监听 IP" hint="留空或填 0.0.0.0 时，按入口服务器的监听模式自动选择 IPv4 或双栈地址。"><input aria-label="监听 IP" value={draft.listen_ip} onChange={event => update({ listen_ip: event.target.value })} placeholder="自动（推荐）" /></FormField>
@@ -516,7 +550,7 @@ function TrafficStat({ label, value, icon, tone }: { label: string; value: numbe
   return <div className="traffic-forwarding-stat" data-tone={tone} aria-label={`${label} ${value}`}><span aria-hidden="true">{icon}</span><div><strong className="tabular-nums">{value}</strong><small>{label}</small></div></div>
 }
 
-function RoutePoint({ eyebrow, title, detail, active = false }: { eyebrow: string; title: string; detail: string; active?: boolean }) {
+function RoutePoint({ eyebrow, title, detail, active = false }: { eyebrow: string; title: React.ReactNode; detail: string; active?: boolean }) {
   return <div className="traffic-forwarding-route-point" data-active={active}><small>{eyebrow}</small><strong>{title}</strong><span>{detail}</span></div>
 }
 

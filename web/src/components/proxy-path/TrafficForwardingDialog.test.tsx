@@ -179,6 +179,18 @@ describe('TrafficForwardingDialog', () => {
     await act(async () => { resolveSave(); await Promise.resolve() })
     expect(container.textContent).toContain('转发配置已保存')
   })
+
+  it('renders region flags for servers in the left sidebar list', () => {
+    const props = dialogProps()
+    props.servers = [
+      server({ id: 1, name: '香港入口', region_code: 'HK' }),
+      server({ id: 2, name: '东京入口', region_code: 'JP' }),
+    ]
+    act(() => root.render(<TrafficForwardingDialog {...props} initialServerID={1} />))
+
+    const flagIcons = container.querySelectorAll('.traffic-forwarding-server-icon .region-flag')
+    expect(flagIcons.length).toBe(2)
+  })
 })
 
 describe('traffic forwarding draft helpers', () => {

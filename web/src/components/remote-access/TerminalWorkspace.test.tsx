@@ -231,4 +231,70 @@ describe('TerminalWorkspace', () => {
       .toContain(`最多同时保持 ${maxTerminalSessions} 个终端会话`)
     expect(FakeTerminalSocket.instances).toHaveLength(0)
   })
+
+  it('filters servers by status pills and search query in picker', () => {
+    renderWorkspace(root, {
+      servers: [
+        { id: 1, name: 'alpha-sg', status: 'online', agent_id: 'a1', region_code: 'SG' },
+        { id: 2, name: 'beta-us', status: 'offline', agent_id: 'a2', region_code: 'US' },
+        { id: 3, name: 'gamma-jp', status: 'online', agent_id: 'a3', region_code: 'JP' },
+      ],
+    })
+    expect(document.querySelectorAll('.terminal-server-option')).toHaveLength(3)
+
+    // Filter by online
+    clickText('.terminal-filter-pill', '在线')
+    expect(document.querySelectorAll('.terminal-server-option')).toHaveLength(2)
+    expect(document.body.textContent).toContain('alpha-sg')
+    expect(document.body.textContent).toContain('gamma-jp')
+    expect(document.body.textContent).not.toContain('beta-us')
+
+    // Filter by offline
+    clickText('.terminal-filter-pill', '离线')
+    expect(document.querySelectorAll('.terminal-server-option')).toHaveLength(1)
+    expect(document.body.textContent).toContain('beta-us')
+
+    // Back to all
+    clickText('.terminal-filter-pill', '全部')
+    expect(document.querySelectorAll('.terminal-server-option')).toHaveLength(3)
+  })
+
+  it('supports multi-selecting servers and batch connecting them in one click', async () => {
+    const request = renderWorkspace(root, {
+      servers: [
+        { id: 10, name: 'node-sg', status: 'online', agent_id: 'a10', region_code: 'SG' },
+        { id: 20, name: 'node-us', status: 'online', agent_id: 'a20', region_code: 'US' },
+        { id: 30, name: 'node-offline', status: 'offline', agent_id: 'a30', region_code: 'JP' },
+      ],
+    })
+
+    const checkboxes = Array.from(document.querySelectorAll<HTMLInputElement>('.terminal-picker-checkbox'))
+    expect(checkboxes).toHaveLength(2) // Only 2 online servers have checkboxes
+
+    // Select both online servers
+    act(() => { checkboxes[0].click(); checkboxes[1].click() })
+
+    // Check batch action bar appears
+    expect(document.querySelector('.terminal-picker-batch-bar')).toBeTruthy()
+    expect(document.querySelector('.batch-bar-count')?.textContent).toContain('2')
+
+    // Click batch start button
+    clickText('.terminal-picker-batch-bar button.primary', '一键启动所选终端')
+    await flush()
+    await flush()
+
+    const created = request.mock.calls.map(call => String(call[0])).filter(path => path.includes('/terminal/sessions'))
+    expect(created).toEqual(['/servers/10/terminal/sessions', '/servers/20/terminal/sessions'])
+    expect(document.querySelectorAll('.terminal-session-item')).toHaveLength(2)
+  })
+
+  it('renders region flags on server items', () => {
+    renderWorkspace(root, {
+      servers: [
+        { id: 1, name: 'server-sg', status: 'online', agent_id: 'a1', region_code: 'SG' },
+      ],
+    })
+    const flag = document.querySelector('.terminal-server-flag img, .terminal-server-flag span')
+    expect(flag).toBeTruthy()
+  })
 })

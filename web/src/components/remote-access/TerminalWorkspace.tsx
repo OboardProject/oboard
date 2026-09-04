@@ -4,6 +4,7 @@ import {
   ClipboardPaste,
   Copy,
   Eraser,
+  Globe,
   Info,
   Maximize2,
   Minimize2,
@@ -35,6 +36,27 @@ export type TerminalServer = {
   name?: string
   status?: string
   agent_id?: string
+  region_mode?: 'auto' | 'manual' | string
+  region_code?: string
+  detected_region_code?: string
+  display_tags?: Array<{ text: string; tone?: string } | string>
+  tags?: string[]
+}
+
+import {
+  RegionFlag,
+  serverRegionCode,
+  regionLabel,
+  normalizeRegionCode,
+  regionFlagEmoji,
+} from '../ui/RegionFlag'
+
+export {
+  RegionFlag,
+  serverRegionCode,
+  regionLabel,
+  normalizeRegionCode,
+  regionFlagEmoji,
 }
 
 // Matches the Controller per-user PTY ceiling. Batch runs are checked against it before any
@@ -106,6 +128,9 @@ export function TerminalWorkspace({
   const [infoOpen, setInfoOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [pickerQuery, setPickerQuery] = useState('')
+  const [pickerStatusFilter, setPickerStatusFilter] = useState<'all' | 'online' | 'offline'>('all')
+  const [pickerRegionFilter, setPickerRegionFilter] = useState('')
+  const [pickerSelection, setPickerSelection] = useState<number[]>([])
   const [batchCommand, setBatchCommand] = useState('')
   const [batchQuery, setBatchQuery] = useState('')
   const [batchSelection, setBatchSelection] = useState<number[]>([])
@@ -223,12 +248,135 @@ export function TerminalWorkspace({
   }, [view, activeSession, sessions])
 
   const connectableServers = useMemo(() => servers.filter(terminalServerConnectable), [servers])
+  const onlineCount = useMemo(() => servers.filter(terminalServerConnectable).length, [servers])
+  const offlineCount = useMemo(() => servers.length - onlineCount, [servers, onlineCount])
+
+  const regionOptionsList = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const server of servers) {
+      const code = serverRegionCode(server)
+      if (code) {
+        map.set(code, (map.get(code) || 0) + 1)
+      }
+    }
+    return Array.from(map.entries())
+      .map(([code, count]) => ({ code, label: regionLabel(code), count }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+  }, [servers])
 
   const pickerServers = useMemo(() => {
     const query = pickerQuery.trim().toLowerCase()
-    if (!query) return servers
-    return servers.filter(server => serverDisplayName(server).toLowerCase().includes(query) || String(server.id) === query)
-  }, [servers, pickerQuery])
+    return servers.filter(server => {
+      const isConnectable = terminalServerConnectable(server)
+      if (pickerStatusFilter === 'online' && !isConnectable) return false
+      if (pickerStatusFilter === 'offline' && isConnectable) return false
+
+      const regCode = serverRegionCode(server)
+      if (pickerRegionFilter && regCode !== pickerRegionFilter) return false
+
+      if (query) {
+        const name = serverDisplayName(server).toLowerCase()
+        const idStr = String(server.id)
+        const regLabel = regionLabel(regCode).toLowerCase()
+        const tags = [
+          ...(server.tags || []),
+          ...(server.display_tags || []).map(t => (typeof t === 'string' ? t : t?.text || '')),
+        ].map(t => String(t).toLowerCase())
+        const matchName = name.includes(query)
+        const matchId = idStr === query
+        const matchRegCode = regCode.toLowerCase().includes(query)
+        const matchRegLabel = regLabel.includes(query)
+        const matchTag = tags.some(t => t.includes(query))
+        if (!matchName && !matchId && !matchRegCode && !matchRegLabel && !matchTag) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [servers, pickerQuery, pickerStatusFilter, pickerRegionFilter])
+
+  const connectableInPicker = useMemo(() => {
+    return pickerServers.filter(terminalServerConnectable)
+  }, [pickerServers])
+
+  const allConnectableSelected = connectableInPicker.length > 0
+    && connectableInPicker.every(s => pickerSelection.includes(Number(s.id)))
+
+  const togglePickerSelect = (serverId: number) => {
+    const server = serverById.get(serverId)
+    if (!server || !terminalServerConnectable(server)) return
+    setPickerSelection(current => (current.includes(serverId)
+      ? current.filter(id => id !== serverId)
+      : [...current, serverId]))
+  }
+
+  const selectAllConnectableInPicker = () => {
+    const connectableIds = connectableInPicker.map(s => Number(s.id))
+    setPickerSelection(current => {
+      const allSelected = connectableIds.length > 0 && connectableIds.every(id => current.includes(id))
+      if (allSelected) {
+        return current.filter(id => !connectableIds.includes(id))
+      }
+      return Array.from(new Set([...current, ...connectableIds]))
+    })
+  }
+
+  const connectSelectedServers = async () => {
+    const targets = pickerSelection
+      .map(id => serverById.get(id))
+      .filter((server): server is TerminalServer => Boolean(server && terminalServerConnectable(server)))
+
+    if (!targets.length) {
+      setNotice('请至少选择一台在线服务器')
+      return
+    }
+
+    const reuse: Array<{ entry: SessionEntry; server: TerminalServer }> = []
+    const fresh: TerminalServer[] = []
+    for (const server of targets) {
+      const existing = sessions.find(entry => entry.serverId === Number(server.id))
+      if (existing) reuse.push({ entry: existing, server })
+      else fresh.push(server)
+    }
+
+    if (sessions.length + fresh.length > maxTerminalSessions) {
+      setNotice(`最多同时保持 ${maxTerminalSessions} 个终端会话，当前已有 ${sessions.length} 个，无法同时启动 ${fresh.length} 个新会话`)
+      return
+    }
+    setNotice('')
+
+    if (passwordConfirmationRequired && fresh.length) {
+      batchTokenRef.current = null
+      let token = ''
+      try {
+        token = await enqueueAuth(fresh.map(server => Number(server.id)))
+      } catch {
+        setNotice('未完成认证，批量启动已取消')
+        return
+      }
+      batchTokenRef.current = {
+        token,
+        remaining: new Set(fresh.map(server => Number(server.id))),
+        expiresAt: Date.now() + 100_000,
+      }
+    }
+
+    let firstKey = ''
+    for (const server of fresh) {
+      const key = openSession(server, { focus: false })
+      if (!firstKey) firstKey = key
+    }
+    if (!firstKey && reuse.length > 0) {
+      firstKey = reuse[0].entry.key
+    }
+
+    if (firstKey) {
+      setActiveKey(firstKey)
+      setView('sessions')
+      setSidebarOpen(false)
+      setPickerSelection([])
+    }
+  }
 
   const batchServers = useMemo(() => {
     const query = batchQuery.trim().toLowerCase()
@@ -464,11 +612,14 @@ export function TerminalWorkspace({
                     </button>
                     <button
                       type="button"
-                      className="ghost icon-button terminal-session-close"
-                      onClick={() => void closeSession(entry.key)}
+                      className="terminal-session-close"
+                      onClick={event => {
+                        event.stopPropagation()
+                        void closeSession(entry.key)
+                      }}
                       aria-label={`关闭 ${entry.serverName} 的会话`}
                       title="关闭会话"
-                    ><X size={13} /></button>
+                    ><X size={12} /></button>
                   </li>
                 ))}
               </ul>
@@ -519,38 +670,140 @@ export function TerminalWorkspace({
 
               {view === 'picker' ? (
                 <div className="terminal-workspace-form" role="region" aria-label="选择服务器">
-                  <div className="terminal-form-search">
-                    <Search size={15} aria-hidden="true" />
-                    <input
-                      type="search"
-                      value={pickerQuery}
-                      onChange={event => setPickerQuery(event.target.value)}
-                      placeholder="搜索服务器名称或编号"
-                      aria-label="搜索服务器"
-                    />
+                  <div className="terminal-picker-toolbar">
+                    <div className="terminal-picker-toolbar-top">
+                      <div className="terminal-form-search">
+                        <Search size={15} aria-hidden="true" />
+                        <input
+                          type="search"
+                          value={pickerQuery}
+                          onChange={event => setPickerQuery(event.target.value)}
+                          placeholder="搜索服务器名称、编号或地区"
+                          aria-label="搜索服务器"
+                        />
+                      </div>
+                      {connectableInPicker.length > 0 ? (
+                        <div className="terminal-picker-quick-actions">
+                          <button
+                            type="button"
+                            className="ghost"
+                            onClick={selectAllConnectableInPicker}
+                          >
+                            {allConnectableSelected ? '取消全选' : `全选在线 (${connectableInPicker.length})`}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="terminal-picker-filters">
+                      <div className="terminal-filter-pills" role="radiogroup" aria-label="状态筛选">
+                        <button
+                          type="button"
+                          className={`terminal-filter-pill${pickerStatusFilter === 'all' ? ' is-active' : ''}`}
+                          onClick={() => setPickerStatusFilter('all')}
+                        >全部 <span className="pill-count">{servers.length}</span></button>
+                        <button
+                          type="button"
+                          className={`terminal-filter-pill${pickerStatusFilter === 'online' ? ' is-active' : ''}`}
+                          onClick={() => setPickerStatusFilter('online')}
+                        >在线 <span className="pill-count">{onlineCount}</span></button>
+                        <button
+                          type="button"
+                          className={`terminal-filter-pill${pickerStatusFilter === 'offline' ? ' is-active' : ''}`}
+                          onClick={() => setPickerStatusFilter('offline')}
+                        >离线 <span className="pill-count">{offlineCount}</span></button>
+                      </div>
+
+                      {regionOptionsList.length > 0 ? (
+                        <div className="terminal-region-filter">
+                          <Globe size={13} aria-hidden="true" />
+                          <select
+                            value={pickerRegionFilter}
+                            onChange={e => setPickerRegionFilter(e.target.value)}
+                            aria-label="按地区筛选"
+                          >
+                            <option value="">全部地区 ({servers.length})</option>
+                            {regionOptionsList.map(item => (
+                              <option key={item.code} value={item.code}>{item.label} ({item.count})</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
+
                   {pickerServers.length ? (
                     <ul className="terminal-server-list">
                       {pickerServers.map(server => {
                         const blocked = terminalServerBlockReason(server)
+                        const connectable = terminalServerConnectable(server)
+                        const selected = pickerSelection.includes(Number(server.id))
+                        const isConnected = sessions.some(s => s.serverId === Number(server.id))
                         return (
-                          <li key={server.id}>
+                          <li key={server.id} className={`terminal-picker-item${selected ? ' is-selected' : ''}`}>
+                            {connectable ? (
+                              <input
+                                type="checkbox"
+                                className="terminal-picker-checkbox"
+                                checked={selected}
+                                onChange={() => togglePickerSelect(Number(server.id))}
+                                aria-label={`选择 ${serverDisplayName(server)}`}
+                              />
+                            ) : (
+                              <span className="terminal-picker-checkbox-empty" aria-hidden="true" />
+                            )}
                             <button
                               type="button"
-                              className="terminal-server-option"
+                              className={`terminal-server-option${selected ? ' is-selected' : ''}`}
                               disabled={Boolean(blocked)}
                               title={blocked || `连接 ${serverDisplayName(server)}`}
-                              onClick={() => connectServer(server)}
+                              onClick={() => {
+                                if (pickerSelection.length > 0) {
+                                  togglePickerSelect(Number(server.id))
+                                } else {
+                                  connectServer(server)
+                                }
+                              }}
                             >
-                              <TerminalIcon size={14} aria-hidden="true" />
+                              <span className="terminal-server-flag">
+                                <RegionFlag code={serverRegionCode(server)} size={18} />
+                              </span>
                               <span className="terminal-server-name">{serverDisplayName(server)}</span>
-                              <span className="muted terminal-server-hint">{blocked || '可连接'}</span>
+                              <span className="muted terminal-server-hint">{blocked || (isConnected ? '已连接' : '可连接')}</span>
                             </button>
                           </li>
                         )
                       })}
                     </ul>
                   ) : <p className="muted">没有匹配的服务器</p>}
+
+                  {pickerSelection.length > 0 ? (
+                    <div className="terminal-picker-batch-bar">
+                      <div className="terminal-batch-bar-info">
+                        <span className="batch-bar-count">已选择 <strong>{pickerSelection.length}</strong> 台服务器</span>
+                        {sessions.length + pickerSelection.length > maxTerminalSessions ? (
+                          <span className="batch-bar-warning">
+                            （超出上限，最多保持 {maxTerminalSessions} 个会话）
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="terminal-batch-bar-actions">
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => setPickerSelection([])}
+                        >取消选择</button>
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => void connectSelectedServers()}
+                        >
+                          <Play size={13} aria-hidden="true" />
+                          <span>一键启动所选终端 ({pickerSelection.length})</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -593,6 +846,9 @@ export function TerminalWorkspace({
                           <li key={id}>
                             <label className="terminal-server-check">
                               <input type="checkbox" checked={batchSelection.includes(id)} onChange={() => toggleBatchServer(id)} />
+                              <span className="terminal-server-flag">
+                                <RegionFlag code={serverRegionCode(server)} size={18} />
+                              </span>
                               <span className="terminal-server-name">{serverDisplayName(server)}</span>
                               {sessions.some(entry => entry.serverId === id) ? <span className="muted terminal-server-hint">复用已有会话</span> : null}
                             </label>

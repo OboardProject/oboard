@@ -12103,9 +12103,8 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	    y: candidate.y + currentRoot.y - arrangedRoot.y,
 	  })
 	}
-	const openCanvasServerPosition = (preferred: GraphPosition, server: Server) => {
-	  const entryCount = entries.filter(entry => entry.server_id === server.id && entry.enabled !== false).length
-	  const width = graphServerNodeWidth(entryCount)
+	const openCanvasServerPosition = (preferred: GraphPosition, _server: Server) => {
+	  const width = graphServerNodeWidth(1)
 	  const height = 140
 	  const occupied = nodes.map(node => ({
 	    x: node.position.x,
@@ -12150,8 +12149,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  const instance: CanvasServerInstance = { instance_id: `${server.id}-${Date.now()}-${++canvasServerSequence.current}`, server_id: server.id }
 	  const id = canvasServerNodeID(instance)
 	  const nextInstances = [...canvasServerInstances, instance]
-	  const entryCount = entries.filter(entry => entry.server_id === server.id && entry.enabled !== false).length
-	  const width = graphServerNodeWidth(entryCount)
+	  const width = graphServerNodeWidth(1)
 	  const targetPos = getPreferredViewportNewNodePosition(width, 140)
 	  setCanvasServerInstances(nextInstances)
 	  placeGraphNode(id, targetPos)
@@ -17398,7 +17396,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     if (!server) return
     const id = canvasServerNodeID(instance)
     const serverEntries = entries.filter(x => x.server_id === server.id && x.enabled !== false)
-    const serverWidth = graphServerNodeWidth(serverEntries.length)
+    const serverWidth = graphServerNodeWidth(1)
     const position = positions[id] || defaultServerGraphPosition(visibleServers.length + index)
 	    const entrySources = sortServerEntriesForGraph(serverEntries, positions, position, serverWidth).map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
 	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, entryHandles: entrySources, pathHandles: [], sourceOptions: graphServerSourceOptions(entrySources, []), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
