@@ -79,8 +79,8 @@ export const GRAPH_LAYOUT_EXIT_NODE_HEIGHT = 130
 // under a now-different width and cards drifted off their connection points.
 // v8 forces one full recompute for that formula change; the drift is not a
 // bug an operator can fix by dragging, so it has to be an automatic reset.
-const POSITIONS_KEY = 'oboard.proxyGraph.positions.v8'
-const LEGACY_POSITIONS_KEYS = ['oboard.proxyGraph.positions.v6', 'oboard.proxyGraph.positions.v7']
+const POSITIONS_KEY = 'oboard.proxyGraph.positions.v9'
+const LEGACY_POSITIONS_KEYS = ['oboard.proxyGraph.positions.v6', 'oboard.proxyGraph.positions.v7', 'oboard.proxyGraph.positions.v8']
 const PINNED_KEY = 'oboard.proxyGraph.pinnedNodes.v1'
 const SIGNATURE_KEY = 'oboard.proxyGraph.layoutSignature.v1'
 const TOOLBOX_KEY = 'oboard.proxyGraph.toolboxPosition.v1'

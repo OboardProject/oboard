@@ -15595,8 +15595,14 @@ function formatInboundDisplayEndpoint(data: any, inbound: any): string {
   const addr = inboundEntryAddress(data, inbound)
   const displayPort = inboundDisplayPort(inbound)
   const listenPort = inboundListenPort(inbound)
-  const base = formatHostPort(addr, displayPort)
   const records = String(inbound?.dns_record_types || '').toLowerCase()
+  if (inbound?.protocol === 'snell') {
+    const clean = String(addr || '').trim()
+    const host = !clean ? '地址待检测' : (clean.includes(':') && !clean.startsWith('[') ? `[${clean}]` : clean)
+    const base = Number(inbound?.advertise_port || 0) > 0 ? formatHostPort(addr, displayPort) : `${host}（端口按用户分配）`
+    return inbound?.dns_sync_enabled && inbound?.dns_domain && records && records !== 'auto' ? `${base} (${records})` : base
+  }
+  const base = formatHostPort(addr, displayPort)
   const hostLabel = inbound?.dns_sync_enabled && inbound?.dns_domain && records && records !== 'auto'
     ? `${base} (${records})`
     : base
@@ -15997,7 +16003,12 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
               </> : null
   const entryAddressDisplay = (() => {
-    const formatted = entryAddress ? formatHostPort(entryAddress, displayPort) : ''
+    const snellPerUserPort = protocol === 'snell' && !natEnabled
+    const cleanAddress = String(entryAddress || '').trim()
+    const formattedHost = cleanAddress.includes(':') && !cleanAddress.startsWith('[') ? `[${cleanAddress}]` : cleanAddress
+    const formatted = snellPerUserPort
+      ? (formattedHost ? `${formattedHost}（端口按用户分配）` : '')
+      : (entryAddress ? formatHostPort(entryAddress, displayPort) : '')
     const records = String(draft.dns_record_types || '').toLowerCase()
     if (draft.dns_sync_enabled && draft.dns_domain && records && records !== 'auto') {
       return formatted ? `${formatted} (${records})` : `${draft.dns_domain} (${records})`
@@ -16068,7 +16079,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <FormField label="入口地址策略" hint="客户端订阅使用的连接地址。自动模式跟随服务器检测结果。" placement="bottom">
                 <Select value={entryMode} onChange={e => changeEntryMode(e.target.value as EntryIPMode)}>{entryIPModes.map(x => <option key={x} value={x}>{entryAddressModeLabel(x, server)}</option>)}</Select>
               </FormField>
-              <FormField label="当前入口地址" hint={draft.dns_sync_enabled && draft.dns_domain ? `订阅 Host；DNS 同步开启时使用解析域名。TLS 的 SNI 仍用证书域名。${natEnabled ? '对外端口' : '监听端口'}对客户端生效，Agent 本机仍监听 ${Number(draft.port) || 0}。` : `订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`} placement="bottom">
+              <FormField label="当前入口地址" hint={protocol === 'snell' ? (natEnabled ? '订阅使用此公网地址和对外端口；网关需把它转发到部署后分配的唯一逐用户运行端口。' : 'Snell 为每个授权用户生成独立端口和密钥；客户端必须使用最新订阅中的地址，不能连接下方的端口标识。') : (draft.dns_sync_enabled && draft.dns_domain ? `订阅 Host；DNS 同步开启时使用解析域名。TLS 的 SNI 仍用证书域名。${natEnabled ? '对外端口' : '监听端口'}对客户端生效，Agent 本机仍监听 ${Number(draft.port) || 0}。` : `订阅与客户端使用${natEnabled ? '对外端口' : '监听端口'}；Agent 本机仍监听 ${Number(draft.port) || 0}。`)} placement="bottom">
                 <input readOnly value={entryAddressDisplay} />
               </FormField>
               {entryMode === 'custom' && <FormField label="自定义入口地址" required full hint="可填写域名、IPv4 或 IPv6。">
@@ -16095,9 +16106,9 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </EntryFormDisclosure>}
           </EntryFormSection>
 
-          <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description="Agent 在本机打开的地址和端口。">
+          <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description={protocol === 'snell' ? 'Snell 从服务器公网端口池为每个授权用户分配独立运行端口。' : 'Agent 在本机打开的地址和端口。'}>
             <div className="entry-form-grid">
-              <FormField label="监听端口" required hint={`${draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}${protocol === 'mieru' ? '这是 Mieru 的主端口；「额外端口范围」在上方协议参数里单独填写。' : ''}`}>
+              <FormField label={protocol === 'snell' ? '端口标识' : '监听端口'} required hint={protocol === 'snell' ? '仅用于标识和端口冲突校验，不是客户端连接端口；实际端口会在部署时按用户分配，并写入订阅。请确保服务器公网端口范围已放行。' : `${draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}${protocol === 'mieru' ? '这是 Mieru 的主端口；「额外端口范围」在上方协议参数里单独填写。' : ''}`}>
                 <div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div>
               </FormField>
               <FormField label="状态" hint="禁用后保留配置，但不再对外提供这个入口。">
@@ -16134,7 +16145,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               {natEnabled && (
                 <FormField label="对外端口" required hint={protocol === 'snell' ? '客户端订阅使用此端口；公网入口必须转发到部署后分配的唯一 Snell 逐用户运行端口。' : 'NAT 网关对外的公网端口，客户端通过此端口连接。'}>
                   <input value={draft.advertise_port || ''} onChange={e => update({ advertise_port: Number(e.target.value) || 0 })} inputMode="numeric" placeholder={String(draft.port || 443)} />
-                  {Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
+                  {protocol !== 'snell' && Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
                 </FormField>
               )}
             </EntryFormDisclosure>
@@ -16828,7 +16839,7 @@ function ServerBranchTree({ data, server }: { data: any; server: Server }) {
     <MotionList className="tree-lane" stagger={0.03}>
       <MotionCard className="tree-node root-node" whileHover={{}}><strong>主机</strong><span>{labelValue(server.status || 'unknown')}</span></MotionCard>
       {entries.length ? entries.map(x => <div className="tree-branch" key={`in-${x.id}`}>
-        <MotionCard className="tree-node entry-node" whileHover={{}}><strong>{x.name}</strong><span>{labelProtocol(x.protocol)} · {formatInboundDisplayEndpoint(data, x)}</span><small>{entryAddressModeLabel(x.entry_ip_mode || 'auto', server)} · {inboundAccessSummary(data, x)}{x.dns_sync_enabled ? ` · DNS ${x.dns_sync_error ? '失败' : (x.dns_sync_status || '待同步')}` : ''}{Number(x.advertise_port) > 0 && Number(x.advertise_port) !== Number(x.port) ? ` · NAT ${x.port}→${x.advertise_port}` : ''}</small></MotionCard>
+        <MotionCard className="tree-node entry-node" whileHover={{}}><strong>{x.name}</strong><span>{labelProtocol(x.protocol)} · {formatInboundDisplayEndpoint(data, x)}</span><small>{entryAddressModeLabel(x.entry_ip_mode || 'auto', server)} · {inboundAccessSummary(data, x)}{x.dns_sync_enabled ? ` · DNS ${x.dns_sync_error ? '失败' : (x.dns_sync_status || '待同步')}` : ''}{Number(x.advertise_port) > 0 ? (x.protocol === 'snell' ? ` · NAT 对外 ${x.advertise_port}` : (Number(x.advertise_port) !== Number(x.port) ? ` · NAT ${x.port}→${x.advertise_port}` : '')) : ''}</small></MotionCard>
         <MotionCard className="tree-node exit-node" whileHover={{}}><strong>出口</strong><span>Direct / 路径出口</span></MotionCard>
       </div>) : <MotionCard className="tree-node muted-node" whileHover={{}}>这台主机还没有入口节点。把“入口节点”工具拖到链路图里创建。</MotionCard>}
       {!!forwards.length && <MotionCard className="branch-note" whileHover={{}}>端口转发：{forwards.map(x => `${x.listen_port}->${x.target_port}`).join('、')}</MotionCard>}
@@ -16880,6 +16891,7 @@ function nodeHandles(node: Node, rect: GraphRect): Record<string, GraphPoint> {
   const handles: Record<string, GraphPoint> = {
     'target-top': { x: (rect.left + rect.right) / 2, y: rect.top },
     'source-bottom': { x: (rect.left + rect.right) / 2, y: rect.bottom },
+    [SERVER_GRAPH_SOURCE_HANDLE]: { x: (rect.left + rect.right) / 2, y: rect.bottom },
   }
 	  const data = node.data as any
 	  const entity = data?.entity as GraphEntity | undefined
@@ -18044,7 +18056,7 @@ function GraphNode({
 	  })}
       {isServer && <Handle id={SERVER_GRAPH_SOURCE_HANDLE} className="connect-handle connect-source server-shared-source-handle" type="source" position={Position.Bottom} title="从此服务器连接分流或后续节点" />}
       {isServer && <span className="server-shared-source-label">连接</span>}
-      {!isServer && !independentSourceCount && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
+      {(isEntry || (!isServer && !independentSourceCount)) && <Handle id="source-bottom" className="connect-handle connect-source connect-source-bottom" type="source" position={Position.Bottom} />}
 
       {/* Header */}
       <div className="rf-node-header">

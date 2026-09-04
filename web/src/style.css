@@ -6796,16 +6796,9 @@ body:has(.dialog-layer) .main {
   background: var(--text-strong);
   box-shadow: 0 2px 8px rgba(15, 23, 42, .18);
   transform: translate(-50%, -50%);
-  opacity: .72;
+  opacity: 0;
   transition: width .14s ease, height .14s ease, opacity .14s ease, background .14s ease;
   pointer-events: none;
-}
-.flow .react-flow__node.graph-node:hover .connect-source-bottom::after,
-.flow .react-flow__node.graph-node.selected .connect-source-bottom::after {
-  width: 10px;
-  height: 10px;
-  background: var(--primary);
-  opacity: 1;
 }
 .flow .react-flow__handle.connect-source-bottom:hover::after {
   width: 12px;
@@ -16271,24 +16264,25 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   opacity: 0 !important;
   pointer-events: none;
 }
+.rf-node-custom .server-entry-target-handle::after {
+  display: none !important;
+}
 .rf-node-custom .server-entry-source-handle::after,
-.rf-node-custom .server-entry-target-handle::after,
 .rf-node-custom .path-step-source-handle::after,
 .rf-node-custom .server-shared-source-handle::after,
 .rf-node-custom .connect-source-bottom::after {
   width: 8px !important;
   height: 8px !important;
   background: var(--graph-node-accent) !important;
-  opacity: .9 !important;
+  opacity: 0;
+  transition: opacity .14s ease, width .14s ease, height .14s ease;
 }
-.flow .react-flow__node.graph-node:hover .rf-node-custom .server-entry-source-handle::after,
-.flow .react-flow__node.graph-node:hover .rf-node-custom .path-step-source-handle::after,
-.flow .react-flow__node.graph-node:hover .rf-node-custom .server-shared-source-handle::after,
-.flow .react-flow__node.graph-node.selected .rf-node-custom .server-entry-source-handle::after,
-.flow .react-flow__node.graph-node.selected .rf-node-custom .path-step-source-handle::after,
-.flow .react-flow__node.graph-node.selected .rf-node-custom .server-shared-source-handle::after {
-  width: 9px !important;
-  height: 9px !important;
+.flow .react-flow__handle.server-entry-source-handle:hover::after,
+.flow .react-flow__handle.path-step-source-handle:hover::after,
+.flow .react-flow__handle.server-shared-source-handle:hover::after,
+.flow .react-flow__handle.connect-source-bottom:hover::after {
+  width: 10px !important;
+  height: 10px !important;
   opacity: 1 !important;
 }
 
@@ -16580,19 +16574,7 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   .proxy-graph-legend-body { grid-template-columns: 1fr; }
 }
 .flow .react-flow__handle.server-entry-target-handle::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  border: 1.5px solid var(--surface-solid);
-  background: color-mix(in srgb, var(--text-strong) 78%, transparent);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, .12);
-  transform: translate(-50%, -50%);
-  opacity: .7;
-  pointer-events: none;
+  display: none !important;
 }
 .flow .react-flow__handle.server-entry-source-handle::after {
   content: '';
@@ -16606,16 +16588,9 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   background: var(--text-strong);
   box-shadow: 0 2px 6px rgba(15, 23, 42, .16);
   transform: translate(-50%, -50%);
-  opacity: .72;
+  opacity: 0;
   transition: width .14s ease, height .14s ease, background .14s ease, opacity .14s ease;
   pointer-events: none;
-}
-.flow .react-flow__node.graph-node:hover .server-entry-source-handle::after,
-.flow .react-flow__node.graph-node.selected .server-entry-source-handle::after {
-  width: 10px;
-  height: 10px;
-  background: var(--primary);
-  opacity: 1;
 }
 .flow .react-flow__handle.server-entry-source-handle:hover::after {
   width: 12px;
@@ -16675,13 +16650,11 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   background: color-mix(in srgb, var(--primary) 82%, var(--text-strong));
   box-shadow: 0 2px 8px rgba(37, 99, 235, .18);
   transform: translate(-50%, -50%);
-  opacity: .76;
+  opacity: 0;
   transition: width .14s ease, height .14s ease, opacity .14s ease;
   pointer-events: none;
 }
 
-.flow .react-flow__node.graph-node:hover .path-step-source-handle::after,
-.flow .react-flow__node.graph-node.selected .path-step-source-handle::after,
 .flow .react-flow__handle.path-step-source-handle:hover::after {
   width: 10px;
   height: 10px;
@@ -16710,14 +16683,15 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   background: var(--primary);
   box-shadow: 0 2px 7px rgba(37, 99, 235, .22);
   transform: translate(-50%, -50%);
-  transition: width .14s ease, height .14s ease;
+  opacity: 0;
+  transition: width .14s ease, height .14s ease, opacity .14s ease;
   pointer-events: none;
 }
 
-.flow .react-flow__handle.server-shared-source-handle:hover::after,
-.flow .react-flow__node.graph-node.selected .server-shared-source-handle::after {
+.flow .react-flow__handle.server-shared-source-handle:hover::after {
   width: 12px;
   height: 12px;
+  opacity: 1;
 }
 
 .server-shared-source-label {
@@ -16923,12 +16897,13 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
 }
 
 .flow .react-flow__node.server-graph-node .connect-target {
-	opacity: 1 !important;
+	opacity: 0 !important;
 	background: transparent !important;
 }
 .flow .react-flow__node.server-graph-node .server-entry-target-handle {
-  opacity: 1 !important;
+  opacity: 0 !important;
   background: transparent !important;
+  pointer-events: none;
 }
 
 /* ==========================================
@@ -17891,7 +17866,6 @@ button[aria-busy="true"] {
   background: color-mix(in srgb, var(--bg-card) 91%, var(--graph-imported));
 }
 .graph-card-server { --graph-node-accent: var(--graph-relay); }
-.server-graph-node .rf-node-custom { width: 260px; }
 
 .graph-source-dialog { width: min(520px, calc(100vw - 28px)); }
 .graph-source-options { display: grid; gap: 8px; max-height: min(420px, 55vh); overflow: auto; padding: 2px; }
