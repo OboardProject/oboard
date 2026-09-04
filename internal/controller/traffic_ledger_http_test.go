@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -203,4 +204,48 @@ func postAgentTraffic(t *testing.T, h http.Handler, agentID, token string, body 
 	var response map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &response)
 	return response
+}
+
+// Ownership is a request-level boundary, and a batch that also carries valid
+// reports does not soften it. Answering an unauthorized pair per report would
+// tell the Agent to drop it silently, and Controller cannot tell a removed
+// binding apart from a claim for access the user never had.
+func TestAgentTrafficUnauthorizedReportFailsTheWholeBatch(t *testing.T) {
+	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
+	defer db.Close()
+	ctx := context.Background()
+	other := &model.User{Username: "unbound-batch", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "55555555-5555-4555-8555-555555555555", ProxyPassword: "unbound-batch-password"}
+	if err := db.CreateUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	valid := ledgerTrafficBody(user.ID, inbound.ID, "tr-valid", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
+	unauthorized := ledgerTrafficBody(other.ID, inbound.ID, "tr-unauthorized", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
+	body := map[string]any{"reports": []map[string]any{valid, unauthorized}}
+	postAgentTraffic(t, h, server.AgentID, "token-a", body, http.StatusForbidden)
+
+	// Nothing in the batch may be billed when the request is refused.
+	stored, err := db.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TrafficUsedBytes != 0 {
+		t.Fatalf("a refused batch billed %d bytes", stored.TrafficUsedBytes)
+	}
+}
+
+// The per-report rejection vocabulary is limited to subjects that are gone.
+// Ownership failures must never appear there.
+func TestAgentTrafficRejectionReasonsExcludeOwnershipFailures(t *testing.T) {
+	for _, err := range []error{errTrafficForbidden, errTrafficUnauthorized} {
+		var rejection *trafficRejection
+		if errors.As(err, &rejection) {
+			t.Fatalf("%v is answered as a per-report rejection", err)
+		}
+		if got := trafficReportFailureStatus(err); got != http.StatusForbidden {
+			t.Fatalf("trafficReportFailureStatus(%v) = %d, want 403", err, got)
+		}
+	}
+	if got := trafficReportFailureStatus(errors.New("malformed report")); got != http.StatusBadRequest {
+		t.Fatalf("a malformed report status = %d, want 400", got)
+	}
 }
