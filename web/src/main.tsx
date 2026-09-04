@@ -173,6 +173,7 @@ import {
   monotonicPercent,
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
+import { useControllerUpdatePromptAutoDismiss } from './controller-update-prompt'
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
@@ -4401,6 +4402,12 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   }
 
   const visible = Boolean(snapshot?.update_available) && !dismissed && !working && tab !== 'settings'
+  useControllerUpdatePromptAutoDismiss(
+    visible,
+    Boolean(snapshot?.auto_update_enabled),
+    dialogOpen,
+    () => setDismissed(true),
+  )
 
   return <>
     <AnimatePresence>
@@ -4416,7 +4423,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
         <div className="controller-update-prompt-icon"><Download size={18} /></div>
         <div className="controller-update-prompt-copy">
           <strong>发现主控新版本 {snapshot?.available?.version || ''}</strong>
-          <span>确认后会安装并自动重启主控。默认不备份数据库。</span>
+          <span>确认后会安装并自动重启主控。默认不备份数据库。{snapshot?.auto_update_enabled ? '（已开启自动更新，此提示将在 10 秒后自动关闭）' : ''}</span>
         </div>
         <button type="button" className="ghost controller-update-prompt-later" aria-label="稍后提醒" title="稍后提醒" onClick={() => setDismissed(true)}><X size={15} /><span>稍后</span></button>
         <button type="button" onClick={() => { setSkipBackup(true); setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
