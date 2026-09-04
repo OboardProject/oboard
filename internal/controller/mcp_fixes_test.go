@@ -156,7 +156,9 @@ func TestAnyTLSRecipeEnablesDNSSyncWithoutMention(t *testing.T) {
 	}
 }
 
-func TestAnyTLSRecipeNeedsDomainForManagedCertificate(t *testing.T) {
+// A managed certificate needs an SNI hostname; Recipe asks for that, not for a
+// resolvable entry domain or a DNS credential the operator may not need.
+func TestAnyTLSRecipeNeedsSNIForManagedCertificate(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
@@ -180,8 +182,46 @@ func TestAnyTLSRecipeNeedsDomainForManagedCertificate(t *testing.T) {
 	if prepared.Status != "needs_input" {
 		t.Fatalf("prepared status = %s, want needs_input", prepared.Status)
 	}
-	if len(prepared.Questions) == 0 || fmt.Sprint(prepared.Questions[0]["field"]) != "dns_domain" {
+	if len(prepared.Questions) == 0 || fmt.Sprint(prepared.Questions[0]["field"]) != "certificate_domain" {
 		t.Fatalf("questions = %#v", prepared.Questions)
+	}
+}
+
+// An SNI alone is enough: the inbound is created with no DNS record and no DNS
+// credential, and clients reach it on the server IP.
+func TestAnyTLSRecipeAcceptsSNIWithoutDNSRecord(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	node := &model.Server{Name: "OC", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.HumanPrincipal(*admin, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	prepared, err := server.prepareInboundCreateRecipe(ctx, principal, mcpTaskInput{
+		Goal:       "给 OC 创建一个 anytls 节点",
+		Params:     map[string]any{"protocol": "anytls", "port": 443, "certificate_domain": "oc.4805787.xyz"},
+		TargetRefs: []string{"server:" + int64String(node.ID)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Status != "ready" {
+		t.Fatalf("prepared status = %s questions=%#v", prepared.Status, prepared.Questions)
+	}
+	inbound, _ := prepared.Operations[0].Input["inbound"].(map[string]any)
+	if inbound["dns_sync_enabled"] != false {
+		t.Fatalf("dns_sync_enabled = %#v, want false for an SNI-only inbound", inbound["dns_sync_enabled"])
+	}
+	if inbound["certificate_domain"] != "oc.4805787.xyz" {
+		t.Fatalf("certificate_domain = %#v", inbound["certificate_domain"])
+	}
+	if domain, exists := inbound["dns_domain"]; exists && fmt.Sprint(domain) != "" {
+		t.Fatalf("dns_domain = %#v, want no record request", domain)
 	}
 }
 

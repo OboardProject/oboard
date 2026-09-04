@@ -757,42 +757,49 @@ func inferredInboundDNSDomain(goal string) string {
 	return ""
 }
 
-// applyInboundRecipeManagedCertificate copies dns_domain into the SNI field and
-// attaches a DNS credential so Controller can issue the certificate during
-// deployment. A managed TLS inbound needs an SNI hostname, not a DNS record, so
-// record sync is enabled only when the caller asks for it and the client may
-// reach the inbound by IP while TLS completes from SNI plus the certificate.
+// applyInboundRecipeManagedCertificate resolves the SNI a managed certificate
+// must cover and attaches a DNS credential so Controller can issue that
+// certificate during deployment.
+//
+// A managed TLS inbound needs the SNI, not a DNS record: the client may dial the
+// server IP while TLS completes from the SNI plus the presented certificate. A
+// bare certificate_domain is therefore only an SNI, while a dns_domain — given
+// as a parameter or named in the goal — is the caller asking Controller to
+// maintain that record, so it also turns record sync on.
+//
 // dns_sync_enabled=true is validated as strictly as inbounds.update: a
-// credential is required before ready. Without sync the credential only drives
-// issuance, so a missing one still lets the request through for an operator who
-// already holds a covering certificate. Create does not wait for a ready
-// certificate.
+// credential is required before ready. When sync was only inferred, or the
+// credential merely drives DNS-01 issuance, a missing one keeps the inbound on
+// its SNI instead of blocking an operator who already holds a covering
+// certificate. Create does not wait for a ready certificate.
 func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input mcpTaskInput, values map[string]any, serverID int64) (*mcpPreparedRecipe, error) {
 	kind := strings.ToLower(strings.TrimSpace(fmt.Sprint(values["kind"])))
 	mode := inboundRecipeCertificateMode(values)
 	managed := mode == model.CertificateModeAuto || mode == model.CertificateModeExact || mode == model.CertificateModeWildcard || (mode == "" && inboundKindUsesManagedCertificate(kind))
+	certificateDomain := firstNonEmptyString(taskStringParam(values, "certificate_domain"), taskStringParam(input.Params, "certificate_domain"))
+	recordRequested := isDNSDomainName(taskStringParam(values, "dns_domain")) || isDNSDomainName(taskStringParam(input.Params, "dns_domain"))
 	dnsDomain := inboundRecipeDNSDomain(input, values)
+	if isDNSDomainName(certificateDomain) && !recordRequested {
+		dnsDomain = ""
+	}
 	if dnsDomain != "" {
 		values["dns_domain"] = dnsDomain
 	}
-	if inboundRecipeWantsDNSSync(input, values) {
-		values["dns_sync_enabled"] = true
-	} else if parsed, ok := coerceTaskBool(values["dns_sync_enabled"]); ok {
-		values["dns_sync_enabled"] = parsed
-	}
-	certificateDomain := taskStringParam(values, "certificate_domain")
 	if certificateDomain == "" && dnsDomain != "" {
 		certificateDomain = dnsDomain
 	}
 	if managed && certificateDomain != "" {
 		values["certificate_domain"] = certificateDomain
 	}
-	syncEnabled := taskBoolParam(values, false, "dns_sync_enabled")
+	_, syncGiven := values["dns_sync_enabled"]
+	syncRequested := inboundRecipeWantsDNSSync(input, values)
+	syncEnabled := syncRequested || (!syncGiven && isDNSDomainName(dnsDomain))
+	values["dns_sync_enabled"] = syncEnabled
 	if syncEnabled && !isDNSDomainName(dnsDomain) {
 		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "dns_domain", "type": "string", "reason": "启用 DNS 同步时需要有效的解析域名；提交后由主控写入解析并申请证书，不必等证书就绪"}}}, nil
 	}
 	if managed && !isDNSDomainName(certificateDomain) {
-		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "certificate_domain", "type": "string", "reason": "托管证书入口需要有效的 SNI 域名。该域名不必解析到本机，入口地址可以直接是服务器 IP；需要主控同时维护解析记录时改填 dns_domain 并开启 dns_sync_enabled。主控在部署时匹配或申请证书，创建不必等待证书签发完成，也不必改走面板"}}}, nil
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "inbound.create", Questions: []map[string]any{{"field": "certificate_domain", "type": "string", "reason": "托管证书入口需要有效的 SNI 域名。该域名不必解析到本机，入口地址可以直接是服务器 IP；需要主控同时维护解析记录时改填 dns_domain。主控在部署时匹配或申请证书，创建不必等待证书签发完成，也不必改走面板"}}}, nil
 	}
 	if !syncEnabled && !managed {
 		return nil, nil
@@ -803,7 +810,8 @@ func (s *Server) applyInboundRecipeManagedCertificate(ctx context.Context, input
 	}
 	id, available, ok := pickInboundDNSCredential(credentials, firstNonEmptyString(dnsDomain, certificateDomain), serverID, int64(taskIntParam(values, "dns_credential_id")))
 	if !ok {
-		if !syncEnabled {
+		if !syncRequested {
+			values["dns_sync_enabled"] = false
 			return nil, nil
 		}
 		return nil, missingDNSCredentialError{Available: available}
