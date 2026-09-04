@@ -27,7 +27,103 @@ const (
 	agentUpdateAutoConcurrencyMax     = 16
 	agentUpdateAutoConcurrencyPercent = 0.02
 	relayUpdateMaxConcurrency         = 4
+	// agentUpdateRestartTimeout bounds the window between "binaries installed"
+	// and "Agent reconnected on the expected build". It is shorter than the
+	// generic running-task timeout so the operator gets the specific reason
+	// rather than "Agent 超过 5 分钟未回传执行结果".
+	agentUpdateRestartTimeout = 4 * time.Minute
+	// agentUpdatePhaseAwaitingRestart is the non-terminal phase recorded in the
+	// task result while the Agent restarts onto its new executable.
+	agentUpdatePhaseAwaitingRestart = "installed_waiting_restart"
 )
+
+// holdAgentUpdateForRestart keeps a successful update_agent task open until the
+// Agent comes back on the expected build.
+//
+// The Agent installs the release, reports this result, and only then arms its
+// own restart. Completing the task here declared the update successful while
+// the old process was still serving, hid a failure to schedule that restart,
+// and cleared the active-task row that completeAgentUpdateAfterReconnect looks
+// up - so the reconnect confirmation could never fire. It returns true when the
+// task was held, meaning the caller must not complete it.
+func (s *Server) holdAgentUpdateForRestart(ctx context.Context, task model.AgentTask, status, result string) (bool, error) {
+	if task.Type != model.AgentTaskTypeUpdateAgent || status != "succeeded" {
+		return false, nil
+	}
+	expected := strings.TrimSpace(agentUpdatePayloadBuild(task))
+	if expected == "" {
+		// Without a target build there is nothing to confirm on reconnect.
+		return false, nil
+	}
+	payload := map[string]any{}
+	if json.Unmarshal([]byte(result), &payload) != nil || payload == nil {
+		payload = map[string]any{}
+	}
+	payload["phase"] = agentUpdatePhaseAwaitingRestart
+	payload["awaiting_restart"] = true
+	payload["expected_build"] = expected
+	payload["message"] = "已安装新版本，等待 Agent 重启后以目标 build 重新连接"
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return false, err
+	}
+	if err := s.store.MarkAgentUpdateAwaitingRestart(ctx, task.ID, string(encoded)); err != nil {
+		// The task is no longer running - it was superseded or already
+		// completed. Fall back to the terminal path so the report is not lost.
+		return false, nil
+	}
+	log.Printf("agent update installed server=%d task=%d expected_build=%s awaiting restart", task.ServerID, task.ID, expected)
+	s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+	return true, nil
+}
+
+// agentUpdateAwaitingRestart reports whether a task result is in the
+// intermediate phase rather than carrying a real Agent report.
+func agentUpdateAwaitingRestart(result string) bool {
+	var payload struct {
+		AwaitingRestart bool `json:"awaiting_restart"`
+	}
+	return json.Unmarshal([]byte(result), &payload) == nil && payload.AwaitingRestart
+}
+
+// expireStuckAgentUpdateRestarts fails update_agent tasks whose Agent installed
+// the release but never reconnected on the new build. Without this the task
+// would sit in the intermediate phase and keep a fleet concurrency slot.
+func (s *Server) expireStuckAgentUpdateRestarts(ctx context.Context) {
+	s.expireStuckAgentUpdateRestartsBefore(ctx, time.Now().Add(-agentUpdateRestartTimeout))
+}
+
+func (s *Server) expireStuckAgentUpdateRestartsBefore(ctx context.Context, cutoff time.Time) {
+	tasks, err := s.store.ListRunningTasksByType(ctx, model.AgentTaskTypeUpdateAgent, cutoff)
+	if err != nil {
+		log.Printf("expire stuck agent update restarts: %v", err)
+		return
+	}
+	published := false
+	for _, task := range tasks {
+		if !agentUpdateAwaitingRestart(task.ResultJSON) {
+			continue
+		}
+		expected := agentUpdatePayloadBuild(task)
+		result, _ := json.Marshal(map[string]any{
+			"message":         "Agent 更新未完成",
+			"error":           "新版本已安装，但 Agent 未在限定时间内以目标 build 重新连接。请在该服务器上检查 oboard-agent 服务状态后重试。",
+			"timeout":         true,
+			"timeout_seconds": int(agentUpdateRestartTimeout.Seconds()),
+			"phase":           agentUpdatePhaseAwaitingRestart,
+			"expected_build":  expected,
+		})
+		if err := s.completeTaskWithNotification(ctx, task.ID, "failed", string(result)); err != nil {
+			log.Printf("fail stuck agent update task %d: %v", task.ID, err)
+			continue
+		}
+		s.noteAgentUpdateOutcome(ctx, task.ServerID, "failed", "新版本已安装但 Agent 未以目标 build 重新连接", expected)
+		published = true
+	}
+	if published {
+		s.publishRealtime(realtimeResourcesForTask(model.AgentTaskTypeUpdateAgent)...)
+	}
+}
 
 type agentUpdateCoordinator struct {
 	server *Server

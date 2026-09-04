@@ -114,6 +114,44 @@ func (s *Store) CountAgentUpdateFleet(ctx context.Context, targetBuild string) (
 	return counts, nil
 }
 
+// MarkAgentUpdateAwaitingRestart records the intermediate phase of an
+// update_agent task without completing it.
+//
+// The Agent replaces the binaries, reports the result, and only then arms its
+// own restart. Treating that first report as terminal success declared the
+// update done while the process was still the old build, and it emptied the
+// active-task slot that the reconnect confirmation looks up. The task stays
+// 'running' until the Agent comes back on the expected build, which also keeps
+// the fleet coordinator's concurrency slot occupied for the whole transition.
+func (s *Store) MarkAgentUpdateAwaitingRestart(ctx context.Context, id int64, result string) error {
+	if result == "" {
+		result = "{}"
+	}
+	res, err := s.db.ExecContext(ctx, `update agent_tasks set result_json=?, updated_at=? where id=? and type=? and status='running'`, result, now(), id, model.AgentTaskTypeUpdateAgent)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return errors.New("update_agent task is not running")
+	}
+	return nil
+}
+
+// ListRunningTasksByType returns running tasks of one type that have not been
+// touched since olderThan. The caller decides what to do with them.
+func (s *Store) ListRunningTasksByType(ctx context.Context, taskType string, olderThan time.Time) ([]model.AgentTask, error) {
+	rows, err := s.db.QueryContext(ctx, agentTaskSelectSQL+` where type=? and status='running' and updated_at < ? order by id`, taskType, olderThan.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 // CountActiveAgentUpdates returns pending+running update_agent tasks.
 func (s *Store) CountActiveAgentUpdates(ctx context.Context) (int, error) {
 	var count int

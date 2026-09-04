@@ -4330,6 +4330,9 @@ const (
 
 func (s *Server) expireTimedOutTasks(ctx context.Context) {
 	now := time.Now()
+	// update_agent stays running through its restart phase, so it needs the
+	// specific verdict before the generic running-task sweep can claim it.
+	s.expireStuckAgentUpdateRestarts(ctx)
 	pendingResult, _ := json.Marshal(map[string]any{
 		"message":         "任务等待超时",
 		"error":           "任务超过 5 分钟仍未被 Agent 领取执行，已标记为超时。请确认服务器在线后重新执行。",
@@ -14762,12 +14765,21 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusBadRequest)
 		return
 	}
-	if err := s.completeTaskWithNotification(r.Context(), req.TaskID, req.Status, req.ResultJSON); err != nil {
+	// An Agent update is not finished when the binaries are on disk. The Agent
+	// still has to restart onto its own new executable, and that restart is
+	// armed after this report. Holding the task open until the Agent reconnects
+	// on the expected build is what makes "更新成功" mean the new process is up.
+	if awaiting, err := s.holdAgentUpdateForRestart(r.Context(), *task, req.Status, req.ResultJSON); err != nil {
 		fail(w, err, 500)
 		return
-	}
-	if task.Type == model.AgentTaskTypeUpdateAgent {
-		s.noteAgentUpdateOutcome(r.Context(), task.ServerID, req.Status, taskResultMessage(model.AgentTask{ResultJSON: req.ResultJSON}), agentUpdatePayloadBuild(*task))
+	} else if !awaiting {
+		if err := s.completeTaskWithNotification(r.Context(), req.TaskID, req.Status, req.ResultJSON); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if task.Type == model.AgentTaskTypeUpdateAgent {
+			s.noteAgentUpdateOutcome(r.Context(), task.ServerID, req.Status, taskResultMessage(model.AgentTask{ResultJSON: req.ResultJSON}), agentUpdatePayloadBuild(*task))
+		}
 	}
 	s.recordConfigurationTaskResult(r.Context(), *task, req.Status, req.ResultJSON)
 	// A completed task may advance an access-change phase or open an
@@ -15438,6 +15450,104 @@ prepare_install_log() {
   mv -f "$log_tmp" "$INSTALL_LOG"
 }
 
+# The Agent serializes its own kernel work with an in-process mutex, which this
+# script cannot see. Both sides take the same advisory flock so an operator
+# update over SSH and a panel-driven deployment cannot replace the same binaries
+# and restart the same service at once.
+CORE_LOCK_HELD=0
+acquire_core_lifecycle_lock() {
+  core_lock_path="$STATE_DIR/core-lifecycle.lock"
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "未找到 flock，无法与面板下发的内核操作互斥；请确认此时没有正在进行的配置下发。" >&2
+    return 0
+  fi
+  # A redirection failure on the ":" special builtin would exit a non-interactive
+  # shell outright, so the writability probe runs in a subshell.
+  if ! ( : >> "$core_lock_path" ) 2>/dev/null; then
+    echo "无法创建更新互斥锁 $core_lock_path，继续执行。" >&2
+    return 0
+  fi
+  chmod 0600 "$core_lock_path" 2>/dev/null || true
+  exec 9>> "$core_lock_path"
+  if ! flock -w 120 9; then
+    echo "另一个 OBoard 更新或面板配置下发正在进行，请稍后重试。" >&2
+    exit 1
+  fi
+  CORE_LOCK_HELD=1
+  printf 'installer %s\n' "$$" >&9 2>/dev/null || true
+}
+
+release_core_lifecycle_lock() {
+  [ "$CORE_LOCK_HELD" = 1 ] || return 0
+  CORE_LOCK_HELD=0
+  exec 9>&-
+}
+
+service_active() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl is-active --quiet "$1"
+  elif [ "$SERVICE_MANAGER" = openrc ]; then
+    rc-service "$1" status >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+restart_managed_service() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl restart "$1" >> "$INSTALL_LOG" 2>&1
+  elif [ "$SERVICE_MANAGER" = openrc ]; then
+    rc-service "$1" restart >> "$INSTALL_LOG" 2>&1
+  else
+    return 1
+  fi
+}
+
+# A service that comes up and immediately exits is a failed update, not a
+# successful one. Restart exit codes alone do not catch that.
+wait_service_stable() {
+  wait_service=$1
+  wait_seconds=${2:-15}
+  wait_stable=0
+  wait_elapsed=0
+  while [ "$wait_elapsed" -lt "$wait_seconds" ]; do
+    if service_active "$wait_service"; then
+      wait_stable=$((wait_stable + 1))
+      if [ "$wait_stable" -ge 3 ]; then
+        return 0
+      fi
+    else
+      wait_stable=0
+    fi
+    sleep 1
+    wait_elapsed=$((wait_elapsed + 1))
+  done
+  return 1
+}
+
+# The kernel that is actually serving traffic is the only thing that proves an
+# update landed. Agent owns the operational-digest normalization, so the check
+# is delegated to it rather than reimplemented here.
+verify_core_runtime() {
+  [ -s "$STATE_DIR/sing-box.json" ] || return 0
+  [ -x "$INSTALL_DIR/oboard-agent" ] || return 0
+  if ! "$INSTALL_DIR/oboard-agent" -h 2>&1 | grep -q -- '-verify-core-runtime'; then
+    echo "当前 Agent 版本不支持内核运行态校验，已跳过该检查。" >&2
+    return 0
+  fi
+  if "$INSTALL_DIR/oboard-agent" -verify-core-runtime \
+    -config "$CONFIG_PATH" \
+    -state-dir "$STATE_DIR" \
+    -core-binary "$INSTALL_DIR/oboard-sb" \
+    -core-service oboard-sb >> "$INSTALL_LOG" 2>&1; then
+    return 0
+  fi
+  echo "内核已重启，但运行中的进程仍不是本次安装的版本或配置，更新未完成。" >&2
+  echo "详细信息见 $INSTALL_LOG。" >&2
+  return 1
+}
+
 resolve_agent_install_dir
 
 if [ "$ACTION" = uninstall ]; then
@@ -15902,14 +16012,14 @@ verify_installed_versions() {
   print_installed_versions
   if [ -n "${TARGET_BUILD:-}" ] && [ -x "$INSTALL_DIR/oboard-agent" ]; then
     if ! "$INSTALL_DIR/oboard-agent" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
-      echo "警告：Agent 二进制 build 与目标 build 不一致，请检查下载缓存或重新执行更新命令。" >&2
+      echo "安装的 Agent 二进制 build 与目标 build 不一致，操作未完成。请检查下载缓存或重新执行命令。" >&2
       return 1
     fi
   fi
   if [ -n "${TARGET_KERNEL_BUILD:-${TARGET_BUILD:-}}" ] && [ -x "$INSTALL_DIR/oboard-sb" ]; then
     expected_core_build=${TARGET_KERNEL_BUILD:-$TARGET_BUILD}
     if ! "$INSTALL_DIR/oboard-sb" -version 2>/dev/null | grep -q "\"build\": \"$expected_core_build\""; then
-      echo "警告：优化内核 build 与目标 build 不一致，请检查下载缓存或重新执行更新命令。" >&2
+      echo "安装的优化内核 build 与目标 build 不一致，操作未完成。请检查下载缓存或重新执行命令。" >&2
       return 1
     fi
   fi
@@ -16022,12 +16132,40 @@ download_binaries() {
   install -m 0755 "$tmp/$agent_name" "$INSTALL_DIR/oboard-agent.new"
   install -m 0755 "$tmp/$core_name" "$INSTALL_DIR/oboard-sb.new"
   install -m 0755 "$tmp/$realm_name" "$INSTALL_DIR/oboard-realm.new"
+  preflight_staged_core "$INSTALL_DIR/oboard-sb.new"
   mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
   mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
   mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"
   rm -f "$INSTALL_DIR/obag"
   ln -s "$INSTALL_DIR/oboard-agent" "$INSTALL_DIR/obag"
   register_obag_path
+}
+
+# The downloaded kernel is checked against the configuration this node is
+# serving right now, while every file on disk is still the working one.
+# Installing first and finding out at restart time replaces a stale-but-serving
+# node with an outage.
+preflight_staged_core() {
+  staged=$1
+  staged_config="$STATE_DIR/sing-box.json"
+  if [ ! -s "$staged_config" ]; then
+    return 0
+  fi
+  echo "校验新版内核是否接受当前运行的配置"
+  staged_status=0
+  "$staged" -check -config "$staged_config" >> "$INSTALL_LOG" 2>&1 || staged_status=$?
+  case "$staged_status" in
+    0) return 0 ;;
+    126|127)
+      # The staged binary could not be executed at all, so there is no verdict.
+      echo "无法执行新版内核进行预检（退出码 $staged_status），已跳过该检查。" >&2
+      return 0
+      ;;
+  esac
+  rm -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-realm.new"
+  echo "新版内核无法接受当前正在运行的配置，已中止更新，未替换任何文件。" >&2
+  echo "请先在面板重新下发配置后重试；详细信息见 $INSTALL_LOG。" >&2
+  return 1
 }
 
 register_obag_path() {
@@ -16098,7 +16236,9 @@ Type=simple
 ExecStart=$INSTALL_DIR/oboard-sb -config $STATE_DIR/sing-box.json -api unix:/run/oboard-sb.sock
 StandardOutput=append:/var/log/oboard-sb.log
 StandardError=append:/var/log/oboard-sb.log
-ExecReload=/bin/kill -HUP \$MAINPID
+# No ExecReload: oboard-sb installs SIGINT/SIGTERM handlers only, so a HUP is
+# not a configuration reload. Agent applies every change with a controlled
+# restart that is verified against the kernel's own runtime status.
 Restart=always
 RestartSec=3
 UMask=0077
@@ -16172,7 +16312,9 @@ command_background=true
 pidfile="/run/\${RC_SVCNAME}.pid"
 output_log="/var/log/\${RC_SVCNAME}.log"
 error_log="/var/log/\${RC_SVCNAME}.log"
-extra_commands="reload"
+# No reload action: oboard-sb installs SIGINT/SIGTERM handlers only, so a HUP
+# would kill the kernel here, and OpenRC has no automatic restart to recover it.
+# Agent applies every change with a controlled restart instead.
 
 depend() {
   need net
@@ -16181,12 +16323,6 @@ depend() {
 
 start_pre() {
   checkpath -d -m 0700 "$STATE_DIR"
-}
-
-reload() {
-  ebegin "Reloading \${RC_SVCNAME}"
-  start-stop-daemon --signal HUP --pidfile "\${pidfile}"
-  eend $?
 }
 OPENRC
   cat > /etc/init.d/oboard-agent <<OPENRC
@@ -16235,21 +16371,48 @@ restart_after_install() {
   fi
 }
 
-restart_after_update() {
+# Replacing binaries is not an update. Every restart below is fatal on failure,
+# so a node that keeps running the old kernel or loses its Agent can never end
+# with this script printing "更新完成".
+restart_core_after_update() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
-    if [ -s "$STATE_DIR/sing-box.json" ]; then systemctl restart oboard-sb >> "$INSTALL_LOG" 2>&1 || true; fi
-    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1 || true
-  elif [ "$SERVICE_MANAGER" = openrc ]; then
-    if [ -s "$STATE_DIR/sing-box.json" ]; then rc-service oboard-sb restart >> "$INSTALL_LOG" 2>&1 || true; fi
-    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1 || true
+    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1 || true
   fi
+  if [ ! -s "$STATE_DIR/sing-box.json" ]; then
+    return 0
+  fi
+  if ! restart_managed_service oboard-sb; then
+    echo "内核 oboard-sb 重启失败，更新未完成。详细信息见 $INSTALL_LOG。" >&2
+    return 1
+  fi
+  if ! wait_service_stable oboard-sb 15; then
+    echo "内核 oboard-sb 重启后未能保持运行，更新未完成。详细信息见 $INSTALL_LOG。" >&2
+    return 1
+  fi
+  return 0
+}
+
+restart_agent_after_update() {
+  if [ "$SERVICE_MANAGER" != systemd ] && [ "$SERVICE_MANAGER" != openrc ]; then
+    echo "未识别服务管理器，二进制已更新；请手动重启 oboard-sb 与 oboard-agent。" >&2
+    return 1
+  fi
+  if ! restart_managed_service oboard-agent; then
+    echo "Agent 重启失败，更新未完成。详细信息见 $INSTALL_LOG。" >&2
+    return 1
+  fi
+  if ! wait_service_stable oboard-agent 15; then
+    echo "Agent 重启后未能保持运行，更新未完成。详细信息见 $INSTALL_LOG。" >&2
+    return 1
+  fi
+  return 0
 }
 
 case "$ACTION" in
   install)
     need_base_url
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
+    acquire_core_lifecycle_lock
     download_binaries
     persist_agent_install_dir
     write_units
@@ -16270,19 +16433,26 @@ case "$ACTION" in
       exit 1
     fi
     unset OBOARD_ENROLL_TOKEN
+    release_core_lifecycle_lock
     restart_after_install
-    verify_installed_versions || true
+    verify_installed_versions
     print_management_help "安装完成"
     echo "提示：oboard-sb 会在面板首次下发配置后自动启动。"
     ;;
   update)
     need_base_url
+    acquire_core_lifecycle_lock
     download_binaries
     persist_agent_install_dir
     write_units
     echo "[4/4] 刷新 Agent 服务"
-    restart_after_update
-    verify_installed_versions || true
+    restart_core_after_update
+    verify_core_runtime
+    # The Agent is restarted after the lock is released so its first task on
+    # reconnect does not collide with this installer still holding it.
+    release_core_lifecycle_lock
+    restart_agent_after_update
+    verify_installed_versions
     print_management_help "更新完成"
     ;;
   uninstall)
@@ -16750,11 +16920,17 @@ print_installed_versions() {
 verify_installed_versions() {
   print_installed_versions
   if [ -n "${TARGET_BUILD:-}" ] && [ -x "$INSTALL_DIR/oboard-agent" ]; then
-    "$INSTALL_DIR/oboard-agent" -version 2>/dev/null | grep -q "build $TARGET_BUILD" || echo "警告：Agent 二进制 build 与目标 build 不一致。" >&2
+    if ! "$INSTALL_DIR/oboard-agent" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+      echo "安装的 Agent 二进制 build 与目标 build 不一致，更新未完成。" >&2
+      return 1
+    fi
   fi
   if [ -n "${TARGET_KERNEL_BUILD:-${TARGET_BUILD:-}}" ] && [ -x "$INSTALL_DIR/oboard-sb" ]; then
     expected_core_build=${TARGET_KERNEL_BUILD:-$TARGET_BUILD}
-    "$INSTALL_DIR/oboard-sb" -version 2>/dev/null | grep -q "\"build\": \"$expected_core_build\"" || echo "警告：优化内核 build 与目标 build 不一致。" >&2
+    if ! "$INSTALL_DIR/oboard-sb" -version 2>/dev/null | grep -q "\"build\": \"$expected_core_build\""; then
+      echo "安装的优化内核 build 与目标 build 不一致，更新未完成。" >&2
+      return 1
+    fi
   fi
 }
 
@@ -16850,6 +17026,116 @@ download_quiet "$BASE_URL/downloads/release-manifest.json.sig" "$tmp/release-man
 verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name"
 chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
 
+# The Agent serializes its own kernel work with an in-process mutex this script
+# cannot see. Both sides take the same advisory flock so a self-update and a
+# panel-driven deployment cannot touch the same binaries and service at once.
+CORE_LOCK_HELD=0
+acquire_core_lifecycle_lock() {
+  core_lock_path="$STATE_DIR/core-lifecycle.lock"
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "未找到 flock，无法与面板下发的内核操作互斥；请确认此时没有正在进行的配置下发。" >&2
+    return 0
+  fi
+  # A redirection failure on the ":" special builtin would exit a non-interactive
+  # shell outright, so the writability probe runs in a subshell.
+  if ! ( : >> "$core_lock_path" ) 2>/dev/null; then
+    echo "无法创建更新互斥锁 $core_lock_path，继续执行。" >&2
+    return 0
+  fi
+  chmod 0600 "$core_lock_path" 2>/dev/null || true
+  exec 9>> "$core_lock_path"
+  if ! flock -w 120 9; then
+    echo "另一个 OBoard 更新或面板配置下发正在进行，请稍后重试。" >&2
+    exit 1
+  fi
+  CORE_LOCK_HELD=1
+  printf 'self-update %s\n' "$$" >&9 2>/dev/null || true
+}
+
+release_core_lifecycle_lock() {
+  [ "$CORE_LOCK_HELD" = 1 ] || return 0
+  CORE_LOCK_HELD=0
+  exec 9>&-
+}
+
+# The downloaded kernel is checked against the configuration this node serves
+# right now, before any file on disk is replaced. Finding out at restart time
+# turns a stale-but-serving node into an outage.
+preflight_staged_core() {
+  staged=$1
+  staged_config="$STATE_DIR/sing-box.json"
+  if [ ! -s "$staged_config" ]; then
+    return 0
+  fi
+  echo "校验新版内核是否接受当前运行的配置"
+  staged_status=0
+  "$staged" -check -config "$staged_config" >/dev/null 2>&1 || staged_status=$?
+  case "$staged_status" in
+    0) return 0 ;;
+    126|127)
+      echo "无法执行新版内核进行预检（退出码 $staged_status），已跳过该检查。" >&2
+      return 0
+      ;;
+  esac
+  echo "新版内核无法接受当前正在运行的配置，已中止更新，未替换任何文件。" >&2
+  echo "请先在面板重新下发配置后重试。" >&2
+  return 1
+}
+
+service_active() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl is-active --quiet "$1"
+  elif [ "$SERVICE_MANAGER" = openrc ]; then
+    rc-service "$1" status >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+# A service that comes up and immediately exits is a failed update. Restart exit
+# codes alone do not catch that.
+wait_service_stable() {
+  wait_service=$1
+  wait_seconds=${2:-15}
+  wait_stable=0
+  wait_elapsed=0
+  while [ "$wait_elapsed" -lt "$wait_seconds" ]; do
+    if service_active "$wait_service"; then
+      wait_stable=$((wait_stable + 1))
+      if [ "$wait_stable" -ge 3 ]; then
+        return 0
+      fi
+    else
+      wait_stable=0
+    fi
+    sleep 1
+    wait_elapsed=$((wait_elapsed + 1))
+  done
+  return 1
+}
+
+# The kernel that is actually serving traffic is the only proof an update
+# landed. Agent owns the operational-digest normalization, so the verdict is
+# delegated to it rather than reimplemented here.
+verify_core_runtime() {
+  [ -s "$STATE_DIR/sing-box.json" ] || return 0
+  [ -x "$INSTALL_DIR/oboard-agent" ] || return 0
+  if ! "$INSTALL_DIR/oboard-agent" -h 2>&1 | grep -q -- '-verify-core-runtime'; then
+    echo "当前 Agent 版本不支持内核运行态校验，已跳过该检查。" >&2
+    return 0
+  fi
+  if "$INSTALL_DIR/oboard-agent" -verify-core-runtime \
+    -config "$CONFIG_PATH" \
+    -state-dir "$STATE_DIR" \
+    -core-binary "$INSTALL_DIR/oboard-sb" \
+    -core-service oboard-sb; then
+    return 0
+  fi
+  echo "内核已重启，但运行中的进程仍不是本次安装的版本或配置，更新未完成。" >&2
+  return 1
+}
+
 install_downloaded_binaries_direct() {
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
   # Do not truncate an executable that may currently be running. Write beside it
@@ -16944,6 +17230,8 @@ install_downloaded_binaries() {
   return 1
 }
 
+acquire_core_lifecycle_lock
+preflight_staged_core "$tmp/$core_name"
 install_downloaded_binaries
 
 register_obag_path || true
@@ -17011,30 +17299,67 @@ restart_agent_delayed() {
 	echo "Agent 将在任务回传后自动重启。"
 }
 
-if [ "$SERVICE_MANAGER" = systemd ]; then
-  systemctl daemon-reload || true
-  if [ -s "$STATE_DIR/sing-box.json" ]; then systemctl restart oboard-sb || true; fi
+# Replacing binaries is not an update. A kernel restart that fails, or a kernel
+# that comes back on the old build or the wrong configuration, must not end with
+# this script reporting success.
+restart_core_after_update() {
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl daemon-reload || true
+  fi
+  if [ ! -s "$STATE_DIR/sing-box.json" ]; then
+    return 0
+  fi
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl restart oboard-sb || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
+  elif [ "$SERVICE_MANAGER" = openrc ]; then
+    rc-service oboard-sb restart || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
+  else
+    return 0
+  fi
+  if ! wait_service_stable oboard-sb 15; then
+    echo "内核 oboard-sb 重启后未能保持运行，更新未完成。" >&2
+    return 1
+  fi
+  return 0
+}
+
+restart_agent_after_update() {
 	if [ "$AGENT_RESTART" = none ]; then
 		echo "Agent 将在任务结果回传后由当前进程安排重启。"
-	elif [ "$AGENT_RESTART" = delayed ]; then
+		return 0
+	fi
+	if [ "$AGENT_RESTART" = delayed ]; then
 		restart_agent_delayed
+		return 0
+	fi
+  if [ "$SERVICE_MANAGER" = systemd ]; then
+    systemctl restart oboard-agent || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
+  elif [ "$SERVICE_MANAGER" = openrc ]; then
+    rc-service oboard-agent restart || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
   else
-    systemctl restart oboard-agent || true
+    return 0
   fi
-elif [ "$SERVICE_MANAGER" = openrc ]; then
-  if [ -s "$STATE_DIR/sing-box.json" ]; then rc-service oboard-sb restart || true; fi
-	if [ "$AGENT_RESTART" = none ]; then
-		echo "Agent 将在任务结果回传后由当前进程安排重启。"
-	elif [ "$AGENT_RESTART" = delayed ]; then
-    restart_agent_delayed
-  else
-    rc-service oboard-agent restart || true
+  if ! wait_service_stable oboard-agent 15; then
+    echo "Agent 重启后未能保持运行，更新未完成。" >&2
+    return 1
   fi
-else
-  echo "未识别服务管理器，只更新二进制。"
+  return 0
+}
+
+if [ "$SERVICE_MANAGER" != systemd ] && [ "$SERVICE_MANAGER" != openrc ]; then
+  release_core_lifecycle_lock
+  echo "未识别服务管理器，二进制已更新；请手动重启 oboard-sb 与 oboard-agent。" >&2
+  exit 1
 fi
 
-verify_installed_versions || true
+restart_core_after_update
+verify_core_runtime
+# The Agent restarts after the lock is released so its first task on reconnect
+# does not collide with this script still holding it.
+release_core_lifecycle_lock
+restart_agent_after_update
+
+verify_installed_versions
 print_management_help
 `, "__BASE_URL__", shellSingleQuote(baseURL))
 	script = strings.ReplaceAll(script, "__RELEASE_PUBLIC_KEY__", shellSingleQuote(version.ReleasePublicKey))

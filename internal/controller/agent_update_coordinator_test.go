@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/OboardProject/oboard/internal/security"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
@@ -228,5 +232,114 @@ func TestListAgentUpdateCandidatesDoesNotTouchTelemetry(t *testing.T) {
 	}
 	if db.SQLStatementCount()-before != 1 {
 		t.Fatalf("candidate query statements = %d", db.SQLStatementCount()-before)
+	}
+}
+
+// An Agent update is only complete when the Agent is back on the new build.
+// Completing the task on the first "succeeded" report declared success while
+// the old process was still serving, and it emptied the active-task row the
+// reconnect confirmation reads.
+func TestAgentUpdateStaysOpenUntilAgentReconnectsOnNewBuild(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task, err := srv.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUpdateAgent, model.UpdateAgentTaskPayload{ExpectedBuild: "20260904120000"}, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NextTask(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := srv.holdAgentUpdateForRestart(ctx, task, "succeeded", `{"message":"agent update completed","installed":true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !held {
+		t.Fatal("a successful install must hold the task open for the restart")
+	}
+	stored, err := db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "running" {
+		t.Fatalf("task status = %q, want running", stored.Status)
+	}
+	if !agentUpdateAwaitingRestart(stored.ResultJSON) {
+		t.Fatalf("task result does not record the restart phase: %s", stored.ResultJSON)
+	}
+	// The reconnect confirmation must still be able to find the task.
+	active, err := db.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeUpdateAgent)
+	if err != nil || active == nil || active.ID != task.ID {
+		t.Fatalf("held update task is not the active task: %#v err=%v", active, err)
+	}
+
+	srv.completeAgentUpdateAfterReconnect(ctx, server.ID, "20260904120000")
+	stored, err = db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "succeeded" {
+		t.Fatalf("task status after reconnect = %q, want succeeded", stored.Status)
+	}
+}
+
+// A failed install is terminal immediately: there is nothing to wait for.
+func TestAgentUpdateFailureIsNotHeld(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	task := model.AgentTask{ID: 1, Type: model.AgentTaskTypeUpdateAgent, PayloadJSON: `{"expected_build":"20260904120000"}`}
+	held, err := srv.holdAgentUpdateForRestart(context.Background(), task, "failed", `{"message":"agent update failed"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held {
+		t.Fatal("a failed update must complete immediately")
+	}
+}
+
+// An Agent that installed the release but never came back on the new build must
+// fail with that reason rather than sit in the intermediate phase forever.
+func TestStuckAgentUpdateRestartTimesOut(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task, err := srv.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUpdateAgent, model.UpdateAgentTaskPayload{ExpectedBuild: "20260904120000"}, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NextTask(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.holdAgentUpdateForRestart(ctx, task, "succeeded", `{"installed":true}`); err != nil {
+		t.Fatal(err)
+	}
+	srv.expireStuckAgentUpdateRestartsBefore(ctx, time.Now().Add(time.Minute))
+	stored, err := db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "failed" || !strings.Contains(stored.ResultJSON, agentUpdatePhaseAwaitingRestart) {
+		t.Fatalf("stuck update was not failed with its own reason: %#v", stored)
 	}
 }

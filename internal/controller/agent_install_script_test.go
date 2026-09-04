@@ -742,3 +742,183 @@ func assertTestFile(t *testing.T, path, want string) {
 		t.Fatalf("%s = %q, want %q", path, value, want)
 	}
 }
+
+// Both Controller-hosted shell scripts must stay valid POSIX shell.
+func TestAgentShellScriptsParse(t *testing.T) {
+	shell := testPOSIXShell(t)
+	for name, script := range map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	} {
+		path := filepath.Join(t.TempDir(), name+".sh")
+		if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(shell, "-n", path).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+	}
+}
+
+// oboard-sb handles SIGINT and SIGTERM only. A unit that advertises a reload is
+// either a no-op that leaves the kernel on the old configuration, or - under
+// OpenRC, which has no automatic restart - a plain kill.
+func TestGeneratedUnitsDoNotAdvertiseKernelReload(t *testing.T) {
+	script := testAgentInstallScript(t)
+	for _, forbidden := range []string{"ExecReload=", "extra_commands=\"reload\"", "--signal HUP"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("generated units still advertise a kernel reload: %q", forbidden)
+		}
+	}
+}
+
+// Replacing binaries is not an update. A restart that fails, or a kernel that
+// comes back on the wrong build or configuration, must fail the script.
+func TestAgentUpdateScriptsFailOnRestartAndVerificationErrors(t *testing.T) {
+	for name, script := range map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	} {
+		for _, want := range []string{
+			"acquire_core_lifecycle_lock",
+			"release_core_lifecycle_lock",
+			"preflight_staged_core",
+			"verify_core_runtime",
+			"-verify-core-runtime",
+			"wait_service_stable",
+		} {
+			if !strings.Contains(script, want) {
+				t.Fatalf("%s script is missing %q", name, want)
+			}
+		}
+		// restart_agent_delayed is intentionally fire-and-forget: it runs a
+		// minute later so the Agent can report its task result first, and the
+		// Controller's own update state machine is what catches a restart that
+		// never happens. Everything the script waits for must be fatal.
+		checked := script
+		if start := strings.Index(checked, "restart_agent_delayed() {"); start >= 0 {
+			if end := strings.Index(checked[start:], "\n}\n"); end > 0 {
+				checked = checked[:start] + checked[start+end:]
+			}
+		}
+		for _, forbidden := range []string{
+			"restart oboard-sb || true",
+			"restart oboard-agent || true",
+			"verify_installed_versions || true",
+		} {
+			if strings.Contains(checked, forbidden) {
+				t.Fatalf("%s script still ignores a failure: %q", name, forbidden)
+			}
+		}
+	}
+}
+
+// The Agent serializes its kernel work with an in-process mutex a shell script
+// cannot see, so both sides must take the same advisory flock file.
+func TestAgentScriptsShareTheAgentCoreLifecycleLockFile(t *testing.T) {
+	for name, script := range map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	} {
+		if !strings.Contains(script, `core_lock_path="$STATE_DIR/core-lifecycle.lock"`) {
+			t.Fatalf("%s script does not take the Agent core lifecycle lock", name)
+		}
+		if !strings.Contains(script, "flock -w 120 9") {
+			t.Fatalf("%s script does not wait on the lock", name)
+		}
+	}
+}
+
+// A syntax check does not catch `set -e` traps or an off-by-one in the
+// stability window, so the service helpers are executed against stubs.
+func TestInstallerServiceHelpersDetectAFlappingService(t *testing.T) {
+	shell := testPOSIXShell(t)
+	script := testAgentInstallScript(t)
+	start := strings.Index(script, "\nservice_active() {")
+	if start < 0 {
+		t.Fatal("installer service helpers are missing")
+	}
+	end := strings.Index(script[start:], "\nresolve_agent_install_dir\n")
+	if end <= 0 {
+		t.Fatal("installer service helper block has no end")
+	}
+	helpers := script[start : start+end]
+
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// systemctl reports the service active only while the marker file exists.
+	writeExecutable(t, filepath.Join(stub, "systemctl"), `#!/bin/sh
+case "$1 $2" in
+  "is-active --quiet") [ -f "$STUB_STATE/active" ] ;;
+  *) exit 0 ;;
+esac
+`)
+
+	for _, tc := range []struct {
+		name    string
+		active  bool
+		wantErr bool
+	}{
+		{name: "stable", active: true},
+		{name: "down", active: false, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := t.TempDir()
+			if tc.active {
+				writeTestFile(t, filepath.Join(state, "active"), "1")
+			}
+			driver := "set -eu\nSERVICE_MANAGER=systemd\n" + helpers + "\nwait_service_stable oboard-sb 4\n"
+			cmd := exec.Command(shell, "-c", driver)
+			cmd.Env = append(os.Environ(), "PATH="+stub+":"+os.Getenv("PATH"), "STUB_STATE="+state)
+			out, err := cmd.CombinedOutput()
+			if tc.wantErr && err == nil {
+				t.Fatalf("a service that is not running must fail: %s", out)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("a running service must pass: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+// The lock helper must survive an unwritable state directory and a host with no
+// flock(1): the lock coordinates with the Agent, it does not authorize the work.
+func TestInstallerLockHelperToleratesUnusableLockPath(t *testing.T) {
+	shell := testPOSIXShell(t)
+	script := testAgentInstallScript(t)
+	start := strings.Index(script, "\nCORE_LOCK_HELD=0")
+	if start < 0 {
+		t.Fatal("installer lock helper is missing")
+	}
+	end := strings.Index(script[start:], "\nservice_active() {")
+	if end <= 0 {
+		t.Fatal("installer lock helper block has no end")
+	}
+	helpers := script[start : start+end]
+
+	emptyPath := t.TempDir()
+	for _, tc := range []struct {
+		name     string
+		stateDir string
+	}{
+		{name: "unwritable state dir", stateDir: "/proc/oboard-does-not-exist"},
+		{name: "writable state dir", stateDir: t.TempDir()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			driver := "set -eu\nSTATE_DIR=" + tc.stateDir + "\n" + helpers + "\nacquire_core_lifecycle_lock\nrelease_core_lifecycle_lock\necho reached-end\n"
+			cmd := exec.Command(shell, "-c", driver)
+			// An empty PATH stands in for a host without flock(1).
+			cmd.Env = append(os.Environ(), "PATH="+emptyPath)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("lock helper aborted the script: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "reached-end") {
+				t.Fatalf("lock helper did not return: %s", out)
+			}
+		})
+	}
+}
