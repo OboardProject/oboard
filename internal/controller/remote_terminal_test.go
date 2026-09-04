@@ -287,6 +287,63 @@ func TestInteractiveReadyCancelsPrepareTimeout(t *testing.T) {
 	}
 }
 
+func TestInteractivePrepareUsesControllerReferenceTime(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "terminal-clock.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	defer app.Close()
+	ctx := context.Background()
+	node := &model.Server{
+		Name: "clock-node", AgentID: "agent-clock", AgentTokenHash: security.HashSecret("agent-token"),
+		ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10100, Status: model.ServerOnline,
+	}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertServerRemoteAccessStatus(ctx, node.ID, model.RemoteAccessReport{
+		Capabilities: []string{model.RemoteAccessCapabilityTerminal}, LocalMode: model.RemoteAccessModeStandard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	controllerNow := time.Now().UTC().Add(2 * time.Minute)
+	app.controllerNTPState = controllerNTPState{reference: controllerNow, localAnchor: time.Now(), source: "ntp:test"}
+	live := make(chan any, 1)
+	app.registerAgentLive(node.ID, live)
+	defer app.unregisterAgentLive(node.ID, live)
+
+	session, err := app.prepareInteractiveSession(ctx, InteractiveOwnerHuman, node, 1, "", "", 0, 80, 24, "login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.failTerminalSession(session.ID, node.ID, "test_cleanup", "")
+	payload := (<-live).(map[string]any)
+	issued, err := time.Parse(time.RFC3339Nano, payload["issued_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, payload["expires_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta := issued.Sub(controllerNow); delta < -time.Second || delta > time.Second {
+		t.Fatalf("prepare issued_at did not use Controller reference: delta=%s", delta)
+	}
+	if ttl := expires.Sub(issued); ttl != security.InteractivePrepareTTL {
+		t.Fatalf("prepare TTL = %s, want %s", ttl, security.InteractivePrepareTTL)
+	}
+	envelope := security.InteractiveEnvelope{
+		Type: "interactive_prepare", ServerID: node.ID, SessionID: session.ID, Nonce: payload["nonce"].(string),
+		IssuedAt: payload["issued_at"].(string), ExpiresAt: payload["expires_at"].(string),
+		Kind: "terminal", Cols: 80, Rows: 24,
+	}
+	if !security.VerifyInteractiveEnvelope(node.AgentTokenHash, envelope, payload["signature"].(string)) {
+		t.Fatal("prepare signature did not cover the Controller reference timestamps")
+	}
+}
+
 func TestCreateTerminalSessionLoginEnvProtocol(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "terminal-login.sqlite"))
 	if err != nil {

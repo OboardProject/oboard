@@ -349,7 +349,11 @@ func (s *Server) prepareInteractiveSession(ctx context.Context, owner Interactiv
 	}
 	loginEnv := slices.Contains(status.Capabilities, model.RemoteAccessCapabilityTerminalLoginEnv)
 	now := time.Now().UTC()
-	prepareExp := now.Add(security.InteractivePrepareTTL)
+	prepareNow := now
+	if controllerNow, _, ok := s.controllerTimeNow(); ok {
+		prepareNow = controllerNow
+	}
+	prepareExp := prepareNow.Add(security.InteractivePrepareTTL)
 	absExp := now.Add(terminalAbsTimeout)
 	session := &terminalSession{
 		ID: sessionID, ServerID: server.ID, OwnerType: owner, UserID: userID,
@@ -374,7 +378,7 @@ func (s *Server) prepareInteractiveSession(ctx context.Context, owner Interactiv
 	if owner == InteractiveOwnerMCP {
 		envelope = security.InteractiveEnvelope{
 			Type: "interactive_prepare", ServerID: server.ID, SessionID: sessionID, Nonce: nonce,
-			IssuedAt: now.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
+			IssuedAt: prepareNow.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
 			Kind: "terminal", Origin: model.InteractiveOriginMCP, Cols: cols, Rows: rows, Mode: mode,
 		}
 		sig = security.SignInteractiveEnvelopeV2(server.AgentTokenHash, envelope)
@@ -382,7 +386,7 @@ func (s *Server) prepareInteractiveSession(ctx context.Context, owner Interactiv
 	} else {
 		envelope = security.InteractiveEnvelope{
 			Type: "interactive_prepare", ServerID: server.ID, SessionID: sessionID, Nonce: nonce,
-			IssuedAt: now.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
+			IssuedAt: prepareNow.Format(time.RFC3339Nano), ExpiresAt: session.PrepareExp,
 			Kind: "terminal", Cols: cols, Rows: rows,
 		}
 		sig = security.SignInteractiveEnvelope(server.AgentTokenHash, envelope)
