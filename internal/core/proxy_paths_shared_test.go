@@ -1158,6 +1158,39 @@ func TestServerStepToUniqueAnyTLSInboundGeneratesBoundOutbound(t *testing.T) {
 	}
 }
 
+func TestGeneratedChainStepAllowedOnServerHostingBoundProtocolInbound(t *testing.T) {
+	// An explicit chain_protocol asks for a generated shared chain listener on
+	// the target server. That the server also hosts an AnyTLS/HY2/Snell inbound
+	// is irrelevant, so the topology must not be forced to bind an inbound_id.
+	source := model.Server{ID: 1, Name: "source", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, ChainSecret: "chain-1", PortRangeStart: 30000, PortRangeEnd: 30100}
+	target := model.Server{ID: 2, Name: "target", PublicIPv4: "203.0.113.2", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, ChainSecret: "chain-2", PortRangeStart: 31000, PortRangeEnd: 31100}
+	root := model.Inbound{ID: 10, ServerID: source.ID, Name: "entry", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 10777, ConfigJSON: testInboundConfig(model.ProtocolAnyTLS), Enabled: true}
+	targetInbound := model.Inbound{ID: 20, ServerID: target.ID, Name: "target-anytls", Protocol: model.ProtocolAnyTLS, ListenIP: "0.0.0.0", Port: 20777, ConfigJSON: testInboundConfig(model.ProtocolAnyTLS), Enabled: true}
+	path := model.ProxyPath{ID: 1, Name: "anytls-generated-ss", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	targetID := target.ID
+	step := model.ProxyPathStep{ID: 2, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &targetID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{"chain_protocol":"shadowsocks","chain_method":"2022-blake3-aes-128-gcm"}`}
+
+	plans, err := BuildProxyPathPlans([]model.ProxyPath{path}, []model.ProxyPathStep{step}, []model.Server{source, target}, []model.Inbound{root, targetInbound})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || len(plans[0].Steps) != 1 {
+		t.Fatalf("plans = %#v", plans)
+	}
+	if bound := plans[0].Steps[0].InboundID; bound != nil && *bound == targetInbound.ID {
+		t.Fatalf("generated chain step was bound to the existing AnyTLS inbound: %#v", plans[0].Steps[0])
+	}
+	generated := false
+	for _, node := range plans[0].RuntimeNodes {
+		if node.ServerID == target.ID && node.Protocol == model.ProtocolSS && node.Profile == "2022-blake3-aes-128-gcm" {
+			generated = true
+		}
+	}
+	if !generated {
+		t.Fatalf("no generated Shadowsocks chain service on the target server: %#v", plans[0].RuntimeNodes)
+	}
+}
+
 func TestValidateProxyPathTransportSetRejectsMismatchedRequiredInbound(t *testing.T) {
 	root := model.Inbound{ID: 10, ServerID: 1, Protocol: model.ProtocolSnell, Port: 11787, Enabled: true}
 	targetInbound := model.Inbound{ID: 20, ServerID: 2, Protocol: model.ProtocolAnyTLS, Port: 10787, Enabled: true}

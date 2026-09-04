@@ -1322,6 +1322,14 @@ func validateProxyPathTransportSet(paths []model.ProxyPath, stepsByPath map[int6
 			if mode != model.ProxyPathTransportSingBox || step.ServerID == nil || *step.ServerID == 0 {
 				continue
 			}
+			// An explicit chain_protocol means the operator asked for a
+			// generated shared chain listener on the target server, not for an
+			// implicit binding to one of its managed inbounds. Implicit binding
+			// resolution skips these steps for the same reason, so demanding an
+			// inbound_id here would reject a fully specified topology.
+			if strings.TrimSpace(stringValue(parseStepConfig(step.ConfigJSON), "chain_protocol", "")) != "" {
+				continue
+			}
 			var bindingRequired []model.Inbound
 			for _, inbound := range inboundByID {
 				if inbound.ServerID == *step.ServerID && inbound.Enabled && ProxyPathProtocolRequiresInboundBinding(inbound.Protocol) {
