@@ -89,7 +89,7 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
       {mode === 'user' && workspace && <strong className="node-impersonation-notice">正在代管 {workspace.subject.nickname || workspace.subject.username} 的节点</strong>}
     </div>}
 
-    {mode === 'global' && isAdmin ? <NodeAssignmentsPage data={data} client={client} load={load} /> : <>
+    {mode === 'global' && isAdmin ? <NodeAssignmentsPage data={data} client={client} load={load} notify={notify} /> : <>
       <div className="node-workspace-tabs" role="tablist" aria-label="节点工作台">
         <button type="button" role="tab" aria-selected={tab === 'library'} className={tab === 'library' ? 'active' : ''} onClick={() => setTab('library')}><Search size={16} />节点库</button>
         <button type="button" role="tab" aria-selected={tab === 'groups'} className={tab === 'groups' ? 'active' : ''} onClick={() => setTab('groups')}><Layers3 size={16} />节点组</button>

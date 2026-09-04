@@ -133,12 +133,12 @@ function nodeTypeLabel(type: string) {
   return type
 }
 
-export function NodeAssignmentsPage({ data, client, load }: { data: any; client: AnyClient; load: () => Promise<void> }) {
-  const [toast, setToast] = React.useState('')
-  const notify = (message: string, tone?: 'success' | 'error' | 'warning') => {
-    setToast(message)
-    window.setTimeout(() => setToast(''), 4000)
-  }
+export function NodeAssignmentsPage({ data, client, load, notify }: {
+  data: any
+  client: AnyClient
+  load: () => Promise<void>
+  notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void
+}) {
   const [query, setQuery] = React.useState('')
   const [entryServerID, setEntryServerID] = React.useState(0)
   const [entryRegion, setEntryRegion] = React.useState('')
@@ -254,13 +254,13 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
       })
       if (res.no_change) {
         setSyncMessage('节点没有变化')
-        notify('节点没有变化', 'warning')
+        notify?.('节点没有变化', 'warning')
       } else if (res.access_change_id) {
         setSyncMessage(`已保存，正在应用变更 #${res.access_change_id}`)
-        notify(`已保存，正在应用变更 #${res.access_change_id}`, 'success')
+        notify?.(`已保存，正在应用变更 #${res.access_change_id}`, 'success')
       } else {
         setSyncMessage('已保存为新版本')
-        notify('已保存为新版本', 'success')
+        notify?.('已保存为新版本', 'success')
       }
       setSelected({})
       setBatchDialogOpen(false)
@@ -286,7 +286,6 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
   return (
     <div className="panel node-assignments-panel">
       <div className="panel-body">
-        {toast && <p style={{ margin: '0 0 8px', color: 'var(--color-success, #16a34a)' }}>{toast}</p>}
         <>
         <div className="node-list-toolbar">
           <div className="node-list-search">
@@ -679,7 +678,7 @@ export function NodeAssignmentsPage({ data, client, load }: { data: any; client:
         onDone={refresh}
       />
 
-      <NodeRenameDialog node={renameNode as RenameNode | null} client={client} onClose={() => setRenameNode(null)} onSaved={async () => { await refresh(); notify('全局节点名称已更新', 'success') }} />
+      <NodeRenameDialog node={renameNode as RenameNode | null} client={client} onClose={() => setRenameNode(null)} onSaved={async () => { await refresh(); notify?.('全局节点名称已更新', 'success') }} />
 
       <Dialog isOpen={batchDialogOpen} onClose={() => setBatchDialogOpen(false)} title={`批量设置节点套餐（已选 ${selectedCount} 个节点）`} size="default">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

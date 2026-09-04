@@ -85,7 +85,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   plans: { id: number; name: string }[]
   users: UserOption[]
   client: AnyClient
-  notify: (message: string, tone?: 'success' | 'error' | 'warning') => void
+  notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void
   onClose: () => void
   onDone: () => void | Promise<void>
 }) {
