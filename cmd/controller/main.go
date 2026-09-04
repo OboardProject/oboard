@@ -84,6 +84,8 @@ func main() {
 	sqliteOptions.MaxOpenConns = envIntRange("OBOARD_SQLITE_MAX_OPEN_CONNS", sqliteOptions.MaxOpenConns, 1, 16)
 	sqliteOptions.MaxIdleConns = sqliteOptions.MaxOpenConns
 	sqliteOptions.BusyTimeout = time.Duration(envIntRange("OBOARD_SQLITE_BUSY_TIMEOUT_MS", int(sqliteOptions.BusyTimeout/time.Millisecond), 1000, 30000)) * time.Millisecond
+	// Per connection, so the resident ceiling is this value times MaxOpenConns.
+	sqliteOptions.CacheKB = envIntRange("OBOARD_SQLITE_CACHE_KB", sqliteOptions.CacheKB, 2048, 262144)
 	db, err := store.OpenWithOptions(*dbPath, sqliteOptions)
 	if err != nil {
 		log.Fatal(err)

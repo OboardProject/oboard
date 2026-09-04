@@ -287,3 +287,66 @@ func TestTrafficReportFailureStatusOnlyRefusesCrossTenantOwnership(t *testing.T)
 		t.Fatalf("a malformed report status = %d, want 400", got)
 	}
 }
+
+// A stream observation missing part of its identity used to pass the handler's
+// partial check and then fail inside the ledger transaction, which returned 500
+// for the whole batch. The Agent keeps such an observation in its local state,
+// so the same batch failed on every retry forever - taking the healthy reports
+// and the lease-renewing policy response with it. The observation must be
+// skipped instead.
+func TestAgentTrafficIncompleteStreamDoesNotPoisonTheBatch(t *testing.T) {
+	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
+	defer db.Close()
+	ctx := context.Background()
+	report := ledgerTrafficBody(user.ID, inbound.ID, "tr-with-bad-stream", 0, 100, 0, 200)["reports"].([]map[string]any)[0]
+	for name, stream := range map[string]map[string]any{
+		"missing period": {
+			"source": "core", "stream_id": "ts_ssh_no_period", "counter_epoch": "ce_1", "period_key": "",
+			"user_id": user.ID, "inbound_id": inbound.ID, "current_upload_bytes": 10, "current_download_bytes": 20,
+		},
+		"missing epoch": {
+			"source": "core", "stream_id": "ts_no_epoch", "counter_epoch": "", "period_key": "2026-09",
+			"user_id": user.ID, "inbound_id": inbound.ID, "current_upload_bytes": 10, "current_download_bytes": 20,
+		},
+		"missing user": {
+			"source": "core", "stream_id": "ts_no_user", "counter_epoch": "ce_1", "period_key": "2026-09",
+			"user_id": 0, "inbound_id": inbound.ID, "current_upload_bytes": 10, "current_download_bytes": 20,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{
+				"reports": []map[string]any{report},
+				"streams": []map[string]any{stream},
+			}
+			response := postAgentTraffic(t, h, server.AgentID, "token-a", body, http.StatusOK)
+			if response["policies"] == nil {
+				t.Fatalf("the policy response that renews traffic leases was not returned: %#v", response)
+			}
+		})
+	}
+	// The report travelling with the unusable observations is still accounted,
+	// exactly once across the sub-tests above.
+	stored, err := db.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TrafficUsedBytes != 300 {
+		t.Fatalf("used = %d, want the batch's valid report billed once", stored.TrafficUsedBytes)
+	}
+}
+
+// A well-formed stream observation is still recorded; skipping is limited to
+// identities the ledger cannot store.
+func TestAgentTrafficCompleteStreamIsRecorded(t *testing.T) {
+	db, server, inbound, user, h := trafficLedgerHTTPFixture(t)
+	defer db.Close()
+	body := map[string]any{"streams": []map[string]any{{
+		"source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1", "period_key": "2026-09",
+		"user_id": user.ID, "inbound_id": inbound.ID, "current_upload_bytes": 10, "current_download_bytes": 20,
+	}}}
+	response := postAgentTraffic(t, h, server.AgentID, "token-a", body, http.StatusOK)
+	checkpoints, _ := response["stream_checkpoints"].([]any)
+	if len(checkpoints) != 1 {
+		t.Fatalf("stream_checkpoints = %#v, want the observation to be recorded", response["stream_checkpoints"])
+	}
+}

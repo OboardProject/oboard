@@ -3,12 +3,17 @@ package controller
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
+
+// accessPair identifies one authorized (inbound, user, path) triple. A zero
+// pathID is a direct inbound binding; a positive one is a proxy-path binding.
+type accessPair struct{ inboundID, userID, pathID int64 }
 
 // routingSnapshotTTL bounds how long a snapshot is reused for time-driven
 // authorization state (binding windows, exception expiry). Mutations rebuild
@@ -42,6 +47,35 @@ type routingSnapshot struct {
 	dnsPoliciesByID map[int64]model.ServerDNSPolicy
 	egressByPathID  map[int64]model.ProxyPathEgressResult
 	portAllocByKey  map[string]model.ProxyPathPortAllocation
+
+	// allowedOnce guards the authorized-pair index. Every Agent report path
+	// needs the same set, so it is built once per snapshot instead of once per
+	// batch. The entry is immutable and revision-keyed, so the result stays
+	// valid for the snapshot's whole lifetime.
+	allowedOnce  sync.Once
+	allowedPairs map[accessPair]struct{}
+}
+
+// allowedAccessPairs returns the authorized (inbound, user, path) triples for
+// this snapshot, building the index on first use.
+func (r *routingSnapshot) allowedAccessPairs() map[accessPair]struct{} {
+	r.allowedOnce.Do(func() {
+		bindings := r.snapshot.InboundUserBindings()
+		pathBindings := r.snapshot.ProxyPathUserBindings()
+		pairs := make(map[accessPair]struct{}, len(bindings)+len(pathBindings))
+		for _, binding := range bindings {
+			if binding.Enabled {
+				pairs[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
+			}
+		}
+		for _, binding := range pathBindings {
+			if binding.Enabled {
+				pairs[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
+			}
+		}
+		r.allowedPairs = pairs
+	})
+	return r.allowedPairs
 }
 
 // routingSnapshot returns the current immutable routing snapshot, rebuilding

@@ -78,7 +78,7 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		fail(w, errors.New("connection audit is disabled for this server"), http.StatusConflict)
 		return
 	}
-	if !s.allowRate(w, r, "agent-connection-audit:"+server.AgentID, 120, time.Minute) {
+	if !s.allowAgentRate(w, "agent-connection-audit:"+server.AgentID, 120, time.Minute) {
 		return
 	}
 	var req struct {
@@ -100,23 +100,11 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	data := routing.data
-	snapshot := routing.snapshot
 	userByID := routing.usersByID
 	inboundByID := routing.inboundsByID
 	paths := data.ProxyPaths
 	steps := data.ProxyPathSteps
-	type accessPair struct{ inboundID, userID, pathID int64 }
-	allowed := map[accessPair]struct{}{}
-	for _, binding := range snapshot.InboundUserBindings() {
-		if binding.Enabled {
-			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
-		}
-	}
-	for _, binding := range snapshot.ProxyPathUserBindings() {
-		if binding.Enabled {
-			allowed[accessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
-		}
-	}
+	allowed := routing.allowedAccessPairs()
 	reports := make([]model.ConnectionAuditReport, 0, len(req.Items))
 	accepted := make([]string, 0, len(req.Items))
 	discarded := make([]connectionAuditDiscardedReport, 0)

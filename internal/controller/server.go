@@ -189,6 +189,14 @@ type Server struct {
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
 	settingsCache atomic.Pointer[settingsSnapshot]
+	// agentCallbackRate is the process-local budget for authenticated Agent
+	// callbacks. It replaces a SQLite write transaction per callback; durable
+	// budgets (enrollment, certificate issuance) stay on the store.
+	agentCallbackRate *memoryRateLimiter
+	// agentAuthFailures counts failed Agent authentications per source address
+	// so a decommissioned node holding a revoked token stops reaching the
+	// credential lookup.
+	agentAuthFailures *memoryRateLimiter
 	// auditRisk is the bounded, userID-coalescing audit risk evaluation queue.
 	auditRisk *auditRiskQueue
 	// accessWorkersWake coalesces wake events for the access change and
@@ -245,7 +253,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64]chan any{}
@@ -6469,7 +6477,7 @@ func uniquePositiveIDs(ids []int64) []int64 {
 }
 
 func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, accountingUsers map[int64]bool, userPolicies map[int64]core.UserLimitPolicy) (map[int64]model.TrafficRuntimePolicy, error) {
-	settings, _ := s.store.ListSettings(ctx)
+	settings := s.runtimeSettings(ctx)
 	loc := trafficLocation(settings)
 	enforcement := trafficEnforcementMode(settings)
 	tz := strings.TrimSpace(settings["traffic_timezone"])
@@ -14171,7 +14179,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowRate(w, r, "agent-connect:"+server.AgentID, 30, time.Minute) {
+	if !s.allowAgentRate(w, "agent-connect:"+server.AgentID, 30, time.Minute) {
 		return
 	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -14667,7 +14675,7 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowRate(w, r, "agent-task-result:"+server.AgentID, 120, time.Minute) {
+	if !s.allowAgentRate(w, "agent-task-result:"+server.AgentID, 120, time.Minute) {
 		return
 	}
 	var req model.AgentTaskResultReport
@@ -14932,7 +14940,7 @@ func (s *Server) agentTrafficReports(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	if !s.allowRate(w, r, "agent-traffic:"+server.AgentID, 120, time.Minute) {
+	if !s.allowAgentRate(w, "agent-traffic:"+server.AgentID, 120, time.Minute) {
 		return
 	}
 	var req agentTrafficReportEnvelope
@@ -14984,7 +14992,7 @@ func (s *Server) agentDNSBenchmarks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowRate(w, r, "agent-dns-benchmark:"+server.AgentID, 30, time.Minute) {
+	if !s.allowAgentRate(w, "agent-dns-benchmark:"+server.AgentID, 30, time.Minute) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -15070,7 +15078,7 @@ func (s *Server) agentMTUDetections(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowRate(w, r, "agent-mtu:"+server.AgentID, 30, time.Minute) {
+	if !s.allowAgentRate(w, "agent-mtu:"+server.AgentID, 30, time.Minute) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -15115,7 +15123,7 @@ func (s *Server) agentPortForwardProbes(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if !s.allowRate(w, r, "agent-pf-probe:"+server.AgentID, 60, time.Minute) {
+	if !s.allowAgentRate(w, "agent-pf-probe:"+server.AgentID, 60, time.Minute) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -15193,16 +15201,30 @@ func (s *Server) portForwardForAgentReport(ctx context.Context, id int64) (*mode
 	return nil, sql.ErrNoRows
 }
 
+// authAgent resolves the Agent identity for a callback.
+//
+// The failure budget is checked before the credential lookup. A node that was
+// deleted or re-enrolled keeps its old token and its own report timers, so it
+// retries on a fixed schedule forever; without this gate every one of those
+// retries still cost a SQLite read, and no per-Agent budget applied because
+// the budget is keyed by an identity the request never established.
 func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Server, bool) {
 	agentID := r.Header.Get("X-Agent-ID")
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	ip := clientIP(r)
+	if s.agentAuthBlocked(ip) {
+		fail(w, errors.New("too many failed agent authentications"), http.StatusTooManyRequests)
+		return nil, false
+	}
 	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(token) == "" {
+		s.noteAgentAuthFailure(ip)
 		fail(w, errors.New("invalid agent credentials"), 401)
 		return nil, false
 	}
 	server, err := s.store.GetServerByAgent(r.Context(), agentID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			s.noteAgentAuthFailure(ip)
 			fail(w, errors.New("invalid agent credentials"), 401)
 		} else {
 			fail(w, err, http.StatusInternalServerError)
@@ -15211,9 +15233,11 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	}
 	// Constant-time compare of hex-encoded SHA-256 hashes.
 	if !hmac.Equal([]byte(server.AgentTokenHash), []byte(security.HashSecret(token))) {
+		s.noteAgentAuthFailure(ip)
 		fail(w, errors.New("invalid agent credentials"), 401)
 		return nil, false
 	}
+	s.noteAgentAuthSuccess(ip)
 	return server, true
 }
 

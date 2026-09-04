@@ -50,24 +50,21 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		fail(w, errors.New("too many traffic items in one report"), 400)
 		return
 	}
-	settings, _ := s.store.ListSettings(r.Context())
+	settings := s.runtimeSettings(r.Context())
 	loc := trafficLocation(settings)
-	data, err := s.store.FullRoutingConfigData(r.Context())
+	// One immutable routing snapshot per report instead of a full routing
+	// rebuild per batch. Every enrolled Agent reports on its own timer, so
+	// rebuilding here made the fleet's report rate the rate at which the whole
+	// routing configuration was re-read from SQLite.
+	routing, err := s.routingSnapshot(r.Context())
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
+	data := routing.data
+	snapshot := routing.snapshot
 	planPolicies := snapshot.UserLimitPolicyMap()
-	access, err := newTrafficReportAccess(server, data, snapshot)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
+	access := newTrafficReportAccess(server, routing)
 	periods := map[int64]model.TrafficPeriod{}
 	reports := make([]model.TrafficReport, 0, len(req.Reports))
 	// Reports whose user, binding, inbound, or path is gone can never be
@@ -98,12 +95,19 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		periods[report.UserID] = period
 	}
 	streams := make([]model.TrafficStreamObservation, 0, len(req.Streams))
+	skippedStreams := 0
+	skippedStreamReason := ""
 	for _, stream := range req.Streams {
 		if err := access.validateStream(stream); err != nil {
 			var rejection *trafficRejection
 			if errors.As(err, &rejection) {
-				// The stream's owner is gone; skip the observation instead of
-				// failing the accounting batch it travels with.
+				// The stream's owner is gone, or its identity can never be
+				// stored; skip the observation instead of failing the
+				// accounting batch it travels with.
+				skippedStreams++
+				if skippedStreamReason == "" {
+					skippedStreamReason = rejection.Reason
+				}
 				continue
 			}
 			fail(w, err, trafficReportFailureStatus(err))
@@ -115,6 +119,13 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 				periods[stream.UserID] = period
 			}
 		}
+	}
+	if skippedStreams > 0 {
+		// A skipped observation drains once the Agent prunes it. A sustained
+		// stream from one Agent is the signal that its local traffic state is
+		// wedged, which the previous whole-batch failure never surfaced.
+		log.Printf("traffic ledger skipped %d unusable stream observation(s) from agent=%s server_id=%d first_reason=%s",
+			skippedStreams, server.AgentID, server.ID, skippedStreamReason)
 	}
 	result, err := s.store.CommitTrafficLedger(r.Context(), store.TrafficLedgerCommit{
 		ServerID: server.ID, AgentInstanceID: strings.TrimSpace(req.AgentInstanceID), Periods: periods, Streams: streams, Reports: reports,
@@ -204,33 +215,21 @@ type trafficReportAccess struct {
 	userByID    map[int64]model.User
 	inboundByID map[int64]model.Inbound
 	pathByID    map[int64]model.ProxyPath
-	allowed     map[trafficAccessPair]struct{}
+	allowed     map[accessPair]struct{}
 }
 
-type trafficAccessPair struct{ inboundID, userID, pathID int64 }
-
-func newTrafficReportAccess(server *model.Server, data store.FullRoutingConfig, snapshot *core.EffectiveAccessSnapshot) (trafficReportAccess, error) {
-	access := trafficReportAccess{server: server, data: data, userByID: map[int64]model.User{}, inboundByID: map[int64]model.Inbound{}, pathByID: map[int64]model.ProxyPath{}, allowed: map[trafficAccessPair]struct{}{}}
-	for _, u := range data.Users {
-		access.userByID[u.ID] = u
+// newTrafficReportAccess borrows the routing snapshot's immutable indexes. The
+// snapshot is revision-keyed, so the maps stay valid for the whole request and
+// are shared with the other Agent report paths instead of being rebuilt.
+func newTrafficReportAccess(server *model.Server, routing *routingSnapshot) trafficReportAccess {
+	return trafficReportAccess{
+		server:      server,
+		data:        routing.data,
+		userByID:    routing.usersByID,
+		inboundByID: routing.inboundsByID,
+		pathByID:    routing.pathsByID,
+		allowed:     routing.allowedAccessPairs(),
 	}
-	for _, inbound := range data.Inbounds {
-		access.inboundByID[inbound.ID] = inbound
-	}
-	for _, path := range data.ProxyPaths {
-		access.pathByID[path.ID] = path
-	}
-	for _, binding := range snapshot.InboundUserBindings() {
-		if binding.Enabled {
-			access.allowed[trafficAccessPair{inboundID: binding.InboundID, userID: binding.UserID}] = struct{}{}
-		}
-	}
-	for _, binding := range snapshot.ProxyPathUserBindings() {
-		if binding.Enabled {
-			access.allowed[trafficAccessPair{inboundID: binding.InboundID, userID: binding.UserID, pathID: binding.ProxyPathID}] = struct{}{}
-		}
-	}
-	return access, nil
 }
 
 // validateIdentity separates three outcomes. A malformed report is a client
@@ -282,19 +281,26 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 	// report rather than a reason to fail the batch - failing it would stall
 	// every other report and the policy response that renews traffic leases,
 	// until every lease on the server ran out.
-	if _, ok := a.allowed[trafficAccessPair{inboundID: *inboundID, userID: userID, pathID: resolvedPath}]; !ok {
+	if _, ok := a.allowed[accessPair{inboundID: *inboundID, userID: userID, pathID: resolvedPath}]; !ok {
 		return trafficReject("binding_removed", "traffic report user is not bound to this inbound")
 	}
 	return nil
 }
 
+// validateStream checks the full stream identity the ledger persists, not a
+// subset of it. An observation missing any identity component can never be
+// stored, so it is terminal for that one observation: letting it through made
+// the whole batch fail inside the commit, and because the Agent keeps the
+// observation in its local state, the same batch then failed on every retry
+// forever - taking the healthy reports and the lease-renewing policy response
+// in the same request down with it.
 func (a trafficReportAccess) validateStream(stream model.TrafficStreamObservation) error {
-	if stream.UserID <= 0 || strings.TrimSpace(stream.StreamID) == "" || strings.TrimSpace(stream.CounterEpoch) == "" {
-		return errors.New("traffic stream is invalid")
+	if stream.UserID <= 0 || strings.TrimSpace(stream.StreamID) == "" || strings.TrimSpace(stream.CounterEpoch) == "" || strings.TrimSpace(stream.PeriodKey) == "" {
+		return trafficReject("invalid_stream", "traffic stream identity is incomplete")
 	}
 	source := strings.TrimSpace(stream.Source)
 	if source != "core" && source != "ssh" {
-		return errors.New("traffic stream source is invalid")
+		return trafficReject("invalid_stream", "traffic stream source is invalid")
 	}
 	if stream.InboundID > 0 {
 		inboundID := stream.InboundID
@@ -335,6 +341,12 @@ func (s *Server) validateAgentTrafficRangeItem(r *http.Request, server *model.Se
 	period, err := s.trafficPeriodForUser(r, item.UserID, reportedPeriodKey, planPolicies, loc)
 	if err != nil {
 		return model.TrafficReport{}, model.TrafficPeriod{}, err
+	}
+	// The ledger stores the period key as part of the stream identity, so a
+	// report that resolves to none can never be committed. Reject this one
+	// report instead of failing the batch inside the transaction.
+	if strings.TrimSpace(period.PeriodKey) == "" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_stream", "traffic report has no resolvable period")
 	}
 	report := model.TrafficReport{
 		ReportID: item.ReportID, ServerID: server.ID, UserID: item.UserID, InboundID: item.InboundID, PathID: item.PathID,

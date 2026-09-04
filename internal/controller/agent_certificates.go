@@ -24,7 +24,7 @@ func (s *Server) agentManagedAssets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowRate(w, r, "agent-assets:"+server.AgentID, 120, time.Minute) {
+	if !s.allowAgentRate(w, "agent-assets:"+server.AgentID, 120, time.Minute) {
 		return
 	}
 	var req model.ManagedAssetRequest

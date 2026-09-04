@@ -12,6 +12,13 @@ const (
 	maintenanceBatchSize        = 2000
 	maintenanceMaxBatches       = 50
 	subscriptionBucketRetention = 24 * time.Hour
+	// maintenanceReclaimPages bounds one incremental vacuum pass. At the 4 KiB
+	// default page size this returns up to 64 MiB per hourly run, which is far
+	// above the steady-state churn of the retention deletes above.
+	maintenanceReclaimPages = 16384
+	// maintenanceWALTruncateFrames is the WAL size, in frames, past which the
+	// passive checkpoint is assumed to be losing to readers.
+	maintenanceWALTruncateFrames = 4096
 
 	ServerMonitoringRetentionDaysSetting = "server_monitoring_retention_days"
 	DefaultServerMonitoringRetentionDays = 7
@@ -30,6 +37,7 @@ type MaintenanceResult struct {
 	LatencyProbeResultsDeleted    int64
 	ConnectivityProbesDeleted     int64
 	AgentTasksDeleted             int64
+	FreePagesReclaimed            int64
 	DNSBenchmarkRunsDeleted       int64
 	DNSBenchmarkResultsDeleted    int64
 	MTUDetectionsDeleted          int64
@@ -159,6 +167,15 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 	if _, err := s.db.ExecContext(ctx, `pragma optimize`); err != nil {
 		return result, fmt.Errorf("optimize SQLite database: %w", err)
 	}
+	// Return a bounded slice of the pages the deletes above freed to the
+	// filesystem. This is a no-op when the database is not in incremental
+	// auto-vacuum mode, and bounded so one maintenance pass cannot hold the
+	// writer while it rewrites a large backlog.
+	reclaimed, err := s.reclaimFreePages(ctx, maintenanceReclaimPages)
+	if err != nil {
+		return result, fmt.Errorf("reclaim free SQLite pages: %w", err)
+	}
+	result.FreePagesReclaimed = reclaimed
 	if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(passive)`).Scan(
 		&result.WALBusyFrames,
 		&result.WALLogFrames,
@@ -166,7 +183,41 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 	); err != nil {
 		return result, fmt.Errorf("passive WAL checkpoint: %w", err)
 	}
+	// A passive checkpoint yields to any active reader, so on a busy
+	// installation the WAL can keep growing while every hourly pass reports
+	// success. Once it is past the threshold, ask for a truncating checkpoint
+	// so the file returns to zero. It blocks new writers only for as long as
+	// the current readers take to drain, and a failure here is not an error:
+	// the next pass tries again.
+	if result.WALLogFrames > maintenanceWALTruncateFrames {
+		var busy, log, checkpointed int
+		if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
+			result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames = busy, log, checkpointed
+		}
+	}
 	return result, nil
+}
+
+// reclaimFreePages returns up to maxPages free pages to the filesystem.
+func (s *Store) reclaimFreePages(ctx context.Context, maxPages int) (int64, error) {
+	var before int64
+	if err := s.db.QueryRowContext(ctx, `pragma freelist_count`).Scan(&before); err != nil {
+		return 0, err
+	}
+	if before == 0 {
+		return 0, nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`pragma incremental_vacuum(%d)`, maxPages)); err != nil {
+		return 0, err
+	}
+	var after int64
+	if err := s.db.QueryRowContext(ctx, `pragma freelist_count`).Scan(&after); err != nil {
+		return 0, err
+	}
+	if after >= before {
+		return 0, nil
+	}
+	return before - after, nil
 }
 
 func ServerMonitoringRetentionDays(settings map[string]string) int {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"net/netip"
 	"net/url"
@@ -41,6 +42,12 @@ type SQLiteOptions struct {
 	// MetricSampleMinInterval bounds server_metric_samples writes to at most
 	// one sample per server per interval. Zero keeps the default 60 seconds.
 	MetricSampleMinInterval time.Duration
+	// CacheKB is the per-connection SQLite page cache in kibibytes. The SQLite
+	// default is 2 MiB, which is far below the working set of an installation
+	// that records traffic, metrics, latency probes and connection audits, so
+	// hot pages were being re-read from disk on every batch. Zero keeps the
+	// default below.
+	CacheKB int
 }
 
 func DefaultSQLiteOptions() SQLiteOptions {
@@ -49,6 +56,7 @@ func DefaultSQLiteOptions() SQLiteOptions {
 		MaxIdleConns:            4,
 		BusyTimeout:             5 * time.Second,
 		MetricSampleMinInterval: defaultMetricSampleMinInterval,
+		CacheKB:                 defaultSQLiteCacheKB,
 	}
 }
 
@@ -58,6 +66,15 @@ const (
 	bootstrapAdminSetting              = "system.bootstrap_admin_user_id"
 	configVersionSetting               = "system.config_version_sequence"
 	defaultMetricSampleMinInterval     = 60 * time.Second
+	defaultSQLiteCacheKB               = 16384
+	minSQLiteCacheKB                   = 2048
+	maxSQLiteCacheKB                   = 262144
+	// sqliteMmapBytes maps the database read-only into the address space so
+	// index scans over the reporting tables stop issuing a read syscall per
+	// page. It is virtual address space, not resident memory.
+	sqliteMmapBytes = 128 * 1024 * 1024
+	// sqliteAutoVacuumIncremental is SQLite's numeric auto_vacuum mode 2.
+	sqliteAutoVacuumIncremental = 2
 	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
 )
 
@@ -92,7 +109,7 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 	if opts.BusyTimeout <= 0 {
 		return nil, errors.New("SQLite BusyTimeout must be positive")
 	}
-	dsn, err := sqliteDSN(path, opts.BusyTimeout)
+	dsn, err := sqliteDSN(path, opts.BusyTimeout, opts.CacheKB, restore)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +138,15 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 		if !strings.EqualFold(activeMode, journalMode) {
 			_ = db.Close()
 			return nil, fmt.Errorf("set SQLite journal mode %s: active mode is %s", journalMode, activeMode)
+		}
+		if !restore {
+			// Reclaim is a storage property, not schema, so it is established
+			// before the tables exist on a fresh database and converted once
+			// on an existing one. Failing here would trade a working panel for
+			// a smaller file, so it only warns.
+			if err := enableIncrementalVacuum(ctx, db); err != nil {
+				log.Printf("SQLite incremental vacuum unavailable, database file will not reclaim space: %v", err)
+			}
 		}
 	}
 	s := &Store{db: newCountingDB(db)}
@@ -154,7 +180,7 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 	return s, nil
 }
 
-func sqliteDSN(path string, busyTimeout time.Duration) (string, error) {
+func sqliteDSN(path string, busyTimeout time.Duration, cacheKB int, restore bool) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", errors.New("SQLite path is required")
@@ -162,6 +188,12 @@ func sqliteDSN(path string, busyTimeout time.Duration) (string, error) {
 	timeoutMS := busyTimeout.Milliseconds()
 	if timeoutMS < 1 {
 		return "", errors.New("SQLite BusyTimeout must be at least one millisecond")
+	}
+	if cacheKB == 0 {
+		cacheKB = defaultSQLiteCacheKB
+	}
+	if cacheKB < minSQLiteCacheKB || cacheKB > maxSQLiteCacheKB {
+		return "", errors.New("SQLite CacheKB is out of range")
 	}
 	dsn := path
 	if path == ":memory:" {
@@ -180,11 +212,83 @@ func sqliteDSN(path string, busyTimeout time.Duration) (string, error) {
 	}
 	pragmas.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", timeoutMS))
 	pragmas.Add("_pragma", "foreign_keys(1)")
+	// A negative cache_size is a size in kibibytes rather than a page count,
+	// so the budget stays fixed regardless of page size.
+	pragmas.Add("_pragma", fmt.Sprintf("cache_size(-%d)", cacheKB))
+	pragmas.Add("_pragma", fmt.Sprintf("mmap_size(%d)", sqliteMmapBytes))
+	if !restore {
+		// synchronous=NORMAL is the WAL-mode setting: commits no longer fsync
+		// individually, and durability is provided by the checkpoint. The
+		// window it gives up is losing the most recent commits on host power
+		// loss or kernel panic - not corruption. Restore runs in DELETE
+		// journal mode, where NORMAL does not carry that guarantee, so it
+		// keeps the FULL default.
+		pragmas.Add("_pragma", "synchronous(1)")
+	}
 	// Store transactions are read-modify-write operations. Reserving the single
 	// SQLite writer before their first read avoids deferred-transaction upgrade
 	// failures, which do not reliably wait for busy_timeout.
 	pragmas.Set("_txlock", "immediate")
 	return dsn + "?" + pragmas.Encode(), nil
+}
+
+// enableIncrementalVacuum puts the database into incremental auto-vacuum so
+// deleted reporting rows can be returned to the filesystem.
+//
+// Retention has always deleted old audit, metric, latency and connectivity
+// rows, but SQLite only moved those pages onto the free list: with the default
+// auto_vacuum=NONE the file never shrinks below its historical high-water
+// mark, so an installation that once accumulated a large backlog keeps paying
+// for it in page-cache misses and backup size forever.
+//
+// On an empty database the mode is a free property change. On an existing one
+// SQLite requires a VACUUM to rewrite the file, which is why this runs once at
+// open, before the Controller serves anything: after it succeeds the mode is
+// persistent and RunMaintenance reclaims incrementally from then on.
+func enableIncrementalVacuum(ctx context.Context, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	var mode int
+	if err := conn.QueryRowContext(ctx, `pragma auto_vacuum`).Scan(&mode); err != nil {
+		return fmt.Errorf("read SQLite auto_vacuum: %w", err)
+	}
+	if mode == sqliteAutoVacuumIncremental {
+		return nil
+	}
+	// The pragma must be issued on the same connection that runs the VACUUM,
+	// which is why the connection is pinned above.
+	if _, err := conn.ExecContext(ctx, `pragma auto_vacuum=incremental`); err != nil {
+		return fmt.Errorf("set SQLite auto_vacuum: %w", err)
+	}
+	var tables int
+	if err := conn.QueryRowContext(ctx, `select count(*) from sqlite_master`).Scan(&tables); err != nil {
+		return fmt.Errorf("inspect SQLite schema: %w", err)
+	}
+	// The mode lives in the database header, and the pragma alone only holds
+	// it on this connection. VACUUM is what writes it, which on an empty
+	// database is immediate and on an existing one also reclaims the free
+	// pages retention already produced.
+	startedAt := time.Now()
+	if tables > 0 {
+		log.Printf("compacting SQLite database once to enable incremental vacuum; this can take a while on a large database")
+	}
+	if _, err := conn.ExecContext(ctx, `vacuum`); err != nil {
+		return fmt.Errorf("compact SQLite database: %w", err)
+	}
+	var confirmed int
+	if err := conn.QueryRowContext(ctx, `pragma auto_vacuum`).Scan(&confirmed); err != nil {
+		return fmt.Errorf("verify SQLite auto_vacuum: %w", err)
+	}
+	if confirmed != sqliteAutoVacuumIncremental {
+		return fmt.Errorf("SQLite auto_vacuum is %d after compaction", confirmed)
+	}
+	if tables > 0 {
+		log.Printf("SQLite database compacted in %s; incremental vacuum is active", time.Since(startedAt).Truncate(time.Millisecond))
+	}
+	return nil
 }
 
 // IsSQLiteBusy reports transient SQLite writer conflicts, including extended
