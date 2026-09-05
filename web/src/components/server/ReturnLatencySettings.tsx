@@ -67,7 +67,7 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
           <Switch checked={values.latency_probe_enabled} ariaLabel="启用自动探测" onChange={checked => updateParam({ latency_probe_enabled: checked })} />
         </label>
         <div className="latency-params-grid">
-          <FormField label="探测方式" hint="TCP 测试端口连接；ICMP 测试 Echo。">
+          <FormField label="公网探测方式" hint="仅用于公网连通性目标，各任务的探测方式独立设置。">
             <Select aria-label="延迟探测方式" variant="segmented" value={values.latency_probe_mode} onChange={event => updateParam({ latency_probe_mode: event.target.value as LatencyProbeMode })}>
               <option value="tcp">TCP Ping</option>
               <option value="icmp">ICMP Ping</option>
@@ -87,7 +87,7 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
           <FormField label="每个目标样本数" hint="连续探测样本数（1–10）。">
             <input aria-label="每个延迟目标样本数" type="number" min={1} max={10} placeholder="3" value={values.latency_probe_sample_count} onChange={event => updateParam({ latency_probe_sample_count: event.target.value === '' ? '' : Number(event.target.value) })} onBlur={event => updateParam({ latency_probe_sample_count: clamp(event.target.value === '' ? '' : Number(event.target.value), 1, 10, 3) })} />
           </FormField>
-          <FormField label="单次最多目标数" hint="含 1 个公网目标（1–256）。超出的任务目标会顺延到下一轮。">
+          <FormField label="单次最多目标数" hint="含 1 个公网目标（1–256）。超出上限的目标不会下发，请按任务数量调整。">
             <input aria-label="单次最多目标数" type="number" min={1} max={256} placeholder="64" value={values.latency_probe_max_targets} onChange={event => updateParam({ latency_probe_max_targets: event.target.value === '' ? '' : Number(event.target.value) })} onBlur={event => updateParam({ latency_probe_max_targets: clamp(event.target.value === '' ? '' : Number(event.target.value), 1, 256, 64) })} />
           </FormField>
         </div>

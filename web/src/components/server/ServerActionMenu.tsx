@@ -34,7 +34,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
     ] },
     { label: '监控与诊断', dividerBefore: true, items: [
       { label: '监控历史', type: 'resource-details', icon: Activity },
-      { label: '回程延迟', type: 'return-latency', icon: Gauge, admin: true },
+      { label: '网络探测', type: 'return-latency', icon: Gauge, admin: true },
       { label: '网络工具', type: 'network', icon: Network },
     ] },
     { label: '运维操作', dividerBefore: true, items: [

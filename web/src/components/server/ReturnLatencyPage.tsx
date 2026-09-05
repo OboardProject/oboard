@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Activity, History, Pencil, Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
 import { Dialog } from '../ui/dialog'
 import { Select } from '../ui/select'
-import type { LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
+import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings } from './ReturnLatencySettings'
 import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
 
@@ -26,12 +26,15 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
 }) {
   const [tasks, setTasks] = useState<LatencyProbeTask[]>([])
   const [tasksState, setTasksState] = useState<{ loading: boolean; error: string }>({ loading: true, error: '' })
-  const [resource, setResource] = useState<{ regions: LatencyProbeRegion[]; loading: boolean; error: string }>({ regions: [], loading: true, error: '' })
+  const [resource, setResource] = useState<{ regions: LatencyProbeRegion[]; targets: LatencyProbeAddress[]; loading: boolean; error: string }>({ regions: [], targets: [], loading: true, error: '' })
   const [resourceRevision, setResourceRevision] = useState(0)
   const [taskRevision, setTaskRevision] = useState(0)
   const [editing, setEditing] = useState<{ open: boolean; task: LatencyProbeTask | null }>({ open: false, task: null })
   const [settingsServer, setSettingsServer] = useState<Server | null>(null)
   const [historyID, setHistoryID] = useState<number | null>(null)
+  const [view, setView] = useState<'targets' | 'nodes'>('targets')
+  const [taskQuery, setTaskQuery] = useState('')
+  const [methodFilter, setMethodFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -46,7 +49,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     const controller = new AbortController()
     setResource(current => ({ ...current, loading: true, error: '' }))
     void client.request('/latency-probe-resource', { signal: controller.signal }).then(result => {
-      if (!controller.signal.aborted) setResource({ regions: result.regions || [], loading: false, error: '' })
+      if (!controller.signal.aborted) setResource({ regions: result.regions || [], targets: result.targets || [], loading: false, error: '' })
     }).catch(error => {
       if (!controller.signal.aborted) setResource(current => ({ ...current, loading: false, error: error?.message || '目标资源加载失败' }))
     })
@@ -151,19 +154,32 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     return true
   })
 
-  return <section className="panel return-latency-page" aria-label="回程延迟管理">
+  const visibleTasks = tasks.filter(task => (methodFilter === 'all' || task.method === methodFilter) && `${task.name} ${task.address} ${task.province} ${task.carrier}`.toLowerCase().includes(taskQuery.trim().toLowerCase()))
+  return <section className="panel return-latency-page" aria-label="网络探测">
     <div className="panel-body">
       <div className="return-latency-toolbar">
-        <button type="button" className="primary" disabled={!canManage || resource.loading} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
+        <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
         <div className="return-latency-toolbar-secondary">
           <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
           <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
         </div>
       </div>
       {notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
-      {resource.error && <p className="danger-text" role="alert">{resource.error} <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
+      {resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
 
-      <section className="return-latency-tasks" aria-label="探测任务">
+      <div className="network-probe-tabs" role="tablist" aria-label="网络探测视图">
+        {(['targets', 'nodes'] as const).map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const next = event.key === 'Home' ? 'targets' : event.key === 'End' ? 'nodes' : index === 0 ? 'nodes' : 'targets'
+          setView(next); document.getElementById(`probe-${next}-tab`)?.focus()
+        }}>{tab === 'targets' ? '目标' : '节点'}<span>{tab === 'targets' ? tasks.length : servers.length}</span></button>)}
+      </div>
+      {view === 'targets' && <section id="probe-targets-panel" role="tabpanel" aria-labelledby="probe-targets-tab" className="return-latency-tasks">
+        <div className="return-latency-filters">
+          <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索探测任务" placeholder="搜索名称或目标地址" value={taskQuery} onChange={event => setTaskQuery(event.target.value)} /></div>
+          <Select aria-label="探测方式筛选" value={methodFilter} onChange={event => setMethodFilter(event.target.value)}><option value="all">全部方式</option><option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option></Select>
+        </div>
         <header className="return-latency-section-head">
           <h2>探测任务</h2>
           <span className="muted">{tasks.length} 个任务 · 每个任务一个目标</span>
@@ -171,40 +187,32 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         {tasksState.error && <p className="danger-text" role="alert">{tasksState.error}</p>}
         {tasksState.loading && !tasks.length ? <p className="muted" role="status">正在加载探测任务…</p> : !tasks.length ? <div className="latency-empty-state">
           <p>还没有探测任务</p>
-          <p className="muted">创建一个任务，指定一个目标（例如 广东 · 中国电信），选择执行的服务器和探测间隔。</p>
+          <p className="muted">填写目标地址，选择 TCP、Ping 或 HTTP，再指定执行节点和探测间隔。</p>
           <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
-        </div> : <ul className="probe-task-cards">
-          {tasks.map(task => {
+        </div> : !visibleTasks.length ? <div className="latency-empty-state"><p>没有匹配的探测任务</p><button type="button" className="ghost" onClick={() => { setTaskQuery(''); setMethodFilter('all') }}>清除筛选</button></div> : <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label="探测任务列表"><table className="network-probe-table">
+          <thead><tr><th scope="col">名称 / 目标地址</th><th scope="col">方式</th><th scope="col">间隔</th><th scope="col">执行节点</th><th scope="col">任务状态</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
+          <tbody>{visibleTasks.map(task => {
             const assigned = task.server_ids.map(id => serverByID.get(id)).filter(Boolean) as Server[]
             const live = assigned.filter(server => online(server) && server.latency_probe_enabled).length
-            return <li key={task.id} className={`probe-task-card${task.enabled ? '' : ' is-disabled'}`}>
-              <div className="probe-task-card-head">
-                <div className="probe-task-card-title">
-                  <strong>{task.name}</strong>
-                  <span className="probe-task-target">{targetLabel(task.province, task.carrier)}</span>
-                </div>
-                <span className={`probe-task-badge${task.enabled ? ' is-on' : ''}`}>{task.enabled ? '运行中' : '已停用'}</span>
-              </div>
-              <dl className="probe-task-meta">
-                <div><dt>探测间隔</dt><dd>{formatInterval(task.interval_seconds)}</dd></div>
-                <div><dt>执行服务器</dt><dd>{assigned.length ? `${assigned.length} 台` : '未分配'}</dd></div>
-                <div><dt>当前可执行</dt><dd>{live} 台</dd></div>
-              </dl>
-              {assigned.length > 0 && <p className="probe-task-servers-preview muted">{assigned.slice(0, 4).map(server => server.name).join('、')}{assigned.length > 4 ? ` 等 ${assigned.length} 台` : ''}</p>}
-              {!assigned.length && <p className="muted">尚未选择执行服务器，该任务不会下发。</p>}
-              <div className="probe-task-card-actions">
-                <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => setEditing({ open: true, task })}><Pencil size={14} aria-hidden="true" />编辑</button>
+            return <tr key={task.id} className="probe-task-card">
+              <td><strong>{task.name}</strong><span className="probe-task-target">{task.address ? `${task.address}${task.method === 'tcp' ? `:${task.port}` : ''}` : targetLabel(task.province, task.carrier)}</span></td>
+              <td><span className="probe-task-badge">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'}</span></td>
+              <td>{formatInterval(task.interval_seconds)}</td>
+              <td title={assigned.map(server => server.name).join('、')}>{assigned.length} 台<small className="muted">{live} 台可执行</small></td>
+              <td><span className={`probe-task-badge${task.enabled ? ' is-on' : ''}`}>{task.enabled ? assigned.length ? '已启用' : '待分配' : '已停用'}</span></td>
+              <td><div className="probe-task-card-actions">
+                <button type="button" className="ghost" aria-label={`编辑 ${task.name}`} disabled={!canManage || busy} onClick={() => setEditing({ open: true, task })}><Pencil size={14} aria-hidden="true" />编辑</button>
                 <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => toggleTask(task)}>{task.enabled ? '停用' : '启用'}</button>
-                <button type="button" className="ghost danger" disabled={!canManage || busy} onClick={() => deleteTask(task)}><Trash2 size={14} aria-hidden="true" />删除</button>
-              </div>
-            </li>
-          })}
-        </ul>}
-      </section>
+                <button type="button" className="ghost danger" aria-label={`删除 ${task.name}`} disabled={!canManage || busy} onClick={() => deleteTask(task)}><Trash2 size={14} aria-hidden="true" />删除</button>
+              </div></td>
+            </tr>
+          })}</tbody>
+        </table></div>}
+      </section>}
 
-      <section className="return-latency-servers" aria-label="执行服务器">
+      {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
         <header className="return-latency-section-head">
-          <h2>执行服务器</h2>
+          <h2>节点状态</h2>
           <span className="muted">{servers.length} 台</span>
         </header>
         <div className="return-latency-filters">
@@ -224,29 +232,30 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
           {loading && !servers.length ? <p className="muted" role="status">正在加载服务器…</p> : !servers.length ? <p className="muted">暂无服务器，请先在服务器管理中添加。</p> : !visibleServers.length ? <div className="latency-empty-state">
             <p>没有匹配的服务器</p>
             <button type="button" className="ghost" onClick={() => { setQuery(''); setFilter('all') }}>清除筛选</button>
-          </div> : visibleServers.map(server => <article className="return-latency-server" key={server.id}>
-            <div className="return-latency-server-head">
-              <span className="return-latency-server-name">
-                <strong>{server.name}</strong>
-                <small className="muted">{server.public_ipv4 || server.public_ipv6 || `#${server.id}`}</small>
-              </span>
-              <span className="return-latency-state">{online(server) ? '在线' : server.agent_id ? '离线' : '未接入'}</span>
-            </div>
-            <p className="muted">{server.latency_probe_enabled ? `${server.latency_probe_mode === 'icmp' ? 'ICMP' : 'TCP'} · 公网基准 ${server.latency_probe_interval_seconds || 60} 秒 · ${taskCountByServer.get(server.id) || 0} 个任务` : '自动探测已关闭'}</p>
-            <div className="return-latency-row-actions">
-              <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => setSettingsServer(server)}><Settings2 size={14} aria-hidden="true" />探测参数</button>
-              <button type="button" className="ghost" disabled={!canManage || busy || !online(server) || !server.latency_probe_enabled} onClick={() => probeNow(server)}><Activity size={14} aria-hidden="true" />立即探测</button>
-              <button type="button" className="ghost" onClick={() => setHistoryID(server.id)}><History size={14} aria-hidden="true" />历史</button>
-            </div>
-          </article>)}
+          </div> : <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label="节点状态列表"><table className="network-probe-table">
+            <thead><tr><th scope="col">节点 / 地址</th><th scope="col">连接状态</th><th scope="col">公网探测</th><th scope="col">任务</th><th scope="col">自动探测</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
+            <tbody>{visibleServers.map(server => <tr className="return-latency-server" key={server.id}>
+              <td><strong>{server.name}</strong><small className="muted">{server.public_ipv4 || server.public_ipv6 || `#${server.id}`}</small></td>
+              <td><span className={`probe-task-badge${online(server) ? ' is-on' : ''}`}>{online(server) ? '在线' : server.agent_id ? '离线' : '未接入'}</span></td>
+              <td>{!online(server) ? '—' : !server.latency_probe_enabled ? '未启用' : server.connectivity_status === 'available' ? `${server.connectivity_latency_ms ?? 0} ms` : server.connectivity_status === 'unavailable' ? '不可达' : '等待结果'}</td>
+              <td>{taskCountByServer.get(server.id) || 0} 个</td>
+              <td>{server.latency_probe_enabled ? '已启用' : '已关闭'}</td>
+              <td><div className="return-latency-row-actions">
+                <button type="button" className="ghost" disabled={!canManage || busy} onClick={() => setSettingsServer(server)}><Settings2 size={14} aria-hidden="true" />探测参数</button>
+                <button type="button" className="ghost" disabled={!canManage || busy || !online(server) || !server.latency_probe_enabled} onClick={() => probeNow(server)}><Activity size={14} aria-hidden="true" />立即探测</button>
+                <button type="button" className="ghost" onClick={() => setHistoryID(server.id)}><History size={14} aria-hidden="true" />历史</button>
+              </div></td>
+            </tr>)}</tbody>
+          </table></div>}
         </div>
-      </section>
+      </section>}
     </div>
     <Dialog isOpen={editing.open} onClose={() => setEditing({ open: false, task: null })} title={editing.task ? '编辑探测任务' : '创建探测任务'} size="lg" className="probe-task-dialog">
       <ReturnLatencyTaskForm
         key={editing.task?.id ?? 'new'}
         task={editing.task}
         regions={resource.regions}
+        targets={resource.targets}
         servers={servers}
         loading={resource.loading}
         error={resource.error}

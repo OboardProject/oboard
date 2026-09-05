@@ -13,8 +13,8 @@ const servers = [
   { id: 2, name: 'Tokyo', agent_id: 'agent-2', status: 'offline', latency_probe_enabled: true },
 ] as Server[]
 const tasks: LatencyProbeTask[] = [
-  { id: 7, name: '广州电信', province: '广东', carrier: '中国电信', interval_seconds: 300, enabled: true, server_ids: [1] },
-  { id: 8, name: '北京移动巡检', province: '北京', carrier: '中国移动', interval_seconds: 3600, enabled: false, server_ids: [] },
+  { id: 7, method: 'tcp', address: '', port: 80, name: '广州电信', province: '广东', carrier: '中国电信', interval_seconds: 300, enabled: true, server_ids: [1] },
+  { id: 8, method: 'icmp', address: '', port: 0, name: '北京移动巡检', province: '北京', carrier: '中国移动', interval_seconds: 3600, enabled: false, server_ids: [] },
 ]
 
 describe('return latency probe tasks', () => {
@@ -51,31 +51,74 @@ describe('return latency probe tasks', () => {
   it('creates one task per target with its own interval and executing servers', async () => {
     const submit = vi.fn()
     await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={submit} onCancel={() => {}} />))
-    await pickOption('探测目标省份', '广东')
-    await pickOption('探测目标运营商', '中国电信')
-    await click(buttonIn(container, '5 分钟')!)
+    expect(container.querySelector('[aria-label="预设目标"]')).toBeNull()
+    await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'example.com')
     await click(container.querySelector<HTMLInputElement>('[aria-label="选择 Hong Kong"]')!)
     await click(buttonIn(container, '创建任务')!)
-    expect(submit).toHaveBeenCalledWith({ name: '广东 · 中国电信', province: '广东', carrier: '中国电信', interval_seconds: 300, enabled: true, server_ids: [1] })
+    expect(submit).toHaveBeenCalledWith({ name: 'example.com', method: 'tcp', address: 'example.com', port: 80, province: '', carrier: '', interval_seconds: 300, enabled: true, server_ids: [1] })
   })
 
   it('keeps an explicit task name so several tasks can share one target', async () => {
     const submit = vi.fn()
     await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={submit} onCancel={() => {}} />))
-    await pickOption('探测目标省份', '广东')
-    await pickOption('探测目标运营商', '中国电信')
+    await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'example.com')
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="任务名称"]')!, '广州电信 高频')
     await click(buttonIn(container, '创建任务')!)
-    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广州电信 高频', province: '广东', carrier: '中国电信' })
+    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广州电信 高频', address: 'example.com', method: 'tcp' })
   })
 
   it('requires a complete target before the task can be created', async () => {
     await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={vi.fn()} onCancel={() => {}} />))
     expect(buttonIn(container, '创建任务')!.disabled).toBe(true)
-    await pickOption('探测目标省份', '北京')
+    await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'https://example.com')
     expect(buttonIn(container, '创建任务')!.disabled).toBe(true)
-    await pickOption('探测目标运营商', '中国联通')
+    await click(buttonIn(container, 'HTTP')!)
     expect(buttonIn(container, '创建任务')!.disabled).toBe(false)
+  })
+
+  it('filters optional presets and fills just the selected address', async () => {
+    const submit = vi.fn()
+    const targets = [
+      { province: '广东', carrier: '中国电信', address: 'gd.example.com' },
+      { province: '北京', carrier: '中国移动', address: 'bj.example.com' },
+    ]
+    await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} targets={targets} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    await click(buttonIn(container, '从预设中选择')!)
+    await pickOption('探测目标省份', '广东')
+    await pickOption('探测目标运营商', '中国电信')
+    expect(container.querySelectorAll('.probe-preset-option')).toHaveLength(1)
+    await click(container.querySelector<HTMLButtonElement>('.probe-preset-option')!)
+    expect(container.querySelector('[aria-label="预设目标"]')).toBeNull()
+    expect(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!.value).toBe('gd.example.com')
+    await click(buttonIn(container, '创建任务')!)
+    expect(submit.mock.calls[0][0]).toMatchObject({ name: '广东 · 中国电信', address: 'gd.example.com', province: '', carrier: '', method: 'tcp', port: 80 })
+  })
+
+  it.each(['Ping', 'HTTP'])('saves %s without presets and reports submission errors in the dialog', async method => {
+    const submit = vi.fn().mockRejectedValue(new Error('任务名称已存在'))
+    await act(async () => root.render(<ReturnLatencyTaskForm regions={[]} servers={servers} error="资源不可用" onSubmit={submit} onCancel={() => {}} />))
+    await click(buttonIn(container, method)!)
+    expect(container.querySelector('[aria-label="目标端口"]')).toBeNull()
+    const address = method === 'HTTP' ? 'https://example.com/health' : 'example.com'
+    await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, address)
+    await click(buttonIn(container, '创建任务')!)
+    expect(submit.mock.calls[0][0]).toMatchObject({ address, method: method === 'HTTP' ? 'http' : 'icmp', port: 0 })
+    expect(container.querySelector('[role="alert"]')!.textContent).toBe('任务名称已存在')
+    expect(buttonIn(container, '创建任务')!.disabled).toBe(false)
+  })
+
+  it('switches between separate horizontal task and node tables with the keyboard', async () => {
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage={false} onRefresh={() => {}} renderHistory={() => null} />))
+    expect(container.querySelector('#probe-targets-panel table')).toBeTruthy()
+    expect(container.querySelector('#probe-nodes-panel')).toBeNull()
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="编辑 广州电信"]')!.disabled).toBe(true)
+    await act(async () => container.querySelector('#probe-targets-tab')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    expect(container.querySelector('#probe-targets-panel')).toBeNull()
+    expect(container.querySelectorAll('#probe-nodes-panel tbody tr')).toHaveLength(2)
+    expect(document.activeElement?.id).toBe('probe-nodes-tab')
+    expect(container.querySelector('#probe-nodes-panel')!.textContent).toContain('等待结果')
+    expect(container.querySelector('#probe-nodes-panel')!.textContent).toContain('离线')
   })
 
   it('lists tasks by name and target without the removed wizard and subtitle', async () => {
@@ -106,6 +149,7 @@ describe('return latency probe tasks', () => {
     const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
     const refresh = vi.fn()
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={refresh} renderHistory={() => null} />))
+    await click(container.querySelector<HTMLButtonElement>('#probe-nodes-tab')!)
     const card = Array.from(container.querySelectorAll('.return-latency-server')).find(element => element.textContent?.includes('Hong Kong'))!
     await click(buttonIn(card, '探测参数')!)
     await click(buttonIn(document.body, '保存参数')!)
@@ -123,6 +167,7 @@ describe('return latency probe tasks', () => {
       return { task_id: 17 }
     })
     await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
+    await click(container.querySelector<HTMLButtonElement>('#probe-nodes-tab')!)
     const offline = Array.from(container.querySelectorAll('.return-latency-server')).find(element => element.textContent?.includes('Tokyo'))!
     expect(buttonIn(offline, '立即探测')!.disabled).toBe(true)
     const live = Array.from(container.querySelectorAll('.return-latency-server')).find(element => element.textContent?.includes('Hong Kong'))!
@@ -140,7 +185,7 @@ describe('return latency probe tasks', () => {
     expect(menu.textContent).toContain('资料与设置')
     expect(menu.textContent).toContain('监控与诊断')
     expect(menu.textContent).toContain('运维操作')
-    const item = Array.from(menu.querySelectorAll('button')).find(element => element.textContent === '回程延迟')!
+    const item = Array.from(menu.querySelectorAll('button')).find(element => element.textContent === '网络探测')!
     await click(item)
     expect(action).toHaveBeenCalledWith('return-latency', servers[0])
     expect(document.body.querySelector('[role="menu"]')).toBeNull()

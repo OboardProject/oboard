@@ -42,6 +42,16 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			return nil, err
 		}
 		return s.serverLatencyProbesRead(ctx, principal, request.ServerID, request.Limit)
+	case "latency_probe_tasks.targets":
+		var request struct{}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		resource, err := loadLatencyProbeResource(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"resource_version": resource.Version, "resource_updated_at": resource.UpdatedAt, "targets": latencyProbeAddressOptions(resource)}, nil
 	case "latency_probe_tasks.list":
 		var request struct{}
 		if err := strictAutomationInput(input, &request); err != nil {

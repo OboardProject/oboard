@@ -1087,7 +1087,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
   account: { label: '我的账户', desc: '维护个人信息、登录安全和订阅加密。', group: '账户' },
   servers: { label: '服务器管理', desc: '', group: '' },
-  'return-latency': { label: '回程延迟', desc: '统一管理服务器到各省份、运营商的延迟测试。', group: '网络' },
+  'return-latency': { label: '网络探测', desc: '管理探测目标，查看节点状态与 TCP、Ping、HTTP 探测结果。', group: '网络' },
   'proxy-paths': { label: '代理拓扑', desc: '', group: '' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
@@ -2416,7 +2416,7 @@ export function App() {
   const tabTitles: { [key: string]: string } = {
     dashboard: '系统总览',
     servers: '服务器管理',
-    'return-latency': '回程延迟',
+    'return-latency': '网络探测',
     'proxy-paths': '代理拓扑',
     users: '用户与分组管理',
     plans: '套餐管理',
@@ -8003,7 +8003,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       </div>
       <div className="section-actions server-toolbar-actions">
         <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
-        <button type="button" className="ghost server-toolbar-tool" onClick={() => goTab('return-latency')}><Gauge size={15} aria-hidden="true" /><span className="server-toolbar-tool-label">回程延迟</span></button>
+        <button type="button" className="ghost server-toolbar-tool" onClick={() => goTab('return-latency')}><Gauge size={15} aria-hidden="true" /><span className="server-toolbar-tool-label">网络探测</span></button>
         {hasManagementAccess(role) && (() => {
           const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
           return (
@@ -8622,7 +8622,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
-          <div className="access-note"><strong>回程延迟</strong><span>请在独立的“回程延迟”页面统一配置测试目标、周期与自动测试开关。</span></div>
+          <div className="access-note"><strong>网络探测</strong><span>请在独立的“网络探测”页面统一配置测试目标、周期与自动测试开关。</span></div>
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -8816,7 +8816,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
-          <div className="access-note"><strong>回程延迟</strong><span>请在独立的“回程延迟”页面统一配置测试目标、周期与自动测试开关。</span></div>
+          <div className="access-note"><strong>网络探测</strong><span>请在独立的“网络探测”页面统一配置测试目标、周期与自动测试开关。</span></div>
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -10505,7 +10505,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
       </div>
       <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
         <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
-        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />回程延迟</button>
+        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />网络探测</button>
       </div>
       <div className="connectivity-head-actions">
         <button
@@ -10542,7 +10542,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
               </button>
             ))}
           </div>
-          <span className="server-monitor-window-note">保留 {retentionDays} 天{response?.regional_data_start_at ? ` · 回程数据始于 ${formatTableTime(response.regional_data_start_at)}` : ''}</span>
+          <span className="server-monitor-window-note">保留 {retentionDays} 天{response?.regional_data_start_at ? ` · 探测数据始于 ${formatTableTime(response.regional_data_start_at)}` : ''}</span>
         </div>
         {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
 

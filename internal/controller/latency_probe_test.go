@@ -195,7 +195,7 @@ func TestLatencyProbeManualRunDeduplicatesAndStoresCallback(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
-	probeTask := model.LatencyProbeTask{Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	probeTask := model.LatencyProbeTask{Method: model.LatencyProbeModeICMP, Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
 	if err := db.SaveLatencyProbeTask(ctx, &probeTask); err != nil {
 		t.Fatal(err)
 	}

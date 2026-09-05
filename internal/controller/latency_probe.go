@@ -11,8 +11,10 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -237,15 +239,41 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 		province string
 		carrier  string
 		ips      []string
+		method   model.LatencyProbeMode
+		port     int
 	}
 	groups := make([]targetGroup, 0, len(tasks))
 	for _, task := range tasks {
 		if !task.Enabled {
 			continue
 		}
+		if task.Address != "" {
+			if server.LatencyProbeMaxTargets > 0 && len(items) >= server.LatencyProbeMaxTargets {
+				break
+			}
+			host, ip, _ := parseLatencyProbeResourceTarget(task.Address)
+			port, targetURL := task.Port, ""
+			if task.Method == model.LatencyProbeModeHTTP {
+				u, err := url.Parse(task.Address)
+				if err != nil {
+					continue
+				}
+				host, targetURL = u.Hostname(), task.Address
+				port = 80
+				if u.Scheme == "https" {
+					port = 443
+				}
+				if u.Port() != "" {
+					port, _ = strconv.Atoi(u.Port())
+				}
+				_, ip, _ = parseLatencyProbeResourceTarget(host)
+			}
+			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("t%d-0", task.ID), Kind: "custom", TaskID: task.ID, TaskName: task.Name, Mode: task.Method, Host: host, IP: ip, Port: port, URL: targetURL, IntervalSeconds: task.IntervalSeconds})
+			continue
+		}
 		ips := resource.Provinces[task.Province][task.Carrier]
 		if len(ips) > 0 {
-			groups = append(groups, targetGroup{taskID: task.ID, taskName: task.Name, interval: task.IntervalSeconds, province: task.Province, carrier: task.Carrier, ips: ips})
+			groups = append(groups, targetGroup{taskID: task.ID, taskName: task.Name, interval: task.IntervalSeconds, province: task.Province, carrier: task.Carrier, ips: ips, method: task.Method, port: task.Port})
 		}
 	}
 	sort.Slice(groups, func(i, j int) bool {
@@ -268,7 +296,14 @@ func latencyProbeTargets(resource latencyProbeResource, server model.Server, tas
 			if !ok {
 				continue
 			}
-			items = append(items, model.LatencyProbeTarget{ProbeID: fmt.Sprintf("t%d-%d", group.taskID, ipIndex), Kind: "regional", TaskID: group.taskID, TaskName: group.taskName, Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: regionalPort, IntervalSeconds: group.interval})
+			port := regionalPort
+			if group.method != "" {
+				port = group.port
+				if group.method == model.LatencyProbeModeICMP {
+					port = 0
+				}
+			}
+			items = append(items, model.LatencyProbeTarget{Mode: group.method, ProbeID: fmt.Sprintf("t%d-%d", group.taskID, ipIndex), Kind: "regional", TaskID: group.taskID, TaskName: group.taskName, Province: group.province, Carrier: group.carrier, Host: host, IP: ip, Port: port, IntervalSeconds: group.interval})
 		}
 		if !added {
 			break
@@ -342,14 +377,14 @@ func (s *Server) serverLatencyProbe(w http.ResponseWriter, r *http.Request, serv
 			fail(w, errors.New("服务器 Agent 版本过旧，请先更新 Agent 后再执行延迟测试"), http.StatusConflict)
 			return
 		}
-		resource, err := loadLatencyProbeResource(r.Context(), true)
-		if err != nil {
-			fail(w, err, 503)
-			return
-		}
 		tasks, err := s.store.ListLatencyProbeTasksForServer(r.Context(), serverID)
 		if err != nil {
 			fail(w, err, 500)
+			return
+		}
+		resource, err := latencyProbeResourceForTasks(r.Context(), tasks, true)
+		if err != nil {
+			fail(w, err, 503)
 			return
 		}
 		targets := latencyProbeTargets(resource, *server, tasks)
@@ -389,6 +424,7 @@ func (s *Server) latencyProbeResource(w http.ResponseWriter, r *http.Request) {
 		"resource_version":    resource.Version,
 		"resource_updated_at": resource.UpdatedAt,
 		"regions":             latencyProbeRegionOptions(resource),
+		"targets":             latencyProbeAddressOptions(resource),
 	})
 }
 
@@ -418,7 +454,7 @@ func (s *Server) applyLatencyProbeTaskResult(ctx context.Context, serverID int64
 	for index := range report.Items {
 		item := &report.Items[index]
 		target, ok := expected[item.ProbeID]
-		if !ok || seen[item.ProbeID] || item.Kind != target.Kind || item.Mode != string(plan.Mode) || item.Province != target.Province || item.Carrier != target.Carrier || item.Host != target.Host || item.IP != target.IP || item.Port != target.Port {
+		if !ok || seen[item.ProbeID] || item.Kind != target.Kind || item.Mode != string(effectiveLatencyTargetMode(target, plan.Mode)) || item.Province != target.Province || item.Carrier != target.Carrier || item.Host != target.Host || item.IP != target.IP || item.Port != target.Port {
 			return errors.New("latency probe result contains an unexpected target")
 		}
 		if item.SampleCount < 1 || item.SampleCount > 10 || item.SuccessCount < 0 || item.SuccessCount > item.SampleCount || item.Available != (item.SuccessCount > 0) || item.LatencyMS < 0 || item.MinLatencyMS < 0 || item.P95LatencyMS < 0 || item.JitterMS < 0 {
@@ -435,8 +471,21 @@ func (s *Server) applyLatencyProbeTaskResult(ctx context.Context, serverID int64
 	return s.store.SaveLatencyProbeResults(ctx, serverID, report)
 }
 
+func latencyProbeResourceForTasks(ctx context.Context, tasks []model.LatencyProbeTask, force bool) (latencyProbeResource, error) {
+	for _, task := range tasks {
+		if task.Enabled && task.Address == "" {
+			return loadLatencyProbeResource(ctx, force)
+		}
+	}
+	return latencyProbeResource{Version: "public"}, nil
+}
+
 func (s *Server) latencyProbePlanForServer(ctx context.Context, server model.Server) (model.LatencyProbeTargetsPlan, error) {
-	resource, err := loadLatencyProbeResource(ctx, false)
+	tasks, err := s.store.ListLatencyProbeTasksForServer(ctx, server.ID)
+	if err != nil {
+		return model.LatencyProbeTargetsPlan{}, err
+	}
+	resource, err := latencyProbeResourceForTasks(ctx, tasks, false)
 	if err != nil {
 		if server.LatencyProbeEnabled {
 			return model.LatencyProbeTargetsPlan{}, err
@@ -446,10 +495,6 @@ func (s *Server) latencyProbePlanForServer(ctx context.Context, server model.Ser
 	}
 	if resource.Version == "" {
 		resource.Version = "public"
-	}
-	tasks, err := s.store.ListLatencyProbeTasksForServer(ctx, server.ID)
-	if err != nil {
-		return model.LatencyProbeTargetsPlan{}, err
 	}
 	version := server.UpdatedAt.UnixNano()
 	if resourceVersion := resource.UpdatedAt.UnixNano(); resourceVersion > version {
@@ -492,7 +537,7 @@ func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport
 		item.ProbeID = strings.TrimSpace(item.ProbeID)
 		item.Host = strings.TrimSpace(item.Host)
 		item.IP = strings.TrimSpace(item.IP)
-		if item.ProbeID == "" || seen[item.ProbeID] || (item.Mode != string(model.LatencyProbeModeTCP) && item.Mode != string(model.LatencyProbeModeICMP)) || item.SampleCount < 1 || item.SampleCount > 10 || item.SuccessCount < 0 || item.SuccessCount > item.SampleCount || item.Available != (item.SuccessCount > 0) || item.LatencyMS < 0 || item.MinLatencyMS < 0 || item.P95LatencyMS < 0 || item.JitterMS < 0 {
+		if item.ProbeID == "" || seen[item.ProbeID] || (item.Mode != string(model.LatencyProbeModeTCP) && item.Mode != string(model.LatencyProbeModeICMP) && item.Mode != string(model.LatencyProbeModeHTTP)) || item.SampleCount < 1 || item.SampleCount > 10 || item.SuccessCount < 0 || item.SuccessCount > item.SampleCount || item.Available != (item.SuccessCount > 0) || item.LatencyMS < 0 || item.MinLatencyMS < 0 || item.P95LatencyMS < 0 || item.JitterMS < 0 {
 			return errors.New("延迟测试回报包含无效结果")
 		}
 		seen[item.ProbeID] = true
@@ -501,8 +546,8 @@ func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport
 			if item.Host != "cp.cloudflare.com" && item.Host != "www.12306.cn" && item.Host != "www.gstatic.com" {
 				return errors.New("公网延迟目标无效")
 			}
-		} else if item.Kind == "regional" {
-			if item.Province == "" || item.Carrier == "" {
+		} else if item.Kind == "regional" || item.Kind == "custom" {
+			if item.Kind == "regional" && (item.Province == "" || item.Carrier == "") {
 				return errors.New("地区延迟目标无效")
 			}
 			host, expectedIP, ok := parseLatencyProbeResourceTarget(item.Host)
@@ -522,7 +567,7 @@ func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport
 		} else {
 			return errors.New("延迟测试目标类型无效")
 		}
-		if item.Mode == string(model.LatencyProbeModeTCP) && (item.Port < 1 || item.Port > 65535) {
+		if (item.Mode == string(model.LatencyProbeModeTCP) || item.Mode == string(model.LatencyProbeModeHTTP)) && (item.Port < 1 || item.Port > 65535) {
 			return errors.New("TCP 延迟目标端口无效")
 		}
 		if item.Mode == string(model.LatencyProbeModeICMP) {
@@ -595,7 +640,7 @@ func (s *Server) resolveLatencyProbeReportTasks(ctx context.Context, serverID in
 	}
 	for index := range report.Items {
 		item := &report.Items[index]
-		if item.Kind != "regional" {
+		if item.Kind != "regional" && item.Kind != "custom" {
 			item.TaskID = 0
 			item.TaskName = ""
 			continue
@@ -603,6 +648,28 @@ func (s *Server) resolveLatencyProbeReportTasks(ctx context.Context, serverID in
 		task, ok := byID[item.TaskID]
 		if !ok {
 			return errors.New("延迟测试回报包含未分配的探测任务")
+		}
+		if task.Address != "" {
+			host, port := task.Address, task.Port
+			if task.Method == model.LatencyProbeModeHTTP {
+				u, err := url.Parse(task.Address)
+				if err != nil {
+					return err
+				}
+				host = u.Hostname()
+				port = 80
+				if u.Scheme == "https" {
+					port = 443
+				}
+				if u.Port() != "" {
+					port, _ = strconv.Atoi(u.Port())
+				}
+			}
+			if item.Kind != "custom" || item.Mode != string(task.Method) || item.Host != host || item.Port != port || item.ProbeID != fmt.Sprintf("t%d-0", task.ID) {
+				return errors.New("网络探测回报与任务目标不一致")
+			}
+		} else if item.Kind != "regional" || item.Mode != string(task.Method) || item.Port != task.Port {
+			return errors.New("网络探测回报与任务方式不一致")
 		}
 		if item.Province != task.Province || item.Carrier != task.Carrier {
 			return errors.New("延迟测试回报与探测任务目标不一致")
@@ -622,18 +689,11 @@ func (s *Server) latencyProbeTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		write(w, 200, map[string]any{"latency_probe_tasks": tasks})
 	case http.MethodPost:
-		var req struct {
-			Name            string  `json:"name"`
-			Province        string  `json:"province"`
-			Carrier         string  `json:"carrier"`
-			IntervalSeconds int     `json:"interval_seconds"`
-			Enabled         *bool   `json:"enabled"`
-			ServerIDs       []int64 `json:"server_ids"`
-		}
+		var req latencyProbeTaskCreateInput
 		if !decode(w, r, &req) {
 			return
 		}
-		task := model.LatencyProbeTask{Name: req.Name, Province: req.Province, Carrier: req.Carrier, IntervalSeconds: req.IntervalSeconds, Enabled: true, ServerIDs: req.ServerIDs}
+		task := model.LatencyProbeTask{Method: req.Method, Address: req.Address, Port: req.Port, Name: req.Name, Province: req.Province, Carrier: req.Carrier, IntervalSeconds: req.IntervalSeconds, Enabled: true, ServerIDs: req.ServerIDs}
 		if req.Enabled != nil {
 			task.Enabled = *req.Enabled
 		}
@@ -663,36 +723,11 @@ func (s *Server) latencyProbeTask(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		write(w, 200, map[string]any{"latency_probe_task": current})
 	case http.MethodPatch:
-		var req struct {
-			Name            *string  `json:"name"`
-			Province        *string  `json:"province"`
-			Carrier         *string  `json:"carrier"`
-			IntervalSeconds *int     `json:"interval_seconds"`
-			Enabled         *bool    `json:"enabled"`
-			ServerIDs       *[]int64 `json:"server_ids"`
-		}
+		var req latencyProbeTaskUpdateInput
 		if !decode(w, r, &req) {
 			return
 		}
-		next := *current
-		if req.Name != nil {
-			next.Name = *req.Name
-		}
-		if req.Province != nil {
-			next.Province = *req.Province
-		}
-		if req.Carrier != nil {
-			next.Carrier = *req.Carrier
-		}
-		if req.IntervalSeconds != nil {
-			next.IntervalSeconds = *req.IntervalSeconds
-		}
-		if req.Enabled != nil {
-			next.Enabled = *req.Enabled
-		}
-		if req.ServerIDs != nil {
-			next.ServerIDs = *req.ServerIDs
-		}
+		next := latencyProbeTaskFromUpdate(*current, req)
 		if err := s.store.SaveLatencyProbeTask(r.Context(), &next); err != nil {
 			fail(w, err, 400)
 			return
@@ -709,4 +744,21 @@ func (s *Server) latencyProbeTask(w http.ResponseWriter, r *http.Request) {
 	default:
 		method(w)
 	}
+}
+
+func effectiveLatencyTargetMode(target model.LatencyProbeTarget, fallback model.LatencyProbeMode) model.LatencyProbeMode {
+	if target.Mode != "" {
+		return target.Mode
+	}
+	return fallback
+}
+
+func latencyProbeAddressOptions(resource latencyProbeResource) []map[string]string {
+	options := []map[string]string{}
+	for _, region := range latencyProbeRegionOptions(resource) {
+		for _, address := range resource.Provinces[region.Province][region.Carrier] {
+			options = append(options, map[string]string{"province": region.Province, "carrier": region.Carrier, "address": address})
+		}
+	}
+	return options
 }

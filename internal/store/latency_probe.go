@@ -201,7 +201,7 @@ func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, f
 	}
 
 	var dataStartText sql.NullString
-	if err := s.db.QueryRowContext(ctx, `select min(checked_at) from server_latency_probe_results where server_id=? and kind='regional'`, serverID).Scan(&dataStartText); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select min(checked_at) from server_latency_probe_results where server_id=? and kind in ('regional','custom')`, serverID).Scan(&dataStartText); err != nil {
 		return nil, nil, err
 	}
 	var dataStart *time.Time
@@ -215,7 +215,7 @@ func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, f
 		with filtered as (
 			select task_id,case when trim(task_name)<>'' then task_name else province||' · '||carrier end as task_name,province,carrier,cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,latency_ms
 			from server_latency_probe_results
-			where server_id=? and kind='regional' and available=1 and success_count>0 and latency_ms>0 and checked_at>=? and checked_at<?
+			where server_id=? and kind in ('regional','custom') and available=1 and success_count>0 and latency_ms>0 and checked_at>=? and checked_at<?
 		)
 		select task_id,task_name,province,carrier,bucket_index,avg(latency_ms),min(latency_ms),max(latency_ms),count(*)
 		from filtered

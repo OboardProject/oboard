@@ -155,6 +155,7 @@ const (
 	ConnectivityProbeTargetGoogle     ConnectivityTarget = "google"
 	LatencyProbeModeTCP               LatencyProbeMode   = "tcp"
 	LatencyProbeModeICMP              LatencyProbeMode   = "icmp"
+	LatencyProbeModeHTTP              LatencyProbeMode   = "http"
 )
 
 type RouteAction string
@@ -2130,15 +2131,17 @@ type ExternalEgressProbePlan struct {
 }
 
 type LatencyProbeTarget struct {
-	ProbeID  string `json:"probe_id"`
-	Kind     string `json:"kind"`
-	TaskID   int64  `json:"task_id,omitempty"`
-	TaskName string `json:"task_name,omitempty"`
-	Province string `json:"province,omitempty"`
-	Carrier  string `json:"carrier,omitempty"`
-	Host     string `json:"host"`
-	IP       string `json:"ip,omitempty"`
-	Port     int    `json:"port"`
+	Mode     LatencyProbeMode `json:"mode,omitempty"`
+	URL      string           `json:"url,omitempty"`
+	ProbeID  string           `json:"probe_id"`
+	Kind     string           `json:"kind"`
+	TaskID   int64            `json:"task_id,omitempty"`
+	TaskName string           `json:"task_name,omitempty"`
+	Province string           `json:"province,omitempty"`
+	Carrier  string           `json:"carrier,omitempty"`
+	Host     string           `json:"host"`
+	IP       string           `json:"ip,omitempty"`
+	Port     int              `json:"port"`
 	// IntervalSeconds is the autonomous cadence for this single target. Zero means the plan cadence.
 	IntervalSeconds int `json:"interval_seconds,omitempty"`
 }
@@ -2148,18 +2151,21 @@ type LatencyProbeRegion struct {
 	Carrier  string `json:"carrier"`
 }
 
-// LatencyProbeTask is one probe target (province + carrier) executed on a chosen set of servers
+// LatencyProbeTask is one network target executed on a chosen set of servers
 // at its own cadence. Several tasks may share the same target with different servers or cadence.
 type LatencyProbeTask struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	Province        string    `json:"province"`
-	Carrier         string    `json:"carrier"`
-	IntervalSeconds int       `json:"interval_seconds"`
-	Enabled         bool      `json:"enabled"`
-	ServerIDs       []int64   `json:"server_ids"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	Method          LatencyProbeMode `json:"method"`
+	Address         string           `json:"address"`
+	Port            int              `json:"port"`
+	ID              int64            `json:"id"`
+	Name            string           `json:"name"`
+	Province        string           `json:"province"`
+	Carrier         string           `json:"carrier"`
+	IntervalSeconds int              `json:"interval_seconds"`
+	Enabled         bool             `json:"enabled"`
+	ServerIDs       []int64          `json:"server_ids"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 type LatencyProbeTargetsPlan struct {

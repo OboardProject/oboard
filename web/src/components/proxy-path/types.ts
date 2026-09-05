@@ -13,7 +13,13 @@ export type ConnectivityProbeTarget = 'auto' | 'cloudflare' | '12306' | 'google'
 export type LatencyProbeMode = 'tcp' | 'icmp'
 export type LatencyProbeRegion = { province: string; carrier: string }
 
+export type LatencyProbeAddress = LatencyProbeRegion & { address: string }
+export type NetworkProbeMethod = 'tcp' | 'icmp' | 'http'
+
 export type LatencyProbeTask = {
+  method: NetworkProbeMethod
+  address: string
+  port: number
   id: number
   name: string
   province: string

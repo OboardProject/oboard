@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/netip"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,12 +48,50 @@ func normalizeLatencyProbeTask(task *model.LatencyProbeTask) error {
 	}
 	task.Province = strings.TrimSpace(task.Province)
 	task.Carrier = strings.TrimSpace(task.Carrier)
-	if task.Province == "" || task.Carrier == "" {
-		return errors.New("探测目标必须同时包含省份和运营商")
+	task.Address = strings.TrimSpace(task.Address)
+	if task.Address == "" && (task.Province == "" || task.Carrier == "") {
+		return errors.New("请填写目标地址或选择完整的省份和运营商")
+	}
+	if task.Method == "" {
+		task.Method = model.LatencyProbeModeTCP
+	}
+	switch task.Method {
+	case model.LatencyProbeModeTCP:
+		if task.Port == 0 {
+			task.Port = 80
+		}
+		if task.Port < 1 || task.Port > 65535 {
+			return errors.New("TCP 端口需要在 1–65535 之间")
+		}
+	case model.LatencyProbeModeICMP:
+		task.Port = 0
+	case model.LatencyProbeModeHTTP:
+		task.Port = 0
+		if task.Address == "" {
+			return errors.New("HTTP 探测需要填写完整 URL")
+		}
+	default:
+		return errors.New("探测方式必须是 TCP、Ping 或 HTTP")
+	}
+	if task.Address != "" {
+		if err := ValidateNetworkProbeAddress(task.Address, task.Method); err != nil {
+			return err
+		}
+		if task.Method == model.LatencyProbeModeHTTP {
+			u, _ := url.Parse(task.Address)
+			u.Host = strings.ToLower(u.Host)
+			task.Address = u.String()
+		} else {
+			task.Address = strings.ToLower(task.Address)
+		}
+		task.Province, task.Carrier = "", ""
 	}
 	task.Name = strings.TrimSpace(task.Name)
 	if task.Name == "" {
 		task.Name = latencyProbeTargetLabel(task.Province, task.Carrier)
+		if task.Name == "" {
+			task.Name = string([]rune(task.Address)[:min(len([]rune(task.Address)), latencyProbeTaskMaxNameLen)])
+		}
 	}
 	if len([]rune(task.Name)) > latencyProbeTaskMaxNameLen {
 		return errors.New("任务名称过长")
@@ -88,7 +129,7 @@ func (s *Store) scanLatencyProbeTasks(ctx context.Context, query string, args ..
 		var task model.LatencyProbeTask
 		var enabled int
 		var createdAt, updatedAt string
-		if err := rows.Scan(&task.ID, &task.Name, &task.Province, &task.Carrier, &task.IntervalSeconds, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&task.ID, &task.Name, &task.Province, &task.Carrier, &task.IntervalSeconds, &task.Method, &task.Address, &task.Port, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		task.Enabled = enabled == 1
@@ -130,7 +171,7 @@ func (s *Store) attachLatencyProbeTaskServers(ctx context.Context, tasks []model
 
 // ListLatencyProbeTasks returns every probe task with its assigned servers.
 func (s *Store) ListLatencyProbeTasks(ctx context.Context) ([]model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,province,carrier,interval_seconds,enabled,created_at,updated_at from latency_probe_tasks order by name,id`)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks order by name,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +183,7 @@ func (s *Store) ListLatencyProbeTasks(ctx context.Context) ([]model.LatencyProbe
 
 // GetLatencyProbeTask loads one probe task by identifier.
 func (s *Store) GetLatencyProbeTask(ctx context.Context, id int64) (*model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,province,carrier,interval_seconds,enabled,created_at,updated_at from latency_probe_tasks where id=?`, id)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select id,name,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at from latency_probe_tasks where id=?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +198,7 @@ func (s *Store) GetLatencyProbeTask(ctx context.Context, id int64) (*model.Laten
 
 // ListLatencyProbeTasksForServer returns the enabled probe tasks assigned to one server.
 func (s *Store) ListLatencyProbeTasksForServer(ctx context.Context, serverID int64) ([]model.LatencyProbeTask, error) {
-	tasks, err := s.scanLatencyProbeTasks(ctx, `select t.id,t.name,t.province,t.carrier,t.interval_seconds,t.enabled,t.created_at,t.updated_at from latency_probe_tasks t join latency_probe_task_servers m on m.task_id=t.id where m.server_id=? and t.enabled=1 order by t.name,t.id`, serverID)
+	tasks, err := s.scanLatencyProbeTasks(ctx, `select t.id,t.name,t.province,t.carrier,t.interval_seconds,t.method,t.address,t.port,t.enabled,t.created_at,t.updated_at from latency_probe_tasks t join latency_probe_task_servers m on m.task_id=t.id where m.server_id=? and t.enabled=1 order by t.name,t.id`, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +243,7 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if task.ID == 0 {
-		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,province,carrier,interval_seconds,enabled,created_at,updated_at) values(?,?,?,?,?,?,?)`, task.Name, task.Province, task.Carrier, task.IntervalSeconds, boolInt(task.Enabled), now, now)
+		result, err := tx.ExecContext(ctx, `insert into latency_probe_tasks(name,province,carrier,interval_seconds,method,address,port,enabled,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?)`, task.Name, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, now)
 		if err != nil {
 			return err
 		}
@@ -213,7 +254,7 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 		task.ID = id
 		task.CreatedAt = parseTime(now)
 	} else {
-		result, err := tx.ExecContext(ctx, `update latency_probe_tasks set name=?,province=?,carrier=?,interval_seconds=?,enabled=?,updated_at=? where id=?`, task.Name, task.Province, task.Carrier, task.IntervalSeconds, boolInt(task.Enabled), now, task.ID)
+		result, err := tx.ExecContext(ctx, `update latency_probe_tasks set name=?,province=?,carrier=?,interval_seconds=?,method=?,address=?,port=?,enabled=?,updated_at=? where id=?`, task.Name, task.Province, task.Carrier, task.IntervalSeconds, task.Method, task.Address, task.Port, boolInt(task.Enabled), now, task.ID)
 		if err != nil {
 			return err
 		}
@@ -369,4 +410,64 @@ func (s *Store) migrateLatencyProbeTasks(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ValidateNetworkProbeAddress validates operator-supplied network probe destinations.
+func ValidateNetworkProbeAddress(address string, method model.LatencyProbeMode) error {
+	host := address
+	if method == model.LatencyProbeModeHTTP {
+		u, err := url.Parse(address)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" || len(address) > 2048 {
+			return errors.New("请输入不含凭据或片段的 HTTP / HTTPS URL")
+		}
+		if u.Port() != "" {
+			port, err := strconv.Atoi(u.Port())
+			if err != nil || port < 1 || port > 65535 {
+				return errors.New("HTTP 端口无效")
+			}
+		}
+		host = u.Hostname()
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if !addr.Is4() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() {
+			return errors.New("目标必须是公网 IPv4 地址或域名")
+		}
+		return nil
+	}
+	if len(host) > 253 || !strings.Contains(host, ".") {
+		return errors.New("请输入公网 IPv4 地址或完整域名")
+	}
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	if len(labels) < 2 || len(labels[len(labels)-1]) < 2 {
+		return errors.New("目标域名无效")
+	}
+	for _, c := range strings.ToLower(labels[len(labels)-1]) {
+		if c < 'a' || c > 'z' {
+			return errors.New("目标域名无效")
+		}
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("目标域名无效")
+		}
+		for _, c := range strings.ToLower(label) {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return errors.New("目标域名无效")
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) migrateNetworkProbeTaskFields(ctx context.Context) error {
+	for _, column := range []struct{ name, ddl string }{
+		{"method", "alter table latency_probe_tasks add column method text not null default 'tcp'"},
+		{"address", "alter table latency_probe_tasks add column address text not null default ''"},
+		{"port", "alter table latency_probe_tasks add column port integer not null default 80"},
+	} {
+		if err := s.ensureColumn(ctx, "latency_probe_tasks", column.name, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
 }

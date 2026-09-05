@@ -13,23 +13,29 @@ import (
 
 // latencyProbeTaskCreateInput is the machine contract for latency_probe_tasks.create.
 type latencyProbeTaskCreateInput struct {
-	Name            string  `json:"name,omitempty"`
-	Province        string  `json:"province"`
-	Carrier         string  `json:"carrier"`
-	IntervalSeconds int     `json:"interval_seconds,omitempty"`
-	Enabled         *bool   `json:"enabled,omitempty"`
-	ServerIDs       []int64 `json:"server_ids,omitempty"`
+	Method          model.LatencyProbeMode `json:"method,omitempty"`
+	Address         string                 `json:"address,omitempty"`
+	Port            int                    `json:"port,omitempty"`
+	Name            string                 `json:"name,omitempty"`
+	Province        string                 `json:"province"`
+	Carrier         string                 `json:"carrier"`
+	IntervalSeconds int                    `json:"interval_seconds,omitempty"`
+	Enabled         *bool                  `json:"enabled,omitempty"`
+	ServerIDs       []int64                `json:"server_ids,omitempty"`
 }
 
 // latencyProbeTaskUpdateInput is the machine contract for latency_probe_tasks.update.
 type latencyProbeTaskUpdateInput struct {
-	ID              int64    `json:"id"`
-	Name            *string  `json:"name,omitempty"`
-	Province        *string  `json:"province,omitempty"`
-	Carrier         *string  `json:"carrier,omitempty"`
-	IntervalSeconds *int     `json:"interval_seconds,omitempty"`
-	Enabled         *bool    `json:"enabled,omitempty"`
-	ServerIDs       *[]int64 `json:"server_ids,omitempty"`
+	Method          *model.LatencyProbeMode `json:"method,omitempty"`
+	Address         *string                 `json:"address,omitempty"`
+	Port            *int                    `json:"port,omitempty"`
+	ID              int64                   `json:"id"`
+	Name            *string                 `json:"name,omitempty"`
+	Province        *string                 `json:"province,omitempty"`
+	Carrier         *string                 `json:"carrier,omitempty"`
+	IntervalSeconds *int                    `json:"interval_seconds,omitempty"`
+	Enabled         *bool                   `json:"enabled,omitempty"`
+	ServerIDs       *[]int64                `json:"server_ids,omitempty"`
 }
 
 type latencyProbeTaskIDInput struct {
@@ -74,6 +80,15 @@ func (s *Server) latencyProbeTaskBoundary(ctx context.Context, principal applica
 // latencyProbeTaskFromUpdate folds a partial update onto the stored task.
 func latencyProbeTaskFromUpdate(current model.LatencyProbeTask, request latencyProbeTaskUpdateInput) model.LatencyProbeTask {
 	next := current
+	if request.Method != nil {
+		next.Method = *request.Method
+	}
+	if request.Address != nil {
+		next.Address = *request.Address
+	}
+	if request.Port != nil {
+		next.Port = *request.Port
+	}
 	if request.Name != nil {
 		next.Name = *request.Name
 	}
@@ -96,7 +111,7 @@ func latencyProbeTaskFromUpdate(current model.LatencyProbeTask, request latencyP
 }
 
 // registerLatencyProbeTaskOperations wires the latency probe task capabilities of
-// the MCP automation layer. A task owns exactly one province+carrier target, its
+// the MCP automation layer. A task owns one network target, its
 // own probe interval, and the set of servers that execute it.
 func (s *Server) registerLatencyProbeTaskOperations() {
 	s.automation.RegisterValidator("latency_probe_tasks.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
@@ -104,7 +119,7 @@ func (s *Server) registerLatencyProbeTaskOperations() {
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		task := model.LatencyProbeTask{Name: request.Name, Province: request.Province, Carrier: request.Carrier, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
+		task := model.LatencyProbeTask{Method: request.Method, Address: request.Address, Port: request.Port, Name: request.Name, Province: request.Province, Carrier: request.Carrier, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
 		if request.Enabled != nil {
 			task.Enabled = *request.Enabled
 		}
@@ -114,14 +129,14 @@ func (s *Server) registerLatencyProbeTaskOperations() {
 		if err := s.store.ValidateLatencyProbeTask(ctx, &task); err != nil {
 			return nil, err
 		}
-		return map[string]any{"name": task.Name, "province": task.Province, "carrier": task.Carrier, "interval_seconds": task.IntervalSeconds, "server_count": len(task.ServerIDs)}, nil
+		return map[string]any{"method": task.Method, "address": task.Address, "port": task.Port, "name": task.Name, "province": task.Province, "carrier": task.Carrier, "interval_seconds": task.IntervalSeconds, "server_count": len(task.ServerIDs)}, nil
 	})
 	s.automation.Register("latency_probe_tasks.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request latencyProbeTaskCreateInput
 		if err := strictAutomationInput(input, &request); err != nil {
 			return nil, err
 		}
-		task := model.LatencyProbeTask{Name: request.Name, Province: request.Province, Carrier: request.Carrier, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
+		task := model.LatencyProbeTask{Method: request.Method, Address: request.Address, Port: request.Port, Name: request.Name, Province: request.Province, Carrier: request.Carrier, IntervalSeconds: request.IntervalSeconds, Enabled: true, ServerIDs: request.ServerIDs}
 		if request.Enabled != nil {
 			task.Enabled = *request.Enabled
 		}
@@ -151,7 +166,7 @@ func (s *Server) registerLatencyProbeTaskOperations() {
 		if err := s.store.ValidateLatencyProbeTask(ctx, &next); err != nil {
 			return nil, err
 		}
-		return map[string]any{"id": next.ID, "name": next.Name, "province": next.Province, "carrier": next.Carrier, "interval_seconds": next.IntervalSeconds, "server_count": len(next.ServerIDs)}, nil
+		return map[string]any{"id": next.ID, "method": next.Method, "address": next.Address, "port": next.Port, "name": next.Name, "province": next.Province, "carrier": next.Carrier, "interval_seconds": next.IntervalSeconds, "server_count": len(next.ServerIDs)}, nil
 	})
 	s.automation.RegisterRevisionResolver("latency_probe_tasks.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
 		var request latencyProbeTaskUpdateInput
