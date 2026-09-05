@@ -23,6 +23,7 @@ var knownUIPagePaths = map[string]struct{}{
 	"/plans":                {},
 	"/port-forwards":        {},
 	"/proxy-paths":          {},
+	"/return-latency":       {},
 	"/routing":              {},
 	"/servers":              {},
 	"/settings":             {},

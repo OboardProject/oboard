@@ -2347,6 +2347,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = timing.run("settings", addSettings)
 		}
+	case "return-latency":
+		if err = require(model.RoleOperator); err == nil {
+			err = addServers()
+		}
 	case "servers":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
@@ -4038,7 +4042,12 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes"`
 			TrafficUsedBytes         *int64                      `json:"traffic_used_bytes"`
 		}
-		if !decode(w, r, &input) {
+		var raw json.RawMessage
+		if !decode(w, r, &raw) {
+			return
+		}
+		if err := json.Unmarshal(raw, &input); err != nil {
+			fail(w, err, http.StatusBadRequest)
 			return
 		}
 		current, err := s.store.GetServer(r.Context(), id)
@@ -4046,7 +4055,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
-		v := input.Server
+		v := *current
+		if err := json.Unmarshal(raw, &v); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
 		v.ID = id
 		if input.MTUMode == nil {
 			v.MTUMode = current.MTUMode

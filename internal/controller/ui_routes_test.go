@@ -3,7 +3,7 @@ package controller
 import "testing"
 
 func TestIsKnownUIPagePath(t *testing.T) {
-	for _, path := range []string{"/", "/dashboard", "/dashboard/", "/servers", "/proxy-paths", "/subscriptions", "/node-order-templates"} {
+	for _, path := range []string{"/", "/dashboard", "/dashboard/", "/servers", "/return-latency", "/return-latency/", "/proxy-paths", "/subscriptions", "/node-order-templates"} {
 		if !isKnownUIPagePath(path) {
 			t.Errorf("isKnownUIPagePath(%q) = false; want true", path)
 		}

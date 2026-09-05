@@ -15,9 +15,8 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
   const offline = enrolled && !isOnline
   const isViewer = String(role)==='viewer'
   const tabs: Array<{id:Tab,label:string; disabled?:boolean; hint?:string}> = [
-    { id:'overview', label:'概览' },
-    { id:'agent', label:'Agent', disabled: isViewer, hint: isViewer? '需要管理员权限': undefined },
-    { id:'settings', label:'系统设置', disabled: isViewer, hint: isViewer? '需要管理员权限': undefined },
+    { id:'overview', label:'主机信息' },
+    { id:'agent', label:'接入与更新', disabled: isViewer, hint: isViewer? '需要管理员权限': undefined },
     { id:'logs', label:'日志', disabled: isViewer || !enrolled || !isOnline, hint: isViewer? '需要管理员权限' : !enrolled? '未接入 Agent' : !isOnline? 'Agent 离线' : undefined },
   ]
 
@@ -52,7 +51,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
   }
 
   return (
-    <ServerWorkspaceDialog server={server} title="系统" tabs={tabs as any} activeTab={tab} onTabChange={(id)=> setTab(id as Tab)} onClose={onClose}>
+    <ServerWorkspaceDialog server={server} title="Agent 维护与日志" tabs={tabs as any} activeTab={tab} onTabChange={(id)=> setTab(id as Tab)} onClose={onClose}>
       {tab==='overview' && <SystemOverviewTab server={server} />}
       {tab==='agent' && <SystemAgentTab server={server} controllerURL={controllerURL} expectedBuild={expectedBuild} onEnroll={handleEnroll} onUpdateAgent={handleUpdateAgent} notify={notify} />}
       {tab==='settings' && <SystemSettingsTab server={server} onSave={handleSaveSystem} onCheckTime={handleCheckTime} />}

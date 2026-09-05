@@ -20,6 +20,8 @@ describe('server resource history', () => {
   it('opens the unified monitor from the whole server card', () => {
     expect(source).toContain('server-monitor-open-overlay')
     expect(source).toContain('服务器监控视图')
-    expect(source).toContain("useState<'load' | 'latency'>('load')")
+    expect(source.includes("initialView = 'load'")).toBe(true)
+    expect(source.includes("useState<'load' | 'latency'>(initialView)")).toBe(true)
+    expect(source.includes('initialView="latency"')).toBe(true)
   })
 })

@@ -1,3 +1,4 @@
+import { ReturnLatencyPage } from './components/server/ReturnLatencyPage'
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
@@ -976,20 +977,6 @@ function ServerRegionField({ draft, update, servers }: { draft: any; update: (pa
   )
 }
 
-function useLatencyProbeResource(client: any) {
-  const [resource, setResource] = useState<{ regions: LatencyProbeRegion[]; loading: boolean; error: string }>({ regions: [], loading: true, error: '' })
-  useEffect(() => {
-    let cancelled = false
-    void client.request('/latency-probe-resource').then((response: any) => {
-      if (!cancelled) setResource({ regions: response.regions || [], loading: false, error: '' })
-    }).catch((error: any) => {
-      if (!cancelled) setResource(current => ({ ...current, loading: false, error: localizeErrorMessage(error?.message || error) }))
-    })
-    return () => { cancelled = true }
-  }, [client])
-  return resource
-}
-
 function connectivityProbeDomain(server: Pick<Server, 'latency_probe_public_target' | 'region_mode' | 'region_code' | 'detected_region_code'>) {
   if (server.latency_probe_public_target === '12306') return 'www.12306.cn'
   if (server.latency_probe_public_target === 'google') return 'www.gstatic.com'
@@ -997,412 +984,6 @@ function connectivityProbeDomain(server: Pick<Server, 'latency_probe_public_targ
   return serverRegionCode(server) === 'CN' ? 'www.12306.cn' : 'cp.cloudflare.com'
 }
 
-function LatencyProbeSettingsDialog({
-  draft,
-  onCancel,
-  onSave,
-  regions,
-  loading,
-  error,
-}: {
-  draft: any
-  onCancel: () => void
-  onSave: (patch: Partial<ReturnType<typeof defaultServerDraft>>) => void | Promise<void>
-  regions: LatencyProbeRegion[]
-  loading?: boolean
-  error?: string
-}) {
-  const [values, setValues] = useState({
-    latency_probe_mode: (draft.latency_probe_mode || 'tcp') as LatencyProbeMode,
-    latency_probe_public_target: (draft.latency_probe_public_target || 'auto') as ConnectivityProbeTarget,
-    latency_probe_interval_seconds: draft.latency_probe_interval_seconds || 60,
-    latency_probe_sample_count: draft.latency_probe_sample_count || 3,
-    latency_probe_max_targets: draft.latency_probe_max_targets || 64,
-  })
-  const [selected, setSelected] = useState<LatencyProbeRegion[]>(() =>
-    Array.isArray(draft.latency_probe_regions) ? [...draft.latency_probe_regions] : []
-  )
-  const [searchKeyword, setSearchKeyword] = useState('')
-  const [carrierFilter, setCarrierFilter] = useState('all')
-  const [saving, setSaving] = useState(false)
-
-  const updateParam = (patch: Partial<typeof values>) => setValues(old => ({ ...old, ...patch }))
-
-  const keyOf = (r: LatencyProbeRegion) => `${r.province}\u0000${r.carrier}`
-  const availableKeys = useMemo(() => new Set(regions.map(keyOf)), [regions])
-  const options = useMemo(() => {
-    const map = new Map<string, LatencyProbeRegion>()
-    for (const r of regions) map.set(keyOf(r), r)
-    for (const r of selected) if (!map.has(keyOf(r))) map.set(keyOf(r), r)
-    return Array.from(map.values()).sort((a, b) =>
-      a.province.localeCompare(b.province, 'zh-CN') || a.carrier.localeCompare(b.carrier, 'zh-CN')
-    )
-  }, [regions, selected])
-
-  const selectedKeys = useMemo(() => new Set(selected.map(keyOf)), [selected])
-
-  const carrierOptions = useMemo(() => {
-    const carrierSet = new Set(options.map(o => o.carrier))
-    const priority = ['中国电信', '中国联通', '中国移动', '中国广电', '教育网']
-    return Array.from(carrierSet).sort((a, b) => {
-      const ia = priority.indexOf(a)
-      const ib = priority.indexOf(b)
-      if (ia !== -1 && ib !== -1) return ia - ib
-      if (ia !== -1) return -1
-      if (ib !== -1) return 1
-      return a.localeCompare(b, 'zh-CN')
-    })
-  }, [options])
-
-  const filteredOptions = useMemo(() => {
-    const q = searchKeyword.trim().toLowerCase()
-    return options.filter(r => {
-      if (carrierFilter !== 'all' && r.carrier !== carrierFilter) return false
-      if (!q) return true
-      return r.province.toLowerCase().includes(q) || r.carrier.toLowerCase().includes(q)
-    })
-  }, [options, carrierFilter, searchKeyword])
-
-  const grouped = useMemo(() => {
-    return filteredOptions.reduce<Record<string, LatencyProbeRegion[]>>((acc, r) => {
-      ;(acc[r.province] ||= []).push(r)
-      return acc
-    }, {})
-  }, [filteredOptions])
-
-  const toggle = (region: LatencyProbeRegion) => {
-    const key = keyOf(region)
-    if (selectedKeys.has(key)) {
-      setSelected(curr => curr.filter(item => keyOf(item) !== key))
-    } else {
-      setSelected(curr => [...curr, region])
-    }
-  }
-
-  const toggleProvince = (province: string) => {
-    const provinceEntries = options.filter(o => o.province === province)
-    const allSelected = provinceEntries.length > 0 && provinceEntries.every(e => selectedKeys.has(keyOf(e)))
-    if (allSelected) {
-      const keysToRemove = new Set(provinceEntries.map(keyOf))
-      setSelected(curr => curr.filter(item => !keysToRemove.has(keyOf(item))))
-    } else {
-      const missing = provinceEntries.filter(e => !selectedKeys.has(keyOf(e)))
-      setSelected(curr => [...curr, ...missing])
-    }
-  }
-
-  const selectAllFiltered = () => {
-    const missing = filteredOptions.filter(e => !selectedKeys.has(keyOf(e)))
-    setSelected(curr => [...curr, ...missing])
-  }
-
-  const deselectAllFiltered = () => {
-    const keysToRemove = new Set(filteredOptions.map(keyOf))
-    setSelected(curr => curr.filter(item => !keysToRemove.has(keyOf(item))))
-  }
-
-  const selectBigThree = () => {
-    const bigThree = options.filter(o => ['中国电信', '中国联通', '中国移动'].includes(o.carrier))
-    const missing = bigThree.filter(e => !selectedKeys.has(keyOf(e)))
-    setSelected(curr => [...curr, ...missing])
-  }
-
-  const clearAll = () => {
-    setSelected([])
-  }
-
-  const automaticDomain = connectivityProbeDomain(draft)
-
-  const save = async () => {
-    if (saving) return
-    setSaving(true)
-    try {
-      await onSave({
-        latency_probe_mode: values.latency_probe_mode,
-        latency_probe_public_target: values.latency_probe_public_target,
-        latency_probe_interval_seconds: values.latency_probe_interval_seconds,
-        latency_probe_sample_count: values.latency_probe_sample_count,
-        latency_probe_max_targets: values.latency_probe_max_targets,
-        latency_probe_regions: selected,
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const cancel = () => {
-    if (!saving) onCancel()
-  }
-
-  const isFilteredAllSelected = filteredOptions.length > 0 && filteredOptions.every(e => selectedKeys.has(keyOf(e)))
-  const totalAvailable = options.length
-  const selectedCount = selected.length
-  const maxTargets = values.latency_probe_max_targets
-  const isOverLimit = selectedCount + 1 > maxTargets
-
-  return (
-    <MotionDialogPanel onCancel={cancel} className="latency-dialog">
-      <header className="dialog-head">
-        <div>
-          <h2 id="latency-dialog-title">延迟测试与地区目标设置</h2>
-          <p className="muted">配置探测参数，并按省份和运营商选择需要参与测试的地区目标节点。</p>
-        </div>
-        <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭">
-          <XIcon />
-        </button>
-      </header>
-
-      <div className="dialog-body latency-dialog-body">
-        <div className="latency-params-card">
-          <div className="form-section-title">探测参数</div>
-          <div className="latency-params-grid">
-            <FormField label="测试方式" hint="TCP 测试端口连接；ICMP 测试 Echo。">
-              <Select
-                aria-label="延迟测试方式"
-                variant="segmented"
-                value={values.latency_probe_mode}
-                onChange={event => updateParam({ latency_probe_mode: event.target.value as LatencyProbeMode })}
-              >
-                <option value="tcp">TCP Ping</option>
-                <option value="icmp">ICMP Ping</option>
-              </Select>
-            </FormField>
-
-            <FormField label="公网目标" hint="断线期间判断公网连通性。">
-              <Select
-                aria-label="延迟测试公网目标"
-                value={values.latency_probe_public_target}
-                onChange={event => updateParam({ latency_probe_public_target: event.target.value as ConnectivityProbeTarget })}
-              >
-                <option value="auto">自动（当前：{automaticDomain}）</option>
-                <option value="cloudflare">cp.cloudflare.com</option>
-                <option value="12306">www.12306.cn</option>
-                <option value="google">www.gstatic.com</option>
-              </Select>
-            </FormField>
-
-            <FormField label="采样间隔（秒）" hint="自动测试周期（30–86400 秒）。">
-              <input
-                aria-label="延迟测试采样间隔（秒）"
-                type="number"
-                min={30}
-                max={86400}
-                placeholder="60"
-                value={values.latency_probe_interval_seconds === '' ? '' : values.latency_probe_interval_seconds}
-                onChange={e => updateParam({ latency_probe_interval_seconds: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
-                onBlur={e => {
-                  const num = Number(e.target.value)
-                  if (!e.target.value || isNaN(num) || num < 30) updateParam({ latency_probe_interval_seconds: 30 })
-                  else if (num > 86400) updateParam({ latency_probe_interval_seconds: 86400 })
-                }}
-              />
-            </FormField>
-
-            <FormField label="每个目标样本数" hint="连续测试样本数（1–10）。">
-              <input
-                aria-label="每个延迟目标样本数"
-                type="number"
-                min={1}
-                max={10}
-                placeholder="3"
-                value={values.latency_probe_sample_count === '' ? '' : values.latency_probe_sample_count}
-                onChange={e => updateParam({ latency_probe_sample_count: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
-                onBlur={e => {
-                  const num = Number(e.target.value)
-                  if (!e.target.value || isNaN(num) || num < 1) updateParam({ latency_probe_sample_count: 1 })
-                  else if (num > 10) updateParam({ latency_probe_sample_count: 10 })
-                }}
-              />
-            </FormField>
-
-            <FormField label="单次最多目标数" hint="含 1 个公网目标（1–256）。">
-              <input
-                aria-label="单次最多目标数"
-                type="number"
-                min={1}
-                max={256}
-                placeholder="64"
-                value={values.latency_probe_max_targets === '' ? '' : values.latency_probe_max_targets}
-                onChange={e => updateParam({ latency_probe_max_targets: e.target.value === '' ? ('' as any) : Number(e.target.value) })}
-                onBlur={e => {
-                  const num = Number(e.target.value)
-                  if (!e.target.value || isNaN(num) || num < 1) updateParam({ latency_probe_max_targets: 1 })
-                  else if (num > 256) updateParam({ latency_probe_max_targets: 256 })
-                }}
-              />
-            </FormField>
-          </div>
-        </div>
-
-        <div className="latency-regions-section">
-          <div className="latency-regions-header">
-            <div className="latency-regions-title-row">
-              <div className="form-section-title">地区目标选择</div>
-              <div className="latency-stats-badge">
-                <span>已选 <strong>{selectedCount}</strong> / 可用 {totalAvailable} 个节点</span>
-                {selectedCount > 0 && <span>覆盖 <strong>{new Set(selected.map(s => s.province)).size}</strong> 个省份</span>}
-              </div>
-            </div>
-            <div className="latency-toolbar">
-              <div className="latency-search-wrap">
-                <Search size={14} className="latency-search-icon" aria-hidden="true" />
-                <input
-                  type="text"
-                  placeholder="搜索省份或运营商（如：广东 / 电信）..."
-                  value={searchKeyword}
-                  onChange={e => setSearchKeyword(e.target.value)}
-                  className="latency-search-input"
-                />
-                {searchKeyword && (
-                  <button type="button" className="ghost icon-button latency-search-clear" onClick={() => setSearchKeyword('')} title="清空搜索">
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-
-              <div className="latency-quick-actions">
-                <div className="latency-carrier-filters" role="group" aria-label="运营商筛选">
-                  <button
-                    type="button"
-                    className={`latency-pill-btn ${carrierFilter === 'all' ? 'active' : ''}`}
-                    onClick={() => setCarrierFilter('all')}
-                  >
-                    全部运营商
-                  </button>
-                  {carrierOptions.map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`latency-pill-btn ${carrierFilter === c ? 'active' : ''}`}
-                      onClick={() => setCarrierFilter(carrierFilter === c ? 'all' : c)}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="latency-batch-btns">
-                  <button type="button" className="ghost latency-action-btn" onClick={selectBigThree}>
-                    全选三网
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost latency-action-btn"
-                    onClick={isFilteredAllSelected ? deselectAllFiltered : selectAllFiltered}
-                  >
-                    {isFilteredAllSelected ? (searchKeyword || carrierFilter !== 'all' ? '取消筛选全选' : '取消全选') : (searchKeyword || carrierFilter !== 'all' ? '全选筛选结果' : '全选所有')}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost latency-action-btn danger-hover"
-                    onClick={clearAll}
-                    disabled={selectedCount === 0}
-                  >
-                    清空已选
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {error && <p className="danger-text" role="alert">地区资源列表加载失败：{error}</p>}
-
-          <div className="latency-region-cards-container" aria-busy={loading}>
-            {loading && options.length === 0 ? (
-              <div className="latency-loading-state">
-                <Loader2 className="animate-spin" size={20} />
-                <span>正在加载地区目标资源...</span>
-              </div>
-            ) : Object.keys(grouped).length === 0 ? (
-              <div className="latency-empty-state">
-                <span>未找到匹配的地区或运营商节点</span>
-                {(searchKeyword || carrierFilter !== 'all') && (
-                  <button type="button" className="ghost" onClick={() => { setSearchKeyword(''); setCarrierFilter('all') }}>
-                    重置筛选条件
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="latency-province-grid">
-                {Object.entries(grouped).map(([province, entries]) => {
-                  const provinceAllEntries = options.filter(o => o.province === province)
-                  const provinceSelectedCount = provinceAllEntries.filter(e => selectedKeys.has(keyOf(e))).length
-                  const isAllProvinceSelected = provinceAllEntries.length > 0 && provinceSelectedCount === provinceAllEntries.length
-                  const hasSelectionInProvince = provinceSelectedCount > 0
-
-                  return (
-                    <div key={province} className={`latency-province-card ${hasSelectionInProvince ? 'has-selected' : ''}`}>
-                      <div className="latency-province-head">
-                        <div className="province-info">
-                          <strong>{province}</strong>
-                          <span className={`province-count-badge ${hasSelectionInProvince ? 'active' : ''}`}>
-                            {provinceSelectedCount}/{provinceAllEntries.length}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          className="ghost province-toggle-btn"
-                          onClick={() => toggleProvince(province)}
-                          title={isAllProvinceSelected ? `取消全选 ${province}` : `全选 ${province} 全部节点`}
-                        >
-                          {isAllProvinceSelected ? '取消全选' : '全选省份'}
-                        </button>
-                      </div>
-
-                      <div className="latency-carrier-chips">
-                        {entries.map(region => {
-                          const key = keyOf(region)
-                          const isSelected = selectedKeys.has(key)
-                          const isAvailable = availableKeys.has(key)
-                          return (
-                            <label
-                              key={key}
-                              className={`latency-carrier-chip ${isSelected ? 'is-selected' : ''} ${!isAvailable ? 'is-removed' : ''}`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggle(region)}
-                              />
-                              <span className="carrier-label">{region.carrier}</span>
-                              {!isAvailable && <span className="removed-flag">已移除</span>}
-                            </label>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <footer className="dialog-actions latency-dialog-actions">
-        <div className="latency-dialog-summary">
-          {isOverLimit ? (
-            <span className="danger-text" role="alert">
-              ⚠️ 已选 {selectedCount} 个目标，超过上限 {maxTargets - 1} 个（公网目标占用 1 个）
-            </span>
-          ) : (
-            <span className="muted">
-              已选 {selectedCount} 个目标节点 · 探测周期 {values.latency_probe_interval_seconds}s
-            </span>
-          )}
-        </div>
-        <div className="dialog-action-buttons">
-          <button type="button" className="ghost" onClick={cancel} disabled={saving}>
-            取消
-          </button>
-          <button type="button" onClick={() => void save()} disabled={saving}>
-            {saving ? '保存中...' : '确认并保存'}
-          </button>
-        </div>
-      </footer>
-    </MotionDialogPanel>
-  )
-}
 
 function connectivityStatusLabel(status: string) {
   if (status === 'available') return '可用'
@@ -1501,6 +1082,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   dashboard: { label: '总览', desc: '全局健康、版本、部署状态和关键指标。', group: '总览' },
   account: { label: '我的账户', desc: '维护个人信息、登录安全和订阅加密。', group: '账户' },
   servers: { label: '服务器管理', desc: '', group: '' },
+  'return-latency': { label: '回程延迟', desc: '统一管理服务器到各省份、运营商的延迟测试。', group: '网络' },
   'proxy-paths': { label: '代理拓扑', desc: '', group: '' },
   inbounds: { label: '入口', desc: '统一编排 sing-box 入站监听、协议和端口。', group: '代理' },
   outbounds: { label: '出口', desc: '配置服务器出口、下一跳和协议认证参数。', group: '代理' },
@@ -1521,13 +1103,13 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
-  { label: '', tabs: ['dashboard', 'servers', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
+  { label: '', tabs: ['dashboard', 'servers', 'return-latency', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
 ]
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 2, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
-  servers: 'operator', 'proxy-paths': 'operator',
+  'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
   nodes: 'none',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
@@ -1605,6 +1187,7 @@ function formatDashDate(d = new Date()) {
 function getTabIcon(x: string) {
   if (x === 'account') return <User size={18} />
   if (x === 'dashboard') return <LayoutDashboard size={18} />
+  if (x === 'return-latency') return <Gauge size={18} />
   if (x === 'servers') return <ServerIcon size={18} />
   if (x === 'proxy-paths') return <Workflow size={18} />
   if (x === 'users') return <UsersIcon size={18} />
@@ -2560,7 +2143,7 @@ export function App() {
   const serverTelemetryStatus = useServerTelemetry(serverTelemetryEnabled, appWebSocketURL('/api/v1/ui/events'), handleServerTelemetry)
 
   useEffect(() => {
-    if (!serverTelemetryEnabled || tab !== 'dashboard' || serverTelemetryStatus === 'open') return
+    if (!serverTelemetryEnabled || !['dashboard', 'return-latency'].includes(tab) || serverTelemetryStatus === 'open') return
     let cancelled = false
     let timer: number | undefined
     const scheduleNext = () => {
@@ -2822,6 +2405,7 @@ export function App() {
   const tabTitles: { [key: string]: string } = {
     dashboard: '系统总览',
     servers: '服务器管理',
+    'return-latency': '回程延迟',
     'proxy-paths': '代理拓扑',
     users: '用户与分组管理',
     plans: '套餐管理',
@@ -3369,6 +2953,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
+  if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
   if (tab === 'servers') return <Servers data={data} client={client} load={load} loading={loading} notify={notify} realtimeStatus={serverTelemetryStatus} />
   if (tab === 'proxy-paths') return <ProxyPathsWorkspace data={data} client={client} load={load} loading={loading} topbarTarget={proxyPathTopbarTarget} patchPageData={patchPageData} focusRequest={proxyInboundFocus} />
   if (tab === 'inbounds') return <Inbounds data={data} client={client} load={load} />
@@ -7452,11 +7037,11 @@ function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolea
 }
 
 const serverSettingTabs = [
-  { id: 'basic', label: '基础' },
-  { id: 'billing', label: '到期' },
-  { id: 'network', label: '网络' },
-  { id: 'monitor', label: '监控' },
-  { id: 'system', label: '系统' },
+  { id: 'basic', label: '基本信息' },
+  { id: 'billing', label: '计费与流量' },
+  { id: 'network', label: '连接与端口' },
+  { id: 'monitor', label: '监控与提醒' },
+  { id: 'system', label: '主机与安全' },
 ] as const
 
 type ServerSettingsTab = typeof serverSettingTabs[number]['id']
@@ -7834,7 +7419,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [serverRefreshing, setServerRefreshing] = useState(false)
   const [serverRefreshFailed, setServerRefreshFailed] = useState(false)
   const [serverRefreshedAt, setServerRefreshedAt] = useState<Date | null>(null)
-  const latencyProbeResource = useLatencyProbeResource(client)
   const serverRequestInFlightRef = useRef(false)
   const serversMountedRef = useRef(false)
   const pendingDeleteServerIDsRef = useRef(new Set<number>())
@@ -8314,7 +7898,11 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
   const handleServerAction = async (type: string, s: Server) => {
     if (type === 'about' || type === 'details') { clearServerWorkspaces(); setAboutServer(s) }
-    else if (type === 'basic-settings' || type === 'edit') { clearServerWorkspaces(); setBasicServer(s) }
+    else if (type === 'basic-settings' || type === 'edit') { clearServerWorkspaces(); setEditServer(s) }
+    else if (type === 'return-latency') {
+      window.history.pushState({}, '', `${pathForTab('return-latency')}?server=${s.id}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }
     else if (type === 'terminal') setTerminalWorkspace({ serverId: s.id })
     else if (type === 'resource-details') setConnectivityServer({ server: s })
     else if (type === 'time-details') setTimeDetailServer(s)
@@ -8324,6 +7912,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'mtu') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'mtu' }) }
     else if (type === 'dns') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'dns' }) }
     else if (type === 'network') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'overview' }) }
+    else if (type === 'agent-maintenance') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'agent' }) }
     else if (type === 'system') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'overview' }) }
     else if (type === 'agent-config') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'settings' }) }
     else if (type === 'update-agent') void updateAgent(s)
@@ -8410,6 +7999,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       </div>
       <div className="section-actions server-toolbar-actions">
         <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
+        <button type="button" className="ghost server-toolbar-tool" onClick={() => goTab('return-latency')}><Gauge size={15} aria-hidden="true" /><span>回程延迟</span></button>
         {hasManagementAccess(role) && (() => {
           const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
           return (
@@ -8545,8 +8135,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       : !visibleServers.length
       ? <div className="server-filter-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
       : <ServerListPage key={JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])} items={visibleServers} view={view} renderItem={renderServerCard} />}
-    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
-    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
+    <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
+    <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
     <AnimatePresence>{detailServer && <ServerDetailDialog server={detailServer} role={role} onResetTraffic={() => void resetServerTraffic(detailServer)} onClose={() => setDetailServer(null)} />}</AnimatePresence>
     <AnimatePresence>{aboutServer && <ServerAboutDialog server={aboutServer} onClose={() => setAboutServer(null)} />}</AnimatePresence>
@@ -8890,7 +8480,7 @@ function CommandCopyBlock({ value, buttonText = '复制命令', language = 'bash
   </div>
 }
 
-function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
+function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
   const update = (patch: Record<string, any>) => setDraft((old: any) => {
     const next: any = { ...old, ...patch }
     const hasTraffic = 'traffic_reset_mode' in patch || 'traffic_reset_day' in patch
@@ -8912,7 +8502,6 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
   })
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
-  const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -8929,7 +8518,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
   const cancel = () => { if (!saving) onCancel() }
   return <MotionDialogPanel onCancel={cancel} className="server-dialog server-dialog-wide">
       <header className="dialog-head">
-        <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">按顶部标签依次填写基础、到期、网络、监控和系统设置。</p></div>
+        <div><h2 id="server-dialog-title">添加服务器</h2><p className="muted">填写基本信息后即可创建，其余设置可按需调整。</p></div>
         <button className="ghost dialog-close icon-button" onClick={cancel} disabled={saving} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
       <div className="server-dialog-tabs" role="tablist" aria-label="服务器设置分类">
@@ -8945,23 +8534,6 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：server-1" />
           </FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
-            <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
-          </FormField>
-          {draft.entry_ip_mode === 'custom' ? (
-            <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
-              <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
-              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
-            </FormField>
-          ) : draft.entry_address ? (
-            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
-          ) : null}
-          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
-            <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
-          </FormField>
-          <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
-            <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
-          </FormField>
           <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
           </>}
 
@@ -8998,15 +8570,30 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </>}
 
           {tab === 'network' && <>
-          <div className="form-section-title">网络策略</div>
+          <div className="form-section-title">入口与监听</div>
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom">
+            <Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
+          </FormField>
+          {draft.entry_ip_mode === 'custom' ? (
+            <FormField label="自定义入口地址" hint="可填写域名、IPv4 或 IPv6。" placement="bottom">
+              <input value={draft.entry_address} onChange={e => update({ entry_address: e.target.value })} placeholder="例如 1.2.3.4 或 example.com" />
+              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
+            </FormField>
+          ) : draft.entry_address ? (
+            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
+          ) : null}
+          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom">
+            <Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select>
+          </FormField>
+          <FormField label="监听 IP" hint="通常保持 0.0.0.0；填写具体地址可覆盖监听模式。" placement="bottom">
+            <input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} placeholder="0.0.0.0" />
+          </FormField>
+          <div className="form-section-title">出口与端口</div>
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。">
             <Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select>
           </FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。">
             <UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} />
-          </FormField>
-          <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
-            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
           <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。">
             <PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} />
@@ -9031,21 +8618,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
-          <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
-            <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
-          </FormField>
-          {Boolean(draft.latency_probe_enabled) && (
-            <div className="form-extra-row latency-probe-entry-row">
-              <button type="button" className="ghost" onClick={() => setLatencyDialogOpen(true)} aria-haspopup="dialog">
-                <Activity size={14} /> 地区延迟目标与探测设置
-              </button>
-              <span>
-                {Array.isArray(draft.latency_probe_regions) && draft.latency_probe_regions.length > 0
-                  ? `已选 ${draft.latency_probe_regions.length} 个地区目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`
-                  : `默认仅测试公网目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`}
-              </span>
-            </div>
-          )}
+          <div className="access-note"><strong>回程延迟</strong><span>请在独立的“回程延迟”页面统一配置测试目标、周期与自动测试开关。</span></div>
           <FormField label="连接审计" hint="记录来源 IP、目标与出口摘要。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -9071,7 +8644,11 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           </>}
 
           {tab === 'system' && <>
-          <div className="form-section-title">系统</div>
+          <div className="form-section-title">主机设置</div>
+          <FormField label="BBR + FQ" hint="首次安装 Agent 时尝试启用，失败不影响安装。">
+            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
+          </FormField>
+
           <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
             <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
           </FormField>
@@ -9084,16 +8661,6 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
         {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
         <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '创建中...' : '创建'}</button>
       </footer>
-      {latencyDialogOpen && (
-        <LatencyProbeSettingsDialog
-          draft={draft}
-          onCancel={() => setLatencyDialogOpen(false)}
-          onSave={patch => { update(patch); setLatencyDialogOpen(false) }}
-          regions={latencyProbeResource.regions}
-          loading={latencyProbeResource.loading}
-          error={latencyProbeResource.error}
-        />
-      )}
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
@@ -9118,11 +8685,10 @@ function serverToDraft(server: Server) {
   }
 }
 
-function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated, latencyProbeResource }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean; latencyProbeResource: { regions: LatencyProbeRegion[]; loading: boolean; error: string } }) {
+function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, onSubmit, servers, connectionAuditGated }: { server: Server; client: any; notify?: (message: string, tone?: string) => void; role?: Role; onCancel: () => void; onSubmit: (server: any) => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
   const [draft, setDraft] = useState<any>(() => serverToDraft(server))
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
-  const [latencyDialogOpen, setLatencyDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -9171,17 +8737,6 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <div className="form-section-title">基础信息</div>
           <FormField label="服务器名称" required hint="用于面板识别。" placement="bottom"><input value={draft.name} onChange={e => update({ name: e.target.value })} /></FormField>
           <ServerRegionField draft={draft} update={update} servers={servers} />
-          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
-          {draft.entry_ip_mode === 'custom' ? (
-            <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
-              <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
-              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
-            </FormField>
-          ) : draft.entry_address ? (
-            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
-          ) : null}
-          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
-          <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
           <ServerDisplayTagsEditor tags={draft.display_tags || []} onChange={display_tags => update({ display_tags })} />
           </>}
           {tab === 'billing' && <>
@@ -9230,12 +8785,21 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           )}
           </>}
           {tab === 'network' && <>
-          <div className="form-section-title">网络策略</div>
+          <div className="form-section-title">入口与监听</div>
+          <FormField label="默认入口地址策略" hint="订阅默认使用的服务器地址。自动：忽略手动入口；自定义：才生效。" placement="bottom"><Select value={draft.entry_ip_mode} onChange={e => { const next = e.target.value as EntryIPMode; update(next === 'custom' ? { entry_ip_mode: next } : { entry_ip_mode: next, entry_address: '' }) }}>{entryIPModes.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
+          {draft.entry_ip_mode === 'custom' ? (
+            <FormField label="自定义入口地址" hint="选择自定义时使用。" placement="bottom">
+              <input value={draft.entry_address || ''} onChange={e => update({ entry_address: e.target.value })} placeholder="域名 / IPv4 / IPv6" />
+              <DetectedEntryAddressNote ipv4={draft.public_ipv4} ipv6={draft.public_ipv6 || draft.interface_ipv6} />
+            </FormField>
+          ) : draft.entry_address ? (
+            <div className="access-note warning"><strong>入口地址未生效</strong><span>已填写自定义入口「{draft.entry_address}」，但当前策略为 {labelValue(draft.entry_ip_mode)}，自动模式会忽略该地址。请将入口策略设为自定义，或<button type="button" className="link" onClick={() => update({ entry_address: '' })} style={{ padding: 0, marginLeft: 4 }}>清除入口地址</button>。</span></div>
+          ) : null}
+          <FormField label="监听模式" hint="自动：有全局 IPv6 地址时同时监听 IPv4 和 IPv6 全部网卡。" placement="bottom"><Select value={draft.listen_mode || 'auto'} onChange={e => update({ listen_mode: e.target.value })}>{listenModes.map(x => <option key={x} value={x}>{listenModeLabels[x]}</option>)}</Select></FormField>
+          <FormField label="监听 IP" hint="填写具体地址可覆盖监听模式。" placement="bottom"><input value={draft.listen_ip} onChange={e => update({ listen_ip: e.target.value })} /></FormField>
+          <div className="form-section-title">出口与端口</div>
           <FormField label="出口解析策略" hint="选择出口优先使用的 IP 类型。"><Select value={draft.ip_stack} onChange={e => update({ ip_stack: e.target.value })}>{ipStacks.map(x => <option key={x} value={x}>{labelValue(x)}</option>)}</Select></FormField>
           <FormField label="UDP 入站" hint="选择 UDP 的处理方式。"><UDPModeSelector value={draft.udp_inbound_mode} onChange={value => update({ udp_inbound_mode: value })} /></FormField>
-          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
-            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
-          </FormField>
           <FormField label="公网端口范围" hint="自动托管的公网监听端口池；耗尽时部署会报错，不会越界回落。"><PortRangeInput start={draft.port_range_start} end={draft.port_range_end} onChange={(port_range_start, port_range_end) => update({ port_range_start, port_range_end })} onValidityChange={setPortRangeValid} /></FormField>
           <FormField label="内部回环端口范围" hint="仅监听 127.0.0.1 / ::1 的内部组件端口池，不受公网端口限制。"><PortRangeInput start={draft.internal_port_range_start} end={draft.internal_port_range_end} onChange={(internal_port_range_start, internal_port_range_end) => update({ internal_port_range_start, internal_port_range_end })} onValidityChange={setInternalPortRangeValid} /></FormField>
           <div className="form-extra-row"><button type="button" className="ghost" onClick={() => setMtuDialogOpen(true)}>MTU 检测设置</button><span>修改后会在下次部署重新检测。</span></div>
@@ -9248,21 +8812,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <FormField label="负载历史" hint="关闭后清除并停止记录历史，只保留实时读数。">
             <Switch checked={Boolean(draft.resource_history_enabled)} onChange={checked => update({ resource_history_enabled: checked })} ariaLabel="负载历史" />
           </FormField>
-          <FormField label="延迟测试" hint="连接主控时计为在线；断线后公网测试成功仍计为在线，结果会在重连后补报。">
-            <Switch checked={Boolean(draft.latency_probe_enabled)} onChange={checked => update({ latency_probe_enabled: checked })} ariaLabel="延迟测试" />
-          </FormField>
-          {Boolean(draft.latency_probe_enabled) && (
-            <div className="form-extra-row latency-probe-entry-row">
-              <button type="button" className="ghost" onClick={() => setLatencyDialogOpen(true)} aria-haspopup="dialog">
-                <Activity size={14} /> 地区延迟目标与探测设置
-              </button>
-              <span>
-                {Array.isArray(draft.latency_probe_regions) && draft.latency_probe_regions.length > 0
-                  ? `已选 ${draft.latency_probe_regions.length} 个地区目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`
-                  : `默认仅测试公网目标 · ${draft.latency_probe_mode === 'icmp' ? 'ICMP Ping' : 'TCP Ping'}`}
-              </span>
-            </div>
-          )}
+          <div className="access-note"><strong>回程延迟</strong><span>请在独立的“回程延迟”页面统一配置测试目标、周期与自动测试开关。</span></div>
           <FormField label="连接审计" hint="关闭后 Agent 停止采集、上报和本地审计状态写入。">
             <Switch checked={Boolean(draft.connection_audit_enabled)} onChange={checked => update({ connection_audit_enabled: checked })} ariaLabel="连接审计" />
             {connectionAuditGated && <p className="muted">全局审计已关闭，该设置暂不生效，Agent 不会采集或上报。</p>}
@@ -9287,7 +8837,11 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           </FormField>}
           </>}
           {tab === 'system' && <>
-          <div className="form-section-title">系统</div>
+          <div className="form-section-title">主机设置</div>
+          <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
+            <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
+          </FormField>
+
           <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} /></FormField>
           <div className="form-section-title">远程控制</div>
           <RemoteAccessStatus serverId={server.id} client={client} notify={notify} editable={hasManagementAccess(role)} />
@@ -9298,16 +8852,6 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
         {tab !== 'basic' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.max(0, serverSettingTabs.findIndex(item => item.id === tab) - 1)].id)} disabled={saving}>上一项</button>}
         {tab !== 'system' && <button type="button" className="ghost" onClick={() => setTab(serverSettingTabs[Math.min(serverSettingTabs.length - 1, serverSettingTabs.findIndex(item => item.id === tab) + 1)].id)} disabled={saving}>下一项</button>}
         <button onClick={() => void submit()} disabled={saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid}>{saving ? '保存中...' : '保存'}</button></footer>
-      {latencyDialogOpen && (
-        <LatencyProbeSettingsDialog
-          draft={draft}
-          onCancel={() => setLatencyDialogOpen(false)}
-          onSave={patch => { update(patch); setLatencyDialogOpen(false) }}
-          regions={latencyProbeResource.regions}
-          loading={latencyProbeResource.loading}
-          error={latencyProbeResource.error}
-        />
-      )}
       {mtuDialogOpen && <MTUSettingsDialog draft={draft} onCancel={() => setMtuDialogOpen(false)} onSave={patch => { update(patch); setMtuDialogOpen(false) }} />}
   </MotionDialogPanel>
 }
@@ -10798,8 +10342,8 @@ function ServerUnifiedTelemetryChart({
   )
 }
 
-function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { server: Server; client: any; onClose: () => void; onUpdated: () => void }) {
-  const [activeView, setActiveView] = useState<'load' | 'latency'>('load')
+function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialView = 'load' }: { server: Server; client: any; onClose: () => void; onUpdated: () => void; initialView?: 'load' | 'latency' }) {
+  const [activeView, setActiveView] = useState<'load' | 'latency'>(initialView)
   const [loadWindowHours, setLoadWindowHours] = useState(1)
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('1h')
   const [response, setResponse] = useState<ConnectivityResponse | null>(null)
@@ -10957,7 +10501,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
       </div>
       <div className="server-monitor-tabs" role="tablist" aria-label="服务器监控视图">
         <button id="server-monitor-load-tab" type="button" role="tab" tabIndex={activeView === 'load' ? 0 : -1} aria-selected={activeView === 'load'} aria-controls="server-monitor-load-panel" className={activeView === 'load' ? 'active' : ''} onClick={() => setActiveView('load')} onKeyDown={handleMonitorTabKeyDown}><Activity size={14} aria-hidden="true" />负载</button>
-        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />延迟</button>
+        <button id="server-monitor-latency-tab" type="button" role="tab" tabIndex={activeView === 'latency' ? 0 : -1} aria-selected={activeView === 'latency'} aria-controls="server-monitor-latency-panel" className={activeView === 'latency' ? 'active' : ''} onClick={() => setActiveView('latency')} onKeyDown={handleMonitorTabKeyDown}><Gauge size={14} aria-hidden="true" />回程延迟</button>
       </div>
       <div className="connectivity-head-actions">
         <button
@@ -10994,7 +10538,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated }: { serv
               </button>
             ))}
           </div>
-          <span className="server-monitor-window-note">保留 {retentionDays} 天{response?.regional_data_start_at ? ` · 地区数据始于 ${formatTableTime(response.regional_data_start_at)}` : ''}</span>
+          <span className="server-monitor-window-note">保留 {retentionDays} 天{response?.regional_data_start_at ? ` · 回程数据始于 ${formatTableTime(response.regional_data_start_at)}` : ''}</span>
         </div>
         {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
 
@@ -11424,7 +10968,6 @@ type GraphSourceSelectionRequest = { title: string; options: GraphSourceOption[]
 
 function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest }: any) {
   const dialogs = useDialogs()
-  const latencyProbeResource = useLatencyProbeResource(client)
   const servers: Server[] = data.servers || []
   const entries: Inbound[] = data.inbounds || []
   const selected = servers.find(s => s.id === selectedServer) || servers[0]
@@ -13831,7 +13374,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </aside>}
       </div>
     </div>
-    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
+    <AnimatePresence>{serverDraft && <ServerCreateDialog draft={serverDraft} setDraft={setServerDraft as React.Dispatch<React.SetStateAction<ReturnType<typeof defaultServerDraft>>>} onCancel={() => { setServerDraft(null); serverDraftPosition.current = null }} onSubmit={submitServerDraft} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} />}</AnimatePresence>
     <AnimatePresence>{entryDraft && <EntryDraftDialog mode="create" draft={entryDraft} setDraft={setEntryDraft} data={data} servers={servers} client={client} onCancel={() => setEntryDraft(null)} onSubmit={submitEntryDraft} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{editEntry && <EntryDraftDialog mode="edit" draft={editEntry} setDraft={setEditEntry} data={data} servers={servers} client={client} onCancel={() => setEditEntry(null)} onSubmit={submitEditEntry} onPaddingUpdated={applyMutationResult} />}</AnimatePresence>
     <AnimatePresence>{routingDraft && <RoutingRuleDraftDialog draft={routingDraft} setDraft={setRoutingDraft} data={data} client={client} load={load} onCancel={() => { setRoutingDraft(null); setRoutingCanvasTargetID('') }} onSubmit={submitRoutingDraft} onOpenTemplateEditor={templateID => setFamilySplitEditor({ templateID: templateID || undefined, select: true })} />}</AnimatePresence>

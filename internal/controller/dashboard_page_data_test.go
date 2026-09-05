@@ -116,3 +116,49 @@ func TestDashboardPageDataSendsServerTiming(t *testing.T) {
 		}
 	}
 }
+
+func TestReturnLatencyPageData(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, token := loginTestAdmin(t, db)
+	server := &model.Server{Name: "return-probe", ListenIP: "0.0.0.0", Status: model.ServerOnline, LatencyProbeEnabled: true}
+	if err := db.CreateServer(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=return-latency", token, nil, http.StatusOK)
+	rows, ok := page["servers"].([]any)
+	if !ok || len(rows) != 1 || rows[0].(map[string]any)["name"] != "return-probe" {
+		t.Fatalf("missing return latency server: %#v", page)
+	}
+	request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "latency-viewer", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "latency-viewer", "password": "long-user-password"}, http.StatusOK)
+	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=return-latency", login["token"].(string), nil, http.StatusForbidden)
+}
+
+func TestReturnLatencySettingsPatchPreservesServerConfiguration(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, token := loginTestAdmin(t, db)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{
+		"name": "latency-patch", "listen_ip": "0.0.0.0", "listen_mode": "ipv4_only", "ip_stack": "prefer_ipv4", "connection_audit_enabled": true,
+		"port_range_start": 12000, "port_range_end": 14000, "monitoring_mode": "standard", "region_mode": "manual", "region_code": "JP",
+	}, http.StatusCreated)["server"].(map[string]any)
+	updated := request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+itoa(int64(created["id"].(float64))), token, map[string]any{
+		"latency_probe_enabled": true, "latency_probe_mode": "icmp", "latency_probe_public_target": "cloudflare", "latency_probe_interval_seconds": 120,
+		"latency_probe_sample_count": 5, "latency_probe_max_targets": 64, "latency_probe_regions": []any{},
+	}, http.StatusOK)["server"].(map[string]any)
+	for _, key := range []string{"name", "listen_ip", "listen_mode", "ip_stack", "connection_audit_enabled", "port_range_start", "port_range_end", "monitoring_mode", "region_mode", "region_code"} {
+		if updated[key] != created[key] {
+			t.Errorf("unrelated field %s changed: %v -> %v", key, created[key], updated[key])
+		}
+	}
+	if updated["latency_probe_mode"] != "icmp" || updated["latency_probe_interval_seconds"] != float64(120) {
+		t.Fatalf("probe patch not saved: %#v", updated)
+	}
+}

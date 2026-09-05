@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, RefreshCw, MoreVertical } from 'lucide-react'
+import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Activity, Gauge, RefreshCw, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
 
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
@@ -27,35 +27,24 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
   const enrolled = Boolean(String(server.agent_id || '').trim())
   const isOnline = String(server.status || '').toLowerCase() === 'online'
 
-  const groups: Array<{ items: Item[]; dividerBefore?: boolean }> = [
-    {
-      items: [
-        { label: '关于', type: 'about', icon: Info },
-        { label: '基础设置', type: 'basic-settings', icon: SlidersHorizontal },
-      ],
-    },
-    {
-      dividerBefore: true,
-      items: [
-        { label: '接入命令', type: 'enroll', icon: Terminal, admin: true },
-        ...(enrolled ? [{ label: '更新 Agent', type: 'update-agent', icon: RefreshCw, admin: true } satisfies Item] : []),
-      ],
-    },
-    {
-      dividerBefore: true,
-      items: [
-        { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
-        { label: '网络', type: 'network', icon: Network },
-        { label: '系统', type: 'system', icon: Settings2 },
-        { label: '任务记录', type: 'tasks', icon: ClipboardList },
-      ],
-    },
-    {
-      dividerBefore: true,
-      items: [
-        { label: '删除服务器', type: 'delete', icon: Trash2, danger: true },
-      ],
-    },
+  const groups: Array<{ label?: string; items: Item[]; dividerBefore?: boolean }> = [
+    { label: '资料与设置', items: [
+      { label: '服务器资料', type: 'about', icon: Info },
+      { label: '服务器设置', type: 'edit', icon: SlidersHorizontal, admin: true },
+    ] },
+    { label: '监控与诊断', dividerBefore: true, items: [
+      { label: '监控历史', type: 'resource-details', icon: Activity },
+      { label: '回程延迟', type: 'return-latency', icon: Gauge, admin: true },
+      { label: '网络工具', type: 'network', icon: Network },
+    ] },
+    { label: '运维操作', dividerBefore: true, items: [
+      { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
+      ...(enrolled ? [{ label: '更新 Agent', type: 'update-agent', icon: RefreshCw, admin: true } satisfies Item, { label: 'Agent 维护与日志', type: 'agent-maintenance', icon: Settings2, admin: true } satisfies Item] : [{ label: '接入命令', type: 'enroll', icon: Terminal, admin: true } satisfies Item]),
+      { label: '任务记录', type: 'tasks', icon: ClipboardList },
+    ] },
+    { dividerBefore: true, items: [
+      { label: '删除服务器', type: 'delete', icon: Trash2, danger: true, admin: true },
+    ] },
   ]
 
   const visibleGroups = groups
@@ -68,8 +57,8 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
     const button = buttonRef.current
     if (!button) return
     const rect = button.getBoundingClientRect()
-    const width = 192
-    const estimatedHeight = Math.min(totalVisibleItems * 36 + visibleGroups.length * 12 + 16, window.innerHeight - 16)
+    const width = 224
+    const estimatedHeight = Math.min(totalVisibleItems * 36 + visibleGroups.length * 32 + 16, window.innerHeight - 16)
     const height = menuRef.current?.offsetHeight || estimatedHeight
     const roomBelow = window.innerHeight - rect.bottom - 8 - 6
     const roomAbove = rect.top - 8 - 6
@@ -149,13 +138,14 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
             position: 'fixed',
             top: menuPosition.top,
             left: menuPosition.left,
-            width: 192,
+            width: 224,
           }}
         >
           {visibleGroups.map((group, groupIdx) => (
             <React.Fragment key={groupIdx}>
               {group.dividerBefore && <div className="server-actions-divider" role="separator" />}
-              <div className="server-actions-section">
+              <div className="server-actions-section" role="group" aria-label={group.label}>
+                {group.label && <span className="server-actions-group-label">{group.label}</span>}
                 {group.items.map((item) => {
                   const Icon = item.icon
                   const disabled = item.type === 'terminal' && (!enrolled || !isOnline)

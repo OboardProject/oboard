@@ -19,12 +19,11 @@ export function ServerNetworkDialog({ server, initialTab='overview', data, clien
   const isViewer = String(role)==='viewer'
 
   const tabs: Array<{id:Tab,label:string; disabled?:boolean; hint?:string}> = [
-    { id:'overview', label:'概览' },
-    { id:'traffic', label:'流量' },
-    { id:'settings', label:'网络设置' },
+    { id:'overview', label:'连接概况' },
+    { id:'traffic', label:'流量统计' },
     { id:'dns', label:'DNS' },
     { id:'mtu', label:'MTU' },
-    { id:'diagnostics', label:'诊断', disabled: isViewer || !enrolled || !isOnline, hint: isViewer? '需要管理员权限' : !enrolled ? '未接入 Agent' : !isOnline ? 'Agent 离线' : undefined },
+    { id:'diagnostics', label:'连通诊断', disabled: isViewer || !enrolled || !isOnline, hint: isViewer? '需要管理员权限' : !enrolled ? '未接入 Agent' : !isOnline ? 'Agent 离线' : undefined },
   ]
 
   const policy = (data.server_dns_policies||[]).find((p:any)=> Number(p.server_id)===Number(server.id))
@@ -48,7 +47,7 @@ export function ServerNetworkDialog({ server, initialTab='overview', data, clien
   }
 
   return (
-    <ServerWorkspaceDialog server={server} title="网络" tabs={tabs as any} activeTab={tab} onTabChange={(id)=>setTab(id as Tab)} onClose={onClose}>
+    <ServerWorkspaceDialog server={server} title="网络工具" tabs={tabs as any} activeTab={tab} onTabChange={(id)=>setTab(id as Tab)} onClose={onClose}>
       {tab==='overview' && <NetworkOverviewTab server={server} />}
       {tab==='traffic' && <NetworkTrafficTab server={server} onResetTraffic={()=>void handleResetTraffic()} disabled={false} />}
       {tab==='settings' && <NetworkSettingsTab server={server} onSave={handleSaveNetwork} disabled={false} />}
