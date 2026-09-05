@@ -8009,7 +8009,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       </div>
       <div className="section-actions server-toolbar-actions">
         <div className="server-toolbar-tools" role="group" aria-label="服务器工具">
-        <button type="button" className="ghost server-toolbar-tool" onClick={() => goTab('return-latency')}><Gauge size={15} aria-hidden="true" /><span>回程延迟</span></button>
+        <button type="button" className="ghost server-toolbar-tool" onClick={() => goTab('return-latency')}><Gauge size={15} aria-hidden="true" /><span className="server-toolbar-tool-label">回程延迟</span></button>
         {hasManagementAccess(role) && (() => {
           const connectableCount = servers.filter(s => String(s.agent_id || '').trim() && String(s.status || '').toLowerCase() === 'online').length
           return (
