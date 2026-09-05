@@ -14718,7 +14718,7 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                   <div className="routing-rule-set-grid-list">
                     {catalogLoading && <small className="muted">正在搜索 Blackmatrix7...</small>}
                     {!catalogLoading && catalogItems.map(item => (
-                      <button type="button" key={item.path} className="routing-ruleset-card" onClick={() => { setRuleSetDraft({ name: item.name, url: item.url, format: item.format }); setShowRuleSetCreate(true) }}>
+                      <button type="button" key={item.path} className="routing-ruleset-card is-catalog-item" onClick={() => { setRuleSetDraft({ name: item.name, url: item.url, format: item.format }); setShowRuleSetCreate(true) }}>
                         <div className="routing-ruleset-info"><strong>{item.name}</strong><small>{item.category} · Blackmatrix7 · {Math.ceil(item.size / 1024)} KiB</small></div>
                         <Plus size={14} aria-hidden="true" />
                       </button>
@@ -14795,20 +14795,20 @@ function RoutingRuleDraftDialog({ draft, setDraft, data, client, load, onCancel,
                 </div>
               </div>
             )}
-          </section>
 
-          <div className="routing-rule-dns-resolver">
-            <FormField label="规则域名 DNS（可选）" hint="只影响命中本条规则时的域名解析；留空使用服务器默认 DNS。">
-              <Select value={draft.dns_resolver} onChange={event => update({ dns_resolver: event.target.value })}>
-                <option value="">服务器默认 DNS</option>
-                <option value="remote-primary">加密 DNS · 主解析</option>
-                <option value="remote-secondary">加密 DNS · 备用</option>
-                <option value="bootstrap-primary">Bootstrap DNS · 主解析</option>
-                <option value="bootstrap-secondary">Bootstrap DNS · 备用</option>
-                <option value="local">系统本地 DNS</option>
-              </Select>
-            </FormField>
-          </div>
+            <div className="routing-rule-dns-resolver">
+              <FormField label="规则域名 DNS（可选）" hint="只影响命中本条规则时的域名解析；留空使用服务器默认 DNS。">
+                <Select value={draft.dns_resolver} onChange={event => update({ dns_resolver: event.target.value })}>
+                  <option value="">服务器默认 DNS</option>
+                  <option value="remote-primary">加密 DNS · 主解析</option>
+                  <option value="remote-secondary">加密 DNS · 备用</option>
+                  <option value="bootstrap-primary">Bootstrap DNS · 主解析</option>
+                  <option value="bootstrap-secondary">Bootstrap DNS · 备用</option>
+                  <option value="local">系统本地 DNS</option>
+                </Select>
+              </FormField>
+            </div>
+          </section>
 
           {/* Section 3: 处理动作与目标出口 */}
           <section className="routing-config-section">

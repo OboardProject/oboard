@@ -5407,6 +5407,8 @@ button.server-address-line.copied:hover {
   border-bottom: 1px solid var(--border);
   background: var(--surface-solid);
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .routing-composer-head-left {
@@ -5478,14 +5480,16 @@ button.server-address-line.copied:hover {
   background: var(--surface-1);
 }
 
+.dialog.routing-composer-dialog .dialog-body,
+.dialog.routing-composer-dialog .routing-composer-body,
 .routing-composer-body {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   background: var(--bg-page);
-  overflow: hidden;
-  padding: 0;
+  overflow: hidden !important;
+  padding: 0 !important;
 }
 
 /* --- Left Sidebar: Stage Pipeline & Existing Rules --- */
@@ -5802,8 +5806,14 @@ button.server-address-line.copied:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding-top: 18px;
+  margin-top: -18px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-soft);
+  position: sticky;
+  top: -18px;
+  background: var(--bg-card);
+  z-index: 5;
 }
 
 .routing-editor-title-group {
@@ -5973,9 +5983,9 @@ button.server-address-line.copied:hover {
 
 /* Rule Set Picker */
 .routing-rule-dns-resolver {
-  margin-top: 10px;
+  margin-top: 4px;
   padding: 10px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: 7px;
   background: var(--surface-2);
 }
@@ -6043,6 +6053,18 @@ button.server-address-line.copied:hover {
   transition: all 0.15s ease;
 }
 
+button.routing-ruleset-card,
+.routing-ruleset-card.is-catalog-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  text-align: left;
+  width: 100%;
+}
+
+button.routing-ruleset-card .routing-ruleset-info,
+.routing-ruleset-card.is-catalog-item .routing-ruleset-info {
+  min-width: 0;
+}
+
 .routing-ruleset-card:hover {
   border-color: var(--border-strong);
 }
@@ -6084,14 +6106,17 @@ button.server-address-line.copied:hover {
 }
 
 /* Footer */
+.dialog.routing-composer-dialog .dialog-actions.routing-composer-footer,
+.dialog.routing-composer-dialog .routing-composer-footer,
 .routing-composer-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 22px;
+  padding: 12px 22px !important;
   border-top: 1px solid var(--border);
   background: var(--surface-solid);
   flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 
 .routing-footer-left {
@@ -6123,9 +6148,11 @@ button.server-address-line.copied:hover {
   .routing-composer-mobile-tabs {
     display: flex;
   }
+  .dialog.routing-composer-dialog .dialog-body,
+  .dialog.routing-composer-dialog .routing-composer-body,
   .routing-composer-body {
     display: block;
-    overflow-y: auto;
+    overflow-y: auto !important;
   }
   .routing-composer-sidebar,
   .routing-composer-main {
