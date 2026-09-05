@@ -94,8 +94,20 @@ export function isExpectedControllerUpdateDisconnect(error: unknown): boolean {
 
 export type ControllerUpdatePendingToast = { message: string; kind: 'info' }
 
-export function controllerUpdatePendingToast(updateInProgress: boolean, error: unknown): ControllerUpdatePendingToast | null {
+// Only the "installing" and "restarting" phases actually replace or relaunch the
+// Controller process (see internal/controller/controller_update_orchestrator.go).
+// Every earlier phase (checking/downloading/preflight/backing_up/ready) keeps the
+// same Controller process serving requests, so a network failure there is a real,
+// unrelated error and must not be swallowed as an expected update disconnect.
+const CONTROLLER_UPDATE_RESTART_PHASES = ['installing', 'restarting']
+
+export function isControllerUpdateRestartPhase(phase: string | undefined | null): boolean {
+  return phase != null && CONTROLLER_UPDATE_RESTART_PHASES.includes(phase)
+}
+
+export function controllerUpdatePendingToast(updateInProgress: boolean, error: unknown, phase?: string | null): ControllerUpdatePendingToast | null {
   if (!updateInProgress) return null
+  if (!isControllerUpdateRestartPhase(phase)) return null
   if (!isExpectedControllerUpdateDisconnect(error)) return null
   return { message: CONTROLLER_UPDATE_PENDING_MESSAGE, kind: 'info' }
 }

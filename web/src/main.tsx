@@ -1244,7 +1244,7 @@ const valueLabels: Record<string, string> = {
 
 type ToastKind = 'error' | 'success' | 'warning' | 'info'
 type ToastState = { id: number; kind: ToastKind; message: string } | null
-type ControllerUpdateInProgressChange = (value: boolean) => void
+type ControllerUpdateInProgressChange = (value: boolean, phase?: string) => void
 const CONTROLLER_UPDATE_IN_PROGRESS_KEY = 'oboard.controller-update.in-progress'
 const LoadingContext = React.createContext<boolean>(false)
 
@@ -1792,8 +1792,10 @@ export function App() {
   const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(() => sessionStorage.getItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY) === '1')
   const controllerUpdateInProgressRef = useRef(controllerUpdateInProgress)
   controllerUpdateInProgressRef.current = controllerUpdateInProgress
-  const handleControllerUpdateInProgressChange = (value: boolean) => {
+  const controllerUpdateRestartPhaseRef = useRef<string | undefined>(undefined)
+  const handleControllerUpdateInProgressChange = (value: boolean, phase?: string) => {
     setControllerUpdateInProgress(value)
+    controllerUpdateRestartPhaseRef.current = value ? phase : undefined
     if (value) sessionStorage.setItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY, '1')
     else sessionStorage.removeItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY)
   }
@@ -2022,6 +2024,7 @@ export function App() {
     const requestToken = token
     const background = opts?.background === true ? true : opts?.background === false ? false : Boolean(pageCacheRef.current[page] && !opts?.forceFresh)
     const updateInProgressSnapshot = controllerUpdateInProgressRef.current
+    const updateRestartPhaseSnapshot = controllerUpdateRestartPhaseRef.current
     dirtyPagesRef.current.delete(page)
     // Only show the global loading flag when this tab has no cached payload yet.
     // Background revalidation must not flash skeletons during a crossfade.
@@ -2057,7 +2060,7 @@ export function App() {
       if (seq !== loadSeq.current) return
       const message = localizeErrorMessage(e?.message || e)
       setData((old: any) => ({ ...old, load_errors: [`${tabMeta[page]?.label || page}: ${message}`] }))
-      const pendingToast = controllerUpdatePendingToast(updateInProgressSnapshot, e)
+      const pendingToast = controllerUpdatePendingToast(updateInProgressSnapshot, e, updateRestartPhaseSnapshot)
       if (pendingToast) showToast(setToast, pendingToast.message, pendingToast.kind)
       else showToast(setToast, message)
     } finally {
@@ -3945,6 +3948,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     const display = controllerUpdateDisplayPhase(result)
     if (isControllerUpdateInProgressStatus(display) || ['checking', 'preflight', 'backing_up', 'restarting', 'verifying'].includes(display)) {
       setPhase(display as ControllerUpdateInstallPhase)
+      onControllerUpdateInProgressChange?.(true, display)
     }
   }
 
@@ -3997,7 +4001,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     setSkipBackup(Boolean(skipBackup))
     setWorking(true)
     setPhase('starting')
-    onControllerUpdateInProgressChange?.(true)
+    onControllerUpdateInProgressChange?.(true, 'starting')
     installRequestPendingRef.current = true
     try {
       const result = await client.request('/controller-update/install', { method: 'POST', body: JSON.stringify({ skip_backup: Boolean(skipBackup) }) }) as ControllerUpdateStatus
@@ -4009,6 +4013,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       if (isExpectedControllerUpdateDisconnect(error)) {
         setConnectionInterrupted(true)
         setPhase('installing')
+        onControllerUpdateInProgressChange?.(true, 'installing')
       } else {
         setWorking(false)
         setFailure(localizeErrorMessage(error?.message || error))
@@ -4101,10 +4106,10 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const installTargetBuildRef = useRef('')
   const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
   const statusRefreshInFlightRef = useRef(false)
-  const updateInstallExpected = (value: boolean) => {
+  const updateInstallExpected = (value: boolean, phase?: string) => {
     installExpectedRef.current = value
     setInstallExpected(value)
-    onControllerUpdateInProgressChange?.(value)
+    onControllerUpdateInProgressChange?.(value, phase)
   }
   const applyInstallStatus = (result: ControllerUpdateStatus) => {
     if (!installExpectedRef.current) return
@@ -4144,8 +4149,12 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       return
     }
     const display = controllerUpdateDisplayPhase(result)
-    if (['checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(display)) setInstallPhase(display as ControllerUpdateInstallPhase)
-    else setInstallPhase('starting')
+    if (['checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(display)) {
+      setInstallPhase(display as ControllerUpdateInstallPhase)
+      onControllerUpdateInProgressChange?.(true, display)
+    } else {
+      setInstallPhase('starting')
+    }
   }
   const refresh = async (quiet = false) => {
     if (statusRefreshInFlightRef.current) return
@@ -4177,7 +4186,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   useEffect(() => {
     if (!isControllerUpdateInProgressStatus(snapshot.status) || installExpected) return
     installTargetBuildRef.current = snapshot.available?.build || ''
-    updateInstallExpected(true)
+    updateInstallExpected(true, snapshot.status)
     setInstallPhase(snapshot.status as ControllerUpdateInstallPhase)
     setInstallDialogOpen(true)
   }, [snapshot.status, installExpected])
@@ -4259,6 +4268,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
         setSnapshot(previous => ({ ...previous, status: 'installing' }))
         setInstallConnectionInterrupted(true)
         setInstallPhase('installing')
+        onControllerUpdateInProgressChange?.(true, 'installing')
       } else {
         updateInstallExpected(false)
         setInstallFailure(localizeErrorMessage(error?.message || error))
