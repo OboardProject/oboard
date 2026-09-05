@@ -57,12 +57,18 @@ describe('server card address badge', () => {
 describe('server card action menu', () => {
   const menuSource = readFileSync(new URL('./components/server/ServerActionMenu.tsx', import.meta.url), 'utf8')
 
-  it('keeps enroll command and agent update as top-level menu actions', () => {
-    expect(menuSource).toContain("label: '接入命令'")
+  it('keeps agent commands and agent update as top-level menu actions', () => {
+    expect(menuSource).toContain("label: 'Agent 命令'")
     expect(menuSource).toContain("type: 'enroll'")
     expect(menuSource).toContain("label: '更新 Agent'")
     expect(menuSource).toContain("type: 'update-agent'")
     expect(mainSource).toContain("else if (type === 'update-agent') void updateAgent(s)")
     expect(mainSource).toContain("else if (type === 'enroll') enroll(s)")
+  })
+
+  it('drops the monitoring history entry and keeps the card click path', () => {
+    expect(menuSource).not.toContain("type: 'resource-details'")
+    expect(mainSource).toContain("else if (type === 'resource-details') setConnectivityServer({ server: s })")
+    expect(mainSource).toContain("onClick={() => onAction('resource-details', server)}")
   })
 })

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Activity, Gauge, RefreshCw, MoreVertical } from 'lucide-react'
+import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Gauge, RefreshCw, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
 
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
@@ -32,15 +32,15 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
       { label: '服务器资料', type: 'about', icon: Info },
       { label: '服务器设置', type: 'edit', icon: SlidersHorizontal, admin: true },
     ] },
-    { label: '监控与诊断', dividerBefore: true, items: [
-      { label: '监控历史', type: 'resource-details', icon: Activity },
-      { label: '网络探测', type: 'return-latency', icon: Gauge, admin: true },
-      { label: '网络工具', type: 'network', icon: Network },
-    ] },
     { label: '运维操作', dividerBefore: true, items: [
       { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
-      ...(enrolled ? [{ label: '更新 Agent', type: 'update-agent', icon: RefreshCw, admin: true } satisfies Item, { label: 'Agent 维护与日志', type: 'agent-maintenance', icon: Settings2, admin: true } satisfies Item] : [{ label: '接入命令', type: 'enroll', icon: Terminal, admin: true } satisfies Item]),
+      { label: 'Agent 命令', type: 'enroll', icon: Terminal, admin: true },
+      ...(enrolled ? [{ label: '更新 Agent', type: 'update-agent', icon: RefreshCw, admin: true } satisfies Item, { label: 'Agent 维护与日志', type: 'agent-maintenance', icon: Settings2, admin: true } satisfies Item] : []),
       { label: '任务记录', type: 'tasks', icon: ClipboardList },
+    ] },
+    { label: '监控与诊断', dividerBefore: true, items: [
+      { label: '网络探测', type: 'return-latency', icon: Gauge, admin: true },
+      { label: '网络工具', type: 'network', icon: Network },
     ] },
     { dividerBefore: true, items: [
       { label: '删除服务器', type: 'delete', icon: Trash2, danger: true, admin: true },
