@@ -3,11 +3,16 @@ import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } f
 import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import {
-  type ThemeName,
-  applyThemeToDocument,
-  normalizeTheme,
-  toggleThemeWithTransition,
+  type ThemeOrigin,
+  type ThemePreference,
+  getThemePreference,
+  resolveTheme,
+  resolveThemeOrigin,
+  saveThemePreference,
+  transitionThemeTo,
+  watchSystemTheme,
 } from './theme'
+import { ThemeSelector } from './components/ui/ThemeSelector'
 import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
@@ -99,7 +104,7 @@ import {
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
   Bell, CheckSquare, ClipboardList, Settings as SettingsIcon, LogOut, Shield,
   Settings2, Activity, ArrowLeftRight, Cpu, ArrowDownUp, HardDrive, 
-  Zap, Sliders, Menu, X, Sun, Moon, RefreshCw, ChevronDown, ChevronRight, Check, Info,
+  Zap, Sliders, Menu, X, RefreshCw, ChevronDown, ChevronRight, Check, Info,
   User, Lock, Globe, Copy, Edit3, Trash2, Plus, UserPlus, Gauge, Database, CalendarDays,
   Eye, EyeOff, FileText, Download, Search, Eraser, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, MoreHorizontal,
   KeyRound, ExternalLink, CalendarSync, BadgeCheck, Fingerprint, Smartphone, ShieldCheck, Send,
@@ -1787,7 +1792,8 @@ export function App() {
   const [tab, setTab] = useState(() => tabFromPath(window.location.pathname))
   const activeTabRef = useRef(tab)
   activeTabRef.current = tab
-  const [theme, setTheme] = useState<ThemeName>(() => normalizeTheme(localStorage.getItem('oboard.theme')))
+  const [theme, setTheme] = useState<ThemePreference>(getThemePreference)
+  const themeOriginRef = useRef<ThemeOrigin | null>(null)
   const [toast, setToast] = useState<ToastState>(null)
   const [controllerUpdateInProgress, setControllerUpdateInProgress] = useState(() => sessionStorage.getItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY) === '1')
   const controllerUpdateInProgressRef = useRef(controllerUpdateInProgress)
@@ -2276,11 +2282,11 @@ export function App() {
     }
   }, [token, tab, realtimeStatus])
   useEffect(() => {
-    // Keep document tokens in sync with React state (e.g. first paint / external restore).
-    // Animated toggles already apply inside the View Transition callback.
-    if (normalizeTheme(document.documentElement.dataset.theme) !== theme) {
-      applyThemeToDocument(theme)
+    const apply = (next: 'light' | 'dark') => {
+      void transitionThemeTo(next, themeOriginRef.current ?? resolveThemeOrigin(), () => {})
     }
+    apply(resolveTheme(theme))
+    return watchSystemTheme(theme, apply)
   }, [theme])
   useEffect(() => {
     const onPopState = () => {
@@ -2306,8 +2312,10 @@ export function App() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [tab])
 
-  const toggleTheme = (event?: React.MouseEvent<HTMLElement> | null) => {
-    toggleThemeWithTransition(event, next => setTheme(next))
+  const changeTheme = (next: ThemePreference, origin: ThemeOrigin) => {
+    themeOriginRef.current = origin
+    saveThemePreference(next)
+    setTheme(next)
   }
   const navigateTab = (next: string) => {
     if (next === tab) {
@@ -2387,7 +2395,7 @@ export function App() {
 
   if (restoringSession) return <PortalLoader loading={false} />
 
-  if (!token) return <Login theme={theme} toggleTheme={(e) => toggleTheme(e)} initialError={restoreError} onToken={(v, user, csrfToken) => {
+  if (!token) return <Login theme={theme} onThemeChange={changeTheme} initialError={restoreError} onToken={(v, user, csrfToken) => {
     activeTokenRef.current = v
     loadSeq.current++
     sessionStorage.setItem('oboard.token', v)
@@ -2539,10 +2547,7 @@ export function App() {
               </div>)}
             </nav>
             <div className="sidebar-footer">
-              <button className="sidebar-footer-btn" onClick={(e) => toggleTheme(e)} type="button" aria-label="切换主题" title={!isMobile && isSidebarCollapsed ? (theme === 'dark' ? '浅色主题' : '深色主题') : undefined}>
-                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-                <span>{theme === 'dark' ? '浅色主题' : '深色主题'}</span>
-              </button>
+              <ThemeSelector value={theme} onChange={changeTheme} variant="sidebar" />
               <button className="sidebar-footer-btn danger" onClick={handleLogout} type="button" aria-label="退出登录" title={!isMobile && isSidebarCollapsed ? '退出登录' : undefined}>
                 <LogOut size={16} />
                 <span>退出登录</span>
@@ -2615,7 +2620,7 @@ export function App() {
   )
 }
 
-function Login({ theme, toggleTheme, initialError, onToken }: { theme: string; toggleTheme: (event?: React.MouseEvent<HTMLElement>) => void; initialError?: string; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
+function Login({ theme, onThemeChange, initialError, onToken }: { theme: ThemePreference; onThemeChange: (theme: ThemePreference, origin: ThemeOrigin) => void; initialError?: string; onToken: (token: string, user: SessionUser, csrfToken: string) => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
@@ -2796,10 +2801,7 @@ $ _`}</pre>
 
         <div className="login-hero-footer">
           <span>© {new Date().getFullYear()} OBoard</span>
-          <button type="button" className="login-ghost-link" onClick={(e) => toggleTheme(e)}>
-            <Globe size={14} />
-            <span>{theme === 'dark' ? '浅色' : '深色'}</span>
-          </button>
+          <ThemeSelector value={theme} onChange={onThemeChange} variant="hero" />
         </div>
       </section>
 
@@ -2916,15 +2918,7 @@ $ _`}</pre>
           </form>
 
           {/* Shown when the left hero (and its theme control) is hidden on narrow screens. */}
-          <button
-            type="button"
-            className="login-theme-inline"
-            onClick={(e) => toggleTheme(e)}
-            aria-label="切换主题"
-          >
-            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-            <span>{theme === 'dark' ? '浅色主题' : '深色主题'}</span>
-          </button>
+          <ThemeSelector value={theme} onChange={onThemeChange} variant="login" />
         </motion.div>
       </section>
     </div>

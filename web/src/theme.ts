@@ -1,4 +1,5 @@
 export type ThemeName = 'light' | 'dark'
+export type ThemePreference = ThemeName | 'auto'
 
 export type ThemeOrigin = { x: number; y: number }
 
@@ -11,6 +12,40 @@ const THEME_KEYBOARD_MAX_WAIT_MS = 520
 
 export function normalizeTheme(value: string | null | undefined): ThemeName {
   return value === 'dark' ? 'dark' : 'light'
+}
+
+export function getThemePreference(): ThemePreference {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY)
+    return value === 'light' || value === 'dark' ? value : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
+
+export function saveThemePreference(preference: ThemePreference) {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, preference)
+  } catch {
+    // The choice still applies for this session when storage is unavailable.
+  }
+}
+
+export function resolveTheme(preference: ThemePreference): ThemeName {
+  if (preference !== 'auto') return preference
+  try {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
+export function watchSystemTheme(preference: ThemePreference, onChange: (theme: ThemeName) => void) {
+  if (preference !== 'auto' || typeof window.matchMedia !== 'function') return
+  const media = window.matchMedia('(prefers-color-scheme: dark)')
+  const update = () => onChange(media.matches ? 'dark' : 'light')
+  media.addEventListener('change', update)
+  return () => media.removeEventListener('change', update)
 }
 
 const THEME_PAGE_BG: Record<ThemeName, string> = {
@@ -28,23 +63,10 @@ export function applyThemeToDocument(theme: ThemeName) {
   if (document.body) {
     document.body.style.backgroundColor = pageBg
   }
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, theme)
-  } catch {
-    // Storage can be unavailable in hardened / private contexts.
-  }
 }
 
 // Logical theme state for click coalescing (must track intended end-state).
-let logicalTheme: ThemeName = normalizeTheme(
-  (() => {
-    try {
-      return localStorage.getItem(THEME_STORAGE_KEY)
-    } catch {
-      return null
-    }
-  })(),
-)
+let logicalTheme: ThemeName = resolveTheme(getThemePreference())
 
 let themeTransitionRunning = false
 let lastEditableBlurAt = Number.NEGATIVE_INFINITY
@@ -60,10 +82,6 @@ if (typeof document !== 'undefined') {
       lastEditableBlurAt = performance.now()
     }
   }, true)
-}
-
-function oppositeTheme(theme: ThemeName): ThemeName {
-  return theme === 'dark' ? 'light' : 'dark'
 }
 
 function prefersReducedMotion(): boolean {
@@ -413,34 +431,11 @@ export async function transitionThemeTo(
   }
 }
 
-export function toggleThemeWithTransition(
-  event: {
-    currentTarget?: EventTarget | null
-    target?: EventTarget | null
-    clientX?: number
-    clientY?: number
-    touches?: ArrayLike<{ clientX: number; clientY: number }>
-    changedTouches?: ArrayLike<{ clientX: number; clientY: number }>
-  } | null | undefined,
-  onApplied: (theme: ThemeName) => void,
-): void {
-  const origin = resolveThemeOrigin(event)
-  if (!themeTransitionRunning) {
-    logicalTheme = normalizeTheme(document.documentElement.dataset.theme)
-  }
-  const next = oppositeTheme(logicalTheme)
-  void transitionThemeTo(next, origin, onApplied)
-}
-
 export function getLogicalTheme(): ThemeName {
   return logicalTheme
 }
 
 // Initial theme setup on script load
-try {
-  const initial = normalizeTheme(localStorage.getItem(THEME_STORAGE_KEY))
-  logicalTheme = initial
-  applyThemeToDocument(initial)
-} catch {
-  // Storage unavailable
+if (typeof document !== 'undefined') {
+  applyThemeToDocument(logicalTheme)
 }
