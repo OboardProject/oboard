@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -277,18 +276,15 @@ func (s *Server) applySubscriptionPlanNodesUpdate(ctx context.Context, principal
 	out := map[string]any{
 		"plan_id": prepared.plan.ID, "no_change": result.NoChange, "lock_version": result.LockVersion,
 		"latest_revision_id": result.LatestRevisionID, "pending_revision_id": result.PendingRevisionID,
-		"access_change_id": int64(0), "access_change_status": "", "queued_tasks": 0,
+		"access_change_id": int64(0), "access_change_status": "", "queued_tasks": 0, "reconcile_queued": false,
 	}
 	if result.NoChange {
 		return out, nil
 	}
-	change, err := s.createPlanPublishChangeForActor(ctx, nil, principal.UserID, prepared.plan, result.Revision.ID)
-	if err != nil {
-		return nil, fmt.Errorf("create access change for plan version %d: %w", result.Revision.ID, err)
+	if result.RequiresDeployment {
+		s.signalPlanReconcile(prepared.plan.ID)
 	}
-	out["access_change_id"] = change.ID
-	out["access_change_status"] = change.Status
-	out["queued_tasks"] = len(change.Targets)
+	out["reconcile_queued"] = result.RequiresDeployment
 	return out, nil
 }
 

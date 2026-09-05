@@ -208,7 +208,7 @@ func TestPlanModeAccessChangeFlow(t *testing.T) {
 	appliedNodes := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "add", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": path2ID, "display_group": "HK"}},
 	}, http.StatusOK)
-	publishChangeID := int64(appliedNodes["access_change_id"].(float64))
+	publishChangeID := reconcileSavedPlanChange(t, srv, appliedNodes)
 	preview := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/changes/preview", token, map[string]any{}, http.StatusOK)
 	hash := preview["preview_hash"].(string)
 	expectedActive := int64(preview["expected_active_revision_id"].(float64))
@@ -308,4 +308,51 @@ func TestDeleteSubscriptionPlanUnbindsUsersAndKeepsAccounts(t *testing.T) {
 	if immediate["deleted"] != true {
 		t.Fatalf("empty plan should delete immediately: %#v", immediate)
 	}
+}
+
+func TestPlanNodeSavesCoalesceBeforePreparingConfiguration(t *testing.T) {
+	h, srv, token := setupPlansAPITestServer(t)
+	node := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "queued-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 20000}, http.StatusCreated)["server"].(map[string]any)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": node["id"], "name": "queued-entry", "protocol": "vless", "port": 10443, "config_json": "{}", "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "queued-plan", "enabled": true}, http.StatusCreated)["subscription_plan"].(map[string]any)
+	id := int64(plan["id"].(float64))
+	var last map[string]any
+	for _, op := range []string{"add", "remove", "add"} {
+		last = request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(id)+"/nodes/apply", token, map[string]any{"op": op, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inbound["id"]}}}, http.StatusOK)
+		if last["reconcile_queued"] != (op == "add") {
+			t.Fatalf("missing async state: %#v", last)
+		}
+		if op == "remove" && last["pending_revision_id"].(float64) != 0 {
+			t.Fatalf("unsent reversal left a stale pending revision: %#v", last)
+		}
+	}
+	changes, err := srv.store.ListAccessChanges(t.Context(), 10)
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("save blocked on configuration generation: %#v, %v", changes, err)
+	}
+	srv.reconcilePlans(t.Context())
+	changes, err = srv.store.ListAccessChanges(t.Context(), 10)
+	if err != nil || len(changes) != 1 || changes[0].CandidateRevisionID != int64(last["latest_revision_id"].(float64)) {
+		t.Fatalf("latest save not coalesced: %#v, %v", changes, err)
+	}
+	current := last["subscription_plan"].(map[string]any)["current_revision_id"]
+	reversed := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(id)+"/nodes/apply", token, map[string]any{"op": "remove", "nodes": []map[string]any{{"node_type": "inbound", "node_id": inbound["id"]}}}, http.StatusOK)
+	if reversed["reconcile_queued"] != true || reversed["subscription_plan"].(map[string]any)["current_revision_id"] != current {
+		t.Fatalf("reversal overtook in-flight authorization: %#v", reversed)
+	}
+
+}
+
+func reconcileSavedPlanChange(t *testing.T, srv *Server, saved map[string]any) int64 {
+	t.Helper()
+	if saved["reconcile_queued"] != true {
+		t.Fatalf("expected saved revision queued: %#v", saved)
+	}
+	srv.reconcilePlans(t.Context())
+	plan := saved["subscription_plan"].(map[string]any)
+	revision, err := srv.store.GetPlanRevision(t.Context(), int64(plan["id"].(float64)), int64(saved["latest_revision_id"].(float64)))
+	if err != nil || revision.ActivationChangeID == nil {
+		t.Fatalf("missing prepared access change: %#v, %v", revision, err)
+	}
+	return *revision.ActivationChangeID
 }

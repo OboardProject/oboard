@@ -271,7 +271,7 @@ func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
 	applied := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
 	}, http.StatusOK)
-	changeID := int64(applied["access_change_id"].(float64))
+	changeID := reconcileSavedPlanChange(t, srv, applied)
 	if err := srv.store.UpdateAccessChangeStatus(t.Context(), changeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server 41 task 5028 failed"); err != nil {
 		t.Fatalf("mark access change failed: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestFailedPlanPublishCanBeAbandonedBeforeActivation(t *testing.T) {
 	second := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}},
 	}, http.StatusOK)
-	secondChangeID := int64(second["access_change_id"].(float64))
+	secondChangeID := reconcileSavedPlanChange(t, srv, second)
 	if err := srv.store.UpdateAccessChangeStatus(t.Context(), secondChangeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server 41 task 5028 failed"); err != nil {
 		t.Fatalf("mark second access change failed: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestFailedPlanPublishIsSupersededByNextNodeSave(t *testing.T) {
 	first := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
 	}, http.StatusOK)
-	firstChangeID := int64(first["access_change_id"].(float64))
+	firstChangeID := reconcileSavedPlanChange(t, srv, first)
 	firstRevisionID := int64(first["latest_revision_id"].(float64))
 	if err := srv.store.UpdateAccessChangeStatus(t.Context(), firstChangeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server 41 task 5028 failed"); err != nil {
 		t.Fatalf("mark first access change failed: %v", err)
@@ -352,7 +352,7 @@ func TestFailedPlanPublishIsSupersededByNextNodeSave(t *testing.T) {
 	second := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p2"]}},
 	}, http.StatusOK)
-	secondChangeID := int64(second["access_change_id"].(float64))
+	secondChangeID := reconcileSavedPlanChange(t, srv, second)
 	secondRevisionID := int64(second["latest_revision_id"].(float64))
 	if secondChangeID == firstChangeID || secondRevisionID == firstRevisionID {
 		t.Fatalf("new save did not replace failed desired state: first=%#v second=%#v", first, second)
@@ -589,9 +589,9 @@ func TestPlanVersionChangeClassification(t *testing.T) {
 	applied := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
 		"op": "remove", "nodes": []map[string]any{{"node_type": "proxy_path", "node_id": ids["p1"]}},
 	}, http.StatusOK)
-	changeID := int64(applied["access_change_id"].(float64))
+	changeID := reconcileSavedPlanChange(t, srv, applied)
 	pendingID := int64(applied["pending_revision_id"].(float64))
-	if pendingID == 0 || applied["access_change_status"] == "" {
+	if pendingID == 0 || applied["reconcile_queued"] != true {
 		t.Fatalf("nodes/apply = %#v", applied)
 	}
 	detail := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans/"+itoa(planID), token, nil, http.StatusOK)

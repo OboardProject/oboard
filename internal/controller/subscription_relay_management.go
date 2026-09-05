@@ -311,6 +311,9 @@ func (s *Server) subscriptionRelayHeartbeat(w http.ResponseWriter, r *http.Reque
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
+		if s.agentUpdates != nil {
+			s.agentUpdates.Wake()
+		}
 		write(w, http.StatusOK, map[string]any{"action": "none"})
 		return
 	}

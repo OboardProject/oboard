@@ -1163,6 +1163,19 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	} else {
 		changeClass = "authorization"
 	}
+	if changeClass == "presentation_only" && pendingID != 0 {
+		var applying bool
+		if err := tx.QueryRowContext(ctx, `select exists(select 1 from access_changes where source_plan_id=? and status in ('preparing','activating','finalizing'))`, planID).Scan(&applying); err != nil {
+			return nil, err
+		}
+		if applying {
+			// A running change can still activate different credentials; queue the
+			// reversal after it instead of declaring the current snapshot settled.
+			changeClass = "authorization"
+		} else {
+			pendingID = 0
+		}
+	}
 	changeKind := mutation.ChangeKind
 	if changeKind == "" {
 		changeKind = model.PlanChangeKindMixed
@@ -1190,7 +1203,7 @@ func (s *Store) CreatePlanVersion(ctx context.Context, planID int64, mutation Pl
 	planMetaSQL := `name=?,description=?,enabled=?`
 	planMetaArgs := []any{planName, planDescription, planEnabled}
 	if changeClass == "presentation_only" {
-		if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,current_revision_id=?,latest_revision_id=?,active_revision_id=?,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, revisionID, revisionID, newLock, ts, planID)...); err != nil {
+		if _, err := tx.ExecContext(ctx, `update subscription_plans set `+planMetaSQL+`,current_revision_id=?,latest_revision_id=?,active_revision_id=?,pending_revision_id=null,lock_version=?,updated_at=? where id=?`, append(planMetaArgs, revisionID, revisionID, revisionID, newLock, ts, planID)...); err != nil {
 			return nil, err
 		}
 	} else {

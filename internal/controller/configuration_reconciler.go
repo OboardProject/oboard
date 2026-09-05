@@ -262,7 +262,15 @@ func (s *Server) configurationMutationServerIDs(ctx context.Context, path, metho
 }
 
 func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs, pathIDs []int64) []int64 {
-	data, err := s.store.FullRoutingConfigData(ctx)
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		return nil
+	}
+	paths, err := s.store.ListProxyPaths(ctx)
+	if err != nil {
+		return nil
+	}
+	steps, err := s.store.ListProxyPathSteps(ctx)
 	if err != nil {
 		return nil
 	}
@@ -278,13 +286,13 @@ func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs,
 			pathSet[pathID] = true
 		}
 	}
-	for _, path := range data.ProxyPaths {
+	for _, path := range paths {
 		if inboundSet[path.InboundID] {
 			pathSet[path.ID] = true
 		}
 	}
-	inboundByID := make(map[int64]model.Inbound, len(data.Inbounds))
-	for _, inbound := range data.Inbounds {
+	inboundByID := make(map[int64]model.Inbound, len(inbounds))
+	for _, inbound := range inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
 	serverIDs := make([]int64, 0)
@@ -293,7 +301,7 @@ func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs,
 			serverIDs = append(serverIDs, inbound.ServerID)
 		}
 	}
-	for _, path := range data.ProxyPaths {
+	for _, path := range paths {
 		if !pathSet[path.ID] {
 			continue
 		}
@@ -309,7 +317,7 @@ func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs,
 			}
 		}
 	}
-	for _, step := range data.ProxyPathSteps {
+	for _, step := range steps {
 		if !pathSet[step.PathID] {
 			continue
 		}
@@ -408,20 +416,8 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		}
 		return
 	}
-	maxRevision := uint64(0)
-	for _, state := range states {
-		if state.WantedRevision > maxRevision {
-			maxRevision = state.WantedRevision
-		}
-	}
-	latest := make([]store.ConfigurationSyncState, 0, len(states))
-	for _, state := range states {
-		if state.WantedRevision == maxRevision {
-			latest = append(latest, state)
-		}
-	}
 	claimed := []store.ConfigurationSyncState{}
-	for _, state := range latest {
+	for _, state := range states {
 		ok, claimErr := s.store.ClaimConfigurationSync(ctx, state.ServerID, state.WantedRevision)
 		if claimErr != nil {
 			logConfigurationError("claim pending", claimErr)

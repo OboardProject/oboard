@@ -16,3 +16,11 @@ func TestRelayUpdateOutputSuffixEmpty(t *testing.T) {
 		t.Fatalf("empty output suffix = %q", got)
 	}
 }
+
+func TestRelayUpdaterRejectsNonPositiveHeartbeatInterval(t *testing.T) {
+	for _, interval := range []string{"0s", "-1s"} {
+		if err := runUpdater([]string{"--interval", interval}); err == nil || err.Error() != "heartbeat interval must be positive" {
+			t.Fatalf("interval %s: %v", interval, err)
+		}
+	}
+}

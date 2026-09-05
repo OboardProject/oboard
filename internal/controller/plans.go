@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -877,19 +876,14 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 		Settings:            settings,
 		ChangeKind:          changeKind,
 		ChangeSummary:       changeSummary,
+		CreatedBy:           requestActorID(r),
 	})
 	if err != nil {
 		s.planVersionConflict(w, err, id)
 		return
 	}
-	var change *model.AccessChange
 	if !result.NoChange && result.RequiresDeployment {
 		s.signalPlanReconcile(id)
-		if c, err := s.enqueuePlanDeployment(r.Context(), r, plan, result.Revision.ID); err != nil {
-			log.Printf("plan %d enqueue deployment: %v", id, err)
-		} else {
-			change = c
-		}
 	}
 	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
 	if err != nil {
@@ -904,14 +898,7 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 		out["version_no"] = result.Revision.VersionNo
 		out["revision"] = result.Revision
 		out["pending_revision_id"] = result.PendingRevisionID
-		if change != nil {
-			out["access_change_id"] = change.ID
-			out["access_change_status"] = change.Status
-			out["queued_tasks"] = len(change.Targets)
-		} else {
-			// Deployment is queued asynchronously via reconciler
-			out["reconcile_queued"] = true
-		}
+		out["reconcile_queued"] = result.RequiresDeployment
 	}
 	write(w, 200, out)
 }
@@ -1497,6 +1484,7 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 		Ordering:         orderingMutation,
 		ChangeKind:       model.PlanChangeKindNodes,
 		ChangeSummary:    strings.TrimSpace(req.ChangeSummary),
+		CreatedBy:        requestActorID(r),
 	})
 	if err != nil {
 		s.planVersionConflict(w, err, id)
@@ -1511,19 +1499,10 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 		})
 		return
 	}
-	s.signalPlanReconcile(id)
-	var change *model.AccessChange
-	if c, err := s.enqueuePlanDeployment(r.Context(), r, plan, result.Revision.ID); err != nil {
-		log.Printf("plan %d enqueue deployment: %v", id, err)
-	} else {
-		change = c
+	if result.RequiresDeployment {
+		s.signalPlanReconcile(id)
 	}
-	auditReq(s, r, req.Op, "subscription-plan-nodes", fmt.Sprintf("%d:%d change=%v", id, len(nodes), func() any {
-		if change != nil {
-			return change.ID
-		}
-		return "queued"
-	}()))
+	auditReq(s, r, req.Op, "subscription-plan-nodes", fmt.Sprintf("%d:%d queued", id, len(nodes)))
 	updated, err := s.store.GetSubscriptionPlan(r.Context(), id)
 	if err != nil {
 		fail(w, err, 500)
@@ -1537,13 +1516,7 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 		"pending_revision_id":        result.PendingRevisionID,
 		"runtime_authorization_mode": s.authorizationMode(r.Context()),
 	}
-	if change != nil {
-		out["access_change_id"] = change.ID
-		out["access_change_status"] = change.Status
-		out["queued_tasks"] = len(change.Targets)
-	} else {
-		out["reconcile_queued"] = true
-	}
+	out["reconcile_queued"] = result.RequiresDeployment
 	write(w, 200, out)
 }
 

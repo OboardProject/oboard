@@ -574,7 +574,10 @@ func (s *Service) synchronizeWorkflow(ctx context.Context, item *model.Automatio
 func (s *Service) accessChangeWorkflowState(ctx context.Context, changeset *model.AutomationChangeset, now time.Time) (model.WorkflowStatus, string, string, *time.Time, json.RawMessage, int64, error) {
 	var result struct {
 		Operations []struct {
-			AccessChangeID int64 `json:"access_change_id"`
+			AccessChangeID   int64 `json:"access_change_id"`
+			PlanID           int64 `json:"plan_id"`
+			LatestRevisionID int64 `json:"latest_revision_id"`
+			ReconcileQueued  bool  `json:"reconcile_queued"`
 		} `json:"operations"`
 	}
 	if err := json.Unmarshal(changeset.Result, &result); err != nil {
@@ -585,6 +588,36 @@ func (s *Service) accessChangeWorkflowState(ctx context.Context, changeset *mode
 		if operation.AccessChangeID > 0 {
 			accessChangeID = operation.AccessChangeID
 			break
+		}
+		if operation.ReconcileQueued && operation.PlanID > 0 && operation.LatestRevisionID > 0 {
+			revision, err := s.store.GetPlanRevision(ctx, operation.PlanID, operation.LatestRevisionID)
+			if err != nil {
+				return "", "", "", nil, nil, 0, err
+			}
+			if revision.ActivationChangeID == nil {
+				plan, err := s.store.GetSubscriptionPlan(ctx, operation.PlanID)
+				if err != nil {
+					return "", "", "", nil, nil, 0, err
+				}
+				if plan.CurrentRevisionID == plan.LatestRevisionID {
+					continue
+				}
+				// Rapid saves can coalesce into a later revision before this one is prepared.
+				revision, err = s.store.GetPlanRevision(ctx, operation.PlanID, plan.LatestRevisionID)
+				if err != nil {
+					return "", "", "", nil, nil, 0, err
+				}
+			}
+			if revision.ActivationChangeID != nil {
+				accessChangeID = *revision.ActivationChangeID
+				break
+			}
+			state, err := s.store.GetPlanReconcileState(ctx, operation.PlanID)
+			if err == nil && state.Status == "failed" {
+				return model.WorkflowFailed, "failed", "", &now, json.RawMessage(`{}`), 0, nil
+			}
+			next := mustJSON(map[string]any{"type": "wait", "resource_type": "subscription_plan_revision", "resource_id": revision.ID, "status": "queued"})
+			return model.WorkflowWaitingForAgent, "running", "access_change", nil, next, 0, nil
 		}
 	}
 	if accessChangeID == 0 {

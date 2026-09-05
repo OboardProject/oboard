@@ -281,6 +281,13 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [orderBusy, setOrderBusy] = React.useState(false)
   const [saveBusy, setSaveBusy] = React.useState(false)
   const planMutationQueueRef = React.useRef(Promise.resolve())
+  const nodeSaveGenerationRef = React.useRef(new Map<number, number>())
+  const planVersionsRef = React.useRef(new Map<number, Plan>())
+  const workingNodesRef = React.useRef(workingNodes)
+  const selectedIDRef = React.useRef(selectedID)
+  workingNodesRef.current = workingNodes
+  selectedIDRef.current = selectedID
+
   const [nodeSaveStatus, setNodeSaveStatus] = React.useState<'idle'|'saving'|'saved'|'error'>('idle')
   const [changes, setChanges] = React.useState<AccessChange[]>([])
   const [message, setMessage] = React.useState('')
@@ -338,6 +345,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       // Fallback: if no enriched, use latest_nodes directly
       const sourceNodes = enriched.length > 0 ? enriched : (res.latest_nodes || [])
       setNodeNames(names)
+      planVersionsRef.current.set(id, res.subscription_plan)
       setDetail(res)
       setWorkingSettings(res.subscription_plan)
       const nextNodes = (sourceNodes || []).flatMap((n: any) => {
@@ -391,6 +399,37 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setMessage('')
     setDetailOpen(true)
   }, [embedded, selectedPlanID, selectedID])
+
+  React.useEffect(() => {
+    const currentPlan = detail?.subscription_plan as Plan | undefined
+    if (!detailOpen || !selectedID || !currentPlan || currentPlan.current_revision_id === currentPlan.latest_revision_id || nodeSaveStatus === 'saving' || nodeSaveStatus === 'error') return
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => {
+      const generation = nodeSaveGenerationRef.current.get(selectedID)
+      try {
+        const [fresh, recent] = await Promise.all([
+          client.request<any>(`/subscription-plans/${selectedID}`),
+          client.request<{ access_changes: AccessChange[] }>('/access-changes?limit=50'),
+        ])
+        if (disposed || generation !== nodeSaveGenerationRef.current.get(selectedID)) return
+        const updated = fresh.subscription_plan as Plan
+        planVersionsRef.current.set(selectedID, updated)
+        setDetail(fresh)
+        setPlans(items => items.map(item => item.id === selectedID ? { ...item, ...updated } : item))
+        setChanges(recent.access_changes || [])
+        if (fresh.reconcile_state?.status === 'failed') {
+          setMessage('后台同步失败：' + (fresh.reconcile_state.blocked_reason || '请查看变更记录'))
+          return
+        }
+        if (updated.current_revision_id !== updated.latest_revision_id) timer = setTimeout(poll, 2000)
+      } catch {
+        if (!disposed) timer = setTimeout(poll, 5000)
+      }
+    }
+    timer = setTimeout(poll, 1500)
+    return () => { disposed = true; clearTimeout(timer) }
+  }, [client, selectedID, detailOpen, nodeSaveStatus, detail?.subscription_plan?.current_revision_id, detail?.subscription_plan?.latest_revision_id])
 
   const selectPlan = (id: number) => {
     setSelectedID(id)
@@ -460,116 +499,73 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       })
       return
     }
-    let nextNodes: PlanNode[] = []
-    setWorkingNodes(list => {
-      const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
-      nextNodes = exists ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id)) : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
-      return nextNodes
-    })
-    // Optimistic immediate save via mutation queue
-    setNodeSaveStatus('saving')
-    const task = async () => {
-      try {
-        const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
-        const res = await client.request<{ no_change?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
-          method: 'POST',
-          body: JSON.stringify({
-            op: 'replace',
-            nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
-            base_revision_id: freshPlan.latest_revision_id,
-            expected_lock_version: freshPlan.lock_version,
-            change_summary: '调整套餐节点集合',
-          }),
-        })
-        if (!res.no_change) {
-          setNodeSaveStatus('saved')
-          await refreshPlans()
-          const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
-          setDetail(freshDetail)
-        } else {
-          setNodeSaveStatus('saved')
-        }
-        setTimeout(() => setNodeSaveStatus('idle'), 2000)
-      } catch (e: any) {
-        const msg = e?.message || String(e)
-        if (msg.includes('409') || msg.includes('conflict')) {
-          try {
-            const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
-            await client.request(`/subscription-plans/${selectedID}/nodes/apply`, {
-              method: 'POST',
-              body: JSON.stringify({
-                op: 'replace',
-                nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
-                base_revision_id: freshPlan.latest_revision_id,
-                expected_lock_version: freshPlan.lock_version,
-                change_summary: '调整套餐节点集合',
-              }),
-            })
-            setNodeSaveStatus('saved')
-            await refreshPlans()
-            const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
-            setDetail(freshDetail)
-            setTimeout(() => setNodeSaveStatus('idle'), 2000)
-            return
-          } catch {}
-        }
-        setNodeSaveStatus('error')
-        setMessage('自动保存失败：' + msg)
-        await loadDetail(selectedID)
-      }
-    }
-    planMutationQueueRef.current = planMutationQueueRef.current.then(task).catch(() => {})
+    const list = workingNodesRef.current
+    const exists = list.some(x => x.node_type === n.type && x.node_id === n.id)
+    const nextNodes: PlanNode[] = exists
+      ? list.filter(x => !(x.node_type === n.type && x.node_id === n.id))
+      : [...list, { node_type: n.type, node_id: n.id, display_group: '', name: n.name, global_name: n.effective_global_name || n.name, source_name: n.source_name || n.name, exit_region: n.exit_region, entry_server_name: n.entry_server_name }]
+    workingNodesRef.current = nextNodes
+    setWorkingNodes(nextNodes)
+    void enqueueNodeListSave(nextNodes)
   }
 
   const enqueueNodeListSave = (nextNodes: PlanNode[]) => {
+    const planID = selectedID
+    const generation = (nodeSaveGenerationRef.current.get(planID) || 0) + 1
+    nodeSaveGenerationRef.current.set(planID, generation)
+    const isLatest = () => nodeSaveGenerationRef.current.get(planID) === generation
+    const isVisible = () => selectedIDRef.current === planID && isLatest()
     setNodeSaveStatus('saving')
     const task = async () => {
+      if (!isLatest()) return
       try {
-        const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
-        await client.request(`/subscription-plans/${selectedID}/nodes/apply`, {
+        let savedPlan = planVersionsRef.current.get(planID)
+        if (!savedPlan) {
+          savedPlan = (await client.request<any>(`/subscription-plans/${planID}`)).subscription_plan as Plan
+        }
+        const save = (base: Plan) => client.request<any>(`/subscription-plans/${planID}/nodes/apply`, {
           method: 'POST',
           body: JSON.stringify({
             op: 'replace',
             nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
-            base_revision_id: freshPlan.latest_revision_id,
-            expected_lock_version: freshPlan.lock_version,
+            base_revision_id: base.latest_revision_id,
+            expected_lock_version: base.lock_version,
             change_summary: '调整套餐节点集合',
           }),
         })
-        setNodeSaveStatus('saved')
-        await refreshPlans()
-        const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
-        setDetail(freshDetail)
-        setTimeout(() => setNodeSaveStatus('idle'), 2000)
-      } catch (e: any) {
-        const msg = e?.message || String(e)
-        if (msg.includes('409') || msg.includes('conflict')) {
-          try {
-            const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
-            await client.request(`/subscription-plans/${selectedID}/nodes/apply`, {
-              method: 'POST',
-              body: JSON.stringify({
-                op: 'replace',
-                nodes: nextNodes.map(x => ({ node_type: x.node_type, node_id: x.node_id, display_group: x.display_group || '' })),
-                base_revision_id: freshPlan.latest_revision_id,
-                expected_lock_version: freshPlan.lock_version,
-                change_summary: '调整套餐节点集合',
-              }),
-            })
-            setNodeSaveStatus('saved')
-            await refreshPlans()
-            const freshDetail = await client.request<any>(`/subscription-plans/${selectedID}`)
-            setDetail(freshDetail)
-            setTimeout(() => setNodeSaveStatus('idle'), 2000)
-            return
-          } catch {}
+        let result: any
+        try {
+          result = await save(savedPlan)
+        } catch (error: any) {
+          const message = error?.message || String(error)
+          if (!message.includes('409') && !message.includes('conflict')) throw error
+          savedPlan = (await client.request<any>(`/subscription-plans/${planID}`)).subscription_plan as Plan
+          if (!isLatest()) return
+          result = await save(savedPlan)
         }
-        setNodeSaveStatus('error')
-        setMessage('自动保存失败：' + msg)
-        await loadDetail(selectedID)
+        const updated = result.subscription_plan || { ...savedPlan,
+          lock_version: result.lock_version || savedPlan.lock_version,
+          latest_revision_id: result.latest_revision_id || savedPlan.latest_revision_id }
+        planVersionsRef.current.set(planID, updated)
+        setPlans(items => items.map(item => item.id === planID ? { ...item, ...updated, node_count: nextNodes.length } : item))
+        if (isVisible()) {
+          setDetail((current: any) => current?.subscription_plan?.id === planID ? {
+            ...current, subscription_plan: updated, latest_nodes: nextNodes,
+            revisions: result.revision ? [result.revision, ...(current.revisions || []).filter((r: Revision) => r.id !== result.revision.id)] : current.revisions,
+          } : current)
+          setNodeSaveStatus('saved')
+        }
+      } catch (error: any) {
+        if (isVisible()) {
+          setNodeSaveStatus('error')
+          setMessage('自动保存失败：' + (error?.message || String(error)))
+        } else {
+          notify?.('套餐节点保存失败：' + (error?.message || String(error)), 'error')
+        }
       }
     }
-    planMutationQueueRef.current = planMutationQueueRef.current.then(task).catch(() => {})
+    planMutationQueueRef.current = planMutationQueueRef.current.then(task)
+    return planMutationQueueRef.current
   }
 
   const createPlan = async () => {
@@ -621,57 +617,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     setNodeApplyBusy(true)
     setMessage('')
     try {
-      const res = await client.request<{ access_change_id?: number; no_change?: boolean; reconcile_queued?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
-        method: 'POST',
-        body: JSON.stringify({
-          op: 'replace',
-          nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })),
-          base_revision_id: plan.latest_revision_id,
-          expected_lock_version: plan.lock_version,
-          change_summary: '调整套餐节点集合',
-        }),
-      })
-      if (res.no_change) {
-        notify?.('节点集合没有变化，未创建新版本', 'warning')
-      } else if (res.access_change_id) {
-        notify?.(`已保存，正在同步 #${res.access_change_id}`, 'success')
-      } else if (res.reconcile_queued) {
-        notify?.('已保存，等待后台同步', 'success')
-      } else {
-        notify?.('已保存', 'success')
-      }
-      await loadDetail(selectedID)
-      await refreshPlans()
-      await loadChanges()
-    } catch (e: any) {
-      const err = e?.message || String(e)
-      if (err.includes('conflict') || err.includes('409')) {
-        // Auto-rebase once: reload latest and retry
-        try {
-          await loadDetail(selectedID)
-          const freshPlan = (await client.request<any>(`/subscription-plans/${selectedID}`)).subscription_plan as Plan
-          const retry = await client.request<{ access_change_id?: number; no_change?: boolean; reconcile_queued?: boolean }>(`/subscription-plans/${selectedID}/nodes/apply`, {
-            method: 'POST',
-            body: JSON.stringify({
-              op: 'replace',
-              nodes: workingNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id, display_group: n.display_group || '' })),
-              base_revision_id: freshPlan.latest_revision_id,
-              expected_lock_version: freshPlan.lock_version,
-              change_summary: '调整套餐节点集合',
-            }),
-          })
-          if (retry.no_change) notify?.('节点集合没有变化', 'warning')
-          else notify?.('已保存（自动重试）', 'success')
-          await loadDetail(selectedID)
-          await refreshPlans()
-          await loadChanges()
-          return
-        } catch (retryErr: any) {
-          setMessage('保存失败：' + (retryErr?.message || String(retryErr)))
-          return
-        }
-      }
-      setMessage('保存失败：' + err)
+      await enqueueNodeListSave(workingNodesRef.current)
     } finally {
       setNodeApplyBusy(false)
     }

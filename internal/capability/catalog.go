@@ -427,7 +427,7 @@ func defaultDescriptors() []Descriptor {
 	})
 	input, output, evaluator := executableSchemas("subscription_plans.nodes.update")
 	descriptors = append(descriptors, Descriptor{
-		Name: "subscription_plans.nodes.update", Description: "新增、移除或替换订阅套餐节点，并通过访问变更流程应用",
+		Name: "subscription_plans.nodes.update", Description: "保存订阅套餐节点修改，后台合并最新版本并通过访问变更流程应用",
 		InputSchema: input, OutputSchema: output, RequiredScopes: []string{"subscription_plans:write"},
 		ResourceTypes: []string{"subscription_plan", "inbound", "proxy_path", "external_outbound"}, ResourceEvaluator: evaluator,
 		RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal,
@@ -656,7 +656,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 				"plan_id": positiveID, "no_change": boolValue, "lock_version": positiveID,
 				"latest_revision_id": positiveID, "pending_revision_id": map[string]any{"type": "integer", "minimum": 0},
 				"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue,
-				"queued_tasks": map[string]any{"type": "integer", "minimum": 0},
+				"queued_tasks": map[string]any{"type": "integer", "minimum": 0}, "reconcile_queued": boolValue,
 			}), "subscription_plan_ids"
 	case "subscription_plans.delete":
 		return schemaObject(map[string]any{"plan_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "plan_id", "confirm"), simpleOutput(map[string]any{

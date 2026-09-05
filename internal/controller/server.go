@@ -1278,7 +1278,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, key)
-			if key == agentAutoUpdateSetting && *value && s.agentUpdates != nil {
+			if (key == agentAutoUpdateSetting || key == subscriptionRelayAutoUpdateSetting) && *value && s.agentUpdates != nil {
 				s.agentUpdates.Wake()
 			}
 		}

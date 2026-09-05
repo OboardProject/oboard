@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -66,7 +65,7 @@ func (s *Server) signalPlanReconcile(planID int64) {
 }
 
 func (s *Server) reconcilePlans(ctx context.Context) {
-	plans, err := s.store.ListSubscriptionPlans(ctx)
+	plans, err := s.store.ListSubscriptionPlansToReconcile(ctx)
 	if err != nil {
 		log.Printf("plan reconcile list plans: %v", err)
 		return
@@ -122,7 +121,11 @@ func (s *Server) reconcileOnePlan(ctx context.Context, plan model.SubscriptionPl
 		return nil
 	}
 	// Create access change for target
-	change, err := s.createPlanPublishChangeForActor(ctx, nil, nil, fresh, targetRevisionID)
+	revision, err := s.store.GetPlanRevision(ctx, fresh.ID, targetRevisionID)
+	if err != nil {
+		return err
+	}
+	change, err := s.createPlanPublishChangeForActor(ctx, nil, revision.CreatedBy, fresh, targetRevisionID)
 	if err != nil {
 		_ = s.store.SetPlanReconcileFailed(ctx, fresh.ID, err.Error())
 		return err
@@ -141,20 +144,4 @@ func (s *Server) planReconcileBlockedReason(ctx context.Context, plan *model.Sub
 	// MVP: always ready. Future: check required servers' configuration sync.
 	// We keep hook to demonstrate waiting_dependency status without blocking saves.
 	return false, "", nil
-}
-
-func (s *Server) enqueuePlanDeployment(ctx context.Context, r *http.Request, plan *model.SubscriptionPlan, revisionID int64) (*model.AccessChange, error) {
-	s.signalPlanReconcile(plan.ID)
-	hasOpen, err := s.store.HasOpenPlanAccessChange(ctx, plan.ID)
-	if err != nil {
-		return nil, err
-	}
-	if hasOpen {
-		return nil, nil
-	}
-	fresh, err := s.store.GetSubscriptionPlan(ctx, plan.ID)
-	if err != nil {
-		return nil, err
-	}
-	return s.createPlanPublishChange(ctx, r, fresh, revisionID)
 }

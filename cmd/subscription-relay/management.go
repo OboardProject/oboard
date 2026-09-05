@@ -81,10 +81,13 @@ func runEnrollment(args []string) error {
 
 func runUpdater(args []string) error {
 	flags := flag.NewFlagSet("updater", flag.ContinueOnError)
-	interval := flags.Duration("interval", 30*time.Second, "heartbeat interval")
+	interval := flags.Duration("interval", 10*time.Second, "heartbeat interval")
 	allowHTTP := flags.Bool("allow-http", false, "allow HTTP for local tests")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *interval <= 0 {
+		return errors.New("heartbeat interval must be positive")
 	}
 	controllerURL, err := validateUpstream(env("OBOARD_CONTROLLER_URL", ""), *allowHTTP)
 	if err != nil {

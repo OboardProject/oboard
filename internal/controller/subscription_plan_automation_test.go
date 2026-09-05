@@ -81,6 +81,16 @@ func TestSubscriptionPlanNodesCapabilityAppliesThroughChangeset(t *testing.T) {
 	if err != nil || len(nodes) != 1 || nodes[0].NodeType != model.AssignableNodeInbound || nodes[0].NodeID != inbound.ID {
 		t.Fatalf("latest plan nodes = %#v, err=%v", nodes, err)
 	}
+	queued, err := server.automation.StartWorkflow(ctx, principal, automation.StartWorkflowRequest{
+		Kind: "access_change", IdempotencyKey: "queued-plan-version", ChangesetID: changeset.ID,
+	})
+	if err != nil || queued.Status != model.WorkflowWaitingForAgent {
+		t.Fatalf("queued revision completed prematurely: %#v, %v", queued, err)
+	}
+	if changes, err := db.ListAccessChanges(ctx, 10); err != nil || len(changes) != 0 {
+		t.Fatalf("save synchronously materialized access changes: %#v, %v", changes, err)
+	}
+	server.reconcilePlans(ctx)
 	changes, err := db.ListAccessChanges(ctx, 10)
 	if err != nil || len(changes) != 1 || changes[0].SourcePlanID != plan.ID || changes[0].CandidateRevisionID != updated.LatestRevisionID {
 		t.Fatalf("access changes = %#v, err=%v", changes, err)
@@ -88,9 +98,7 @@ func TestSubscriptionPlanNodesCapabilityAppliesThroughChangeset(t *testing.T) {
 	if changes[0].CreatedBy == nil || *changes[0].CreatedBy != admin.ID {
 		t.Fatalf("access change actor was not preserved: %#v", changes[0].CreatedBy)
 	}
-	workflow, err := server.automation.StartWorkflow(ctx, principal, automation.StartWorkflowRequest{
-		Kind: "access_change", IdempotencyKey: "track-admin-plan-access-change", ChangesetID: changeset.ID,
-	})
+	workflow, err := server.automation.GetWorkflow(ctx, principal, queued.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

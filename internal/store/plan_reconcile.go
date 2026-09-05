@@ -9,6 +9,18 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func (s *Store) ListSubscriptionPlansToReconcile(ctx context.Context) ([]model.SubscriptionPlan, error) {
+	rows, err := s.db.QueryContext(ctx, planSelectSQL+` where coalesce(p.latest_revision_id,0)>0 and (
+		coalesce(p.current_revision_id,0)<>p.latest_revision_id or exists (
+			select 1 from subscription_plan_reconcile_states rs where rs.plan_id=p.id and rs.status<>'idle'
+		)) order by p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSubscriptionPlans(rows)
+}
+
 func (s *Store) GetPlanReconcileState(ctx context.Context, planID int64) (*model.PlanReconcileState, error) {
 	row := s.db.QueryRowContext(ctx, `select plan_id,applying_revision_id,status,last_access_change_id,blocked_reason,blocked_json,attempt_count,created_at,updated_at from subscription_plan_reconcile_states where plan_id=?`, planID)
 	var state model.PlanReconcileState

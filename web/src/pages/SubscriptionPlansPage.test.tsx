@@ -206,6 +206,54 @@ describe('SubscriptionPlansPage', () => {
     ])
   })
 
+  it('coalesces queued node edits and reuses returned plan versions', async () => {
+    let finishFirst: (() => void) | undefined
+    const firstSave = new Promise<void>(resolve => { finishFirst = resolve })
+    const bodies: any[] = []
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/subscription-plans') return { subscription_plans: [plan] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path === '/subscription-plans/1') return { subscription_plan: plan, latest_nodes: [], revisions: [], member_count: 0 }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [], policy: { mode: 'exit_region' } }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [11, 12, 13].map(id => ({ type: 'inbound', id, key: `inbound:${id}`, name: `Entry ${id}`, status: 'ok' })), total: 3 }
+      if (path === '/subscription-plans/1/nodes/apply') {
+        bodies.push(JSON.parse(String(init?.body)))
+        const revision = bodies.length + 1
+        if (bodies.length === 1) await firstSave
+        return { subscription_plan: { ...plan, latest_revision_id: revision, lock_version: revision }, reconcile_queued: true }
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    await act(async () => {
+      root.render(<React.StrictMode><SubscriptionPlansPage data={{ subscription_plans: [plan] }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} /></React.StrictMode>)
+    })
+    act(() => Array.from(container.querySelectorAll('button')).find(button => button.textContent === '编辑')?.click())
+    await flushEffects()
+    act(() => Array.from(document.body.querySelectorAll('button')).find(button => button.textContent?.includes('添加节点'))?.click())
+    await flushEffects()
+    const toggle = (id: number) => {
+      const checkbox = Array.from(document.body.querySelectorAll('label')).find(label => label.textContent?.includes(`Entry ${id}`))?.querySelector('input[type="checkbox"]') as HTMLInputElement
+      expect(checkbox).toBeTruthy()
+      act(() => checkbox.click())
+    }
+    const detailReads = request.mock.calls.filter(([path]) => path === '/subscription-plans/1').length
+    toggle(11)
+    await flushEffects()
+    expect(bodies).toHaveLength(1)
+    toggle(12)
+    await flushEffects()
+    toggle(13)
+    await flushEffects()
+    expect(bodies).toHaveLength(1)
+    await act(async () => { finishFirst?.(); await firstSave })
+    await flushEffects()
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1].nodes.map((node: any) => node.node_id)).toEqual([11, 12, 13])
+    expect(bodies[1].expected_lock_version).toBe(2)
+    expect(request.mock.calls.filter(([path]) => path === '/subscription-plans/1')).toHaveLength(detailReads)
+  })
+
   it('shows a failed node change without blocking further edits', async () => {
     const blockedPlan = { ...plan, lock_version: 2, latest_revision_id: 2, pending_revision_id: 2, node_count: 1 }
     const request = vi.fn(async (path: string) => {

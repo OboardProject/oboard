@@ -221,6 +221,42 @@ else
 	echo "[4/4] 刷新中继服务"
 fi
 
+relay_ready() {
+	probe_addr=$RELAY_ADDR
+	case "$probe_addr" in
+		:*) probe_addr="127.0.0.1$probe_addr" ;;
+		0.0.0.0:*) probe_addr="127.0.0.1:${probe_addr##*:}" ;;
+		\[::\]:*) probe_addr="[::1]:${probe_addr##*:}" ;;
+	esac
+	probe_base=${CONTROLLER_URL#https://}
+	case "$probe_base" in */*) probe_base=/${probe_base#*/} ;; *) probe_base= ;; esac
+	probe_url="http://$probe_addr${probe_base%/}/healthz"
+	probe_attempt=0
+	while [ "$probe_attempt" -lt 10 ]; do
+		if command -v curl >/dev/null 2>&1; then
+			curl --noproxy '*' --connect-timeout 1 --max-time 2 --fail --silent "$probe_url" >/dev/null && return 0
+		else
+			http_proxy= HTTP_PROXY= https_proxy= HTTPS_PROXY= all_proxy= ALL_PROXY= wget -T 2 -q -O /dev/null "$probe_url" && return 0
+		fi
+		probe_attempt=$((probe_attempt + 1))
+		sleep 1
+	done
+	return 1
+}
+
+restart_relay() {
+	if [ "$manager" = systemd ]; then systemctl restart oboard-subscription-relay.service
+	else rc-service oboard-subscription-relay restart
+	fi
+}
+
+rollback_relay() {
+	if [ "$HAD_OLD" = 1 ] && mv -f "$ROLLBACK_FILE" "$INSTALL_DIR/oboard-subscription-relay" && restart_relay && relay_ready; then
+		fail "新中继未能就绪，已恢复旧版本服务。"
+	fi
+	fail "中继未能就绪，自动恢复未完成，请检查本机服务日志。"
+}
+
 if [ "$manager" = systemd ]; then
 	if [ "$MANAGED_UPDATE" = 0 ]; then
 		install -m 0644 "$TMP_DIR/deploy/systemd/oboard-subscription-relay.service" /etc/systemd/system/oboard-subscription-relay.service
@@ -228,11 +264,7 @@ if [ "$manager" = systemd ]; then
 		systemctl daemon-reload
 		systemctl enable oboard-subscription-relay.service oboard-subscription-relay-updater.service
 	fi
-	if ! systemctl restart oboard-subscription-relay.service; then
-		if [ "$HAD_OLD" = 1 ]; then mv -f "$ROLLBACK_FILE" "$INSTALL_DIR/oboard-subscription-relay" 2>/dev/null || true; systemctl restart oboard-subscription-relay.service 2>/dev/null || true; fi
-		rm -f "$INSTALL_DIR/oboard-subscription-relay.new"
-		fail "中继服务启动失败，已回滚到旧版本。"
-	fi
+	if ! restart_relay || ! relay_ready; then rollback_relay; fi
 	if [ "$HAD_OLD" = 1 ]; then rm -f "$ROLLBACK_FILE"; fi
 	[ "$MANAGED_UPDATE" = 1 ] || systemctl restart oboard-subscription-relay-updater.service
 elif [ "$manager" = openrc ]; then
@@ -242,11 +274,7 @@ elif [ "$manager" = openrc ]; then
 		rc-update add oboard-subscription-relay default
 		rc-update add oboard-subscription-relay-updater default
 	fi
-	if ! rc-service oboard-subscription-relay restart; then
-		if [ "$HAD_OLD" = 1 ]; then mv -f "$ROLLBACK_FILE" "$INSTALL_DIR/oboard-subscription-relay" 2>/dev/null || true; rc-service oboard-subscription-relay restart 2>/dev/null || true; fi
-		rm -f "$INSTALL_DIR/oboard-subscription-relay.new"
-		fail "中继服务启动失败，已回滚到旧版本。"
-	fi
+	if ! restart_relay || ! relay_ready; then rollback_relay; fi
 	if [ "$HAD_OLD" = 1 ]; then rm -f "$ROLLBACK_FILE"; fi
 	[ "$MANAGED_UPDATE" = 1 ] || rc-service oboard-subscription-relay-updater restart
 else

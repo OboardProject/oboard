@@ -1013,3 +1013,31 @@ func TestCreateAgentTaskRejectsNonAdvancingConfigVersion(t *testing.T) {
 		t.Fatal("queueing a guarded task below the last version must fail")
 	}
 }
+
+func TestConfigurationReconcileProcessesIndependentRevisionsTogether(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	ctx := t.Context()
+	ids := []int64{}
+	for i := 0; i < 2; i++ {
+		node := &model.Server{Name: fmt.Sprintf("revision-%d", i), AgentID: fmt.Sprintf("agent-%d", i), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+		if err := db.CreateServer(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, node.ID)
+		if _, err := db.MarkConfigurationSyncPending(ctx, uint64(51+i), []int64{node.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.reconcileConfiguration(ctx)
+	for _, id := range ids {
+		state, err := db.ConfigurationSyncState(ctx, id)
+		if err != nil || state.State != "queued" {
+			t.Fatalf("server %d not dispatched in first pass: %#v, %v", id, state, err)
+		}
+	}
+}

@@ -86,6 +86,7 @@ func TestMCPAccessChangeRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.reconcilePlans(ctx)
 	changes, err := db.ListAccessChanges(ctx, 10)
 	if err != nil || len(changes) != 1 {
 		t.Fatalf("access changes = %#v, err=%v", changes, err)
