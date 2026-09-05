@@ -138,11 +138,7 @@ func renderLoonLine(proxy subscriptionProxy) (string, error) {
 		return "", fmt.Errorf("Loon does not support subscription proxy type %q", proxy.Type)
 	}
 	if subscriptionProxyAdvertisesTFO(proxy) {
-		if proxy.Type == "socks5" {
-			parts = append(parts, "tfo=true")
-		} else {
-			parts = append(parts, "fast-open=true")
-		}
+		parts = append(parts, "fast-open=true")
 	}
 	return strings.Join(parts, ","), nil
 }

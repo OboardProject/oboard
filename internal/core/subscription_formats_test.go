@@ -102,10 +102,6 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 			"type": "shadowsocks", "tag": "SS TFO", "server": "ss.example.com", "server_port": 8388,
 			"method": "chacha20-ietf-poly1305", "password": "ss-pass", "tcp_fast_open": true,
 		}},
-		{Name: "SOCKS TFO", Group: "备用", Raw: map[string]any{
-			"type": "socks", "tag": "SOCKS TFO", "server": "socks.example.com", "server_port": 1080,
-			"username": "alice", "password": "socks-pass", "tcp_fast_open": true,
-		}},
 	}
 	for _, test := range []struct {
 		format model.SubscriptionFormat
@@ -137,12 +133,25 @@ func TestTCPFastOpenSubscriptionMapping(t *testing.T) {
 			}
 		})
 	}
-	loon, err := renderSubscriptionTarget(nodes, model.SubscriptionFormatLoon)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(loon, "tfo=true") {
-		t.Fatalf("Loon SOCKS line missing tfo=true:\n%s", loon)
+	socks := []SubscriptionNode{{Name: "SOCKS TFO", Group: "备用", Raw: map[string]any{
+		"type": "socks", "tag": "SOCKS TFO", "server": "socks.example.com", "server_port": 1080,
+		"username": "alice", "password": "socks-pass", "tcp_fast_open": true,
+	}}}
+	for _, format := range []model.SubscriptionFormat{
+		model.SubscriptionFormatSingBox, model.SubscriptionFormatMihomo, model.SubscriptionFormatStash,
+		model.SubscriptionFormatEgern, model.SubscriptionFormatSurge, model.SubscriptionFormatSurgeMac,
+		model.SubscriptionFormatLoon, model.SubscriptionFormatQX, model.SubscriptionFormatShadowrocket,
+		model.SubscriptionFormatV2RayURI,
+	} {
+		t.Run("SOCKS5/"+string(format), func(t *testing.T) {
+			output, err := renderSubscriptionTarget(socks, format)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if subscriptionOutputHasTFO(output) {
+				t.Fatalf("%s advertised TFO for a SOCKS5 proxy:\n%s", format, output)
+			}
+		})
 	}
 	hy2 := []SubscriptionNode{{Name: "HY2", Group: "自动选择", Raw: map[string]any{
 		"type": "hysteria2", "tag": "HY2", "server": "hy2.example.com", "server_port": 8443, "password": "hy2-pass",

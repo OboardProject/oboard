@@ -17,7 +17,7 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 		"hysteria2": {"password", "tls", "server_ports", "hop_interval", "hop_interval_max", "up_mbps", "down_mbps", "obfs", "network"},
 		"anytls":    {"password", "tls"},
 		"ss":        {"method", "password", "plugin", "plugin_opts", "network", "udp_over_tcp", "multiplex", "tcp_fast_open"},
-		"socks5":    {"version", "username", "password", "network", "udp_over_tcp", "tcp_fast_open"},
+		"socks5":    {"version", "username", "password", "network", "udp_over_tcp"},
 		"ssh":       {"password", "host_key"},
 		"mieru":     {"server_ports", "transport", "username", "password", "multiplexing", "traffic_pattern", "tcp_fast_open"},
 		"snell":     {"version", "psk", "userkey", "obfs_mode", "obfs_host", "mode", "reuse", "network", "tcp_fast_open"},

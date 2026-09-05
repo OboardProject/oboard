@@ -334,7 +334,7 @@ func subscriptionProxyAdvertisesTFO(proxy subscriptionProxy) bool {
 
 func subscriptionTypeSupportsTFO(proxyType string) bool {
 	switch proxyType {
-	case "vless", "vmess", "trojan", "ss", "socks5", "snell", "anytls":
+	case "vless", "vmess", "trojan", "ss", "snell", "anytls":
 		return true
 	default:
 		return false

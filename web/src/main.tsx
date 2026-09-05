@@ -15873,6 +15873,7 @@ function InboundTransportFields({ protocol, config, updateConfig, server }: { pr
         <div className="switch-form-row"><span className="switch-form-label">TCP Fast Open</span><Switch checked={Boolean(config.tcp_fast_open)} onChange={checked => updateConfig({ tcp_fast_open: checked || undefined })} ariaLabel="TCP Fast Open" /></div>
         <small className={`field-hint${config.tcp_fast_open && !tfoReady ? ' warning-text' : ''}`}>{serverTCPFastOpenNote(server)}</small>
         {protocol === 'anytls' ? <small className="field-hint">仅作用于入站监听。内核链式 AnyTLS 出站和 sing-box 订阅不会下发该选项。</small> : null}
+        {protocol === 'socks' ? <small className="field-hint">仅作用于入站监听。客户端普遍忽略或拒绝 SOCKS5 的 TFO 字段，订阅不下发该选项。</small> : null}
       </>
       : <div className="access-note compact"><strong>TCP Fast Open</strong><span>{protocol === 'mieru' ? '当前为 UDP 传输，不使用 TCP 套接字，因此不可用。' : '该协议的数据面不跑在 TCP 上，因此不可用。'}</span></div>}
   </div>
