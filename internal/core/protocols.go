@@ -782,6 +782,12 @@ func addRuntimeLimitsForInboundTag(config *SingBoxConfig, inbound model.Inbound,
 			config.OBoard.RateLimits.Inbounds = map[string]OBoardUserRuntimeLimit{}
 		}
 		for _, limit := range limits {
+			// The per-user loop above assigns into its range copy, so the values
+			// in limits still carry no inbound identity. The traffic ledger
+			// rejects a report without inbound_id with a request-fatal 400, which
+			// stalls lease renewal for every user on the server, so the
+			// single-user inbound map must carry the same identity.
+			limit.InboundID = inbound.ID
 			config.OBoard.RateLimits.Inbounds[inboundTag] = limit
 		}
 	}
