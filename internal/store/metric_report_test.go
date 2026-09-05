@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -132,4 +134,47 @@ func TestListServerMetricSamplesOverlaysPublicLatency(t *testing.T) {
 
 func boolPointer(value bool) *bool {
 	return &value
+}
+
+func TestListServerMetricSamplesFleetKeepsLatestPerServer(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "fleet-metrics.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	base := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	var servers []int64
+	for index, count := range []int{0, 3, 75, 140} {
+		server := &model.Server{Name: fmt.Sprintf("fleet-%d", index)}
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+		servers = append(servers, server.ID)
+		for sample := count - 1; sample >= 0; sample-- {
+			at := base.Add(time.Duration(sample-index*1000) * time.Minute)
+			if _, err := db.SaveMetricReport(ctx, server.ID, model.MetricReport{ReportID: fmt.Sprintf("%d-%d", index, sample), SampledAt: at, CPUUsagePercent: float64(sample)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, limit := range []int{1, 60, 120, 0, 2881} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			want := []model.ServerMetricSample{}
+			for _, id := range servers {
+				samples, err := db.ListServerMetricSamples(ctx, id, limit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want = append(want, samples...)
+			}
+			got, err := db.ListServerMetricSamples(ctx, 0, limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("fleet samples differ from individual histories: got %d, want %d", len(got), len(want))
+			}
+		})
+	}
 }

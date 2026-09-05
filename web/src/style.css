@@ -1395,6 +1395,20 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
 
 .server-list-filter-clear { flex: 0 0 var(--control-height); }
 
+.server-list-page { scroll-margin-top: 80px; }
+.server-list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.server-list-pagination-controls { display: flex; align-items: center; gap: 8px; }
+.server-list-pagination-controls button { white-space: nowrap; }
+
 .server-list-result-count {
   min-width: 52px;
   margin-left: auto;

@@ -138,6 +138,7 @@ import { ServerNetworkDialog } from './components/server/ServerNetworkDialog'
 import { ServerSystemDialog } from './components/server/ServerSystemDialog'
 import { ServerTasksDialog } from './components/server/ServerTasksDialog'
 import { ServerActionMenu } from './components/server/ServerActionMenu'
+import { ServerListPage } from './components/server/ServerListPage'
 import { OverflowMenu, type OverflowMenuGroup } from './components/ui/overflow-menu'
 import singBoxClientIcon from './assets/subscription-clients/sing-box.svg'
 import clashMetaClientIcon from './assets/subscription-clients/clash-meta.png'
@@ -7877,11 +7878,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }, [])
 
   useEffect(() => {
-    setServers(((data.servers || []) as Server[]).filter(server => !pendingDeleteServerIDsRef.current.has(server.id)))
+    const incoming = (data.servers || []) as Server[]
+    setServers(pendingDeleteServerIDsRef.current.size ? incoming.filter(server => !pendingDeleteServerIDsRef.current.has(server.id)) : incoming)
   }, [data.servers])
   useEffect(() => {
     const incoming = (data.server_metrics || []) as ServerMetricSample[]
     setServerMetrics(current => {
+      if (current === incoming) return current
       if (!current.length) return incoming
       if (!incoming.length) return current
       // Merge incoming DB samples with current live samples to avoid flicker when DB is sparser (rate-limited).
@@ -7990,7 +7993,12 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const serverRefreshedTime = serverRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
   const metricsByServer = useMemo(() => {
     const grouped = new Map<number, ServerMetricSample[]>()
-    serverMetrics.forEach(sample => grouped.set(Number(sample.server_id), [...(grouped.get(Number(sample.server_id)) || []), sample]))
+    for (const sample of serverMetrics) {
+      const id = Number(sample.server_id)
+      const samples = grouped.get(id)
+      if (samples) samples.push(sample)
+      else grouped.set(id, [sample])
+    }
     return grouped
   }, [serverMetrics])
   const serverRegions = useMemo(() => {
@@ -8536,9 +8544,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       ? <p className="muted server-empty">暂无服务器</p>
       : !visibleServers.length
       ? <div className="server-filter-empty"><Search size={20} aria-hidden="true" /><strong>没有符合条件的服务器</strong><button type="button" className="ghost" onClick={clearServerFilters}>清除筛选</button></div>
-      : view === 'grid'
-		  ? <MotionList className="server-grid">{visibleServers.map(renderServerCard)}</MotionList>
-      : <MotionList className="server-list">{visibleServers.map(renderServerCard)}</MotionList>}
+      : <ServerListPage key={JSON.stringify([serverQuery, serverStatusFilter, serverRegionFilter, listPreferences.sortMode])} items={visibleServers} view={view} renderItem={renderServerCard} />}
     <AnimatePresence>{createOpen && <ServerCreateDialog draft={draft} setDraft={setDraft} onCancel={() => setCreateOpen(false)} onSubmit={createServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{editServer && <ServerEditDialog server={editServer} client={client} notify={notify} role={role} onCancel={() => setEditServer(null)} onSubmit={updateServer} servers={data.servers || []} connectionAuditGated={!settingEnabled(data.settings?.audit_enabled) || !settingEnabled(data.settings?.connection_audit_enabled)} latencyProbeResource={latencyProbeResource} />}</AnimatePresence>
     <AnimatePresence>{extendServer && <ServerExtendExpiryDialog server={extendServer} onCancel={() => setExtendServer(null)} onSubmit={extendServerExpiry} />}</AnimatePresence>
@@ -10167,7 +10173,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
     const totalTraffic = formatBytes(trafficTotalBytes)
     const limitTraffic = trafficLimitBytes > 0 ? formatBytes(trafficLimitBytes) : ''
     return (
-      <MotionCard tag="article" className="server-card server-list-row server-card-monitorable" hoverEffect={false}>
+      <article className="server-card server-list-row server-card-monitorable">
         <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
         
         {/* Identity */}
@@ -10254,7 +10260,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <span className="server-list-mobile-sep">·</span>
           <span className="server-list-mobile-traffic" title={trafficLimitBytes > 0 ? `${totalTraffic} / ${limitTraffic} · ${trafficPercentLabel}` : totalTraffic}>{trafficLimitBytes > 0 ? `${totalTraffic}/${limitTraffic}` : totalTraffic}{trafficLimitBytes > 0 ? ` ${trafficPercentLabel}` : ''}</span>
         </div>
-      </MotionCard>
+      </article>
     )
   }
 
@@ -10281,7 +10287,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   }
 
   return (
-    <MotionCard tag="article" className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}`} hoverEffect={false}>
+    <article className={`server-card server-card-monitorable${isOnline ? '' : ' is-offline'}`}>
       <button type="button" className="server-monitor-open-overlay" onClick={() => onAction('resource-details', server)} aria-label={`查看 ${server.name || `服务器 #${server.id}`} 的负载与延迟`} />
       <div className="server-card-head">
         <div className="server-card-title">
@@ -10377,7 +10383,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           ))}
         </div>
       ) : null}
-    </MotionCard>
+    </article>
   )
 }
 

@@ -3208,7 +3208,12 @@ func (s *Store) ListServerMetricSamples(ctx context.Context, serverID int64, lim
 		query += ` order by sampled_at desc limit ?`
 		args = append(args, limit)
 	} else {
-		query = `with ranked as (select ` + columns + `,row_number() over(partition by server_id order by sampled_at desc) as rn from server_metric_samples) select ` + columns + ` from ranked where rn<=? order by server_id,sampled_at`
+		// Seek the latest samples through the per-server time index instead of
+		// ranking every retained historical row before applying the limit.
+		query = `with recent as (
+			select samples.* from servers cross join server_metric_samples as samples
+			on samples.id in (select id from server_metric_samples where server_id=servers.id order by sampled_at desc limit ?)
+		) select ` + columns + ` from recent order by server_id,sampled_at`
 		args = append(args, limit)
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
