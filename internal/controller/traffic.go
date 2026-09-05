@@ -238,7 +238,13 @@ func newTrafficReportAccess(server *model.Server, routing *routingSnapshot) traf
 // that single report only.
 func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pathID *int64) error {
 	if inboundID == nil {
-		return errors.New("traffic report must identify an inbound")
+		// A structurally malformed report is terminal for that one report,
+		// not the batch. The Agent keeps a rejected batch in its local state,
+		// so a request-fatal 400 here would make the same batch fail on every
+		// retry forever, taking the healthy reports and the lease-renewing
+		// policy response down with it. A current Agent never produces one;
+		// the reason exists so a wedged Agent drains instead of stalling.
+		return trafficReject("invalid_report", "traffic report must identify an inbound")
 	}
 	inbound, ok := a.inboundByID[*inboundID]
 	if !ok {
@@ -250,14 +256,14 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 	accountingLocation := inbound.ServerID == a.server.ID
 	if pathID != nil {
 		if *pathID <= 0 {
-			return errors.New("traffic report path_id must be positive")
+			return trafficReject("invalid_report", "traffic report path_id must be positive")
 		}
 		if _, exists := a.pathByID[*pathID]; !exists {
 			return trafficReject("path_removed", "traffic report proxy path no longer exists")
 		}
 		accountingLocation = core.IsProxyPathAccountingLocation(a.server.ID, inbound.ID, *pathID, a.data.ProxyPaths, a.data.ProxyPathSteps, a.data.Inbounds)
 	} else if core.ProxyPathRequiresAccountingPathID(inbound.ID, a.data.ProxyPaths, a.data.ProxyPathSteps, a.data.Inbounds) {
-		return errors.New("traffic report must identify the transparent proxy path")
+		return trafficReject("invalid_report", "traffic report must identify the transparent proxy path")
 	}
 	if !accountingLocation {
 		return errTrafficForbidden
@@ -321,15 +327,18 @@ func (a trafficReportAccess) validateStream(stream model.TrafficStreamObservatio
 }
 
 func (s *Server) validateAgentTrafficRangeItem(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
+	// Structural malformations are terminal for the one report, never the
+	// batch: the Agent keeps a rejected batch in its local state, so a
+	// request-fatal 400 would wedge the same batch on every retry forever.
 	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, errors.New("traffic report is invalid")
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
 	}
 	if item.ToUpload < item.FromUpload || item.ToDownload < item.FromDownload || item.FromUpload < 0 || item.FromDownload < 0 {
-		return model.TrafficReport{}, model.TrafficPeriod{}, errors.New("traffic report is invalid")
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
 	}
 	source := strings.TrimSpace(item.Source)
 	if source != "core" && source != "ssh" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, errors.New("traffic report source is invalid")
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report source is invalid")
 	}
 	if err := access.validateIdentity(item.UserID, item.InboundID, item.PathID); err != nil {
 		return model.TrafficReport{}, model.TrafficPeriod{}, err

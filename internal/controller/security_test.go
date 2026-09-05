@@ -888,7 +888,10 @@ func TestAgentTrafficRequiresLocalInboundAuthorizationAndIsIdempotent(t *testing
 		return response
 	}
 
-	report(nil, "missing-inbound", http.StatusBadRequest)
+	// A report naming no inbound is structurally malformed, which is terminal
+	// for that report only: the Agent keeps a rejected batch in its local
+	// state, so a request-fatal 400 would wedge the same batch forever.
+	assertTrafficRejection(t, report(nil, "missing-inbound", http.StatusOK), "missing-inbound", "invalid_report")
 	// Another server's inbound is the one boundary a correct Agent can never
 	// reach, so it refuses the whole request.
 	report(&inboundB.ID, "cross-server", http.StatusForbidden)
@@ -972,7 +975,9 @@ func TestAgentTrafficAcceptsOnlyTransparentPathProcessingServer(t *testing.T) {
 		return response
 	}
 
-	report(servers[0].AgentID, "token-source", "source-without-path", nil, http.StatusBadRequest)
+	// A transparent-path report without path_id is structurally malformed,
+	// terminal for that one report rather than the batch.
+	assertTrafficRejection(t, report(servers[0].AgentID, "token-source", "source-without-path", nil, http.StatusOK), "source-without-path", "invalid_report")
 	report(servers[0].AgentID, "token-source", "source-with-path", &path.ID, http.StatusForbidden)
 	report(servers[2].AgentID, "token-downstream", "downstream-with-path", &path.ID, http.StatusForbidden)
 	response := report(servers[1].AgentID, "token-processing", "processing-with-path", &path.ID, http.StatusOK)
