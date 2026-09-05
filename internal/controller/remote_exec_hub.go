@@ -7,34 +7,100 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+// Agent websocket keepalive. The read timeout is several ping intervals so a
+// pong lost to a busy moment never drops a healthy Agent, and it stays well
+// above the 10s/20s heartbeat an Agent already answers.
+const (
+	defaultAgentSocketPingInterval = 30 * time.Second
+	defaultAgentSocketReadTimeout  = 90 * time.Second
+	defaultAgentSocketWriteTimeout = 20 * time.Second
+)
+
+func (s *Server) agentSocketKeepalive() (ping, read, write time.Duration) {
+	ping, read, write = s.agentSocketPingInterval, s.agentSocketReadTimeout, s.agentSocketWriteTimeout
+	if ping <= 0 {
+		ping = defaultAgentSocketPingInterval
+	}
+	if read <= 0 {
+		read = defaultAgentSocketReadTimeout
+	}
+	if write <= 0 {
+		write = defaultAgentSocketWriteTimeout
+	}
+	return ping, read, write
+}
+
+// One server can hold several agent sockets at once: agentConnect counts
+// overlapping connections on purpose, because a reconnecting Agent regularly
+// dials a new socket before the previous one has finished dying. The control
+// channels are therefore kept per connection, in registration order, so a short
+// lived duplicate that comes and goes can never unregister the channel of the
+// connection that is still serving health reports. Keeping a single slot here
+// made that case report the server as offline for every remote request while
+// the panel still showed it online.
 func (s *Server) registerAgentLive(serverID int64, ch chan any) {
 	s.agentLiveMu.Lock()
 	defer s.agentLiveMu.Unlock()
 	if s.agentLive == nil {
-		s.agentLive = map[int64]chan any{}
+		s.agentLive = map[int64][]chan any{}
 	}
-	s.agentLive[serverID] = ch
+	s.agentLive[serverID] = append(s.agentLive[serverID], ch)
 }
 
 func (s *Server) unregisterAgentLive(serverID int64, ch chan any) {
 	s.agentLiveMu.Lock()
 	defer s.agentLiveMu.Unlock()
-	if s.agentLive[serverID] == ch {
-		delete(s.agentLive, serverID)
+	channels := s.agentLive[serverID]
+	for index, candidate := range channels {
+		if candidate != ch {
+			continue
+		}
+		channels = append(channels[:index], channels[index+1:]...)
+		break
 	}
+	if len(channels) == 0 {
+		delete(s.agentLive, serverID)
+		return
+	}
+	s.agentLive[serverID] = channels
 }
 
+// agentControlOnline reports whether a control payload can be handed to this
+// server right now. It is the fact behind every remote request, and unlike the
+// persisted status it never lags the socket.
+func (s *Server) agentControlOnline(serverID int64) bool {
+	s.agentLiveMu.Lock()
+	defer s.agentLiveMu.Unlock()
+	return len(s.agentLive[serverID]) > 0
+}
+
+// sendAgentControl delivers to the newest connection first: after a reconnect
+// that is the socket the Agent is actually reading. Older connections are only
+// tried when the newest one cannot take the payload immediately, and exactly one
+// connection ever receives it, so a duplicated Agent identity cannot start two
+// PTYs for one request.
 func (s *Server) sendAgentControl(serverID int64, payload any) bool {
 	s.agentLiveMu.Lock()
-	ch := s.agentLive[serverID]
+	channels := append([]chan any(nil), s.agentLive[serverID]...)
 	s.agentLiveMu.Unlock()
-	if ch == nil {
+	if len(channels) == 0 {
 		return false
 	}
+	for index := len(channels) - 1; index >= 0; index-- {
+		select {
+		case channels[index] <- payload:
+			return true
+		default:
+		}
+	}
+	// Every buffer is full: wait on the newest connection only, so the total
+	// budget stays the same regardless of how many sockets are registered.
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	select {
-	case ch <- payload:
+	case channels[len(channels)-1] <- payload:
 		return true
-	case <-time.After(2 * time.Second):
+	case <-timer.C:
 		return false
 	}
 }

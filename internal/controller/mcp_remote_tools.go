@@ -146,7 +146,7 @@ func remoteMCPToolDescription(descriptor capability.Descriptor) string {
 func isRemoteAccessDenialCode(code string) bool {
 	switch code {
 	case "privileged_grant_required", "privileged_grant_revoked", "privileged_grant_expired", "privileged_resource_denied",
-		"remote_access_global_disabled", "remote_access_server_disabled", "agent_offline", "agent_upgrade_required", "agent_local_gate_denied":
+		"remote_access_global_disabled", "remote_access_server_disabled", "agent_offline", "agent_control_unavailable", "agent_upgrade_required", "agent_local_gate_denied":
 		return true
 	default:
 		return false

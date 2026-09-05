@@ -114,7 +114,7 @@ type Server struct {
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
 	agentLiveMu                   sync.Mutex
-	agentLive                     map[int64]chan any
+	agentLive                     map[int64][]chan any
 	remoteExecHub                 *remoteExecResultHub
 	terminalHub                   *terminalSessionHub
 	notificationMu                sync.Mutex
@@ -177,8 +177,15 @@ type Server struct {
 	tasks *taskNotifier
 	// taskRecoveryScanMin/Max bound the jittered recovery scan that re-wakes
 	// servers with pending tasks after a lost wake. Tests shorten them.
-	taskRecoveryScanMin time.Duration
-	taskRecoveryScanMax time.Duration
+	taskRecoveryScanMin     time.Duration
+	taskRecoveryScanMax     time.Duration
+	// agentSocket* bound the Agent websocket keepalive. Without them a peer
+	// that stopped reading, or a host killed without closing TCP, leaves a
+	// socket that is registered and useless: control payloads queue into a
+	// connection nobody reads. Tests shorten them.
+	agentSocketPingInterval time.Duration
+	agentSocketReadTimeout  time.Duration
+	agentSocketWriteTimeout time.Duration
 	// configurationWake is a coalesced hint for the durable desired-state
 	// reconciler. SQLite configuration_sync_states remains authoritative.
 	configurationWake  chan struct{}
@@ -256,7 +263,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
-	s.agentLive = map[int64]chan any{}
+	s.agentLive = map[int64][]chan any{}
 	s.remoteExecHub = newRemoteExecResultHub()
 	s.terminalHub = newTerminalSessionHub()
 	s.agentUpdates = newAgentUpdateCoordinator(s)
@@ -14171,6 +14178,15 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	conn.SetReadLimit(1 << 20) // 1 MiB max agent websocket frame
+	pingInterval, readTimeout, writeTimeout := s.agentSocketKeepalive()
+	// Any frame from the Agent proves the socket is alive, so both ordinary
+	// reads and pongs extend the deadline. A host killed without closing TCP
+	// otherwise leaves this handler parked in ReadJSON for as long as the
+	// kernel keeps the connection, holding a control channel nobody reads.
+	_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(readTimeout))
+	})
 	log.Printf("agent connected server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(server.AgentID), safeLogField(clientIP(r)))
 	connectedAt := time.Now()
 	s.trackAgentConnection(r.Context(), server.ID, true, connectedAt.UTC())
@@ -14193,7 +14209,13 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	if plan, err := s.latencyProbePlanForServer(r.Context(), *server); err == nil {
 		hello["latency_probe_plan"] = plan
 	}
+	// Without a write deadline a peer that stopped reading parks this loop in
+	// WriteJSON forever: reads stop being drained, the server drifts offline,
+	// and queued control payloads are never delivered.
 	writeAgentJSON := func(payload any) error {
+		if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+			return err
+		}
 		return conn.WriteJSON(s.withControllerTime(payload))
 	}
 	_ = writeAgentJSON(hello)
@@ -14206,6 +14228,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		for {
 			var message map[string]json.RawMessage
 			err := conn.ReadJSON(&message)
+			if err == nil {
+				_ = conn.SetReadDeadline(time.Now().Add(readTimeout))
+			}
 			select {
 			case reads <- agentSocketRead{message: message, err: err}:
 			case <-r.Context().Done():
@@ -14284,6 +14309,8 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	_, heartbeatInterval := serverMonitoringPolicy(server)
 	heartbeatTimer := time.NewTimer(heartbeatInterval)
 	defer heartbeatTimer.Stop()
+	pingTimer := time.NewTimer(pingInterval)
+	defer pingTimer.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
@@ -14340,6 +14367,15 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if err := writeAgentJSON(payload); err != nil {
 				return
 			}
+		case <-pingTimer.C:
+			// A ping is answered by the gorilla client's own pong handler, so
+			// this works against Agents that predate the keepalive. Failing to
+			// write it is itself proof the socket is gone.
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeTimeout)); err != nil {
+				log.Printf("agent ping failed server=%d(%s): %v", server.ID, safeLogField(server.Name), err)
+				return
+			}
+			pingTimer.Reset(pingInterval)
 		case <-heartbeatTimer.C:
 			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
 				server = latest

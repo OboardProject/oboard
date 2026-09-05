@@ -113,6 +113,19 @@ func (s *Server) remoteAccessView(r *http.Request, server *model.Server) (remote
 	return view, nil
 }
 
+// serverAgentReachable answers whether a remote request can reach this Agent.
+// The persisted status lags the socket in both directions: the offline sweeper
+// only runs periodically, and an Agent that just reconnected is reachable before
+// its first health report lands. A live control channel is therefore accepted on
+// its own, and a stale online row that has no channel left is still allowed
+// through here so the caller fails with the precise agent_control_unavailable.
+func (s *Server) serverAgentReachable(server *model.Server) bool {
+	if server == nil {
+		return false
+	}
+	return server.Status == model.ServerOnline || s.agentControlOnline(server.ID)
+}
+
 func (s *Server) remoteAccessUnavailableReasons(server *model.Server, view remoteAccessView, feature string) []string {
 	reasons := []string{}
 	switch feature {
@@ -123,7 +136,7 @@ func (s *Server) remoteAccessUnavailableReasons(server *model.Server, view remot
 		if !view.Server.RemoteTerminalEnabled {
 			reasons = append(reasons, "remote_access_server_disabled")
 		}
-		if server.Status != model.ServerOnline {
+		if !s.serverAgentReachable(server) {
 			reasons = append(reasons, "agent_offline")
 		}
 		if !slices.Contains(view.Agent.Capabilities, model.RemoteAccessCapabilityTerminal) {
@@ -139,7 +152,7 @@ func (s *Server) remoteAccessUnavailableReasons(server *model.Server, view remot
 		if !view.Server.MCPEnabled {
 			reasons = append(reasons, "remote_access_server_disabled")
 		}
-		if server.Status != model.ServerOnline {
+		if !s.serverAgentReachable(server) {
 			reasons = append(reasons, "agent_offline")
 		}
 		requiredCap := model.RemoteAccessCapabilityExec
@@ -153,7 +166,7 @@ func (s *Server) remoteAccessUnavailableReasons(server *model.Server, view remot
 			reasons = append(reasons, "agent_local_gate_denied")
 		}
 	default:
-		if server.Status != model.ServerOnline {
+		if !s.serverAgentReachable(server) {
 			reasons = append(reasons, "agent_offline")
 		}
 	}
@@ -207,7 +220,7 @@ func (s *Server) assertRemotePrivilegeAllowed(ctx context.Context, server *model
 		if !policy.RemoteTerminalEnabled {
 			return codedError("remote_access_server_disabled", "remote terminal is disabled on this server")
 		}
-		if server.Status != model.ServerOnline {
+		if !s.serverAgentReachable(server) {
 			return codedError("agent_offline", "agent is offline")
 		}
 		if !slices.Contains(status.Capabilities, model.RemoteAccessCapabilityTerminal) {
@@ -227,7 +240,7 @@ func (s *Server) assertRemotePrivilegeAllowed(ctx context.Context, server *model
 	}
 	// Common checks for MCP privileges
 	if privilege != "remote_terminal" {
-		if server.Status != model.ServerOnline {
+		if !s.serverAgentReachable(server) {
 			return codedError("agent_offline", "agent is offline")
 		}
 		switch privilege {
@@ -550,12 +563,13 @@ func (s *Server) remoteAccessMachineView(ctx context.Context, server *model.Serv
 	if !policy.MCPEnabled {
 		blockers = append(blockers, RemoteAccessBlocker{Code: "remote_access_server_disabled", Message: "MCP remote control is disabled for this server", Scope: "server"})
 	}
-	if server.Status != model.ServerOnline {
+	reachable := s.serverAgentReachable(server)
+	if !reachable {
 		blockers = append(blockers, RemoteAccessBlocker{Code: "agent_offline", Message: "Agent is offline", Scope: "agent"})
 	}
 	// capability / local gate blockers are reported separately via agent, but we include them for completeness
 	// For now we keep MCPExecution blockers as global/server only; agent blockers will be surfaced via mcp_execution evaluation when needed
-	view.MCPExecution = RemoteAccessMCPExecution{Available: len(blockers) == 0 && server.Status == model.ServerOnline, Blockers: blockers}
+	view.MCPExecution = RemoteAccessMCPExecution{Available: len(blockers) == 0 && reachable, Blockers: blockers}
 	if len(blockers) == 0 {
 		view.MCPExecution.Blockers = nil
 	}
@@ -586,7 +600,8 @@ func (s *Server) remoteAccessDiagnosticView(ctx context.Context, server *model.S
 	if !policy.MCPEnabled {
 		blockers = append(blockers, "remote_access_server_disabled")
 	}
-	if server.Status != model.ServerOnline {
+	reachable := s.serverAgentReachable(server)
+	if !reachable {
 		blockers = append(blockers, "agent_offline")
 	}
 	// Check privileged grant matrix if provided
@@ -627,12 +642,14 @@ func (s *Server) remoteAccessDiagnosticView(ctx context.Context, server *model.S
 		blockers = append(blockers, "privileged_grant_required")
 	}
 	agentInfo := map[string]any{
-		"online": server.Status == model.ServerOnline,
+		// online is reachability (the live control channel counts); status stays
+		// the persisted row so a diagnostic can show both.
+		"online": reachable,
 		"status": string(server.Status),
 		"capabilities": status.Capabilities,
 		"local_mode": status.LocalMode,
 	}
-	if server.Status != model.ServerOnline {
+	if !reachable {
 		agentInfo["remote_terminal_supported"] = false
 	} else {
 		agentInfo["remote_terminal_supported"] = slices.Contains(status.Capabilities, model.RemoteAccessCapabilityTerminal)

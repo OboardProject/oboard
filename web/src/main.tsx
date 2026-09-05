@@ -1299,6 +1299,7 @@ const errorMessages: Record<string, string> = {
   remote_access_global_disabled: '远程控制已在全局关闭',
   remote_access_server_disabled: '此服务器已关闭远程控制',
   agent_offline: '节点离线，无法打开远程终端',
+  agent_control_unavailable: '暂时无法向该节点下发指令，Agent 可能正在重连，请稍后重试',
   agent_upgrade_required: '节点 Agent 版本过低，请先更新后再使用远程终端',
   agent_local_gate_denied: '节点本机安全策略拒绝了远程终端',
   terminal_limit_exceeded: '远程终端数量已达上限',

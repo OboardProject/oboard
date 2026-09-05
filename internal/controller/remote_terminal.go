@@ -411,7 +411,10 @@ func (s *Server) prepareInteractiveSession(ctx context.Context, owner Interactiv
 		s.terminalHub.mu.Lock()
 		delete(s.terminalHub.sessions, sessionID)
 		s.terminalHub.mu.Unlock()
-		return nil, codedError("agent_offline", "agent control channel is unavailable")
+		// Not the same fact as an offline node: the server can be reported online
+		// and still have no socket that accepts control payloads right now. Report
+		// it separately so an operator is not sent looking for a dead host.
+		return nil, codedError("agent_control_unavailable", "agent control channel is unavailable")
 	}
 	session.mu.Lock()
 	session.prepareTimer = time.AfterFunc(terminalPrepareTimeout, func() {
@@ -509,7 +512,7 @@ func (s *Server) createTerminalSession(w http.ResponseWriter, r *http.Request, s
 			switch coded.Code() {
 			case "terminal_limit_exceeded":
 				failCode(w, coded.Code(), err.Error(), http.StatusConflict)
-			case "agent_offline", "agent_upgrade_required", "remote_access_global_disabled", "remote_access_server_disabled", "agent_local_gate_denied":
+			case "agent_offline", "agent_control_unavailable", "agent_upgrade_required", "remote_access_global_disabled", "remote_access_server_disabled", "agent_local_gate_denied":
 				failCode(w, coded.Code(), err.Error(), http.StatusConflict)
 			default:
 				fail(w, err, http.StatusInternalServerError)
