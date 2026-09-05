@@ -329,3 +329,8 @@ func int64Value(value any) (int64, bool) {
 		return 0, false
 	}
 }
+
+// latencyProbeTaskRefs resolves the servers a latency probe task assigns work to.
+func latencyProbeTaskRefs(ctx context.Context, input any) ([]mcpauth.ResourceRef, error) {
+	return refsFromInt64Slice(ctx, input, "server_ids", "server")
+}

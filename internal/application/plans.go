@@ -40,7 +40,6 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 		LatencyProbePublicTarget    model.ConnectivityTarget   `json:"latency_probe_public_target"`
 		LatencyProbeIntervalSeconds int                        `json:"latency_probe_interval_seconds"`
 		LatencyProbeSampleCount     int                        `json:"latency_probe_sample_count"`
-		LatencyProbeRegions         []model.LatencyProbeRegion `json:"latency_probe_regions"`
 		LatencyProbeMaxTargets      int                        `json:"latency_probe_max_targets"`
 	}
 	if err := strictUnmarshal(raw, &input); err != nil {
@@ -168,7 +167,7 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 		"name": input.Name, "region_code": strings.ToUpper(strings.TrimSpace(input.RegionCode)), "ip_stack": input.IPStack,
 		"latency_probe_enabled": latencyEnabled, "latency_probe_mode": input.LatencyProbeMode, "latency_probe_public_target": input.LatencyProbePublicTarget,
 		"latency_probe_interval_seconds": input.LatencyProbeIntervalSeconds, "latency_probe_sample_count": input.LatencyProbeSampleCount,
-		"latency_probe_regions": input.LatencyProbeRegions, "latency_probe_max_targets": input.LatencyProbeMaxTargets,
+		"latency_probe_max_targets": input.LatencyProbeMaxTargets,
 		"listen_ip": "0.0.0.0", "port_range_start": publicStart, "port_range_end": publicEnd,
 		"internal_port_range_start": internalStart, "internal_port_range_end": internalEnd,
 	}

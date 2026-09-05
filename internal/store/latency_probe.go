@@ -3,9 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
@@ -30,28 +28,6 @@ func normalizeLatencyProbeSettings(server *model.Server) {
 	if server.LatencyProbeMaxTargets < 1 || server.LatencyProbeMaxTargets > 256 {
 		server.LatencyProbeMaxTargets = 64
 	}
-	server.LatencyProbeRegions = cleanLatencyProbeRegions(server.LatencyProbeRegions)
-}
-
-func cleanLatencyProbeRegions(values []model.LatencyProbeRegion) []model.LatencyProbeRegion {
-	seen := map[string]bool{}
-	out := make([]model.LatencyProbeRegion, 0, len(values))
-	for _, value := range values {
-		value.Province = strings.TrimSpace(value.Province)
-		value.Carrier = strings.TrimSpace(value.Carrier)
-		key := value.Province + "\x00" + value.Carrier
-		if value.Province != "" && value.Carrier != "" && !seen[key] {
-			seen[key] = true
-			out = append(out, value)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Province == out[j].Province {
-			return out[i].Carrier < out[j].Carrier
-		}
-		return out[i].Province < out[j].Province
-	})
-	return out
 }
 
 func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model.Server) error {
@@ -69,7 +45,7 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 		byID[servers[i].ID] = &servers[i]
 	}
 	serverIDs, placeholders := serverIDQueryArgs(servers)
-	rows, err := s.db.QueryContext(ctx, `select server_id,enabled,mode,public_target,interval_seconds,sample_count,regions_json,max_targets,resource_version from server_latency_probe_settings where server_id in (`+placeholders+`)`, serverIDs...)
+	rows, err := s.db.QueryContext(ctx, `select server_id,enabled,mode,public_target,interval_seconds,sample_count,max_targets,resource_version from server_latency_probe_settings where server_id in (`+placeholders+`)`, serverIDs...)
 	if err != nil {
 		return err
 	}
@@ -77,8 +53,8 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 	for rows.Next() {
 		var id int64
 		var enabled, interval, samples, maxTargets int
-		var mode, publicTarget, regionsJSON, resourceVersion string
-		if err := rows.Scan(&id, &enabled, &mode, &publicTarget, &interval, &samples, &regionsJSON, &maxTargets, &resourceVersion); err != nil {
+		var mode, publicTarget, resourceVersion string
+		if err := rows.Scan(&id, &enabled, &mode, &publicTarget, &interval, &samples, &maxTargets, &resourceVersion); err != nil {
 			return err
 		}
 		server := byID[id]
@@ -92,7 +68,6 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 		server.LatencyProbeSampleCount = samples
 		server.LatencyProbeMaxTargets = maxTargets
 		server.LatencyProbeResourceVersion = resourceVersion
-		_ = json.Unmarshal([]byte(regionsJSON), &server.LatencyProbeRegions)
 		normalizeLatencyProbeSettings(server)
 	}
 	if err := rows.Err(); err != nil {
@@ -114,7 +89,6 @@ func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *mo
 		return errors.New("latency probe requires a server")
 	}
 	normalizeLatencyProbeSettings(server)
-	regions, _ := json.Marshal(server.LatencyProbeRegions)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -130,7 +104,7 @@ func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *mo
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
-	if _, err := tx.ExecContext(ctx, `insert into server_latency_probe_settings(server_id,enabled,mode,public_target,interval_seconds,sample_count,regions_json,max_targets,resource_version,updated_at) values(?,?,?,?,?,?,?,?,?,?) on conflict(server_id) do update set enabled=excluded.enabled,mode=excluded.mode,public_target=excluded.public_target,interval_seconds=excluded.interval_seconds,sample_count=excluded.sample_count,regions_json=excluded.regions_json,max_targets=excluded.max_targets,resource_version=excluded.resource_version,updated_at=excluded.updated_at`, server.ID, boolInt(server.LatencyProbeEnabled), server.LatencyProbeMode, server.LatencyProbePublicTarget, server.LatencyProbeIntervalSeconds, server.LatencyProbeSampleCount, string(regions), server.LatencyProbeMaxTargets, server.LatencyProbeResourceVersion, updatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into server_latency_probe_settings(server_id,enabled,mode,public_target,interval_seconds,sample_count,max_targets,resource_version,updated_at) values(?,?,?,?,?,?,?,?,?) on conflict(server_id) do update set enabled=excluded.enabled,mode=excluded.mode,public_target=excluded.public_target,interval_seconds=excluded.interval_seconds,sample_count=excluded.sample_count,max_targets=excluded.max_targets,resource_version=excluded.resource_version,updated_at=excluded.updated_at`, server.ID, boolInt(server.LatencyProbeEnabled), server.LatencyProbeMode, server.LatencyProbePublicTarget, server.LatencyProbeIntervalSeconds, server.LatencyProbeSampleCount, server.LatencyProbeMaxTargets, server.LatencyProbeResourceVersion, updatedAt.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	newEnabled := boolInt(server.LatencyProbeEnabled)
@@ -189,7 +163,7 @@ func (s *Store) ListLatencyProbeResults(ctx context.Context, serverID int64, lim
 	if limit <= 0 || limit > 4096 {
 		limit = 512
 	}
-	rows, err := s.db.QueryContext(ctx, `select probe_id,kind,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at from server_latency_probe_results where server_id=? order by checked_at desc,id desc limit ?`, serverID, limit)
+	rows, err := s.db.QueryContext(ctx, `select probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at from server_latency_probe_results where server_id=? order by checked_at desc,id desc limit ?`, serverID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -199,11 +173,14 @@ func (s *Store) ListLatencyProbeResults(ctx context.Context, serverID int64, lim
 		var item model.LatencyProbeResult
 		var available int
 		var checked string
-		if err := rows.Scan(&item.ProbeID, &item.Kind, &item.Mode, &item.Province, &item.Carrier, &item.Host, &item.IP, &item.Port, &available, &item.LatencyMS, &item.MinLatencyMS, &item.P95LatencyMS, &item.JitterMS, &item.SampleCount, &item.SuccessCount, &item.Error, &checked); err != nil {
+		if err := rows.Scan(&item.ProbeID, &item.Kind, &item.TaskID, &item.TaskName, &item.Mode, &item.Province, &item.Carrier, &item.Host, &item.IP, &item.Port, &available, &item.LatencyMS, &item.MinLatencyMS, &item.P95LatencyMS, &item.JitterMS, &item.SampleCount, &item.SuccessCount, &item.Error, &checked); err != nil {
 			return nil, err
 		}
 		item.Available = available != 0
 		item.CheckedAt = parseTime(checked)
+		if item.Kind == "regional" && strings.TrimSpace(item.TaskName) == "" {
+			item.TaskName = latencyProbeTargetLabel(item.Province, item.Carrier)
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -236,15 +213,15 @@ func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, f
 	fromText := from.Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `
 		with filtered as (
-			select province,carrier,cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,latency_ms
+			select task_id,case when trim(task_name)<>'' then task_name else province||' · '||carrier end as task_name,province,carrier,cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,latency_ms
 			from server_latency_probe_results
 			where server_id=? and kind='regional' and available=1 and success_count>0 and latency_ms>0 and checked_at>=? and checked_at<?
 		)
-		select province,carrier,bucket_index,avg(latency_ms),min(latency_ms),max(latency_ms),count(*)
+		select task_id,task_name,province,carrier,bucket_index,avg(latency_ms),min(latency_ms),max(latency_ms),count(*)
 		from filtered
 		where bucket_index>=0 and bucket_index<?
-		group by province,carrier,bucket_index
-		order by bucket_index,province,carrier`, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano), bucketCount)
+		group by task_id,task_name,bucket_index
+		order by bucket_index,task_name,task_id`, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano), bucketCount)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -253,7 +230,7 @@ func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, f
 	for rows.Next() {
 		var point model.ServerRegionalLatencyPoint
 		var bucketIndex int64
-		if err := rows.Scan(&point.Province, &point.Carrier, &bucketIndex, &point.LatencyMS, &point.MinLatencyMS, &point.MaxLatencyMS, &point.Count); err != nil {
+		if err := rows.Scan(&point.TaskID, &point.TaskName, &point.Province, &point.Carrier, &bucketIndex, &point.LatencyMS, &point.MinLatencyMS, &point.MaxLatencyMS, &point.Count); err != nil {
 			return nil, nil, err
 		}
 		point.Kind = "regional"
@@ -287,7 +264,7 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 		if len(item.Error) > 240 {
 			item.Error = item.Error[:240]
 		}
-		result, err := tx.ExecContext(ctx, `insert or ignore into server_latency_probe_results(server_id,report_id,resource_version,probe_id,kind,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.ReportID, report.ResourceVersion, item.ProbeID, item.Kind, item.Mode, item.Province, item.Carrier, item.Host, item.IP, item.Port, boolInt(item.Available), item.LatencyMS, item.MinLatencyMS, item.P95LatencyMS, item.JitterMS, item.SampleCount, item.SuccessCount, item.Error, checkedAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+		result, err := tx.ExecContext(ctx, `insert or ignore into server_latency_probe_results(server_id,report_id,resource_version,probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.ReportID, report.ResourceVersion, item.ProbeID, item.Kind, item.TaskID, item.TaskName, item.Mode, item.Province, item.Carrier, item.Host, item.IP, item.Port, boolInt(item.Available), item.LatencyMS, item.MinLatencyMS, item.P95LatencyMS, item.JitterMS, item.SampleCount, item.SuccessCount, item.Error, checkedAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
 		if err != nil {
 			return err
 		}

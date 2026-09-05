@@ -25,15 +25,46 @@ func TestLatencyProbeTargetsUseExactProvinceCarrierPairs(t *testing.T) {
 		"广东": {"中国电信": {"192.0.2.1", "192.0.2.2"}, "中国联通": {"192.0.2.3"}},
 		"浙江": {"中国电信": {"192.0.2.4"}, "中国联通": {"192.0.2.5"}},
 	}}
-	server := model.Server{LatencyProbeRegions: []model.LatencyProbeRegion{{Province: "广东", Carrier: "中国电信"}, {Province: "浙江", Carrier: "中国联通"}}, LatencyProbeMaxTargets: 3}
-	targets := latencyProbeTargets(resource, server)
+	server := model.Server{LatencyProbeMaxTargets: 3}
+	tasks := []model.LatencyProbeTask{
+		{ID: 1, Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 120, Enabled: true},
+		{ID: 2, Name: "浙江 · 中国联通", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 900, Enabled: true},
+		{ID: 3, Name: "已停用", Province: "广东", Carrier: "中国联通", IntervalSeconds: 60},
+	}
+	targets := latencyProbeTargets(resource, server, tasks)
 	if len(targets) != 3 || targets[0].Kind != "public" || targets[1].Province != "广东" || targets[1].Carrier != "中国电信" || targets[2].Province != "浙江" || targets[2].Carrier != "中国联通" {
 		t.Fatalf("targets = %#v", targets)
 	}
+	if targets[1].TaskID != 1 || targets[1].TaskName != "广东 · 中国电信" || targets[1].IntervalSeconds != 120 || targets[2].TaskID != 2 || targets[2].IntervalSeconds != 900 {
+		t.Fatalf("task identity and cadence = %#v", targets)
+	}
 	for _, target := range targets {
 		if (target.Province == "广东" && target.Carrier == "中国联通") || (target.Province == "浙江" && target.Carrier == "中国电信") {
-			t.Fatalf("generated an unselected pair: %#v", target)
+			t.Fatalf("generated an unselected or disabled pair: %#v", target)
 		}
+	}
+}
+
+// TestLatencyProbeTargetsSeparateTasksOnOneTarget covers two tasks that watch the
+// same province and carrier at different cadences: they must stay distinct probes.
+func TestLatencyProbeTargetsSeparateTasksOnOneTarget(t *testing.T) {
+	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
+		"广东": {"中国电信": {"192.0.2.1"}},
+	}}
+	tasks := []model.LatencyProbeTask{
+		{ID: 4, Name: "华南备线", Province: "广东", Carrier: "中国电信", IntervalSeconds: 1800, Enabled: true},
+		{ID: 5, Name: "华南主线", Province: "广东", Carrier: "中国电信", IntervalSeconds: 60, Enabled: true},
+	}
+	targets := latencyProbeTargets(resource, model.Server{LatencyProbeMaxTargets: 8}, tasks)
+	if len(targets) != 3 {
+		t.Fatalf("targets = %#v", targets)
+	}
+	// Targets are ordered by task name, so 华南主线 precedes 华南备线.
+	if targets[1].TaskID != 5 || targets[1].IntervalSeconds != 60 || targets[2].TaskID != 4 || targets[2].IntervalSeconds != 1800 {
+		t.Fatalf("per-task cadence = %#v", targets)
+	}
+	if targets[1].ProbeID == targets[2].ProbeID {
+		t.Fatalf("tasks on one target share a probe id: %#v", targets)
 	}
 }
 
@@ -41,8 +72,12 @@ func TestLatencyProbeTargetsKeepHostnameWithoutLiteralIP(t *testing.T) {
 	resource := latencyProbeResource{Version: "v1", Provinces: map[string]map[string][]string{
 		"广东": {"中国电信": {"gd-ct-v4.ip.zstaticcdn.com"}, "教育网": {"192.0.2.8"}},
 	}}
-	server := model.Server{LatencyProbeRegions: []model.LatencyProbeRegion{{Province: "广东", Carrier: "中国电信"}, {Province: "广东", Carrier: "教育网"}}, LatencyProbeMaxTargets: 8}
-	targets := latencyProbeTargets(resource, server)
+	server := model.Server{LatencyProbeMaxTargets: 8}
+	tasks := []model.LatencyProbeTask{
+		{ID: 1, Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true},
+		{ID: 2, Name: "广东 · 教育网", Province: "广东", Carrier: "教育网", IntervalSeconds: 300, Enabled: true},
+	}
+	targets := latencyProbeTargets(resource, server, tasks)
 	if len(targets) != 3 {
 		t.Fatalf("targets = %#v", targets)
 	}
@@ -156,8 +191,12 @@ func TestLatencyProbeManualRunDeduplicatesAndStoresCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	server := &model.Server{Name: "latency-edge", AgentID: "latency-agent", AgentTokenHash: security.HashSecret("latency-token"), Status: model.ServerOnline, LatencyProbeEnabled: true, LatencyProbeMode: model.LatencyProbeModeICMP, LatencyProbeSampleCount: 3, LatencyProbeRegions: []model.LatencyProbeRegion{{Province: "广东", Carrier: "中国电信"}}, LatencyProbeMaxTargets: 8}
+	server := &model.Server{Name: "latency-edge", AgentID: "latency-agent", AgentTokenHash: security.HashSecret("latency-token"), Status: model.ServerOnline, LatencyProbeEnabled: true, LatencyProbeMode: model.LatencyProbeModeICMP, LatencyProbeSampleCount: 3, LatencyProbeMaxTargets: 8}
 	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	probeTask := model.LatencyProbeTask{Name: "广东 · 中国电信", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	if err := db.SaveLatencyProbeTask(ctx, &probeTask); err != nil {
 		t.Fatal(err)
 	}
 	resource, err := parseLatencyProbeResource([]byte(`{"广东":{"中国电信":["192.0.2.1"]}}`), time.Now())
@@ -202,6 +241,67 @@ func TestLatencyProbeManualRunDeduplicatesAndStoresCallback(t *testing.T) {
 	items, err := db.ListLatencyProbeResults(ctx, server.ID, 10)
 	if err != nil || len(items) != 1 || items[0].LatencyMS != 12 {
 		t.Fatalf("stored results = %#v err=%v", items, err)
+	}
+	// Task identity comes from the queued plan, never from the Agent report.
+	if items[0].TaskID != probeTask.ID || items[0].TaskName != probeTask.Name {
+		t.Fatalf("stored result lost its task identity: %#v", items[0])
+	}
+}
+
+// TestLatencyProbeAutonomousReportResolvesTasksFromAssignment proves an autonomous
+// report can only name probe tasks the controller actually assigned to that server,
+// and that the stored task name is the controller's, not the Agent's.
+func TestLatencyProbeAutonomousReportResolvesTasksFromAssignment(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "latency-autonomous.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "latency-autonomous", LatencyProbeEnabled: true}
+	other := &model.Server{Name: "latency-other", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateServer(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	assigned := model.LatencyProbeTask{Name: "华南主线", Province: "广东", Carrier: "中国电信", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{server.ID}}
+	foreign := model.LatencyProbeTask{Name: "别人的任务", Province: "浙江", Carrier: "中国联通", IntervalSeconds: 300, Enabled: true, ServerIDs: []int64{other.ID}}
+	if err := db.SaveLatencyProbeTask(ctx, &assigned); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveLatencyProbeTask(ctx, &foreign); err != nil {
+		t.Fatal(err)
+	}
+	app := newTestServer(db, "test-secret", "")
+
+	report := model.LatencyProbeResultReport{ReportID: "auto-1", ResourceVersion: "v1", CheckedAt: time.Now().UTC(), Items: []model.LatencyProbeResult{
+		{ProbeID: "public-cloudflare", Kind: "public", TaskID: 99, TaskName: "伪造", Mode: "tcp", Host: "cp.cloudflare.com", Port: 443, Available: true, LatencyMS: 20, MinLatencyMS: 18, P95LatencyMS: 22, SampleCount: 3, SuccessCount: 3},
+		{ProbeID: "t1-0", Kind: "regional", TaskID: assigned.ID, TaskName: "Agent 自己编的名字", Mode: "tcp", Province: "广东", Carrier: "中国电信", Host: "192.0.2.1", IP: "192.0.2.1", Port: 80, Available: true, LatencyMS: 30, MinLatencyMS: 28, P95LatencyMS: 32, SampleCount: 3, SuccessCount: 3},
+	}}
+	if err := app.resolveLatencyProbeReportTasks(ctx, server.ID, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Items[0].TaskID != 0 || report.Items[0].TaskName != "" {
+		t.Fatalf("public item kept a task identity: %#v", report.Items[0])
+	}
+	if report.Items[1].TaskName != assigned.Name {
+		t.Fatalf("agent-supplied task name was trusted: %#v", report.Items[1])
+	}
+
+	unassigned := report
+	unassigned.Items = append([]model.LatencyProbeResult(nil), report.Items...)
+	unassigned.Items[1].TaskID = foreign.ID
+	if err := app.resolveLatencyProbeReportTasks(ctx, server.ID, &unassigned); err == nil {
+		t.Fatal("a task assigned to another server was accepted")
+	}
+
+	mismatched := report
+	mismatched.Items = append([]model.LatencyProbeResult(nil), report.Items...)
+	mismatched.Items[1].Carrier = "中国移动"
+	if err := app.resolveLatencyProbeReportTasks(ctx, server.ID, &mismatched); err == nil {
+		t.Fatal("a result whose target contradicts its task was accepted")
 	}
 }
 

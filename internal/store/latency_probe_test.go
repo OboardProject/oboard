@@ -25,12 +25,7 @@ func TestLatencyProbeSettingsAndResultsRoundTrip(t *testing.T) {
 		LatencyProbePublicTarget:    model.ConnectivityProbeTarget12306,
 		LatencyProbeIntervalSeconds: 600,
 		LatencyProbeSampleCount:     5,
-		LatencyProbeRegions: []model.LatencyProbeRegion{
-			{Province: "广东", Carrier: "中国电信"},
-			{Province: "广东", Carrier: "中国电信"},
-			{Province: " 浙江 ", Carrier: " 中国联通 "},
-		},
-		LatencyProbeMaxTargets: 32,
+		LatencyProbeMaxTargets:      32,
 	}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -42,7 +37,7 @@ func TestLatencyProbeSettingsAndResultsRoundTrip(t *testing.T) {
 	if !stored.LatencyProbeEnabled || stored.LatencyProbeIntervalSeconds != 600 || stored.LatencyProbeSampleCount != 5 || stored.LatencyProbeMaxTargets != 32 {
 		t.Fatalf("settings = %#v", stored)
 	}
-	if stored.LatencyProbeMode != model.LatencyProbeModeICMP || stored.LatencyProbePublicTarget != model.ConnectivityProbeTarget12306 || len(stored.LatencyProbeRegions) != 2 || stored.LatencyProbeRegions[0].Province != "广东" || stored.LatencyProbeRegions[1].Province != "浙江" {
+	if stored.LatencyProbeMode != model.LatencyProbeModeICMP || stored.LatencyProbePublicTarget != model.ConnectivityProbeTarget12306 {
 		t.Fatalf("normalized settings = %#v", stored)
 	}
 	stored.LatencyProbeEnabled = false
@@ -50,7 +45,6 @@ func TestLatencyProbeSettingsAndResultsRoundTrip(t *testing.T) {
 	stored.LatencyProbeSampleCount = 4
 	stored.LatencyProbeMode = model.LatencyProbeModeTCP
 	stored.LatencyProbePublicTarget = model.ConnectivityProbeTargetCloudflare
-	stored.LatencyProbeRegions = []model.LatencyProbeRegion{{Province: "四川", Carrier: "中国联通"}}
 	stored.LatencyProbeMaxTargets = 16
 	if err := db.UpdateServer(ctx, stored); err != nil {
 		t.Fatal(err)
@@ -59,7 +53,7 @@ func TestLatencyProbeSettingsAndResultsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.LatencyProbeEnabled || updated.LatencyProbeMode != model.LatencyProbeModeTCP || updated.LatencyProbePublicTarget != model.ConnectivityProbeTargetCloudflare || updated.LatencyProbeIntervalSeconds != 900 || updated.LatencyProbeSampleCount != 4 || updated.LatencyProbeMaxTargets != 16 || len(updated.LatencyProbeRegions) != 1 || updated.LatencyProbeRegions[0] != (model.LatencyProbeRegion{Province: "四川", Carrier: "中国联通"}) {
+	if updated.LatencyProbeEnabled || updated.LatencyProbeMode != model.LatencyProbeModeTCP || updated.LatencyProbePublicTarget != model.ConnectivityProbeTargetCloudflare || updated.LatencyProbeIntervalSeconds != 900 || updated.LatencyProbeSampleCount != 4 || updated.LatencyProbeMaxTargets != 16 {
 		t.Fatalf("updated settings = %#v", updated)
 	}
 

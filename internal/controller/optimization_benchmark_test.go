@@ -313,7 +313,7 @@ func BenchmarkHeartbeatScaling(b *testing.B) {
 				}
 				_, _ = serverMonitoringPolicy(latest)
 				_ = srv.effectiveConnectionAuditEnabled(ctx, latest)
-				if _, err := latencyProbePlanForServer(ctx, *latest); err != nil {
+				if _, err := srv.latencyProbePlanForServer(ctx, *latest); err != nil {
 					b.Fatal(err)
 				}
 				heartbeat := map[string]any{"type": "heartbeat", "ts": time.Now().UTC()}

@@ -151,7 +151,7 @@ func TestReturnLatencySettingsPatchPreservesServerConfiguration(t *testing.T) {
 	}, http.StatusCreated)["server"].(map[string]any)
 	updated := request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+itoa(int64(created["id"].(float64))), token, map[string]any{
 		"latency_probe_enabled": true, "latency_probe_mode": "icmp", "latency_probe_public_target": "cloudflare", "latency_probe_interval_seconds": 120,
-		"latency_probe_sample_count": 5, "latency_probe_max_targets": 64, "latency_probe_regions": []any{},
+		"latency_probe_sample_count": 5, "latency_probe_max_targets": 64,
 	}, http.StatusOK)["server"].(map[string]any)
 	for _, key := range []string{"name", "listen_ip", "listen_mode", "ip_stack", "connection_audit_enabled", "port_range_start", "port_range_end", "monitoring_mode", "region_mode", "region_code"} {
 		if updated[key] != created[key] {

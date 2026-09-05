@@ -22,6 +22,7 @@ func (s *Server) registerOpsAutomationOperations() {
 	s.registerTaskTriggerOperations()
 	s.registerLogOperations()
 	s.registerProbeOperations()
+	s.registerLatencyProbeTaskOperations()
 }
 
 // ---- task triggers (diagnose / update agent / agents update all) ----
@@ -469,7 +470,11 @@ func (s *Server) registerProbeOperations() {
 		if err != nil {
 			return nil, err
 		}
-		targets := latencyProbeTargets(resource, *server)
+		tasks, err := s.store.ListLatencyProbeTasksForServer(ctx, server.ID)
+		if err != nil {
+			return nil, err
+		}
+		targets := latencyProbeTargets(resource, *server, tasks)
 		if len(targets) == 0 {
 			return nil, errors.New("没有匹配的省份或运营商探针")
 		}

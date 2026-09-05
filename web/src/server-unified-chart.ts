@@ -6,10 +6,27 @@ export interface MetricSeries {
   yAxis: 'left' | 'right'
 }
 
+// regionalSeriesKey identifies the probe task that produced a sample. Several
+// tasks may share one province+carrier target, so the task id wins when present.
+export function regionalSeriesKey(probe: { task_id?: number; province?: string; carrier?: string }): string {
+  if (probe.task_id && probe.task_id > 0) return `task_${probe.task_id}`
+  return `${probe.province || ''} · ${probe.carrier || ''}`
+}
+
+// regionalSeriesLabel prefers the probe task name so charts stay readable when
+// several tasks watch the same province and carrier.
+export function regionalSeriesLabel(probe: { task_name?: string; province?: string; carrier?: string }): string {
+  const name = (probe.task_name || '').trim()
+  if (name) return name
+  return `${probe.province || ''} · ${probe.carrier || ''}`
+}
+
 export interface LatencyProbeResultSample {
   probe_id?: number | string
   server_id?: number
   kind?: 'public' | 'regional'
+  task_id?: number
+  task_name?: string
   province?: string
   carrier?: string
   host?: string
@@ -176,14 +193,13 @@ export function alignUnifiedMetrics({
   const startTime = now - windowMs
   const bucketDuration = windowMs / bucketCount
 
-  // 1. Discover all regional probe targets
-  const regionalTargets = new Map<string, { province: string; carrier: string }>()
+  // 1. Discover all regional probe targets. A probe task owns one target, so the
+  // task identity is the series key and the task name is the series label.
+  const regionalTargets = new Map<string, string>()
   regionalProbes.forEach(probe => {
     if ((probe.kind === 'regional' || probe.at) && probe.province && probe.carrier) {
-      const key = `${probe.province} · ${probe.carrier}`
-      if (!regionalTargets.has(key)) {
-        regionalTargets.set(key, { province: probe.province, carrier: probe.carrier })
-      }
+      const key = regionalSeriesKey(probe)
+      if (!regionalTargets.has(key)) regionalTargets.set(key, regionalSeriesLabel(probe))
     }
   })
 
@@ -197,11 +213,11 @@ export function alignUnifiedMetrics({
   ]
 
   let colorIdx = 0
-  const regTargetKeys = Array.from(regionalTargets.keys()).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+  const regTargetKeys = Array.from(regionalTargets.keys()).sort((a, b) => (regionalTargets.get(a) || a).localeCompare(regionalTargets.get(b) || b, 'zh-CN'))
   regTargetKeys.forEach(targetKey => {
     seriesList.push({
       id: `reg_${targetKey}`,
-      label: targetKey,
+      label: regionalTargets.get(targetKey) || targetKey,
       color: REGIONAL_SERIES_COLORS[colorIdx % REGIONAL_SERIES_COLORS.length],
       unit: 'ms',
       yAxis: 'right',
@@ -278,7 +294,7 @@ export function alignUnifiedMetrics({
     if (!Number.isFinite(value)) return
     const idx = getBucketIndex(new Date(timeString).getTime())
     if (idx >= 0) {
-      const seriesId = `reg_${probe.province} · ${probe.carrier}`
+      const seriesId = `reg_${regionalSeriesKey(probe)}`
       addLatency(idx, seriesId, value, Number(probe.count || 1))
     }
   })

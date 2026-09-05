@@ -40,7 +40,6 @@ type serverUpdateChanges struct {
 	LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target,omitempty"`
 	LatencyProbeInterval     *int                        `json:"latency_probe_interval_seconds,omitempty"`
 	LatencyProbeSamples      *int                        `json:"latency_probe_sample_count,omitempty"`
-	LatencyProbeRegions      *[]model.LatencyProbeRegion `json:"latency_probe_regions,omitempty"`
 	LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets,omitempty"`
 	TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode,omitempty"`
 	OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled,omitempty"`
@@ -187,7 +186,6 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("latency_probe_public_target", changes.LatencyProbePublicTarget != nil, func() { next.LatencyProbePublicTarget = *changes.LatencyProbePublicTarget })
 	set("latency_probe_interval_seconds", changes.LatencyProbeInterval != nil, func() { next.LatencyProbeIntervalSeconds = *changes.LatencyProbeInterval })
 	set("latency_probe_sample_count", changes.LatencyProbeSamples != nil, func() { next.LatencyProbeSampleCount = *changes.LatencyProbeSamples })
-	set("latency_probe_regions", changes.LatencyProbeRegions != nil, func() { next.LatencyProbeRegions = *changes.LatencyProbeRegions })
 	set("latency_probe_max_targets", changes.LatencyProbeMaxTargets != nil, func() { next.LatencyProbeMaxTargets = *changes.LatencyProbeMaxTargets })
 	set("time_correction_mode", changes.TimeCorrectionMode != nil, func() { next.TimeCorrectionMode = *changes.TimeCorrectionMode })
 	set("offline_notify_enabled", changes.OfflineNotifyEnabled != nil, func() { next.OfflineNotifyEnabled = *changes.OfflineNotifyEnabled })

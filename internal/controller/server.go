@@ -462,6 +462,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/port-forward-probes", s.auth(s.portForwardProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/inbound-probes", s.auth(s.inboundProbes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/latency-probe-resource", s.auth(s.latencyProbeResource, model.RoleViewer))
+	mux.HandleFunc("/api/v1/latency-probe-tasks", s.auth(s.latencyProbeTasks, model.RoleOperator))
+	mux.HandleFunc("/api/v1/latency-probe-tasks/", s.auth(s.latencyProbeTask, model.RoleOperator))
 	mux.HandleFunc("/api/v1/configuration-sync", s.auth(s.configurationSync, model.RoleOperator))
 	mux.HandleFunc("/api/v1/configuration-sync/retry", s.auth(s.configurationSyncRetry, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/apply", s.auth(s.applyDeployment, model.RoleOperator))
@@ -4026,7 +4028,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target"`
 			LatencyProbeInterval     *int                        `json:"latency_probe_interval_seconds"`
 			LatencyProbeSamples      *int                        `json:"latency_probe_sample_count"`
-			LatencyProbeRegions      *[]model.LatencyProbeRegion `json:"latency_probe_regions"`
 			LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets"`
 			OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled"`
 			OfflineAfterSeconds      *int                        `json:"offline_after_seconds"`
@@ -4190,7 +4191,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		v.LatencyProbePublicTarget = current.LatencyProbePublicTarget
 		v.LatencyProbeIntervalSeconds = current.LatencyProbeIntervalSeconds
 		v.LatencyProbeSampleCount = current.LatencyProbeSampleCount
-		v.LatencyProbeRegions = current.LatencyProbeRegions
 		v.LatencyProbeMaxTargets = current.LatencyProbeMaxTargets
 		v.LatencyProbeResourceVersion = current.LatencyProbeResourceVersion
 		if input.LatencyProbeEnabled != nil {
@@ -4207,9 +4207,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.LatencyProbeSamples != nil {
 			v.LatencyProbeSampleCount = *input.LatencyProbeSamples
-		}
-		if input.LatencyProbeRegions != nil {
-			v.LatencyProbeRegions = *input.LatencyProbeRegions
 		}
 		if input.LatencyProbeMaxTargets != nil {
 			v.LatencyProbeMaxTargets = *input.LatencyProbeMaxTargets
@@ -5316,11 +5313,6 @@ func validateServer(v *model.Server) error {
 	if v.LatencyProbeMaxTargets == 0 {
 		v.LatencyProbeMaxTargets = 64
 	}
-	var err error
-	v.LatencyProbeRegions, err = normalizeLatencyProbeRegions(v.LatencyProbeRegions)
-	if err != nil {
-		return fmt.Errorf("latency_probe_regions: %w", err)
-	}
 	switch v.LatencyProbeMode {
 	case "", model.LatencyProbeModeTCP:
 		v.LatencyProbeMode = model.LatencyProbeModeTCP
@@ -5413,39 +5405,12 @@ func validateServer(v *model.Server) error {
 	if err := core.ValidatePortRange(v.PortRangeStart, v.PortRangeEnd); err != nil {
 		return err
 	}
-	v.DisplayTags, err = model.NormalizeServerDisplayTags(v.DisplayTags)
+	tags, err := model.NormalizeServerDisplayTags(v.DisplayTags)
 	if err != nil {
 		return err
 	}
+	v.DisplayTags = tags
 	return core.ValidatePortRange(v.InternalPortRangeStart, v.InternalPortRangeEnd)
-}
-
-func normalizeLatencyProbeRegions(values []model.LatencyProbeRegion) ([]model.LatencyProbeRegion, error) {
-	seen := map[string]bool{}
-	out := make([]model.LatencyProbeRegion, 0, len(values))
-	for _, value := range values {
-		value.Province = strings.TrimSpace(value.Province)
-		value.Carrier = strings.TrimSpace(value.Carrier)
-		if value.Province == "" || value.Carrier == "" {
-			return nil, errors.New("每个地区目标都必须同时选择省份和运营商")
-		}
-		key := value.Province + "\x00" + value.Carrier
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, value)
-		if len(out) > 200 {
-			return nil, errors.New("地区延迟目标最多选择 200 组")
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Province == out[j].Province {
-			return out[i].Carrier < out[j].Carrier
-		}
-		return out[i].Province < out[j].Province
-	})
-	return out, nil
 }
 
 func portPolicyChanged(current, next model.Server) bool {
@@ -14225,7 +14190,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 		hello[key] = value
 	}
-	if plan, err := latencyProbePlanForServer(r.Context(), *server); err == nil {
+	if plan, err := s.latencyProbePlanForServer(r.Context(), *server); err == nil {
 		hello["latency_probe_plan"] = plan
 	}
 	writeAgentJSON := func(payload any) error {
@@ -14388,7 +14353,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 				heartbeat[key] = value
 			}
-			if plan, planErr := latencyProbePlanForServer(r.Context(), *server); planErr == nil {
+			if plan, planErr := s.latencyProbePlanForServer(r.Context(), *server); planErr == nil {
 				heartbeat["latency_probe_plan"] = plan
 			}
 			if err := writeAgentJSON(heartbeat); err != nil {
@@ -14421,6 +14386,8 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 		if err := json.Unmarshal(raw, &report); err != nil {
 			log.Printf("reject latency probe report server=%d: %v", server.ID, err)
 		} else if err := validateAutonomousLatencyProbeReport(&report); err != nil {
+			log.Printf("reject latency probe report server=%d: %v", server.ID, err)
+		} else if err := s.resolveLatencyProbeReportTasks(ctx, server.ID, &report); err != nil {
 			log.Printf("reject latency probe report server=%d: %v", server.ID, err)
 		} else if err := s.store.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
 			log.Printf("save latency probe report server=%d: %v", server.ID, err)

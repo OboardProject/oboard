@@ -395,6 +395,10 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', interval_seconds integer not null default 60, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
 		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
 		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
+		`create table if not exists latency_probe_tasks (id integer primary key autoincrement, name text not null, province text not null, carrier text not null, interval_seconds integer not null default 60, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
+		`create unique index if not exists idx_latency_probe_tasks_name on latency_probe_tasks(name)`,
+		`create table if not exists latency_probe_task_servers (task_id integer not null references latency_probe_tasks(id) on delete cascade, server_id integer not null references servers(id) on delete cascade, primary key(task_id,server_id))`,
+		`create index if not exists idx_latency_probe_task_servers_server on latency_probe_task_servers(server_id)`,
 		`create table if not exists controller_backups (id text primary key, name text not null, origin text not null, local_path text not null default '', local_status text not null default 'available', remote_key text not null default '', remote_target text not null default '', remote_status text not null default 'disabled', remote_error text not null default '', size_bytes integer not null default 0, source_version text not null default '', format_version integer not null default 1, protected integer not null default 0, created_at text not null, updated_at text not null)`,
 		`create table if not exists rate_limits (key_hash text primary key, window_start text not null, count integer not null, updated_at text not null)`,
 		`create table if not exists api_principals (id text primary key, owner_user_id integer references users(id) on delete set null, name text not null, type text not null, enabled integer not null default 1, scopes_json text not null default '[]', resource_filter_json text not null default '{}', allowed_cidrs_json text not null default '[]', rate_limit_per_minute integer not null default 60, max_concurrency integer not null default 4, expires_at text, last_used_at text, created_at text not null, updated_at text not null)`,
@@ -738,6 +742,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"server_latency_probe_results", "mode", `alter table server_latency_probe_results add column mode text not null default 'icmp'`},
 		{"server_latency_probe_results", "host", `alter table server_latency_probe_results add column host text not null default ''`},
 		{"server_latency_probe_results", "port", `alter table server_latency_probe_results add column port integer not null default 0`},
+		{"server_latency_probe_results", "task_id", `alter table server_latency_probe_results add column task_id integer not null default 0`},
+		{"server_latency_probe_results", "task_name", `alter table server_latency_probe_results add column task_name text not null default ''`},
 		{"snell_profiles", "tcp_fast_open", `alter table snell_profiles add column tcp_fast_open integer not null default 0`},
 		{"servers", "tcp_fastopen_state", `alter table servers add column tcp_fastopen_state text not null default ''`},
 		{"servers", "tcp_fastopen_value", `alter table servers add column tcp_fastopen_value integer not null default 0`},
@@ -750,6 +756,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateUnifiedLatencyProbeSettings(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateLatencyProbeTasks(ctx); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_server_latency_probe_results_report_target on server_latency_probe_results(server_id,report_id,probe_id) where report_id<>''`); err != nil {

@@ -60,7 +60,6 @@ type ServerDTO struct {
 	LatencyProbePublicTarget    model.ConnectivityTarget   `json:"latency_probe_public_target"`
 	LatencyProbeIntervalSeconds int                        `json:"latency_probe_interval_seconds"`
 	LatencyProbeSampleCount     int                        `json:"latency_probe_sample_count"`
-	LatencyProbeRegions         []model.LatencyProbeRegion `json:"latency_probe_regions,omitempty"`
 	LatencyProbeMaxTargets      int                        `json:"latency_probe_max_targets"`
 	LatencyProbeResourceVersion string                     `json:"latency_probe_resource_version"`
 	DisplayTags                 []model.ServerDisplayTag   `json:"display_tags"`
@@ -258,7 +257,7 @@ func serverDTO(item model.Server) ServerDTO {
 		ExpiryNotifyEnabled: item.ExpiryNotifyEnabled, LastAutoRenewedAt: item.LastAutoRenewedAt,
 		LatencyProbeEnabled: item.LatencyProbeEnabled, LatencyProbeMode: item.LatencyProbeMode,
 		LatencyProbePublicTarget: item.LatencyProbePublicTarget, LatencyProbeIntervalSeconds: item.LatencyProbeIntervalSeconds,
-		LatencyProbeSampleCount: item.LatencyProbeSampleCount, LatencyProbeRegions: item.LatencyProbeRegions,
+		LatencyProbeSampleCount:     item.LatencyProbeSampleCount,
 		LatencyProbeMaxTargets:      item.LatencyProbeMaxTargets,
 		LatencyProbeResourceVersion: item.LatencyProbeResourceVersion,
 		DisplayTags:                 append([]model.ServerDisplayTag{}, item.DisplayTags...),

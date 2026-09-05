@@ -13,6 +13,18 @@ export type ConnectivityProbeTarget = 'auto' | 'cloudflare' | '12306' | 'google'
 export type LatencyProbeMode = 'tcp' | 'icmp'
 export type LatencyProbeRegion = { province: string; carrier: string }
 
+export type LatencyProbeTask = {
+  id: number
+  name: string
+  province: string
+  carrier: string
+  interval_seconds: number
+  enabled: boolean
+  server_ids: number[]
+  created_at?: string
+  updated_at?: string
+}
+
 export type Server = {
   id: number
   name: string
@@ -83,7 +95,6 @@ export type Server = {
   latency_probe_public_target: ConnectivityProbeTarget
   latency_probe_interval_seconds?: number
   latency_probe_sample_count?: number
-  latency_probe_regions?: LatencyProbeRegion[]
   latency_probe_max_targets?: number
   latency_probe_resource_version?: string
   connection_audit_enabled: boolean

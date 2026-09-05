@@ -42,6 +42,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			return nil, err
 		}
 		return s.serverLatencyProbesRead(ctx, principal, request.ServerID, request.Limit)
+	case "latency_probe_tasks.list":
+		var request struct{}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return s.latencyProbeTasksRead(ctx, principal)
 	case "audit.logs.list":
 		var request struct {
 			Limit  int    `json:"limit"`

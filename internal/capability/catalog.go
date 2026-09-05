@@ -262,7 +262,6 @@ func defaultDescriptors() []Descriptor {
 		"auto_renew_enabled": boolValue, "expiry_notify_enabled": boolValue, "last_auto_renewed_at": nullableString(),
 		"latency_probe_enabled": boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
 		"latency_probe_interval_seconds": map[string]any{"type": "integer"}, "latency_probe_sample_count": map[string]any{"type": "integer"},
-		"latency_probe_regions":          map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")},
 		"latency_probe_max_targets":      map[string]any{"type": "integer"},
 		"latency_probe_resource_version": stringValue,
 		"display_tags":                   displayTags,
@@ -317,8 +316,8 @@ func defaultDescriptors() []Descriptor {
 				"internal_port_range_start": internalPortStart, "internal_port_range_end": internalPortEnd,
 				"latency_probe_enabled": boolValue, "latency_probe_mode": stringValue, "latency_probe_public_target": stringValue,
 				"latency_probe_interval_seconds": map[string]any{"type": "integer"}, "latency_probe_sample_count": map[string]any{"type": "integer"},
-				"latency_probe_regions": map[string]any{"type": "array", "items": closedObject(map[string]any{"province": stringValue, "carrier": stringValue}, "province", "carrier")}, "latency_probe_max_targets": map[string]any{"type": "integer"},
-				"expires_at": stringValue,
+				"latency_probe_max_targets": map[string]any{"type": "integer"},
+				"expires_at":                stringValue,
 			}),
 			"action": stringValue, "name": stringValue, "label": stringValue, "agent_connected": boolValue,
 			"requires_external_install": boolValue, "entry_server_id": positiveID, "entry_inbound_id": positiveID,
@@ -332,7 +331,6 @@ func defaultDescriptors() []Descriptor {
 		"suggested_changeset": suggestedChangesetSchema(),
 	}, "kind", "valid", "warnings", "candidates")
 	probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
-	probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
 	serverOnboardingInput := schemaObject(map[string]any{
 		"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64, "description": "必填。同名已存在时规划结果改为重签发 enrollment，不会建议再创建一条服务器"}, "region_code": map[string]any{"type": "string", "pattern": "^[A-Za-z]{2}$"},
 		"ip_stack":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4_only", "ipv6_only", "dual_stack", "prefer_ipv4", "prefer_ipv6"}},
@@ -343,17 +341,22 @@ func defaultDescriptors() []Descriptor {
 		"expires_at":               nullableString(),
 		"resource_history_enabled": boolValue, "latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 		"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
-		"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+		"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
 	})
 	proxyPlanInput := schemaObject(map[string]any{"entry_server_id": positiveID, "exit_region": map[string]any{"type": "string", "maxLength": 2}, "preferred_relay_regions": stringArray(0, 32), "max_hops": map[string]any{"type": "integer", "minimum": 1, "maximum": 5}, "avoid_server_ids": idArray(0, 100), "objective": map[string]any{"type": "string", "maxLength": 500}}, "entry_server_id")
 	deploymentInput := schemaObject(map[string]any{"server_ids": idArray(1, 100), "reason": map[string]any{"type": "string", "maxLength": 500}}, "server_ids")
 	incidentPlanInput := schemaObject(map[string]any{"incident_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "user_id": positiveID, "rule_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "anomaly_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "evidence_refs": stringArray(0, 128)}, "incident_id", "user_id")
+	latencyProbeTask := closedObject(map[string]any{"id": positiveID, "name": stringValue, "province": stringValue, "carrier": stringValue, "interval_seconds": map[string]any{"type": "integer"}, "enabled": boolValue, "server_ids": map[string]any{"type": "array", "items": positiveID}, "created_at": stringValue, "updated_at": stringValue}, "id", "name", "province", "carrier", "interval_seconds", "enabled", "server_ids")
 	descriptors := []Descriptor{
 		{Name: "inventory.read", Description: "读取受授权范围内的库存摘要", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "users": arrayOf(user), "server_count": map[string]any{"type": "integer"}, "online_count": map[string]any{"type": "integer"}, "user_count": map[string]any{"type": "integer"}}, "servers", "users", "server_count", "online_count", "user_count"), RequiredScopes: []string{"inventory:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "servers.list", Description: "列出受授权服务器。port_range_* 是公网托管池，internal_port_range_* 是回环内部池，与 servers.get 字段相同", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "servers.get", Description: "读取服务器状态与能力。port_range_* 是公网托管池，internal_port_range_* 是回环内部池，与 servers.list 字段相同", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromID},
 		{Name: "servers.metrics.read", Description: "读取服务器当前资源、连接数、系统负载与最近窗口内的流量指标", InputSchema: schemaObject(map[string]any{"server_id": positiveID, "window_hours": map[string]any{"type": "integer", "minimum": 1, "maximum": 72}}, "server_id"), OutputSchema: rawSchema(map[string]any{"type": "object"}), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID},
 		{Name: "servers.latency_probes.read", Description: "读取服务器已采集的延迟探测结果，不触发新的探测任务", InputSchema: schemaObject(map[string]any{"server_id": positiveID, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 512}}, "server_id"), OutputSchema: rawSchema(map[string]any{"type": "object"}), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID},
+		{Name: "latency_probe_tasks.list", Description: "列出全部回程延迟探测任务及其执行服务器。一个任务对应一个省份+运营商目标", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"latency_probe_tasks": arrayOf(latencyProbeTask)}, "latency_probe_tasks"), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
+		{Name: "latency_probe_tasks.create", Description: "创建一个回程延迟探测任务：一个目标（省份+运营商）、一个探测间隔、一组执行服务器", InputSchema: schemaObject(map[string]any{"name": map[string]any{"type": "string", "maxLength": 60}, "province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}, "interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "enabled": boolValue, "server_ids": idArray(0, 512)}, "province", "carrier"), OutputSchema: schemaObject(map[string]any{"latency_probe_task": latencyProbeTask}, "latency_probe_task"), RequiredScopes: []string{"servers:write"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required", Idempotent: false, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: latencyProbeTaskRefs},
+		{Name: "latency_probe_tasks.update", Description: "修改回程延迟探测任务的名称、目标、间隔、启用状态或执行服务器", InputSchema: schemaObject(map[string]any{"id": positiveID, "name": map[string]any{"type": "string", "maxLength": 60}, "province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}, "interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "enabled": boolValue, "server_ids": idArray(0, 512)}, "id"), OutputSchema: schemaObject(map[string]any{"latency_probe_task": latencyProbeTask}, "latency_probe_task"), RequiredScopes: []string{"servers:write"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: latencyProbeTaskRefs},
+		{Name: "latency_probe_tasks.delete", Description: "删除一个回程延迟探测任务及其服务器分配", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: schemaObject(map[string]any{"deleted": boolValue}, "deleted"), RequiredScopes: []string{"servers:write"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", RiskClass: 2, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: latencyProbeTaskRefs},
 		{Name: "users.list", Description: "列出不包含凭据的用户摘要", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(user)), RequiredScopes: []string{"users:read"}, ResourceTypes: []string{"user"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, SensitiveOutput: []string{"username", "nickname"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "subscription_plans.list", Description: "列出订阅套餐及其当前版本状态", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(plan)), RequiredScopes: []string{"subscription_plans:read"}, ResourceTypes: []string{"subscription_plan"}, ResourceEvaluator: "subscription_plan_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: noRefs},
 		{Name: "subscription_plans.get", Description: "读取订阅套餐的最新与当前节点快照", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(plan), RequiredScopes: []string{"subscription_plans:read"}, ResourceTypes: []string{"subscription_plan"}, ResourceEvaluator: "subscription_plan_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings", ResolveResourceRefs: subscriptionPlanRefFromID},
@@ -665,7 +668,6 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		}), "subscription_plan_ids"
 	case "servers.onboard":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
-		probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
 		serverInput := closedObject(map[string]any{
 			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "region_code": stringValue, "region_mode": stringValue, "ip_stack": stringValue,
 			"listen_ip": stringValue, "listen_mode": stringValue, "entry_address": stringValue, "entry_ip_mode": stringValue,
@@ -677,16 +679,15 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"offline_notify_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true"}, "offline_after_seconds": map[string]any{"type": "integer"},
 			"resource_history_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true"}, "latency_probe_enabled": map[string]any{"type": "boolean", "description": "省略时默认 true。未赋值时不要传 false"}, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}}, "latency_probe_public_target": probeTarget,
 			"latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400}, "latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
-			"latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion}, "latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
-			"monitoring_mode":  map[string]any{"type": "string", "enum": []string{"lightweight", "standard"}, "description": "省略时默认 lightweight"},
-			"service_start_at": stringValue, "expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
+			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+			"monitoring_mode":           map[string]any{"type": "string", "enum": []string{"lightweight", "standard"}, "description": "省略时默认 lightweight"},
+			"service_start_at":          stringValue, "expires_at": stringValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空时自动按 service_start_at(优先)或 expires_at 的日推导(仅日精度),例如 2025-07-05 起租即每月5日重置"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "为空时同上自动推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags": serverDisplayTagsSchema(),
 		})
 		return schemaObject(map[string]any{"server": serverInput, "issue_enrollment_token": boolValue}, "server"), simpleOutput(map[string]any{"server": serverInput, "enrollment_expires_at": stringValue, "enrollment_token": stringValue}), "servers.allow_create"
 	case "servers.update":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}
-		probeRegion := closedObject(map[string]any{"province": map[string]any{"type": "string", "minLength": 1}, "carrier": map[string]any{"type": "string", "minLength": 1}}, "province", "carrier")
 		changes := closedObject(map[string]any{
 			"name": stringValue, "entry_address": stringValue, "entry_ip_mode": stringValue,
 			"region_mode": stringValue, "region_code": stringValue, "listen_ip": stringValue,
@@ -699,9 +700,9 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"connection_audit_enabled": boolValue, "resource_history_enabled": boolValue, "time_correction_mode": stringValue,
 			"latency_probe_enabled": boolValue, "latency_probe_mode": map[string]any{"type": "string", "enum": []string{"tcp", "icmp"}},
 			"latency_probe_public_target": probeTarget, "latency_probe_interval_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
-			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10}, "latency_probe_regions": map[string]any{"type": "array", "maxItems": 200, "items": probeRegion},
-			"latency_probe_max_targets": map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
-			"offline_notify_enabled":    boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
+			"latency_probe_sample_count": map[string]any{"type": "integer", "minimum": 1, "maximum": 10},
+			"latency_probe_max_targets":  map[string]any{"type": "integer", "minimum": 1, "maximum": 256},
+			"offline_notify_enabled":     boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 			"service_start_at": stringValue, "clear_service_start_at": boolValue, "expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导；仅设置 traffic_reset_day 时自动使用 month_day"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "单独设置时自动将 traffic_reset_mode 切换为 month_day；为空时可按账期日期推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags": serverDisplayTagsSchema(),

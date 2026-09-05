@@ -177,7 +177,6 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 		"latency_probe_public_target":    "google",
 		"latency_probe_interval_seconds": 90,
 		"latency_probe_sample_count":     5,
-		"latency_probe_regions":          []any{map[string]any{"province": "广东", "carrier": "中国电信"}, map[string]any{"province": "浙江", "carrier": "中国联通"}},
 		"latency_probe_max_targets":      16,
 	}})
 	if err != nil || len(prepared.Operations) != 1 {
@@ -199,8 +198,9 @@ func TestMCPServerOnboardingUsesControllerDefaults(t *testing.T) {
 	if serverInput["latency_probe_mode"] != "icmp" || serverInput["latency_probe_public_target"] != "google" || serverInput["latency_probe_interval_seconds"] != 90 || serverInput["latency_probe_sample_count"] != 5 || serverInput["latency_probe_max_targets"] != 16 {
 		t.Fatalf("latency settings were not forwarded: %#v", serverInput)
 	}
-	if regions, ok := serverInput["latency_probe_regions"].([]any); !ok || len(regions) != 2 {
-		t.Fatalf("latency regions were not forwarded: %#v", serverInput["latency_probe_regions"])
+	// Regional targets are standalone probe tasks now, never a server field.
+	if _, ok := serverInput["latency_probe_regions"]; ok {
+		t.Fatalf("server onboarding still carries per-server regions: %#v", serverInput)
 	}
 }
 
