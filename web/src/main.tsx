@@ -19425,7 +19425,7 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
   }
   const addCandidate = () => setDraft(current => current.candidates.length >= 32 ? current : ({ ...current, candidates: [...current.candidates, dnsCandidateDraft()] }))
   const removeCandidate = (id: number) => setDraft(current => current.candidates.length <= 2 ? current : ({ ...current, candidates: current.candidates.filter(candidate => candidate.id !== id) }))
-  const typeLabel = draft.kind === 'encrypted' ? '加密解析' : '基础解析'
+  const typeLabel = draft.kind === 'encrypted' ? '加密 DNS' : '默认 DNS'
   const addressPlaceholder = draft.kind === 'encrypted' ? 'https://cloudflare-dns.com/dns-query' : 'udp://1.1.1.1'
   const canSave = Boolean(draft.name.trim()) && draft.candidates.length >= 2 && draft.candidates.every(candidate => candidate.name.trim() && candidate.address.trim())
   return <MotionDialogPanel onCancel={onCancel} className="dns-list-dialog">
@@ -19436,7 +19436,7 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
     <div className="dialog-body">
       <div className="form server-dialog-form labeled-form dns-list-dialog-form">
         <FormField label="列表名称" required><input value={draft.name} onChange={event => update({ name: event.target.value })} placeholder={draft.kind === 'encrypted' ? '海外加密解析' : '公网基础解析'} autoFocus /></FormField>
-        <FormField label="列表类型" required><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: emptyDNSListCandidates() })}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></FormField>
+        <FormField label="列表类型" required><Select variant="segmented" value={draft.kind} disabled={Boolean(editing)} onChange={event => update({ kind: event.target.value as DNSListKind, candidates: emptyDNSListCandidates() })}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select></FormField>
         <section className="dns-candidate-editor" aria-labelledby="dns-candidate-editor-title">
           <div className="dns-candidate-editor-head">
             <div><h3 id="dns-candidate-editor-title">解析服务</h3><span>{draft.candidates.length} / 32</span></div>
@@ -19496,7 +19496,7 @@ function DNSListSettings({ data, client, load, notify }: any) {
   const setDefault = async (list: DNSList) => {
     try {
       await client.request(`/dns-lists/${list.id}/set-default`, { method: 'POST' })
-      notify?.(`已将 ${list.name} 设为默认${list.kind === 'encrypted' ? '加密解析' : '基础解析'}列表`, 'success')
+      notify?.(`已将 ${list.name} 设为默认${list.kind === 'encrypted' ? '加密 DNS' : '默认 DNS'}列表`, 'success')
     } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
   }
   const removeList = async (list: DNSList) => {
@@ -19551,14 +19551,14 @@ function DNSListSettings({ data, client, load, notify }: any) {
   const visible = lists.filter(list => list.kind === filter)
   return <section className="settings-card dns-lists-card">
     <div className="settings-card-head"><div><h3>解析服务</h3><p className="muted">为服务器准备可复用的加密解析和基础解析服务；标记为默认的列表会被新建服务器直接使用。</p></div><button type="button" className="ghost" onClick={() => openCreate(filter)}><Plus size={14} />新建解析列表</button></div>
-    <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密解析</option><option value="bootstrap">基础解析</option></Select></div>
+    <div className="dns-list-toolbar"><Select variant="segmented" value={filter} onChange={event => setFilter(event.target.value as DNSListKind)}><option value="encrypted">加密 DNS</option><option value="bootstrap">默认 DNS</option></Select></div>
     <div className="dns-record-list">{visible.length ? visible.map(list => <div className="dns-record-row dns-list-row" key={list.id}>
         <span className="record-type">{list.kind === 'encrypted' ? '加密' : '基础'}</span>
         <div className="record-main"><strong>{list.name}</strong><span>{Array.from(new Set(list.candidates.map(candidate => dnsTransportLabel(candidate.transport)))).join(' · ')}</span><small>{list.candidates.length} 个解析服务 · {list.usage_count} 台服务器使用</small></div>
         <span className={`status-pill ${list.enabled ? 'ok' : 'warning'}`}>{list.enabled ? '启用' : '停用'}</span>
         {list.protected && <span className="status-pill managed">默认</span>}
         <div className="record-actions"><OverflowMenu groups={listMenuGroups(list)} label={`${list.name} 的操作`} /></div>
-      </div>) : <div className="empty-inline">暂无{filter === 'encrypted' ? '加密解析' : '基础解析'}列表</div>}</div>
+      </div>) : <div className="empty-inline">暂无{filter === 'encrypted' ? '加密 DNS' : '默认 DNS'}列表</div>}</div>
     <AnimatePresence>{editorOpen && <DNSListDialog draft={draft} setDraft={setDraft} editing={editing} saving={working === 'save'} onCancel={closeEditor} onSave={() => void save()} />}</AnimatePresence>
   </section>
 }
