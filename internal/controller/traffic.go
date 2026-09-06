@@ -76,15 +76,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			var rejection *trafficRejection
 			if errors.As(err, &rejection) {
-				// An unbound pair is the one rejection that is also the signal
-				// a misbehaving Agent would produce. A removed binding yields a
-				// bounded burst that drains; a sustained stream from one Agent
-				// does not, so the pair is logged rather than folded into the
-				// aggregate line below.
-				if rejection.Reason == "binding_removed" {
-					log.Printf("traffic ledger rejected an unbound pair agent=%s server_id=%d user_id=%d inbound_id=%v report_id=%s",
-						server.AgentID, server.ID, item.UserID, item.InboundID, strings.TrimSpace(item.ReportID))
-				}
+				log.Printf("traffic ledger rejected report agent=%q server_id=%d user_id=%d inbound_id=%v report_id=%q reason=%s", server.AgentID, server.ID, item.UserID, valueOrZero(item.InboundID), strings.TrimSpace(item.ReportID), rejection.Reason)
 				rejected = append(rejected, model.TrafficAcceptedReport{ReportID: strings.TrimSpace(item.ReportID), Status: "rejected", Reason: rejection.Reason})
 				continue
 			}
@@ -131,6 +123,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		ServerID: server.ID, AgentInstanceID: strings.TrimSpace(req.AgentInstanceID), Periods: periods, Streams: streams, Reports: reports,
 	})
 	if err != nil {
+		log.Printf("agent traffic sync failed stage=ledger_commit server_id=%d agent=%q reports=%d streams=%d error=%v", server.ID, server.AgentID, len(req.Reports), len(req.Streams), err)
 		fail(w, err, 500)
 		return
 	}
@@ -155,6 +148,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, snapshot.InboundUserBindings(), snapshot.ProxyPathUserBindings())
 	policies, err := s.trafficRuntimePolicies(r.Context(), server.ID, data.Users, accountingUsers, planPolicies)
 	if err != nil {
+		log.Printf("agent traffic sync failed stage=traffic_limit_compute server_id=%d agent=%q reports=%d streams=%d error=%v", server.ID, server.AgentID, len(req.Reports), len(req.Streams), err)
 		fail(w, err, 500)
 		return
 	}
@@ -167,6 +161,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	}
 	authorization, err := s.currentAuthorizationLease(r.Context(), server.ID)
 	if err != nil {
+		log.Printf("agent traffic sync failed stage=authorization_issue server_id=%d agent=%q reports=%d streams=%d error=%v", server.ID, server.AgentID, len(req.Reports), len(req.Streams), err)
 		fail(w, err, 500)
 		return
 	}

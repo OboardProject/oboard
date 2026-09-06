@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -116,6 +117,7 @@ func (s *Server) allowAgentRate(w http.ResponseWriter, key string, limit int, wi
 	if s.agentCallbackRate.allow(key, limit, window, time.Now()) {
 		return true
 	}
+	s.logAgentRestriction("callback_rate", key, http.StatusTooManyRequests)
 	fail(w, errors.New("rate limit exceeded"), http.StatusTooManyRequests)
 	return false
 }
@@ -137,10 +139,18 @@ func (s *Server) noteAgentAuthFailure(ip string) {
 	if ip == "" {
 		return
 	}
+	s.logAgentRestriction("invalid_credentials", ip, http.StatusUnauthorized)
 	s.agentAuthFailures.allow(ip, agentAuthFailureLimit, agentAuthFailureWindow, time.Now())
 }
 
 // noteAgentAuthSuccess clears the failure window for a source address.
 func (s *Server) noteAgentAuthSuccess(ip string) {
 	s.agentAuthFailures.clear(ip)
+}
+
+func (s *Server) logAgentRestriction(reason, subject string, status int) {
+	if s.agentDiagnosticRate != nil && !s.agentDiagnosticRate.allow(reason+":"+subject, 1, time.Minute, time.Now()) {
+		return
+	}
+	log.Printf("agent connection restricted reason=%s subject=%q http_status=%d", reason, subject, status)
 }

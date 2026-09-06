@@ -205,7 +205,8 @@ type Server struct {
 	// agentAuthFailures counts failed Agent authentications per source address
 	// so a decommissioned node holding a revoked token stops reaching the
 	// credential lookup.
-	agentAuthFailures *memoryRateLimiter
+	agentAuthFailures   *memoryRateLimiter
+	agentDiagnosticRate *memoryRateLimiter
 	// auditRisk is the bounded, userID-coalescing audit risk evaluation queue.
 	auditRisk *auditRiskQueue
 	// accessWorkersWake coalesces wake events for the access change and
@@ -262,7 +263,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
@@ -15307,6 +15308,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	ip := clientIP(r)
 	if s.agentAuthBlocked(ip) {
+		s.logAgentRestriction("authentication_budget", ip, http.StatusTooManyRequests)
 		fail(w, errors.New("too many failed agent authentications"), http.StatusTooManyRequests)
 		return nil, false
 	}

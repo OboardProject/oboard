@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,5 +77,25 @@ func TestAllowAgentRateWritesTooManyRequests(t *testing.T) {
 	}
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d", rr.Code)
+	}
+}
+
+func TestAgentRateRestrictionLogsOnceWithoutChangingBudget(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previous)
+	s := &Server{agentCallbackRate: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter()}
+	if !s.allowAgentRate(httptest.NewRecorder(), "agent-traffic:node-a", 1, time.Minute) {
+		t.Fatal("first request rejected")
+	}
+	for range 3 {
+		if s.allowAgentRate(httptest.NewRecorder(), "agent-traffic:node-a", 1, time.Minute) {
+			t.Fatal("logging changed callback limit")
+		}
+	}
+	got := output.String()
+	if strings.Count(got, "agent connection restricted") != 1 || !strings.Contains(got, "reason=callback_rate") || !strings.Contains(got, "http_status=429") {
+		t.Fatalf("incorrect restriction log: %s", got)
 	}
 }
