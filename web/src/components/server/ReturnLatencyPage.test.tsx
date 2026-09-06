@@ -84,6 +84,8 @@ describe('return latency probe tasks', () => {
     ]
     await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} targets={targets} servers={servers} onSubmit={submit} onCancel={() => {}} />))
     await click(buttonIn(container, '从预设中选择')!)
+    expect(container.querySelector('.probe-task-form')?.classList.contains('is-preset-open')).toBe(true)
+    expect(container.querySelector('.probe-task-layout')).toBeTruthy()
     await pickOption('探测目标省份', '广东')
     await pickOption('探测目标运营商', '中国电信')
     expect(container.querySelectorAll('.probe-preset-option')).toHaveLength(1)

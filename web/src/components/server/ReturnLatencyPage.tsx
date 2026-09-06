@@ -250,7 +250,7 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         </div>
       </section>}
     </div>
-    <Dialog isOpen={editing.open} onClose={() => setEditing({ open: false, task: null })} title={editing.task ? '编辑探测任务' : '创建探测任务'} size="lg" className="probe-task-dialog">
+    <Dialog isOpen={editing.open} onClose={() => setEditing({ open: false, task: null })} title={editing.task ? '编辑探测任务' : '创建探测任务'} size="xl" className="probe-task-dialog">
       <ReturnLatencyTaskForm
         key={editing.task?.id ?? 'new'}
         task={editing.task}
