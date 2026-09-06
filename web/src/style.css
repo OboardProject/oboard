@@ -7128,7 +7128,7 @@ body:has(.dialog-layer) .main {
   max-width: min(680px, 100%);
   min-width: 0;
   display: inline-flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   padding: 9px 12px 9px 16px;
   color: var(--text-strong);
@@ -7184,9 +7184,9 @@ body:has(.dialog-layer) .main {
 
 .toast-icon {
   flex: 0 0 auto;
+  display: block;
   width: 20px;
   height: 20px;
-  margin-top: 1px;
   stroke-width: 2.2;
 }
 
@@ -7198,21 +7198,29 @@ body:has(.dialog-layer) .main {
   word-break: break-word;
   white-space: pre-wrap;
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 20px;
   font-weight: 650;
   letter-spacing: 0;
   text-wrap: pretty;
+  translate: 0 1px;
 }
 
 .toast-message-multiline {
   padding-top: 1px;
   font-weight: 600;
+  line-height: 1.55;
+  translate: none;
 }
 
 .toast.toast-multiline {
+  align-items: flex-start;
   border-radius: 16px;
   padding-top: 11px;
   padding-bottom: 11px;
+}
+
+.toast.toast-multiline .toast-icon {
+  margin-top: 2px;
 }
 
 .toast .toast-close {
@@ -7221,7 +7229,7 @@ body:has(.dialog-layer) .main {
   min-height: 32px;
   width: 32px;
   height: 32px;
-  margin: -2px 0 0;
+  margin: 0;
   padding: 0;
   display: inline-flex;
   align-items: center;
