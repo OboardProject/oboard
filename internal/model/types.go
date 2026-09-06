@@ -842,6 +842,16 @@ const (
 	AccessChangeExceptions   AccessChangeType = "exceptions"
 )
 
+// AccessChangeKind is the authorization direction of a change, derived from
+// the prepare (old ∪ new) and finalize (new) projections.
+type AccessChangeKind string
+
+const (
+	AccessChangeKindGrant     AccessChangeKind = "grant"
+	AccessChangeKindMigration AccessChangeKind = "migration"
+	AccessChangeKindRevoke    AccessChangeKind = "revoke"
+)
+
 // AccessChangeStatus is the orchestration state machine. Prepare deploys the
 // old-union-new permission set, activation atomically switches the durable
 // authorization state (publish revision, enable plan, activate exceptions),
@@ -880,12 +890,21 @@ type AccessChange struct {
 	CandidateRevisionID      int64                `json:"candidate_revision_id,omitempty"`
 	ExpectedActiveRevisionID int64                `json:"expected_active_revision_id,omitempty"`
 	Status                   AccessChangeStatus   `json:"status"`
-	PreviewHash              string               `json:"preview_hash,omitempty"`
-	AffectedUserCount        int                  `json:"affected_user_count"`
-	ActivateAt               *time.Time           `json:"activate_at,omitempty"`
-	PayloadJSON              string               `json:"-"`
-	PrepareProjectionJSON    string               `json:"-"`
-	FinalizeProjectionJSON   string               `json:"-"`
+	// Kind classifies the authorization effect: grant (only adds access),
+	// migration (adds and removes), or revoke (only removes). It decides
+	// whether the revoke fast lane must run before configuration cleanup.
+	Kind                   AccessChangeKind `json:"kind,omitempty"`
+	PreviewHash            string           `json:"preview_hash,omitempty"`
+	AffectedUserCount      int              `json:"affected_user_count"`
+	ActivateAt             *time.Time       `json:"activate_at,omitempty"`
+	PayloadJSON            string           `json:"-"`
+	PrepareProjectionJSON  string           `json:"-"`
+	FinalizeProjectionJSON string           `json:"-"`
+	// OldScopeJSON is the stable-ID projection of the access that existed
+	// before the change (user, inbound, path, and server IDs only; never
+	// credential material). It lets a revoke be computed after the business
+	// rows are already gone.
+	OldScopeJSON string `json:"-"`
 	Error                    string               `json:"error,omitempty"`
 	CreatedBy                *int64               `json:"created_by,omitempty"`
 	CreatedAt                time.Time            `json:"created_at"`
@@ -3326,6 +3345,10 @@ type HealthReport struct {
 	RemoteAccess              RemoteAccessReport         `json:"remote_access,omitempty"`
 	NetworkInventory          *NetworkInterfaceInventory `json:"network_inventory,omitempty"`
 	Storage                   *StorageDiskInfo           `json:"storage,omitempty"`
+	// AppliedAuthorization is opaque confirmation metadata for the
+	// authorization snapshot the Agent's data plane currently enforces. It
+	// carries no grants, credentials, or task payloads.
+	AppliedAuthorization *AuthorizationAppliedSnapshot `json:"applied_authorization,omitempty"`
 }
 
 type StorageDiskInfo struct {

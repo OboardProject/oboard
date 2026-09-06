@@ -402,6 +402,7 @@ type accessChangeDraft struct {
 	affectedUserCount        int
 	activateAt               *time.Time
 	payload                  accessChangePayload
+	oldProjection            core.AccessProjection
 	prepareProjection        core.AccessProjection
 	finalizeProjection       core.AccessProjection
 	serverIDs                []int64
@@ -421,6 +422,10 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 	if err != nil {
 		return nil, err
 	}
+	oldScopeJSON, err := json.Marshal(core.ProjectionScope(draft.oldProjection))
+	if err != nil {
+		return nil, err
+	}
 	createdBy := draft.createdBy
 	if createdBy == nil && r != nil {
 		if user := currentUser(r); user != nil {
@@ -433,6 +438,8 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 		CandidateRevisionID:      draft.candidateRevisionID,
 		ExpectedActiveRevisionID: draft.expectedActiveRevisionID,
 		Status:                   model.AccessChangePreparing,
+		Kind:                     core.ClassifyProjectionChange(draft.oldProjection, draft.finalizeProjection),
+		OldScopeJSON:             string(oldScopeJSON),
 		PreviewHash:              draft.previewHash,
 		AffectedUserCount:        draft.affectedUserCount,
 		ActivateAt:               draft.activateAt,
@@ -1161,6 +1168,7 @@ func (s *Server) createPlanPublishChangeForActor(ctx context.Context, r *http.Re
 		previewHash:              hash,
 		affectedUserCount:        affectedUsers,
 		prepareProjection:        prepare,
+		oldProjection:            oldSnap.Projection(),
 		finalizeProjection:       finalize,
 		serverIDs:                servers,
 		createdBy:                actorID,
@@ -1219,6 +1227,7 @@ func (s *Server) createPlanDisableChange(ctx context.Context, r *http.Request, p
 		affectedUserCount:  affectedUsers,
 		activateAt:         &now,
 		prepareProjection:  prepare,
+		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: newSnap.Projection(),
 		serverIDs:          servers,
 	})
@@ -1298,6 +1307,7 @@ func (s *Server) createPlanDeleteChange(ctx context.Context, r *http.Request, ac
 		affectedUserCount:  affectedUsers,
 		activateAt:         &now,
 		prepareProjection:  prepare,
+		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: newSnap.Projection(),
 		serverIDs:          servers,
 		createdBy:          actorID,
@@ -1340,6 +1350,7 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 		activateAt:         &at,
 		payload:            accessChangePayload{UserIDs: userIDs},
 		prepareProjection:  prepare,
+		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: finalize,
 		serverIDs:          servers,
 	})
@@ -1398,6 +1409,7 @@ func (s *Server) createExceptionChangesForActor(ctx context.Context, r *http.Req
 		activateAt:         &at,
 		payload:            accessChangePayload{ExceptionIDs: exceptionIDs, TargetStatus: string(targetStatus)},
 		prepareProjection:  prepare,
+		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: finalize,
 		serverIDs:          servers,
 		createdBy:          actorID,

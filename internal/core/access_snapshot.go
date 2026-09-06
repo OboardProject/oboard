@@ -391,6 +391,55 @@ func (s *EffectiveAccessSnapshot) Projection() AccessProjection {
 	}
 }
 
+// AccessScope is the stable-ID view of a projection: which users may reach
+// which inbounds and paths. It carries no policies and no credential material,
+// so it can be persisted as the pre-change scope of an access change.
+type AccessScope struct {
+	InboundUsers   map[int64][]int64 `json:"inbound_users"`
+	ProxyPathUsers map[int64][]int64 `json:"proxy_path_users"`
+}
+
+// ProjectionScope reduces a projection to its access scope.
+func ProjectionScope(p AccessProjection) AccessScope {
+	return AccessScope{InboundUsers: cloneUserIDMap(p.InboundUsers), ProxyPathUsers: cloneUserIDMap(p.ProxyPathUsers)}
+}
+
+// ClassifyProjectionChange compares the pre-change and post-change scopes and
+// reports whether the change only grants, only revokes, or does both. Policy
+// changes without a membership change classify as grant because nothing has
+// to be denied on the data plane.
+func ClassifyProjectionChange(before, after AccessProjection) model.AccessChangeKind {
+	added, removed := false, false
+	compare := func(old, current map[int64][]int64) {
+		for node, users := range current {
+			previous := old[node]
+			for _, userID := range users {
+				if !containsInt64(previous, userID) {
+					added = true
+				}
+			}
+		}
+		for node, users := range old {
+			next := current[node]
+			for _, userID := range users {
+				if !containsInt64(next, userID) {
+					removed = true
+				}
+			}
+		}
+	}
+	compare(before.InboundUsers, after.InboundUsers)
+	compare(before.ProxyPathUsers, after.ProxyPathUsers)
+	switch {
+	case removed && added:
+		return model.AccessChangeKindMigration
+	case removed:
+		return model.AccessChangeKindRevoke
+	default:
+		return model.AccessChangeKindGrant
+	}
+}
+
 // MergeProjections returns the union of two projections: a user is present for
 // a node if either side grants it, and policies prefer the right side so the
 // new plan limits win during prepare.

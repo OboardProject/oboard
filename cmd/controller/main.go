@@ -127,6 +127,7 @@ func main() {
 	go app.StartControllerBackups(ctx)
 	go app.StartDatabaseMaintenance(ctx)
 	go app.StartAccessChangeWorker(ctx)
+	go app.StartAuthorizationSyncWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
 	go app.StartConfigurationReconciler(ctx)
 	go app.StartSubscriptionPlanReconciler(ctx)

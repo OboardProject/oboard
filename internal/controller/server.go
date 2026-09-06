@@ -81,6 +81,10 @@ type trustedProxyStateContextKey struct{}
 type Server struct {
 	proxyCredentialMu          sync.Mutex
 	proxyCredentialRevision    atomic.Uint64
+	authorizationProjections   authorizationProjectionCache
+	authorizationSyncWake      chan struct{}
+	authorizationSyncMu        sync.Mutex
+	authorizationSyncInFlight  map[int64]bool
 	store                      *store.Store
 	sessionSecret              string
 	staticDir                  string
@@ -263,7 +267,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
@@ -515,6 +519,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent/assets", s.agentManagedAssets)
 	mux.HandleFunc("/api/v1/agent/certificate-issues", s.agentCertificateIssues)
 	mux.HandleFunc("/api/v1/agent/traffic-reports", s.agentTrafficReports)
+	mux.HandleFunc("/api/v1/agent/authorization", s.agentAuthorization)
 	mux.HandleFunc("/api/v1/agent/connection-reports", s.agentConnectionReports)
 	mux.HandleFunc("/api/v1/agent/dns-benchmarks", s.agentDNSBenchmarks)
 	mux.HandleFunc("/api/v1/agent/mtu-detections", s.agentMTUDetections)
@@ -14277,6 +14282,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	s.trackAgentConnection(r.Context(), server.ID, true, connectedAt.UTC())
 	controlCh := make(chan any, 16)
 	s.registerAgentLive(server.ID, controlCh)
+	// A reconnecting Agent may have missed a revoke; the worker re-evaluates
+	// this server and pushes the current snapshot on the new socket.
+	s.wakeAuthorizationSync()
 	defer func() {
 		s.unregisterAgentLive(server.ID, controlCh)
 		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
@@ -14431,6 +14439,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if envelope.Type == "interactive_ready" || envelope.Type == "interactive_failed" {
 				s.handleInteractiveAgentStatus(server.ID, received.message)
 			}
+			if envelope.Type == model.AgentControlAuthorizationAck {
+				s.handleAuthorizationAck(r.Context(), server, received.message)
+			}
 			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
 			if acceptedLatencyReportID != "" {
 				if err := writeAgentJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID}); err != nil {
@@ -14569,6 +14580,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				applyHealthReportToServer(server, result)
 				_ = s.store.UpsertServerRemoteAccessStatus(ctx, server.ID, h.RemoteAccess)
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
+				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishServerPatch(result)
 			}
@@ -14874,6 +14886,9 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusBadRequest)
 			return
 		}
+	}
+	if task.Type == model.AgentTaskTypeApplyTrafficPolicy {
+		s.recordAuthorizationTaskResult(r.Context(), server, *task, req.Status)
 	}
 	if task.Type == model.AgentTaskTypeProbeLatencyTargets {
 		if err := s.applyLatencyProbeTaskResult(r.Context(), server.ID, *task, req.Status, req.ResultJSON); err != nil {

@@ -141,6 +141,7 @@ func (s *Server) createBindingActivationChange(ctx context.Context, binding mode
 		affectedUserCount:  1,
 		payload:            accessChangePayload{UserIDs: []int64{binding.UserID}},
 		prepareProjection:  projection,
+		oldProjection:      projection,
 		finalizeProjection: projection,
 		serverIDs:          servers,
 	})
@@ -180,6 +181,7 @@ func (s *Server) createBindingExpiryChange(ctx context.Context, binding model.Us
 		affectedUserCount:  1,
 		payload:            accessChangePayload{UserIDs: []int64{binding.UserID}},
 		prepareProjection:  prepare,
+		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: finalizeSnap.Projection(),
 		serverIDs:          servers,
 	})
@@ -222,6 +224,7 @@ func (s *Server) createExceptionActivationChange(ctx context.Context, ex model.U
 		activateAt:         &at,
 		payload:            accessChangePayload{ExceptionIDs: []int64{ex.ID}, TargetStatus: string(model.UserNodeExceptionActive)},
 		prepareProjection:  projection,
+		oldProjection:      projection,
 		finalizeProjection: projection,
 		serverIDs:          servers,
 	})
@@ -262,6 +265,7 @@ func (s *Server) createExceptionExpiryChange(ctx context.Context, ex model.UserN
 		affectedUserCount:  1,
 		payload:            accessChangePayload{ExceptionIDs: []int64{ex.ID}, TargetStatus: string(model.UserNodeExceptionExpired)},
 		prepareProjection:  prepare,
+		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: finalizeSnap.Projection(),
 		serverIDs:          servers,
 	})

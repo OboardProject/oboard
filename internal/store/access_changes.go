@@ -15,7 +15,7 @@ import (
 // current status no longer permits it (concurrent worker or cancelled change).
 var ErrAccessChangeNotActive = errors.New("access change is not in the expected state")
 
-const accessChangeSelectSQL = `select id,change_type,coalesce(source_plan_id,0),coalesce(candidate_revision_id,0),coalesce(expected_active_revision_id,0),status,coalesce(preview_hash,''),affected_user_count,activate_at,coalesce(payload_json,'{}'),coalesce(prepare_projection_json,'{}'),coalesce(finalize_projection_json,'{}'),coalesce(error,''),created_by,created_at,activated_at,finalized_at,failed_at from access_changes`
+const accessChangeSelectSQL = `select id,change_type,coalesce(source_plan_id,0),coalesce(candidate_revision_id,0),coalesce(expected_active_revision_id,0),status,coalesce(preview_hash,''),affected_user_count,activate_at,coalesce(payload_json,'{}'),coalesce(prepare_projection_json,'{}'),coalesce(finalize_projection_json,'{}'),coalesce(error,''),created_by,created_at,activated_at,finalized_at,failed_at,coalesce(kind,''),coalesce(old_scope_json,'{}') from access_changes`
 
 // CreateAccessChange inserts the change and its per-server targets in one
 // transaction.
@@ -26,8 +26,8 @@ func (s *Store) CreateAccessChange(ctx context.Context, v *model.AccessChange, s
 	}
 	defer tx.Rollback()
 	ts := now()
-	res, err := tx.ExecContext(ctx, `insert into access_changes(change_type,source_plan_id,candidate_revision_id,expected_active_revision_id,status,preview_hash,affected_user_count,activate_at,payload_json,prepare_projection_json,finalize_projection_json,error,created_by,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		string(v.ChangeType), nullInt64(v.SourcePlanID), nonNullInt64(v.CandidateRevisionID), nonNullInt64(v.ExpectedActiveRevisionID), string(v.Status), v.PreviewHash, v.AffectedUserCount, nullTime(v.ActivateAt), v.PayloadJSON, v.PrepareProjectionJSON, v.FinalizeProjectionJSON, v.Error, v.CreatedBy, ts, ts)
+	res, err := tx.ExecContext(ctx, `insert into access_changes(change_type,source_plan_id,candidate_revision_id,expected_active_revision_id,status,preview_hash,affected_user_count,activate_at,payload_json,prepare_projection_json,finalize_projection_json,error,created_by,created_at,updated_at,kind,old_scope_json) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		string(v.ChangeType), nullInt64(v.SourcePlanID), nonNullInt64(v.CandidateRevisionID), nonNullInt64(v.ExpectedActiveRevisionID), string(v.Status), v.PreviewHash, v.AffectedUserCount, nullTime(v.ActivateAt), v.PayloadJSON, v.PrepareProjectionJSON, v.FinalizeProjectionJSON, v.Error, v.CreatedBy, ts, ts, string(v.Kind), oldScopeJSONOrEmpty(v.OldScopeJSON))
 	if err != nil {
 		return 0, err
 	}
@@ -67,7 +67,7 @@ func (s *Store) getAccessChange(ctx context.Context, id int64) (*model.AccessCha
 	var createdBy sql.NullInt64
 	var activateAt, activatedAt, finalizedAt, failedAt sql.NullString
 	var ca string
-	if err := s.db.QueryRowContext(ctx, accessChangeSelectSQL+` where id=?`, id).Scan(&v.ID, &v.ChangeType, &v.SourcePlanID, &v.CandidateRevisionID, &v.ExpectedActiveRevisionID, &v.Status, &v.PreviewHash, &v.AffectedUserCount, &activateAt, &v.PayloadJSON, &v.PrepareProjectionJSON, &v.FinalizeProjectionJSON, &v.Error, &createdBy, &ca, &activatedAt, &finalizedAt, &failedAt); err != nil {
+	if err := s.db.QueryRowContext(ctx, accessChangeSelectSQL+` where id=?`, id).Scan(&v.ID, &v.ChangeType, &v.SourcePlanID, &v.CandidateRevisionID, &v.ExpectedActiveRevisionID, &v.Status, &v.PreviewHash, &v.AffectedUserCount, &activateAt, &v.PayloadJSON, &v.PrepareProjectionJSON, &v.FinalizeProjectionJSON, &v.Error, &createdBy, &ca, &activatedAt, &finalizedAt, &failedAt, &v.Kind, &v.OldScopeJSON); err != nil {
 		return nil, err
 	}
 	v.ActivateAt = parseNullTimePtr(activateAt)
@@ -131,7 +131,7 @@ func scanAccessChanges(rows *sql.Rows) ([]model.AccessChange, error) {
 		var createdBy sql.NullInt64
 		var activateAt, activatedAt, finalizedAt, failedAt sql.NullString
 		var ca string
-		if err := rows.Scan(&v.ID, &v.ChangeType, &v.SourcePlanID, &v.CandidateRevisionID, &v.ExpectedActiveRevisionID, &v.Status, &v.PreviewHash, &v.AffectedUserCount, &activateAt, &v.PayloadJSON, &v.PrepareProjectionJSON, &v.FinalizeProjectionJSON, &v.Error, &createdBy, &ca, &activatedAt, &finalizedAt, &failedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.ChangeType, &v.SourcePlanID, &v.CandidateRevisionID, &v.ExpectedActiveRevisionID, &v.Status, &v.PreviewHash, &v.AffectedUserCount, &activateAt, &v.PayloadJSON, &v.PrepareProjectionJSON, &v.FinalizeProjectionJSON, &v.Error, &createdBy, &ca, &activatedAt, &finalizedAt, &failedAt, &v.Kind, &v.OldScopeJSON); err != nil {
 			return nil, err
 		}
 		v.ActivateAt = parseNullTimePtr(activateAt)
@@ -308,4 +308,11 @@ func parseNullTimePtr(v sql.NullString) *time.Time {
 	}
 	t := parseTime(v.String)
 	return &t
+}
+
+func oldScopeJSONOrEmpty(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "{}"
+	}
+	return v
 }

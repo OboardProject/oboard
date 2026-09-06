@@ -2,9 +2,13 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/OboardProject/oboard/internal/core"
@@ -13,6 +17,16 @@ import (
 )
 
 const authorizationLeaseDuration = 5 * time.Minute
+
+// authorizationProjectionTTL bounds how long a projection built from one
+// routing revision is reused. Time-driven transitions are encoded as intervals
+// inside the projection, so the TTL only guards against clock skew in the
+// interval arithmetic and keeps memory bounded after a burst of revisions.
+const authorizationProjectionTTL = 60 * time.Second
+
+// authorizationMaxEventsPerUser caps the number of future binding/exception
+// boundaries evaluated for one user when building the projection.
+const authorizationMaxEventsPerUser = 32
 
 type credentialScopeKey struct {
 	userID, inboundID, pathID, epoch int64
@@ -67,6 +81,8 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 	}
 	s.proxyCredentialRevision.Store(revision)
 	s.invalidateRoutingSnapshot()
+	s.invalidateAuthorizationProjection()
+	s.wakeAuthorizationSync()
 	return nil
 }
 
@@ -85,13 +101,258 @@ func snapshotAt(data store.FullRoutingConfig, at time.Time) *core.EffectiveAcces
 		Inbounds: data.Inbounds, ExternalOutbounds: data.ExternalOutbounds, Now: at})
 }
 
-// Capture the revision on both sides: an old response cannot claim a new mutation's revision.
-func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) (*model.AuthorizationLease, error) {
+// authorizationInterval is one half-open window [from, to) during which a
+// credential scope is authorized. A zero `to` is open-ended.
+type authorizationInterval struct {
+	from, to time.Time
+}
+
+// authorizationEntry is one active credential with the servers that
+// authenticate it and the time windows in which it is authorized.
+type authorizationEntry struct {
+	key       string
+	servers   map[int64]bool
+	intervals []authorizationInterval
+}
+
+// authorizationProjection is the server-independent grant projection for one
+// routing revision. It is computed once per revision and answers every server's
+// lease for the projection's lifetime by filtering, so a fleet of N servers
+// renewing every 30 seconds costs N cheap filters, not N full snapshot builds.
+type authorizationProjection struct {
+	routingRevision uint64
+	builtAt         time.Time
+	entries         []authorizationEntry
+}
+
+// serverGrant is the per-server, per-credential outcome at one instant.
+type serverGrant struct {
+	key      string
+	deadline time.Time
+	boundary time.Time
+}
+
+// grantsAt returns the credentials this server must admit at `at`, each with
+// its lease deadline (at + lease duration, clamped to the business boundary).
+func (p *authorizationProjection) grantsAt(serverID int64, at time.Time) []serverGrant {
+	out := make([]serverGrant, 0)
+	for _, entry := range p.entries {
+		if !entry.servers[serverID] {
+			continue
+		}
+		for _, interval := range entry.intervals {
+			if at.Before(interval.from) {
+				continue
+			}
+			if !interval.to.IsZero() && !at.Before(interval.to) {
+				continue
+			}
+			deadline := at.Add(authorizationLeaseDuration)
+			if !interval.to.IsZero() && interval.to.Before(deadline) {
+				deadline = interval.to
+			}
+			out = append(out, serverGrant{key: entry.key, deadline: deadline, boundary: interval.to})
+			break
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].key < out[j].key })
+	return out
+}
+
+// nextTransition returns the earliest interval boundary strictly after `after`
+// across all entries, or zero when nothing is scheduled.
+func (p *authorizationProjection) nextTransition(after time.Time) time.Time {
+	var next time.Time
+	consider := func(t time.Time) {
+		if t.IsZero() || !t.After(after) {
+			return
+		}
+		if next.IsZero() || t.Before(next) {
+			next = t
+		}
+	}
+	for _, entry := range p.entries {
+		for _, interval := range entry.intervals {
+			consider(interval.from)
+			consider(interval.to)
+		}
+	}
+	return next
+}
+
+// authorizationDigest is the semantic identity of a grant set: sorted
+// credential keys with their business boundaries. Renewal deadlines are not
+// part of it, so a renewal never changes the digest while a revoke, a new
+// grant, or a boundary change always does.
+func authorizationDigest(grants []serverGrant) (string, []string) {
+	keys := make([]string, 0, len(grants))
+	h := sha256.New()
+	for _, grant := range grants {
+		keys = append(keys, grant.key)
+		h.Write([]byte(grant.key))
+		h.Write([]byte{'\t'})
+		if !grant.boundary.IsZero() {
+			h.Write([]byte(grant.boundary.UTC().Format(time.RFC3339Nano)))
+		}
+		h.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(h.Sum(nil)), keys
+}
+
+// buildAuthorizationProjection evaluates every user's authorization windows.
+// Users without future boundaries are covered by the single snapshot at `at`;
+// users with binding or exception boundaries get one snapshot per boundary so
+// a redundant grant's expiry does not disconnect a route another plan still
+// authorizes, and a scheduled start becomes visible without a rebuild.
+func buildAuthorizationProjection(revision uint64, at time.Time, data store.FullRoutingConfig, credentials []model.ProxyCredential) *authorizationProjection {
+	at = at.UTC()
+	snap := snapshotAt(data, at)
+	scopesNow := map[credentialScopeKey]bool{}
+	for _, scope := range core.ProxyCredentialScopes(data.Users, data.UserDevices, data.Inbounds, credentialOptions(data, snap)) {
+		scopesNow[proxyScopeKey(scope)] = true
+	}
+	intervalsByScope := map[credentialScopeKey][]authorizationInterval{}
+	for _, user := range data.Users {
+		events := map[time.Time]bool{}
+		consider := func(t *time.Time) {
+			if t != nil && t.After(at) {
+				events[t.UTC()] = true
+			}
+		}
+		for _, binding := range data.PlanBindings {
+			if binding.UserID == user.ID {
+				consider(binding.StartsAt)
+				consider(binding.ExpiresAt)
+			}
+		}
+		for _, ex := range data.UserNodeExceptions {
+			if ex.UserID == user.ID {
+				consider(ex.StartsAt)
+				consider(ex.ExpiresAt)
+			}
+		}
+		if len(events) == 0 {
+			for key := range scopesNow {
+				if key.userID == user.ID {
+					intervalsByScope[key] = []authorizationInterval{{from: at}}
+				}
+			}
+			continue
+		}
+		times := make([]time.Time, 0, len(events)+1)
+		for event := range events {
+			times = append(times, event)
+		}
+		sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+		if len(times) > authorizationMaxEventsPerUser {
+			times = times[:authorizationMaxEventsPerUser]
+		}
+		times = append([]time.Time{at}, times...)
+		single := data
+		single.Users = []model.User{user}
+		presence := make([]map[credentialScopeKey]bool, len(times))
+		for i, t := range times {
+			if i == 0 {
+				presence[i] = map[credentialScopeKey]bool{}
+				for key := range scopesNow {
+					if key.userID == user.ID {
+						presence[i][key] = true
+					}
+				}
+				continue
+			}
+			future := snapshotAt(single, t)
+			presence[i] = map[credentialScopeKey]bool{}
+			for _, scope := range core.ProxyCredentialScopes(single.Users, single.UserDevices, single.Inbounds, credentialOptions(single, future)) {
+				presence[i][proxyScopeKey(scope)] = true
+			}
+		}
+		allKeys := map[credentialScopeKey]bool{}
+		for _, set := range presence {
+			for key := range set {
+				allKeys[key] = true
+			}
+		}
+		for key := range allKeys {
+			var intervals []authorizationInterval
+			var open *authorizationInterval
+			for i, t := range times {
+				present := presence[i][key]
+				switch {
+				case present && open == nil:
+					intervals = append(intervals, authorizationInterval{from: t})
+					open = &intervals[len(intervals)-1]
+				case !present && open != nil:
+					open.to = t
+					open = nil
+				}
+			}
+			intervalsByScope[key] = intervals
+		}
+	}
+	projection := &authorizationProjection{routingRevision: revision, builtAt: at}
+	serversByRoute := map[[2]int64]map[int64]bool{}
+	for _, c := range credentials {
+		if c.Status != "active" || c.ID == "" {
+			continue
+		}
+		intervals, ok := intervalsByScope[proxyScopeKey(c)]
+		if !ok || len(intervals) == 0 {
+			continue
+		}
+		route := [2]int64{c.InboundID, c.PathID}
+		servers, resolved := serversByRoute[route]
+		if !resolved {
+			nodeType, nodeID := model.AssignableNodeInbound, c.InboundID
+			for _, path := range data.ProxyPaths {
+				if path.Enabled && path.ID == c.PathID && path.InboundID == c.InboundID {
+					nodeType, nodeID = model.AssignableNodeProxyPath, path.ID
+					break
+				}
+			}
+			ids, _, _ := core.AffectedAuthServers(map[string]bool{core.NodeKeyOf(nodeType, nodeID): true}, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, nil)
+			servers = make(map[int64]bool, len(ids))
+			for _, id := range ids {
+				servers[id] = true
+			}
+			serversByRoute[route] = servers
+		}
+		if len(servers) == 0 {
+			continue
+		}
+		projection.entries = append(projection.entries, authorizationEntry{key: c.ID, servers: servers, intervals: intervals})
+	}
+	sort.Slice(projection.entries, func(i, j int) bool { return projection.entries[i].key < projection.entries[j].key })
+	return projection
+}
+
+// authorizationProjectionCache is the revision-keyed cache of the projection.
+type authorizationProjectionCache struct {
+	mu      sync.Mutex
+	current *authorizationProjection
+}
+
+func (s *Server) invalidateAuthorizationProjection() {
+	s.authorizationProjections.mu.Lock()
+	s.authorizationProjections.current = nil
+	s.authorizationProjections.mu.Unlock()
+}
+
+// authorizationProjection returns the projection for the current routing
+// revision, rebuilding it only when the revision changed or the entry aged out.
+// The revision is read before and after loading so a concurrent mutation can
+// never be attributed to an older projection.
+func (s *Server) authorizationProjection(ctx context.Context) (*authorizationProjection, error) {
 	for attempt := 0; attempt < 3; attempt++ {
-		issued := time.Now().UTC()
 		before, err := s.store.RoutingCacheRevision(ctx)
 		if err != nil {
 			return nil, err
+		}
+		s.authorizationProjections.mu.Lock()
+		current := s.authorizationProjections.current
+		s.authorizationProjections.mu.Unlock()
+		if current != nil && current.routingRevision == before && time.Since(current.builtAt) < authorizationProjectionTTL {
+			return current, nil
 		}
 		routing, err := s.routingSnapshot(ctx)
 		if err != nil {
@@ -108,90 +369,71 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 		if before != after || routing.revision != before {
 			continue
 		}
-		return buildAuthorizationLease(int64(after)+1, issued, serverID, routing.data, credentials), nil
+		built := buildAuthorizationProjection(after, time.Now().UTC(), routing.data, credentials)
+		s.authorizationProjections.mu.Lock()
+		s.authorizationProjections.current = built
+		s.authorizationProjections.mu.Unlock()
+		return built, nil
 	}
-	return nil, errors.New("authorization changed while issuing lease; retry required")
+	return nil, errors.New("authorization changed while building projection; retry required")
 }
 
+// currentAuthorizationLease issues the lease a server must hold right now. It
+// records the semantic desired revision in the ledger (advancing it only when
+// the grant set changed), allocates the renewal sequence, and carries every
+// still-unconfirmed denial so a kernel can deny before the snapshot lands.
+func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) (*model.AuthorizationLease, error) {
+	projection, err := s.authorizationProjection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	grants := projection.grantsAt(serverID, now)
+	digest, keys := authorizationDigest(grants)
+	evaluation, err := s.store.EvaluateAuthorizationDesired(ctx, serverID, projection.routingRevision, digest, keys, now)
+	if err != nil {
+		return nil, err
+	}
+	expires := now.Add(authorizationLeaseDuration)
+	sequence, err := s.store.IssueAuthorizationSequence(ctx, serverID, evaluation.State.DesiredRevision, expires)
+	if err != nil {
+		return nil, err
+	}
+	denials, err := s.store.PendingAuthorizationDenials(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	lease := &model.AuthorizationLease{
+		Revision:  evaluation.State.DesiredRevision,
+		Sequence:  sequence,
+		Digest:    digest,
+		IssuedAt:  now.Format(time.RFC3339Nano),
+		ExpiresAt: expires.Format(time.RFC3339Nano),
+		Grants:    make(map[string]string, len(grants)),
+	}
+	for _, grant := range grants {
+		lease.Grants[grant.key] = grant.deadline.UTC().Format(time.RFC3339Nano)
+	}
+	for _, denial := range denials {
+		if _, granted := lease.Grants[denial.CredentialID]; granted {
+			continue
+		}
+		lease.Denied = append(lease.Denied, denial.CredentialID)
+	}
+	sort.Strings(lease.Denied)
+	return lease, nil
+}
+
+// buildAuthorizationLease is the stateless projection of one server's grants
+// at `at`. It carries no ledger revision or denials and exists for callers that
+// only need the grant set, such as tests and previews.
 func buildAuthorizationLease(revision int64, at time.Time, serverID int64, data store.FullRoutingConfig, credentials []model.ProxyCredential) *model.AuthorizationLease {
-	lease := &model.AuthorizationLease{Revision: revision, IssuedAt: at.UTC().Format(time.RFC3339Nano), Grants: map[string]string{}}
-	snap := snapshotAt(data, at)
-	scopes := core.ProxyCredentialScopes(data.Users, data.UserDevices, data.Inbounds, credentialOptions(data, snap))
-	allowed := make(map[credentialScopeKey]time.Time, len(scopes))
-	for _, scope := range scopes {
-		allowed[proxyScopeKey(scope)] = at.Add(authorizationLeaseDuration)
-	}
-	// Evaluate each subject's time boundaries so a redundant grant's expiry does
-	// not disconnect a route that another plan/exception still authorizes.
-	for _, user := range data.Users {
-		events := map[time.Time]bool{}
-		consider := func(t *time.Time) {
-			if t != nil && t.After(at) && t.Before(at.Add(authorizationLeaseDuration)) {
-				events[t.UTC()] = true
-			}
-		}
-		for _, binding := range data.PlanBindings {
-			if binding.UserID == user.ID {
-				consider(binding.StartsAt)
-				consider(binding.ExpiresAt)
-			}
-		}
-		for _, ex := range data.UserNodeExceptions {
-			if ex.UserID == user.ID {
-				consider(ex.StartsAt)
-				consider(ex.ExpiresAt)
-			}
-		}
-		times := make([]time.Time, 0, len(events))
-		for event := range events {
-			times = append(times, event)
-		}
-		sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
-		for _, event := range times {
-			single := data
-			single.Users = []model.User{user}
-			future := snapshotAt(single, event)
-			remaining := map[credentialScopeKey]bool{}
-			for _, scope := range core.ProxyCredentialScopes(single.Users, single.UserDevices, single.Inbounds, credentialOptions(single, future)) {
-				remaining[proxyScopeKey(scope)] = true
-			}
-			for key, end := range allowed {
-				if key.userID == user.ID && event.Before(end) && !remaining[key] {
-					allowed[key] = event
-				}
-			}
-		}
-	}
-	serversByScope := map[[2]int64]bool{}
-	resolved := map[[2]int64]bool{}
-	for _, c := range credentials {
-		if c.Status != "active" || c.ID == "" {
-			continue
-		}
-		deadline, ok := allowed[proxyScopeKey(c)]
-		if !ok {
-			continue
-		}
-		route := [2]int64{c.InboundID, c.PathID}
-		if !resolved[route] {
-			nodeType, nodeID := model.AssignableNodeInbound, c.InboundID
-			for _, path := range data.ProxyPaths {
-				if path.Enabled && path.ID == c.PathID && path.InboundID == c.InboundID {
-					nodeType, nodeID = model.AssignableNodeProxyPath, path.ID
-					break
-				}
-			}
-			servers, _, _ := core.AffectedAuthServers(map[string]bool{core.NodeKeyOf(nodeType, nodeID): true}, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, nil)
-			for _, id := range servers {
-				if id == serverID {
-					serversByScope[route] = true
-				}
-			}
-			resolved[route] = true
-		}
-		if serversByScope[route] {
-			lease.Grants[c.ID] = deadline.UTC().Format(time.RFC3339Nano)
-		}
+	projection := buildAuthorizationProjection(0, at, data, credentials)
+	grants := projection.grantsAt(serverID, at.UTC())
+	digest, _ := authorizationDigest(grants)
+	lease := &model.AuthorizationLease{Revision: revision, Digest: digest, IssuedAt: at.UTC().Format(time.RFC3339Nano), ExpiresAt: at.UTC().Add(authorizationLeaseDuration).Format(time.RFC3339Nano), Grants: map[string]string{}}
+	for _, grant := range grants {
+		lease.Grants[grant.key] = grant.deadline.UTC().Format(time.RFC3339Nano)
 	}
 	return lease
 }
@@ -213,4 +455,18 @@ func (s *Server) attachAuthorizationLease(ctx context.Context, serverID int64, c
 	metadata["authorization"] = lease
 	encoded, err := json.MarshalIndent(root, "", "  ")
 	return string(encoded), err
+}
+
+// authorizationLeaseValidUntil parses the absolute expiry of a lease.
+func authorizationLeaseValidUntil(lease *model.AuthorizationLease) time.Time {
+	if lease == nil {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(lease.ExpiresAt)); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(lease.IssuedAt)); err == nil {
+		return t.Add(authorizationLeaseDuration)
+	}
+	return time.Time{}
 }

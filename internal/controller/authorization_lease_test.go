@@ -60,6 +60,16 @@ func TestAuthorizationLeaseRevokesWithoutRenderingOrCredentialAllocation(t *test
 	if before != after {
 		t.Fatal("renewal mutated configuration")
 	}
+	if lease.Revision != 1 || lease.Sequence != 1 || lease.Digest == "" || lease.ExpiresAt == "" {
+		t.Fatalf("first lease is not revision 1 / sequence 1 with digest and expiry: %+v", lease)
+	}
+	renewed, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.Revision != lease.Revision || renewed.Sequence != lease.Sequence+1 || renewed.Digest != lease.Digest {
+		t.Fatalf("renewal changed the semantic revision: first=%+v renewed=%+v", lease, renewed)
+	}
 	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: user.ID}}); err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +77,18 @@ func TestAuthorizationLeaseRevokesWithoutRenderingOrCredentialAllocation(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(revoked.Grants) != 0 || revoked.Revision <= lease.Revision {
-		t.Fatal("revocation did not advance authorization")
+	if len(revoked.Grants) != 0 || revoked.Revision != lease.Revision+1 {
+		t.Fatalf("revocation did not advance authorization by exactly one: %+v", revoked)
+	}
+	if len(revoked.Denied) != 1 || revoked.Denied[0] != credential.AuthorizationKey {
+		t.Fatalf("revoked key missing from deny watermark: %+v", revoked.Denied)
+	}
+	state, err := db.AuthorizationState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DesiredRevision != revoked.Revision || state.Confirmed() {
+		t.Fatalf("ledger not tracking the unconfirmed revoke: %+v", state)
 	}
 	if err := srv.reconcileProxyCredentials(ctx); err != nil {
 		t.Fatal(err)
@@ -79,6 +99,76 @@ func TestAuthorizationLeaseRevokesWithoutRenderingOrCredentialAllocation(t *test
 	}
 	if len(rows) != 1 || rows[0].Status != "revoked" {
 		t.Fatal("credential tombstone missing")
+	}
+}
+
+// Removing one of two plan bindings that both grant the same inbound must not
+// drop the grant: revocation follows the effective-authorization difference,
+// never the deletion of a single binding row.
+func TestAuthorizationLeaseKeepsGrantWhileAnotherSourceStillAuthorizes(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "authorization-test-secret", "")
+	server := &model.Server{Name: "overlap-node", PublicIPv4: "203.0.113.2"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "overlap", PasswordHash: "hash", Role: model.RoleViewer, Status: "active"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "socks", Protocol: model.ProtocolSocks, Port: 10444, Enabled: true, ConfigJSON: "{}"}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	planA := &model.SubscriptionPlan{Name: "plan-a", Enabled: true}
+	planB := &model.SubscriptionPlan{Name: "plan-b", Enabled: true}
+	for _, plan := range []*model.SubscriptionPlan{planA, planB} {
+		if err := db.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeInbound, NodeID: inbound.ID}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: user.ID, PlanID: planA.ID}, {UserID: user.ID, PlanID: planB.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lease.Grants) != 1 {
+		t.Fatalf("expected one grant, got %+v", lease.Grants)
+	}
+	var key string
+	for key = range lease.Grants {
+	}
+	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: user.ID, PlanID: planA.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.reconcileProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := srv.currentAuthorizationLease(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Grants[key] == "" {
+		t.Fatalf("overlapping authorization was revoked: %+v", after.Grants)
+	}
+	rows, err := db.ListProxyCredentials(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.ID == key && row.Status != "active" {
+			t.Fatalf("credential %s was tombstoned while still authorized", key)
+		}
 	}
 }
 

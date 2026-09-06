@@ -165,9 +165,15 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		fail(w, err, 500)
 		return
 	}
+	authorizationEnvelope, err := s.authorizationEnvelopeFor(*server, authorization, "")
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	revision, _ := s.store.TrafficPolicyRevision(r.Context())
 	write(w, 200, map[string]any{
 		"authorization":       authorization,
+		"authorization_envelope": authorizationEnvelope,
 		"ok":                  true,
 		"policy_revision":     revision,
 		"stream_checkpoints":  result.StreamCheckpoints,

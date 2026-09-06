@@ -504,6 +504,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists agent_tasks (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, type text not null, payload_json text not null, status text not null, result_json text not null default '{}', config_version integer not null default 0, nonce text not null, created_at text not null, updated_at text not null, completed_at text)`,
 		`create table if not exists configuration_sync_states (server_id integer primary key references servers(id) on delete cascade, wanted_revision integer not null, wanted_digest text not null default '', state text not null check(state in ('pending','preparing','queued','running','synced','failed')), last_config_version integer not null default 0, last_task_id integer not null default 0, retry_count integer not null default 0, next_retry_at text, last_error text not null default '', trigger_reason text not null default '', sync_strategy text not null default '', changed_at text not null, updated_at text not null)`,
 		`create index if not exists idx_configuration_sync_queue on configuration_sync_states(state,next_retry_at,wanted_revision,server_id)`,
+		`create table if not exists authorization_states (server_id integer primary key references servers(id) on delete cascade, desired_revision integer not null default 0, desired_digest text not null default '', desired_keys_json text not null default '[]', evaluated_routing_revision integer not null default 0, issued_sequence integer not null default 0, last_issued_expires_at text, delivered_revision integer not null default 0, delivered_sequence integer not null default 0, delivered_message_id text not null default '', delivered_at text, confirmed_revision integer not null default 0, confirmed_sequence integer not null default 0, confirmed_digest text not null default '', confirmed_boot_id text not null default '', confirmed_at text, pending_reason text not null default '', last_error text not null default '', retryable integer not null default 1, updated_at text not null)`,
+		`create table if not exists authorization_denials (server_id integer not null references servers(id) on delete cascade, credential_id text not null, deny_revision integer not null, lease_bound_until text not null, confirmed_at text, created_at text not null, primary key(server_id, credential_id))`,
+		`create index if not exists idx_authorization_denials_pending on authorization_denials(server_id) where confirmed_at is null`,
 		`create table if not exists proxy_path_egress_results (path_id integer primary key references proxy_paths(id) on delete cascade, external_outbound_id integer not null references external_outbounds(id) on delete cascade, owner_server_id integer not null references servers(id) on delete cascade, topology_fingerprint text not null, config_version integer not null default 0, task_id integer references agent_tasks(id) on delete set null, status text not null default 'pending', last_exit_ip text not null default '', last_region_code text not null default '', geo_database_revision text not null default '', last_error text not null default '', last_attempt_at text, last_success_at text, created_at text not null, updated_at text not null)`,
 		`create table if not exists deployment_failure_dismissals (config_version integer primary key, actor_id integer not null, dismissed_at text not null)`,
 		`create table if not exists audit_logs (id integer primary key autoincrement, actor_id integer references users(id) on delete set null, action text not null, target text not null, detail text not null, ip text not null, created_at text not null)`,
@@ -960,6 +963,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "servers", "cpu_cores", `alter table servers add column cpu_cores integer not null default 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "access_changes", "kind", `alter table access_changes add column kind text not null default ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "access_changes", "old_scope_json", `alter table access_changes add column old_scope_json text not null default '{}'`); err != nil {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "warp_profiles", "underlay_json", `alter table warp_profiles add column underlay_json text not null default '{}'`); err != nil {
