@@ -27,7 +27,7 @@ func TestProcessMetricReportAcknowledgesOnlyAcceptedHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := newTestServer(db, "test-secret", "")
-	report := model.MetricReport{ReportID: "metric-1", SampledAt: time.Now().UTC().Add(-time.Minute), CPUUsagePercent: 25, MemoryUsedBytes: 250, MemoryTotalBytes: 1000}
+	report := model.MetricReport{ReportID: "metric-1", SampledAt: time.Now().UTC().Truncate(time.Minute).Add(-time.Minute + 123*time.Millisecond), CPUUsagePercent: 25, MemoryUsedBytes: 250, MemoryTotalBytes: 1000}
 	raw, _ := json.Marshal(report)
 	latencyID, metricID := app.processAgentSocketMessage(ctx, stored, map[string]json.RawMessage{"metric_report": raw}, "192.0.2.1")
 	if latencyID != "" || metricID != report.ReportID {
