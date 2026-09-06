@@ -4373,6 +4373,13 @@ const (
 	// not keep "waiting" forever for dead Agents or stuck executions.
 	agentTaskPendingTimeout = 5 * time.Minute
 	agentTaskRunningTimeout = 5 * time.Minute
+	// update_agent runs a full release download (bounded at 4 minutes on the
+	// Agent), a staged-kernel preflight, and a verified kernel activation
+	// before it can report. A slow node can legitimately exceed 5 minutes, and
+	// the socket-level dispatch timeout for it is already 10 minutes; the
+	// generic running sweep must not fail it first and then reject the result
+	// the Agent still reports.
+	agentTaskRunningTimeoutUpdateAgent = 10 * time.Minute
 )
 
 func (s *Server) expireTimedOutTasks(ctx context.Context) {
@@ -4392,7 +4399,13 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 		"timeout":         true,
 		"timeout_seconds": int(agentTaskRunningTimeout.Seconds()),
 	})
-	failed, err := s.store.FailTimedOutTasks(ctx, now.Add(-agentTaskPendingTimeout), now.Add(-agentTaskRunningTimeout), string(pendingResult), string(runningResult))
+	runningUpdateAgentResult, _ := json.Marshal(map[string]any{
+		"message":         "任务执行超时",
+		"error":           "Agent 超过 10 分钟未回传执行结果，任务已标记为超时。请查看 Agent 日志后重试。",
+		"timeout":         true,
+		"timeout_seconds": int(agentTaskRunningTimeoutUpdateAgent.Seconds()),
+	})
+	failed, err := s.store.FailTimedOutTasks(ctx, now.Add(-agentTaskPendingTimeout), now.Add(-agentTaskRunningTimeout), now.Add(-agentTaskRunningTimeoutUpdateAgent), string(pendingResult), string(runningResult), string(runningUpdateAgentResult))
 	if err != nil {
 		log.Printf("expire timed out tasks: %v", err)
 		return
@@ -4411,6 +4424,13 @@ func (s *Server) expireTimedOutTasks(ctx context.Context) {
 			log.Printf("apply timed out time check task %d: %v", task.ID, err)
 		}
 		s.recordConfigurationTaskResult(ctx, task, "failed", task.ResultJSON)
+		if task.Type == model.AgentTaskTypeUpdateAgent {
+			// A timed-out update must count toward the retry gate. Without this,
+			// a server whose Agent never claims or finishes the task retried
+			// every coordinator pass forever, because the failure path that
+			// records attempts only runs for results the Agent reports.
+			s.noteAgentUpdateOutcome(ctx, task.ServerID, "failed", taskResultMessage(task), agentUpdatePayloadBuild(task))
+		}
 		s.notifyTaskFailure(ctx, task)
 	}
 	if len(failed) > 0 {

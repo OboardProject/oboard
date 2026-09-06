@@ -124,7 +124,7 @@ func BenchmarkFailTimedOutTasks(b *testing.B) {
 	now := time.Now().UTC()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := store.FailTimedOutTasks(ctx, now.Add(-5*time.Minute), now.Add(-5*time.Minute), `{}`, `{}`); err != nil {
+		if _, err := store.FailTimedOutTasks(ctx, now.Add(-5*time.Minute), now.Add(-5*time.Minute), now.Add(-10*time.Minute), `{}`, `{}`, `{}`); err != nil {
 			b.Fatal(err)
 		}
 	}

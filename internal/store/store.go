@@ -5988,7 +5988,7 @@ func (s *Store) SetProxyPathStepProcessingRoleForTest(ctx context.Context, stepI
 	return err
 }
 
-func (s *Store) FailTimedOutTasks(ctx context.Context, pendingOlderThan, runningOlderThan time.Time, pendingResult, runningResult string) ([]model.AgentTask, error) {
+func (s *Store) FailTimedOutTasks(ctx context.Context, pendingOlderThan, runningOlderThan, updateAgentRunningOlderThan time.Time, pendingResult, runningResult, runningUpdateAgentResult string) ([]model.AgentTask, error) {
 	ts := now()
 	failed := []model.AgentTask{}
 	if pendingResult == "" {
@@ -5997,16 +5997,48 @@ func (s *Store) FailTimedOutTasks(ctx context.Context, pendingOlderThan, running
 	if runningResult == "" {
 		runningResult = "{}"
 	}
+	if runningUpdateAgentResult == "" {
+		runningUpdateAgentResult = runningResult
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	failStatus := func(status string, olderThan time.Time, result string) error {
+	failStatus := func(status string, olderThan time.Time, result string, taskTypes ...string) error {
 		if olderThan.IsZero() {
 			return nil
 		}
-		rows, err := tx.QueryContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where status=? and updated_at < ? order by id`, status, olderThan.UTC().Format(time.RFC3339Nano))
+		query := `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where status=? and updated_at < ?`
+		update := `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where status=? and updated_at < ?`
+		args := []any{status, olderThan.UTC().Format(time.RFC3339Nano)}
+		updateArgs := []any{result, ts, ts, status, olderThan.UTC().Format(time.RFC3339Nano)}
+		// A trailing exclusion type ("name!") scopes the window to every type
+		// except the one named, which keeps the generic sweep from claiming a
+		// type that runs under its own longer window.
+		excludeType := ""
+		if len(taskTypes) > 0 && strings.HasSuffix(taskTypes[len(taskTypes)-1], "!") {
+			excludeType = strings.TrimSuffix(taskTypes[len(taskTypes)-1], "!")
+			taskTypes = taskTypes[:len(taskTypes)-1]
+		}
+		if excludeType != "" {
+			query += ` and type <> ?`
+			update += ` and type <> ?`
+			args = append(args, excludeType)
+			updateArgs = append(updateArgs, excludeType)
+		}
+		if len(taskTypes) > 0 {
+			placeholders := make([]string, 0, len(taskTypes))
+			for _, taskType := range taskTypes {
+				placeholders = append(placeholders, "?")
+				args = append(args, taskType)
+				updateArgs = append(updateArgs, taskType)
+			}
+			query += ` and type in (` + strings.Join(placeholders, ",") + `)`
+			update += ` and type in (` + strings.Repeat("?,", len(taskTypes)-1) + "?)"
+		}
+		query += ` order by id`
+		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -6018,7 +6050,7 @@ func (s *Store) FailTimedOutTasks(ctx context.Context, pendingOlderThan, running
 		if closeErr != nil {
 			return closeErr
 		}
-		if _, err := tx.ExecContext(ctx, `update agent_tasks set status='failed', result_json=?, updated_at=?, completed_at=? where status=? and updated_at < ?`, result, ts, ts, status, olderThan.UTC().Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, update, updateArgs...); err != nil {
 			return err
 		}
 		for i := range items {
@@ -6031,10 +6063,17 @@ func (s *Store) FailTimedOutTasks(ctx context.Context, pendingOlderThan, running
 		failed = append(failed, items...)
 		return nil
 	}
-	if err := failStatus("pending", pendingOlderThan, pendingResult); err != nil {
+	// update_agent gets its own running window: the Agent-side release
+	// download alone is bounded at 4 minutes and the socket-level dispatch
+	// timeout is 10 minutes, so the generic 5-minute sweep would fail a slow
+	// but healthy update and then reject the result the Agent still reports.
+	if err := failStatus("running", runningOlderThan, runningResult, model.AgentTaskTypeUpdateAgent+"!"); err != nil {
 		return nil, err
 	}
-	if err := failStatus("running", runningOlderThan, runningResult); err != nil {
+	if err := failStatus("running", updateAgentRunningOlderThan, runningUpdateAgentResult, model.AgentTaskTypeUpdateAgent); err != nil {
+		return nil, err
+	}
+	if err := failStatus("pending", pendingOlderThan, pendingResult); err != nil {
 		return nil, err
 	}
 	return failed, tx.Commit()

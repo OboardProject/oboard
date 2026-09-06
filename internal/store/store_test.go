@@ -1111,7 +1111,7 @@ func TestFailTimedOutTasks(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `update agent_tasks set status='running' where id=?`, oldRunning.ID); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := s.FailTimedOutTasks(ctx, time.Now().Add(-10*time.Minute), time.Now().Add(-20*time.Minute), `{"message":"pending timeout"}`, `{"message":"running timeout"}`)
+	failed, err := s.FailTimedOutTasks(ctx, time.Now().Add(-10*time.Minute), time.Now().Add(-20*time.Minute), time.Now().Add(-20*time.Minute), `{"message":"pending timeout"}`, `{"message":"running timeout"}`, `{"message":"running timeout"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1131,6 +1131,73 @@ func TestFailTimedOutTasks(t *testing.T) {
 	}
 	if byID[freshPending.ID].Status != "pending" {
 		t.Fatalf("fresh task should remain pending: %#v", byID[freshPending.ID])
+	}
+}
+
+// update_agent runs under its own longer running window: the Agent-side
+// release download alone is bounded at 4 minutes, so the generic 5-minute
+// sweep must not fail a slow-but-healthy update and then reject the result
+// the Agent still reports.
+func TestFailTimedOutTasksGivesUpdateAgentItsOwnRunningWindow(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "slow-node", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	otherServer := &model.Server{Name: "dead-node", ListenIP: "0.0.0.0", PortRangeStart: 10020, PortRangeEnd: 10030, Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, otherServer); err != nil {
+		t.Fatal(err)
+	}
+	// One active update_agent per server, so the unique index holds.
+	slowUpdate := &model.AgentTask{ServerID: server.ID, Type: "update_agent", PayloadJSON: "{}", Status: "running", ResultJSON: "{}", Nonce: "update-slow"}
+	deadUpdate := &model.AgentTask{ServerID: otherServer.ID, Type: "update_agent", PayloadJSON: "{}", Status: "running", ResultJSON: "{}", Nonce: "update-dead"}
+	otherRunning := &model.AgentTask{ServerID: server.ID, Type: "collect_logs", PayloadJSON: "{}", Status: "running", ResultJSON: "{}", Nonce: "logs-dead"}
+	for _, task := range []*model.AgentTask{slowUpdate, deadUpdate, otherRunning} {
+		if err := s.CreateTask(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sevenMinutes := time.Now().Add(-7 * time.Minute).UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `update agent_tasks set updated_at=? where id in (?,?)`, sevenMinutes, slowUpdate.ID, otherRunning.ID); err != nil {
+		t.Fatal(err)
+	}
+	twelveMinutes := time.Now().Add(-12 * time.Minute).UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `update agent_tasks set updated_at=? where id=?`, twelveMinutes, deadUpdate.ID); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := s.FailTimedOutTasks(ctx, time.Now().Add(-5*time.Minute), time.Now().Add(-5*time.Minute), time.Now().Add(-10*time.Minute), `{"message":"pending timeout"}`, `{"message":"running timeout"}`, `{"message":"update running timeout"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failed) != 2 {
+		t.Fatalf("timed out rows = %d, want 2 (dead update + generic running)", len(failed))
+	}
+	tasks, err := s.ListTasksByServer(ctx, server.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherTasks, otherErr := s.ListTasksByServer(ctx, otherServer.ID, 10); otherErr == nil {
+		tasks = append(tasks, otherTasks...)
+	} else {
+		t.Fatal(otherErr)
+	}
+	byID := map[int64]model.AgentTask{}
+	for _, task := range tasks {
+		byID[task.ID] = task
+	}
+	if byID[slowUpdate.ID].Status != "running" {
+		t.Fatalf("a 7-minute update_agent was failed by the generic window: %#v", byID[slowUpdate.ID])
+	}
+	if byID[deadUpdate.ID].Status != "failed" {
+		t.Fatalf("a 12-minute update_agent survived its own window: %#v", byID[deadUpdate.ID])
+	}
+	if byID[otherRunning.ID].Status != "failed" {
+		t.Fatalf("the generic running sweep skipped a non-update task: %#v", byID[otherRunning.ID])
 	}
 }
 
