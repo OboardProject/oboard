@@ -18315,17 +18315,33 @@ button[aria-busy="true"] {
 
 .node-list-search input {
   min-width: 0;
+  width: auto;
   flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
   font-size: 13px;
 }
 
+.node-list-search input:hover,
 .node-list-search input:focus {
   outline: 0;
+  border: 0;
   box-shadow: none;
+  background: transparent;
+}
+
+.node-list-search input::-webkit-search-decoration,
+.node-list-search input::-webkit-search-cancel-button,
+.node-list-search input::-webkit-search-results-button,
+.node-list-search input::-webkit-search-results-decoration {
+  display: none;
 }
 
 .node-list-search .icon-button {
