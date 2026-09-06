@@ -126,7 +126,7 @@ func TestGeneratedInboundListenFollowsDetectedFamilies(t *testing.T) {
 				listenIP = "127.0.0.1"
 			}
 			inbound := model.Inbound{ID: 10, ServerID: tc.server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: listenIP, Port: 443, ConfigJSON: `{}`, Enabled: true}
-			config, err := GenerateServerConfigWithOptions(tc.server, []model.Inbound{inbound}, nil, testDNSState(tc.server.ID), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}}, ConfigOptions{})
+			config, err := generateFixtureConfig(tc.server, []model.Inbound{inbound}, nil, testDNSState(tc.server.ID), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}}, ConfigOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,14 +144,14 @@ func TestGeneratedInboundListenFollowsDetectedFamilies(t *testing.T) {
 }
 
 func TestConnectionAuditMetadataIsOnlyEmittedWhenEnabled(t *testing.T) {
-	disabled, err := GenerateServerConfigWithOptions(model.Server{ID: 1, Name: "edge"}, nil, nil, nil, nil, ConfigOptions{})
+	disabled, err := generateFixtureConfig(model.Server{ID: 1, Name: "edge"}, nil, nil, nil, nil, ConfigOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(disabled, "connection_audit") {
 		t.Fatalf("disabled server emitted connection audit metadata: %s", disabled)
 	}
-	enabled, err := GenerateServerConfigWithOptions(model.Server{ID: 1, Name: "edge", ConnectionAuditEnabled: true}, nil, nil, nil, nil, ConfigOptions{})
+	enabled, err := generateFixtureConfig(model.Server{ID: 1, Name: "edge", ConnectionAuditEnabled: true}, nil, nil, nil, nil, ConfigOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestSnellGeneratedConfigAcrossUDPModes(t *testing.T) {
 			server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", UDPInboundMode: model.UDPInboundMode(mode)}
 			v4 := model.Inbound{ID: 2, ServerID: 1, Name: "snell-v4", Protocol: model.ProtocolSnell, ListenIP: "", Port: 6160, ConfigJSON: `{"version":4,"psk":"secret-psk-1234","obfs_mode":"http","obfs_host":"bing.com"}`, Enabled: true}
 			v6 := model.Inbound{ID: 3, ServerID: 1, Name: "snell-v6", Protocol: model.ProtocolSnell, ListenIP: "", Port: 7177, ConfigJSON: `{"version":6,"psk":"secret-psk-1234","mode":"unshaped"}`, Enabled: true}
-			config, err := GenerateServerConfigWithOptions(server, []model.Inbound{v4, v6}, nil, testDNSState(1), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyPassword: "user-pass"}}, ConfigOptions{})
+			config, err := generateFixtureConfig(server, []model.Inbound{v4, v6}, nil, testDNSState(1), []model.User{{ID: 1, Username: "alice", Status: "active", ProxyPassword: "user-pass"}}, ConfigOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -267,7 +267,7 @@ func TestShadowsocksOutboundForcesUoTVersion2(t *testing.T) {
 
 func TestExternalRawOutboundStripsPrivateMetadata(t *testing.T) {
 	serverID := int64(1)
-	config, err := GenerateServerConfigWithOptions(
+	config, err := generateFixtureConfig(
 		model.Server{ID: serverID, Name: "edge"},
 		nil,
 		nil,
@@ -316,7 +316,7 @@ func TestExternalSocksOutboundAndProxyPathDetour(t *testing.T) {
 		},
 		InboundUsers: []model.InboundUser{{InboundID: rootInbound.ID, UserID: 1, Enabled: true}},
 	}
-	config, err := GenerateServerConfigWithOptions(server1, []model.Inbound{rootInbound, targetInbound}, nil, nil, []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}}, opts)
+	config, err := generateFixtureConfig(server1, []model.Inbound{rootInbound, targetInbound}, nil, nil, []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestExternalSocksOutboundAndProxyPathDetour(t *testing.T) {
 		t.Fatalf("proxy path config missing expected chain: socks=%v target=%v route=%v config=%s", foundSocks, foundTarget, foundRoute, config)
 	}
 
-	targetConfig, err := GenerateServerConfigWithOptions(server2, []model.Inbound{rootInbound, targetInbound}, nil, nil, nil, opts)
+	targetConfig, err := generateFixtureConfig(server2, []model.Inbound{rootInbound, targetInbound}, nil, nil, nil, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1135,7 +1135,7 @@ func TestIntermediateDirectBranchRoutesAtItsSourceServer(t *testing.T) {
 	if !cDirectRoute {
 		t.Fatalf("C should terminate the two-hop branch with direct: %s", configC)
 	}
-	subscriptionNodes, err := BuildSubscriptionNodes(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
+	subscriptionNodes, err := buildFixtureSubscriptionNodes(user, []model.Server{serverA, serverB, serverC}, []model.Inbound{rootInbound}, SubscriptionOptions{
 		EffectiveNodes: map[string]bool{
 			NodeKeyOf(model.AssignableNodeProxyPath, chain.ID):   true,
 			NodeKeyOf(model.AssignableNodeProxyPath, direct.ID):  true,
@@ -1174,7 +1174,7 @@ func TestResolveReachableEntryAddressUsesSourceStackAndHonorsExplicitMode(t *tes
 	if _, err := ResolveReachableEntryAddress(ipv4Source, model.Inbound{}, target); err == nil || !errors.Is(err, ErrInvalidDesiredState) || !strings.Contains(err.Error(), "IPv6") {
 		t.Fatalf("explicit IPv6 mismatch error = %v", err)
 	}
-	_, err = GenerateServerConfigWithOptions(ipv4Source, nil, []model.Outbound{{ID: 1, ServerID: ipv4Source.ID, Name: "bad-v6", Protocol: model.ProtocolVLESS, TargetAddress: target.PublicIPv6, TargetPort: 443, Enabled: true}}, testDNSState(ipv4Source.ID), nil, ConfigOptions{})
+	_, err = generateFixtureConfig(ipv4Source, nil, []model.Outbound{{ID: 1, ServerID: ipv4Source.ID, Name: "bad-v6", Protocol: model.ProtocolVLESS, TargetAddress: target.PublicIPv6, TargetPort: 443, Enabled: true}}, testDNSState(ipv4Source.ID), nil, ConfigOptions{})
 	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
 		t.Fatalf("generated config mismatch error = %v", err)
 	}
@@ -1464,7 +1464,7 @@ func TestProxyPathImportedNodeCanBeMiddleDetourBeforeServerHop(t *testing.T) {
 
 func mustServerConfig(t *testing.T, server model.Server, inbounds []model.Inbound, users []model.User, opts ConfigOptions) string {
 	t.Helper()
-	config, err := GenerateServerConfigWithOptions(server, inbounds, nil, nil, users, opts)
+	config, err := generateFixtureConfig(server, inbounds, nil, nil, users, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1555,7 +1555,7 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 		},
 		InboundUsers: []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
 	}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, []model.User{user}, opts)
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, []model.User{user}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1585,7 +1585,7 @@ func TestProxyPathBranchesUseAuthUserRoutesAndSubscriptionNodes(t *testing.T) {
 	if !routeA || !routeB || !routeDirect {
 		t.Fatalf("branch auth_user routes missing: routeA=%v routeB=%v routeDirect=%v config=%s", routeA, routeB, routeDirect, config)
 	}
-	sub, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+	sub, err := generateFixtureSubscription(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
 		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, pathA.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathB.ID): true, NodeKeyOf(model.AssignableNodeProxyPath, pathDirect.ID): true},
 		ProxyPaths:     opts.ProxyPaths,
 		ProxyPathSteps: opts.ProxyPathSteps,
@@ -1629,7 +1629,7 @@ func TestGenerateServerConfigUsesExactProxyPathUsers(t *testing.T) {
 		{ID: 8, Username: "bob", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222"},
 	}
 	paths := []model.ProxyPath{{ID: 40, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Enabled: true}}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
 		Inbounds:       []model.Inbound{inbound},
 		ProxyPaths:     paths,
 		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: 40, InboundID: inbound.ID, UserID: 7, Enabled: true}},
@@ -1674,7 +1674,7 @@ func TestGenerateServerConfigUsesInboundUserBindings(t *testing.T) {
 		{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"},
 		{ID: 2, Username: "bob", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "pass-b"},
 	}
-	config, err := GenerateServerConfigWithOptions(
+	config, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "s1"},
 		[]model.Inbound{
 			{ID: 1, ServerID: 1, Name: "alice-only", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
@@ -1724,7 +1724,7 @@ func TestGenerateServerConfigUsesPlaceholderWhenInboundHasNoUsers(t *testing.T) 
 	for i, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			inboundID := int64(i + 1)
-			config, err := GenerateServerConfigWithOptions(
+			config, err := generateFixtureConfig(
 				model.Server{ID: 1, Name: "edge"},
 				[]model.Inbound{{ID: inboundID, ServerID: 1, Name: tt.name, Protocol: tt.protocol, ListenIP: "0.0.0.0", Port: tt.port, ConfigJSON: tt.config, Enabled: true}},
 				nil,
@@ -1793,7 +1793,7 @@ func TestGenerateServerConfigPlaceholderIsStableWithServerSecret(t *testing.T) {
 	inbounds := []model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}}
 	generate := func(current model.Server) string {
 		t.Helper()
-		config, err := GenerateServerConfigWithOptions(current, inbounds, nil, nil, nil, ConfigOptions{InboundUsers: []model.InboundUser{}})
+		config, err := generateFixtureConfig(current, inbounds, nil, nil, nil, ConfigOptions{InboundUsers: []model.InboundUser{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1811,7 +1811,7 @@ func TestGenerateServerConfigPlaceholderIsStableWithServerSecret(t *testing.T) {
 }
 
 func TestGenerateServerConfigPlaceholderDisappearsWhenUserBound(t *testing.T) {
-	config, err := GenerateServerConfigWithOptions(
+	config, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "edge"},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
 		nil,
@@ -1831,7 +1831,7 @@ func TestGenerateServerConfigPlaceholderDisappearsWhenUserBound(t *testing.T) {
 }
 
 func TestPlaceholderDoesNotEnterSubscription(t *testing.T) {
-	content, err := GenerateSubscriptionWithOptions(
+	content, err := generateFixtureSubscription(
 		model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"},
 		[]model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.10"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
@@ -1859,14 +1859,14 @@ func TestPlaceholderDoesNotEnterSubscription(t *testing.T) {
 func TestImportedSocksSubscriptionRequiresGrant(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
 	external := model.ExternalOutbound{ID: 9, Name: "socks-a", Protocol: model.ProtocolSocks, TargetAddress: "socks.example.com", TargetPort: 1080, ConfigJSON: `{"type":"socks","server":"socks.example.com","server_port":1080,"username":"u","password":"p"}`, ExposeToUsers: true, Enabled: true}
-	withoutGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ExternalOutbounds: []model.ExternalOutbound{external}})
+	withoutGrant, err := generateFixtureSubscription(user, nil, nil, SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ExternalOutbounds: []model.ExternalOutbound{external}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(withoutGrant, "socks-a") {
 		t.Fatalf("imported node leaked without grant: %s", withoutGrant)
 	}
-	withGrant, err := GenerateSubscriptionWithOptions(user, nil, nil, SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ExternalOutbounds: []model.ExternalOutbound{external}, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID): true}})
+	withGrant, err := generateFixtureSubscription(user, nil, nil, SubscriptionOptions{Format: model.SubscriptionFormatSingBox, ExternalOutbounds: []model.ExternalOutbound{external}, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeExternalOutbound, external.ID): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1876,7 +1876,7 @@ func TestImportedSocksSubscriptionRequiresGrant(t *testing.T) {
 }
 
 func TestGenerateServerConfigRejectsMultipleUsersOnSingleUserInbound(t *testing.T) {
-	_, err := GenerateServerConfigWithOptions(
+	_, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "s1"},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "single-password-ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"chacha20-ietf-poly1305"}`, Enabled: true}},
 		nil,
@@ -2182,7 +2182,7 @@ func TestAnyTLSPathHopOmitsTCPFastOpen(t *testing.T) {
 		InboundUsers: []model.InboundUser{{InboundID: rootInbound.ID, UserID: 1, Enabled: true}},
 	}
 	users := []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}}
-	config, err := GenerateServerConfigWithOptions(serverA, []model.Inbound{rootInbound, targetInbound}, nil, nil, users, opts)
+	config, err := generateFixtureConfig(serverA, []model.Inbound{rootInbound, targetInbound}, nil, nil, users, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2200,7 +2200,7 @@ func TestAnyTLSPathHopOmitsTCPFastOpen(t *testing.T) {
 	if _, exists := hop["tcp_fast_open"]; exists {
 		t.Fatalf("path anytls hop still carries tcp_fast_open: %#v", hop)
 	}
-	targetConfig, err := GenerateServerConfigWithOptions(serverB, []model.Inbound{rootInbound, targetInbound}, nil, nil, users, opts)
+	targetConfig, err := generateFixtureConfig(serverB, []model.Inbound{rootInbound, targetInbound}, nil, nil, users, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2253,7 +2253,7 @@ func TestGeneratedWARPAndRouteConfigPassesOfficialSingBoxCheck(t *testing.T) {
 	inbound := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	path := model.ProxyPath{ID: 20, Name: "edge｜WARP", InboundID: inbound.ID, Enabled: true}
 	step := model.ProxyPathStep{ID: 21, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}
-	config, err := GenerateServerConfigWithOptions(
+	config, err := generateFixtureConfig(
 		server,
 		[]model.Inbound{inbound},
 		nil,
@@ -2328,7 +2328,7 @@ func TestProxyPathWARPUsesLastControlledServer(t *testing.T) {
 	inbound := model.Inbound{ID: 10, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	path := model.ProxyPath{ID: 20, Name: "edge｜WARP", InboundID: inbound.ID, Enabled: true}
 	step := model.ProxyPathStep{ID: 21, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}}, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, []model.User{{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111"}}, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: []model.ProxyPathStep{step},
 		WARPProfiles: []model.WARPProfile{{ID: warpID, ServerID: server.ID, Status: model.WARPStatusRequested, ConfigJSON: `{}`, Enabled: true}},
 	})
@@ -2800,7 +2800,7 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 	outboundID := int64(10)
 	externalID := int64(20)
 	warpID := int64(30)
-	config, err := GenerateServerConfigWithOptions(
+	config, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackDualStack, MTUValue: 1360},
 		nil,
 		[]model.Outbound{{ID: outboundID, ServerID: 1, Name: "paid-ss", Protocol: model.ProtocolSS, TargetAddress: "example.com", TargetPort: 8388, ConfigJSON: `{}`, Enabled: true}},
@@ -2879,7 +2879,7 @@ func TestGenerateServerConfigWithRoutingRulesIgnoresUnreferencedWARP(t *testing.
 }
 
 func TestGenerateServerConfigRejectsLegacyWARPRoutingAction(t *testing.T) {
-	_, err := GenerateServerConfigWithOptions(
+	_, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "edge", IPStack: model.IPStackDualStack},
 		nil,
 		nil,
@@ -2903,7 +2903,7 @@ func TestRoutingRuleDNSResolverEmitsDNSRules(t *testing.T) {
 		{ID: 2, ServerID: 1, Name: "ruleset-dns", Priority: 20, MatchSource: model.RoutingMatchSourceRuleSet, RuleSetID: &rulesetID, DNSResolver: "remote-primary", Action: model.RouteActionDirect, Enabled: true},
 	}
 	sets := []model.RoutingRuleSet{{ID: rulesetID, Name: "remote", Revision: "rev-1", Status: model.RoutingRuleSetStatusReady}}
-	config, err := GenerateServerConfigWithOptions(server, nil, nil, nil, nil, ConfigOptions{RoutingRules: rules, RoutingRuleSets: sets})
+	config, err := generateFixtureConfig(server, nil, nil, nil, nil, ConfigOptions{RoutingRules: rules, RoutingRuleSets: sets})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2962,7 +2962,7 @@ func runSingBoxCheck(t *testing.T, bin string, oboardSB bool, config string) {
 }
 
 func TestGenerateServerConfigRejectsIPv6OnlyLiteralIPv4Outbounds(t *testing.T) {
-	_, err := GenerateServerConfigWithOptions(
+	_, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "v6", IPStack: model.IPStackIPv6Only},
 		nil,
 		[]model.Outbound{{ID: 1, ServerID: 1, Name: "bad-v4", Protocol: model.ProtocolVLESS, TargetAddress: "1.1.1.1", TargetPort: 443, ConfigJSON: `{}`, Enabled: true}},
@@ -2976,7 +2976,7 @@ func TestGenerateServerConfigRejectsIPv6OnlyLiteralIPv4Outbounds(t *testing.T) {
 }
 
 func TestGenerateServerConfigRejectsIPv6OnlyLiteralIPv4ExternalOutbound(t *testing.T) {
-	_, err := GenerateServerConfigWithOptions(
+	_, err := generateFixtureConfig(
 		model.Server{ID: 1, Name: "v6", IPStack: model.IPStackIPv6Only},
 		nil,
 		nil,
@@ -2996,7 +2996,7 @@ func TestGeneratedConfigIncludesRuntimeRateLimits(t *testing.T) {
 		{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"},
 		{ID: 2, Username: "bob", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "pass-b", SpeedLimitMbps: 10},
 	}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
 		InboundUsers: []model.InboundUser{{InboundID: 1, UserID: 1, Enabled: true}, {InboundID: 1, UserID: 2, Enabled: true}},
 	})
 	if err != nil {
@@ -3021,7 +3021,7 @@ func TestGeneratedConfigTracksUnlimitedRealUser(t *testing.T) {
 	server := model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv4}
 	inbound := model.Inbound{ID: 7, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
 	user := model.User{ID: 9, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, []model.User{user}, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, []model.User{user}, ConfigOptions{
 		InboundUsers: []model.InboundUser{{InboundID: inbound.ID, UserID: user.ID, Enabled: true}},
 		TrafficPolicies: map[int64]model.TrafficRuntimePolicy{
 			user.ID: {UserID: user.ID, Billable: true, PeriodKey: "2026-07-01", PeriodStart: "2026-06-30T16:00:00Z", PeriodEnd: "2026-07-31T16:00:00Z", ResetMode: "monthly", Timezone: "Asia/Shanghai", QuotaState: "active"},
@@ -3060,7 +3060,7 @@ func TestRuntimePathIDFromUsername(t *testing.T) {
 func TestGeneratedConfigOmitsPlaceholderRuntimeRateLimits(t *testing.T) {
 	server := model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv4}
 	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, nil, ConfigOptions{InboundUsers: []model.InboundUser{}})
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, nil, ConfigOptions{InboundUsers: []model.InboundUser{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3077,7 +3077,7 @@ func TestSingleUserInboundIncludesInboundRuntimeRateLimit(t *testing.T) {
 	server := model.Server{ID: 1, Name: "edge", IPStack: model.IPStackPreferIPv4}
 	inbound := model.Inbound{ID: 7, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"aes-128-gcm"}`, Enabled: true}
 	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a", SpeedLimitMbps: 20}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, nil, []model.User{user}, ConfigOptions{InboundUsers: []model.InboundUser{{InboundID: 7, UserID: 1, Enabled: true}}})
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, []model.User{user}, ConfigOptions{InboundUsers: []model.InboundUser{{InboundID: 7, UserID: 1, Enabled: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}

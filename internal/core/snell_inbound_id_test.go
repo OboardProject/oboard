@@ -16,7 +16,7 @@ func TestSingleUserInboundRuntimeLimitCarriesInboundID(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	users := snellTestUsers(1)
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound},
 		PortLedger: NewProxyPathPortLedger(nil),
 		TrafficPolicies: map[int64]model.TrafficRuntimePolicy{

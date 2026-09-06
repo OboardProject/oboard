@@ -58,17 +58,12 @@ func snellUserInboundTag(inboundID, userID, pathID int64) string {
 	return name
 }
 
-// snellUserPSK derives the per-user server PSK. The root is the inbound's
-// config_json.psk, which Controller already generates and persists as a stable
-// credential that user changes never rotate, so no new table or migration is
-// needed. user.ProxyPassword joins the seed so rotating a user's password
-// rotates their Snell credential the same way it does for every other
-// protocol; device-bound users arrive here with ProxyPassword already rewritten
-// per inbound and path by credentialUser, so device binding flows through too.
-//
-// deterministicSecret returns 43 base64url characters, satisfying the 12-255
-// byte PSK contract sing-snell v6 enforces.
+// snellUserPSK uses the persisted per-authorization PSK for public users.
+// Managed hop and placeholder secrets remain Controller-owned.
 func snellUserPSK(inboundSecret string, inbound model.Inbound, user model.User, pathID int64) string {
+	if user.ID > 0 {
+		return user.ProxyPassword
+	}
 	return deterministicSecret(fmt.Sprintf("%s:snell:inbound:%d:user:%d:path:%d:%s",
 		inboundSecret, inbound.ID, user.ID, pathID, user.ProxyPassword))
 }
@@ -140,13 +135,13 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 				ServerID:  host.ID,
 				User:      user,
 				PathID:    pathID,
-				Tag:       snellUserInboundTag(inbound.ID, user.ID, pathID),
+				Tag:       snellCredentialInboundTag(inbound.ID, user, pathID),
 				PSK:       snellUserPSK(secret, inbound, user, pathID),
 			}
 			seed := inbound.ID*1000003 + user.ID*10007 + pathID*101
 			listener.Port = opts.PortLedger.resolve(PortRequirement{
 				Kind:           model.ProxyPathPortKindSnellUser,
-				ScopeKey:       snellUserPortScopeKey(inbound.ID, user.ID, pathID),
+				ScopeKey:       snellCredentialPortScopeKey(inbound.ID, user, pathID),
 				ServerID:       host.ID,
 				Pool:           model.PortPoolPublic,
 				ListenIP:       listenIP,
@@ -248,6 +243,22 @@ func snellUserPortScopeKey(inboundID, userID, pathID int64) string {
 	return fmt.Sprintf("inbound:%d:user:%d:path:%d", inboundID, userID, pathID)
 }
 
+func snellCredentialInboundTag(inboundID int64, user model.User, pathID int64) string {
+	value := snellUserInboundTag(inboundID, user.ID, pathID)
+	if user.ID > 0 && user.DeviceIDHash != "" {
+		value += "-d" + user.DeviceIDHash
+	}
+	return value
+}
+
+func snellCredentialPortScopeKey(inboundID int64, user model.User, pathID int64) string {
+	value := snellUserPortScopeKey(inboundID, user.ID, pathID)
+	if user.ID > 0 && user.DeviceIDHash != "" {
+		value += ":device:" + user.DeviceIDHash
+	}
+	return value
+}
+
 // SnellRuntimeProbePorts returns the actual ports occupied by a fanned-out
 // Snell inbound. The panel inbound's Port is only its stable logical port and
 // is not rendered into sing-box. During deployment projectedOnly excludes
@@ -335,7 +346,10 @@ func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.I
 	if err != nil {
 		return nil, false, err
 	}
-	runtimePort, ok := ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellUserPortScopeKey(inbound.ID, user.ID, pathID), inbound.ServerID)
+	if user.ID > 0 && user.AuthorizationKey == "" {
+		return nil, false, nil
+	}
+	runtimePort, ok := ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellCredentialPortScopeKey(inbound.ID, user, pathID), inbound.ServerID)
 	if !ok {
 		return nil, false, nil
 	}

@@ -1,28 +1,21 @@
 package core
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
-	"io"
-	"strconv"
+	"sort"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
-	"golang.org/x/crypto/hkdf"
 )
 
-// ExpandDeviceUsers projects each account into the authentication identities
-// that may be installed on the data plane. A nil device slice means the caller
-// is outside the Controller routing snapshot and preserves the supplied users.
+// ExpandDeviceUsers projects accounts into eligible data-plane identities.
 func ExpandDeviceUsers(users []model.User, devices []model.UserDevice) []model.User {
 	if devices == nil {
 		return append([]model.User(nil), users...)
 	}
 	byUser := make(map[int64][]model.UserDevice)
 	for _, device := range devices {
-		if device.UserID > 0 && device.Status == "active" {
+		if device.UserID > 0 && device.Status == "active" && device.ProxyAccessState != "revoked" && device.ProxyAccessState != "disabled" {
 			byUser[device.UserID] = append(byUser[device.UserID], device)
 		}
 	}
@@ -44,74 +37,127 @@ func ExpandDeviceUsers(users []model.User, devices []model.UserDevice) []model.U
 func UserForDevice(user model.User, device model.UserDevice) model.User {
 	out := user
 	out.Username = deviceAuthUsername(user.ID, device.DeviceIDHash)
-	out.SSHRandomID = deviceSSHRandomID(user.ProxyPassword, device.DeviceIDHash, device.CredentialEpoch)
 	out.DeviceIDHash = device.DeviceIDHash
 	out.CredentialEpoch = device.CredentialEpoch
-	out.CredentialSeed = user.ProxyPassword
+	out.CredentialSeed, out.SSHRandomID = "", ""
+	out.ProxyUsername, out.ProxyPassword, out.ProxyUUID, out.AuthorizationKey = "", "", "", ""
 	out.CredentialStatus = device.ProxyAccessState
 	if out.CredentialStatus == "" {
 		out.CredentialStatus = "active"
 	}
-	out = credentialUser(out, 0, 0, "device")
 	return out
 }
 
+// UserCredentialForRoute selects persisted secret material. An account without
+// an exact active scope never falls back to account or derived credentials.
 func UserCredentialForRoute(user model.User, inboundID, pathID int64, protocol model.Protocol) model.User {
-	return credentialUser(user, inboundID, pathID, string(protocol))
+	if user.ID <= 0 {
+		return user
+	} // Controller-owned managed hop/placeholder.
+	user.ProxyUsername, user.ProxyPassword, user.ProxyUUID, user.AuthorizationKey = "", "", "", ""
+	if user.Status != "active" || user.CredentialStatus == "revoked" || user.CredentialStatus == "disabled" {
+		return user
+	}
+	for _, c := range user.ProxyCredentials {
+		if c.Status == "active" && c.UserID == user.ID && c.InboundID == inboundID && c.PathID == pathID && c.Protocol == protocol && c.DeviceIDHash == user.DeviceIDHash && c.CredentialEpoch == user.CredentialEpoch && c.ID != "" && c.Username != "" && c.Password != "" && c.UUID != "" {
+			user.ProxyUsername, user.ProxyPassword, user.ProxyUUID, user.AuthorizationKey = c.Username, c.Password, c.UUID, c.ID
+			return user
+		}
+	}
+	return user
 }
 
 func credentialUsersForInbound(users []model.User, inbound model.Inbound) []model.User {
 	out := make([]model.User, 0, len(users))
 	for _, user := range users {
-		pathID := runtimePathIDFromUsername(user.Username)
-		out = append(out, credentialUser(user, inbound.ID, pathID, string(inbound.Protocol)))
+		user = UserCredentialForRoute(user, inbound.ID, runtimePathIDFromUsername(user.Username), inbound.Protocol)
+		if user.ID <= 0 || user.AuthorizationKey != "" {
+			out = append(out, user)
+		}
 	}
 	return out
 }
 
-func credentialUser(user model.User, inboundID, pathID int64, protocol string) model.User {
-	if user.DeviceIDHash == "" || user.CredentialEpoch <= 0 || user.CredentialSeed == "" {
-		return user
+// ProxyCredentialScopes enumerates authorization only: no secrets, configuration
+// generation or port allocation. Bindings must describe the complete authorized
+// snapshot; absent bindings do not grant everyone access.
+func ProxyCredentialScopes(users []model.User, devices []model.UserDevice, inbounds []model.Inbound, opts ConfigOptions) []model.ProxyCredential {
+	if opts.AccessSnapshot != nil {
+		opts.InboundUsers = opts.AccessSnapshot.InboundUserBindings()
+		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
 	}
-	key := deviceKey(user.CredentialSeed, user.DeviceIDHash, user.CredentialEpoch)
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(strconv.FormatInt(inboundID, 10)))
-	_, _ = mac.Write([]byte{0})
-	_, _ = mac.Write([]byte(strconv.FormatInt(pathID, 10)))
-	_, _ = mac.Write([]byte{0})
-	_, _ = mac.Write([]byte(protocol))
-	sum := mac.Sum(nil)
-	uuid := append([]byte(nil), sum[:16]...)
-	uuid[6] = (uuid[6] & 0x0f) | 0x40
-	uuid[8] = (uuid[8] & 0x3f) | 0x80
-	user.ProxyUUID = fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
-	user.ProxyPassword = base64.RawURLEncoding.EncodeToString(sum)
-	return user
-}
-
-func deviceKey(userSecret, deviceIDHash string, epoch int64) []byte {
-	info := []byte("oboard-device-v1\x00" + deviceIDHash + "\x00" + strconv.FormatInt(epoch, 10))
-	reader := hkdf.New(sha256.New, []byte(userSecret), nil, info)
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(reader, key); err != nil {
-		panic(err)
+	if opts.InboundUsers == nil {
+		opts.InboundUsers = []model.InboundUser{}
 	}
-	return key
+	if opts.ProxyPathUsers == nil {
+		opts.ProxyPathUsers = []model.ProxyPathUser{}
+	}
+	users = ExpandDeviceUsers(users, devices)
+	steps := make(map[int64]bool)
+	for _, step := range opts.ProxyPathSteps {
+		steps[step.PathID] = true
+	}
+	seen := make(map[model.ProxyCredential]bool)
+	out := []model.ProxyCredential{}
+	appendScope := func(user model.User, inbound model.Inbound, pathID int64) {
+		if user.ID <= 0 || user.Status != "active" || user.CredentialStatus == "revoked" || user.CredentialStatus == "disabled" {
+			return
+		}
+		if (user.DeviceIDHash == "" && user.CredentialEpoch != 0) || (user.DeviceIDHash != "" && user.CredentialEpoch <= 0) {
+			return
+		}
+		c := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, Protocol: inbound.Protocol}
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	for _, inbound := range inbounds {
+		if !inbound.Enabled || inbound.ID <= 0 {
+			continue
+		}
+		paths := proxyPathsForRootInbound(inbound.ID, opts.ProxyPaths)
+		if len(paths) == 0 {
+			pathID := int64(0)
+			if inbound.Protocol == model.ProtocolSSH {
+				pathID = SSHDirectBranchPathID(inbound.ID)
+			}
+			for _, user := range usersForInbound(inbound, users, opts.InboundUsers) {
+				appendScope(user, inbound, pathID)
+			}
+			continue
+		}
+		for _, path := range paths {
+			if path.Kind != model.ProxyPathKindDirect && !steps[path.ID] {
+				continue
+			}
+			for _, user := range usersForProxyPath(path, inbound, users, opts.InboundUsers, opts.ProxyPathUsers) {
+				appendScope(user, inbound, path.ID)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.UserID != b.UserID {
+			return a.UserID < b.UserID
+		}
+		if a.InboundID != b.InboundID {
+			return a.InboundID < b.InboundID
+		}
+		if a.PathID != b.PathID {
+			return a.PathID < b.PathID
+		}
+		if a.DeviceIDHash != b.DeviceIDHash {
+			return a.DeviceIDHash < b.DeviceIDHash
+		}
+		if a.CredentialEpoch != b.CredentialEpoch {
+			return a.CredentialEpoch < b.CredentialEpoch
+		}
+		return a.Protocol < b.Protocol
+	})
+	return out
 }
 
 func deviceAuthUsername(userID int64, deviceIDHash string) string {
-	suffix := strings.ToLower(strings.TrimSpace(deviceIDHash))
-	if len(suffix) > 12 {
-		suffix = suffix[:12]
-	}
-	return fmt.Sprintf("u%d__oboard_device_%s", userID, suffix)
-}
-
-func deviceSSHRandomID(userSecret, deviceIDHash string, epoch int64) string {
-	key := deviceKey(userSecret, deviceIDHash, epoch)
-	value := uint64(0)
-	for _, b := range key[:8] {
-		value = value<<8 | uint64(b)
-	}
-	return fmt.Sprintf("%012d", value%1_000_000_000_000)
+	return fmt.Sprintf("u%d__oboard_device_%s", userID, strings.ToLower(strings.TrimSpace(deviceIDHash)))
 }

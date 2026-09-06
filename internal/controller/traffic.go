@@ -165,8 +165,14 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		log.Printf("traffic ledger rejected %d unaccountable report(s) from agent=%s first_reason=%s", len(rejected), server.AgentID, rejected[0].Reason)
 		acceptedReports = append(append(make([]model.TrafficAcceptedReport, 0, len(acceptedReports)+len(rejected)), acceptedReports...), rejected...)
 	}
+	authorization, err := s.currentAuthorizationLease(r.Context(), server.ID)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	revision, _ := s.store.TrafficPolicyRevision(r.Context())
 	write(w, 200, map[string]any{
+		"authorization":       authorization,
 		"ok":                  true,
 		"policy_revision":     revision,
 		"stream_checkpoints":  result.StreamCheckpoints,

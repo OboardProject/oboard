@@ -197,6 +197,9 @@ type User struct {
 	Status                        string                       `json:"status"`
 	ProxyUUID                     string                       `json:"proxy_uuid"`
 	ProxyPassword                 string                       `json:"proxy_password"`
+	ProxyUsername                 string                       `json:"-"`
+	AuthorizationKey              string                       `json:"-"`
+	ProxyCredentials              []ProxyCredential            `json:"-"`
 	SSHRandomID                   string                       `json:"-"`
 	SpeedLimitMbps                int                          `json:"speed_limit_mbps"`
 	TrafficLimitBytes             int64                        `json:"traffic_limit_bytes"`
@@ -228,6 +231,20 @@ type User struct {
 	Protected                     bool                         `json:"protected,omitempty"`
 	CreatedAt                     time.Time                    `json:"created_at"`
 	UpdatedAt                     time.Time                    `json:"updated_at"`
+}
+
+type ProxyCredential struct {
+	ID              string   `json:"id"`
+	UserID          int64    `json:"user_id"`
+	InboundID       int64    `json:"inbound_id"`
+	PathID          int64    `json:"path_id"`
+	DeviceIDHash    string   `json:"device_id_hash,omitempty"`
+	CredentialEpoch int64    `json:"credential_epoch"`
+	Protocol        Protocol `json:"protocol"`
+	Status          string   `json:"status"`
+	Username        string   `json:"-"`
+	Password        string   `json:"-"`
+	UUID            string   `json:"-"`
 }
 
 type UserDevice struct {
@@ -601,15 +618,15 @@ type PlanRuleReconcileState struct {
 }
 
 type PlanReconcileState struct {
-	PlanID              int64      `json:"plan_id"`
-	ApplyingRevisionID  *int64     `json:"applying_revision_id,omitempty"`
-	Status              string     `json:"status"`
-	LastAccessChangeID  *int64     `json:"last_access_change_id,omitempty"`
-	BlockedReason       string     `json:"blocked_reason,omitempty"`
-	BlockedJSON         string     `json:"blocked_json,omitempty"`
-	AttemptCount        int        `json:"attempt_count"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	PlanID             int64     `json:"plan_id"`
+	ApplyingRevisionID *int64    `json:"applying_revision_id,omitempty"`
+	Status             string    `json:"status"`
+	LastAccessChangeID *int64    `json:"last_access_change_id,omitempty"`
+	BlockedReason      string    `json:"blocked_reason,omitempty"`
+	BlockedJSON        string    `json:"blocked_json,omitempty"`
+	AttemptCount       int       `json:"attempt_count"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // SubscriptionNodeOrderMode controls how a plan revision's nodes are ordered in
@@ -933,112 +950,112 @@ type SubscriptionRelay struct {
 }
 
 type Server struct {
-	ID                          int64                `json:"id"`
-	Name                        string               `json:"name"`
-	AgentID                     string               `json:"agent_id"`
-	AgentTokenHash              string               `json:"-"`
-	ChainSecret                 string               `json:"-"`
-	EnrollmentHash              string               `json:"-"`
-	EnrollmentExpiresAt         *time.Time           `json:"-"`
-	EntryAddress                string               `json:"entry_address"`
-	PublicIPv4                  string               `json:"public_ipv4"`
-	PublicIPv6                  string               `json:"public_ipv6"`
-	InterfaceIPv6               string               `json:"interface_ipv6"`
-	RegionCode                  string               `json:"region_code"`
-	DetectedRegionCode          string               `json:"detected_region_code"`
-	RegionMode                  string               `json:"region_mode"`
-	EntryIPMode                 EntryIPMode          `json:"entry_ip_mode"`
-	ListenIP                    string               `json:"listen_ip"`
-	ListenMode                  ListenMode           `json:"listen_mode"`
-	IPStack                     IPStack              `json:"ip_stack"`
-	UDPInboundMode              UDPInboundMode       `json:"udp_inbound_mode"`
-	MTUMode                     MTUMode              `json:"mtu_mode"`
-	MTUValue                    int                  `json:"mtu_value"`
-	MTUProbeHost                string               `json:"mtu_probe_host"`
-	MTUProbePort                int                  `json:"mtu_probe_port"`
-	MTUOverheadBytes            int                  `json:"mtu_overhead_bytes"`
-	BBREnabled                  bool                 `json:"bbr_enabled"`
-	PortRangeStart              int                  `json:"port_range_start"`
-	PortRangeEnd                int                  `json:"port_range_end"`
-	InternalPortRangeStart      int                  `json:"internal_port_range_start"`
-	InternalPortRangeEnd        int                  `json:"internal_port_range_end"`
-	PortPolicyRevision          int64                `json:"port_policy_revision"`
-	Status                      ServerStatus         `json:"status"`
-	OS                          string               `json:"os"`
-	DistroID                    string               `json:"distro_id"`
-	DistroVersion               string               `json:"distro_version"`
-	DistroName                  string               `json:"distro_name"`
-	Libc                        string               `json:"libc"`
-	ServiceManager              string               `json:"service_manager"`
-	PackageManager              string               `json:"package_manager"`
-	Arch                        string               `json:"arch"`
-	Kernel                      string               `json:"kernel"`
-	CPU                         string               `json:"cpu"`
-	CPUCores                    int                  `json:"cpu_cores"`
-	MemoryBytes                 uint64               `json:"memory_bytes"`
-	CPUUsagePercent             float64              `json:"cpu_usage_percent"`
-	MemoryUsedBytes             uint64               `json:"memory_used_bytes"`
-	MemoryTotalBytes            uint64               `json:"memory_total_bytes"`
-	AgentMemoryBytes            uint64               `json:"agent_memory_bytes"`
-	DiskBytes                   uint64               `json:"disk_bytes"`
-	DiskTotalBytes              uint64               `json:"disk_total_bytes"`
-	TCPConnectionCount          uint64               `json:"tcp_connection_count"`
-	UDPConnectionCount          uint64               `json:"udp_connection_count"`
-	ProcessCount                uint64               `json:"process_count"`
-	AgentVersion                string               `json:"agent_version"`
-	AgentBuild                  string               `json:"agent_build"`
-	SingBoxVersion              string               `json:"sing_box_version"`
-	KernelCapabilities          []string             `json:"kernel_capabilities,omitempty"`
-	TCPFastOpenState            string               `json:"tcp_fastopen_state"`
-	TCPFastOpenValue            int                  `json:"tcp_fastopen_value"`
-	MonitoringMode              string               `json:"monitoring_mode"`
-	ResourceHistoryEnabled      bool                 `json:"resource_history_enabled"`
-	ResourceHistoryConfigured   bool                 `json:"-"`
-	TrafficResetMode            string               `json:"traffic_reset_mode"`
-	TrafficResetDay             int                  `json:"traffic_reset_day"`
-	TrafficLimitBytes           int64                `json:"traffic_limit_bytes"`
-	NetworkUploadBPS            uint64               `json:"network_upload_bps"`
-	NetworkDownloadBPS          uint64               `json:"network_download_bps"`
-	TrafficUploadBytes          uint64               `json:"traffic_upload_bytes"`
-	TrafficDownloadBytes        uint64               `json:"traffic_download_bytes"`
-	TrafficPeriodStart          string               `json:"traffic_period_start"`
-	TrafficPeriodEnd            string               `json:"traffic_period_end"`
-	ConnectivityProbeEnabled    bool                 `json:"-"`
-	ConnectivityProbeTarget     ConnectivityTarget   `json:"-"`
-	LatencyProbeEnabled         bool                 `json:"latency_probe_enabled"`
-	LatencyProbeMode            LatencyProbeMode     `json:"latency_probe_mode"`
-	LatencyProbePublicTarget    ConnectivityTarget   `json:"latency_probe_public_target"`
-	LatencyProbeIntervalSeconds int                  `json:"latency_probe_interval_seconds"`
-	LatencyProbeSampleCount     int                  `json:"latency_probe_sample_count"`
-	LatencyProbeMaxTargets      int                  `json:"latency_probe_max_targets"`
-	LatencyProbeResourceVersion string               `json:"latency_probe_resource_version,omitempty"`
-	ConnectionAuditEnabled      bool                 `json:"connection_audit_enabled"`
-	DisplayTags                 []ServerDisplayTag   `json:"display_tags"`
-	OfflineNotifyEnabled        bool                 `json:"offline_notify_enabled"`
-	OfflineAfterSeconds         int                  `json:"offline_after_seconds"`
-	ServiceStartAt              *time.Time           `json:"service_start_at,omitempty"`
-	ExpiresAt                   *time.Time           `json:"expires_at,omitempty"`
-	RenewalCycle                ServerRenewalCycle   `json:"renewal_cycle"`
-	AutoRenewEnabled            bool                 `json:"auto_renew_enabled"`
-	ExpiryNotifyEnabled         bool                 `json:"expiry_notify_enabled"`
-	LastAutoRenewedAt           *time.Time           `json:"last_auto_renewed_at,omitempty"`
-	TimeCorrectionMode          TimeCorrectionMode   `json:"time_correction_mode"`
-	TimeCheckStatus             string               `json:"time_check_status"`
-	TimeOffsetMS                int64                `json:"time_offset_ms"`
-	TimeEffectiveOffsetMS       int64                `json:"time_effective_offset_ms"`
-	TimeCheckSource             string               `json:"time_check_source"`
-	TimeCheckError              string               `json:"time_check_error"`
-	TimeLogicalActive           bool                 `json:"time_logical_active"`
-	TimeUnsupportedPaths        []string             `json:"time_unsupported_paths,omitempty"`
-	TimeCheckedAt               *time.Time           `json:"time_checked_at,omitempty"`
-	ConnectivityStatus          string               `json:"connectivity_status"`
-	ConnectivityLatencyMS       int64                `json:"connectivity_latency_ms"`
-	ConnectivityCheckedAt       *time.Time           `json:"connectivity_checked_at,omitempty"`
-	ConnectivityError           string               `json:"connectivity_error"`
-	TelemetryUpdatedAt          *time.Time           `json:"telemetry_updated_at,omitempty"`
-	LastSeenAt                  *time.Time           `json:"last_seen_at,omitempty"`
-	CreatedAt                   time.Time            `json:"created_at"`
-	UpdatedAt                   time.Time            `json:"updated_at"`
+	ID                          int64              `json:"id"`
+	Name                        string             `json:"name"`
+	AgentID                     string             `json:"agent_id"`
+	AgentTokenHash              string             `json:"-"`
+	ChainSecret                 string             `json:"-"`
+	EnrollmentHash              string             `json:"-"`
+	EnrollmentExpiresAt         *time.Time         `json:"-"`
+	EntryAddress                string             `json:"entry_address"`
+	PublicIPv4                  string             `json:"public_ipv4"`
+	PublicIPv6                  string             `json:"public_ipv6"`
+	InterfaceIPv6               string             `json:"interface_ipv6"`
+	RegionCode                  string             `json:"region_code"`
+	DetectedRegionCode          string             `json:"detected_region_code"`
+	RegionMode                  string             `json:"region_mode"`
+	EntryIPMode                 EntryIPMode        `json:"entry_ip_mode"`
+	ListenIP                    string             `json:"listen_ip"`
+	ListenMode                  ListenMode         `json:"listen_mode"`
+	IPStack                     IPStack            `json:"ip_stack"`
+	UDPInboundMode              UDPInboundMode     `json:"udp_inbound_mode"`
+	MTUMode                     MTUMode            `json:"mtu_mode"`
+	MTUValue                    int                `json:"mtu_value"`
+	MTUProbeHost                string             `json:"mtu_probe_host"`
+	MTUProbePort                int                `json:"mtu_probe_port"`
+	MTUOverheadBytes            int                `json:"mtu_overhead_bytes"`
+	BBREnabled                  bool               `json:"bbr_enabled"`
+	PortRangeStart              int                `json:"port_range_start"`
+	PortRangeEnd                int                `json:"port_range_end"`
+	InternalPortRangeStart      int                `json:"internal_port_range_start"`
+	InternalPortRangeEnd        int                `json:"internal_port_range_end"`
+	PortPolicyRevision          int64              `json:"port_policy_revision"`
+	Status                      ServerStatus       `json:"status"`
+	OS                          string             `json:"os"`
+	DistroID                    string             `json:"distro_id"`
+	DistroVersion               string             `json:"distro_version"`
+	DistroName                  string             `json:"distro_name"`
+	Libc                        string             `json:"libc"`
+	ServiceManager              string             `json:"service_manager"`
+	PackageManager              string             `json:"package_manager"`
+	Arch                        string             `json:"arch"`
+	Kernel                      string             `json:"kernel"`
+	CPU                         string             `json:"cpu"`
+	CPUCores                    int                `json:"cpu_cores"`
+	MemoryBytes                 uint64             `json:"memory_bytes"`
+	CPUUsagePercent             float64            `json:"cpu_usage_percent"`
+	MemoryUsedBytes             uint64             `json:"memory_used_bytes"`
+	MemoryTotalBytes            uint64             `json:"memory_total_bytes"`
+	AgentMemoryBytes            uint64             `json:"agent_memory_bytes"`
+	DiskBytes                   uint64             `json:"disk_bytes"`
+	DiskTotalBytes              uint64             `json:"disk_total_bytes"`
+	TCPConnectionCount          uint64             `json:"tcp_connection_count"`
+	UDPConnectionCount          uint64             `json:"udp_connection_count"`
+	ProcessCount                uint64             `json:"process_count"`
+	AgentVersion                string             `json:"agent_version"`
+	AgentBuild                  string             `json:"agent_build"`
+	SingBoxVersion              string             `json:"sing_box_version"`
+	KernelCapabilities          []string           `json:"kernel_capabilities,omitempty"`
+	TCPFastOpenState            string             `json:"tcp_fastopen_state"`
+	TCPFastOpenValue            int                `json:"tcp_fastopen_value"`
+	MonitoringMode              string             `json:"monitoring_mode"`
+	ResourceHistoryEnabled      bool               `json:"resource_history_enabled"`
+	ResourceHistoryConfigured   bool               `json:"-"`
+	TrafficResetMode            string             `json:"traffic_reset_mode"`
+	TrafficResetDay             int                `json:"traffic_reset_day"`
+	TrafficLimitBytes           int64              `json:"traffic_limit_bytes"`
+	NetworkUploadBPS            uint64             `json:"network_upload_bps"`
+	NetworkDownloadBPS          uint64             `json:"network_download_bps"`
+	TrafficUploadBytes          uint64             `json:"traffic_upload_bytes"`
+	TrafficDownloadBytes        uint64             `json:"traffic_download_bytes"`
+	TrafficPeriodStart          string             `json:"traffic_period_start"`
+	TrafficPeriodEnd            string             `json:"traffic_period_end"`
+	ConnectivityProbeEnabled    bool               `json:"-"`
+	ConnectivityProbeTarget     ConnectivityTarget `json:"-"`
+	LatencyProbeEnabled         bool               `json:"latency_probe_enabled"`
+	LatencyProbeMode            LatencyProbeMode   `json:"latency_probe_mode"`
+	LatencyProbePublicTarget    ConnectivityTarget `json:"latency_probe_public_target"`
+	LatencyProbeIntervalSeconds int                `json:"latency_probe_interval_seconds"`
+	LatencyProbeSampleCount     int                `json:"latency_probe_sample_count"`
+	LatencyProbeMaxTargets      int                `json:"latency_probe_max_targets"`
+	LatencyProbeResourceVersion string             `json:"latency_probe_resource_version,omitempty"`
+	ConnectionAuditEnabled      bool               `json:"connection_audit_enabled"`
+	DisplayTags                 []ServerDisplayTag `json:"display_tags"`
+	OfflineNotifyEnabled        bool               `json:"offline_notify_enabled"`
+	OfflineAfterSeconds         int                `json:"offline_after_seconds"`
+	ServiceStartAt              *time.Time         `json:"service_start_at,omitempty"`
+	ExpiresAt                   *time.Time         `json:"expires_at,omitempty"`
+	RenewalCycle                ServerRenewalCycle `json:"renewal_cycle"`
+	AutoRenewEnabled            bool               `json:"auto_renew_enabled"`
+	ExpiryNotifyEnabled         bool               `json:"expiry_notify_enabled"`
+	LastAutoRenewedAt           *time.Time         `json:"last_auto_renewed_at,omitempty"`
+	TimeCorrectionMode          TimeCorrectionMode `json:"time_correction_mode"`
+	TimeCheckStatus             string             `json:"time_check_status"`
+	TimeOffsetMS                int64              `json:"time_offset_ms"`
+	TimeEffectiveOffsetMS       int64              `json:"time_effective_offset_ms"`
+	TimeCheckSource             string             `json:"time_check_source"`
+	TimeCheckError              string             `json:"time_check_error"`
+	TimeLogicalActive           bool               `json:"time_logical_active"`
+	TimeUnsupportedPaths        []string           `json:"time_unsupported_paths,omitempty"`
+	TimeCheckedAt               *time.Time         `json:"time_checked_at,omitempty"`
+	ConnectivityStatus          string             `json:"connectivity_status"`
+	ConnectivityLatencyMS       int64              `json:"connectivity_latency_ms"`
+	ConnectivityCheckedAt       *time.Time         `json:"connectivity_checked_at,omitempty"`
+	ConnectivityError           string             `json:"connectivity_error"`
+	TelemetryUpdatedAt          *time.Time         `json:"telemetry_updated_at,omitempty"`
+	LastSeenAt                  *time.Time         `json:"last_seen_at,omitempty"`
+	CreatedAt                   time.Time          `json:"created_at"`
+	UpdatedAt                   time.Time          `json:"updated_at"`
 }
 
 type Inbound struct {
@@ -1320,38 +1337,38 @@ const (
 )
 
 type RoutingRule struct {
-	ID                    int64             `json:"id"`
-	ServerID              int64             `json:"server_id"`
-	Scope                 string            `json:"scope"`
-	ProxyPathID           *int64            `json:"proxy_path_id,omitempty"`
-	StageStepID           *int64            `json:"stage_step_id,omitempty"`
-	SortPosition          int               `json:"sort_position"`
-	MatchSource           string            `json:"match_source"`
-	RuleSetID             *int64            `json:"rule_set_id,omitempty"`
-	DNSResolver           string            `json:"dns_resolver,omitempty"`
-	Name                  string            `json:"name"`
-	Priority              int               `json:"priority"`
-	MatchJSON             string            `json:"match_json"`
-	Action                RouteAction       `json:"action"`
-	OutboundID            *int64            `json:"outbound_id,omitempty"`
-	ExternalOutboundID    *int64            `json:"external_outbound_id,omitempty"`
-	TargetProxyPathID     *int64            `json:"target_proxy_path_id,omitempty"`
-	FamilySplitTemplateID *int64            `json:"family_split_template_id,omitempty"`
-	FamilyDNSStrategy     FamilyDNSStrategy `json:"family_dns_strategy,omitempty"`
-	TargetServerID        *int64            `json:"target_server_id,omitempty"`
-	OutboundTag           string            `json:"outbound_tag"`
+	ID                     int64             `json:"id"`
+	ServerID               int64             `json:"server_id"`
+	Scope                  string            `json:"scope"`
+	ProxyPathID            *int64            `json:"proxy_path_id,omitempty"`
+	StageStepID            *int64            `json:"stage_step_id,omitempty"`
+	SortPosition           int               `json:"sort_position"`
+	MatchSource            string            `json:"match_source"`
+	RuleSetID              *int64            `json:"rule_set_id,omitempty"`
+	DNSResolver            string            `json:"dns_resolver,omitempty"`
+	Name                   string            `json:"name"`
+	Priority               int               `json:"priority"`
+	MatchJSON              string            `json:"match_json"`
+	Action                 RouteAction       `json:"action"`
+	OutboundID             *int64            `json:"outbound_id,omitempty"`
+	ExternalOutboundID     *int64            `json:"external_outbound_id,omitempty"`
+	TargetProxyPathID      *int64            `json:"target_proxy_path_id,omitempty"`
+	FamilySplitTemplateID  *int64            `json:"family_split_template_id,omitempty"`
+	FamilyDNSStrategy      FamilyDNSStrategy `json:"family_dns_strategy,omitempty"`
+	TargetServerID         *int64            `json:"target_server_id,omitempty"`
+	OutboundTag            string            `json:"outbound_tag"`
 	InterfaceName          string            `json:"interface_name,omitempty"`
 	InterfaceIPStack       IPStack           `json:"-"`
 	InterfaceBindKnown     bool              `json:"-"`
 	InterfaceHasGlobalIPv4 bool              `json:"-"`
 	InterfaceHasGlobalIPv6 bool              `json:"-"`
 	SourcePrefix           string            `json:"source_prefix,omitempty"`
-	SyncGroupID           string            `json:"sync_group_id,omitempty"`
-	SyncSourceRuleID      *int64            `json:"sync_source_rule_id,omitempty"`
-	SyncEnabled           bool              `json:"sync_enabled,omitempty"`
-	Enabled               bool              `json:"enabled"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	SyncGroupID            string            `json:"sync_group_id,omitempty"`
+	SyncSourceRuleID       *int64            `json:"sync_source_rule_id,omitempty"`
+	SyncEnabled            bool              `json:"sync_enabled,omitempty"`
+	Enabled                bool              `json:"enabled"`
+	CreatedAt              time.Time         `json:"created_at"`
+	UpdatedAt              time.Time         `json:"updated_at"`
 }
 
 const (
@@ -1888,14 +1905,14 @@ const (
 )
 
 type PortForward struct {
-	ID                   int64                 `json:"id"`
-	Name                 string                `json:"name"`
-	SourceServerID       int64                 `json:"source_server_id"`
-	TargetServerID       int64                 `json:"target_server_id,omitempty"`
-	ListenIP             string                `json:"listen_ip"`
-	ListenPort           int                   `json:"listen_port"`
-	TargetAddress        string                `json:"target_address"`
-	TargetPort           int                   `json:"target_port"`
+	ID                   int64           `json:"id"`
+	Name                 string          `json:"name"`
+	SourceServerID       int64           `json:"source_server_id"`
+	TargetServerID       int64           `json:"target_server_id,omitempty"`
+	ListenIP             string          `json:"listen_ip"`
+	ListenPort           int             `json:"listen_port"`
+	TargetAddress        string          `json:"target_address"`
+	TargetPort           int             `json:"target_port"`
 	Protocol             ForwardProtocol `json:"protocol"`
 	Backend              ForwardBackend  `json:"backend"`
 	ProbeMode            string          `json:"probe_mode"`
@@ -1957,6 +1974,7 @@ type SSHInbound struct {
 }
 
 type SSHInboundUser struct {
+	AuthorizationKey string `json:"authorization_key,omitempty"`
 	UserID           int64  `json:"user_id"`
 	Username         string `json:"username"`
 	Password         string `json:"password"`
@@ -2038,9 +2056,9 @@ type NetworkInterfaceInfo struct {
 }
 
 type NetworkInterfaceInventory struct {
-	Interfaces []NetworkInterfaceInfo `json:"interfaces"`
-	Hash       string                 `json:"hash,omitempty"`
-	CollectedAt *time.Time            `json:"collected_at,omitempty"`
+	Interfaces  []NetworkInterfaceInfo `json:"interfaces"`
+	Hash        string                 `json:"hash,omitempty"`
+	CollectedAt *time.Time             `json:"collected_at,omitempty"`
 }
 
 type WARPUnderlay struct {
@@ -2091,6 +2109,7 @@ type AgentTaskResultReport struct {
 }
 
 type ApplyCoreConfigTaskPayload struct {
+	SSHInbounds  *SSHInboundPlan         `json:"ssh_inbounds,omitempty"`
 	Config       string                  `json:"config"`
 	Reason       string                  `json:"reason,omitempty"`
 	PrunedUserID int64                   `json:"pruned_user_id,omitempty"`
@@ -2098,6 +2117,7 @@ type ApplyCoreConfigTaskPayload struct {
 }
 
 type ApplyTrafficPolicyTaskPayload struct {
+	Authorization  *AuthorizationLease             `json:"authorization,omitempty"`
 	PolicyRevision int64                           `json:"policy_revision"`
 	Reason         string                          `json:"reason,omitempty"`
 	Policies       map[string]TrafficRuntimePolicy `json:"policies"`
@@ -2627,25 +2647,25 @@ type TrafficPeriod struct {
 }
 
 type TrafficReport struct {
-	ReportID         string    `json:"report_id"`
-	ServerID         int64     `json:"server_id"`
-	UserID           int64     `json:"user_id"`
-	InboundID        *int64    `json:"inbound_id,omitempty"`
-	PathID           *int64    `json:"path_id,omitempty"`
-	PeriodKey        string    `json:"period_key"`
-	Upload           int64     `json:"upload_bytes"`
-	Download         int64     `json:"download_bytes"`
-	StartedAt        time.Time `json:"started_at"`
-	EndedAt          time.Time `json:"ended_at"`
-	ProtocolVersion  int       `json:"protocol_version,omitempty"`
-	CounterSource    string    `json:"counter_source,omitempty"`
-	StreamID         string    `json:"stream_id,omitempty"`
-	CounterEpoch     string    `json:"counter_epoch,omitempty"`
-	FromUploadBytes  int64     `json:"from_upload_bytes,omitempty"`
-	ToUploadBytes    int64     `json:"to_upload_bytes,omitempty"`
-	FromDownloadBytes int64    `json:"from_download_bytes,omitempty"`
-	ToDownloadBytes  int64     `json:"to_download_bytes,omitempty"`
-	AcceptStatus     string    `json:"accept_status,omitempty"`
+	ReportID          string    `json:"report_id"`
+	ServerID          int64     `json:"server_id"`
+	UserID            int64     `json:"user_id"`
+	InboundID         *int64    `json:"inbound_id,omitempty"`
+	PathID            *int64    `json:"path_id,omitempty"`
+	PeriodKey         string    `json:"period_key"`
+	Upload            int64     `json:"upload_bytes"`
+	Download          int64     `json:"download_bytes"`
+	StartedAt         time.Time `json:"started_at"`
+	EndedAt           time.Time `json:"ended_at"`
+	ProtocolVersion   int       `json:"protocol_version,omitempty"`
+	CounterSource     string    `json:"counter_source,omitempty"`
+	StreamID          string    `json:"stream_id,omitempty"`
+	CounterEpoch      string    `json:"counter_epoch,omitempty"`
+	FromUploadBytes   int64     `json:"from_upload_bytes,omitempty"`
+	ToUploadBytes     int64     `json:"to_upload_bytes,omitempty"`
+	FromDownloadBytes int64     `json:"from_download_bytes,omitempty"`
+	ToDownloadBytes   int64     `json:"to_download_bytes,omitempty"`
+	AcceptStatus      string    `json:"accept_status,omitempty"`
 }
 
 type TrafficCounterStream struct {
@@ -2669,46 +2689,46 @@ type TrafficCounterStream struct {
 }
 
 type TrafficLease struct {
-	ID             int64      `json:"id"`
-	ServerID       int64      `json:"server_id"`
-	UserID         int64      `json:"user_id"`
-	PeriodKey      string     `json:"period_key"`
-	LeaseBytes     int64      `json:"lease_bytes"`
-	ConsumedBytes  int64      `json:"consumed_bytes"`
-	LeaseRevision  int64      `json:"lease_revision"`
-	State          string     `json:"state"`
-	IssuedAt       time.Time  `json:"issued_at"`
-	LastSyncedAt   time.Time  `json:"last_synced_at"`
-	ValidUntil     *time.Time `json:"valid_until,omitempty"`
-	ReleasedAt     *time.Time `json:"released_at,omitempty"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-}
-
-type TrafficReconciliationEvent struct {
 	ID            int64      `json:"id"`
 	ServerID      int64      `json:"server_id"`
 	UserID        int64      `json:"user_id"`
-	Source        string     `json:"source"`
-	StreamID      string     `json:"stream_id"`
-	CounterEpoch  string     `json:"counter_epoch"`
 	PeriodKey     string     `json:"period_key"`
-	Kind          string     `json:"kind"`
-	Detail        string     `json:"detail"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
+	LeaseBytes    int64      `json:"lease_bytes"`
+	ConsumedBytes int64      `json:"consumed_bytes"`
+	LeaseRevision int64      `json:"lease_revision"`
+	State         string     `json:"state"`
+	IssuedAt      time.Time  `json:"issued_at"`
+	LastSyncedAt  time.Time  `json:"last_synced_at"`
+	ValidUntil    *time.Time `json:"valid_until,omitempty"`
+	ReleasedAt    *time.Time `json:"released_at,omitempty"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+type TrafficReconciliationEvent struct {
+	ID           int64      `json:"id"`
+	ServerID     int64      `json:"server_id"`
+	UserID       int64      `json:"user_id"`
+	Source       string     `json:"source"`
+	StreamID     string     `json:"stream_id"`
+	CounterEpoch string     `json:"counter_epoch"`
+	PeriodKey    string     `json:"period_key"`
+	Kind         string     `json:"kind"`
+	Detail       string     `json:"detail"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
 }
 
 type TrafficStreamObservation struct {
-	Source            string `json:"source"`
-	StreamID          string `json:"stream_id"`
-	CounterEpoch      string `json:"counter_epoch"`
-	PeriodKey         string `json:"period_key"`
-	UserID            int64  `json:"user_id"`
-	InboundID         int64  `json:"inbound_id,omitempty"`
-	PathID            int64  `json:"path_id,omitempty"`
-	CurrentUpload     int64  `json:"current_upload_bytes"`
-	CurrentDownload   int64  `json:"current_download_bytes"`
-	Status            string `json:"status,omitempty"`
+	Source          string `json:"source"`
+	StreamID        string `json:"stream_id"`
+	CounterEpoch    string `json:"counter_epoch"`
+	PeriodKey       string `json:"period_key"`
+	UserID          int64  `json:"user_id"`
+	InboundID       int64  `json:"inbound_id,omitempty"`
+	PathID          int64  `json:"path_id,omitempty"`
+	CurrentUpload   int64  `json:"current_upload_bytes"`
+	CurrentDownload int64  `json:"current_download_bytes"`
+	Status          string `json:"status,omitempty"`
 }
 
 type TrafficStreamCheckpoint struct {
@@ -2739,10 +2759,10 @@ type TrafficAcceptedReport struct {
 }
 
 type TrafficLedgerView struct {
-	UserID int64                  `json:"user_id"`
-	Period TrafficLedgerPeriod    `json:"period"`
-	Servers []TrafficLedgerServer `json:"servers"`
-	Issues []TrafficReconciliationEvent `json:"issues,omitempty"`
+	UserID  int64                        `json:"user_id"`
+	Period  TrafficLedgerPeriod          `json:"period"`
+	Servers []TrafficLedgerServer        `json:"servers"`
+	Issues  []TrafficReconciliationEvent `json:"issues,omitempty"`
 }
 
 type TrafficLedgerPeriod struct {
@@ -2755,11 +2775,11 @@ type TrafficLedgerPeriod struct {
 }
 
 type TrafficLedgerServer struct {
-	ServerID   int64                   `json:"server_id"`
-	ServerName string                  `json:"server_name,omitempty"`
-	Lease      TrafficLedgerLease      `json:"lease"`
-	Sync       TrafficLedgerSync       `json:"sync"`
-	Streams    []TrafficCounterStream  `json:"streams"`
+	ServerID   int64                  `json:"server_id"`
+	ServerName string                 `json:"server_name,omitempty"`
+	Lease      TrafficLedgerLease     `json:"lease"`
+	Sync       TrafficLedgerSync      `json:"sync"`
+	Streams    []TrafficCounterStream `json:"streams"`
 }
 
 type TrafficLedgerLease struct {
@@ -3254,27 +3274,27 @@ func TCPFastOpenServerReady(state string) bool {
 }
 
 type HealthReport struct {
-	AgentID                   string       `json:"agent_id"`
-	Status                    ServerStatus `json:"status"`
-	PublicIPv4                string       `json:"public_ipv4"`
-	PublicIPv6                string       `json:"public_ipv6"`
-	InterfaceIPv6             string       `json:"interface_ipv6"`
-	RegionCode                string       `json:"region_code"`
-	OS                        string       `json:"os"`
-	DistroID                  string       `json:"distro_id"`
-	DistroVersion             string       `json:"distro_version"`
-	DistroName                string       `json:"distro_name"`
-	Libc                      string       `json:"libc"`
-	ServiceManager            string       `json:"service_manager"`
-	PackageManager            string       `json:"package_manager"`
-	Arch                      string       `json:"arch"`
-	Kernel                    string       `json:"kernel"`
-	CPU                       string       `json:"cpu"`
-	CPUCores                  int          `json:"cpu_cores,omitempty"`
-	MemoryBytes               uint64       `json:"memory_bytes"`
-	CPUUsagePercent           float64      `json:"cpu_usage_percent"`
-	MemoryUsedBytes           uint64       `json:"memory_used_bytes"`
-	MemoryTotalBytes          uint64       `json:"memory_total_bytes"`
+	AgentID                   string                     `json:"agent_id"`
+	Status                    ServerStatus               `json:"status"`
+	PublicIPv4                string                     `json:"public_ipv4"`
+	PublicIPv6                string                     `json:"public_ipv6"`
+	InterfaceIPv6             string                     `json:"interface_ipv6"`
+	RegionCode                string                     `json:"region_code"`
+	OS                        string                     `json:"os"`
+	DistroID                  string                     `json:"distro_id"`
+	DistroVersion             string                     `json:"distro_version"`
+	DistroName                string                     `json:"distro_name"`
+	Libc                      string                     `json:"libc"`
+	ServiceManager            string                     `json:"service_manager"`
+	PackageManager            string                     `json:"package_manager"`
+	Arch                      string                     `json:"arch"`
+	Kernel                    string                     `json:"kernel"`
+	CPU                       string                     `json:"cpu"`
+	CPUCores                  int                        `json:"cpu_cores,omitempty"`
+	MemoryBytes               uint64                     `json:"memory_bytes"`
+	CPUUsagePercent           float64                    `json:"cpu_usage_percent"`
+	MemoryUsedBytes           uint64                     `json:"memory_used_bytes"`
+	MemoryTotalBytes          uint64                     `json:"memory_total_bytes"`
 	AgentMemoryBytes          uint64                     `json:"agent_memory_bytes"`
 	DiskBytes                 uint64                     `json:"disk_bytes"`
 	DiskTotalBytes            uint64                     `json:"disk_total_bytes"`

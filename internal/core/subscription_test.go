@@ -11,7 +11,7 @@ import (
 func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}
 	inboundID := int64(101)
-	nodes, err := BuildSubscriptionNodes(user,
+	nodes, err := buildFixtureSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}, {ID: 2, Name: "sg", PublicIPv4: "203.0.113.2"}},
 		[]model.Inbound{
 			{ID: inboundID, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
@@ -35,7 +35,7 @@ func TestGenerateSubscriptionWithPlanNodesAndGroups(t *testing.T) {
 		t.Fatalf("node tag = %v", nodes[0].Raw["tag"])
 	}
 
-	sub, err := GenerateSubscriptionWithOptions(user,
+	sub, err := generateFixtureSubscription(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: inboundID, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
 		SubscriptionOptions{Format: model.SubscriptionFormatSingBox, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inboundID): true}},
@@ -73,14 +73,14 @@ func TestRenderedSubscriptionUsesEffectiveNodeNamePrecedence(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			opts := SubscriptionOptions{EffectiveNodes: map[string]bool{key: true}, GlobalNodeNames: test.global, PlanNodeNames: test.plan}
-			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+			nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(nodes) != 1 || !strings.Contains(nodes[0].Name, test.want) || nodes[0].HasPlanNameOverride != test.planScoped {
 				t.Fatalf("effective node = %#v", nodes)
 			}
-			body, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+			body, err := generateFixtureSubscription(user, []model.Server{server}, []model.Inbound{inbound}, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,7 +93,7 @@ func TestRenderedSubscriptionUsesEffectiveNodeNamePrecedence(t *testing.T) {
 
 func TestSubscriptionRespectsInboundUserBindings(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
-	nodes, err := BuildSubscriptionNodes(user,
+	nodes, err := buildFixtureSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{
 			{ID: 1, ServerID: 1, Name: "allowed", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
@@ -136,7 +136,7 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&opts)
 			}
-			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+			nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ func TestSSHSubscriptionRequiresDeployedHostAndAuthorization(t *testing.T) {
 			}
 			if test.want == 1 {
 				raw := nodes[0].Raw
-				if raw["server"] != server.PublicIPv4 || raw["username"] != "u123456789012-p17" || raw["password"] != user.ProxyPassword || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
+				if raw["server"] != server.PublicIPv4 || raw["username"] != "alice__oboard_path_17" || raw["password"] != "fixture-password-7-17" || !stringSetContains(stringListFromAny(raw["host_key"]), sshSubscriptionHostKey) {
 					t.Fatalf("SSH node = %#v", raw)
 				}
 			}
@@ -161,7 +161,7 @@ func TestSSHStandaloneInboundRendersImplicitDirectBranch(t *testing.T) {
 		EffectiveNodes:    map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
 		SSHServerHostKeys: map[int64]string{server.ID: sshSubscriptionHostKey},
 	}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,12 +169,12 @@ func TestSSHStandaloneInboundRendersImplicitDirectBranch(t *testing.T) {
 		t.Fatalf("implicit SSH direct node = %#v", nodes)
 	}
 	raw := nodes[0].Raw
-	if raw["username"] != "u123456789012-p11" || raw["password"] != user.ProxyPassword || raw["server"] != server.PublicIPv4 {
+	if raw["username"] != "alice__oboard_path_11" || raw["password"] != "fixture-password-7-11" || raw["server"] != server.PublicIPv4 {
 		t.Fatalf("implicit SSH direct raw = %#v", raw)
 	}
 
 	opts.ProxyPaths = []model.ProxyPath{{ID: 17, Kind: model.ProxyPathKindDirect, Name: "configured", InboundID: inbound.ID, Enabled: true}}
-	nodes, err = BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
+	nodes, err = buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestSSHStandaloneInboundRendersImplicitDirectBranch(t *testing.T) {
 
 func TestSubscriptionWithoutEffectiveNodesReturnsNoNodes(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
-	nodes, err := BuildSubscriptionNodes(user,
+	nodes, err := buildFixtureSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{
 			{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true},
@@ -202,7 +202,7 @@ func TestSubscriptionWithoutEffectiveNodesReturnsNoNodes(t *testing.T) {
 
 func TestShadowsocks2022SubscriptionUsesServerAndUserPassword(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "user-pass"}
-	nodes, err := BuildSubscriptionNodes(user,
+	nodes, err := buildFixtureSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "ss2022", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"2022-blake3-aes-128-gcm","password":"server-pass"}`, Enabled: true}},
 		SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}},
@@ -220,7 +220,7 @@ func TestShadowsocksUoTSubscriptionConfiguresClientOutbound(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "user-pass"}
 	server := model.Server{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1", UDPInboundMode: model.UDPInboundUoT}
 	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "ss", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, ConfigJSON: `{"method":"chacha20-ietf-poly1305"}`, Enabled: true}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestShadowsocksUoTSubscriptionConfiguresClientOutbound(t *testing.T) {
 
 func TestVLESSRealitySubscriptionUsesTCPRealityVision(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "user-pass"}
-	nodes, err := BuildSubscriptionNodes(user,
+	nodes, err := buildFixtureSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "reality", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{
   "flow": "xtls-rprx-vision",
@@ -310,14 +310,14 @@ func TestSubscriptionFiltersUnauthorizedProxyPaths(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass"}
 	inbound := model.Inbound{ID: 1, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true}
 	paths := []model.ProxyPath{{ID: 10, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "allowed", Enabled: true}, {ID: 11, InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Name: "blocked", Enabled: true}}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1"}}, []model.Inbound{inbound}, SubscriptionOptions{
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{{ID: 1, Name: "edge", PublicIPv4: "203.0.113.1"}}, []model.Inbound{inbound}, SubscriptionOptions{
 		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeProxyPath, 10): true},
 		ProxyPaths:     paths,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantUUID := proxyPathBranchUser(paths[0], inbound, user).ProxyUUID
+	wantUUID := proxyPathBranchUser(paths[0], inbound, fixtureCredentials([]model.User{user}, []model.Inbound{inbound}, paths)[0]).ProxyUUID
 	if len(nodes) != 1 || nodes[0].Raw["uuid"] != wantUUID {
 		t.Fatalf("nodes = %#v, want only allowed path", nodes)
 	}
@@ -336,11 +336,11 @@ func TestSubscriptionFamilySplitEmitsSingleLogicalNode(t *testing.T) {
 	sourceID := paths[0].ID
 	rule := model.RoutingRule{ID: 5, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &sourceID, Action: model.RouteActionFamilySplit, FamilySplitTemplateID: &templateID, Enabled: true}
 	effective := map[string]bool{
-		NodeKeyOf(model.AssignableNodeProxyPath, sourceID): true,
+		NodeKeyOf(model.AssignableNodeProxyPath, sourceID):    true,
 		NodeKeyOf(model.AssignableNodeProxyPath, paths[1].ID): true,
 		NodeKeyOf(model.AssignableNodeProxyPath, paths[2].ID): true,
 	}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{ProxyPaths: paths, RoutingRules: []model.RoutingRule{rule}, EffectiveNodes: effective})
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{ProxyPaths: paths, RoutingRules: []model.RoutingRule{rule}, EffectiveNodes: effective})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestSubscriptionFamilySplitEmitsSingleLogicalNode(t *testing.T) {
 		t.Fatalf("family split nodes = %#v, want only source path %d", nodes, sourceID)
 	}
 	delete(effective, NodeKeyOf(model.AssignableNodeProxyPath, sourceID))
-	nodes, err = BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{ProxyPaths: paths, RoutingRules: []model.RoutingRule{rule}, EffectiveNodes: effective})
+	nodes, err = buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{ProxyPaths: paths, RoutingRules: []model.RoutingRule{rule}, EffectiveNodes: effective})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestSubscriptionFamilySplitEmitsSingleLogicalNode(t *testing.T) {
 
 func TestSubscriptionEntryAddressOverride(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a"}
-	nodes, err := BuildSubscriptionNodes(user,
+	nodes, err := buildFixtureSubscriptionNodes(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.10", PublicIPv6: "2001:db8::1", EntryIPMode: model.EntryIPModeIPv6}},
 		[]model.Inbound{
 			{ID: 1, ServerID: 1, Name: "server-default", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, EntryIPMode: model.EntryIPModeAuto, ConfigJSON: `{}`, Enabled: true},
@@ -513,7 +513,7 @@ func TestSubscriptionStandaloneNamesUseVisibleServersAndProtocols(t *testing.T) 
 	for _, inbound := range inbounds {
 		effective[NodeKeyOf(model.AssignableNodeInbound, inbound.ID)] = true
 	}
-	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{EffectiveNodes: effective})
+	nodes, err := buildFixtureSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{EffectiveNodes: effective})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestSubscriptionStandaloneNamesUseOnlyVisibleProtocols(t *testing.T) {
 		{ID: 1, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, Port: 443, ConfigJSON: `{}`, Enabled: true},
 		{ID: 2, ServerID: 1, Name: "hy2", Protocol: model.ProtocolHY2, Port: 8443, ConfigJSON: `{}`, Enabled: true},
 	}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, inbounds, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, inbounds, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestSubscriptionNamesAvoidPathsAndDisambiguateImportedNodes(t *testing.T) {
 		{ID: 20, Name: "重复导入", Protocol: model.ProtocolSocks, TargetAddress: "203.0.113.20", TargetPort: 1080, ConfigJSON: `{}`, ExposeToUsers: true, Enabled: true},
 		{ID: 40, Name: "导入名", Protocol: model.ProtocolSocks, TargetAddress: "203.0.113.40", TargetPort: 1080, ConfigJSON: `{}`, ExposeToUsers: true, Enabled: true},
 	}
-	nodes, err := BuildSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{
+	nodes, err := buildFixtureSubscriptionNodes(user, servers, inbounds, SubscriptionOptions{
 		EffectiveNodes: map[string]bool{
 			NodeKeyOf(model.AssignableNodeInbound, 1):           true,
 			NodeKeyOf(model.AssignableNodeInbound, 2):           true,
@@ -623,7 +623,7 @@ func TestManagedCertificateDomainOverridesSubscriptionSNI(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inbound := model.Inbound{ID: 1, ServerID: 1, Name: test.name, Protocol: test.protocol, ListenIP: "0.0.0.0", Port: 443, CertificateMode: model.CertificateModeExplicit, CertificateDomain: "entry.example.net", ConfigJSON: test.config, Enabled: true}
-			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+			nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -662,7 +662,7 @@ func TestSubscriptionHostUsesIPWhileTLSUsesCertificateDomain(t *testing.T) {
 				CertificateMode: model.CertificateModeAuto, CertificateDomain: "entry.example.net",
 				ConfigJSON: test.config, Enabled: true,
 			}
-			nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+			nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -682,7 +682,7 @@ func TestSubscriptionHostUsesIPWhileTLSUsesCertificateDomain(t *testing.T) {
 
 func TestGenerateClashMetaSubscription(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}
-	sub, err := GenerateSubscriptionWithOptions(user,
+	sub, err := generateFixtureSubscription(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{"tls":{"enabled":true,"server_name":"example.com"}}`, Enabled: true}},
 		SubscriptionOptions{
@@ -703,7 +703,7 @@ func TestGenerateClashMetaSubscription(t *testing.T) {
 
 func TestSubscriptionFormatUsesRequestOption(t *testing.T) {
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-1111-1111-111111111111", ProxyPassword: "pass-a"}
-	sub, err := GenerateSubscriptionWithOptions(user,
+	sub, err := generateFixtureSubscription(user,
 		[]model.Server{{ID: 1, Name: "hk", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: 1, ServerID: 1, Name: "hk-vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
 		SubscriptionOptions{

@@ -61,20 +61,20 @@ func DefaultSQLiteOptions() SQLiteOptions {
 }
 
 const (
-	UserGroupSystemAdmins              = "administrators"
-	UserGroupSystemUsers               = "users"
-	bootstrapAdminSetting              = "system.bootstrap_admin_user_id"
-	configVersionSetting               = "system.config_version_sequence"
-	defaultMetricSampleMinInterval     = 60 * time.Second
-	defaultSQLiteCacheKB               = 16384
-	minSQLiteCacheKB                   = 2048
-	maxSQLiteCacheKB                   = 262144
+	UserGroupSystemAdmins          = "administrators"
+	UserGroupSystemUsers           = "users"
+	bootstrapAdminSetting          = "system.bootstrap_admin_user_id"
+	configVersionSetting           = "system.config_version_sequence"
+	defaultMetricSampleMinInterval = 60 * time.Second
+	defaultSQLiteCacheKB           = 16384
+	minSQLiteCacheKB               = 2048
+	maxSQLiteCacheKB               = 262144
 	// sqliteMmapBytes maps the database read-only into the address space so
 	// index scans over the reporting tables stop issuing a read syscall per
 	// page. It is virtual address space, not resident memory.
 	sqliteMmapBytes = 128 * 1024 * 1024
 	// sqliteAutoVacuumIncremental is SQLite's numeric auto_vacuum mode 2.
-	sqliteAutoVacuumIncremental = 2
+	sqliteAutoVacuumIncremental        = 2
 	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
 )
 
@@ -984,6 +984,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "server_remote_access_policies", "mcp_enabled", `alter table server_remote_access_policies add column mcp_enabled integer not null default 0`); err != nil {
+		return err
+	}
+	if err := s.ensureProxyCredentials(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateConfigurationRevisionTriggers(ctx); err != nil {

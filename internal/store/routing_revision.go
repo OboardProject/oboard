@@ -27,6 +27,7 @@ const trafficPolicyRevisionTable = "traffic_policy_revision"
 // apply_core_config. Quota fields advance traffic_policy_revision and use
 // traffic reports / apply_traffic_policy.
 var configurationRevisionTables = []string{
+	"proxy_credentials",
 	"servers",
 	"inbounds",
 	"outbounds",
@@ -57,6 +58,7 @@ var configurationRevisionTables = []string{
 // because high-frequency accounting and activity timestamp writes must not
 // invalidate the cache.
 var routingRevisionTables = []string{
+	"access_changes",
 	"servers",
 	"inbounds",
 	"outbounds",
@@ -81,6 +83,7 @@ var routingRevisionTables = []string{
 	"user_plan_bindings",
 	"user_node_exceptions",
 	"proxy_path_egress_results",
+	"proxy_credentials",
 }
 
 // usersRoutingUpdateWhen lists user fields that change identity, access, or
@@ -122,10 +125,11 @@ func routingRevisionTriggerStatements() []string {
 func configurationRevisionTriggerStatements() []string {
 	out := []string{fmt.Sprintf(`insert or ignore into %s(id,revision) values(1,0)`, configurationRevisionTable)}
 	updateWhen := map[string]string{
-		"servers":            `old.name<>new.name or old.chain_secret<>new.chain_secret or coalesce(old.entry_address,'')<>coalesce(new.entry_address,'') or old.region_code<>new.region_code or old.region_mode<>new.region_mode or old.entry_ip_mode<>new.entry_ip_mode or coalesce(old.listen_ip,'')<>coalesce(new.listen_ip,'') or old.listen_mode<>new.listen_mode or old.ip_stack<>new.ip_stack or old.udp_inbound_mode<>new.udp_inbound_mode or old.mtu_mode<>new.mtu_mode or old.mtu_value<>new.mtu_value or old.mtu_probe_host<>new.mtu_probe_host or old.mtu_probe_port<>new.mtu_probe_port or old.mtu_overhead_bytes<>new.mtu_overhead_bytes or old.bbr_enabled<>new.bbr_enabled or old.port_range_start<>new.port_range_start or old.port_range_end<>new.port_range_end or old.internal_port_range_start<>new.internal_port_range_start or old.internal_port_range_end<>new.internal_port_range_end or old.port_policy_revision<>new.port_policy_revision or old.connection_audit_enabled<>new.connection_audit_enabled`,
-		"inbounds":           `old.server_id<>new.server_id or old.name<>new.name or old.protocol<>new.protocol or old.listen_ip<>new.listen_ip or old.port<>new.port or coalesce(old.advertise_port,0)<>coalesce(new.advertise_port,0) or old.entry_ip_mode<>new.entry_ip_mode or old.external_ip<>new.external_ip or old.dns_sync_enabled<>new.dns_sync_enabled or coalesce(old.dns_credential_id,0)<>coalesce(new.dns_credential_id,0) or old.dns_domain<>new.dns_domain or old.dns_proxy_enabled<>new.dns_proxy_enabled or old.dns_record_types<>new.dns_record_types or old.ddns_enabled<>new.ddns_enabled or old.ddns_interval_seconds<>new.ddns_interval_seconds or old.tls<>new.tls or old.config_json<>new.config_json or old.enabled<>new.enabled`,
-		"routing_rule_sets":  `old.name<>new.name or old.url<>new.url or old.format<>new.format or old.mihomo_behavior<>new.mihomo_behavior`,
-		"subscription_plans": `old.enabled<>new.enabled or coalesce(old.active_revision_id,0)<>coalesce(new.active_revision_id,0) or coalesce(old.current_revision_id,0)<>coalesce(new.current_revision_id,0)`,
+		"proxy_credentials":   `old.status<>new.status`,
+		"servers":             `old.name<>new.name or old.chain_secret<>new.chain_secret or coalesce(old.entry_address,'')<>coalesce(new.entry_address,'') or old.region_code<>new.region_code or old.region_mode<>new.region_mode or old.entry_ip_mode<>new.entry_ip_mode or coalesce(old.listen_ip,'')<>coalesce(new.listen_ip,'') or old.listen_mode<>new.listen_mode or old.ip_stack<>new.ip_stack or old.udp_inbound_mode<>new.udp_inbound_mode or old.mtu_mode<>new.mtu_mode or old.mtu_value<>new.mtu_value or old.mtu_probe_host<>new.mtu_probe_host or old.mtu_probe_port<>new.mtu_probe_port or old.mtu_overhead_bytes<>new.mtu_overhead_bytes or old.bbr_enabled<>new.bbr_enabled or old.port_range_start<>new.port_range_start or old.port_range_end<>new.port_range_end or old.internal_port_range_start<>new.internal_port_range_start or old.internal_port_range_end<>new.internal_port_range_end or old.port_policy_revision<>new.port_policy_revision or old.connection_audit_enabled<>new.connection_audit_enabled`,
+		"inbounds":            `old.server_id<>new.server_id or old.name<>new.name or old.protocol<>new.protocol or old.listen_ip<>new.listen_ip or old.port<>new.port or coalesce(old.advertise_port,0)<>coalesce(new.advertise_port,0) or old.entry_ip_mode<>new.entry_ip_mode or old.external_ip<>new.external_ip or old.dns_sync_enabled<>new.dns_sync_enabled or coalesce(old.dns_credential_id,0)<>coalesce(new.dns_credential_id,0) or old.dns_domain<>new.dns_domain or old.dns_proxy_enabled<>new.dns_proxy_enabled or old.dns_record_types<>new.dns_record_types or old.ddns_enabled<>new.ddns_enabled or old.ddns_interval_seconds<>new.ddns_interval_seconds or old.tls<>new.tls or old.config_json<>new.config_json or old.enabled<>new.enabled`,
+		"routing_rule_sets":   `old.name<>new.name or old.url<>new.url or old.format<>new.format or old.mihomo_behavior<>new.mihomo_behavior`,
+		"subscription_plans":  `old.enabled<>new.enabled or coalesce(old.active_revision_id,0)<>coalesce(new.active_revision_id,0) or coalesce(old.current_revision_id,0)<>coalesce(new.current_revision_id,0)`,
 		"server_dns_policies": `coalesce(old.encrypted_list_id,0)<>coalesce(new.encrypted_list_id,0) or old.bootstrap_list_id<>new.bootstrap_list_id or old.revision<>new.revision or old.strategy<>new.strategy or old.auto_test<>new.auto_test or old.test_interval_seconds<>new.test_interval_seconds`,
 		"warp_profiles":       `old.server_id<>new.server_id or old.name<>new.name or old.config_json<>new.config_json or old.mtu<>new.mtu or old.dns_strategy<>new.dns_strategy or old.enabled<>new.enabled`,
 	}

@@ -5,6 +5,8 @@ import { Switch } from '../ui/switch'
 import { FormField } from '../ui/form-field'
 
 export interface SSHAccess {
+  node_id: string
+  device_id?: string
   inbound_id: number
   name: string
   address: string
@@ -40,8 +42,7 @@ export function AdvancedSettingsCard({
   const [agePublicKey, setAgePublicKey] = useState(initialAgePublicKey)
   const [ageSaving, setAgeSaving] = useState(false)
 
-  // Copy local state map { [inbound_id]: boolean }
-  const [copiedMap, setCopiedMap] = useState<Record<number, boolean>>({})
+  const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     setAgeEnabled(initialAgeEnabled)
@@ -64,12 +65,14 @@ export function AdvancedSettingsCard({
     }
   }
 
+  const accessKey = (access: SSHAccess) => `${access.node_id}:${access.device_id || ""}:${access.username}`
+
   const handleCopy = async (access: SSHAccess) => {
     const success = await onCopySSH(access)
     if (success) {
-      setCopiedMap((prev) => ({ ...prev, [access.inbound_id]: true }))
+      setCopiedMap((prev) => ({ ...prev, [accessKey(access)]: true }))
       setTimeout(() => {
-        setCopiedMap((prev) => ({ ...prev, [access.inbound_id]: false }))
+        setCopiedMap((prev) => ({ ...prev, [accessKey(access)]: false }))
       }, 1800)
     }
   }
@@ -195,9 +198,9 @@ export function AdvancedSettingsCard({
             <div className="account-ssh-panel">
               <div className="account-ssh-list">
                 {sshAccesses.map((access) => {
-                  const isCopied = Boolean(copiedMap[access.inbound_id])
+                  const isCopied = Boolean(copiedMap[accessKey(access)])
                   return (
-                    <div key={access.inbound_id} className="account-ssh-item">
+                    <div key={accessKey(access)} className="account-ssh-item">
                       <div className="account-ssh-info">
                         <strong>{access.name}</strong>
                         <small className="muted">{`${access.username}@${access.address}:${access.port}`}</small>

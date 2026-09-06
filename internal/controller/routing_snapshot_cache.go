@@ -94,6 +94,10 @@ func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) 
 	if err != nil {
 		return nil, err
 	}
+	data, err = s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return nil, err
+	}
 	snap, err := s.buildAccessSnapshot(ctx, data)
 	if err != nil {
 		return nil, err

@@ -194,7 +194,7 @@ func TestTCPFastOpenAnyTLSSingBoxOmitsDialOption(t *testing.T) {
 }
 
 func TestSubscriptionNodesFollowInboundTCPFastOpenSwitch(t *testing.T) {
-	user := model.User{ID: 4, Username: "tfo-user", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "secret"}
+	user := model.User{ID: 4, Username: "tfo-user", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "secret"}
 	server := model.Server{ID: 1, Name: "edge", PublicIPv4: "203.0.113.21"}
 	onInbound := model.Inbound{
 		ID: 31, ServerID: server.ID, Name: "ss-tfo-on", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 8388, Enabled: true,
@@ -208,7 +208,7 @@ func TestSubscriptionNodesFollowInboundTCPFastOpenSwitch(t *testing.T) {
 		NodeKeyOf(model.AssignableNodeInbound, onInbound.ID):  true,
 		NodeKeyOf(model.AssignableNodeInbound, offInbound.ID): true,
 	}}
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{onInbound, offInbound}, opts)
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{onInbound, offInbound}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}

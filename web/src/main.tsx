@@ -2936,7 +2936,6 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
       useDialogs={useDialogs}
       passkeyAvailable={passkeyAvailable}
       createPasskeyCredential={createPasskeyCredential}
-      sshShareURI={sshShareURI}
       copyText={copyText}
       formatDate={formatDate}
       localizeErrorMessage={localizeErrorMessage}
@@ -10819,10 +10818,7 @@ function formatHostPort(host: string, port: number) {
   const formattedHost = clean.includes(':') && !clean.startsWith('[') ? `[${clean}]` : clean
   return `${formattedHost}:${port || 0}`
 }
-function sshShareURI(host: string, port: number, username: string, password: string) {
-  const endpoint = formatHostPort(host, port)
-  return `ssh://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${endpoint}`
-}
+
 function inboundClientEntryHost(entry: { dns_sync_enabled?: boolean; dns_domain?: string; entry_ip_mode?: EntryIPMode; external_ip?: string; dns_record_types?: string; ddns_enabled?: boolean }, server: Server | undefined, alwaysUseDomain = false) {
   const domain = String(entry.dns_domain || '').trim()
   const literal = entryAddressByMode(server, entry.entry_ip_mode || 'auto', entry.external_ip || '')
@@ -20463,9 +20459,22 @@ function Subscriptions({ data, client, load, notify }: any) {
     }
   }
 
-  const sshURIFor = (inbound: Inbound, user: User) => {
-    const address = inboundEntryAddress(data, inbound)
-    return sshShareURI(address, inbound.port, `oboard-${user.id}`, user.proxy_password)
+  const copySSHLinks = async (inbound: Inbound, user: User) => {
+    try {
+      const paths = (data.proxy_paths || []).filter((path: ProxyPath) => path.enabled && path.inbound_id === inbound.id)
+      const keys = new Set(paths.length ? paths.map((path: ProxyPath) => `proxy_path:${path.id}`) : [`inbound:${inbound.id}`])
+      const result: { nodes: { id: string; copyable: boolean }[] } = await client.request(`/node-library?user_id=${user.id}`)
+      const nodes = result.nodes.filter(node => keys.has(node.id) && node.copyable)
+      if (!nodes.length) {
+        notify?.('没有已部署的 SSH 凭证，请检查授权与部署状态', 'warning')
+        return
+      }
+      const links = await Promise.all(nodes.map(node => client.request(`/node-library/share?user_id=${user.id}`, { method: 'POST', body: JSON.stringify({ node_id: node.id }) })))
+      const ok = await copyText(links.map((link: { url: string }) => link.url).join('\n'))
+      notify?.(ok ? `${user.username} 的 SSH 链接已复制` : '复制失败', ok ? 'success' : 'error')
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+    }
   }
 
   const copyUserSub = async (user: User, encrypted = false) => {
@@ -20686,7 +20695,7 @@ function Subscriptions({ data, client, load, notify }: any) {
             <div className="sub-section-head">
               <div>
                 <h3><Lock size={16} />SSH 受限代理</h3>
-                <p className="muted">使用用户代理密码认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。授权用户由套餐中的 SSH 入口节点决定。</p>
+                <p className="muted">使用已部署的随机代理凭证认证，并向支持 SSH 的订阅客户端分发。Agent 仅开放本地/动态转发。授权用户由套餐中的 SSH 入口节点决定。</p>
               </div>
             </div>
             <div className="sub-user-table">
@@ -20699,7 +20708,7 @@ function Subscriptions({ data, client, load, notify }: any) {
                     {granted.length ? granted.map(user => <span key={user.id} className="sub-pill ok">{user.username}</span>) : <span className="sub-pill warn">暂无授权用户</span>}
                   </div>
                   <div className="sub-user-actions">
-                    {granted.map(user => <button type="button" className="ghost" key={user.id} onClick={() => void copyText(sshURIFor(inbound, user)).then(ok => notify?.(ok ? `${user.username} 的 SSH 链接已复制` : '复制失败', ok ? 'success' : 'error'))}>复制 {user.username} 链接</button>)}
+                    {granted.map(user => <button type="button" className="ghost" key={user.id} onClick={() => void copySSHLinks(inbound, user)}>复制 {user.username} 链接</button>)}
                   </div>
                 </div>
               })}

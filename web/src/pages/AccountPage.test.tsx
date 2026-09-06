@@ -21,8 +21,8 @@ const dummyData = {
   current_user: dummyUser,
   passkeys: [],
   ssh_accesses: [
-    { inbound_id: 1, name: 'Softbank', address: '1.2.3.4', port: 22, username: 'u101' },
-    { inbound_id: 2, name: 'Direct', address: '5.6.7.8', port: 22, username: 'u101' },
+    { node_id: 'inbound:1', inbound_id: 1, name: 'Softbank', address: '1.2.3.4', port: 22, username: 'u101' },
+    { node_id: 'inbound:2', inbound_id: 2, name: 'Direct', address: '5.6.7.8', port: 22, username: 'u101' },
   ],
 }
 
@@ -72,7 +72,6 @@ describe('AccountPage component unit & interaction tests', () => {
           useDialogs={() => ({ prompt: vi.fn(), confirm: vi.fn() })}
           passkeyAvailable={() => true}
           createPasskeyCredential={vi.fn()}
-          sshShareURI={(addr, port, user) => `ssh://${user}@${addr}:${port}`}
           copyText={vi.fn().mockResolvedValue(true)}
           formatDate={(d) => d}
           localizeErrorMessage={(msg) => String(msg)}
@@ -104,7 +103,6 @@ describe('AccountPage component unit & interaction tests', () => {
           useDialogs={() => ({ prompt: vi.fn(), confirm: vi.fn() })}
           passkeyAvailable={() => true}
           createPasskeyCredential={vi.fn()}
-          sshShareURI={(addr, port, user) => `ssh://${user}@${addr}:${port}`}
           copyText={vi.fn().mockResolvedValue(true)}
           formatDate={(d) => d}
           localizeErrorMessage={(msg) => String(msg)}
@@ -139,7 +137,6 @@ describe('AccountPage component unit & interaction tests', () => {
           useDialogs={() => ({ prompt: vi.fn(), confirm: vi.fn() })}
           passkeyAvailable={() => true}
           createPasskeyCredential={vi.fn()}
-          sshShareURI={(addr, port, user) => `ssh://${user}@${addr}:${port}`}
           copyText={vi.fn().mockResolvedValue(true)}
           formatDate={(d) => d}
           localizeErrorMessage={(msg) => String(msg)}
@@ -185,7 +182,6 @@ describe('AccountPage component unit & interaction tests', () => {
           useDialogs={() => ({ prompt: vi.fn(), confirm: vi.fn() })}
           passkeyAvailable={() => true}
           createPasskeyCredential={vi.fn()}
-          sshShareURI={(addr, port, user) => `ssh://${user}@${addr}:${port}`}
           copyText={vi.fn().mockResolvedValue(true)}
           formatDate={(d) => d}
           localizeErrorMessage={(msg) => String(msg)}
@@ -222,4 +218,31 @@ describe('AccountPage component unit & interaction tests', () => {
     expect(textarea).not.toBeNull()
     expect(textarea?.placeholder).toBe('age1...')
   })
+  it('copies the deployed SSH link for the selected branch and device', async () => {
+    const url = 'ssh://opaque-user:current-secret@1.2.3.4:2222'
+    const request = vi.fn().mockImplementation(async (path: string) =>
+      path === '/node-library/share' ? { url } : { passkeys: [] })
+    const copyText = vi.fn().mockResolvedValue(true)
+    await act(async () => {
+      root.render(<AccountPage
+        data={{ ...dummyData, current_user: { ...dummyUser, proxy_password: 'old-password' },
+          ssh_accesses: [{ ...dummyData.ssh_accesses[0], node_id: 'proxy_path:7', device_id: 'device-a' }] }}
+        client={{ request }} load={vi.fn()} useDialogs={() => ({ prompt: vi.fn(), confirm: vi.fn() })}
+        passkeyAvailable={() => true} createPasskeyCredential={vi.fn()} copyText={copyText}
+        formatDate={d => d} localizeErrorMessage={String} Panel={DummyPanel}
+        TOTPSetupDialog={DummyDialog} RecoveryCodesDialog={DummyDialog}
+      />)
+    })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('#setting-row-ssh button')?.click()
+    })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.copy-btn')?.click()
+    })
+    expect(request).toHaveBeenCalledWith('/node-library/share', {
+      method: 'POST', body: JSON.stringify({ node_id: 'proxy_path:7', device_id: 'device-a' }),
+    })
+    expect(copyText).toHaveBeenCalledExactlyOnceWith(url)
+  })
+
 })

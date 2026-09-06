@@ -49,7 +49,7 @@ func TestMieruAdapterGeneratesBoundedUserAliasesAndRanges(t *testing.T) {
 		ID: 9, Protocol: model.ProtocolMieru, ListenIP: "0.0.0.0", Port: 8964,
 		ConfigJSON: `{"transport":"TCP","listen_ports":["8965-8966"],"user_hint_is_mandatory":true}`,
 	}
-	user := model.User{ID: 7, Username: strings.Repeat("long-user-", 12), Status: "active", ProxyPassword: "secret", SpeedLimitMbps: 20}
+	user := model.User{ID: 7, Username: strings.Repeat("long-user-", 12), Status: "active", ProxyUsername: "oboard-u7", ProxyPassword: "secret", SpeedLimitMbps: 20}
 	item, err := (mieruAdapter{}).Inbound(inbound, []model.User{user})
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +79,7 @@ func TestMieruProxyPathIdentitiesUseRuntimeAliases(t *testing.T) {
 	path := model.ProxyPath{ID: 12, InboundID: root.ID, Enabled: true}
 	user := model.User{ID: 7, Username: "alice", Status: "active", ProxyPassword: "secret"}
 
+	user = fixtureCredentials([]model.User{user}, []model.Inbound{root}, []model.ProxyPath{path})[0]
 	branchNames := proxyPathBranchUsernames(path, root, []model.User{user})
 	if !reflect.DeepEqual(branchNames, []string{"oboard-u7-p12"}) {
 		t.Fatalf("Mieru branch auth users = %v", branchNames)
@@ -153,7 +154,7 @@ func TestMieruSubscriptionTargetMatrix(t *testing.T) {
 		{format: model.SubscriptionFormatV2RayURI},
 	} {
 		t.Run(string(test.format), func(t *testing.T) {
-			subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: test.format, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+			subscription, err := generateFixtureSubscription(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: test.format, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +183,7 @@ func TestMieruShareURLPreservesDisjointRanges(t *testing.T) {
 		ID: 1, ServerID: server.ID, Name: "Mieru", Protocol: model.ProtocolMieru, Port: 8964, Enabled: true,
 		ConfigJSON: `{"transport":"UDP","listen_ports":["9000-9001"]}`,
 	}
-	subscription, err := GenerateSubscriptionWithOptions(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatShadowrocket, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
+	subscription, err := generateFixtureSubscription(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{Format: model.SubscriptionFormatShadowrocket, EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, 1): true}})
 	if err != nil {
 		t.Fatal(err)
 	}

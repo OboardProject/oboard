@@ -292,6 +292,9 @@ func TestSubscriptionIsolationHidesOnlySelectedInboundWithoutDeployment(t *testi
 		// The test helper already activates one immutable plan version. Creating a
 		// second plan is unnecessary when the draft API is not available here.
 	}
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
 	before := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(before, httptest.NewRequest(http.MethodGet, "/api/v1/subscriptions/subscription-token?format=sing-box", nil))
 	if before.Code != http.StatusOK || !strings.Contains(before.Body.String(), `"type": "vless"`) {

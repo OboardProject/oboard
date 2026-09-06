@@ -100,6 +100,9 @@ func main() {
 		}
 	}
 	app := controller.New(db, *secret, *staticDir, normalizedBasePath, logManager)
+	if err := app.InitializeProxyCredentials(context.Background()); err != nil {
+		log.Fatalf("initialize proxy credentials: %v", err)
+	}
 	defer app.Close()
 	geoIPDir := env("OBOARD_GEOIP_DIR", filepath.Join(filepath.Dir(filepath.Dir(*dbPath)), "downloads", "geoip"))
 	if err := app.ConfigureGeoIP(geoIPDir); err != nil {

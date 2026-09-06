@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -588,10 +589,22 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	}
 	grantTestPlanNode(t, db, user.ID, model.AssignableNodeProxyPath, directPath.ID)
 
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
 	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	data, err = srv.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedUsers, err := db.LoadProxyCredentials(ctx, "test-secret", []model.User{*user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*user = loadedUsers[0]
 	policies, err := srv.trafficRuntimePolicies(ctx, server.ID, data.Users, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -600,7 +613,8 @@ func TestSSHInboundRequiresConfirmationAndBuildsPerUserPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != sshLoginName(*user, directPath.ID) || plan.Inbounds[0].Users[0].Password != user.ProxyPassword || plan.Inbounds[0].Users[0].RouteKind != "kernel" || plan.Inbounds[0].Users[0].RouteInboundTag != "in-"+strconv.FormatInt(inboundID, 10) || plan.Inbounds[0].Users[0].RouteAuthUser != user.Username+"__oboard_path_"+strconv.FormatInt(directPath.ID, 10) {
+	expected := core.UserCredentialForRoute(*user, inboundID, directPath.ID, model.ProtocolSSH)
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 || plan.Inbounds[0].Users[0].Username != expected.ProxyUsername || plan.Inbounds[0].Users[0].Password != expected.ProxyPassword || plan.Inbounds[0].Users[0].RouteKind != "kernel" || plan.Inbounds[0].Users[0].RouteInboundTag != "in-"+strconv.FormatInt(inboundID, 10) || plan.Inbounds[0].Users[0].RouteAuthUser != expected.ProxyUsername {
 		t.Fatalf("SSH inbound plan = %#v", plan)
 	}
 	if _, ok := plan.Inbounds[0].Policies["user:"+strconv.FormatInt(user.ID, 10)]; !ok {
@@ -629,10 +643,22 @@ func TestSSHInboundPlanBuildsImplicitDirectRouteForStandaloneGrant(t *testing.T)
 		t.Fatal(err)
 	}
 	grantTestPlanNode(t, db, user.ID, model.AssignableNodeInbound, inbound.ID)
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
 	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	data, err = srv.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedUsers, err := db.LoadProxyCredentials(ctx, "test-secret", []model.User{*user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*user = loadedUsers[0]
 	snapshot, err := srv.buildAccessSnapshot(ctx, data)
 	if err != nil {
 		t.Fatal(err)
@@ -646,7 +672,8 @@ func TestSSHInboundPlanBuildsImplicitDirectRouteForStandaloneGrant(t *testing.T)
 	}
 	planned := plan.Inbounds[0].Users[0]
 	pathID := core.SSHDirectBranchPathID(inbound.ID)
-	if planned.PathID != pathID || planned.Username != sshLoginName(*user, pathID) || planned.Password != user.ProxyPassword || planned.RouteKind != "kernel" || planned.RouteInboundTag != "in-"+strconv.FormatInt(inbound.ID, 10) || planned.RouteAuthUser != user.Username+"__oboard_path_"+strconv.FormatInt(pathID, 10) {
+	expected := core.UserCredentialForRoute(*user, inbound.ID, pathID, model.ProtocolSSH)
+	if planned.PathID != pathID || planned.Username != expected.ProxyUsername || planned.Password != expected.ProxyPassword || planned.RouteKind != "kernel" || planned.RouteInboundTag != "in-"+strconv.FormatInt(inbound.ID, 10) || planned.RouteAuthUser != expected.ProxyUsername {
 		t.Fatalf("implicit SSH direct user = %#v", planned)
 	}
 
@@ -709,6 +736,7 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
 	server := &model.Server{Name: "ssh-device", PublicIPv4: "203.0.113.20", ListenIP: "0.0.0.0", PortRangeStart: 20000, PortRangeEnd: 20100, Status: model.ServerOnline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -731,10 +759,22 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	grantTestPlanNode(t, db, user.ID, model.AssignableNodeProxyPath, path.ID)
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
 	data, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	data, err = srv.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedUsers, err := db.LoadProxyCredentials(ctx, "test-secret", []model.User{*user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*user = loadedUsers[0]
 	plan, err := buildSSHInboundPlan(7, *server, data, nil, snapshotBindingsFromData(data), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -753,7 +793,7 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 	}
 	deviceUser := core.UserForDevice(*user, *device)
 	expectedDeviceCredential := core.UserCredentialForRoute(deviceUser, inbound.ID, path.ID, model.ProtocolSSH)
-	if legacy == nil || legacy.Password != user.ProxyPassword || bound == nil || bound.DeviceIDHash != device.DeviceIDHash || bound.CredentialEpoch != device.CredentialEpoch || bound.CredentialStatus != "active" || bound.Password != expectedDeviceCredential.ProxyPassword || bound.Password == legacy.Password {
+	if legacy == nil || legacy.Password != core.UserCredentialForRoute(*user, inbound.ID, path.ID, model.ProtocolSSH).ProxyPassword || bound == nil || bound.DeviceIDHash != device.DeviceIDHash || bound.CredentialEpoch != device.CredentialEpoch || bound.CredentialStatus != "active" || bound.Password != expectedDeviceCredential.ProxyPassword || bound.Password == legacy.Password {
 		t.Fatalf("SSH expanded credentials legacy=%#v device=%#v", legacy, bound)
 	}
 	deployments, err := newTestServer(db, "test-secret", "").sshPasswordDeploymentsFromPlan(server.ID, plan)
@@ -828,7 +868,7 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	hostIdentity := model.SSHServerHostKey{PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey)}
 	payload := model.DeploymentTaskPayload{Version: 19, SSHInbounds: model.SSHInboundPlan{Version: 19, Inbounds: []model.SSHInbound{{
 		InboundID: 31, ServerID: server.ID, Enabled: true,
-		Users: []model.SSHInboundUser{{UserID: user.ID, Username: sshLoginName(*user, 9), Password: user.ProxyPassword, PathID: 9, RouteKind: "direct", Enabled: true}},
+		Users: []model.SSHInboundUser{{UserID: user.ID, Username: "test-ssh-login", Password: user.ProxyPassword, PathID: 9, RouteKind: "direct", Enabled: true}},
 	}}}}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -939,14 +979,27 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	hostIdentity := model.SSHServerHostKey{PublicKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostPublicKey))), Fingerprint: ssh.FingerprintSHA256(hostPublicKey)}
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
 	config, err := db.FullRoutingConfigData(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	config, err = srv.loadProxyCredentialData(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedUsers, err := db.LoadProxyCredentials(ctx, "test-secret", []model.User{*user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*user = loadedUsers[0]
 	plan, err := buildSSHInboundPlan(0, *server, config, nil, snapshotBindingsFromData(config), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	expectedCredential := core.UserCredentialForRoute(*user, inbound.ID, path.ID, model.ProtocolSSH)
 	planDigest := sshInboundPlanDigest(plan)
 	expectedDeployments, err := srv.sshPasswordDeploymentsFromPlan(server.ID, plan)
 	if err != nil || len(expectedDeployments) != 1 {
@@ -1010,12 +1063,48 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodes := readSubscription()
-	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != sshLoginName(*user, path.ID) || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != user.ProxyPassword {
+	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != expectedCredential.ProxyUsername || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != expectedCredential.ProxyPassword {
 		t.Fatalf("matching SSH subscription = %#v", nodes)
 	}
 	workspaceNodes := readWorkspaceSSHNodes()
-	if len(workspaceNodes) != 1 || workspaceNodes[0].Raw["username"] != sshLoginName(*user, path.ID) {
+	if len(workspaceNodes) != 1 || workspaceNodes[0].Raw["username"] != expectedCredential.ProxyUsername {
 		t.Fatalf("matching SSH workspace nodes = %#v", workspaceNodes)
+	}
+
+	accountRequest := httptest.NewRequest(http.MethodGet, "/api/v1/page-data?page=account", nil)
+	accountRequest = accountRequest.WithContext(context.WithValue(ctx, userKey, user))
+	accountResponse := httptest.NewRecorder()
+	srv.pageData(accountResponse, accountRequest)
+	var account struct {
+		Accesses []struct {
+			NodeID   string `json:"node_id"`
+			DeviceID string `json:"device_id"`
+		} `json:"ssh_accesses"`
+	}
+	if err := json.Unmarshal(accountResponse.Body.Bytes(), &account); err != nil {
+		t.Fatal(err)
+	}
+	expectedNodeID := core.NodeKeyOf(model.AssignableNodeProxyPath, path.ID)
+	if accountResponse.Code != http.StatusOK || len(account.Accesses) != 1 || account.Accesses[0].NodeID != expectedNodeID || account.Accesses[0].DeviceID != "" {
+		t.Fatalf("account SSH access did not identify deployed branch: %s", accountResponse.Body.String())
+	}
+	shareRequest := httptest.NewRequest(http.MethodPost, "/api/v1/node-library/share", strings.NewReader(`{"node_id":"`+expectedNodeID+`"}`))
+	shareRequest = shareRequest.WithContext(context.WithValue(ctx, userKey, user))
+	shareResponse := httptest.NewRecorder()
+	srv.nodeLibraryItem(shareResponse, shareRequest)
+	var shared struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(shareResponse.Body.Bytes(), &shared); err != nil {
+		t.Fatal(err)
+	}
+	sharedURL, err := url.Parse(shared.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, _ := sharedURL.User.Password()
+	if shareResponse.Code != http.StatusOK || sharedURL.User.Username() != expectedCredential.ProxyUsername || password != expectedCredential.ProxyPassword || password == user.ProxyPassword {
+		t.Fatal("SSH sharing did not use the deployed scoped credential")
 	}
 
 	other := &model.User{Username: "bob", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "bob-id", ProxyPassword: "bob-pass", SubscriptionToken: "bob-subscription-token"}
@@ -1054,7 +1143,7 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	}
 	egernSSH := egernDocument.Proxies[0]["ssh"]
 	hostKeys, hostKeysOK := egernSSH["host_keys"].([]any)
-	if egernSSH["username"] != sshLoginName(*user, path.ID) || egernSSH["server"] != server.PublicIPv4 || egernSSH["password"] != user.ProxyPassword || !hostKeysOK || len(hostKeys) != 1 || hostKeys[0] != hostIdentity.PublicKey {
+	if egernSSH["username"] != expectedCredential.ProxyUsername || egernSSH["server"] != server.PublicIPv4 || egernSSH["password"] != expectedCredential.ProxyPassword || !hostKeysOK || len(hostKeys) != 1 || hostKeys[0] != hostIdentity.PublicKey {
 		t.Fatalf("Egern SSH subscription = %#v", egernDocument.Proxies[0])
 	}
 }
@@ -1265,7 +1354,9 @@ func TestDeploymentFailureDismissalPersistsUntilNextDeployment(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	h := newTestServer(db, "test-secret", "").Handler()
+	srv := newTestServer(db, "test-secret", "")
+	defer waitDashboardConnectionAuditIdle(t, srv)
+	h := srv.Handler()
 
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
@@ -2951,8 +3042,20 @@ func TestPlanGrantedSubscriptionIncludesInboundNode(t *testing.T) {
 	if err := db.SetUserPlanBindings(context.Background(), []model.UserPlanBinding{{UserID: userID, PlanID: planID}}); err != nil {
 		t.Fatal(err)
 	}
+	srv := newTestServer(db, "test-secret", "")
+	if err := srv.InitializeProxyCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fixtureUser, err := db.GetUser(context.Background(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := db.LoadProxyCredentials(context.Background(), "test-secret", []model.User{*fixtureUser})
+	if err != nil {
+		t.Fatal(err)
+	}
 	sub, err := core.GenerateSubscriptionWithOptions(
-		model.User{ID: userID, Username: "bob", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass"},
+		loaded[0],
 		[]model.Server{{ID: serverID, Name: "s1", PublicIPv4: "203.0.113.1"}},
 		[]model.Inbound{{ID: inboundID, ServerID: serverID, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}},
 		core.SubscriptionOptions{EffectiveNodes: map[string]bool{core.NodeKeyOf(model.AssignableNodeInbound, inboundID): true}},
@@ -3086,6 +3189,13 @@ func TestRealityInboundDefaults(t *testing.T) {
 		Inbounds: []model.Inbound{*storedInbound}, Now: time.Now(),
 	})
 	effective := snap.EffectiveNodeKeys(users[0].ID)
+	if err := newTestServer(db, "test-secret", "").InitializeProxyCredentials(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	users, err = db.LoadProxyCredentials(context.Background(), "test-secret", users)
+	if err != nil {
+		t.Fatal(err)
+	}
 	subscription, err := core.GenerateSubscriptionWithOptions(users[0], []model.Server{*server}, []model.Inbound{*storedInbound}, core.SubscriptionOptions{Format: model.SubscriptionFormatSingBox, EffectiveNodes: effective})
 	if err != nil {
 		t.Fatal(err)

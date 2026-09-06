@@ -464,6 +464,10 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 // independent of later plan edits.
 func (s *Server) generateServerCoreConfigForProjection(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger, snap *core.EffectiveAccessSnapshot) (generatedServerCoreConfig, error) {
 	var err error
+	data, err = s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	data.RoutingRules, err = s.routingRulesWithInterfaceIPStacks(ctx, server.ID, data.RoutingRules)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
@@ -494,6 +498,10 @@ func (s *Server) generateServerCoreConfigForProjection(ctx context.Context, serv
 	if err != nil {
 		return generatedServerCoreConfig{}, err
 	}
+	config, err = s.attachAuthorizationLease(ctx, server.ID, config)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	return generatedServerCoreConfig{Config: config, Assets: assets, Inbounds: inbounds, TrafficPolicies: trafficPolicies}, nil
 }
 
@@ -513,7 +521,14 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 	if err := json.Unmarshal([]byte(projectionJSON), &projection); err != nil {
 		return 0, err
 	}
+	if err := s.reconcileProxyCredentials(ctx); err != nil {
+		return 0, err
+	}
 	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return 0, err
+	}
+	data, err = s.loadProxyCredentialData(ctx, data)
 	if err != nil {
 		return 0, err
 	}
@@ -558,14 +573,22 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 		if err != nil {
 			return 0, err
 		}
-		if unchanged {
+		sshPlan, err := buildSSHInboundPlan(0, server, data, snap.InboundUserBindings(), snap.ProxyPathUserBindings(), generated.TrafficPolicies)
+		if err != nil {
+			return 0, err
+		}
+		sshUnchanged, err := s.sshConfigUnchanged(ctx, server.ID, sshPlan)
+		if err != nil {
+			return 0, err
+		}
+		if unchanged && sshUnchanged {
 			if err := s.store.SetAccessChangeTargetTask(ctx, change.ID, target.ServerID, 0, phase, model.AccessChangeTargetPrepared); err != nil {
 				return 0, err
 			}
 			continue
 		}
 		reason := "access_change_" + string(change.ChangeType) + "_" + phase
-		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, Assets: generated.Assets}})
+		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, Assets: generated.Assets, SSHInbounds: &sshPlan}})
 	}
 	if len(prepared) == 0 {
 		return 0, nil
@@ -575,6 +598,7 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 		return 0, err
 	}
 	for _, item := range prepared {
+		item.payload.SSHInbounds.Version = version
 		task, err := s.queueAgentTask(ctx, item.serverID, model.AgentTaskTypeApplyCoreConfig, item.payload, version)
 		if err != nil {
 			return 0, err

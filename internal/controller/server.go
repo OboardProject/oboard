@@ -79,6 +79,8 @@ type trustedProxyState struct {
 type trustedProxyStateContextKey struct{}
 
 type Server struct {
+	proxyCredentialMu          sync.Mutex
+	proxyCredentialRevision    atomic.Uint64
 	store                      *store.Store
 	sessionSecret              string
 	staticDir                  string
@@ -177,8 +179,8 @@ type Server struct {
 	tasks *taskNotifier
 	// taskRecoveryScanMin/Max bound the jittered recovery scan that re-wakes
 	// servers with pending tasks after a lost wake. Tests shorten them.
-	taskRecoveryScanMin     time.Duration
-	taskRecoveryScanMax     time.Duration
+	taskRecoveryScanMin time.Duration
+	taskRecoveryScanMax time.Duration
 	// agentSocket* bound the Agent websocket keepalive. Without them a peer
 	// that stopped reading, or a host killed without closing TCP, leaves a
 	// socket that is registered and useless: control payloads queue into a
@@ -969,9 +971,9 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerExpiryNotifyTime                    *string            `json:"server_expiry_notify_time"`
 			RegistrationEnabled                       *bool              `json:"registration_enabled"`
 			RegistrationDefaultGroupID                *int64             `json:"registration_default_group_id"`
-			RemoteTerminalEnabled                     *bool `json:"remote_terminal_enabled"`
-			RemoteTerminalPasswordConfirmationEnabled *bool `json:"remote_terminal_password_confirmation_enabled"`
-			MCPEnabled                                *bool `json:"mcp_enabled"`
+			RemoteTerminalEnabled                     *bool              `json:"remote_terminal_enabled"`
+			RemoteTerminalPasswordConfirmationEnabled *bool              `json:"remote_terminal_password_confirmation_enabled"`
+			MCPEnabled                                *bool              `json:"mcp_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -2639,6 +2641,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 				if configErr != nil {
 					err = configErr
 				} else {
+					config, configErr = s.loadProxyCredentialData(ctx, config)
+					if configErr != nil {
+						err = configErr
+						break
+					}
 					inboundBindings, pathBindings, _, bindingsErr := s.runtimeAccessBindings(ctx, config)
 					if bindingsErr != nil {
 						err = bindingsErr
@@ -2689,7 +2696,21 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 									if strings.TrimSpace(accessName) == "" && access.PathID == core.SSHDirectBranchPathID(inbound.InboundID) {
 										accessName = inbound.Name
 									}
-									accesses = append(accesses, map[string]any{"inbound_id": inbound.InboundID, "path_id": access.PathID, "name": accessName, "address": inbound.Address, "port": inbound.Port, "username": access.Username, "device_id_hash": access.DeviceIDHash, "credential_epoch": access.CredentialEpoch, "credential_status": access.CredentialStatus})
+									nodeID := core.NodeKeyOf(model.AssignableNodeInbound, inbound.InboundID)
+									for _, path := range config.ProxyPaths {
+										if path.Enabled && path.ID == access.PathID && path.InboundID == inbound.InboundID {
+											nodeID = core.NodeKeyOf(model.AssignableNodeProxyPath, path.ID)
+											break
+										}
+									}
+									deviceID := ""
+									for _, device := range config.UserDevices {
+										if device.UserID == access.UserID && device.DeviceIDHash == access.DeviceIDHash {
+											deviceID = device.ID
+											break
+										}
+									}
+									accesses = append(accesses, map[string]any{"node_id": nodeID, "device_id": deviceID, "inbound_id": inbound.InboundID, "path_id": access.PathID, "name": accessName, "address": inbound.Address, "port": inbound.Port, "username": access.Username, "device_id_hash": access.DeviceIDHash, "credential_epoch": access.CredentialEpoch, "credential_status": access.CredentialStatus})
 								}
 							}
 						}
@@ -4026,29 +4047,29 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		var input struct {
 			model.Server
-			MTUMode                  *model.MTUMode              `json:"mtu_mode"`
-			BBREnabled               *bool                       `json:"bbr_enabled"`
-			TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode"`
-			ResourceHistoryEnabled   *bool                       `json:"resource_history_enabled"`
-			LatencyProbeEnabled      *bool                       `json:"latency_probe_enabled"`
-			LatencyProbeMode         *model.LatencyProbeMode     `json:"latency_probe_mode"`
-			LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target"`
-			LatencyProbeInterval     *int                        `json:"latency_probe_interval_seconds"`
-			LatencyProbeSamples      *int                        `json:"latency_probe_sample_count"`
-			LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets"`
-			OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled"`
-			OfflineAfterSeconds      *int                        `json:"offline_after_seconds"`
-			ServiceStartAt           *time.Time                  `json:"service_start_at"`
-			ClearServiceStartAt      *bool                       `json:"clear_service_start_at"`
-			ExpiresAt                *time.Time                  `json:"expires_at"`
-			ClearExpiresAt           *bool                       `json:"clear_expires_at"`
-			AutoRenewEnabled         *bool                       `json:"auto_renew_enabled"`
-			RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle"`
-			ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled"`
-			TrafficResetMode         *string                     `json:"traffic_reset_mode"`
-			TrafficResetDay          *int                        `json:"traffic_reset_day"`
-			TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes"`
-			TrafficUsedBytes         *int64                      `json:"traffic_used_bytes"`
+			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
+			BBREnabled               *bool                     `json:"bbr_enabled"`
+			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
+			ResourceHistoryEnabled   *bool                     `json:"resource_history_enabled"`
+			LatencyProbeEnabled      *bool                     `json:"latency_probe_enabled"`
+			LatencyProbeMode         *model.LatencyProbeMode   `json:"latency_probe_mode"`
+			LatencyProbePublicTarget *model.ConnectivityTarget `json:"latency_probe_public_target"`
+			LatencyProbeInterval     *int                      `json:"latency_probe_interval_seconds"`
+			LatencyProbeSamples      *int                      `json:"latency_probe_sample_count"`
+			LatencyProbeMaxTargets   *int                      `json:"latency_probe_max_targets"`
+			OfflineNotifyEnabled     *bool                     `json:"offline_notify_enabled"`
+			OfflineAfterSeconds      *int                      `json:"offline_after_seconds"`
+			ServiceStartAt           *time.Time                `json:"service_start_at"`
+			ClearServiceStartAt      *bool                     `json:"clear_service_start_at"`
+			ExpiresAt                *time.Time                `json:"expires_at"`
+			ClearExpiresAt           *bool                     `json:"clear_expires_at"`
+			AutoRenewEnabled         *bool                     `json:"auto_renew_enabled"`
+			RenewalCycle             *model.ServerRenewalCycle `json:"renewal_cycle"`
+			ExpiryNotifyEnabled      *bool                     `json:"expiry_notify_enabled"`
+			TrafficResetMode         *string                   `json:"traffic_reset_mode"`
+			TrafficResetDay          *int                      `json:"traffic_reset_day"`
+			TrafficLimitBytes        *int64                    `json:"traffic_limit_bytes"`
+			TrafficUsedBytes         *int64                    `json:"traffic_used_bytes"`
 		}
 		var raw json.RawMessage
 		if !decode(w, r, &raw) {
@@ -12264,6 +12285,9 @@ func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64
 }
 
 func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID int64, expandTransparentScope bool, allowedServerIDs, ignoredPathIDs map[int64]bool) ([]model.AgentTask, int64, error) {
+	if err := s.reconcileProxyCredentials(ctx); err != nil {
+		return nil, 0, deploymentFail(500, err)
+	}
 	// Preparation repairs stored topology, refreshes derived roles and allocates
 	// one monotonic config version. Serialize it so two concurrent applies cannot
 	// interleave those writes or queue overlapping desired state.
@@ -12279,6 +12303,10 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		return nil, 0, deploymentFail(400, err)
 	}
 	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return nil, 0, deploymentFail(500, err)
+	}
+	data, err = s.loadProxyCredentialData(ctx, data)
 	if err != nil {
 		return nil, 0, deploymentFail(500, err)
 	}
@@ -12781,8 +12809,7 @@ func filterInboundsByServerID(items []model.Inbound, allowed map[int64]bool) []m
 }
 
 // buildSSHInboundPlan turns the regular inbound permissions into a dedicated
-// user-facing SSH listener plan. It reuses the user's proxy password and never
-// exposes the panel login password.
+// user-facing SSH listener plan using the persisted route credential.
 func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
 	plan := model.SSHInboundPlan{Version: version, Inbounds: []model.SSHInbound{}}
 	users := make(map[int64][]model.User, len(data.Users))
@@ -12819,18 +12846,19 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seenPolicy := map[int64]bool{}
 		appendSSHUser := func(user model.User, pathID int64, routeInboundTag, routeAuthUser string) error {
-			if user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") || strings.TrimSpace(user.ProxyPassword) == "" {
+			if user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 				return nil
 			}
-			if strings.TrimSpace(user.SSHRandomID) == "" {
-				return fmt.Errorf("SSH 用户 %d 缺少随机登录标识", user.ID)
-			}
 			credential := core.UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSSH)
+			if credential.AuthorizationKey == "" {
+				return nil
+			}
+			routeAuthUser = credential.ProxyUsername
 			status := strings.TrimSpace(user.CredentialStatus)
 			if status == "" {
 				status = "active"
 			}
-			entry.Users = append(entry.Users, model.SSHInboundUser{UserID: user.ID, Username: sshLoginName(user, pathID), Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: pathID, RouteKind: "kernel", RouteInboundTag: routeInboundTag, RouteAuthUser: routeAuthUser, Enabled: true})
+			entry.Users = append(entry.Users, model.SSHInboundUser{AuthorizationKey: credential.AuthorizationKey, UserID: user.ID, Username: credential.ProxyUsername, Password: credential.ProxyPassword, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: pathID, RouteKind: "kernel", RouteInboundTag: routeInboundTag, RouteAuthUser: routeAuthUser, Enabled: true})
 			if !seenPolicy[user.ID] {
 				seenPolicy[user.ID] = true
 				if policy, ok := policies[user.ID]; ok {
@@ -12877,12 +12905,9 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 	return plan, nil
 }
 
-func sshLoginName(user model.User, pathID int64) string {
-	return fmt.Sprintf("u%s-p%d", user.SSHRandomID, pathID)
-}
-
 func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 	type digestUser struct {
+		AuthorizationKey string `json:"authorization_key"`
 		UserID           int64  `json:"user_id"`
 		Username         string `json:"username"`
 		DeviceIDHash     string `json:"device_id_hash,omitempty"`
@@ -12911,7 +12936,7 @@ func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
 				if status == "" {
 					status = "active"
 				}
-				item.Users = append(item.Users, digestUser{UserID: user.UserID, Username: user.Username, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag, RouteInboundTag: user.RouteInboundTag, RouteAuthUser: user.RouteAuthUser})
+				item.Users = append(item.Users, digestUser{AuthorizationKey: user.AuthorizationKey, UserID: user.UserID, Username: user.Username, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, CredentialStatus: status, PathID: user.PathID, RouteKind: user.RouteKind, OutboundTag: user.OutboundTag, RouteInboundTag: user.RouteInboundTag, RouteAuthUser: user.RouteAuthUser})
 			}
 		}
 		canonical = append(canonical, item)
@@ -12994,6 +13019,11 @@ func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identi
 }
 
 func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
+	var err error
+	data, err = s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return nil, err
+	}
 	deployments, err := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
 	if err != nil {
 		return nil, err
@@ -13033,28 +13063,17 @@ func (s *Server) matchingDeployedSSHPlan(ctx context.Context, serverID int64, cu
 	if err != nil {
 		return nil, model.SSHInboundPlan{}, false, err
 	}
-	task, err := s.store.LastSuccessfulTaskByServerType(ctx, serverID, model.AgentTaskTypeApplyDeployment)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, model.SSHInboundPlan{}, false, nil
-	}
+	taskPlan, version, err := s.lastAppliedSSHPlan(ctx, serverID)
 	if err != nil {
 		return nil, model.SSHInboundPlan{}, false, err
 	}
-	var payload model.DeploymentTaskPayload
-	if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+	if version == 0 || version != hostKey.ConfigVersion || hostKey.PlanDigest != sshInboundPlanDigest(taskPlan) {
 		return nil, model.SSHInboundPlan{}, false, nil
 	}
-	version := payload.Version
-	if version == 0 {
-		version = task.ConfigVersion
-	}
-	if version != hostKey.ConfigVersion || hostKey.PlanDigest != sshInboundPlanDigest(payload.SSHInbounds) {
+	if sshInboundListenerPlanDigest(current) != sshInboundListenerPlanDigest(taskPlan) {
 		return nil, model.SSHInboundPlan{}, false, nil
 	}
-	if sshInboundListenerPlanDigest(current) != sshInboundListenerPlanDigest(payload.SSHInbounds) {
-		return nil, model.SSHInboundPlan{}, false, nil
-	}
-	return hostKey, payload.SSHInbounds, true, nil
+	return hostKey, taskPlan, true, nil
 }
 
 type sshPasswordDeploymentIdentity struct {
@@ -13177,18 +13196,6 @@ func effectiveConfigSHA256FromDeploymentResult(raw string) string {
 		}
 	}
 	return ""
-}
-
-func canonicalConfigSHA256(config string) (string, error) {
-	var value any
-	if err := json.Unmarshal([]byte(config), &value); err != nil {
-		return "", err
-	}
-	canonical, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", sha256.Sum256(canonical)), nil
 }
 
 func (s *Server) shouldRunDeploymentMTU(ctx context.Context, plan model.MTUDetectionPlan) (bool, error) {
@@ -13511,6 +13518,10 @@ func networkInterfaceIPStack(networkInterface model.NetworkInterfaceInfo) model.
 
 func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model.Server, data store.FullRoutingConfig, ledger *core.ProxyPathPortLedger, includeTrafficRuntime bool) (generatedServerCoreConfig, error) {
 	var err error
+	data, err = s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	data.RoutingRules, err = s.routingRulesWithInterfaceIPStacks(ctx, server.ID, data.RoutingRules)
 	if err != nil {
 		return generatedServerCoreConfig{}, err
@@ -13532,7 +13543,10 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	}
 	if includeTrafficRuntime {
 		if users, listErr := s.store.ListUsers(ctx); listErr == nil && len(users) > 0 {
-			data.Users = users
+			data.Users, err = s.store.LoadProxyCredentials(ctx, s.sessionSecret, users)
+			if err != nil {
+				return generatedServerCoreConfig{}, err
+			}
 		}
 	}
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
@@ -13551,6 +13565,12 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	})
 	if err != nil {
 		return generatedServerCoreConfig{}, err
+	}
+	if includeTrafficRuntime {
+		config, err = s.attachAuthorizationLease(ctx, server.ID, config)
+		if err != nil {
+			return generatedServerCoreConfig{}, err
+		}
 	}
 	return generatedServerCoreConfig{Config: config, Assets: assets, Inbounds: inbounds, TrafficPolicies: trafficPolicies}, nil
 }
@@ -13596,7 +13616,27 @@ func (s *Server) queueCoreConfigRefreshForServers(ctx context.Context, serverIDs
 }
 
 func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reason string, allowed map[int64]bool) error {
+	if err := s.reconcileProxyCredentials(ctx); err != nil {
+		return err
+	}
 	data, err := s.store.FullRoutingConfigData(ctx)
+	if err != nil {
+		return err
+	}
+	data, err = s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return err
+	}
+	ids := []int64{}
+	for _, server := range data.Servers {
+		if allowed == nil || allowed[server.ID] {
+			ids = append(ids, server.ID)
+		}
+	}
+	if err := s.queueAuthorizationRefresh(ctx, ids, reason); err != nil {
+		return err
+	}
+	bindings, pathBindings, _, err := s.runtimeAccessBindings(ctx, data)
 	if err != nil {
 		return err
 	}
@@ -13631,10 +13671,18 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 		if err != nil {
 			return err
 		}
-		if unchanged {
+		sshPlan, err := buildSSHInboundPlan(0, server, data, bindings, pathBindings, generated.TrafficPolicies)
+		if err != nil {
+			return err
+		}
+		sshUnchanged, err := s.sshConfigUnchanged(ctx, server.ID, sshPlan)
+		if err != nil {
+			return err
+		}
+		if unchanged && sshUnchanged {
 			continue
 		}
-		payload := model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, PrunedUserID: userID, Assets: generated.Assets}
+		payload := model.ApplyCoreConfigTaskPayload{Config: generated.Config, Reason: reason, PrunedUserID: userID, Assets: generated.Assets, SSHInbounds: &sshPlan}
 		prepared = append(prepared, preparedCoreRefresh{serverID: server.ID, payload: payload})
 	}
 	if len(prepared) == 0 {
@@ -13669,6 +13717,9 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 		return err
 	}
 	for _, item := range prepared {
+		if item.payload.SSHInbounds != nil {
+			item.payload.SSHInbounds.Version = version
+		}
 		if _, err := s.queueAgentTask(ctx, item.serverID, model.AgentTaskTypeApplyCoreConfig, item.payload, version); err != nil {
 			return err
 		}
@@ -13762,6 +13813,12 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("this account requires a device-specific subscription link"), http.StatusForbidden)
 		return
 	}
+	credentials, err := s.store.LoadProxyCredentials(r.Context(), s.sessionSecret, []model.User{*user})
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	*user = credentials[0]
 	subscriptionUser := *user
 	if device != nil {
 		subscriptionUser = core.UserForDevice(*user, *device)
@@ -14776,6 +14833,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, http.StatusBadRequest)
 				return
 			}
+		}
+	}
+	if task.Type == model.AgentTaskTypeApplyCoreConfig && req.Status == "succeeded" {
+		if err := s.applyFocusedSSHState(r.Context(), server.ID, *task, req.ResultJSON); err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
 		}
 	}
 	if task.Type == model.AgentTaskTypeProbeExternalEgress || task.Type == model.AgentTaskTypeApplyDeployment {
@@ -17608,6 +17671,7 @@ func failCode(w http.ResponseWriter, code, message string, status int) {
 	write(w, status, map[string]any{"error": message, "code": code})
 }
 func method(w http.ResponseWriter) { fail(w, errors.New("method not allowed"), 405) }
+
 // writeOpaqueNotFound returns a bare 404 with no body. Used when a request
 // misses the configured security base path so the response does not fingerprint
 // the Controller through structured error JSON or request IDs.

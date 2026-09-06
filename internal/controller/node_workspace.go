@@ -772,6 +772,11 @@ func (s *Server) workspaceSubscriptionNodes(ctx context.Context, user model.User
 }
 
 func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user model.User, output *model.SubscriptionOutput) ([]core.SubscriptionNode, []model.NodeGroup, int, core.SubscriptionFilterStats, error) {
+	credentials, err := s.store.LoadProxyCredentials(ctx, s.sessionSecret, []model.User{user})
+	if err != nil {
+		return nil, nil, 0, core.SubscriptionFilterStats{}, err
+	}
+	user = credentials[0]
 	groups, err := s.store.ListNodeGroups(ctx, user.ID)
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err

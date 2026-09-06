@@ -55,7 +55,7 @@ func TestSnellGeneratesPerUserSingleUserListeners(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	users := snellTestUsers(3)
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound},
 		PortLedger: NewProxyPathPortLedger(nil),
 	})
@@ -104,7 +104,7 @@ func TestSnellRuntimeProbePortsFollowCurrentProjection(t *testing.T) {
 		Kind: model.ProxyPathPortKindSnellUser, ScopeKey: snellUserPortScopeKey(inbound.ID, 99, 0),
 		ServerID: server.ID, Port: 40099, State: model.PortAllocationStateActive, Generation: 1,
 	}})
-	if _, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	if _, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: ledger,
 	}); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestSnellPerUserListenersCarryPerUserRuntimeLimits(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	users := snellTestUsers(2)
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound},
 		PortLedger: NewProxyPathPortLedger(nil),
 		UserPolicies: map[int64]UserLimitPolicy{
@@ -164,7 +164,7 @@ func TestSnellPerUserPortsSurviveUserChanges(t *testing.T) {
 	inbound := snellTestInbound()
 	users := snellTestUsers(2)
 	ledger := NewProxyPathPortLedger(nil)
-	first, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	first, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: ledger,
 	})
 	if err != nil {
@@ -176,7 +176,7 @@ func TestSnellPerUserPortsSurviveUserChanges(t *testing.T) {
 	// deployments, then add a third user.
 	stored := ledger.Pending()
 	grown := NewProxyPathPortLedger(stored)
-	second, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(3), ConfigOptions{
+	second, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(3), ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: grown,
 	})
 	if err != nil {
@@ -216,7 +216,7 @@ func TestSnellBranchesAllocateOnePortPerUserAndBranch(t *testing.T) {
 	pathB := model.ProxyPath{ID: 51, Name: "branch-b", InboundID: inbound.ID, Secret: "secret-b", Enabled: true}
 	stepA := model.ProxyPathStep{ID: 101, PathID: pathA.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitBID}
 	stepB := model.ProxyPathStep{ID: 102, PathID: pathB.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitCID}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server, exitB, exitC}, Inbounds: []model.Inbound{inbound},
 		ProxyPaths: []model.ProxyPath{pathA, pathB}, ProxyPathSteps: []model.ProxyPathStep{stepA, stepB},
 		PortLedger: NewProxyPathPortLedger(nil),
@@ -293,7 +293,7 @@ func TestSnellPSKRotationIsScopedToOneUser(t *testing.T) {
 
 func mustSnellConfig(t *testing.T, server model.Server, inbound model.Inbound, users []model.User, ledger *ProxyPathPortLedger) string {
 	t.Helper()
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), users, ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: ledger,
 	})
 	if err != nil {
@@ -308,7 +308,7 @@ func TestSnellPortRangeExhaustionFails(t *testing.T) {
 	server := snellTestServer()
 	server.PortRangeStart, server.PortRangeEnd = 40000, 40001
 	inbound := snellTestInbound()
-	_, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(3), ConfigOptions{
+	_, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(3), ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: NewProxyPathPortLedger(nil),
 	})
 	if err == nil {
@@ -325,7 +325,7 @@ func TestSnellPerUserListenersHaveNoListenConflicts(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	other := model.Inbound{ID: 3, ServerID: 1, Name: "vless", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 40005, ConfigJSON: `{}`, Enabled: true}
-	config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound, other}, nil, testDNSState(1), snellTestUsers(5), ConfigOptions{
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound, other}, nil, testDNSState(1), snellTestUsers(5), ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound, other}, PortLedger: NewProxyPathPortLedger(nil),
 	})
 	if err != nil {
@@ -354,7 +354,7 @@ func TestSnellSubscriptionMatchesKernelListener(t *testing.T) {
 	// Controller replays the persisted rows for read-only rendering.
 	renderLedger := NewProxyPathPortLedger(ledger.Pending())
 	for _, user := range users {
-		nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+		nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
 			Format:         model.SubscriptionFormatSingBox,
 			EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
 			PortLedger:     renderLedger,
@@ -395,7 +395,7 @@ func TestSnellSubscriptionUsesAdvertisePortWithoutChangingRuntimeListener(t *tes
 	}
 
 	renderLedger := NewProxyPathPortLedger(ledger.Pending())
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
 		Format:         model.SubscriptionFormatSingBox,
 		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
 		PortLedger:     renderLedger,
@@ -415,7 +415,7 @@ func TestSnellAdvertisePortRejectsMultipleClientListeners(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	inbound.AdvertisePort = 2627
-	_, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(2), ConfigOptions{
+	_, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), snellTestUsers(2), ConfigOptions{
 		Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: NewProxyPathPortLedger(nil),
 	})
 	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
@@ -446,7 +446,7 @@ func TestSnellSubscriptionSkipsUndeployedListener(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	user := snellTestUsers(1)[0]
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
 		Format:         model.SubscriptionFormatSingBox,
 		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
 		PortLedger:     NewProxyPathPortLedger(nil),
@@ -465,7 +465,7 @@ func TestSnellSubscriptionRenderingNeverAllocates(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
 	ledger := NewProxyPathPortLedger(nil)
-	if _, err := BuildSubscriptionNodes(snellTestUsers(1)[0], []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+	if _, err := buildFixtureSubscriptionNodes(snellTestUsers(1)[0], []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
 		Format:         model.SubscriptionFormatSingBox,
 		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
 		PortLedger:     ledger,
@@ -486,7 +486,7 @@ func TestSnellNodesRenderWithoutUserKeyAcrossClients(t *testing.T) {
 	ledger := NewProxyPathPortLedger(nil)
 	mustSnellConfig(t, server, inbound, []model.User{user}, ledger)
 
-	nodes, err := BuildSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
+	nodes, err := buildFixtureSubscriptionNodes(user, []model.Server{server}, []model.Inbound{inbound}, SubscriptionOptions{
 		Format:         model.SubscriptionFormatSingBox,
 		EffectiveNodes: map[string]bool{NodeKeyOf(model.AssignableNodeInbound, inbound.ID): true},
 		PortLedger:     NewProxyPathPortLedger(ledger.Pending()),

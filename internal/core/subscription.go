@@ -145,7 +145,7 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 		standaloneName := proxyPathServerLabel(server, server.ID)
 		if inbound.Protocol == model.ProtocolSSH {
 			hostKey := strings.TrimSpace(opts.SSHServerHostKeys[server.ID])
-			if strings.TrimSpace(user.ProxyPassword) == "" || strings.TrimSpace(user.SSHRandomID) == "" || hostKey == "" {
+			if hostKey == "" {
 				continue
 			}
 			if len(authorizedBranches) == 0 {
@@ -156,12 +156,15 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 				}
 				pathID := SSHDirectBranchPathID(inbound.ID)
 				credentialUser := UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSSH)
+				if credentialUser.AuthorizationKey == "" {
+					continue
+				}
 				group := nodeGroupFor(opts.EffectiveNodeGroups, NodeKeyOf(model.AssignableNodeInbound, inbound.ID), defaultGroup)
 				raw := map[string]any{
 					"type":         "ssh",
 					"server":       server.EntryAddress,
 					"server_port":  InboundSubscriptionPort(inbound),
-					"username":     fmt.Sprintf("u%s-p%d", user.SSHRandomID, pathID),
+					"username":     credentialUser.ProxyUsername,
 					"password":     credentialUser.ProxyPassword,
 					"host_key":     []string{hostKey},
 					"oboard_group": group,
@@ -174,6 +177,9 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 			}
 			for _, path := range authorizedBranches {
 				credentialUser := UserCredentialForRoute(user, inbound.ID, path.ID, model.ProtocolSSH)
+				if credentialUser.AuthorizationKey == "" {
+					continue
+				}
 				branchName := strings.TrimSpace(path.Name)
 				if branchName == "" {
 					branchName = fmt.Sprintf("%s 分支 %d", standaloneName, path.ID)
@@ -183,7 +189,7 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 					"type":         "ssh",
 					"server":       server.EntryAddress,
 					"server_port":  InboundSubscriptionPort(inbound),
-					"username":     fmt.Sprintf("u%s-p%d", user.SSHRandomID, path.ID),
+					"username":     credentialUser.ProxyUsername,
 					"password":     credentialUser.ProxyPassword,
 					"host_key":     []string{hostKey},
 					"oboard_group": group,
@@ -285,6 +291,9 @@ func BuildSubscriptionCandidates(user model.User, servers []model.Server, inboun
 // be skipped rather than guessed.
 func subscriptionRawForInbound(opts SubscriptionOptions, user model.User, inbound model.Inbound, server model.Server, adapter Adapter, pathID int64) (map[string]any, bool, error) {
 	credential := UserCredentialForRoute(user, inbound.ID, pathID, inbound.Protocol)
+	if credential.ID > 0 && credential.AuthorizationKey == "" {
+		return nil, false, nil
+	}
 	if inbound.Protocol != model.ProtocolSnell {
 		raw, err := adapter.SubscriptionNode(credential, inbound, server)
 		if err != nil {

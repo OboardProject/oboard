@@ -29,8 +29,9 @@ type SingBoxConfig struct {
 }
 
 type OBoardRuntimeMetadata struct {
-	RateLimits      OBoardRateLimits       `json:"rate_limits,omitempty"`
-	ConnectionAudit *OBoardConnectionAudit `json:"connection_audit,omitempty"`
+	Authorization   *model.AuthorizationLease `json:"authorization,omitempty"`
+	RateLimits      OBoardRateLimits          `json:"rate_limits,omitempty"`
+	ConnectionAudit *OBoardConnectionAudit    `json:"connection_audit,omitempty"`
 }
 
 type OBoardConnectionAudit struct {
@@ -43,6 +44,7 @@ type OBoardRateLimits struct {
 }
 
 type OBoardUserRuntimeLimit struct {
+	AuthorizationKey  string `json:"authorization_key,omitempty"`
 	UserID            int64  `json:"user_id,omitempty"`
 	InboundID         int64  `json:"inbound_id,omitempty"`
 	PathID            int64  `json:"path_id,omitempty"`
@@ -749,7 +751,7 @@ func addRuntimeLimitsForInboundTag(config *SingBoxConfig, inbound model.Inbound,
 		return
 	}
 	limits := runtimeLimitsForUsers(users, opts)
-	if inbound.Protocol == model.ProtocolMieru && len(limits) > 0 {
+	if len(limits) > 0 {
 		aliases := make(map[string]OBoardUserRuntimeLimit, len(limits))
 		for _, user := range users {
 			if limit, ok := limits[user.Username]; ok {
@@ -816,6 +818,7 @@ func runtimeLimitsForUsers(users []model.User, opts ConfigOptions) map[string]OB
 		}
 		speed, traffic := policy.SpeedLimitMbps, policy.TrafficLimitBytes
 		limit := OBoardUserRuntimeLimit{
+			AuthorizationKey: user.AuthorizationKey,
 			UserID:           user.ID,
 			DeviceIDHash:     user.DeviceIDHash,
 			CredentialEpoch:  user.CredentialEpoch,
@@ -1107,7 +1110,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 				}
 				processingUsers = placeholderUsers
 			}
-			processingUsers = credentialUsersForInbound(processingUsers, processingInbound)
+			processingUsers = credentialUsersForInbound(processingUsers, root)
 			if !InboundSupportsMultipleUsers(processingInbound) && len(processingUsers) > 1 {
 				return nil, fmt.Errorf("processing inbound %s supports only one user", processingInbound.Name)
 			}
@@ -1458,7 +1461,7 @@ func rootInboundRoutingTags(root model.Inbound, path model.ProxyPath, users []mo
 	branchUsers := proxyPathBranchUsersForPath(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 	out := make([]string, 0, len(branchUsers))
 	for _, user := range branchUsers {
-		out = append(out, snellUserInboundTag(root.ID, user.ID, runtimePathIDFromUsername(user.Username)))
+		out = append(out, snellCredentialInboundTag(root.ID, user, runtimePathIDFromUsername(user.Username)))
 	}
 	return out
 }
@@ -3230,8 +3233,8 @@ func usersForInbound(inbound model.Inbound, users []model.User, bindings []model
 // call it so the two can never disagree about who an inbound serves.
 func resolveInboundUsers(inbound model.Inbound, users []model.User, opts ConfigOptions, serverSecret string) ([]model.User, []model.User, error) {
 	accounted := usersForInbound(inbound, users, opts.InboundUsers)
-	if branchUsers := proxyPathBranchUsersForInbound(inbound, users, opts.InboundUsers, opts.ProxyPathUsers, opts.ProxyPaths, opts.ProxyPathSteps); len(branchUsers) > 0 {
-		accounted = branchUsers
+	if len(proxyPathsForRootInbound(inbound.ID, opts.ProxyPaths)) > 0 {
+		accounted = proxyPathBranchUsersForInbound(inbound, users, opts.InboundUsers, opts.ProxyPathUsers, opts.ProxyPaths, opts.ProxyPathSteps)
 	}
 	accounted = credentialUsersForInbound(accounted, inbound)
 	listeners := append(append([]model.User{}, accounted...), pathLinkUsersForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)...)
@@ -3374,7 +3377,10 @@ func proxyPathBranchUsersForPath(path model.ProxyPath, inbound model.Inbound, us
 		if user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 			continue
 		}
-		out = append(out, proxyPathBranchUser(path, inbound, user))
+		projected := proxyPathBranchUser(path, inbound, user)
+		if projected.AuthorizationKey != "" {
+			out = append(out, projected)
+		}
 	}
 	return out
 }
@@ -3391,19 +3397,8 @@ func proxyPathsForRootInbound(inboundID int64, paths []model.ProxyPath) []model.
 }
 
 func proxyPathBranchUser(path model.ProxyPath, inbound model.Inbound, user model.User) model.User {
-	seed := path.Secret
-	if strings.TrimSpace(seed) == "" {
-		seed = fmt.Sprintf("path:%d:inbound:%d:user:%d", path.ID, inbound.ID, user.ID)
-	}
-	out := user
-	out.ID = user.ID
-	out.Username = fmt.Sprintf("%s__oboard_path_%d", user.Username, path.ID)
-	out.ProxyUUID = deterministicUUID(fmt.Sprintf("%s:branch:user:%d:uuid", seed, user.ID))
-	out.ProxyPassword = deterministicSecret(fmt.Sprintf("%s:branch:user:%d:password", seed, user.ID))
-	if out.DeviceIDHash != "" {
-		out = credentialUser(out, inbound.ID, path.ID, string(inbound.Protocol))
-	}
-	return out
+	user.Username = fmt.Sprintf("%s__oboard_path_%d", user.Username, path.ID)
+	return UserCredentialForRoute(user, inbound.ID, path.ID, inbound.Protocol)
 }
 
 func proxyPathLinkUser(path model.ProxyPath, inbound model.Inbound) model.User {
@@ -3545,7 +3540,7 @@ func vlessUsers(users []model.User, flow string) []map[string]any {
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
 		if u.ProxyUUID != "" {
-			item := map[string]any{"name": u.Username, "uuid": u.ProxyUUID}
+			item := map[string]any{"name": protocolAuthUsername(model.ProtocolVLESS, u), "uuid": u.ProxyUUID}
 			if flow != "" {
 				item["flow"] = flow
 			}
@@ -3559,7 +3554,7 @@ func passwordUsers(users []model.User) []map[string]any {
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
 		if u.ProxyPassword != "" {
-			out = append(out, map[string]any{"name": u.Username, "password": u.ProxyPassword})
+			out = append(out, map[string]any{"name": protocolAuthUsername(model.ProtocolAnyTLS, u), "password": u.ProxyPassword})
 		}
 	}
 	return out
@@ -3567,17 +3562,7 @@ func passwordUsers(users []model.User) []map[string]any {
 
 func mieruUsername(user model.User) string {
 	if user.ID > 0 {
-		deviceSuffix := ""
-		if value := strings.ToLower(strings.TrimSpace(user.DeviceIDHash)); value != "" {
-			if len(value) > 12 {
-				value = value[:12]
-			}
-			deviceSuffix = "-d" + value
-		}
-		if pathID := runtimePathIDFromUsername(user.Username); pathID > 0 {
-			return fmt.Sprintf("oboard-u%d%s-p%d", user.ID, deviceSuffix, pathID)
-		}
-		return fmt.Sprintf("oboard-u%d%s", user.ID, deviceSuffix)
+		return user.ProxyUsername
 	}
 	if user.ID < 0 {
 		return fmt.Sprintf("oboard-i%x", -user.ID)
@@ -3587,6 +3572,9 @@ func mieruUsername(user model.User) string {
 }
 
 func protocolAuthUsername(protocol model.Protocol, user model.User) string {
+	if user.ID > 0 {
+		return user.ProxyUsername
+	}
 	if protocol == model.ProtocolMieru {
 		return mieruUsername(user)
 	}
@@ -3607,10 +3595,11 @@ func mieruPasswordUsers(users []model.User) []map[string]any {
 func socksPasswordUsers(users []model.User) []map[string]any {
 	out := make([]map[string]any, 0, len(users))
 	for _, user := range users {
-		if strings.TrimSpace(user.Username) == "" || user.ProxyPassword == "" {
+		username := protocolAuthUsername(model.ProtocolSocks, user)
+		if strings.TrimSpace(username) == "" || user.ProxyPassword == "" {
 			continue
 		}
-		out = append(out, map[string]any{"username": user.Username, "password": user.ProxyPassword})
+		out = append(out, map[string]any{"username": username, "password": user.ProxyPassword})
 	}
 	return out
 }
@@ -3625,7 +3614,7 @@ func ssPasswordUsers(users []model.User, method string) []map[string]any {
 		if shadowsocksMethodSupportsUsers(method) {
 			password = normalizeSS2022Key(password, method)
 		}
-		out = append(out, map[string]any{"name": u.Username, "password": password})
+		out = append(out, map[string]any{"name": protocolAuthUsername(model.ProtocolSS, u), "password": password})
 	}
 	return out
 }
@@ -4168,7 +4157,7 @@ func (a socksAdapter) Outbound(v model.Outbound, user *model.User) (map[string]a
 	extra := parseExtra(v.ConfigJSON)
 	item := map[string]any{"type": "socks", "tag": tag("out", v.ID), "server": v.TargetAddress, "server_port": v.TargetPort, "version": "5"}
 	if user != nil {
-		item["username"] = user.Username
+		item["username"] = protocolAuthUsername(model.ProtocolSocks, *user)
 		item["password"] = user.ProxyPassword
 	}
 	// sing-box SOCKSOutboundOptions has no `multiplex` field: SOCKS has no
@@ -4181,7 +4170,7 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 		return nil, err
 	}
 	extra := parseExtra(inbound.ConfigJSON)
-	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": "5", "username": user.Username, "password": user.ProxyPassword}
+	node := map[string]any{"type": "socks", "tag": inbound.Name, "server": server.EntryAddress, "server_port": InboundSubscriptionPort(inbound), "version": "5", "username": protocolAuthUsername(model.ProtocolSocks, user), "password": user.ProxyPassword}
 	applyAllowed(node, extra, "network", "udp_over_tcp", "tcp_fast_open")
 	if server.UDPInboundMode == model.UDPInboundBlock || server.UDPInboundMode == model.UDPInboundUoT {
 		node["network"] = "tcp"

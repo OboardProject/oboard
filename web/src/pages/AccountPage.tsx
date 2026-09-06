@@ -32,7 +32,6 @@ export interface AccountPageProps {
   useDialogs: any
   passkeyAvailable: () => boolean
   createPasskeyCredential: (options: any) => Promise<any>
-  sshShareURI: (address: string, port: number, username: string, proxyPass: string) => string
   copyText: (text: string) => Promise<boolean>
   formatDate: (dateStr: string) => string
   localizeErrorMessage: (msg: any) => string
@@ -49,7 +48,6 @@ export function AccountPage({
   useDialogs,
   passkeyAvailable,
   createPasskeyCredential,
-  sshShareURI,
   copyText,
   formatDate,
   localizeErrorMessage,
@@ -379,10 +377,18 @@ export function AccountPage({
 
   // SSH copy
   const handleCopySSH = async (access: SSHAccess) => {
-    const uri = sshShareURI(access.address, access.port, access.username, user?.proxy_password || '')
-    const ok = await copyText(uri)
-    notify?.(ok ? 'SSH 链接已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
-    return ok
+    try {
+      const result: { url: string } = await client.request('/node-library/share', {
+        method: 'POST',
+        body: JSON.stringify({ node_id: access.node_id, device_id: access.device_id || '' }),
+      })
+      const ok = await copyText(result.url)
+      notify?.(ok ? 'SSH 链接已复制' : '复制失败，请手动复制', ok ? 'success' : 'error')
+      return ok
+    } catch (error: any) {
+      notify?.(localizeErrorMessage(error?.message || error), 'error')
+      return false
+    }
   }
 
   return (

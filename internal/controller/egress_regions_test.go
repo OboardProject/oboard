@@ -87,7 +87,7 @@ func TestFullDeploymentAddsExternalEgressPlanAndManualProbeReusesActiveTask(t *t
 		t.Fatalf("egress config version = %d, deployment = %v", payload.ExternalEgressProbe.ExpectedConfigVersion, deployment["config_version"])
 	}
 
-	deployedDigest, err := canonicalConfigSHA256(payload.Config.Config)
+	deployedDigest, err := core.SemanticConfigDigest(payload.Config.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,12 +108,12 @@ func TestFullDeploymentAddsExternalEgressPlanAndManualProbeReusesActiveTask(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	regeneratedDigest, err := canonicalConfigSHA256(regenerated.Config)
+	regeneratedDigest, err := core.SemanticConfigDigest(regenerated.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployedDigest != regeneratedDigest {
-		t.Fatalf("deployed and regenerated config digests differ: %s != %s", deployedDigest, regeneratedDigest)
+	if deployedDigest.DataPlaneDigest != regeneratedDigest.DataPlaneDigest {
+		t.Fatalf("deployed and regenerated config digests differ: %s != %s", deployedDigest.DataPlaneDigest, regeneratedDigest.DataPlaneDigest)
 	}
 	pathURL := "/api/v1/ui/proxy-paths/" + strconv.FormatInt(fixture.path.ID, 10) + "/probe-egress"
 	first := request(t, handler, http.MethodPost, pathURL, token, map[string]any{}, http.StatusAccepted)
