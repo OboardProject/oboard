@@ -568,6 +568,58 @@ func dbStepIDAt(t *testing.T, db *store.Store, pathID int64, position int) int64
 	return 0
 }
 
+// A rule-set that backs a rule-level DNS override was classified as
+// domain-only when the rule was saved. A remote update that introduces
+// destination-IP conditions must not replace the snapshot or queue a
+// deployment: the last domain-only snapshot stays active and the set reports
+// the classification error until the source or the rule changes.
+func TestRoutingRuleSetRefreshRevalidatesDNSOverrideBeforeReplacingSnapshot(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	node := &model.Server{Name: "A", AgentID: "agent-a", PublicIPv4: "1.1.1.1", ListenIP: "0.0.0.0", PortRangeStart: 30000, PortRangeEnd: 30100, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	set := &model.RoutingRuleSet{Name: "unlock", URL: "https://rules.example/unlock.json", Format: model.RoutingRuleSetFormatSingBoxSource, Content: []byte(`{"version":1,"rules":[{"domain_suffix":["stream.example"]}]}`), Revision: "revision-1", Status: model.RoutingRuleSetStatusReady}
+	if err := db.CreateRoutingRuleSet(ctx, set); err != nil {
+		t.Fatal(err)
+	}
+	setID := set.ID
+	rule := &model.RoutingRule{ServerID: node.ID, Scope: model.RoutingRuleScopeServer, MatchSource: model.RoutingMatchSourceRuleSet, RuleSetID: &setID, DNSResolver: "remote-primary", Name: "unlock", Priority: 10, MatchJSON: `{}`, Action: model.RouteActionDirect, Enabled: true}
+	if err := db.CreateRoutingRule(ctx, rule); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	server.routingRuleSetFetcher = func(context.Context, model.RoutingRuleSet, bool) (*fetchedRoutingRuleSet, error) {
+		return &fetchedRoutingRuleSet{content: []byte(`{"version":1,"rules":[{"domain_suffix":["stream.example"]},{"ip_cidr":["203.0.113.0/24"]}]}`), revision: "revision-2"}, nil
+	}
+	refreshed, changed, err := server.refreshRoutingRuleSet(ctx, set.ID)
+	if err == nil || changed || !strings.Contains(err.Error(), "dns_override_requires_pre_resolve_match") {
+		t.Fatalf("mixed update accepted: changed=%v err=%v", changed, err)
+	}
+	if refreshed.Revision != "revision-1" || string(refreshed.Content) != string(set.Content) || refreshed.Status != model.RoutingRuleSetStatusError {
+		t.Fatalf("snapshot replaced despite failed classification: %#v", refreshed)
+	}
+	tasks, err := db.ListTasks(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("rejected update still queued deployments: %#v", tasks)
+	}
+	server.routingRuleSetFetcher = func(context.Context, model.RoutingRuleSet, bool) (*fetchedRoutingRuleSet, error) {
+		return &fetchedRoutingRuleSet{content: []byte(`{"version":1,"rules":[{"domain_suffix":["stream.example","video.example"]}]}`), revision: "revision-3"}, nil
+	}
+	refreshed, changed, err = server.refreshRoutingRuleSet(ctx, set.ID)
+	if err != nil || !changed || refreshed.Revision != "revision-3" || refreshed.Status != model.RoutingRuleSetStatusReady {
+		t.Fatalf("domain-only update rejected: changed=%v err=%v item=%#v", changed, err, refreshed)
+	}
+}
+
 func TestRoutingRuleSetRefreshQueuesOnlyReferencingServers(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
 	if err != nil {

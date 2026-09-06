@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/ruleset"
 )
@@ -275,6 +276,26 @@ func (s *Server) refreshRoutingRuleSet(ctx context.Context, id int64) (*model.Ro
 			return nil, false, err
 		}
 		return item, false, fetchErr
+	}
+	if !fetched.notModified && fetched.revision != item.Revision {
+		candidate := *item
+		candidate.Content, candidate.Revision = fetched.content, fetched.revision
+		rules, err := s.store.ListRoutingRules(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, rule := range rules {
+			if rule.RuleSetID == nil || *rule.RuleSetID != id {
+				continue
+			}
+			if err := core.ValidateRoutingDNSOverride(rule, []model.RoutingRuleSet{candidate}); err != nil {
+				item.Status, item.LastError = model.RoutingRuleSetStatusError, err.Error()
+				if saveErr := s.store.UpdateRoutingRuleSet(ctx, item); saveErr != nil {
+					return nil, false, saveErr
+				}
+				return item, false, err
+			}
+		}
 	}
 	item.Status, item.LastError = model.RoutingRuleSetStatusReady, ""
 	item.LastSuccessAt = &attemptedAt

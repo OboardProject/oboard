@@ -18,7 +18,32 @@ type DNSConfigState struct {
 const (
 	primaryRemoteDNSTag    = "remote-primary"
 	primaryBootstrapDNSTag = "bootstrap-primary"
+	// remoteDNSGroupTag and bootstrapDNSGroupTag are the sequential failover
+	// groups over the two selected candidates of each list. They are only
+	// emitted for kernels that advertise dnsGroupCapability.
+	remoteDNSGroupTag     = "remote"
+	bootstrapDNSGroupTag  = "bootstrap"
+	dnsGroupType          = "oboard-dns-group"
+	dnsGroupCapability    = "dns_group_v1"
+	dnsDoQCapability      = "dns_doq_v1"
+	dnsGroupDefaultBudget = 5000
 )
+
+// KernelSupportsDNSGroup reports whether the server's active kernel can run the
+// OBoard sequential DNS failover group. A server without an enrolled Agent has
+// no kernel report yet, so generation assumes the current kernel.
+func KernelSupportsDNSGroup(server model.Server) bool {
+	return strings.TrimSpace(server.AgentID) == "" || stringSliceContains(server.KernelCapabilities, dnsGroupCapability)
+}
+
+// dnsFailoverGroup composes the two selected candidates of one role into a
+// single runtime resolver: the primary answers, and only a transport error or
+// a retryable server failure moves the query to the secondary. NXDOMAIN and
+// NODATA are final answers, so an unlock resolver never silently degrades to
+// the other candidate's view.
+func dnsFailoverGroup(groupTag string, members []string) map[string]any {
+	return map[string]any{"type": dnsGroupType, "tag": groupTag, "members": append([]string(nil), members...), "timeout_ms": dnsGroupDefaultBudget}
+}
 
 // DNSConfigStateForServer resolves the lists a server's DNS policy binds. A
 // policy may deliberately bind no encrypted list (EncryptedListID == 0), which
@@ -88,54 +113,49 @@ func BuildDNSConfig(server model.Server, state *DNSConfigState) (map[string]any,
 		return nil, errors.New("dns policy has no usable draft candidates")
 	}
 
-	servers := make([]map[string]any, 0, len(encrypted)+len(bootstrap)+1)
+	groups := KernelSupportsDNSGroup(server)
+	servers := make([]map[string]any, 0, len(encrypted)+len(bootstrap)+3)
+	remoteTags := make([]string, 0, len(encrypted))
 	for i, candidate := range encrypted {
+		if candidate.Transport == model.DNSTransportDoQ && strings.TrimSpace(server.AgentID) != "" && !stringSliceContains(server.KernelCapabilities, dnsDoQCapability) {
+			return nil, markInvalidDesiredState(fmt.Errorf("kernel_capability_missing: server %s requires %s; update Agent/kernel before deploying DoQ", server.Name, dnsDoQCapability))
+		}
 		item := candidateToSingBoxDNS(candidate)
 		item["tag"] = []string{primaryRemoteDNSTag, "remote-secondary"}[i]
 		if hostNeedsResolver(candidate.Server) {
 			item["domain_resolver"] = primaryBootstrapDNSTag
 		}
 		servers = append(servers, item)
+		remoteTags = append(remoteTags, item["tag"].(string))
 	}
+	bootstrapTags := make([]string, 0, len(bootstrap))
 	for i, candidate := range bootstrap {
 		item := candidateToSingBoxDNS(candidate)
 		item["tag"] = []string{primaryBootstrapDNSTag, "bootstrap-secondary"}[i]
 		servers = append(servers, item)
+		bootstrapTags = append(bootstrapTags, item["tag"].(string))
 	}
 	servers = append(servers, map[string]any{"type": "local", "tag": "local"})
 	// Without an encrypted list there is no remote-* object to make final, so
-	// the plain bootstrap primary answers every query.
+	// the plain bootstrap resolvers answer every query. With two selected
+	// candidates the final resolver is the sequential failover group; a kernel
+	// without the group capability keeps the primary alone as before.
 	final := primaryRemoteDNSTag
 	if len(encrypted) == 0 {
 		final = primaryBootstrapDNSTag
+		if groups && len(bootstrapTags) == 2 {
+			servers = append(servers, dnsFailoverGroup(bootstrapDNSGroupTag, bootstrapTags))
+			final = bootstrapDNSGroupTag
+		}
+	} else if groups && len(remoteTags) == 2 {
+		servers = append(servers, dnsFailoverGroup(remoteDNSGroupTag, remoteTags))
+		final = remoteDNSGroupTag
 	}
 	return map[string]any{
 		"servers":  servers,
 		"final":    final,
 		"strategy": normalizeDNSStrategy(state.Policy.Strategy, EffectiveIPStack(server)),
 	}, nil
-}
-
-// ResolveDNSServerTag maps a requested sing-box DNS server tag onto a tag the
-// generated DNS configuration actually contains. A server bound to no encrypted
-// DNS list emits no remote-* objects, so a routing rule that still names one
-// must fall back to the configuration's final resolver instead of leaving the
-// kernel with an unresolvable reference.
-func ResolveDNSServerTag(dns map[string]any, requested string) string {
-	requested = strings.TrimSpace(requested)
-	available := map[string]bool{}
-	for _, item := range dnsServerItems(dns["servers"]) {
-		if tag, _ := item["tag"].(string); tag != "" {
-			available[tag] = true
-		}
-	}
-	if available[requested] {
-		return requested
-	}
-	if final, _ := dns["final"].(string); available[final] {
-		return final
-	}
-	return "local"
 }
 
 func selectedOrDraft(selected []model.DNSCandidate, selectedRevision int64, list model.DNSList) []model.DNSCandidate {

@@ -101,22 +101,17 @@ func ValidateDialConstraintObject(dc DialConstraint) (*NormalizedDialConstraint,
 	var prefix netip.Prefix
 	var canonicalSource string
 	if sourceStr != "" {
-		// Accept both address and prefix forms; normalize to address string.
+		// Prefix selection belongs to the managed source-prefix policy.
 		if addr, err := netip.ParseAddr(sourceStr); err == nil {
-			if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() {
+			addr = addr.Unmap()
+			if !addr.IsGlobalUnicast() || addr.IsLoopback() {
 				return nil, &ConfigFieldError{Path: "dial_constraint.source_address", Problem: "must be a valid unicast address"}
 			}
 			// Preserve original textual family for family validation.
 			prefix = netip.PrefixFrom(addr, addr.BitLen())
 			canonicalSource = addr.String()
-		} else if p, err := netip.ParsePrefix(sourceStr); err == nil {
-			if !p.IsValid() || !p.Addr().IsValid() {
-				return nil, &ConfigFieldError{Path: "dial_constraint.source_address", Problem: "must be a valid unicast address"}
-			}
-			prefix = p
-			canonicalSource = p.Addr().String()
 		} else {
-			return nil, &ConfigFieldError{Path: "dial_constraint.source_address", Problem: "must be a valid IP address"}
+			return nil, &ConfigFieldError{Path: "dial_constraint.source_address", Problem: "must be an exact IP address; use the managed source-prefix policy for prefixes"}
 		}
 		// Family vs source address consistency.
 		if family == DialConstraintFamilyIPv4Only && prefix.Addr().Is6() {
@@ -163,11 +158,32 @@ func ParseWARPUnderlay(raw string) (*NormalizedDialConstraint, error) {
 // sing-box WireGuard endpoint map. It enforces the Physical Dial Owner rule:
 // if the endpoint already has a detour, binding fields are forbidden.
 func ApplyDialConstraintToEndpoint(endpoint map[string]any, dc *NormalizedDialConstraint) error {
-	if dc == nil || dc.Mode == DialConstraintModeAuto {
+	if dc == nil {
 		return nil
 	}
 	if endpoint == nil {
 		return fmt.Errorf("endpoint is nil")
+	}
+	if dc.Mode == DialConstraintModeAuto {
+		delete(endpoint, "bind_interface")
+		delete(endpoint, "inet4_bind_address")
+		delete(endpoint, "inet6_bind_address")
+		return nil
+	}
+	if dc.Family == DialConstraintFamilyIPv4Only || dc.Family == DialConstraintFamilyIPv6Only {
+		for _, peer := range dnsServerItems(endpoint["peers"]) {
+			if raw, ok := peer["address"].(string); ok {
+				if address, err := netip.ParseAddr(raw); err == nil && (dc.Family == DialConstraintFamilyIPv4Only && !address.Unmap().Is4() || dc.Family == DialConstraintFamilyIPv6Only && !address.Unmap().Is6()) {
+					return markInvalidDesiredState(fmt.Errorf("underlay_family_mismatch: WARP peer address conflicts with underlay"))
+				}
+			}
+		}
+		resolver, _ := endpoint["domain_resolver"].(map[string]any)
+		if resolver == nil {
+			resolver = map[string]any{"server": primaryBootstrapDNSTag}
+		}
+		resolver["strategy"] = dc.Family
+		endpoint["domain_resolver"] = resolver
 	}
 	if detour, _ := endpoint["detour"].(string); strings.TrimSpace(detour) != "" {
 		return markInvalidDesiredState(fmt.Errorf("WARP underlay binding cannot be combined with detour"))

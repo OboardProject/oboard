@@ -462,17 +462,7 @@ func ValidateRoutingMatchJSON(raw string) error {
 	if err := decoder.Decode(&match); err != nil {
 		return err
 	}
-	if value, ok := match["port"]; ok {
-		if err := validateRoutingPorts(value); err != nil {
-			return fmt.Errorf("port: %w", err)
-		}
-	}
-	if value, ok := match["port_range"]; ok {
-		if err := validateRoutingPortRanges(value); err != nil {
-			return fmt.Errorf("port_range: %w", err)
-		}
-	}
-	return nil
+	return validateProtectedRoutingMatch(match, 0)
 }
 
 func validateRoutingPorts(value any) error {
@@ -569,12 +559,8 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.DNS = dns
-	if dnsRules, err := buildDNSRules(server, opts.RoutingRules, opts.RoutingRuleSets, dns); err != nil {
-		return "", err
-	} else if len(dnsRules) > 0 {
-		dns["rules"] = dnsRules
-	}
 	config.Route["default_domain_resolver"] = defaultDomainResolver(dns, server)
+	policyCtx := newRoutePolicyContext(server, dns, opts.RoutingRuleSets, inbounds, opts.Inbounds)
 	// Snell fans out into one single-user listener per identity, so its ports
 	// must be claimed before anything else derives a generated listener:
 	// proxy path hops allocate from the same server range and only see
@@ -690,7 +676,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		return "", err
 	}
 	config.Outbounds = append(config.Outbounds, interfaceOutbounds...)
-	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds)
+	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds, policyCtx)
 	if err != nil {
 		return "", err
 	}
@@ -707,7 +693,15 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			continue
 		}
 		if profile.Status != model.WARPStatusReady || strings.TrimSpace(profile.ConfigJSON) == "" || strings.TrimSpace(profile.ConfigJSON) == "{}" {
-			config.Endpoints = append(config.Endpoints, map[string]any{"type": "wireguard", "tag": tag("warp", profile.ID), "_oboard_warp_pending": profile.ID})
+			endpoint := map[string]any{"type": "wireguard", "tag": tag("warp", profile.ID), "_oboard_warp_pending": profile.ID}
+			underlay, err := WARPUnderlayFromProfile(profile)
+			if err != nil {
+				return "", err
+			}
+			if err := ApplyDialConstraintToEndpoint(endpoint, underlay); err != nil {
+				return "", err
+			}
+			config.Endpoints = append(config.Endpoints, endpoint)
 			continue
 		}
 		item, err := warpProfileToSingBox(profile, server)
@@ -719,7 +713,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	if err := applyRoutingRuleWARPEndpointBindings(server, opts.RoutingRules, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles, &config.Endpoints); err != nil {
 		return "", err
 	}
-	rules, err := buildRouteRules(server, opts.RoutingRules, outbounds, opts.ExternalOutbounds)
+	rules, err := buildRouteRules(server, opts.RoutingRules, outbounds, opts.ExternalOutbounds, policyCtx)
 	if err != nil {
 		return "", err
 	}
@@ -1132,7 +1126,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	return out, nil
 }
 
-func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model.Outbound, opts ConfigOptions, users []model.User, plannedInbounds map[int64]model.Inbound) ([]map[string]any, []map[string]any, error) {
+func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model.Outbound, opts ConfigOptions, users []model.User, plannedInbounds map[int64]model.Inbound, policyCtx *routePolicyContext) ([]map[string]any, []map[string]any, error) {
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -1305,7 +1299,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			previousTag = stepTag
 			if step.NodeType == model.ProxyPathStepServerInbound {
 				if previousTag != "" {
-					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+					stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles, policyCtx)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -1326,7 +1320,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 				return nil, nil, fmt.Errorf("直接出口分支 %s 必须结束于可控服务器", path.Name)
 			}
 			if activeServerID == server.ID {
-				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+				stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles, policyCtx)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1336,14 +1330,14 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			continue
 		}
 		if previousTag != "" && activeServerID == server.ID {
-			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles, policyCtx)
 			if err != nil {
 				return nil, nil, err
 			}
 			rules = append(rules, stageRules...)
 			rules = appendPathRoutingRule(rules, activeInboundTags, activeAuthUsers, previousTag)
 		} else if previousTag == "" && activeStageStepID != nil && activeServerID == server.ID {
-			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles)
+			stageRules, err := buildPathStageRules(path, activeStageStepID, server, activeInboundTags, activeAuthUsers, opts.RoutingRules, outboundsInput, opts.ExternalOutbounds, paths, opts.ProxyPathSteps, opts.WARPProfiles, policyCtx)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1421,7 +1415,14 @@ func validateProxyPathForConfig(path model.ProxyPath, root model.Inbound, steps 
 
 func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep, root model.Inbound, targetServerID int64, inboundByID map[int64]model.Inbound, users []model.User, opts ConfigOptions, services map[proxyPathChainServiceKey]*proxyPathChainService, transparentGroup *transparentProxyPathGroup) ([]string, []string) {
 	if transparentGroup != nil && step.Position == transparentGroup.PrefixLength {
-		return []string{proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength)}, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+		// The shared transparent listener carries every branch of the root
+		// inbound; a branch without authorized identities has no traffic to
+		// route and must not claim the whole listener.
+		branchUsers := proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+		if len(branchUsers) == 0 && protocolHasRoutingAuthUser(root.Protocol) {
+			return nil, nil
+		}
+		return []string{proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength)}, branchUsers
 	}
 	if step.InboundID != nil && *step.InboundID != 0 {
 		inbound := inboundByID[*step.InboundID]
@@ -1455,10 +1456,16 @@ func appendPathRoutingRule(rules []map[string]any, inboundTags, authUsers []stri
 // gives every identity its own single-user listener, so the branch is
 // identified by the set of those tags and there is no auth_user to match.
 func rootInboundRoutingTags(root model.Inbound, path model.ProxyPath, users []model.User, opts ConfigOptions) []string {
+	branchUsers := proxyPathBranchUsersForPath(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
+	// A branch on a shared multi-user listener is identified by its authorized
+	// auth_user set. With no authorized identity there is nothing to match, and
+	// an inbound-only rule would capture every other branch on that listener.
+	if len(branchUsers) == 0 && protocolHasRoutingAuthUser(root.Protocol) {
+		return nil
+	}
 	if root.Protocol != model.ProtocolSnell {
 		return []string{tag("in", root.ID)}
 	}
-	branchUsers := proxyPathBranchUsersForPath(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
 	out := make([]string, 0, len(branchUsers))
 	for _, user := range branchUsers {
 		out = append(out, snellCredentialInboundTag(root.ID, user, runtimePathIDFromUsername(user.Username)))
@@ -1816,6 +1823,13 @@ func warpProfileToSingBox(v model.WARPProfile, server model.Server) (map[string]
 	}
 	raw["mtu"] = WarpTunnelMTU
 	applyManagedWARPDomainResolver(raw, normalizeDNSStrategy(v.DNSStrategy, EffectiveIPStack(server)))
+	underlay, err := WARPUnderlayFromProfile(v)
+	if err != nil {
+		return nil, err
+	}
+	if err := ApplyDialConstraintToEndpoint(raw, underlay); err != nil {
+		return nil, err
+	}
 	return raw, nil
 }
 
@@ -1918,8 +1932,13 @@ func normalizeWireGuardPeer(peer map[string]any) map[string]any {
 	return out
 }
 
+// defaultDomainResolver is the server's default business-target resolver: the
+// resolver the DNS policy makes final (the encrypted failover group, or the
+// bootstrap group for a plain-DNS-only policy). Infrastructure lookups — DoH/
+// DoT/DoQ hostnames, next-hop proxy servers and WARP peers — keep their own
+// explicit bootstrap resolver and never inherit this one.
 func defaultDomainResolver(dns map[string]any, server model.Server) any {
-	resolver := preferredDNSResolverTag(dns)
+	resolver := defaultTargetResolverTag(dns)
 	strategy := normalizeDNSStrategy("", EffectiveIPStack(server))
 	if strategy == "" {
 		return resolver
@@ -1927,18 +1946,27 @@ func defaultDomainResolver(dns map[string]any, server model.Server) any {
 	return map[string]any{"server": resolver, "strategy": strategy}
 }
 
-func preferredDNSResolverTag(dns map[string]any) string {
-	fallback := "local"
+func defaultTargetResolverTag(dns map[string]any) string {
+	available := map[string]bool{}
+	first := ""
 	for _, server := range dnsServerItems(dns["servers"]) {
-		tag, _ := server["tag"].(string)
-		if tag == primaryBootstrapDNSTag {
-			return tag
-		}
-		if tag != "" && fallback == "local" {
-			fallback = tag
+		if tag, _ := server["tag"].(string); tag != "" {
+			available[tag] = true
+			if first == "" {
+				first = tag
+			}
 		}
 	}
-	return fallback
+	if final, _ := dns["final"].(string); available[final] {
+		return final
+	}
+	if available[primaryBootstrapDNSTag] {
+		return primaryBootstrapDNSTag
+	}
+	if first != "" {
+		return first
+	}
+	return "local"
 }
 
 func dnsServerItems(value any) []map[string]any {
@@ -1975,7 +2003,7 @@ func applyManagedWARPDomainResolver(item map[string]any, strategy string) {
 	item["domain_resolver"] = map[string]any{"server": primaryBootstrapDNSTag, "strategy": strategy}
 }
 
-func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound) ([]map[string]any, error) {
+func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, policyCtx *routePolicyContext) ([]map[string]any, error) {
 	filtered := make([]model.RoutingRule, 0, len(rules))
 	for _, rule := range rules {
 		if rule.ServerID == server.ID && rule.Enabled && (rule.Scope == "" || rule.Scope == model.RoutingRuleScopeServer) {
@@ -1990,39 +2018,33 @@ func buildRouteRules(server model.Server, rules []model.RoutingRule, outbounds [
 	})
 	out := make([]map[string]any, 0, len(filtered))
 	for _, rule := range filtered {
-		item := map[string]any{}
-		if strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}" {
-			if err := json.Unmarshal([]byte(rule.MatchJSON), &item); err != nil {
-				return nil, fmt.Errorf("routing rule %s match_json: %w", rule.Name, err)
+		var target string
+		var err error
+		switch rule.Action {
+		case model.RouteActionInterface:
+			target = routingRuleInterfaceOutboundTag(rule.ID)
+		case model.RouteActionSourcePrefix:
+			target = sourcePrefixOutboundTag(rule.SourcePrefix)
+		default:
+			var ok bool
+			target, ok, err = routeRuleOutboundTag(rule, server, outbounds, external)
+			if err == nil && !ok {
+				continue
 			}
 		}
-		if rule.Action == model.RouteActionInterface {
-			item["action"] = "route"
-			item["outbound"] = routingRuleInterfaceOutboundTag(rule.ID)
-			out = append(out, item)
-			continue
-		}
-		if rule.Action == model.RouteActionSourcePrefix {
-			item["action"] = "route"
-			item["outbound"] = sourcePrefixOutboundTag(rule.SourcePrefix)
-			out = append(out, item)
-			continue
-		}
-		tag, ok, err := routeRuleOutboundTag(rule, server, outbounds, external)
 		if err != nil {
 			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
 		}
-		if !ok {
-			continue
+		compiled, err := compileRoutePolicies(rule, nil, nil, target, policyCtx)
+		if err != nil {
+			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
 		}
-		item["action"] = "route"
-		item["outbound"] = tag
-		out = append(out, item)
+		out = append(out, compiled...)
 	}
 	return out, nil
 }
 
-func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTags []string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile) ([]map[string]any, error) {
+func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.Server, inboundTags []string, authUsers []string, rules []model.RoutingRule, outbounds []model.Outbound, external []model.ExternalOutbound, paths []model.ProxyPath, steps []model.ProxyPathStep, warpProfiles []model.WARPProfile, policyCtx *routePolicyContext) ([]map[string]any, error) {
 	// No listener on this server means no stage to attach rules to. Emitting
 	// them with an empty inbound list would make sing-box match every inbound.
 	if len(inboundTags) == 0 {
@@ -2043,52 +2065,28 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 	})
 	result := make([]map[string]any, 0, len(filtered))
 	for _, rule := range filtered {
-		item := map[string]any{}
-		if rule.MatchSource == model.RoutingMatchSourceRuleSet {
-			if rule.RuleSetID == nil {
-				return nil, fmt.Errorf("routing rule %s: rule_set_id required", rule.Name)
-			}
-			item["rule_set"] = []string{routingRuleSetTag(*rule.RuleSetID)}
-		} else if strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}" {
-			if err := json.Unmarshal([]byte(rule.MatchJSON), &item); err != nil {
-				return nil, fmt.Errorf("routing rule %s match_json: %w", rule.Name, err)
-			}
-		}
-		item["inbound"] = append([]string(nil), inboundTags...)
-		if len(authUsers) > 0 {
-			item["auth_user"] = append([]string(nil), authUsers...)
-		} else {
-			delete(item, "auth_user")
-		}
-		if rule.Action == model.RouteActionInterface {
-			item["action"] = "route"
-			if continuation, err := routingRuleSamePathContinuationTag(rule, server, paths, steps, warpProfiles); err == nil && continuation != "" {
-				item["outbound"] = routingRuleBoundOutboundTag(rule.ID, continuation)
-			} else {
-				item["outbound"] = routingRuleInterfaceOutboundTag(rule.ID)
-			}
-			result = append(result, item)
-			continue
-		}
-		if rule.Action == model.RouteActionSourcePrefix {
-			item["action"] = "route"
-			item["outbound"] = sourcePrefixOutboundTag(rule.SourcePrefix)
-			result = append(result, item)
-			continue
-		}
 		var outboundTag string
 		var ok bool
 		var err error
-		if rule.Action == model.RouteActionProxyPath {
+		switch rule.Action {
+		case model.RouteActionInterface:
+			if continuation, continuationErr := routingRuleSamePathContinuationTag(rule, server, paths, steps, warpProfiles); continuationErr == nil && continuation != "" {
+				outboundTag = routingRuleBoundOutboundTag(rule.ID, continuation)
+			} else {
+				outboundTag = routingRuleInterfaceOutboundTag(rule.ID)
+			}
+			ok = true
+		case model.RouteActionSourcePrefix:
+			outboundTag, ok = sourcePrefixOutboundTag(rule.SourcePrefix), true
+		case model.RouteActionProxyPath:
 			outboundTag, err = routingRuleProxyPathOutboundTag(rule, server, paths, steps, warpProfiles)
 			if err == nil && routingRuleHasProxyPathBinding(rule) {
 				outboundTag = routingRuleBoundOutboundTag(rule.ID, outboundTag)
 			}
 			ok = err == nil && outboundTag != ""
-		} else if rule.Action == model.RouteActionFamilySplit {
-			outboundTag = routingRuleFamilySelectorTag(rule.ID)
-			ok = true
-		} else {
+		case model.RouteActionFamilySplit:
+			outboundTag, ok = routingRuleFamilySelectorTag(rule.ID), true
+		default:
 			outboundTag, ok, err = routeRuleOutboundTag(rule, server, outbounds, external)
 		}
 		if err != nil {
@@ -2097,9 +2095,11 @@ func buildPathStageRules(path model.ProxyPath, stageStepID *int64, server model.
 		if !ok {
 			continue
 		}
-		item["action"] = "route"
-		item["outbound"] = outboundTag
-		result = append(result, item)
+		compiled, err := compileRoutePolicies(rule, inboundTags, authUsers, outboundTag, policyCtx)
+		if err != nil {
+			return nil, fmt.Errorf("routing rule %s: %w", rule.Name, err)
+		}
+		result = append(result, compiled...)
 	}
 	return result, nil
 }
@@ -2407,7 +2407,11 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 		}
 		resolver := domainResolverMap(defaultResolver)
 		if strings.TrimSpace(rule.DNSResolver) != "" {
-			resolver["server"] = ResolveDNSServerTag(dns, rule.DNSResolver)
+			resolverTag, err := RequireDNSServerTag(dns, rule.DNSResolver)
+			if err != nil {
+				return nil, err
+			}
+			resolver["server"] = resolverTag
 		}
 		resolver["strategy"] = strategy
 		selector["domain_resolver"] = resolver
@@ -2834,57 +2838,6 @@ func buildRouteRuleSets(server model.Server, rules []model.RoutingRule, sets []m
 	}
 	sort.SliceStable(result, func(i, j int) bool { return fmt.Sprint(result[i]["tag"]) < fmt.Sprint(result[j]["tag"]) })
 	return result
-}
-
-func buildDNSRules(server model.Server, rules []model.RoutingRule, sets []model.RoutingRuleSet, dns map[string]any) ([]map[string]any, error) {
-	filtered := make([]model.RoutingRule, 0)
-	for _, rule := range rules {
-		if rule.ServerID == server.ID && rule.Enabled && strings.TrimSpace(rule.DNSResolver) != "" {
-			filtered = append(filtered, rule)
-		}
-	}
-	sort.SliceStable(filtered, func(i, j int) bool {
-		if filtered[i].Priority == filtered[j].Priority {
-			return filtered[i].ID < filtered[j].ID
-		}
-		return filtered[i].Priority < filtered[j].Priority
-	})
-	result := make([]map[string]any, 0, len(filtered))
-	for _, rule := range filtered {
-		item := map[string]any{}
-		if rule.MatchSource == model.RoutingMatchSourceRuleSet {
-			if rule.RuleSetID == nil {
-				return nil, fmt.Errorf("routing rule %s: rule_set_id required", rule.Name)
-			}
-			found := false
-			for _, set := range sets {
-				if set.ID == *rule.RuleSetID && set.Revision != "" {
-					item["rule_set"] = []string{routingRuleSetTag(set.ID)}
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("routing rule %s: rule set %d has no successful snapshot", rule.Name, *rule.RuleSetID)
-			}
-		} else if strings.TrimSpace(rule.MatchJSON) != "" && strings.TrimSpace(rule.MatchJSON) != "{}" {
-			var match map[string]any
-			if err := json.Unmarshal([]byte(rule.MatchJSON), &match); err != nil {
-				return nil, fmt.Errorf("routing rule %s match_json: %w", rule.Name, err)
-			}
-			for _, key := range []string{"domain", "domain_suffix", "domain_keyword", "domain_regex", "geosite", "geoip", "ip_cidr"} {
-				if value, ok := match[key]; ok {
-					item[key] = value
-				}
-			}
-		}
-		if len(item) == 0 {
-			continue
-		}
-		item["server"] = ResolveDNSServerTag(dns, rule.DNSResolver)
-		result = append(result, item)
-	}
-	return result, nil
 }
 
 func routeRuleOutboundTag(rule model.RoutingRule, server model.Server, outbounds []model.Outbound, external []model.ExternalOutbound) (string, bool, error) {

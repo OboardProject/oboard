@@ -2895,33 +2895,276 @@ func TestGenerateServerConfigRejectsLegacyWARPRoutingAction(t *testing.T) {
 	}
 }
 
-func TestRoutingRuleDNSResolverEmitsDNSRules(t *testing.T) {
+// A rule-level DNS override compiles into one logical unit: a `resolve`
+// action immediately followed by the `route` action, both carrying the same
+// normalized match. Business-target DNS never degrades into a server-global
+// dns.rules entry.
+func TestRoutingRuleDNSResolverEmitsAdjacentResolveAndRoute(t *testing.T) {
 	server := model.Server{ID: 1, Name: "edge"}
 	rulesetID := int64(9)
 	rules := []model.RoutingRule{
-		{ID: 1, ServerID: 1, Name: "inline-dns", Priority: 10, MatchJSON: `{"domain_suffix":["example.com"]}`, DNSResolver: "local", Action: model.RouteActionDirect, Enabled: true},
+		{ID: 1, ServerID: 1, Name: "inline-dns", Priority: 10, MatchJSON: `{"domain_suffix":["example.com"],"port":[443]}`, DNSResolver: "local", Action: model.RouteActionDirect, Enabled: true},
 		{ID: 2, ServerID: 1, Name: "ruleset-dns", Priority: 20, MatchSource: model.RoutingMatchSourceRuleSet, RuleSetID: &rulesetID, DNSResolver: "remote-primary", Action: model.RouteActionDirect, Enabled: true},
 	}
-	sets := []model.RoutingRuleSet{{ID: rulesetID, Name: "remote", Revision: "rev-1", Status: model.RoutingRuleSetStatusReady}}
+	sets := []model.RoutingRuleSet{{ID: rulesetID, Name: "remote", Revision: "rev-1", Status: model.RoutingRuleSetStatusReady, Content: []byte(`{"version":1,"rules":[{"domain_suffix":["stream.example"]}]}`)}}
 	config, err := generateFixtureConfig(server, nil, nil, nil, nil, ConfigOptions{RoutingRules: rules, RoutingRuleSets: sets})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var parsed SingBoxConfig
-	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
+	parsed := parseSingBoxConfig(t, config)
+	if parsed.DNS["rules"] != nil {
+		t.Fatalf("business DNS policy leaked into global dns.rules: %#v", parsed.DNS["rules"])
+	}
+	routeRules := mapList(parsed.Route["rules"])
+	units := 0
+	for i, rule := range routeRules {
+		if rule["action"] != "resolve" {
+			continue
+		}
+		if i+1 >= len(routeRules) {
+			t.Fatalf("resolve rule %d has no adjacent route rule", i)
+		}
+		next := routeRules[i+1]
+		if next["action"] != "route" {
+			t.Fatalf("resolve rule %d is followed by %#v", i, next)
+		}
+		resolveMatch, routeMatch := cloneNestedMap(rule), cloneNestedMap(next)
+		for _, key := range []string{"action", "server", "outbound", "disable_optimistic_cache"} {
+			delete(resolveMatch, key)
+			delete(routeMatch, key)
+		}
+		if string(mustJSON(t, resolveMatch)) != string(mustJSON(t, routeMatch)) {
+			t.Fatalf("resolve/route matches diverge: %#v vs %#v", resolveMatch, routeMatch)
+		}
+		switch rule["server"] {
+		case "local":
+			if rule["domain_suffix"] == nil || rule["port"] == nil || next["outbound"] != "direct" {
+				t.Fatalf("inline unit = %#v %#v", rule, next)
+			}
+		case "remote-primary":
+			if rule["rule_set"] == nil {
+				t.Fatalf("rule-set unit = %#v", rule)
+			}
+		default:
+			t.Fatalf("unexpected resolver %#v", rule["server"])
+		}
+		units++
+	}
+	if units != 2 {
+		t.Fatalf("expected two resolve/route units, got %d in %#v", units, routeRules)
+	}
+}
+
+// A rule-set that carries destination-IP conditions cannot pick a resolver
+// before resolution; the override is rejected while ordinary routing through
+// the same set stays available.
+func TestRoutingRuleDNSOverrideRequiresPreResolveMatch(t *testing.T) {
+	server := model.Server{ID: 1, Name: "edge"}
+	rulesetID := int64(9)
+	mixed := []model.RoutingRuleSet{{ID: rulesetID, Name: "mixed", Revision: "rev-1", Status: model.RoutingRuleSetStatusReady, Content: []byte(`{"version":1,"rules":[{"domain_suffix":["a.example"]},{"ip_cidr":["203.0.113.0/24"]}]}`)}}
+	override := model.RoutingRule{ID: 2, ServerID: 1, Name: "ruleset-dns", Priority: 20, MatchSource: model.RoutingMatchSourceRuleSet, RuleSetID: &rulesetID, DNSResolver: "remote-primary", Action: model.RouteActionDirect, Enabled: true}
+	if _, err := generateFixtureConfig(server, nil, nil, nil, nil, ConfigOptions{RoutingRules: []model.RoutingRule{override}, RoutingRuleSets: mixed}); err == nil || !strings.Contains(err.Error(), "dns_override_requires_pre_resolve_match") {
+		t.Fatalf("mixed rule-set DNS override accepted: %v", err)
+	}
+	plain := override
+	plain.DNSResolver = ""
+	config, err := generateFixtureConfig(server, nil, nil, nil, nil, ConfigOptions{RoutingRules: []model.RoutingRule{plain}, RoutingRuleSets: mixed})
+	if err != nil {
 		t.Fatal(err)
 	}
-	rulesValue, ok := parsed.DNS["rules"].([]any)
-	if !ok || len(rulesValue) != 2 {
-		t.Fatalf("dns rules = %#v", parsed.DNS["rules"])
+	found := false
+	for _, rule := range mapList(parseSingBoxConfig(t, config).Route["rules"]) {
+		if rule["rule_set"] != nil && rule["action"] == "route" {
+			found = true
+		}
 	}
-	first := rulesValue[0].(map[string]any)
-	if first["server"] != "local" || first["domain_suffix"] == nil {
-		t.Fatalf("inline dns rule = %#v", first)
+	if !found {
+		t.Fatal("ordinary rule-set routing was lost")
 	}
-	second := rulesValue[1].(map[string]any)
-	if second["server"] != "remote-primary" || second["rule_set"] == nil {
-		t.Fatalf("ruleset dns rule = %#v", second)
+	inlineIP := model.RoutingRule{ID: 3, ServerID: 1, Name: "ip-dns", Priority: 30, MatchJSON: `{"ip_cidr":["203.0.113.0/24"]}`, DNSResolver: "remote-primary", Action: model.RouteActionDirect, Enabled: true}
+	if err := ValidateRoutingDNSOverride(inlineIP, nil); err == nil || !strings.Contains(err.Error(), "dns_override_requires_pre_resolve_match") {
+		t.Fatalf("inline ip_cidr DNS override accepted: %v", err)
+	}
+	unknown := model.RoutingRule{ID: 4, ServerID: 1, Name: "missing-dns", Priority: 40, MatchJSON: `{"domain_suffix":["a.example"]}`, DNSResolver: "remote-primary", Action: model.RouteActionDirect, Enabled: true}
+	state := testDNSState(1)
+	state.Policy.EncryptedListID, state.EncryptedList = 0, nil
+	if _, err := generateFixtureConfig(server, nil, nil, state, nil, ConfigOptions{RoutingRules: []model.RoutingRule{unknown}}); err == nil || !strings.Contains(err.Error(), "resolver_not_found") {
+		t.Fatalf("missing resolver silently accepted: %v", err)
+	}
+}
+
+// Two branches on the same server and the same shared listener may resolve
+// the same domain through different resolvers. The compiled resolve action
+// must keep the branch identity (inbound + auth_user), the stage and the full
+// user match so the two policies never collapse into one global rule.
+func TestPathStageDNSPolicyKeepsBranchIdentity(t *testing.T) {
+	server := model.Server{ID: 1, Name: "exit", PublicIPv4: "203.0.113.1"}
+	inbound := model.Inbound{ID: 1, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	users := []model.User{
+		{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111"},
+		{ID: 8, Username: "bob", Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222"},
+	}
+	pathA, pathB, warpID := int64(101), int64(102), int64(30)
+	paths := []model.ProxyPath{
+		{ID: pathA, Name: "A", InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Enabled: true},
+		{ID: pathB, Name: "B", InboundID: inbound.ID, Kind: model.ProxyPathKindChain, Secret: "b-secret", Enabled: true},
+	}
+	steps := []model.ProxyPathStep{{ID: 201, PathID: pathB, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}}
+	rules := []model.RoutingRule{
+		{ID: 1, ServerID: 1, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathA, Name: "A", Enabled: true, MatchJSON: `{"domain_suffix":["service.test"],"port":[443]}`, DNSResolver: "remote-primary", Action: model.RouteActionDirect},
+		{ID: 2, ServerID: 1, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathB, Name: "B", Enabled: true, MatchJSON: `{"domain_suffix":["service.test"],"port":[443]}`, DNSResolver: "remote-secondary", Action: model.RouteActionDirect},
+	}
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
+		Servers:        []model.Server{server},
+		Inbounds:       []model.Inbound{inbound},
+		ProxyPaths:     paths,
+		ProxyPathSteps: steps,
+		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: pathA, InboundID: inbound.ID, UserID: 7, Enabled: true}, {ProxyPathID: pathB, InboundID: inbound.ID, UserID: 8, Enabled: true}},
+		WARPProfiles:   []model.WARPProfile{{ID: warpID, ServerID: server.ID, Status: model.WARPStatusRequested, ConfigJSON: `{}`, Enabled: true}},
+		RoutingRules:   rules,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := parseSingBoxConfig(t, config)
+	if parsed.DNS["rules"] != nil {
+		t.Fatalf("branch DNS policy leaked into global dns.rules: %#v", parsed.DNS["rules"])
+	}
+	routeRules := mapList(parsed.Route["rules"])
+	resolvers := map[string]string{}
+	for i, rule := range routeRules {
+		if rule["action"] != "resolve" {
+			continue
+		}
+		inbounds := stringListFromAny(rule["inbound"])
+		authUsers := stringListFromAny(rule["auth_user"])
+		if len(inbounds) != 1 || inbounds[0] != tag("in", inbound.ID) || len(authUsers) != 1 || rule["domain_suffix"] == nil || rule["port"] == nil {
+			t.Fatalf("resolve rule lost branch identity or match: %#v", rule)
+		}
+		next := routeRules[i+1]
+		if next["action"] != "route" || next["outbound"] != "direct" || strings.Join(stringListFromAny(next["auth_user"]), ",") != strings.Join(authUsers, ",") {
+			t.Fatalf("resolve rule %d is not followed by its own route: %#v", i, next)
+		}
+		if next["domain_suffix"] == nil || next["port"] == nil {
+			t.Fatalf("route rule dropped the shared match: %#v", next)
+		}
+		resolvers[authUsers[0]] = rule["server"].(string)
+	}
+	if len(resolvers) != 2 {
+		t.Fatalf("expected one resolve per branch, got %#v", resolvers)
+	}
+	seen := map[string]bool{}
+	for user, resolver := range resolvers {
+		if seen[resolver] {
+			t.Fatalf("branches share resolver %s: %#v", resolver, resolvers)
+		}
+		seen[resolver] = true
+		if !strings.Contains(user, "__oboard_path_") && !strings.HasPrefix(user, "u") {
+			t.Fatalf("resolve rule auth_user %q is not a branch credential", user)
+		}
+	}
+	for _, rule := range routeRules {
+		if rule["action"] == "resolve" && rule["inbound"] == nil {
+			t.Fatalf("global resolve rule emitted: %#v", rule)
+		}
+	}
+}
+
+// A DNS override that applies to restricted SSH traffic re-resolves the
+// target, so the answers must pass the relay's public-address boundary. The
+// compiled unit routes SSH identities through a public-answers-only view of
+// the resolver and refuses to deploy to a kernel that cannot enforce it.
+func TestRestrictedSSHDNSOverrideUsesPublicAnswersOnlyResolver(t *testing.T) {
+	server := model.Server{ID: 1, Name: "exit", PublicIPv4: "203.0.113.1"}
+	root := model.Inbound{ID: 1, ServerID: server.ID, Name: "ssh", Protocol: model.ProtocolSSH, ListenIP: "0.0.0.0", Port: 2222, ConfigJSON: `{}`, Enabled: true}
+	users := []model.User{{ID: 7, Username: "alice", Status: "active", ProxyPassword: "alice-password"}}
+	pathID := int64(101)
+	paths := []model.ProxyPath{{ID: pathID, Name: "A", InboundID: root.ID, Kind: model.ProxyPathKindDirect, Enabled: true}}
+	rules := []model.RoutingRule{{ID: 1, ServerID: 1, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID, Name: "A", Enabled: true, MatchJSON: `{"domain_suffix":["service.test"]}`, DNSResolver: "remote-primary", Action: model.RouteActionDirect}}
+	opts := ConfigOptions{
+		Servers:        []model.Server{server},
+		Inbounds:       []model.Inbound{root},
+		ProxyPaths:     paths,
+		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: pathID, InboundID: root.ID, UserID: 7, Enabled: true}},
+		RoutingRules:   rules,
+	}
+	config, err := generateFixtureConfig(server, []model.Inbound{root}, nil, nil, users, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := parseSingBoxConfig(t, config)
+	var guard map[string]any
+	for _, item := range dnsServerItems(parsed.DNS["servers"]) {
+		if item["tag"] == "ssh-public-remote-primary" {
+			guard = item
+		}
+	}
+	if guard == nil || guard["type"] != "oboard-dns-group" || guard["public_answers_only"] != true || strings.Join(stringListFromAny(guard["members"]), ",") != "remote-primary" {
+		t.Fatalf("public-answers-only resolver = %#v", guard)
+	}
+	guarded := false
+	for i, rule := range mapList(parsed.Route["rules"]) {
+		if rule["action"] != "resolve" || !stringSetContains(stringListFromAny(rule["inbound"]), tag("in", root.ID)) {
+			continue
+		}
+		if rule["server"] != "ssh-public-remote-primary" {
+			t.Fatalf("restricted SSH resolve %d uses unfiltered resolver: %#v", i, rule)
+		}
+		if len(stringListFromAny(rule["auth_user"])) == 0 {
+			t.Fatalf("restricted SSH resolve lost its identity: %#v", rule)
+		}
+		guarded = true
+	}
+	if !guarded {
+		t.Fatalf("no guarded resolve rule for the SSH branch: %#v", parsed.Route["rules"])
+	}
+	if err := ValidateGeneratedSingBoxConfig(parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyKernel := server
+	legacyKernel.AgentID, legacyKernel.KernelCapabilities = "enrolled", []string{"dns_doq_v1"}
+	if _, err := generateFixtureConfig(legacyKernel, []model.Inbound{root}, nil, nil, users, opts); err == nil || !strings.Contains(err.Error(), "kernel_capability_missing") || !strings.Contains(err.Error(), "dns_group_v1") {
+		t.Fatalf("restricted SSH DNS override deployed to a kernel without answer filtering: %v", err)
+	}
+}
+
+// A branch without authorized identities on a shared multi-user listener has
+// nothing to match and must not be emitted as an inbound-only rule that
+// would capture the other branch.
+func TestEmptyBranchIdentityDoesNotBecomeGlobalRule(t *testing.T) {
+	server := model.Server{ID: 1, Name: "exit", PublicIPv4: "203.0.113.1"}
+	inbound := model.Inbound{ID: 1, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	users := []model.User{{ID: 7, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111"}}
+	pathA, pathB, warpID := int64(101), int64(102), int64(30)
+	paths := []model.ProxyPath{
+		{ID: pathA, Name: "A", InboundID: inbound.ID, Kind: model.ProxyPathKindDirect, Enabled: true},
+		{ID: pathB, Name: "B", InboundID: inbound.ID, Kind: model.ProxyPathKindChain, Secret: "b-secret", Enabled: true},
+	}
+	steps := []model.ProxyPathStep{{ID: 201, PathID: pathB, Position: 1, NodeType: model.ProxyPathStepWARP, TransportMode: model.ProxyPathTransportSingBox}}
+	rules := []model.RoutingRule{{ID: 2, ServerID: 1, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathB, Name: "B", Enabled: true, MatchJSON: `{"domain_suffix":["service.test"]}`, DNSResolver: "remote-secondary", Action: model.RouteActionDirect}}
+	config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, nil, users, ConfigOptions{
+		Servers:        []model.Server{server},
+		Inbounds:       []model.Inbound{inbound},
+		ProxyPaths:     paths,
+		ProxyPathSteps: steps,
+		ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: pathA, InboundID: inbound.ID, UserID: 7, Enabled: true}},
+		WARPProfiles:   []model.WARPProfile{{ID: warpID, ServerID: server.ID, Status: model.WARPStatusRequested, ConfigJSON: `{}`, Enabled: true}},
+		RoutingRules:   rules,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range mapList(parseSingBoxConfig(t, config).Route["rules"]) {
+		if rule["inbound"] == nil {
+			continue
+		}
+		if stringSetContains(stringListFromAny(rule["inbound"]), tag("in", inbound.ID)) && rule["auth_user"] == nil {
+			t.Fatalf("empty branch identity became an inbound-wide rule: %#v", rule)
+		}
+		if rule["action"] == "resolve" {
+			t.Fatalf("branch without users still emitted a resolve rule: %#v", rule)
+		}
 	}
 }
 
@@ -3240,13 +3483,16 @@ func TestSSHRootUsesKernelRouteIdentityAndManagedSSHTunnelContinues(t *testing.T
 		{ID: 81, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &middleID, TransportMode: model.ProxyPathTransportTunnel, ConfigJSON: string(sshConfig)},
 		{ID: 82, PathID: path.ID, Position: 2, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`},
 	}
-	opts := ConfigOptions{Servers: []model.Server{source, middle, exit}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: steps}
+	// The branch needs an authorized identity: the synthetic SSH root rule is
+	// matched by inbound plus auth_user, never by the shared inbound alone.
+	users := []model.User{{ID: 7, Username: "alice", Status: "active", ProxyPassword: "alice-password"}}
+	opts := ConfigOptions{Servers: []model.Server{source, middle, exit}, Inbounds: []model.Inbound{root}, ProxyPaths: []model.ProxyPath{path}, ProxyPathSteps: steps, ProxyPathUsers: []model.ProxyPathUser{{ProxyPathID: path.ID, InboundID: root.ID, UserID: 7, Enabled: true}}}
 
 	routeKind, outboundTag, err := ProxyPathEntryRoute(path, steps, root, nil)
 	if err != nil || routeKind != "outbound" || outboundTag != proxyPathStepTag(path.ID, 1) {
 		t.Fatalf("SSH entry route = %q %q, %v", routeKind, outboundTag, err)
 	}
-	sourceConfig := parseSingBoxConfig(t, mustServerConfig(t, source, []model.Inbound{root}, nil, opts))
+	sourceConfig := parseSingBoxConfig(t, mustServerConfig(t, source, []model.Inbound{root}, users, opts))
 	if hasInbound(string(mustJSON(t, sourceConfig)), tag("in", root.ID), "") {
 		t.Fatalf("SSH root leaked into sing-box inbounds: %#v", sourceConfig.Inbounds)
 	}
@@ -3262,6 +3508,9 @@ func TestSSHRootUsesKernelRouteIdentityAndManagedSSHTunnelContinues(t *testing.T
 	foundSyntheticContinuation := false
 	for _, rule := range mapList(sourceConfig.Route["rules"]) {
 		if stringSetContains(stringListFromAny(rule["inbound"]), tag("in", root.ID)) && rule["outbound"] == outboundTag {
+			if len(stringListFromAny(rule["auth_user"])) == 0 {
+				t.Fatalf("synthetic SSH root rule lost its branch identity: %#v", rule)
+			}
 			foundSyntheticContinuation = true
 		}
 	}
@@ -3269,7 +3518,7 @@ func TestSSHRootUsesKernelRouteIdentityAndManagedSSHTunnelContinues(t *testing.T
 		t.Fatalf("source missing synthetic SSH root continuation: %#v", sourceConfig.Route["rules"])
 	}
 
-	middleConfig := parseSingBoxConfig(t, mustServerConfig(t, middle, []model.Inbound{root}, nil, opts))
+	middleConfig := parseSingBoxConfig(t, mustServerConfig(t, middle, []model.Inbound{root}, users, opts))
 	wantNext := proxyPathStepTag(path.ID, 2)
 	foundContinuation := false
 	for _, rule := range mapList(middleConfig.Route["rules"]) {

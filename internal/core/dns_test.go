@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -78,8 +79,71 @@ func TestBuildDNSConfigIncludesSelectedPrimaryAndSecondary(t *testing.T) {
 	for _, item := range servers {
 		byTag[item["tag"].(string)] = item
 	}
-	if dns["final"] != "remote-primary" || byTag["remote-primary"]["server"] != "dns.google" || byTag["remote-secondary"]["server"] != "dns.quad9.net" || byTag["bootstrap-primary"]["server"] != "1.1.1.1" || byTag["bootstrap-secondary"]["server"] != "8.8.8.8" {
+	if dns["final"] != "remote" || byTag["remote-primary"]["server"] != "dns.google" || byTag["remote-secondary"]["server"] != "dns.quad9.net" || byTag["bootstrap-primary"]["server"] != "1.1.1.1" || byTag["bootstrap-secondary"]["server"] != "8.8.8.8" {
 		t.Fatalf("dual dns config = %#v", dns)
+	}
+	group := byTag["remote"]
+	if group["type"] != "oboard-dns-group" || strings.Join(group["members"].([]string), ",") != "remote-primary,remote-secondary" {
+		t.Fatalf("remote failover group = %#v", group)
+	}
+	if _, ok := byTag["bootstrap"]; ok {
+		t.Fatal("bootstrap group emitted while encrypted resolvers are final")
+	}
+}
+
+// The failover group is a kernel feature. A server whose active kernel does
+// not report dns_group_v1 keeps the primary alone as its final resolver; the
+// kernel that does report it receives the sequential group, and a plain-DNS
+// policy groups the bootstrap pair instead.
+func TestBuildDNSConfigFailoverGroupFollowsKernelCapability(t *testing.T) {
+	state := testDNSState(1)
+	legacy := model.Server{ID: 1, AgentID: "enrolled", KernelCapabilities: []string{"dns_doq_v1"}}
+	dns, err := BuildDNSConfig(legacy, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dns["final"] != "remote-primary" {
+		t.Fatalf("legacy kernel final = %v", dns["final"])
+	}
+	for _, server := range dns["servers"].([]map[string]any) {
+		if server["type"] == "oboard-dns-group" {
+			t.Fatalf("legacy kernel received a DNS group: %#v", server)
+		}
+	}
+	current := legacy
+	current.KernelCapabilities = []string{"dns_doq_v1", "dns_group_v1"}
+	dns, err = BuildDNSConfig(current, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dns["final"] != "remote" {
+		t.Fatalf("group-capable kernel final = %v", dns["final"])
+	}
+	plain := testDNSState(1)
+	plain.Policy.EncryptedListID, plain.EncryptedList = 0, nil
+	dns, err = BuildDNSConfig(current, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dns["final"] != "bootstrap" {
+		t.Fatalf("plain-only group-capable final = %v", dns["final"])
+	}
+	var group map[string]any
+	for _, server := range dns["servers"].([]map[string]any) {
+		if server["tag"] == "bootstrap" {
+			group = server
+		}
+	}
+	if group == nil || strings.Join(group["members"].([]string), ",") != "bootstrap-primary,bootstrap-secondary" {
+		t.Fatalf("bootstrap group = %#v", group)
+	}
+	outbounds := []map[string]any{{"type": "direct", "tag": "direct"}}
+	if err := ValidateGeneratedSingBoxConfig(SingBoxConfig{DNS: dns, Inbounds: []map[string]any{}, Outbounds: outbounds, Route: map[string]any{"final": "direct", "default_domain_resolver": map[string]any{"server": "bootstrap"}}}); err != nil {
+		t.Fatalf("group configuration rejected by validator: %v", err)
+	}
+	group["members"] = []string{"bootstrap-primary", "bootstrap"}
+	if err := ValidateGeneratedSingBoxConfig(SingBoxConfig{DNS: dns, Inbounds: []map[string]any{}, Outbounds: outbounds, Route: map[string]any{"final": "direct"}}); err == nil {
+		t.Fatal("nested DNS group accepted by validator")
 	}
 }
 
@@ -109,6 +173,19 @@ func TestBuildDNSConfigSupportsDoQ(t *testing.T) {
 	remote := dns["servers"].([]map[string]any)[0]
 	if remote["type"] != "quic" || remote["server_port"] != 853 || remote["domain_resolver"] != "bootstrap-primary" {
 		t.Fatalf("doq remote = %#v", remote)
+	}
+}
+
+func TestBuildDNSConfigRequiresActiveDoQCapability(t *testing.T) {
+	state := testDNSState(1)
+	state.EncryptedList.Candidates[0] = model.DNSCandidate{Tag: "doq", Transport: model.DNSTransportDoQ, Server: "dns.example.com", Port: 853}
+	server := model.Server{ID: 1, AgentID: "enrolled"}
+	if _, err := BuildDNSConfig(server, state); err == nil {
+		t.Fatal("DoQ accepted without reported kernel capability")
+	}
+	server.KernelCapabilities = []string{"dns_doq_v1"}
+	if _, err := BuildDNSConfig(server, state); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -154,9 +231,11 @@ func TestGeneratedConfigUsesCurrentDomainResolverShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(config), &parsed); err != nil {
 		t.Fatal(err)
 	}
+	// Business targets follow the DNS policy's final resolver (the encrypted
+	// failover group); only infrastructure lookups stay on bootstrap.
 	resolver, ok := parsed.Route["default_domain_resolver"].(map[string]any)
-	if !ok || resolver["server"] != "bootstrap-primary" || resolver["strategy"] != "prefer_ipv6" {
-		t.Fatalf("default_domain_resolver = %#v, want bootstrap object with prefer_ipv6", parsed.Route["default_domain_resolver"])
+	if !ok || resolver["server"] != parsed.DNS["final"] || resolver["server"] != "remote" || resolver["strategy"] != "prefer_ipv6" {
+		t.Fatalf("default_domain_resolver = %#v, want final resolver object with prefer_ipv6", parsed.Route["default_domain_resolver"])
 	}
 	outbound := parsed.Outbounds[2]
 	if _, ok := outbound["domain_strategy"]; ok {
@@ -175,7 +254,7 @@ func TestBuildDNSConfigUsesListDraftWhenSelectionIsMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	servers := dns["servers"].([]map[string]any)
-	if len(servers) != 5 || servers[0]["tag"] != "remote-primary" || servers[3]["tag"] != "bootstrap-secondary" {
+	if len(servers) != 6 || servers[0]["tag"] != "remote-primary" || servers[3]["tag"] != "bootstrap-secondary" || servers[5]["tag"] != "remote" {
 		t.Fatalf("draft dns servers = %#v", servers)
 	}
 }
@@ -254,7 +333,7 @@ func TestBuildDNSConfigDefaultState(t *testing.T) {
 		t.Fatalf("strategy = %v, want prefer_ipv6", dns["strategy"])
 	}
 	servers := dns["servers"].([]map[string]any)
-	if len(servers) != 5 || servers[2]["tag"] != "bootstrap-primary" || servers[2]["server"] != "2606:4700:4700::1111" || servers[3]["server"] != "2001:4860:4860::8888" {
+	if len(servers) != 6 || servers[2]["tag"] != "bootstrap-primary" || servers[2]["server"] != "2606:4700:4700::1111" || servers[3]["server"] != "2001:4860:4860::8888" || servers[5]["tag"] != "remote" {
 		t.Fatalf("default dns servers = %#v", servers)
 	}
 }
@@ -364,14 +443,14 @@ func TestBuildDNSConfigWithoutEncryptedListUsesBootstrapOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	servers := dns["servers"].([]map[string]any)
-	if len(servers) != 3 {
-		t.Fatalf("servers = %#v, want two bootstrap resolvers plus local", servers)
+	if len(servers) != 4 {
+		t.Fatalf("servers = %#v, want two bootstrap resolvers, local and the bootstrap failover group", servers)
 	}
-	if servers[0]["tag"] != "bootstrap-primary" || servers[1]["tag"] != "bootstrap-secondary" || servers[2]["tag"] != "local" {
+	if servers[0]["tag"] != "bootstrap-primary" || servers[1]["tag"] != "bootstrap-secondary" || servers[2]["tag"] != "local" || servers[3]["tag"] != "bootstrap" {
 		t.Fatalf("servers = %#v, want no remote-* objects", servers)
 	}
-	if dns["final"] != "bootstrap-primary" {
-		t.Fatalf("final = %v, want bootstrap-primary", dns["final"])
+	if dns["final"] != "bootstrap" {
+		t.Fatalf("final = %v, want bootstrap failover group", dns["final"])
 	}
 	for _, item := range servers {
 		if item["type"] == "https" || item["type"] == "tls" || item["type"] == "quic" {
@@ -413,22 +492,25 @@ func TestDNSBenchmarkPlanForPolicyWithoutEncryptedList(t *testing.T) {
 	}
 }
 
-func TestResolveDNSServerTagFallsBackToFinal(t *testing.T) {
+// An explicit resolver reference never degrades to another resolver: a
+// plain-DNS-only server has no remote-* transport, so a rule that still names
+// one is rejected instead of silently answering from bootstrap.
+func TestRequireDNSServerTagIsStrict(t *testing.T) {
 	dns, err := BuildDNSConfig(model.Server{ID: 1}, plainOnlyDNSState(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ResolveDNSServerTag(dns, "remote-primary"); got != "bootstrap-primary" {
-		t.Fatalf("ResolveDNSServerTag(remote-primary) = %q, want bootstrap-primary", got)
+	if _, err := RequireDNSServerTag(dns, "remote-primary"); err == nil || !strings.Contains(err.Error(), "resolver_not_found") {
+		t.Fatalf("missing resolver accepted: %v", err)
 	}
-	if got := ResolveDNSServerTag(dns, "local"); got != "local" {
-		t.Fatalf("ResolveDNSServerTag(local) = %q, want local", got)
+	if got, err := RequireDNSServerTag(dns, "local"); err != nil || got != "local" {
+		t.Fatalf("RequireDNSServerTag(local) = %q, %v", got, err)
 	}
 	full, err := BuildDNSConfig(model.Server{ID: 1}, testDNSState(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := ResolveDNSServerTag(full, "remote-secondary"); got != "remote-secondary" {
-		t.Fatalf("ResolveDNSServerTag(remote-secondary) = %q, want remote-secondary", got)
+	if got, err := RequireDNSServerTag(full, "remote-secondary"); err != nil || got != "remote-secondary" {
+		t.Fatalf("RequireDNSServerTag(remote-secondary) = %q, %v", got, err)
 	}
 }

@@ -7891,6 +7891,7 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 	if v.Priority == 0 {
 		v.Priority = 100
 	}
+	var dnsRuleSets []model.RoutingRuleSet
 	if v.MatchSource == model.RoutingMatchSourceRuleSet {
 		if v.RuleSetID == nil {
 			return errors.New("rule_set_id required for remote rule-set match")
@@ -7902,6 +7903,7 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 		if set.Revision == "" {
 			return errors.New("routing rule set has no successful snapshot")
 		}
+		dnsRuleSets = append(dnsRuleSets, *set)
 		v.MatchJSON = "{}"
 	} else if v.MatchSource != model.RoutingMatchSourceInline {
 		return fmt.Errorf("unsupported match_source %q", v.MatchSource)
@@ -7917,6 +7919,9 @@ func (s *Server) validateRoutingRuleWithCandidatePath(ctx context.Context, v *mo
 	}
 	if err := core.ValidateRoutingMatchJSON(v.MatchJSON); err != nil {
 		return fmt.Errorf("match_json: %w", err)
+	}
+	if err := core.ValidateRoutingDNSOverride(*v, dnsRuleSets); err != nil {
+		return err
 	}
 	server, err := s.store.GetServer(ctx, v.ServerID)
 	if err != nil {
@@ -12499,9 +12504,11 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 				if plan.DNSStrategy == string(model.IPStackAuto) || plan.DNSStrategy == string(model.IPStackDualStack) {
 					plan.DNSStrategy = "auto"
 				}
-				if underlay, err := core.ValidateDialConstraint(profile.UnderlayJSON); err == nil && underlay.Mode != core.DialConstraintModeAuto {
-					plan.Underlay = &model.DialConstraint{Mode: underlay.Mode, InterfaceName: underlay.InterfaceName, SourceAddress: underlay.SourceAddress, Family: underlay.Family}
+				underlay, err := core.ValidateDialConstraint(profile.UnderlayJSON)
+				if err != nil {
+					return nil, 0, deploymentFail(400, err)
 				}
+				plan.Underlay = &model.DialConstraint{Mode: underlay.Mode, InterfaceName: underlay.InterfaceName, SourceAddress: underlay.SourceAddress, Family: underlay.Family}
 				warpRequests = append(warpRequests, plan)
 			}
 		}

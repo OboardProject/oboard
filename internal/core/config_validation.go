@@ -310,9 +310,30 @@ func (v *configValidator) validateDNS(dns map[string]any) {
 	if final := stringFromAny(dns["final"]); final != "" && !v.dnsTag[final] {
 		v.addf("dns.final references unknown dns server %q", final)
 	}
+	groupTags := map[string]bool{}
+	for _, server := range servers {
+		if stringFromAny(server["type"]) == dnsGroupType {
+			groupTags[stringFromAny(server["tag"])] = true
+		}
+	}
 	for i, server := range servers {
 		if resolver := stringFromAny(server["domain_resolver"]); resolver != "" && !v.dnsTag[resolver] {
 			v.addf("dns.servers[%d].domain_resolver references unknown dns server %q", i, resolver)
+		}
+		if stringFromAny(server["type"]) != dnsGroupType {
+			continue
+		}
+		members := stringListFromAny(server["members"])
+		if len(members) < 1 || len(members) > 2 {
+			v.addf("dns.servers[%d] group must contain one or two members", i)
+		}
+		for _, member := range members {
+			switch {
+			case !v.dnsTag[member]:
+				v.addf("dns.servers[%d] group member references unknown dns server %q", i, member)
+			case groupTags[member]:
+				v.addf("dns.servers[%d] group member %q is itself a group", i, member)
+			}
 		}
 	}
 	for i, rule := range mapList(dns["rules"]) {
@@ -513,6 +534,13 @@ func (v *configValidator) validateRoute(route map[string]any) {
 		}
 	}
 	for i, rule := range mapList(route["rules"]) {
+		if stringFromAny(rule["action"]) == "resolve" {
+			resolver := stringFromAny(rule["server"])
+			if resolver == "" || !v.dnsTag[resolver] {
+				v.addf("route.rules[%d].server references unknown dns server %q", i, resolver)
+			}
+		}
+
 		if action := stringFromAny(rule["action"]); action != "" && action != "route" {
 			continue
 		}
