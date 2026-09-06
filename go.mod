@@ -1,6 +1,6 @@
 module github.com/OboardProject/oboard
 
-go 1.25.12
+go 1.25.13
 
 require (
 	github.com/go-webauthn/webauthn v0.17.4

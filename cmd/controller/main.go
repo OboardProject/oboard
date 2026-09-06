@@ -174,6 +174,9 @@ func parseLogOutput(value string) (string, error) {
 }
 
 func controllerLogWriter(mode string, stdout, file io.Writer) io.Writer {
+	// The managed file sink redacts on write; wrap stdout so journald and
+	// container logs never become the unredacted copy.
+	stdout = oboardlog.NewRedactingWriter(stdout)
 	switch mode {
 	case "stdout":
 		return stdout

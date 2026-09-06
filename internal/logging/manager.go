@@ -117,6 +117,22 @@ func redact(p []byte) []byte {
 	return clean
 }
 
+// RedactingWriter applies the same secret redaction as the managed log file to
+// another sink. Redaction is a property of the log content, not of the file
+// destination, so stdout and journald must not be the one place a bearer token
+// or credential survives verbatim.
+type RedactingWriter struct{ sink io.Writer }
+
+func NewRedactingWriter(sink io.Writer) *RedactingWriter { return &RedactingWriter{sink: sink} }
+
+func (w *RedactingWriter) Write(p []byte) (int, error) {
+	if _, err := w.sink.Write(redact(p)); err != nil {
+		return 0, err
+	}
+	// Report the original byte count so io.MultiWriter accepts redacted writes.
+	return len(p), nil
+}
+
 func (m *Manager) Configure(config Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

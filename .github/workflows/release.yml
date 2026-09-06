@@ -34,10 +34,14 @@ jobs:
       - name: Validate stable version and compute metadata
         id: meta
         shell: bash
+        env:
+          # Never interpolate a dispatch input into the script body: it is
+          # attacker-controlled text and this job holds the release App key.
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           version=$(tr -d '[:space:]' < VERSION)
-          if [ "$version" != "${{ inputs.version }}" ]; then
-            echo "VERSION file is $version but workflow input is ${{ inputs.version }}" >&2
+          if [ "$version" != "$REQUESTED_VERSION" ]; then
+            echo "VERSION file is $version but workflow input differs" >&2
             exit 1
           fi
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
