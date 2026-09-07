@@ -304,6 +304,44 @@ describe('SubscriptionPlansPage', () => {
     expect(request).toHaveBeenCalledWith('/access-changes/17/cancel', { method: 'POST', body: '{}' })
   })
 
+  it('keeps create-plan actions outside the node list scroll', async () => {
+    const catalogNodes = Array.from({ length: 8 }, (_, index) => ({
+      type: 'inbound',
+      id: index + 1,
+      key: `inbound:${index + 1}`,
+      name: `Node ${index + 1}`,
+      entry_protocol: 'anytls',
+      exit_region: 'DE',
+      status: 'ok',
+    }))
+    const request = vi.fn(async (path: string) => {
+      if (path === '/subscription-plans') return { subscription_plans: [plan] }
+      if (path === '/access-changes?limit=50') return { access_changes: [] }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: catalogNodes, total: catalogNodes.length, page: 1, page_size: 200 }
+      throw new Error(`unexpected request: ${path}`)
+    })
+
+    await act(async () => {
+      root.render(<SubscriptionPlansPage data={{ subscription_plans: [plan] }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />)
+    })
+    await flushEffects()
+
+    const createButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('新建套餐'))
+    expect(createButton).toBeTruthy()
+    act(() => createButton?.click())
+    await flushEffects()
+
+    const dialog = document.body.querySelector('.plan-form-dialog')
+    expect(dialog).toBeTruthy()
+    const list = dialog?.querySelector('.plan-form-dialog-list')
+    const footer = dialog?.querySelector('.dialog-chrome-foot')
+    expect(list?.textContent).toContain('Node 1')
+    expect(list?.textContent).toContain('Node 8')
+    expect(footer?.textContent).toContain('创建套餐')
+    expect(list?.contains(footer as Node)).toBe(false)
+    expect((list as HTMLElement | null)?.style.maxHeight).toBe('')
+  })
+
   it('opens plan detail with standalone SSH in subscription order instead of node_type order', async () => {
     const latestNodes = [
       { node_type: 'inbound', node_id: 31, display_group: '', source_type: 'explicit' },

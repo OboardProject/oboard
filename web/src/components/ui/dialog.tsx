@@ -10,6 +10,7 @@ export interface DialogProps {
   title?: string
   className?: string
   size?: "default" | "sm" | "lg" | "xl"
+  footer?: React.ReactNode
 }
 
 export function Dialog({
@@ -18,7 +19,8 @@ export function Dialog({
   children,
   title,
   className = "",
-  size = "default"
+  size = "default",
+  footer,
 }: DialogProps) {
   const titleID = React.useId()
   const sizeClasses = {
@@ -42,7 +44,7 @@ export function Dialog({
           portal={false}
         >
           {title && (
-            <div className={`flex items-center justify-between gap-3 ${isCompact ? "" : "border-b border-border pb-4 mb-4"}`}>
+            <div className={`dialog-chrome-head flex items-center justify-between gap-3 ${isCompact ? "" : "border-b border-border pb-4 mb-4"}`}>
               <h3 id={titleID} className={`${isCompact ? "text-base" : "text-lg"} font-bold leading-snug tracking-tight text-foreground`}>
                 {title}
               </h3>
@@ -58,9 +60,14 @@ export function Dialog({
               </button>
             </div>
           )}
-          <div className={`overflow-y-auto flex-1 min-h-0 ${isCompact ? "" : "pr-1"}`}>
+          <div className="dialog-chrome-body overflow-x-hidden overflow-y-auto flex-1 min-h-0">
             {children}
           </div>
+          {footer ? (
+            <div className={`dialog-chrome-foot flex shrink-0 flex-wrap items-center justify-end gap-2 ${isCompact ? "" : "border-t border-border pt-4 mt-4"}`}>
+              {footer}
+            </div>
+          ) : null}
         </ModalSurface>
       )}
     </AnimatePresence>

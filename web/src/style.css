@@ -24372,6 +24372,78 @@ button.dns-policy-row-main:focus {
   min-height: 34px;
 }
 
+.dialog.plan-form-dialog {
+  max-height: min(90vh, 860px);
+}
+
+.dialog.plan-form-dialog .dialog-chrome-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.plan-form-dialog-stack {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
+}
+
+.plan-form-dialog-fields {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 12px;
+}
+
+.plan-form-dialog-form {
+  margin-bottom: 0;
+}
+
+@media (min-width: 640px) {
+  .plan-form-dialog-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plan-form-dialog-form > .form-field:nth-child(-n+2) {
+    grid-column: 1 / -1;
+  }
+}
+
+.plan-form-dialog-search {
+  display: flex;
+  gap: 8px;
+}
+
+.plan-form-dialog-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 4.75rem;
+  overflow: auto;
+}
+
+.plan-form-dialog-list {
+  flex: 1 1 auto;
+  min-height: min(180px, 28vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+@media (max-height: 640px) {
+  .dialog.plan-form-dialog .dialog-chrome-body {
+    overflow-y: auto;
+  }
+
+  .plan-form-dialog-list {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+  }
+}
+
 .plan-node-save-row .muted {
   font-size: 12px;
 }
@@ -24478,6 +24550,15 @@ button.dns-policy-row-main:focus {
   }
 
   .plan-node-save-row .ui-btn {
+    width: 100%;
+  }
+
+  .dialog.plan-form-dialog .dialog-chrome-foot {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .dialog.plan-form-dialog .dialog-chrome-foot > .ui-btn {
     width: 100%;
   }
 }
