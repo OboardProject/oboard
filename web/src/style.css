@@ -4643,6 +4643,10 @@ button.server-address-line.copied:hover {
   white-space: nowrap;
 }
 
+.proxy-path-entry-picker .server-related-jumps {
+  grid-column: 2;
+  margin-top: -4px;
+}
 .graph-entry-select { width: 100%; }
 .graph-path-select { width: 100%; }
 .proxy-path-entry-picker .custom-select-trigger,
@@ -7039,6 +7043,11 @@ body:has(.dialog-layer) .main {
   color: var(--text);
   font-size: 12px;
 }
+.access-note > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
 .access-note strong {
   flex: 0 0 auto;
   color: var(--text-strong);
@@ -7052,6 +7061,9 @@ body:has(.dialog-layer) .main {
 .access-note.warning {
   border-color: color-mix(in srgb, var(--warning) 30%, var(--border));
   background: var(--warning-soft);
+}
+.access-note .server-related-jumps {
+  margin-top: 6px;
 }
 
 .managed-entry-status {
@@ -10336,6 +10348,36 @@ body:has(.dialog-layer) .main {
 }
 .dns-records .empty-inline { padding: 24px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); text-align: center; }
 .dns-credential-empty { padding: 30px 20px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); text-align: center; }
+.form-field-control:has(.server-related-jumps) {
+  display: grid;
+  gap: 6px;
+}
+.server-related-jumps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.server-related-jumps button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+.server-related-jumps button:hover {
+  background: none;
+  color: var(--text-strong);
+}
+.server-related-jumps.is-compact {
+  gap: 4px 8px;
+}
+button.server-related-jump-pill {
+  min-height: 0;
+  cursor: pointer;
+}
 .dns-zone-editor {
   grid-column: 1 / -1;
   min-width: 0;

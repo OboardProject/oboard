@@ -1214,6 +1214,25 @@ function goTab(tab: string) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
+function openServerPanel(serverID: number, panel: string, tab?: string) {
+  const params = new URLSearchParams()
+  params.set('server', String(serverID))
+  params.set('panel', panel)
+  if (tab) params.set('tab', tab)
+  const next = `${pathForTab('servers')}?${params.toString()}`
+  const current = `${window.location.pathname}${window.location.search}`
+  if (current !== next) window.history.pushState({ tab: 'servers' }, '', next)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function ServerRelatedJumps({ serverID, compact = false }: { serverID?: number; compact?: boolean }) {
+  const id = Number(serverID || 0)
+  return <div className={`server-related-jumps${compact ? ' is-compact' : ''}`}>
+    {id > 0 && <button type="button" className="ghost" onClick={() => openServerPanel(id, 'network', 'dns')}>服务器 DNS</button>}
+    <button type="button" className="ghost" onClick={() => goTab('dns-records')}>域名账号</button>
+  </div>
+}
+
 function formatDashDate(d = new Date()) {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -5584,7 +5603,7 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
         {selectedOption && <div className="dns-zone-badges">
           <span className="status-pill dns-provider-pill"><DNSProviderIcon provider={selectedOption.credential.provider} size={14} />{dnsProviderLabels[selectedOption.credential.provider]}</span>
           {selectedOption.credential.name && selectedOption.credential.name !== selectedOption.zone.zone_name && <span className="status-pill">{selectedOption.credential.name}</span>}
-          {selectedOption.zone.server_id && <span className="status-pill ok">关联服务器: {serverName(selectedOption.zone.server_id)}</span>}
+          {selectedOption.zone.server_id && <button type="button" className="status-pill ok server-related-jump-pill" onClick={() => openServerPanel(Number(selectedOption.zone.server_id), 'network', 'dns')}>关联服务器: {serverName(selectedOption.zone.server_id)}</button>}
         </div>}
       </div>
       {records.length > 0 && <div className="dns-record-filter-toolbar">
@@ -5929,8 +5948,14 @@ function CertificateSettings({ data, client, load, notify }: any) {
           <FormField label="域名" required hint="可填写多个域名，使用逗号或空格分隔。"><input required value={draft.domains} onChange={e => { const domains = e.target.value; const previousDefault = defaultCertificateAccountEmail(draft.domains); setDraft({ ...draft, domains, account_email: !draft.account_email || draft.account_email === previousDefault ? defaultCertificateAccountEmail(domains) : draft.account_email }) }} placeholder="example.com, *.example.com" autoCapitalize="none" spellCheck={false} /></FormField>
           <FormField label="验证方式" required><Select required value={draft.challenge_type} onChange={e => setDraft({ ...draft, challenge_type: e.target.value })}><option value="dns01">面板 DNS-01</option><option value="dns01_manual">手动 DNS-01</option><option value="http01">Agent HTTP-01</option></Select></FormField>
           <div className="certificate-challenge-guide"><Info size={17} /><span>{challengeGuide}</span></div>
-          {draft.challenge_type === 'dns01' && <FormField label="域名服务账号" required hint="用于自动完成域名所有权验证。"><Select required value={draft.dns_credential_id} onChange={e => setDraft({ ...draft, dns_credential_id: Number(e.target.value) })}><option value={0}>选择已验证的账号</option>{credentials.filter(item => item.verified_at).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></FormField>}
-          {draft.challenge_type === 'http01' && <FormField label="签发服务器" required hint="域名需要已解析到这台服务器。"><Select required value={draft.issuance_server_id} onChange={e => setDraft({ ...draft, issuance_server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select></FormField>}
+          {draft.challenge_type === 'dns01' && <FormField label="域名服务账号" required hint="用于自动完成域名所有权验证。">
+            <Select required value={draft.dns_credential_id} onChange={e => setDraft({ ...draft, dns_credential_id: Number(e.target.value) })}><option value={0}>选择已验证的账号</option>{credentials.filter(item => item.verified_at).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</Select>
+            <ServerRelatedJumps />
+          </FormField>}
+          {draft.challenge_type === 'http01' && <FormField label="签发服务器" required hint="域名需要已解析到这台服务器。">
+            <Select required value={draft.issuance_server_id} onChange={e => setDraft({ ...draft, issuance_server_id: Number(e.target.value) })}><option value={0}>选择服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select>
+            <ServerRelatedJumps serverID={Number(draft.issuance_server_id || 0)} />
+          </FormField>}
           <FormField label="证书颁发机构" required><Select required value={draft.acme_ca} onChange={e => { const acmeCA = e.target.value; setDraft({ ...draft, acme_ca: acmeCA, ...(acmeCA === 'google' ? {} : { google_eab_credential_id: 0, eab_key_id: '', eab_hmac_key: '' }) }) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
           {draft.acme_ca === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>Google EAB</strong><small>{draftEABConfigured ? '已配置，可用于本次签发' : '请选择已保存的 EAB，或填写新的 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={draftEABSelection} onChange={event => {
             const value = event.target.value
@@ -7963,6 +7988,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'reset-traffic') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'traffic' }) }
     else if (type === 'mtu') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'mtu' }) }
     else if (type === 'dns') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'dns' }) }
+    else if (type === 'dns-records') goTab('dns-records')
     else if (type === 'network') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'overview' }) }
     else if (type === 'agent-maintenance') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'agent' }) }
     else if (type === 'system') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'overview' }) }
@@ -12822,6 +12848,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
               emptyMessage="没有匹配的入口服务器"
               ariaLabel="选择当前入口服务器"
             />
+            {selected?.id ? <ServerRelatedJumps serverID={selected.id} compact /> : null}
           </div>
 		  {visibleProxyPaths.length > 0 && <div className="proxy-path-focus-picker">
 		    <span className="proxy-path-entry-label">路径聚焦</span>
@@ -15159,6 +15186,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const dnsRecordFields = showDNSRecordFields ? <>
                 <FormField label="域名服务账号" required hint="使用已验证的域名解析账号。">
                   <Select required value={Number(draft.dns_credential_id || 0)} onChange={e => changeDNSCredential(Number(e.target.value))} aria-required="true"><option value={0}>选择凭据</option>{enabledDNSCredentials.map(item => <option key={item.id} value={item.id}>{item.name} · {dnsProviderLabels[item.provider]}</option>)}</Select>
+                  <ServerRelatedJumps serverID={server?.id} />
                 </FormField>
                 <FormField label="解析域名" required hint="客户端连接使用的域名。修改后会删除旧解析、写入新解析，并匹配或申请对应证书。">
                   <div className="dns-domain-input">
@@ -15214,6 +15242,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             <div className="entry-form-grid">
               <FormField label="服务器" required hint="入口会部署到这台服务器的 Agent。" placement="bottom">
                 <Select value={draft.server_id} onChange={e => changeServer(Number(e.target.value))}><option value={0}>选择服务器</option>{servers.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</Select>
+                <ServerRelatedJumps serverID={Number(draft.server_id || 0)} />
               </FormField>
               <FormField label="入口名称" required hint="用于拓扑图、订阅和任务识别。留空时按服务器、协议和端口自动命名。" placement="bottom">
                 <input value={draft.name} onChange={e => update({ name: e.target.value })} />
@@ -15279,7 +15308,13 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 </span>
                 <Switch checked={Boolean(draft.dns_sync_enabled) && hasDNSCredentials} disabled={!hasDNSCredentials} onChange={checked => update({ dns_sync_enabled: checked, dns_credential_id: checked ? (draft.dns_credential_id || defaultDNSCredentialID) : undefined, dns_record_types: draft.dns_record_types === 'auto' ? 'a' : (draft.dns_record_types || 'a'), dns_proxy_enabled: checked && selectedDNSCredential?.provider === 'cloudflare' ? Boolean(draft.dns_proxy_enabled) : false })} ariaLabel="自动同步 DNS 解析" aria-describedby={!hasDNSCredentials ? 'entry-dns-sync-hint' : undefined} />
               </div>
-              {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning"><strong>请先配置 DNS 凭据</strong><span>到「域名解析」创建并验证账号后，才能开启自动同步。</span></div>}
+              {!hasDNSCredentials && <div id="entry-dns-sync-hint" className="access-note warning">
+                <div>
+                  <strong>请先配置 DNS 凭据</strong>
+                  <span>到「域名解析」创建并验证账号后，才能开启自动同步。</span>
+                  <ServerRelatedJumps serverID={server?.id} />
+                </div>
+              </div>}
               {dnsRecordFields}
             </EntryFormDisclosure>
           </EntryFormSection>
