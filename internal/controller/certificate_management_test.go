@@ -376,6 +376,28 @@ func TestAgentCertificateAssetAuthorization(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("unbound agent received certificate: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+
+	stale, _ := json.Marshal(model.ManagedAssetRequest{Assets: []model.ManagedAssetReference{{Kind: "certificate", ID: certificate.ID, Revision: "stale-revision"}}})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/agent/assets", bytes.NewReader(stale))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", server.AgentID)
+	req.Header.Set("Authorization", "Bearer token-1")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("stale revision status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	tampered, _ := json.Marshal(model.ManagedAssetRequest{Assets: []model.ManagedAssetReference{{Kind: "certificate", ID: certificate.ID + 99, Revision: certificate.Revision}}})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/agent/assets", bytes.NewReader(tampered))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-ID", server.AgentID)
+	req.Header.Set("Authorization", "Bearer token-1")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("tampered certificate id status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestCoreConfigRefreshIncludesManagedCertificateAssets(t *testing.T) {

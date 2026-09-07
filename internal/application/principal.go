@@ -94,15 +94,16 @@ func (p Principal) AllowsInt64(resource string, id int64) bool {
 			return false
 		}
 	}
-	// Existing Service Accounts used flat *_ids arrays. They remain readable
-	// while MCP grants are always persisted in the canonical nested format.
+	// Existing Service Accounts used flat *_ids arrays. A non-empty filter is
+	// deny-by-default: unmentioned resource types are rejected. Empty {} stays
+	// unrestricted and is handled above. MCP grants use the nested format.
 	var filters map[string]json.RawMessage
 	if json.Unmarshal(p.ResourceFilter, &filters) != nil {
 		return false
 	}
 	raw, exists := filters[resource]
 	if !exists {
-		return true
+		return false
 	}
 	var ids []int64
 	if json.Unmarshal(raw, &ids) != nil {

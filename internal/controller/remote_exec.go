@@ -136,10 +136,16 @@ func remoteExecArgvInvokesShell(argv []string) bool {
 }
 
 func remoteExecArgvInvokesShellDepth(argv []string, depth int) bool {
-	if len(argv) == 0 || depth > 3 {
+	if len(argv) == 0 {
 		return false
 	}
+	if depth > 8 {
+		return true
+	}
 	if remoteExecArgvIsShellName(argv[0]) {
+		return true
+	}
+	if remoteExecArgvIsFind(argv[0]) && remoteExecFindInvokesShell(argv, depth) {
 		return true
 	}
 	if !remoteExecArgvIsCommandWrapper(argv[0]) {
@@ -158,15 +164,42 @@ func remoteExecArgvBase(arg string) string {
 
 func remoteExecArgvIsShellName(arg string) bool {
 	switch remoteExecArgvBase(arg) {
-	case "sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish", "busybox":
+	case "sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish", "busybox", "script", "su", "runuser", "login":
 		return true
 	}
 	return false
 }
 
+func remoteExecArgvIsFind(arg string) bool {
+	return remoteExecArgvBase(arg) == "find"
+}
+
+func remoteExecFindInvokesShell(argv []string, depth int) bool {
+	for i := 1; i < len(argv); i++ {
+		switch strings.TrimSpace(argv[i]) {
+		case "-exec", "-execdir", "-ok", "-okdir":
+			if remoteExecArgvInvokesShellDepth(remoteExecFindExecArgv(argv[i+1:]), depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func remoteExecFindExecArgv(rest []string) []string {
+	out := make([]string, 0, len(rest))
+	for _, arg := range rest {
+		if arg == ";" || arg == "+" {
+			break
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
 func remoteExecArgvIsCommandWrapper(arg string) bool {
 	switch remoteExecArgvBase(arg) {
-	case "env", "nice", "nohup", "timeout", "stdbuf", "ionice", "chrt", "time", "watch", "xargs", "sudo", "doas", "flock", "setpriv", "capsh", "unshare", "nsenter":
+	case "env", "nice", "nohup", "timeout", "stdbuf", "ionice", "chrt", "time", "watch", "xargs", "sudo", "doas", "flock", "setpriv", "capsh", "unshare", "nsenter", "setsid":
 		return true
 	}
 	return false

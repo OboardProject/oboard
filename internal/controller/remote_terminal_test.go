@@ -172,6 +172,83 @@ func TestBrowserTerminalWebsocketUsesTicketCookieAndRelaysOnce(t *testing.T) {
 	}
 }
 
+func TestHumanTerminalPeerCloseFreesServerSlot(t *testing.T) {
+	app, httpServer, token, sessionCookie, node, _, sessionID, ticket, cleanup := startTerminalSession(t)
+	defer cleanup()
+
+	wsURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/api/v1/ui/servers/" + itoa(node.ID) + "/terminal/ws/" + sessionID
+	browserHeader := http.Header{
+		"Cookie": []string{sessionCookie.Name + "=" + sessionCookie.Value + "; " + ticket.Name + "=" + ticket.Value},
+		"Origin": []string{httpServer.URL},
+	}
+	app.terminalHub.mu.Lock()
+	session := app.terminalHub.sessions[sessionID]
+	app.terminalHub.mu.Unlock()
+	if session == nil {
+		t.Fatal("missing session")
+	}
+	agentHeader := http.Header{
+		"Authorization":              []string{"Bearer agent-token"},
+		"X-Agent-ID":                 []string{node.AgentID},
+		"X-OBoard-Interactive-Proof": []string{security.InteractiveProof(security.HashSecret("agent-token"), sessionID, node.ID, session.Nonce, session.PrepareExp)},
+		"Origin":                     []string{httpServer.URL},
+	}
+	agentURL := "ws" + strings.TrimPrefix(httpServer.URL, "http") + "/api/v1/agent/interactive/" + sessionID
+
+	var browserConn, agentConn *websocket.Conn
+	var browserErr, agentErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		browserConn, _, browserErr = websocket.DefaultDialer.Dial(wsURL, browserHeader)
+	}()
+	go func() {
+		defer wg.Done()
+		agentConn, _, agentErr = websocket.DefaultDialer.Dial(agentURL, agentHeader)
+	}()
+	wg.Wait()
+	if browserErr != nil {
+		t.Fatalf("browser websocket: %v", browserErr)
+	}
+	if agentErr != nil {
+		t.Fatalf("agent websocket: %v", agentErr)
+	}
+	defer agentConn.Close()
+	if err := agentConn.WriteMessage(websocket.BinaryMessage, []byte("ready")); err != nil {
+		t.Fatal(err)
+	}
+	_ = browserConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := browserConn.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	_ = browserConn.Close()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if app.terminalHub.countForServer(node.ID) == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if app.terminalHub.countForServer(node.ID) != 0 {
+		t.Fatal("closed human terminal still occupies a server slot")
+	}
+
+	createBody, _ := json.Marshal(map[string]any{"cols": 80, "rows": 24})
+	createReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/servers/"+itoa(node.ID)+"/terminal/sessions", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createRes, err := httpServer.Client().Do(createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer createRes.Body.Close()
+	if createRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create after peer close status = %d body=%s", createRes.StatusCode, readBody(t, createRes))
+	}
+}
+
 func TestInteractiveFailedClosesBrowserAndFreesSlot(t *testing.T) {
 	app, httpServer, token, sessionCookie, node, _, sessionID, ticket, cleanup := startTerminalSession(t)
 	defer cleanup()

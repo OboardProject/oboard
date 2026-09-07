@@ -205,12 +205,22 @@ func newTerminalSessionHub() *terminalSessionHub {
 	return &terminalSessionHub{sessions: map[string]*terminalSession{}}
 }
 
+func (h *terminalSessionHub) sessionIsOpen(session *terminalSession) bool {
+	if session == nil {
+		return false
+	}
+	session.mu.Lock()
+	closed := session.Closed || session.closed
+	session.mu.Unlock()
+	return !closed
+}
+
 func (h *terminalSessionHub) countForServer(serverID int64) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	n := 0
 	for _, session := range h.sessions {
-		if session.ServerID == serverID {
+		if h.sessionIsOpen(session) && session.ServerID == serverID {
 			n++
 		}
 	}
@@ -222,7 +232,7 @@ func (h *terminalSessionHub) countForUser(userID int64) int {
 	defer h.mu.Unlock()
 	n := 0
 	for _, session := range h.sessions {
-		if session.UserID == userID {
+		if h.sessionIsOpen(session) && session.UserID == userID {
 			n++
 		}
 	}
@@ -234,7 +244,7 @@ func (h *terminalSessionHub) countForGrant(grantID string) int {
 	defer h.mu.Unlock()
 	n := 0
 	for _, session := range h.sessions {
-		if session.OwnerType == InteractiveOwnerMCP && session.OAuthGrantID == grantID {
+		if h.sessionIsOpen(session) && session.OwnerType == InteractiveOwnerMCP && session.OAuthGrantID == grantID {
 			n++
 		}
 	}
@@ -246,7 +256,7 @@ func (h *terminalSessionHub) countForGrantServer(grantID string, serverID int64)
 	defer h.mu.Unlock()
 	n := 0
 	for _, session := range h.sessions {
-		if session.OwnerType == InteractiveOwnerMCP && session.OAuthGrantID == grantID && session.ServerID == serverID {
+		if h.sessionIsOpen(session) && session.OwnerType == InteractiveOwnerMCP && session.OAuthGrantID == grantID && session.ServerID == serverID {
 			n++
 		}
 	}
@@ -420,13 +430,16 @@ func (s *Server) prepareInteractiveSession(ctx context.Context, owner Interactiv
 	session.prepareTimer = time.AfterFunc(terminalPrepareTimeout, func() {
 		s.failTerminalSession(sessionID, server.ID, "prepare_timeout", "")
 	})
-	// idle timeout for MCP sessions: will be reset on activity
+	session.absTimer = time.AfterFunc(terminalAbsTimeout, func() {
+		if owner == InteractiveOwnerMCP {
+			s.closeMCPTerminalSession(sessionID, "terminal_expired")
+			return
+		}
+		s.releaseTerminalSession(sessionID, "terminal_expired")
+	})
 	if owner == InteractiveOwnerMCP {
 		session.idleTimer = time.AfterFunc(terminalIdleTimeout, func() {
 			s.closeMCPTerminalSession(sessionID, "idle_timeout")
-		})
-		session.absTimer = time.AfterFunc(terminalAbsTimeout, func() {
-			s.closeMCPTerminalSession(sessionID, "terminal_expired")
 		})
 	}
 	session.mu.Unlock()
@@ -584,6 +597,20 @@ func (s *Server) closeTerminalSession(w http.ResponseWriter, r *http.Request, se
 	session.close("user_close")
 	_ = s.sendAgentControl(serverID, map[string]any{"type": "interactive_close", "session_id": sessionID})
 	write(w, http.StatusOK, map[string]any{"closed": true})
+}
+
+func (s *Server) releaseTerminalSession(sessionID, reason string) {
+	s.terminalHub.mu.Lock()
+	session := s.terminalHub.sessions[sessionID]
+	if session != nil {
+		delete(s.terminalHub.sessions, sessionID)
+	}
+	s.terminalHub.mu.Unlock()
+	if session == nil {
+		return
+	}
+	session.close(reason)
+	_ = s.sendAgentControl(session.ServerID, map[string]any{"type": "interactive_close", "session_id": sessionID})
 }
 
 func (session *terminalSession) close(reason string) {
@@ -924,11 +951,11 @@ func (s *Server) relayTerminal(session *terminalSession) {
 		for {
 			mt, data, err := src.ReadMessage()
 			if err != nil {
-				session.close("peer_closed")
+				s.releaseTerminalSession(session.ID, "peer_closed")
 				return
 			}
 			if len(data) > terminalMaxMessage {
-				session.close("oversized_frame")
+				s.releaseTerminalSession(session.ID, "oversized_frame")
 				return
 			}
 			if mt == websocket.TextMessage && toAgent {
@@ -940,7 +967,7 @@ func (s *Server) relayTerminal(session *terminalSession) {
 				}
 			}
 			if err := dst.WriteMessage(mt, data); err != nil {
-				session.close("slow_consumer")
+				s.releaseTerminalSession(session.ID, "slow_consumer")
 				return
 			}
 		}
