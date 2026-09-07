@@ -49,8 +49,6 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
   const [planID, setPlanID] = React.useState(binding?.plan_id || 0)
   const [startsAt, setStartsAt] = React.useState(toLocalInputValue(binding?.starts_at))
   const [expiresAt, setExpiresAt] = React.useState(toLocalInputValue(binding?.expires_at))
-  const [preview, setPreview] = React.useState<any>(null)
-  const [previewBusy, setPreviewBusy] = React.useState(false)
   const [applyBusy, setApplyBusy] = React.useState(false)
   const [message, setMessage] = React.useState('')
   const [nodes, setNodes] = React.useState<EffectiveNode[]>([])
@@ -84,30 +82,12 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
     setPlanID(binding?.plan_id || 0)
     setStartsAt(toLocalInputValue(binding?.starts_at))
     setExpiresAt(toLocalInputValue(binding?.expires_at))
-    setPreview(null)
     setMessage('')
     setExForm({ node_key: '', effect: 'allow', reason: '', expires_at: '' })
     setSearchQuery('')
     setSearchResults([])
     void reload()
   }, [isOpen, user.id])
-
-  const runPreview = async () => {
-    if (!planID) { setMessage('请先选择套餐'); return }
-    setPreviewBusy(true)
-    setMessage('')
-    try {
-      const res = await client.request<any>('/users/plan-assignment/preview', {
-        method: 'POST',
-        body: JSON.stringify({ user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt) }),
-      })
-      setPreview(res.preview || res)
-    } catch (e: any) {
-      setMessage('预览失败：' + (e?.message || String(e)))
-    } finally {
-      setPreviewBusy(false)
-    }
-  }
 
   const applyAssignment = async () => {
     if (!planID) { setMessage('请先选择套餐'); return }
@@ -118,7 +98,6 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
         method: 'POST',
         body: JSON.stringify({ user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt) }),
       })
-      setPreview(null)
       if (res.access_change_id) setChangeID(res.access_change_id)
       setMessage(res.status === 'scheduled'
         ? `已排定：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
@@ -217,21 +196,8 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
                 </Select>
                 <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
                 <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
-                <Button variant="outline" size="sm" disabled={previewBusy} onClick={() => void runPreview()}>预览影响</Button>
+                <Button size="sm" disabled={!planID || applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '保存中…' : '保存套餐'}</Button>
               </div>
-              {preview && (
-                <div className="user-plan-dialog-preview">
-                  <p className="muted">新增 {preview.nodes_added?.length || 0} · 移除 {preview.nodes_removed?.length || 0} · 受影响服务器 {preview.affected_servers?.length || 0} 台</p>
-                  <div className="user-plan-dialog-chips">
-                    {(preview.nodes_added || []).map((k: string) => <Badge key={k} variant="success">+ {k}</Badge>)}
-                    {(preview.nodes_removed || []).map((k: string) => <Badge key={k} variant="destructive">− {k}</Badge>)}
-                  </div>
-                  <div className="user-plan-dialog-preview-actions">
-                    <Button size="sm" disabled={applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '保存中...' : '保存分配'}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>取消</Button>
-                  </div>
-                </div>
-              )}
             </section>
           </div>
           <div className="user-plan-dialog-col">

@@ -24527,19 +24527,6 @@ button.dns-policy-row-main:focus {
   grid-column: 1 / -1;
 }
 
-.user-plan-dialog-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.user-plan-dialog-chips,
-.user-plan-dialog-preview-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 .user-plan-dialog-nodes {
   display: flex;
   flex-direction: column;
