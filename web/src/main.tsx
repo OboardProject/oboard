@@ -9813,12 +9813,14 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <div className="server-list-identity-text">
             <div className="server-list-name-row">
               <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
-              <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
-              {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
-              <ServerDeliveryBadge server={server} />
-              <ServerExpiryBadge server={server} />
-              {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
-              {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
+              <div className="server-list-status">
+                <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
+                {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
+                <ServerDeliveryBadge server={server} />
+                <ServerExpiryBadge server={server} />
+                {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
+                {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
+              </div>
             </div>
             <ServerAddressBadge server={server} />
           </div>

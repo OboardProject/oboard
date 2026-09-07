@@ -1986,7 +1986,33 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.server-list-name-row::-webkit-scrollbar {
+  display: none;
+}
+
+.server-list-name-row > .server-list-name {
+  flex: 0 1 auto;
+  min-width: 2.5em;
+}
+
+.server-list-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.server-list-status > * {
+  flex-shrink: 0;
 }
 
 .server-list-mobile-meta {
@@ -3027,9 +3053,10 @@ button.server-address-line.copied:hover {
 }
 
 .server-list-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
