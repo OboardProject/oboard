@@ -22267,28 +22267,28 @@ button.ui-btn-ghost:hover {
   padding: 6px 12px;
   border: 1px solid transparent;
   border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--muted);
-  box-shadow: none;
+  background: transparent !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
   font-size: 12.5px;
   font-weight: 600;
 }
 
 .ui-tabs-list button:hover,
 .ui-tabs-trigger:hover {
-  color: var(--text-strong);
-  background: var(--surface-solid);
-  box-shadow: none;
+  color: var(--text-strong) !important;
+  background: var(--surface-solid) !important;
+  box-shadow: none !important;
 }
 
 .ui-tabs-list button.active,
 .ui-tabs-list button[aria-selected="true"],
 .ui-tabs-trigger.active,
 .ui-tabs-trigger[aria-selected="true"] {
-  color: var(--text-strong);
-  background: var(--surface-solid);
-  border-color: var(--border);
-  box-shadow: none;
+  color: var(--primary-contrast) !important;
+  background: var(--primary) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 .ui-tabs-panel { margin-top: 16px; }
