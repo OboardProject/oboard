@@ -4,7 +4,11 @@ import * as React from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { ScriptsWorkspace } from './ScriptsWorkspace'
+
+const stylesheet = readFileSync(path.resolve(__dirname, '../../style.css'), 'utf8')
 
 async function flush() {
   await act(async () => {
@@ -90,5 +94,41 @@ describe('ScriptsWorkspace', () => {
     await flush()
     expect(document.body.textContent).toContain('OBOARD_ACTION=enable-scripts')
     expect(document.body.textContent).toContain('安装不会自动开启脚本')
+  })
+
+  it('renders the runtime card immediately and distinguishes the selected tab', async () => {
+    let resolveRuntime: (value: unknown) => void = () => {}
+    const runtimePending = new Promise(resolve => { resolveRuntime = resolve })
+    const requestV2 = vi.fn(async (path: string) => {
+      if (path === '/script-runtime/status') return await runtimePending
+      if (path === '/scripts') return { scripts: [] }
+      if (path === '/script-triggers') return { triggers: [] }
+      return {}
+    })
+    await act(async () => {
+      root.render(<ScriptsWorkspace tab="scripts" data={{ session: { role: 'admin' }, servers: [] }} client={{ requestV2 }} notify={vi.fn()} onNavigate={vi.fn()} />)
+    })
+    expect(container.textContent).toContain('运行环境')
+    expect(container.textContent).toContain('正在检查运行环境')
+    expect(container.textContent).not.toContain('未安装')
+    const tabs = Array.from(container.querySelectorAll('[role="tab"]'))
+    expect(tabs.map(item => item.textContent)).toEqual(['脚本库', '触发器', '执行记录'])
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+    expect(tabs[0].className).toContain('active')
+    expect(tabs[1].getAttribute('aria-selected')).toBe('false')
+    expect(tabs[1].className).not.toContain('active')
+    expect(tabs[2].className).not.toContain('active')
+    await act(async () => {
+      resolveRuntime({ status: { enabled: false, runtime_installed: false, worker_connected: false, isolation_available: false } })
+    })
+    await flush()
+    expect(container.textContent).toContain('未安装')
+    expect(container.textContent).not.toContain('正在检查运行环境')
+  })
+
+  it('keeps script tabs off the global primary button fill', () => {
+    expect(stylesheet).toMatch(/\.ui-tabs-list button[^}]*background:\s*transparent/s)
+    expect(stylesheet).toMatch(/\.ui-tabs-list button\.active[^}]*background:\s*var\(--surface-solid\)/s)
+    expect(stylesheet).toMatch(/\.script-runtime-status\s*\{[^}]*background:\s*var\(--surface-solid\)/s)
   })
 })

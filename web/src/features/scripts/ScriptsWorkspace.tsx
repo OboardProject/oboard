@@ -3,6 +3,7 @@ import { Button } from '../../components/ui/button'
 import { Dialog } from '../../components/ui/dialog'
 import { Input } from '../../components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
+import { useRegisterPageRefresh } from '../../page-refresh-context'
 import { canManageAdministratorAccounts } from '../../permissions'
 import * as api from './api'
 import type { Script, ScriptRevision, ScriptRun, ScriptTrigger, ScriptsWorkspaceProps } from './types'
@@ -32,22 +33,35 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
   const [grantCaps, setGrantCaps] = useState('servers.status')
   const [grantServers, setGrantServers] = useState('')
   const [loading, setLoading] = useState(false)
+  const [runtimeLoading, setRuntimeLoading] = useState(true)
+  const [runtimeError, setRuntimeError] = useState('')
   const [installOpen, setInstallOpen] = useState(false)
 
-  const refresh = async () => {
+  const refreshRuntime = async () => {
+    setRuntimeLoading(true)
+    try {
+      const status = await api.runtimeStatus(requestV2)
+      setRuntime(status.status || null)
+      setRuntimeError('')
+    } catch (error: any) {
+      setRuntimeError(error.message || '读取运行环境失败')
+    } finally {
+      setRuntimeLoading(false)
+    }
+  }
+
+  const refreshWorkspace = async () => {
     setLoading(true)
     try {
-      const listed = await api.listScripts(requestV2)
-      setScripts(listed.scripts || [])
-      const trig = await api.listTriggers(requestV2)
+      const [listed, trig] = await Promise.all([
+        api.listScripts(requestV2),
+        api.listTriggers(requestV2),
+      ])
+      const scriptItems = listed.scripts || []
+      setScripts(scriptItems)
       setTriggers(trig.triggers || [])
-      const status = await api.runtimeStatus(requestV2)
-      setRuntime(status.status)
-      const recent: ScriptRun[] = []
-      for (const item of (listed.scripts || []).slice(0, 8)) {
-        const page = await requestV2(`/scripts/${item.id}/runs?limit=8`)
-        recent.push(...(page.runs || []))
-      }
+      const pages = await Promise.all(scriptItems.slice(0, 8).map(item => requestV2(`/scripts/${item.id}/runs?limit=8`)))
+      const recent = pages.flatMap(page => page.runs || [])
       setRuns(recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))))
     } catch (error: any) {
       notify(error.message || '加载脚本失败', 'error')
@@ -56,7 +70,13 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
     }
   }
 
-  useEffect(() => { void refresh() }, [tab])
+  const refresh = async () => {
+    await Promise.all([refreshRuntime(), refreshWorkspace()])
+  }
+
+  useEffect(() => { void refreshRuntime() }, [])
+  useEffect(() => { void refreshWorkspace() }, [tab])
+  useRegisterPageRefresh(() => refresh())
 
   const openEditor = async (item: Script) => {
     try {
@@ -105,7 +125,7 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
           <p className="text-sm text-muted-foreground">受限 JavaScript 自动化，不是 Node.js，也不是远程 Shell。</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => void refresh()} disabled={loading}>刷新</Button>
+          <Button variant="ghost" onClick={() => void refresh()} disabled={loading || runtimeLoading}>刷新</Button>
           {view === 'library' && <Button onClick={() => { setName(''); setDescription(''); setCreateOpen(true) }}>新建脚本</Button>}
           {view === 'triggers' && <Button onClick={async () => {
             const published = scripts[0]
@@ -133,10 +153,40 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
           <TabsTrigger value="triggers">触发器</TabsTrigger>
           <TabsTrigger value="runs">执行记录</TabsTrigger>
         </TabsList>
+        <div className="script-runtime-status">
+          <strong>运行环境</strong>
+          {runtimeLoading && !runtime ? (
+            <p>正在检查运行环境…</p>
+          ) : runtimeError && !runtime ? (
+            <p>{runtimeError}</p>
+          ) : runtime?.runtime_installed ? (
+            <p>Worker {runtime.worker_connected ? '已连接' : '未连接'} · 沙箱 {runtime.isolation_available ? runtime.isolation_mode : (runtime.isolation_reason || '不可用')} · 执行 {runtime.enabled ? '已启用' : '已关闭'}</p>
+          ) : (
+            <p>未安装。默认安装主控时不带脚本运行环境；在主控主机上执行安装命令后再启用执行。</p>
+          )}
+          {isAdmin && runtime && (
+            <div className="mt-3 flex gap-2">
+              {!runtime.runtime_installed && (
+                <Button size="sm" onClick={() => setInstallOpen(true)}>安装运行环境</Button>
+              )}
+              {runtime.runtime_installed && (
+                <Button size="sm" variant="outline" onClick={async () => {
+                  try {
+                    await api.updateRuntimeSettings(requestV2, { enabled: !runtime.enabled })
+                    notify(runtime.enabled ? '已关闭脚本执行' : '已启用脚本执行', 'success')
+                    void refreshRuntime()
+                  } catch (error: any) {
+                    notify(error.message || '更新运行环境失败', 'error')
+                  }
+                }}>{runtime.enabled ? '关闭执行' : '启用执行'}</Button>
+              )}
+            </div>
+          )}
+        </div>
         <TabsContent value="library">
           <div className="rounded-2xl border border-border/70 bg-card/70">
             {scripts.length === 0 ? <p className="p-6 text-sm text-muted-foreground">还没有脚本。先创建草稿，再发布并授权。</p> : scripts.map(item => (
-              <button key={item.id} className="flex w-full items-center justify-between border-b border-border/50 px-4 py-3 text-left last:border-0 hover:bg-background-muted/60" onClick={() => void openEditor(item)}>
+              <button key={item.id} className="script-library-row" onClick={() => void openEditor(item)}>
                 <div>
                   <strong>{item.name}</strong>
                   <div className="text-xs text-muted-foreground">{item.status} · {item.description || '无说明'}</div>
@@ -181,34 +231,6 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
           </div>
         </TabsContent>
       </Tabs>
-      {runtime && (
-        <div className="rounded-2xl border border-border/70 p-4 text-sm">
-          <strong>运行环境</strong>
-          {runtime.runtime_installed ? (
-            <div className="mt-1 text-muted-foreground">Worker {runtime.worker_connected ? '已连接' : '未连接'} · 沙箱 {runtime.isolation_available ? runtime.isolation_mode : (runtime.isolation_reason || '不可用')} · 执行 {runtime.enabled ? '已启用' : '已关闭'}</div>
-          ) : (
-            <div className="mt-1 text-muted-foreground">未安装。默认安装主控时不带脚本运行环境；在主控主机上执行安装命令后再启用执行。</div>
-          )}
-          {isAdmin && (
-            <div className="mt-3 flex gap-2">
-              {!runtime.runtime_installed && (
-                <Button size="sm" onClick={() => setInstallOpen(true)}>安装运行环境</Button>
-              )}
-              {runtime.runtime_installed && (
-                <Button size="sm" variant="outline" onClick={async () => {
-                  try {
-                    await api.updateRuntimeSettings(requestV2, { enabled: !runtime.enabled })
-                    notify(runtime.enabled ? '已关闭脚本执行' : '已启用脚本执行', 'success')
-                    void refresh()
-                  } catch (error: any) {
-                    notify(error.message || '更新运行环境失败', 'error')
-                  }
-                }}>{runtime.enabled ? '关闭执行' : '启用执行'}</Button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       <Dialog isOpen={installOpen} onClose={() => setInstallOpen(false)} title="安装脚本运行环境" size="lg">
         <div className="space-y-3 text-sm">

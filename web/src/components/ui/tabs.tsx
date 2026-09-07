@@ -27,7 +27,8 @@ export interface TabsListProps extends React.HTMLAttributes<HTMLDivElement> {}
 export function TabsList({ className = "", children, ...props }: TabsListProps) {
   return (
     <div
-      className={`inline-flex h-10 items-center justify-center rounded-xl bg-secondary/60 p-1 text-muted-foreground backdrop-blur-md border border-border/40 ${className}`}
+      className={`ui-tabs-list ${className}`.trim()}
+      role="tablist"
       {...props}
     >
       {children}
@@ -50,12 +51,8 @@ export function TabsTrigger({ value, className = "", children, ...props }: TabsT
       type="button"
       role="tab"
       aria-selected={isActive}
+      className={`ui-tabs-trigger${isActive ? ' active' : ''}${className ? ` ${className}` : ''}`}
       onClick={() => context.onValueChange?.(value)}
-      className={`inline-flex items-center justify-center whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold ring-offset-background transition-all duration-250 ease-[cubic-bezier(0.175,0.885,0.32,1.5)] active:scale-[0.97] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 min-h-0 shadow-none border-none
-        ${isActive 
-          ? "bg-popover text-foreground-intense shadow-xs font-bold" 
-          : "hover:bg-accent/40 text-foreground-muted hover:text-foreground-strong"
-        } ${className}`}
       {...props}
     >
       {children}
@@ -78,7 +75,7 @@ export function TabsContent({ value, className = "", children, ...props }: TabsC
   return (
     <div
       role="tabpanel"
-      className={`mt-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
+      className={`ui-tabs-panel ${className}`.trim()}
       {...props}
     >
       {children}
