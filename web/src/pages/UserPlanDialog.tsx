@@ -8,6 +8,7 @@ import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
 import { DateTimePicker } from '../components/ui/datetime-picker'
 import { RefreshCw, Trash2, Plus } from 'lucide-react'
+import { useRegisterPageRefresh } from '../page-refresh-context'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -73,6 +74,10 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
       setMessage(e?.message || String(e))
     }
   }
+  useRegisterPageRefresh(() => {
+    if (!isOpen) return
+    return reload()
+  })
 
   React.useEffect(() => {
     if (!isOpen) return

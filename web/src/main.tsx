@@ -159,6 +159,8 @@ import egernClientIcon from './assets/subscription-clients/egern.jpg'
 import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
 import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData } from './page-data'
+import { createPageRefreshRegistry, pageRefreshIncludesLiveServers } from './page-refresh'
+import { PageRefreshProvider, useRegisterPageRefresh } from './page-refresh-context'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { usePausedInterval } from './visibility'
@@ -1829,6 +1831,9 @@ export function App() {
     else sessionStorage.removeItem(CONTROLLER_UPDATE_IN_PROGRESS_KEY)
   }
   const [loading, setLoading] = useState(false)
+  const [pageRefreshing, setPageRefreshing] = useState(false)
+  const pageRefreshingRef = useRef(false)
+  const pageRefreshRegistryRef = useRef(createPageRefreshRegistry())
   const [data, setData] = useState<any>({})
   const activeSubscriptionRelay = (data.subscription_relays || []).find((relay: any) => relay.active)
   subscriptionPublicBaseURL = subscriptionBaseURL(String(data.subscription_public_base_url || data.settings?.subscription_relay_url || activeSubscriptionRelay?.public_url || ''), appControllerURL())
@@ -2059,9 +2064,18 @@ export function App() {
     // Background revalidation must not flash skeletons during a crossfade.
     if (!background) setLoading(true)
     try {
-      const response = await requestPageData(page, Boolean(opts?.forceFresh), background ? 'background' : 'foreground')
+      const canFetchLiveServers = Boolean(opts?.forceFresh && pageRefreshIncludesLiveServers(page) && sessionUser && roleRanks[sessionUser.role] >= roleRanks.operator)
+      const [response, live] = await Promise.all([
+        requestPageData(page, Boolean(opts?.forceFresh), background ? 'background' : 'foreground'),
+        canFetchLiveServers ? client.request('/servers?include_metrics=1').catch(() => null) : Promise.resolve(null),
+      ])
       if (!pageRequestsRef.current.isCurrent(page, response)) return
-      const next = response.data
+      const next = { ...response.data }
+      if (live?.servers) {
+        next.servers = live.servers
+        latestTelemetryRef.current = live.servers
+      }
+      if (live?.server_metrics) next.server_metrics = live.server_metrics
       if (requestToken !== activeTokenRef.current) return
       if (next.current_user && seq === loadSeq.current) {
         setSessionUser(next.current_user)
@@ -2099,6 +2113,25 @@ export function App() {
         prefetchSchedulerRef.current?.resumeIdle()
       }
       if (page === activeTabRef.current && dirtyPagesRef.current.has(page)) scheduleRealtimePageRefresh(page)
+    }
+  }
+
+  const registerPageRefresh = React.useCallback((handler: () => Promise<void> | void) => {
+    return pageRefreshRegistryRef.current.register(handler)
+  }, [])
+
+  const refreshCurrentPage = async () => {
+    if (!token || pageRefreshingRef.current) return
+    pageRefreshingRef.current = true
+    setPageRefreshing(true)
+    try {
+      await Promise.all([
+        load(tab, { forceFresh: true, background: Boolean(pageCacheRef.current[tab]) }),
+        pageRefreshRegistryRef.current.runAll(),
+      ])
+    } finally {
+      pageRefreshingRef.current = false
+      setPageRefreshing(false)
     }
   }
 
@@ -2489,6 +2522,7 @@ export function App() {
 
   return (
     <DialogContext.Provider value={dialogs}>
+      <PageRefreshProvider register={registerPageRefresh} refresh={refreshCurrentPage} refreshing={pageRefreshing}>
       <LoadingContext.Provider value={loading}>
         <AnimatePresence>
           {showPortalLoader && (
@@ -2625,7 +2659,7 @@ export function App() {
                   onLocateInbound={locateProxyInbound}
                 />
 
-                <IconButton label={loading ? "正在刷新" : "刷新"} onClick={() => void load(tab, { forceFresh: true })} className={`topbar-refresh${loading ? " refreshing" : ""}`} busy={loading}><RefreshIcon /></IconButton>
+                <IconButton label={pageRefreshing || loading ? "正在刷新" : "刷新"} onClick={() => void refreshCurrentPage()} className={`topbar-refresh${pageRefreshing || loading ? " refreshing" : ""}`} busy={pageRefreshing || loading}><RefreshIcon /></IconButton>
               </div>
               <div ref={setProxyPathTopbarTarget} className="proxy-path-topbar-slot" aria-hidden={tab === 'proxy-paths' ? undefined : true} />
             </header>
@@ -2639,6 +2673,7 @@ export function App() {
           </main>
         </div>
       </LoadingContext.Provider>
+      </PageRefreshProvider>
     </DialogContext.Provider>
   )
 }
@@ -3117,6 +3152,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
     }
   }
   useEffect(() => { void refresh() }, [])
+  useRegisterPageRefresh(() => refresh())
   useEffect(() => {
     if (realtimeRevision > 0 && (realtimeResources.includes('automation') || realtimeResources.includes('all'))) void refresh()
   }, [realtimeRevision, realtimeResources])
@@ -3250,11 +3286,12 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
   useEffect(() => { setRelays(data.subscription_relays || []) }, [data.subscription_relays])
   useEffect(() => { setControllerDirectEnabled(settingEnabled(data.settings?.subscription_controller_direct_enabled, false)) }, [data.settings?.subscription_controller_direct_enabled])
   useEffect(() => () => { relaysMountedRef.current = false }, [])
-  usePausedInterval(() => {
-    void client.request('/subscription-relays').then(result => {
-      if (relaysMountedRef.current) setRelays(result.subscription_relays || [])
-    }).catch(() => undefined)
-  }, 30000)
+  const reloadRelays = React.useCallback(async () => {
+    const result = await client.request('/subscription-relays')
+    if (relaysMountedRef.current) setRelays(result.subscription_relays || [])
+  }, [client])
+  useRegisterPageRefresh(() => reloadRelays())
+  usePausedInterval(() => { void reloadRelays().catch(() => undefined) }, 30000)
 
   const hasActiveRelay = relays.some(relay => relay.active)
   const activeRelay = relays.find(relay => relay.active)
@@ -6047,6 +6084,7 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
     }).finally(() => { if (!cancelled) setRefreshing(false) })
     return () => { cancelled = true }
   }, [client, windowHours, refreshRevision])
+  useRegisterPageRefresh(() => { setRefreshRevision(value => value + 1) })
 
   const filteredUsers = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -21591,7 +21629,7 @@ function Tasks({ data, client, loading: pageLoading }: any) {
   }, [])
 
   const loadTasks = React.useCallback(async (mode: 'manual' | 'background' = 'manual') => {
-    if (requestInFlightRef.current) return
+    if (mode === 'background' && requestInFlightRef.current) return
     requestInFlightRef.current = true
     if (mode === 'manual') setManualRefreshing(true)
     else setBackgroundRefreshing(true)
@@ -21612,6 +21650,7 @@ function Tasks({ data, client, loading: pageLoading }: any) {
       }
     }
   }, [client])
+  useRegisterPageRefresh(() => loadTasks('manual'))
 
   useEffect(() => {
     let cancelled = false
@@ -21656,7 +21695,6 @@ function Tasks({ data, client, loading: pageLoading }: any) {
           <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : 'HTTP 自动刷新已开启'}</span>
           {refreshedTime ? <time dateTime={lastRefreshedAt?.toISOString()}>更新于 {refreshedTime}</time> : null}
         </div>
-        <button className="ghost" onClick={() => void loadTasks('manual')} disabled={refreshing}>{refreshing ? '刷新中…' : '刷新'}</button>
       </div>
     </div>
     {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows} data={data} />}

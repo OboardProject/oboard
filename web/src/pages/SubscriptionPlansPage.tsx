@@ -17,6 +17,7 @@ import { PlanNodeNameDialog, type PlanNameNode } from '../components/node-assign
 import { PlanMembershipRulesPanel } from '../components/node-assignment/PlanMembershipRulesPanel'
 import { AssignPlanUsersDialog } from '../components/node-assignment/AssignPlanUsersDialog'
 import { formatPlanVersion } from '../lib/plan-version'
+import { useRegisterPageRefresh } from '../page-refresh-context'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -289,8 +290,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const planVersionsRef = React.useRef(new Map<number, Plan>())
   const workingNodesRef = React.useRef(workingNodes)
   const selectedIDRef = React.useRef(selectedID)
+  const detailOpenRef = React.useRef(detailOpen)
   workingNodesRef.current = workingNodes
   selectedIDRef.current = selectedID
+  detailOpenRef.current = detailOpen
 
   const [nodeSaveStatus, setNodeSaveStatus] = React.useState<'idle'|'saving'|'saved'|'error'>('idle')
   const [changes, setChanges] = React.useState<AccessChange[]>([])
@@ -389,9 +392,22 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   }, [client])
 
   React.useEffect(() => {
+    if (Array.isArray(data.subscription_plans)) setPlans(data.subscription_plans)
+  }, [data.subscription_plans])
+  React.useEffect(() => {
     void refreshPlans()
     void loadChanges()
   }, [])
+  useRegisterPageRefresh(async () => {
+    await Promise.all([
+      refreshPlans(),
+      loadChanges(),
+      users
+        ? client.request<{ users: any[] }>('/users').then(res => { setUsers(res.users || []) }).catch(() => undefined)
+        : Promise.resolve(),
+    ])
+    if (selectedIDRef.current && detailOpenRef.current) await loadDetail(selectedIDRef.current)
+  })
   React.useEffect(() => {
     if (selectedID && detailOpen) void loadDetail(selectedID)
   }, [selectedID, detailOpen, loadDetail])

@@ -5,6 +5,7 @@ import { Select } from '../ui/select'
 import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings } from './ReturnLatencySettings'
 import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
+import { useRegisterPageRefresh } from '../../page-refresh-context'
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any> }
 type Notice = { kind: 'success' | 'error'; text: string }
@@ -70,6 +71,10 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   }, [client, taskRevision])
 
   const reloadTasks = () => setTaskRevision(current => current + 1)
+  useRegisterPageRefresh(() => {
+    reloadTasks()
+    setResourceRevision(current => current + 1)
+  })
   const guard = async (action: () => Promise<void>) => {
     if (busyRef.current) return
     busyRef.current = true

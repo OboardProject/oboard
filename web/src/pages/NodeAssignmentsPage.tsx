@@ -10,6 +10,7 @@ import { NodeScopeMenu, type NodeScopeRequest, type ScopeNode } from '../compone
 import { NodeScopeActionDialog } from '../components/node-assignment/NodeScopeActionDialog'
 import { X, MoreHorizontal, Pencil, Info, Settings, Search, SlidersHorizontal, RotateCcw } from 'lucide-react'
 import { hasManagementAccess } from '../permissions'
+import { useRegisterPageRefresh } from '../page-refresh-context'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -238,6 +239,18 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
     await load()
     await loadNodes(page)
   }
+  const detailRef = React.useRef(detail)
+  detailRef.current = detail
+  useRegisterPageRefresh(async () => {
+    await loadNodes(page)
+    const current = detailRef.current
+    if (!current?.node?.type || !current.node.id) return
+    try {
+      setDetail(await client.request<DetailResponse>(`/assignable-nodes/${current.node.type}/${current.node.id}`))
+    } catch {
+      // Keep the open detail until the next successful load.
+    }
+  })
 
   const runSync = async () => {
     if (!syncPlanID || selectedCount === 0) return

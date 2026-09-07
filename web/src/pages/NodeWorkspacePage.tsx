@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Check, CloudDownload, Copy, Eye, Layers3, Pencil, P
 import { useDialogs } from '../components/ui/dialog-context'
 import { NodeAssignmentsPage } from './NodeAssignmentsPage'
 import { hasManagementAccess } from '../permissions'
+import { useRegisterPageRefresh } from '../page-refresh-context'
 
 type Client = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 type Group = { id: number; kind: 'oboard' | 'remote' | 'manual'; system_key?: string; name: string; node_count: number }
@@ -56,6 +57,7 @@ export function NodeWorkspacePage({ data, client, load, notify, legacySubscripti
   }, [client, mode, subjectQuery, isAdmin, userID, roleResolved])
 
   React.useEffect(() => { void refresh() }, [refresh])
+  useRegisterPageRefresh(() => refresh())
 
   const message = (value: string, tone: 'success' | 'error' | 'warning' = 'success') => notify?.(value, tone)
   const mutate = async (path: string, init: RequestInit, success: string): Promise<boolean> => {

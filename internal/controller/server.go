@@ -2357,6 +2357,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = timing.run("servers", addServerSnapshot)
 		}
+		if err == nil && serverSnapshotLoaded {
+			s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+		}
 		if err == nil {
 			err = timing.run("inbounds", func() error {
 				var inbounds []model.Inbound
@@ -2389,6 +2392,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	case "servers":
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
+		}
+		if err == nil && serverSnapshotLoaded {
+			s.annotateServerDeliveryStatus(ctx, serverSnapshot)
 		}
 		if err == nil {
 			err = addServerCreationDefaults()
