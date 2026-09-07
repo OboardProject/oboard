@@ -18224,7 +18224,7 @@ function UserManagement({ data, client, load, notify }: any) {
           title: '用户已创建',
           message: (
             <div style={{ display: 'grid', gap: 12 }}>
-              <p className="muted" style={{ margin: 0 }}>用户 <strong>{draft.username.trim()}</strong> 已创建，随机密码仅显示一次，请立即复制并妥善保存。</p>
+              <p className="muted" style={{ margin: 0 }}>已为 <strong>{draft.username.trim()}</strong> 生成随机密码，请先复制保存。</p>
               <CopyBlock value={finalPassword} />
               <small style={{ color: 'var(--text-muted)' }}>关闭后将无法再次查看，可在用户列表中重置密码。</small>
             </div>
