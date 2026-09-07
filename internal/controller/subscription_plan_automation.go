@@ -279,12 +279,19 @@ func (s *Server) applySubscriptionPlanNodesUpdate(ctx context.Context, principal
 		"access_change_id": int64(0), "access_change_status": "", "queued_tasks": 0, "reconcile_queued": false,
 	}
 	if result.NoChange {
-		return out, nil
+		return s.attachDeliveryCompletion(ctx, out, 0, 0), nil
 	}
 	if result.RequiresDeployment {
 		s.signalPlanReconcile(prepared.plan.ID)
 	}
 	out["reconcile_queued"] = result.RequiresDeployment
+	completion := "confirmed"
+	if result.RequiresDeployment {
+		completion = "pending"
+	}
+	out["change_id"] = int64(0)
+	out["pending_servers"] = []int64{}
+	out["completion"] = completion
 	return out, nil
 }
 

@@ -126,6 +126,20 @@ func TestDefaultCatalogDoesNotExposeEscapeCapabilities(t *testing.T) {
 	}
 }
 
+func TestAccessChangesRetryIsExecutable(t *testing.T) {
+	catalog := NewCatalog()
+	retry, ok := catalog.Get("access_changes.retry")
+	if !ok || !retry.Executable || retry.ReadOnly || retry.ApprovalPolicy != "required" {
+		t.Fatalf("access_changes.retry metadata: %#v ok=%v", retry, ok)
+	}
+	if retry.RBACPermission != "admin.settings" || retry.MinimumAccess != mcpauth.AccessOperate {
+		t.Fatalf("access_changes.retry authorization: %#v", retry)
+	}
+	if !strings.Contains(string(retry.OutputSchema), "completion") || !strings.Contains(string(retry.OutputSchema), "pending_servers") {
+		t.Fatalf("access_changes.retry output lacks delivery fields: %s", retry.OutputSchema)
+	}
+}
+
 func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
 	catalog := NewCatalog()
 	for _, name := range []string{

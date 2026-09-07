@@ -75,6 +75,8 @@ type ServerDTO struct {
 	UsersConfirmed              bool                       `json:"users_confirmed,omitempty"`
 	UsersPendingReason          string                     `json:"users_pending_reason,omitempty"`
 	UsersFallback               string                     `json:"users_fallback,omitempty"`
+	AuthorizationFastLane       bool                       `json:"authorization_fast_lane"`
+	RuntimeUsersEnabled         bool                       `json:"runtime_users_enabled"`
 }
 
 type UserDTO struct {
@@ -273,6 +275,7 @@ func serverDTO(item model.Server) ServerDTO {
 		AuthorizationRevision: item.AuthorizationRevision, AuthorizationConfirmed: item.AuthorizationConfirmed,
 		AuthorizationPendingReason: item.AuthorizationPendingReason, UsersRevision: item.UsersRevision,
 		UsersConfirmed: item.UsersConfirmed, UsersPendingReason: item.UsersPendingReason, UsersFallback: item.UsersFallback,
+		AuthorizationFastLane: item.AuthorizationFastLane, RuntimeUsersEnabled: item.RuntimeUsersEnabled,
 	}
 }
 

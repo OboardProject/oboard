@@ -143,9 +143,8 @@ func (s *Server) registerUserAutomationOperations() {
 		if err := s.store.Delete(ctx, "users", user.ID); err != nil {
 			return nil, err
 		}
-		s.applyChangePlan(ctx, user.ID, ClassifyUserRemoval())
-		_ = serverIDs
-		return s.attachDeliveryCompletion(ctx, map[string]any{"deleted": true, "user_id": user.ID}, user.ID, 0), nil
+		s.applyChangePlanOn(ctx, user.ID, serverIDs, ClassifyUserRemoval())
+		return s.attachDeliveryCompletionOn(ctx, map[string]any{"deleted": true, "user_id": user.ID}, user.ID, 0, serverIDs), nil
 	})
 
 	// ---- users.session_revoke ----

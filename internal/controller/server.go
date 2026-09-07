@@ -4098,6 +4098,8 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			TrafficResetDay          *int                      `json:"traffic_reset_day"`
 			TrafficLimitBytes        *int64                    `json:"traffic_limit_bytes"`
 			TrafficUsedBytes         *int64                    `json:"traffic_used_bytes"`
+			AuthorizationFastLane    *bool                     `json:"authorization_fast_lane"`
+			RuntimeUsersEnabled      *bool                     `json:"runtime_users_enabled"`
 		}
 		var raw json.RawMessage
 		if !decode(w, r, &raw) {
@@ -4302,8 +4304,13 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if err := s.applyServerDeliveryFlags(r.Context(), v.ID, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
+			fail(w, err, 500)
+			return
+		}
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
 		updated, _ := s.store.GetServer(r.Context(), v.ID)
+		s.annotateOneServerDeliveryStatus(r.Context(), updated)
 		response := map[string]any{"server": updated}
 		if current.TimeCorrectionMode != v.TimeCorrectionMode {
 			if err := s.store.ResetServerTimeCheck(r.Context(), v.ID); err != nil {
@@ -11222,8 +11229,7 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		s.applyChangePlan(r.Context(), id, ClassifyUserRemoval())
-		_ = serverIDs
+		s.applyChangePlanOn(r.Context(), id, serverIDs, ClassifyUserRemoval())
 		auditReq(s, r, "delete", "user", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true})
 	default:

@@ -270,6 +270,7 @@ func defaultDescriptors() []Descriptor {
 		"authorization_revision": map[string]any{"type": "integer"}, "authorization_confirmed": boolValue,
 		"authorization_pending_reason": stringValue, "users_revision": map[string]any{"type": "integer"},
 		"users_confirmed": boolValue, "users_pending_reason": stringValue, "users_fallback": stringValue,
+		"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 	})
 	user := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "username": stringValue, "nickname": stringValue,
@@ -712,6 +713,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"service_start_at": stringValue, "clear_service_start_at": boolValue, "expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导；仅设置 traffic_reset_day 时自动使用 month_day"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "单独设置时自动将 traffic_reset_mode 切换为 month_day；为空时可按账期日期推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags": serverDisplayTagsSchema(),
+			"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":

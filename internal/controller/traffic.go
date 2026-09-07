@@ -71,11 +71,35 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	// accounted. They are answered as terminally rejected so the Agent drops
 	// them locally instead of resending the same failing batch forever.
 	rejected := make([]model.TrafficAcceptedReport, 0)
+	tailAccepted := make([]model.TrafficAcceptedReport, 0)
 	for _, item := range req.Reports {
 		report, period, err := s.validateAgentTrafficRangeItem(r, server, item, req.PeriodKey, access, planPolicies, loc)
 		if err != nil {
 			var rejection *trafficRejection
 			if errors.As(err, &rejection) {
+				kind, ok := s.legalTrafficTail(r.Context(), server.ID, item.UserID, item.StreamID, rejection.Reason)
+				if ok && kind == trafficTailDeletedSnapshot {
+					tailAccepted = append(tailAccepted, model.TrafficAcceptedReport{
+						ReportID: strings.TrimSpace(item.ReportID), Status: "accepted", Reason: "legal_tail",
+						StreamID: strings.TrimSpace(item.StreamID), CounterEpoch: strings.TrimSpace(item.CounterEpoch), PeriodKey: strings.TrimSpace(item.PeriodKey),
+					})
+					continue
+				}
+				if ok && kind == trafficTailActiveCheckpoint {
+					report, period, err = s.validateAgentTrafficRangeItemAllowInactive(r, server, item, req.PeriodKey, access, planPolicies, loc)
+					if err == nil {
+						reports = append(reports, report)
+						periods[report.UserID] = period
+						continue
+					}
+					if !errors.As(err, &rejection) {
+						fail(w, err, trafficReportFailureStatus(err))
+						return
+					}
+				}
+				if rejection.Reason == "user_deleted" {
+					rejection.Reason = "unattributable_traffic"
+				}
 				log.Printf("traffic ledger rejected report agent=%q server_id=%d user_id=%d inbound_id=%v report_id=%q reason=%s", server.AgentID, server.ID, item.UserID, valueOrZero(item.InboundID), strings.TrimSpace(item.ReportID), rejection.Reason)
 				rejected = append(rejected, model.TrafficAcceptedReport{ReportID: strings.TrimSpace(item.ReportID), Status: "rejected", Reason: rejection.Reason})
 				continue
@@ -93,6 +117,18 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		if err := access.validateStream(stream); err != nil {
 			var rejection *trafficRejection
 			if errors.As(err, &rejection) {
+				kind, ok := s.legalTrafficTail(r.Context(), server.ID, stream.UserID, stream.StreamID, rejection.Reason)
+				if ok && kind == trafficTailActiveCheckpoint {
+					if err := access.validateStreamAllowInactive(stream); err == nil {
+						streams = append(streams, stream)
+						if _, exists := periods[stream.UserID]; !exists {
+							if period, periodErr := s.trafficPeriodForUser(r, stream.UserID, stream.PeriodKey, planPolicies, loc); periodErr == nil {
+								periods[stream.UserID] = period
+							}
+						}
+						continue
+					}
+				}
 				// The stream's owner is gone, or its identity can never be
 				// stored; skip the observation instead of failing the
 				// accounting batch it travels with.
@@ -135,6 +171,9 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 			s.trafficReportsAcceptedTotal.Add(1)
 		}
 	}
+	for range tailAccepted {
+		s.trafficReportsAcceptedTotal.Add(1)
+	}
 	for _, accepted := range result.AcceptedReports {
 		if accepted.Status != "accepted" {
 			continue
@@ -154,6 +193,9 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	}
 	s.trafficPolicyRuntimeAppliesTotal.Add(1)
 	acceptedReports := result.AcceptedReports
+	if len(tailAccepted) > 0 {
+		acceptedReports = append(append(make([]model.TrafficAcceptedReport, 0, len(acceptedReports)+len(tailAccepted)), acceptedReports...), tailAccepted...)
+	}
 	if len(rejected) > 0 {
 		s.trafficReportsRejectedTotal.Add(uint64(len(rejected)))
 		log.Printf("traffic ledger rejected %d unaccountable report(s) from agent=%s first_reason=%s", len(rejected), server.AgentID, rejected[0].Reason)
@@ -181,6 +223,34 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 		"accepted_report_ids": acceptedReportIDs(acceptedReports),
 		"policies":            policies,
 	})
+}
+
+const (
+	trafficTailActiveCheckpoint = "active_checkpoint"
+	trafficTailDeletedSnapshot  = "deleted_snapshot"
+)
+
+func (s *Server) legalTrafficTail(ctx context.Context, serverID, userID int64, streamID, reason string) (string, bool) {
+	streamID = strings.TrimSpace(streamID)
+	if s == nil || s.store == nil || serverID <= 0 || userID <= 0 || streamID == "" {
+		return "", false
+	}
+	switch strings.TrimSpace(reason) {
+	case "user_inactive":
+		found, err := s.store.HasTrafficCounterStream(ctx, serverID, userID, streamID)
+		if err != nil || !found {
+			return "", false
+		}
+		return trafficTailActiveCheckpoint, true
+	case "user_deleted":
+		found, err := s.store.HasTrafficTailStream(ctx, serverID, userID, streamID)
+		if err != nil || !found {
+			return "", false
+		}
+		return trafficTailDeletedSnapshot, true
+	default:
+		return "", false
+	}
 }
 
 var errTrafficForbidden = errors.New("inbound does not belong to this agent")
@@ -244,6 +314,14 @@ func newTrafficReportAccess(server *model.Server, routing *routingSnapshot) traf
 // violation, and an entity that has been deleted or disabled is terminal for
 // that single report only.
 func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pathID *int64) error {
+	return a.validateIdentityAccess(userID, inboundID, pathID, false)
+}
+
+func (a trafficReportAccess) validateIdentityAllowInactive(userID int64, inboundID *int64, pathID *int64) error {
+	return a.validateIdentityAccess(userID, inboundID, pathID, true)
+}
+
+func (a trafficReportAccess) validateIdentityAccess(userID int64, inboundID *int64, pathID *int64, allowInactive bool) error {
 	if inboundID == nil {
 		// A structurally malformed report is terminal for that one report,
 		// not the batch. The Agent keeps a rejected batch in its local state,
@@ -279,7 +357,7 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 	if !ok {
 		return trafficReject("user_deleted", "traffic report user no longer exists")
 	}
-	if u.Status != "active" {
+	if u.Status != "active" && !allowInactive {
 		return trafficReject("user_inactive", "traffic report user is not active")
 	}
 	resolvedPath := int64(0)
@@ -308,6 +386,14 @@ func (a trafficReportAccess) validateIdentity(userID int64, inboundID *int64, pa
 // forever - taking the healthy reports and the lease-renewing policy response
 // in the same request down with it.
 func (a trafficReportAccess) validateStream(stream model.TrafficStreamObservation) error {
+	return a.validateStreamAccess(stream, false)
+}
+
+func (a trafficReportAccess) validateStreamAllowInactive(stream model.TrafficStreamObservation) error {
+	return a.validateStreamAccess(stream, true)
+}
+
+func (a trafficReportAccess) validateStreamAccess(stream model.TrafficStreamObservation, allowInactive bool) error {
 	if stream.UserID <= 0 || strings.TrimSpace(stream.StreamID) == "" || strings.TrimSpace(stream.CounterEpoch) == "" || strings.TrimSpace(stream.PeriodKey) == "" {
 		return trafficReject("invalid_stream", "traffic stream identity is incomplete")
 	}
@@ -321,13 +407,13 @@ func (a trafficReportAccess) validateStream(stream model.TrafficStreamObservatio
 		if stream.PathID > 0 {
 			pathID = &stream.PathID
 		}
-		return a.validateIdentity(stream.UserID, &inboundID, pathID)
+		return a.validateIdentityAccess(stream.UserID, &inboundID, pathID, allowInactive)
 	}
 	u, ok := a.userByID[stream.UserID]
 	if !ok {
 		return trafficReject("user_deleted", "traffic stream user no longer exists")
 	}
-	if u.Status != "active" {
+	if u.Status != "active" && !allowInactive {
 		return trafficReject("user_inactive", "traffic stream user is not active")
 	}
 	return nil
@@ -350,6 +436,28 @@ func (s *Server) validateAgentTrafficRangeItem(r *http.Request, server *model.Se
 	if err := access.validateIdentity(item.UserID, item.InboundID, item.PathID); err != nil {
 		return model.TrafficReport{}, model.TrafficPeriod{}, err
 	}
+	return s.finishAgentTrafficRangeItem(r, server, item, requestPeriod, planPolicies, loc)
+}
+
+func (s *Server) validateAgentTrafficRangeItemAllowInactive(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
+	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
+	}
+	if item.ToUpload < item.FromUpload || item.ToDownload < item.FromDownload || item.FromUpload < 0 || item.FromDownload < 0 {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
+	}
+	source := strings.TrimSpace(item.Source)
+	if source != "core" && source != "ssh" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report source is invalid")
+	}
+	if err := access.validateIdentityAllowInactive(item.UserID, item.InboundID, item.PathID); err != nil {
+		return model.TrafficReport{}, model.TrafficPeriod{}, err
+	}
+	return s.finishAgentTrafficRangeItem(r, server, item, requestPeriod, planPolicies, loc)
+}
+
+func (s *Server) finishAgentTrafficRangeItem(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
+	source := strings.TrimSpace(item.Source)
 	reportedPeriodKey := strings.TrimSpace(item.PeriodKey)
 	if reportedPeriodKey == "" {
 		reportedPeriodKey = strings.TrimSpace(requestPeriod)

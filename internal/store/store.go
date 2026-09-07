@@ -698,6 +698,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateTrafficLedgerV2(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateServerDeliveryFlags(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateTrafficPolicyRevision(ctx); err != nil {
 		return err
 	}

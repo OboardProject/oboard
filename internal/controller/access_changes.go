@@ -906,6 +906,7 @@ func (s *Server) accessChanges(w http.ResponseWriter, r *http.Request) {
 			view := s.accessChangeDeliveryView(r.Context(), change)
 			view["access_change"] = change
 			view["runtime_authorization_mode"] = s.authorizationMode(r.Context())
+			view["sessions_closed"] = 0
 			write(w, 200, view)
 			return
 		}

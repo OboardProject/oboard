@@ -215,11 +215,14 @@ func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64) {
 		// Agent time to acknowledge before re-sending the same snapshot.
 		return
 	}
-	if !serverSupportsAuthorizationControl(*server) {
-		// Older Agents only learn about revokes through the task queue and
-		// traffic responses. Keep that path alive and label the limitation;
-		// the queued task's success is what confirms the revision.
-		if state.DeliveredRevision >= lease.Revision && state.PendingReason == store.AuthorizationPendingAgentUpgrade {
+	if !s.authorizationFastLaneEnabled(ctx, *server) {
+		// Older Agents, or a server whose fast lane is turned off, learn
+		// about revokes through the task queue and traffic responses.
+		reason := store.AuthorizationPendingAgentUpgrade
+		if serverSupportsAuthorizationControl(*server) {
+			reason = store.AuthorizationPendingCompatibilityTask
+		}
+		if state.DeliveredRevision >= lease.Revision && state.PendingReason == reason {
 			return
 		}
 		if serverSupportsAuthorizationLease(*server) && server.Status == model.ServerOnline {
@@ -229,7 +232,7 @@ func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64) {
 				_ = s.store.RecordAuthorizationDelivery(ctx, serverID, lease.Revision, lease.Sequence, "task")
 			}
 		}
-		_ = s.store.MarkAuthorizationPending(ctx, serverID, store.AuthorizationPendingAgentUpgrade, "", true)
+		_ = s.store.MarkAuthorizationPending(ctx, serverID, reason, "", true)
 		return
 	}
 	if !s.agentControlOnline(serverID) {

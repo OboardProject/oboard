@@ -60,6 +60,10 @@ func ClassifyCredentialRotation() ChangePlan {
 }
 
 func (s *Server) applyChangePlan(ctx context.Context, userID int64, plan ChangePlan) {
+	s.applyChangePlanOn(ctx, userID, nil, plan)
+}
+
+func (s *Server) applyChangePlanOn(ctx context.Context, userID int64, serverIDs []int64, plan ChangePlan) {
 	if plan.Authorization {
 		s.wakeAuthorizationSync()
 	}
@@ -67,31 +71,48 @@ func (s *Server) applyChangePlan(ctx context.Context, userID int64, plan ChangeP
 		s.wakeRuntimeUsersSync()
 	}
 	if plan.TrafficPolicy {
-		serverIDs, err := s.userAccountingServerIDs(ctx, userID)
-		if err != nil {
-			logConfigurationError("user accounting servers", err)
-			return
+		ids := serverIDs
+		if ids == nil {
+			var err error
+			ids, err = s.userAccountingServerIDs(ctx, userID)
+			if err != nil {
+				logConfigurationError("user accounting servers", err)
+				return
+			}
 		}
-		if err := s.queueApplyTrafficPolicy(ctx, serverIDs, plan.Reason, map[int64]bool{userID: true}); err != nil {
+		if err := s.queueApplyTrafficPolicy(ctx, ids, plan.Reason, map[int64]bool{userID: true}); err != nil {
 			logConfigurationError("queue traffic policy", err)
 		}
 	}
 	if plan.CoreConfig {
+		if serverIDs != nil {
+			if err := s.queueCoreConfigRefreshForServers(ctx, serverIDs, plan.Reason); err != nil {
+				logConfigurationError("queue core config for user change", err)
+			}
+			return
+		}
 		if err := s.queueCoreConfigRefreshForUser(ctx, userID, plan.Reason); err != nil {
 			logConfigurationError("queue core config for user change", err)
 		}
 		return
 	}
 	if plan.RuntimeUsers {
-		s.queueRuntimeUsersFallbackIfNeeded(ctx, userID, plan.Reason)
+		s.queueRuntimeUsersFallbackIfNeededOn(ctx, userID, serverIDs, plan.Reason)
 	}
 }
 
 func (s *Server) queueRuntimeUsersFallbackIfNeeded(ctx context.Context, userID int64, reason string) {
-	serverIDs, err := s.userAccountingServerIDs(ctx, userID)
-	if err != nil {
-		logConfigurationError("user accounting servers", err)
-		return
+	s.queueRuntimeUsersFallbackIfNeededOn(ctx, userID, nil, reason)
+}
+
+func (s *Server) queueRuntimeUsersFallbackIfNeededOn(ctx context.Context, userID int64, serverIDs []int64, reason string) {
+	if serverIDs == nil {
+		var err error
+		serverIDs, err = s.userAccountingServerIDs(ctx, userID)
+		if err != nil {
+			logConfigurationError("user accounting servers", err)
+			return
+		}
 	}
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
@@ -103,7 +124,7 @@ func (s *Server) queueRuntimeUsersFallbackIfNeeded(ctx context.Context, userID i
 		if !ok {
 			continue
 		}
-		if !serverSupportsRuntimeUsersLane(server) {
+		if !s.runtimeUsersLaneEnabled(ctx, server) {
 			restart = append(restart, serverID)
 			continue
 		}

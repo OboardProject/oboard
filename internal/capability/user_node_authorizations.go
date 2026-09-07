@@ -45,7 +45,7 @@ func userNodeAuthorizationDescriptors(positiveID, stringValue, boolValue map[str
 		{
 			Name: "user_node_authorizations.list", Description: "列出一个节点的单独用户授权；plan_includes 标识该用户套餐也包含此节点，最终节点集合按并集计算且不会重复",
 			InputSchema:    schemaObject(map[string]any{"node_type": nodeType, "node_id": positiveID}, "node_type", "node_id"),
-			OutputSchema:   schemaObject(map[string]any{"node_type": stringValue, "node_id": positiveID, "authorizations": arrayOf(authorization), "count": map[string]any{"type": "integer", "minimum": 0}, "runtime_authorization_mode": stringValue}, "authorizations"),
+			OutputSchema:   schemaObject(map[string]any{"node_type": stringValue, "node_id": positiveID, "authorizations": arrayOf(authorization), "count": map[string]any{"type": "integer", "minimum": 0}, "runtime_authorization_mode": stringValue, "external_credential_no_remote_revoke": boolValue}, "authorizations"),
 			RequiredScopes: []string{"user_node_authorizations:read"}, ResourceTypes: []string{"user", "inbound", "proxy_path", "external_outbound"}, ResourceEvaluator: "user_ids",
 			ReadOnly: true, Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, RBACPermission: "admin.settings",
 			ResolveResourceRefs: userNodeAuthorizationListRefs,

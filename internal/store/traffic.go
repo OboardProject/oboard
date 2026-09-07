@@ -87,7 +87,70 @@ func (s *Store) migrateTrafficLedgerV2(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_traffic_reports_range on traffic_reports(server_id, counter_source, stream_id, counter_epoch, period_key, from_upload_bytes, to_upload_bytes, from_download_bytes, to_download_bytes) where stream_id <> ''`); err != nil {
 		return err
 	}
-	return nil
+	return s.migrateTrafficTail(ctx)
+}
+
+func (s *Store) migrateTrafficTail(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `create table if not exists traffic_tail_streams (
+		id integer primary key autoincrement,
+		server_id integer not null,
+		user_id integer not null,
+		counter_source text not null,
+		stream_id text not null,
+		counter_epoch text not null,
+		period_key text not null,
+		inbound_id integer not null default 0,
+		path_id integer not null default 0,
+		accepted_upload_bytes integer not null default 0,
+		accepted_download_bytes integer not null default 0,
+		captured_at text not null,
+		unique(server_id, user_id, counter_source, stream_id, counter_epoch, period_key)
+	)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_traffic_tail_streams_lookup on traffic_tail_streams(server_id, user_id, stream_id)`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `drop trigger if exists traffic_tail_on_user_delete`); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `create trigger traffic_tail_on_user_delete before delete on users
+begin
+	insert or ignore into traffic_tail_streams(
+		server_id, user_id, counter_source, stream_id, counter_epoch, period_key,
+		inbound_id, path_id, accepted_upload_bytes, accepted_download_bytes, captured_at
+	)
+	select server_id, user_id, counter_source, stream_id, counter_epoch, period_key,
+		inbound_id, path_id, accepted_upload_bytes, accepted_download_bytes, datetime('now')
+	from traffic_counter_streams where user_id = old.id;
+end`)
+	return err
+}
+
+func (s *Store) HasTrafficCounterStream(ctx context.Context, serverID, userID int64, streamID string) (bool, error) {
+	streamID = strings.TrimSpace(streamID)
+	if serverID <= 0 || userID <= 0 || streamID == "" {
+		return false, nil
+	}
+	var found int
+	err := s.db.QueryRowContext(ctx, `select 1 from traffic_counter_streams where server_id=? and user_id=? and stream_id=? limit 1`, serverID, userID, streamID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *Store) HasTrafficTailStream(ctx context.Context, serverID, userID int64, streamID string) (bool, error) {
+	streamID = strings.TrimSpace(streamID)
+	if serverID <= 0 || userID <= 0 || streamID == "" {
+		return false, nil
+	}
+	var found int
+	err := s.db.QueryRowContext(ctx, `select 1 from traffic_tail_streams where server_id=? and user_id=? and stream_id=? limit 1`, serverID, userID, streamID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *Store) AllocateTrafficLease(ctx context.Context, serverID, userID int64, periodKey string, limitBytes, usedBytes int64) (TrafficLeaseAllocation, error) {

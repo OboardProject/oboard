@@ -79,6 +79,7 @@ func (s *Service) decorateServerDelivery(ctx context.Context, items []model.Serv
 	for _, state := range userStates {
 		usersByID[state.ServerID] = state
 	}
+	flagByID, _ := s.store.ListServerDeliveryFlags(ctx)
 	for i := range items {
 		if auth, ok := authByID[items[i].ID]; ok {
 			items[i].AuthorizationRevision = auth.DesiredRevision
@@ -93,6 +94,12 @@ func (s *Service) decorateServerDelivery(ctx context.Context, items []model.Serv
 				items[i].UsersFallback = "apply_core_config"
 			}
 		}
+		flags, ok := flagByID[items[i].ID]
+		if !ok {
+			flags = store.ServerDeliveryFlags{AuthorizationFastLane: true, RuntimeUsersEnabled: true}
+		}
+		items[i].AuthorizationFastLane = flags.AuthorizationFastLane
+		items[i].RuntimeUsersEnabled = flags.RuntimeUsersEnabled
 	}
 }
 

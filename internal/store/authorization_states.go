@@ -22,6 +22,7 @@ const (
 	AuthorizationPendingAwaitingConfirm    = "awaiting_confirmation"
 	AuthorizationPendingSuperseded         = "superseded"
 	AuthorizationPendingRuntimeUnavailable = "runtime_unavailable"
+	AuthorizationPendingCompatibilityTask  = "compatibility_task"
 )
 
 // AuthorizationState is the durable per-server authorization ledger. The

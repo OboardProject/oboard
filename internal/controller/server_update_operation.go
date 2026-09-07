@@ -56,6 +56,8 @@ type serverUpdateChanges struct {
 	TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes,omitempty"`
 	TrafficUsedBytes         *int64                      `json:"traffic_used_bytes,omitempty"`
 	DisplayTags              *[]model.ServerDisplayTag   `json:"display_tags,omitempty"`
+	AuthorizationFastLane    *bool                       `json:"authorization_fast_lane,omitempty"`
+	RuntimeUsersEnabled      *bool                       `json:"runtime_users_enabled,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -205,6 +207,8 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 		next.TrafficDownloadBytes = 0
 	})
 	set("display_tags", changes.DisplayTags != nil, func() { next.DisplayTags = *changes.DisplayTags })
+	set("authorization_fast_lane", changes.AuthorizationFastLane != nil, func() {})
+	set("runtime_users_enabled", changes.RuntimeUsersEnabled != nil, func() {})
 	return changed
 }
 
@@ -255,6 +259,9 @@ func (s *Server) registerServerUpdateOperation() {
 			if err := s.store.SetServerTrafficUsed(ctx, next.ID, *request.Changes.TrafficUsedBytes, window); err != nil {
 				return nil, err
 			}
+		}
+		if err := s.applyServerDeliveryFlags(ctx, next.ID, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled); err != nil {
+			return nil, err
 		}
 		if current.TimeCorrectionMode != next.TimeCorrectionMode {
 			if err := s.store.ResetServerTimeCheck(ctx, next.ID); err != nil {

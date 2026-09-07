@@ -136,3 +136,24 @@ func TestUsersDigestMatchesSortedCanonicalForm(t *testing.T) {
 		t.Fatal("revision is not part of the digest")
 	}
 }
+
+func BenchmarkUsersDigest(b *testing.B) {
+	entries := make([]model.UsersInstallEntry, 128)
+	scope := make([]string, 8)
+	for i := range scope {
+		scope[i] = "in-" + string(rune('a'+i))
+	}
+	for i := range entries {
+		entries[i] = model.UsersInstallEntry{
+			InboundTag: scope[i%len(scope)], AuthUser: "user-" + string(rune('a'+i%26)),
+			AuthorizationKey: "key", Credential: model.UsersCredential{UUID: "11111111-1111-4111-8111-111111111111"},
+			RouteOutbound: "direct",
+		}
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := UsersDigest(1, scope, entries); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

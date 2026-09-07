@@ -20,11 +20,18 @@ func (s *Server) attachAccessChangeDelivery(ctx context.Context, result map[stri
 }
 
 func (s *Server) attachDeliveryCompletion(ctx context.Context, result map[string]any, userID, changeID int64) map[string]any {
+	return s.attachDeliveryCompletionOn(ctx, result, userID, changeID, nil)
+}
+
+func (s *Server) attachDeliveryCompletionOn(ctx context.Context, result map[string]any, userID, changeID int64, serverIDs []int64) map[string]any {
 	if result == nil {
 		result = map[string]any{}
 	}
 	result["change_id"] = changeID
 	status := s.deliveryCompletionForUser(ctx, userID)
+	if serverIDs != nil {
+		status = s.deliveryCompletionForServers(ctx, serverIDs)
+	}
 	result["pending_servers"] = status.pendingServers
 	result["completion"] = status.completion
 	return result
@@ -160,8 +167,10 @@ func (s *Server) accessChangeDeliveryView(ctx context.Context, change *model.Acc
 		return map[string]any{"change_id": 0, "retryable": false, "pending_servers": []int64{}, "completion": "confirmed"}
 	}
 	out := map[string]any{
-		"change_id": change.ID,
-		"retryable": change.Status == model.AccessChangeFailed,
+		"change_id":        change.ID,
+		"retryable":        change.Status == model.AccessChangeFailed,
+		"pending_servers":  []int64{},
+		"completion":       "confirmed",
 	}
 	targets, err := s.store.ListAccessChangeTargets(ctx, change.ID)
 	if err != nil || len(targets) == 0 {

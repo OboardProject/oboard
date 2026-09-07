@@ -214,11 +214,15 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64) {
 		return
 	}
 	pkg.Mode = "full"
-	if !serverSupportsRuntimeUsersLane(*server) {
-		if state.PendingReason == store.RuntimeUsersPendingAgentUpgrade && state.DeliveredRevision >= pkg.UsersRevision {
+	if !s.runtimeUsersLaneEnabled(ctx, *server) {
+		reason := store.RuntimeUsersPendingAgentUpgrade
+		if serverSupportsRuntimeUsersLane(*server) {
+			reason = store.RuntimeUsersPendingCoreConfigFallback
+		}
+		if state.PendingReason == reason && state.DeliveredRevision >= pkg.UsersRevision {
 			return
 		}
-		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingAgentUpgrade, "", true)
+		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, reason, "", true)
 		return
 	}
 	if len(pkg.Scope) == 0 {
@@ -461,6 +465,11 @@ func (s *Server) annotateOneServerDeliveryStatus(ctx context.Context, server *mo
 			server.UsersFallback = "apply_core_config"
 		}
 	}
+	flags, err := s.store.ServerDeliveryFlags(ctx, server.ID)
+	if err != nil {
+		flags = store.ServerDeliveryFlags{AuthorizationFastLane: true, RuntimeUsersEnabled: true}
+	}
+	applyDeliveryFlagsToServer(server, flags)
 }
 
 func parseAppliedUsersHeaders(r *http.Request) *model.UsersAppliedSnapshot {

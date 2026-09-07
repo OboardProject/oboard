@@ -971,6 +971,8 @@ func (s *Server) configurationSyncViews(ctx context.Context, states []store.Conf
 	views := configurationSyncViews(states, servers)
 	for i := range views {
 		s.attachLaneFields(ctx, views[i], states[i].ServerID)
+		views[i]["sessions_closed"] = 0
+		views[i]["change_id"] = 0
 	}
 	return views
 }

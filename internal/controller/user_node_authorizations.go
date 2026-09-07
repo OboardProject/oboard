@@ -104,7 +104,8 @@ func (s *Server) queryUserNodeAuthorizations(ctx context.Context, principal appl
 	return map[string]any{
 		"node_type": request.NodeType, "node_id": request.NodeID,
 		"authorizations": filtered, "count": len(filtered),
-		"runtime_authorization_mode": s.authorizationMode(ctx),
+		"runtime_authorization_mode":           s.authorizationMode(ctx),
+		"external_credential_no_remote_revoke": request.NodeType == model.AssignableNodeExternalOutbound,
 	}, nil
 }
 
@@ -140,10 +141,10 @@ func (s *Server) prepareUserNodeAuthorizationSet(ctx context.Context, principal 
 func (s *Server) applyUserNodeAuthorizationSet(ctx context.Context, actorID *int64, req batchUserExceptionRequest, existing []model.UserNodeException, outcome batchExceptionOutcome) (any, error) {
 	changed := append(append([]model.UserNodeException{}, outcome.Created...), outcome.Updated...)
 	if len(changed) == 0 {
-		return map[string]any{
+		return s.attachDeliveryCompletion(ctx, map[string]any{
 			"created": 0, "updated": 0, "skipped": len(outcome.Skipped),
 			"affected_users": 0, "access_change_id": int64(0), "access_change_status": "none", "queued_tasks": 0,
-		}, nil
+		}, 0, 0), nil
 	}
 	writes := make([]store.UserNodeExceptionWrite, 0, len(changed))
 	affectedUsers := map[int64]bool{}
@@ -257,7 +258,7 @@ func (s *Server) prepareUserNodeAuthorizationRevoke(ctx context.Context, princip
 
 func (s *Server) revokeUserNodeAuthorizations(ctx context.Context, actorID *int64, items []model.UserNodeException) (any, error) {
 	if len(items) == 0 {
-		return map[string]any{"revoking": false, "authorization_ids": []int64{}, "access_change_id": int64(0), "access_change_status": "none", "queued_tasks": 0}, nil
+		return s.attachDeliveryCompletion(ctx, map[string]any{"revoking": false, "authorization_ids": []int64{}, "access_change_id": int64(0), "access_change_status": "none", "queued_tasks": 0}, 0, 0), nil
 	}
 	before, err := s.store.ListUserNodeExceptions(ctx)
 	if err != nil {

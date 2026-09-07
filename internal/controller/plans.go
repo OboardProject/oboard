@@ -957,19 +957,19 @@ func (s *Server) deleteSubscriptionPlan(ctx context.Context, id int64, actorID *
 		if err := s.store.DeleteSubscriptionPlan(ctx, id); err != nil {
 			return nil, err
 		}
-		return map[string]any{"deleted": true, "plan_id": id, "unbound_user_count": 0, "access_change_id": int64(0), "access_change_status": ""}, nil
+		return s.attachDeliveryCompletion(ctx, map[string]any{"deleted": true, "plan_id": id, "unbound_user_count": 0, "access_change_id": int64(0), "access_change_status": ""}, 0, 0), nil
 	}
 	change, err := s.createPlanDeleteChange(ctx, r, actorID, plan, len(members))
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	return s.attachAccessChangeDelivery(ctx, map[string]any{
 		"deleted":              false,
 		"plan_id":              id,
 		"unbound_user_count":   len(members),
 		"access_change_id":     change.ID,
 		"access_change_status": change.Status,
-	}, nil
+	}, change), nil
 }
 
 func (s *Server) subscriptionPlanSubroutes(w http.ResponseWriter, r *http.Request, id int64, parts []string) {
