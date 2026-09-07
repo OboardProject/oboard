@@ -1848,6 +1848,15 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var serverSnapshot []model.Server
 	serverSnapshotLoaded := false
+	var laneStates serverDeliveryLaneStates
+	laneStatesLoaded := false
+	loadLaneStates := func() serverDeliveryLaneStates {
+		if !laneStatesLoaded {
+			laneStates = s.loadServerDeliveryLaneStates(ctx)
+			laneStatesLoaded = true
+		}
+		return laneStates
+	}
 	var settingsSnapshot map[string]string
 	settingsSnapshotLoaded := false
 	loadSettingsSnapshot := func() (map[string]string, error) {
@@ -2116,9 +2125,6 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 					return listErr
 				}
 				users = s.withTrafficStatus(ctx, users)
-				if err := s.enrichSubscriptionCustomPaths(ctx, users, groups, members); err != nil {
-					return err
-				}
 				out["users"] = users
 				out["user_groups"] = groups
 				out["user_group_members"] = members
@@ -2366,7 +2372,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil && serverSnapshotLoaded {
 			err = timing.run("delivery", func() error {
-				s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+				s.annotateServerDeliveryStatusFromLaneStates(ctx, serverSnapshot, loadLaneStates())
 				return nil
 			})
 		}
@@ -2405,7 +2411,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil && serverSnapshotLoaded {
 			err = timing.run("delivery", func() error {
-				s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+				s.annotateServerDeliveryStatusFromLaneStates(ctx, serverSnapshot, loadLaneStates())
 				return nil
 			})
 		}
@@ -2651,7 +2657,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var tasks []model.AgentTask
-			tasks, err = s.store.ListTasks(ctx, intQuery(r, "limit", 300))
+			tasks, err = s.store.ListTaskTimeline(ctx, intQuery(r, "limit", 300))
 			if err == nil {
 				out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
 			}
@@ -2836,7 +2842,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			}
 			if serverSnapshotLoaded {
 				views := configurationSyncViews(configurationStates, serverSnapshot)
-				s.attachLaneFieldsToSyncViews(ctx, views, configurationStates)
+				s.attachLaneFieldsFromLaneStates(ctx, views, configurationStates, loadLaneStates())
 				out["configuration_sync"] = views
 				return nil
 			}
@@ -11337,23 +11343,37 @@ func (s *Server) revokeUserSessions(w http.ResponseWriter, r *http.Request, id i
 }
 
 func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []model.User {
+	if len(users) == 0 {
+		return users
+	}
 	groups, _ := s.store.ListUserGroups(ctx)
 	members, _ := s.store.ListUserGroupMembers(ctx)
 	userPolicies, _ := s.userPlanPolicies(ctx, users)
 	settings, _ := s.store.ListSettings(ctx)
 	loc := trafficLocation(settings)
+	bootstrapID, _ := s.store.BootstrapAdminUserID(ctx)
+	ids := make([]int64, 0, len(users))
+	for _, user := range users {
+		if user.ID > 0 {
+			ids = append(ids, user.ID)
+		}
+	}
+	periodsByUser, _ := s.store.ListTrafficPeriodsByUsers(ctx, ids)
+	transitionsByUser, _ := s.store.ListTrafficPeriodTransitionsByUsers(ctx, ids)
+	at := time.Now()
 	for i := range users {
-		users[i].Protected, _ = s.store.IsBootstrapAdmin(ctx, users[i].ID)
+		users[i].Protected = bootstrapID > 0 && users[i].ID == bootstrapID
 		limit, okLimit := userPolicies[users[i].ID]
 		if !okLimit {
 			limit = defaultUserLimitPolicy(users[i])
 		}
-		periodKey, start, end, err := s.resolvedTrafficWindow(ctx, users[i].ID, time.Now(), limit, loc)
-		if err != nil {
+		periodKey, _, _ := trafficWindow(at, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
+		resolved, ok := resolveTrafficPeriodKeyLocal(transitionsByUser[users[i].ID], periodKey)
+		if !ok {
 			continue
 		}
-		period, err := s.store.EnsureTrafficPeriod(ctx, users[i].ID, periodKey, start, end, limit.TrafficLimitBytes)
-		if err != nil {
+		period, ok := periodsByUser[users[i].ID][resolved]
+		if !ok {
 			continue
 		}
 		users[i].TrafficUsedBytes = period.Upload + period.Download
@@ -11363,6 +11383,21 @@ func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []mo
 	}
 	_ = s.enrichSubscriptionCustomPaths(ctx, users, groups, members)
 	return users
+}
+
+func resolveTrafficPeriodKeyLocal(chain map[string]string, periodKey string) (string, bool) {
+	current := strings.TrimSpace(periodKey)
+	if current == "" {
+		return "", false
+	}
+	for range 16 {
+		next := strings.TrimSpace(chain[current])
+		if next == "" || next == current {
+			return current, true
+		}
+		current = next
+	}
+	return "", false
 }
 
 func (s *Server) userSubscriptionToken(w http.ResponseWriter, r *http.Request, id int64, action string) {
@@ -13471,7 +13506,7 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	items, err := s.store.ListTasks(r.Context(), intQuery(r, "limit", 300))
+	items, err := s.store.ListTaskTimeline(r.Context(), intQuery(r, "limit", 300))
 	if err != nil {
 		fail(w, err, 500)
 		return

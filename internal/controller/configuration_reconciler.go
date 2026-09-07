@@ -963,7 +963,7 @@ func (s *Server) configurationSyncRetry(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) configurationSyncViews(ctx context.Context, states []store.ConfigurationSyncState) []map[string]any {
-	servers, err := s.store.ListServers(ctx)
+	servers, err := s.store.ListServerAgentReachability(ctx)
 	if err != nil {
 		logConfigurationError("list servers for sync views", err)
 		return configurationSyncViews(states, nil)

@@ -625,9 +625,9 @@ func (s *Server) listDNSZoneRecords(ctx context.Context, principal application.P
 	return map[string]any{"dns_records": records, "dns_zone": map[string]any{"id": zone.ID, "zone_name": zone.ZoneName, "credential_id": zone.CredentialID}, "count": len(records)}, nil
 }
 
-// listAgentTasksMCP returns sanitized Agent task views. Task payloads and
-// results are scrubbed so secrets (enrollment material, tunnel keys, SSH
-// passwords) never reach MCP output.
+// listAgentTasksMCP returns sanitized Agent task views. The collection
+// projection omits payload and result JSON so listing cannot pull those
+// bodies through the WAL; a single-task read still returns a redacted body.
 func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Principal, taskID, limit int64) (any, error) {
 	var items []model.AgentTask
 	if taskID > 0 {
@@ -640,7 +640,7 @@ func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Pr
 		}
 		items = []model.AgentTask{*task}
 	} else {
-		all, err := s.store.ListTasks(ctx, int(limit))
+		all, err := s.store.ListTaskTimeline(ctx, int(limit))
 		if err != nil {
 			return nil, err
 		}

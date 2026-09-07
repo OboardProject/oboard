@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -96,4 +98,100 @@ func TestAnnotateServerDeliveryStatusUsesConstantQueries(t *testing.T) {
 	if !servers[0].AuthorizationFastLane || !servers[7].RuntimeUsersEnabled {
 		t.Fatalf("delivery flags were not applied: %#v", servers[0])
 	}
+}
+
+func TestDeliveryAndLaneFieldsShareOneLedgerLoad(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	item := &model.Server{Name: "lane-share", ListenIP: "0.0.0.0", PortRangeStart: 21000, PortRangeEnd: 21010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	servers := []model.Server{*item}
+	views := []map[string]any{{}}
+	states := []store.ConfigurationSyncState{{ServerID: item.ID}}
+	before := db.SQLStatementCount()
+	lanes := srv.loadServerDeliveryLaneStates(ctx)
+	srv.annotateServerDeliveryStatusFromLaneStates(ctx, servers, lanes)
+	srv.attachLaneFieldsFromLaneStates(ctx, views, states, lanes)
+	if delta := db.SQLStatementCount() - before; delta != 3 {
+		t.Fatalf("shared lane load SQL statements = %d, want 3", delta)
+	}
+	if views[0]["desired_state"] == nil || views[0]["effective_state"] == nil {
+		t.Fatalf("lane fields missing: %#v", views[0])
+	}
+}
+
+func TestWithTrafficStatusDoesNotInsertPeriods(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	h, token := loginTestAdmin(t, db)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/users", token, map[string]any{"username": "member", "password": "long-user-password", "role": "viewer", "status": "active"}, http.StatusCreated)
+	user := created["user"].(map[string]any)
+	userID := int64(user["id"].(float64))
+	key, start, end := trafficWindow(time.Now(), model.TrafficResetMonthly, 1, time.Time{}, time.FixedZone("Asia/Shanghai", 8*3600))
+	if _, err := db.GetTrafficPeriod(ctx, userID, key); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("new user already had a traffic period: %v", err)
+	}
+
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=users", token, nil, http.StatusOK)
+	list := request(t, h, http.MethodGet, "/api/v1/ui/users", token, nil, http.StatusOK)
+	if _, err := db.GetTrafficPeriod(ctx, userID, key); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("listing users inserted a traffic period: %v", err)
+	}
+	pageUser := firstNamedUser(t, page["users"], "member")
+	listUser := firstNamedUser(t, list["users"], "member")
+	if pageUser["protected"] == true || listUser["protected"] == true {
+		t.Fatalf("member marked protected: page=%#v list=%#v", pageUser, listUser)
+	}
+	admin := firstNamedUser(t, page["users"], "admin")
+	if admin["protected"] != true {
+		t.Fatalf("bootstrap admin not protected: %#v", admin)
+	}
+
+	period, err := db.EnsureTrafficPeriod(ctx, userID, key, start, end, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "traffic-list", ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := db.AddTrafficReports(ctx, []model.TrafficReport{{
+		ReportID: "list-traffic", ServerID: server.ID, UserID: userID, PeriodKey: period.PeriodKey,
+		Upload: 100, Download: 40, StartedAt: now, EndedAt: now,
+	}}, period); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := request(t, h, http.MethodGet, "/api/v1/ui/users", token, nil, http.StatusOK)
+	member := firstNamedUser(t, refreshed["users"], "member")
+	if member["traffic_used_bytes"] != float64(140) || member["traffic_period_key"] != key {
+		t.Fatalf("existing period bytes not shown: %#v want key %q", member, key)
+	}
+}
+
+func firstNamedUser(t *testing.T, raw any, username string) map[string]any {
+	t.Helper()
+	items, ok := raw.([]any)
+	if !ok {
+		t.Fatalf("users = %#v", raw)
+	}
+	for _, item := range items {
+		user, ok := item.(map[string]any)
+		if ok && user["username"] == username {
+			return user
+		}
+	}
+	t.Fatalf("user %q not found in %#v", username, raw)
+	return nil
 }

@@ -1881,13 +1881,28 @@ func (s *Store) SetBootstrapAdmin(ctx context.Context, userID int64) error {
 	return err
 }
 
-func (s *Store) IsBootstrapAdmin(ctx context.Context, userID int64) (bool, error) {
+func (s *Store) BootstrapAdminUserID(ctx context.Context) (int64, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx, `select value from app_settings where key=?`, bootstrapAdminSetting).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return 0, nil
 	}
-	return err == nil && value == fmt.Sprint(userID), err
+	if err != nil {
+		return 0, err
+	}
+	id, convErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if convErr != nil || id <= 0 {
+		return 0, nil
+	}
+	return id, nil
+}
+
+func (s *Store) IsBootstrapAdmin(ctx context.Context, userID int64) (bool, error) {
+	id, err := s.BootstrapAdminUserID(ctx)
+	if err != nil {
+		return false, err
+	}
+	return id > 0 && id == userID, nil
 }
 
 func (s *Store) AssignUserToBuiltinGroup(ctx context.Context, userID int64, systemKey string) error {
@@ -2744,6 +2759,26 @@ func (s *Store) ListServers(ctx context.Context) ([]model.Server, error) {
 		return nil, err
 	}
 	return items, s.attachServerLatencySettings(ctx, items)
+}
+
+// ListServerAgentReachability returns only the fields configuration-sync views
+// need to decide whether an Agent can be reached. page-data used to call
+// ListServers for that, which also loaded telemetry and latency settings.
+func (s *Store) ListServerAgentReachability(ctx context.Context) ([]model.Server, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,coalesce(agent_id,''),status from servers order by id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Server{}
+	for rows.Next() {
+		var item model.Server
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetServer(ctx context.Context, id int64) (*model.Server, error) {
@@ -6956,9 +6991,16 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 }
 
 func (s *Store) GetTrafficPeriod(ctx context.Context, userID int64, periodKey string) (model.TrafficPeriod, error) {
+	row := s.db.QueryRowContext(ctx, trafficPeriodSelectSQL+` where user_id=? and period_key=?`, userID, periodKey)
+	return scanTrafficPeriod(row)
+}
+
+const trafficPeriodSelectSQL = `select id,user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at from traffic_periods`
+
+func scanTrafficPeriod(row interface{ Scan(dest ...any) error }) (model.TrafficPeriod, error) {
 	var p model.TrafficPeriod
 	var start, end, updated string
-	err := s.db.QueryRowContext(ctx, `select id,user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at from traffic_periods where user_id=? and period_key=?`, userID, periodKey).Scan(&p.ID, &p.UserID, &p.PeriodKey, &start, &end, &p.Upload, &p.Download, &p.Limit, &p.State, &updated)
+	err := row.Scan(&p.ID, &p.UserID, &p.PeriodKey, &start, &end, &p.Upload, &p.Download, &p.Limit, &p.State, &updated)
 	if err != nil {
 		return model.TrafficPeriod{}, err
 	}
@@ -6966,6 +7008,81 @@ func (s *Store) GetTrafficPeriod(ctx context.Context, userID int64, periodKey st
 	p.EndsAt = parseTime(end)
 	p.UpdatedAt = parseTime(updated)
 	return p, nil
+}
+
+// ListTrafficPeriodsByUsers loads every stored period for the given users in
+// one query so listing pages do not look up (user_id, period_key) per row.
+func (s *Store) ListTrafficPeriodsByUsers(ctx context.Context, userIDs []int64) (map[int64]map[string]model.TrafficPeriod, error) {
+	out := map[int64]map[string]model.TrafficPeriod{}
+	args, placeholders := int64IDQueryArgs(userIDs)
+	if len(args) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, trafficPeriodSelectSQL+` where user_id in (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		period, err := scanTrafficPeriod(rows)
+		if err != nil {
+			return nil, err
+		}
+		byKey := out[period.UserID]
+		if byKey == nil {
+			byKey = map[string]model.TrafficPeriod{}
+			out[period.UserID] = byKey
+		}
+		byKey[period.PeriodKey] = period
+	}
+	return out, rows.Err()
+}
+
+// ListTrafficPeriodTransitionsByUsers loads period-key remaps for listing so
+// ResolveTrafficPeriodKey is not one query per user.
+func (s *Store) ListTrafficPeriodTransitionsByUsers(ctx context.Context, userIDs []int64) (map[int64]map[string]string, error) {
+	out := map[int64]map[string]string{}
+	args, placeholders := int64IDQueryArgs(userIDs)
+	if len(args) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `select user_id,source_period_key,target_period_key from traffic_period_transitions where user_id in (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID int64
+		var source, target string
+		if err := rows.Scan(&userID, &source, &target); err != nil {
+			return nil, err
+		}
+		bySource := out[userID]
+		if bySource == nil {
+			bySource = map[string]string{}
+			out[userID] = bySource
+		}
+		bySource[source] = target
+	}
+	return out, rows.Err()
+}
+
+func int64IDQueryArgs(ids []int64) ([]any, string) {
+	seen := make(map[int64]struct{}, len(ids))
+	args := make([]any, 0, len(ids))
+	placeholders := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		args = append(args, id)
+		placeholders = append(placeholders, "?")
+	}
+	return args, strings.Join(placeholders, ",")
 }
 
 func (s *Store) ResolveTrafficPeriodKey(ctx context.Context, userID int64, periodKey string) (string, bool, error) {
@@ -7024,15 +7141,19 @@ func (s *Store) Dashboard(ctx context.Context) (model.DashboardSummary, error) {
 		{`select count(*),
 			coalesce(sum(case when status='active' then 1 else 0 end),0)
 			from users`, []any{&d.UsersTotal, &d.UsersActive}},
-		{`select coalesce(sum(p.upload_bytes),0),coalesce(sum(p.download_bytes),0)
-			from traffic_periods p
-			join (select user_id,max(started_at) as started_at from traffic_periods group by user_id) latest
-			  on latest.user_id=p.user_id and latest.started_at=p.started_at`, []any{&d.TrafficUpload, &d.TrafficDownload}},
+		{`select coalesce(sum(upload_bytes),0),coalesce(sum(download_bytes),0)
+			from (
+				select upload_bytes, download_bytes,
+					row_number() over (partition by user_id order by started_at desc) as rn
+				from traffic_periods
+			) latest
+			where rn = 1`, []any{&d.TrafficUpload, &d.TrafficDownload}},
 		{`select
-			(select count(*) from agent_tasks where status='pending'),
-			(select count(*) from agent_tasks where status='running'),
-			(select count(*) from agent_tasks where status in ('failed','rollback_failed')),
-			(select coalesce(max(config_version),0) from agent_tasks)`, []any{&d.PendingTasks, &d.RunningTasks, &d.FailedTasks, &d.LastConfigVersion}},
+			coalesce(sum(case when status='pending' then 1 else 0 end),0),
+			coalesce(sum(case when status='running' then 1 else 0 end),0),
+			coalesce(sum(case when status in ('failed','rollback_failed') then 1 else 0 end),0),
+			coalesce(max(config_version),0)
+			from agent_tasks`, []any{&d.PendingTasks, &d.RunningTasks, &d.FailedTasks, &d.LastConfigVersion}},
 	}
 	for _, item := range queries {
 		if err := s.db.QueryRowContext(ctx, item.query).Scan(item.dest...); err != nil {

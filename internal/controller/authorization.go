@@ -64,14 +64,21 @@ func defaultUserLimitPolicy(u model.User) core.UserLimitPolicy {
 }
 
 // userPlanPolicies resolves the plan-based speed/traffic policy per user.
+// Listing pages only need plan limits, not the full routing snapshot.
 func (s *Server) userPlanPolicies(ctx context.Context, users []model.User) (map[int64]core.UserLimitPolicy, error) {
-	data, err := s.store.FullRoutingConfigData(ctx)
+	plans, err := s.store.ListSubscriptionPlans(ctx)
 	if err != nil {
 		return nil, err
 	}
-	snap, err := s.buildAccessSnapshot(ctx, data)
+	bindings, err := s.store.ListEffectiveUserPlanBindings(ctx, time.Now())
 	if err != nil {
 		return nil, err
 	}
+	snap := core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
+		Users:    users,
+		Bindings: bindings,
+		Plans:    plans,
+		Now:      time.Now(),
+	})
 	return snap.UserLimitPolicyMap(), nil
 }

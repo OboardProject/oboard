@@ -2722,3 +2722,84 @@ func TestListTaskTimelineOmitsPayloadsAndKeepsSummaryColumns(t *testing.T) {
 		t.Fatalf("timeline older row = %#v", items[1])
 	}
 }
+
+func TestListServerAgentReachabilityOmitsTelemetry(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "reach-node", AgentID: "agent-reach", ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	before := s.SQLStatementCount()
+	items, err := s.ListServerAgentReachability(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delta := s.SQLStatementCount() - before; delta != 1 {
+		t.Fatalf("reachability SQL statements = %d, want 1", delta)
+	}
+	if len(items) != 1 || items[0].ID != server.ID || items[0].AgentID != "agent-reach" || items[0].Status != model.ServerOnline {
+		t.Fatalf("reachability = %#v", items)
+	}
+	if items[0].ConnectivityStatus != "" || items[0].TrafficUploadBytes != 0 {
+		t.Fatalf("reachability loaded telemetry: %#v", items[0])
+	}
+}
+
+func TestListTrafficPeriodsByUsersAndTransitions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	user := &model.User{Username: "period-user", PasswordHash: "x", Status: "active"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	other := &model.User{Username: "other-user", PasswordHash: "x", Status: "active"}
+	if err := s.CreateUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	source := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-08-01", StartedAt: now.Add(-48 * time.Hour), EndsAt: now.Add(-24 * time.Hour)}
+	target := model.TrafficPeriod{UserID: user.ID, PeriodKey: "2026-09-01", StartedAt: now.Add(-24 * time.Hour), EndsAt: now.Add(24 * time.Hour), Upload: 11, Download: 22}
+	if _, err := s.EnsureTrafficPeriod(ctx, source.UserID, source.PeriodKey, source.StartedAt, source.EndsAt, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EnsureTrafficPeriod(ctx, target.UserID, target.PeriodKey, target.StartedAt, target.EndsAt, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `update traffic_periods set upload_bytes=?,download_bytes=? where user_id=? and period_key=?`, target.Upload, target.Download, user.ID, target.PeriodKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `insert into traffic_period_transitions(user_id,source_period_key,target_period_key,created_at) values(?,?,?,?)`, user.ID, source.PeriodKey, target.PeriodKey, now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	periods, err := s.ListTrafficPeriodsByUsers(ctx, []int64{user.ID, other.ID, 0, user.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if periods[other.ID] != nil {
+		t.Fatalf("unexpected periods for other user: %#v", periods[other.ID])
+	}
+	got := periods[user.ID][target.PeriodKey]
+	if got.Upload != 11 || got.Download != 22 {
+		t.Fatalf("listed period = %#v", got)
+	}
+	transitions, err := s.ListTrafficPeriodTransitionsByUsers(ctx, []int64{user.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transitions[user.ID][source.PeriodKey] != target.PeriodKey {
+		t.Fatalf("transitions = %#v", transitions)
+	}
+	empty, err := s.ListTrafficPeriodsByUsers(ctx, nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty user list = %#v err=%v", empty, err)
+	}
+}

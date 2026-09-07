@@ -21220,15 +21220,15 @@ function Tasks({ data, client, loading: pageLoading }: any) {
         </div>
       </div>
     </div>
-    {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows} data={data} />}
+    {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows} data={data} client={client} />}
   </Panel>
 }
 
-function TaskTimeline({ rows, data }: { rows: any[]; data: any }) {
+function TaskTimeline({ rows, data, client }: { rows: any[]; data: any; client?: any }) {
   const groups = groupTasksForTimeline(rows, labelValue)
   if (!groups.length) return <p className="muted">暂无任务</p>
   return <MotionList className="task-card-list">{groups.map(group => (
-    <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} />
+    <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} client={client} />
   ))}</MotionList>
 }
 
@@ -21237,7 +21237,7 @@ function taskServerLabel(data: any, serverID: number) {
   return server?.name || `服务器 #${serverID}`
 }
 
-function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
+function TaskGroupCard({ group, data, client }: { group: TaskGroup; data: any; client?: any }) {
   const [expanded, setExpanded] = useState(false)
   const [openServerID, setOpenServerID] = useState<number | null>(null)
   const summary = serverTaskStatusSummary(group.tasks)
@@ -21286,7 +21286,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
     {expanded && (
       <div className="task-group-body">
         {isFlatSingle ? (
-          <TaskDetailList tasks={group.tasks} data={data} />
+          <TaskDetailList tasks={group.tasks} data={data} client={client} />
         ) : (
           <div className="task-server-list">
             {serverIDs.map(serverID => {
@@ -21305,7 +21305,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
                     <ChevronRight size={15} className={open ? 'task-chevron open' : 'task-chevron'} />
                   </div>
                 </button>
-                {open && <TaskDetailList tasks={tasks} data={data} />}
+                {open && <TaskDetailList tasks={tasks} data={data} client={client} />}
               </div>
             })}
             {(byServer.get(0) || []).length > 0 && (
@@ -21313,7 +21313,7 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
                 <div className="task-server-toggle static">
                   <div><strong>未绑定服务器</strong><span>{(byServer.get(0) || []).length} 项</span></div>
                 </div>
-                <TaskDetailList tasks={byServer.get(0) || []} data={data} />
+                <TaskDetailList tasks={byServer.get(0) || []} data={data} client={client} />
               </div>
             )}
           </div>
@@ -21323,23 +21323,51 @@ function TaskGroupCard({ group, data }: { group: TaskGroup; data: any }) {
   </MotionCard>
 }
 
-function TaskDetailList({ tasks, data }: { tasks: any[]; data: any }) {
+function TaskDetailList({ tasks, data, client }: { tasks: any[]; data: any; client?: any }) {
   const sorted = [...tasks].sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
   return <div className="task-detail-list">
-    {sorted.map(task => <TaskDetailCard key={task.id} task={task} data={data} />)}
+    {sorted.map(task => <TaskDetailCard key={task.id} task={task} data={data} client={client} />)}
   </div>
 }
 
-function TaskDetailCard({ task, data }: { task: any; data?: any }) {
+function taskHasDetailBody(task: any) {
+  return Boolean(String(task?.payload_json || '').trim() || String(task?.result_json || '').trim())
+}
+
+function TaskDetailCard({ task, data, client }: { task: any; data?: any; client?: any }) {
   const [open, setOpen] = useState(false)
-  const result = parseJSONLoose(task.result_json)
-  const payload = parseJSONLoose(task.payload_json)
+  const [detail, setDetail] = useState(task)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  useEffect(() => {
+    setDetail((current: any) => {
+      if (Number(current?.id) === Number(task?.id) && taskHasDetailBody(current) && !taskHasDetailBody(task)) {
+        return { ...task, payload_json: current.payload_json, result_json: current.result_json, nonce: current.nonce }
+      }
+      return task
+    })
+  }, [task])
+  const result = parseJSONLoose(detail.result_json)
+  const payload = parseJSONLoose(detail.payload_json)
   const error = String(result?.error || '')
   const message = String(result?.message || '')
-  const status = result?.timeout ? 'timeout' : task.status
-  const summary = error || message || taskSummaryFromPayload(task.type, payload)
+  const status = result?.timeout ? 'timeout' : detail.status
+  const summary = error || message || taskSummaryFromPayload(detail.type, payload)
+  const loadDetail = async () => {
+    const next = !open
+    setOpen(next)
+    if (!next || !client || !task?.id || taskHasDetailBody(detail)) return
+    setLoadingDetail(true)
+    try {
+      const res = await client.request(`/agent-tasks/${task.id}`)
+      if (res?.task) setDetail({ ...task, ...res.task })
+    } catch (error) {
+      console.warn('Task detail load failed:', error)
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
   return <article className="task-detail-card">
-    <button type="button" className="task-detail-toggle" onClick={() => setOpen(v => !v)} aria-expanded={open}>
+    <button type="button" className="task-detail-toggle" onClick={() => { void loadDetail() }} aria-expanded={open}>
       <div>
         <strong>{labelValue(task.type || 'task')}</strong>
         <span className={error ? 'error-text' : ''}>{summary}</span>
@@ -21358,6 +21386,7 @@ function TaskDetailCard({ task, data }: { task: any; data?: any }) {
           {task.completed_at && <span>完成 {formatTableTime(String(task.completed_at))}</span>}
           {task.config_version ? <span>版本 {task.config_version}</span> : null}
         </div>
+        {loadingDetail ? <p className="muted">正在加载任务详情…</p> : null}
         {task.type === 'apply_deployment' && Array.isArray(result?.steps) ? (
           <div className="deployment-step-list">
             {result.steps.map((step: any, index: number) => (

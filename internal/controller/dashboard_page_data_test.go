@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -56,11 +57,38 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 		t.Fatalf("dashboard connection_audit missing elevated_risk_count: %#v", audit)
 	}
 
+	tasksPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=tasks", token, nil, http.StatusOK)
+	assertLightTaskProjection(t, tasksPage["agent_tasks"], "tasks page-data")
+	listed := request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks?limit=300", token, nil, http.StatusOK)
+	assertLightTaskProjection(t, listed["tasks"], "GET /agent-tasks")
+	detail := request(t, h, http.MethodGet, "/api/v1/ui/agent-tasks/"+itoa(int64(task["id"].(float64))), token, nil, http.StatusOK)
+	got := detail["task"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(got["payload_json"]), "kernel") || !strings.Contains(fmt.Sprint(got["result_json"]), "steps") {
+		t.Fatalf("task detail omitted payload/result: %#v", got)
+	}
+
 	auditPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=audit", token, nil, http.StatusOK)
 	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk"} {
 		if value, exists := auditPage[key]; exists && value != nil {
 			t.Fatalf("audit page-data should not embed the heavy risk overview (%q present: %#v); the console refetches /audit/risk-overview", key, value)
 		}
+	}
+}
+
+func assertLightTaskProjection(t *testing.T, raw any, label string) {
+	t.Helper()
+	tasks, ok := raw.([]any)
+	if !ok || len(tasks) != 1 {
+		t.Fatalf("%s tasks = %#v", label, raw)
+	}
+	task := tasks[0].(map[string]any)
+	for _, field := range []string{"payload_json", "result_json", "nonce"} {
+		if value, exists := task[field]; exists && value != "" {
+			t.Fatalf("%s leaked %q = %#v", label, field, value)
+		}
+	}
+	if task["config_version"] != float64(3) || task["status"] != "succeeded" || task["type"] != model.AgentTaskTypeApplyDeployment {
+		t.Fatalf("%s lost summary columns: %#v", label, task)
 	}
 }
 

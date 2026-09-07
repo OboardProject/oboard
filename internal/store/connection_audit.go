@@ -142,8 +142,10 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 	if !connectionAuditEnabled {
 		overview.EnabledServerCount = 0
 	}
-	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),(select count(*) from user_devices d where d.user_id=u.id and d.status='active')
-		from connection_audit_reports r join users u on u.id=r.user_id where r.ended_at>=? group by r.user_id,u.username,u.nickname`, since)
+	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
+		from connection_audit_reports r join users u on u.id=r.user_id
+		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
+		where r.ended_at>=? group by r.user_id,u.username,u.nickname`, since)
 	if err != nil {
 		return overview, err
 	}
@@ -156,7 +158,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		usersByID[overview.Users[index].UserID] = index
 	}
 	presenceByUser := map[int64][]model.ConnectionPresenceEvent{}
-	presenceRows, err := s.db.QueryContext(ctx, `select p.server_id,p.user_id,p.inbound_id,p.path_id,p.device_id_hash,p.credential_epoch,p.source_ip,p.route_id,p.network,p.active_connections,p.meaningful,p.payload_last_at,p.last_event_at,p.last_sequence,p.updated_at,u.username,u.nickname,coalesce(u.device_limit,0),(select count(*) from user_devices d where d.user_id=u.id and d.status='active') from connection_presence_states p join users u on u.id=p.user_id where p.last_event_at>=? order by p.user_id,p.device_id_hash,p.source_ip,p.network`, nowTime.Add(-connectionAuditPresenceTCP).Format(time.RFC3339Nano))
+	presenceRows, err := s.db.QueryContext(ctx, `select p.server_id,p.user_id,p.inbound_id,p.path_id,p.device_id_hash,p.credential_epoch,p.source_ip,p.route_id,p.network,p.active_connections,p.meaningful,p.payload_last_at,p.last_event_at,p.last_sequence,p.updated_at,u.username,u.nickname,coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0) from connection_presence_states p join users u on u.id=p.user_id left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id where p.last_event_at>=? order by p.user_id,p.device_id_hash,p.source_ip,p.network`, nowTime.Add(-connectionAuditPresenceTCP).Format(time.RFC3339Nano))
 	if err != nil {
 		return overview, err
 	}
@@ -308,8 +310,10 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 	if len(seen) == 0 {
 		return overview, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),(select count(*) from user_devices d where d.user_id=u.id and d.status='active')
-		from connection_audit_reports r join users u on u.id=r.user_id where r.user_id in (`+inClause(len(seen))+`) and r.ended_at>=? group by r.user_id,u.username,u.nickname`, append(seenAny(seen), since)...)
+	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
+		from connection_audit_reports r join users u on u.id=r.user_id
+		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
+		where r.user_id in (`+inClause(len(seen))+`) and r.ended_at>=? group by r.user_id,u.username,u.nickname`, append(seenAny(seen), since)...)
 	if err != nil {
 		return overview, err
 	}
@@ -322,7 +326,7 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 		usersByID[overview.Users[index].UserID] = index
 	}
 	presenceByUser := map[int64][]model.ConnectionPresenceEvent{}
-	presenceRows, err := s.db.QueryContext(ctx, `select p.server_id,p.user_id,p.inbound_id,p.path_id,p.device_id_hash,p.credential_epoch,p.source_ip,p.route_id,p.network,p.active_connections,p.meaningful,p.payload_last_at,p.last_event_at,p.last_sequence,p.updated_at,u.username,u.nickname,coalesce(u.device_limit,0),(select count(*) from user_devices d where d.user_id=u.id and d.status='active') from connection_presence_states p join users u on u.id=p.user_id where p.user_id in (`+inClause(len(seen))+`) and p.last_event_at>=? order by p.user_id,p.device_id_hash,p.source_ip,p.network`, append(seenAny(seen), nowTime.Add(-connectionAuditPresenceTCP).Format(time.RFC3339Nano))...)
+	presenceRows, err := s.db.QueryContext(ctx, `select p.server_id,p.user_id,p.inbound_id,p.path_id,p.device_id_hash,p.credential_epoch,p.source_ip,p.route_id,p.network,p.active_connections,p.meaningful,p.payload_last_at,p.last_event_at,p.last_sequence,p.updated_at,u.username,u.nickname,coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0) from connection_presence_states p join users u on u.id=p.user_id left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id where p.user_id in (`+inClause(len(seen))+`) and p.last_event_at>=? order by p.user_id,p.device_id_hash,p.source_ip,p.network`, append(seenAny(seen), nowTime.Add(-connectionAuditPresenceTCP).Format(time.RFC3339Nano))...)
 	if err != nil {
 		return overview, err
 	}
@@ -546,15 +550,19 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	var item model.ConnectionAuditUserSummary
 	var lastSeen sql.NullString
 	err := s.db.QueryRowContext(ctx, `select u.id,u.username,u.nickname,
-		coalesce((select count(distinct r.source_ip) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=? and r.source_ip<>''),0),
-		coalesce((select count(distinct r.server_id) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
-		coalesce((select sum(r.connection_count) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
-		coalesce((select max(r.active_peak) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
-		coalesce((select count(*) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),0),
-		(select max(r.ended_at) from connection_audit_reports r where r.user_id=u.id and r.ended_at>=?),
+		coalesce(count(distinct case when r.source_ip<>'' then r.source_ip end),0),
+		coalesce(count(distinct r.server_id),0),
+		coalesce(sum(r.connection_count),0),
+		coalesce(max(r.active_peak),0),
+		coalesce(count(r.report_id),0),
+		max(r.ended_at),
 		coalesce(u.device_limit,0),
-		(select count(*) from user_devices d where d.user_id=u.id and d.status='active')
-		from users u where u.id=?`, sinceText, sinceText, sinceText, sinceText, sinceText, sinceText, userID).Scan(&item.UserID, &item.Username, &item.Nickname, &item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen, &item.DeviceLimit, &item.RegisteredDeviceCount)
+		coalesce(user_device_counts.active_count,0)
+		from users u
+		left join connection_audit_reports r on r.user_id=u.id and r.ended_at>=?
+		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
+		where u.id=?
+		group by u.id,u.username,u.nickname`, sinceText, userID).Scan(&item.UserID, &item.Username, &item.Nickname, &item.SourceIPCount, &item.ServerCount, &item.ConnectionCount, &item.ActivePeak, &item.ReportCount, &lastSeen, &item.DeviceLimit, &item.RegisteredDeviceCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, sql.ErrNoRows
 	}

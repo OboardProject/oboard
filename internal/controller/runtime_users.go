@@ -442,23 +442,24 @@ const (
 	headerUsersBootID          = "X-Oboard-Users-Boot-Id"
 )
 
-func (s *Server) annotateServerDeliveryStatus(ctx context.Context, items []model.Server) {
-	if len(items) == 0 {
-		return
-	}
+// serverDeliveryLaneStates is one request-scoped load of authorization, runtime
+// user, and delivery-flag ledgers. page-data used to list those tables twice:
+// once to annotate servers and again to decorate configuration_sync.
+type serverDeliveryLaneStates struct {
+	auth  map[int64]store.AuthorizationState
+	users map[int64]store.RuntimeUserState
+	flags map[int64]store.ServerDeliveryFlags
+	ok    bool
+}
+
+func (s *Server) loadServerDeliveryLaneStates(ctx context.Context) serverDeliveryLaneStates {
 	auths, err := s.store.ListAuthorizationStates(ctx)
 	if err != nil {
-		for i := range items {
-			s.annotateOneServerDeliveryStatus(ctx, &items[i])
-		}
-		return
+		return serverDeliveryLaneStates{}
 	}
 	users, err := s.store.ListRuntimeUserStates(ctx)
 	if err != nil {
-		for i := range items {
-			s.annotateOneServerDeliveryStatus(ctx, &items[i])
-		}
-		return
+		return serverDeliveryLaneStates{}
 	}
 	flags, err := s.store.ListServerDeliveryFlags(ctx)
 	if err != nil {
@@ -472,16 +473,33 @@ func (s *Server) annotateServerDeliveryStatus(ctx context.Context, items []model
 	for _, state := range users {
 		usersByID[state.ServerID] = state
 	}
+	return serverDeliveryLaneStates{auth: authByID, users: usersByID, flags: flags, ok: true}
+}
+
+func (s *Server) annotateServerDeliveryStatus(ctx context.Context, items []model.Server) {
+	s.annotateServerDeliveryStatusFromLaneStates(ctx, items, s.loadServerDeliveryLaneStates(ctx))
+}
+
+func (s *Server) annotateServerDeliveryStatusFromLaneStates(ctx context.Context, items []model.Server, states serverDeliveryLaneStates) {
+	if len(items) == 0 {
+		return
+	}
+	if !states.ok {
+		for i := range items {
+			s.annotateOneServerDeliveryStatus(ctx, &items[i])
+		}
+		return
+	}
 	for i := range items {
-		auth := authByID[items[i].ID]
+		auth := states.auth[items[i].ID]
 		if auth.ServerID == 0 {
 			auth = store.AuthorizationState{ServerID: items[i].ID, Retryable: true}
 		}
-		userState := usersByID[items[i].ID]
+		userState := states.users[items[i].ID]
 		if userState.ServerID == 0 {
 			userState = store.RuntimeUserState{ServerID: items[i].ID, Retryable: true}
 		}
-		deliveryFlags, ok := flags[items[i].ID]
+		deliveryFlags, ok := states.flags[items[i].ID]
 		if !ok {
 			deliveryFlags = store.ServerDeliveryFlags{ServerID: items[i].ID, AuthorizationFastLane: true, RuntimeUsersEnabled: true}
 		}
