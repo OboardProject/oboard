@@ -5369,8 +5369,11 @@ function emptyDNSCredentialDraft() {
   return { name: '', provider: 'cloudflare' as DNSProvider, zones: [emptyDNSZoneDraft()], enabled: true, config: {} as Record<string, string> }
 }
 
+let dnsZoneDraftSeq = 0
+
 function emptyDNSZoneDraft() {
-  return { id: 0, zone_name: '', provider_zone_id: '', server_id: 0 }
+  dnsZoneDraftSeq += 1
+  return { id: 0, zone_name: '', provider_zone_id: '', server_id: 0, client_key: `new-${dnsZoneDraftSeq}` }
 }
 
 function isOBoardDNSRecord(record: DNSRecord) {
@@ -5465,14 +5468,14 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   }
   const editCredential = (credential: DNSCredential) => {
     setEditingID(credential.id)
-    setDraft({ name: credential.name, provider: credential.provider, zones: (credential.zones || []).map(zone => ({ id: zone.id, zone_name: zone.zone_name, provider_zone_id: zone.provider_zone_id || '', server_id: Number(zone.server_id || 0) })), enabled: credential.enabled, config: {} })
+    setDraft({ name: credential.name, provider: credential.provider, zones: (credential.zones || []).map(zone => ({ id: zone.id, zone_name: zone.zone_name, provider_zone_id: zone.provider_zone_id || '', server_id: Number(zone.server_id || 0), client_key: `saved-${zone.id}` })), enabled: credential.enabled, config: {} })
     setCredentialDialogOpen(true)
   }
   const saveCredential = async () => {
     const provider = draft.provider as DNSProvider
     const config = Object.fromEntries(Object.entries(draft.config || {}).map(([key, value]) => [key, String(value || '').trim()]).filter(([, value]) => value))
-    const zones = (draft.zones || []).map((zone: any) => ({ id: Number(zone.id || 0), zone_name: String(zone.zone_name || '').trim(), provider_zone_id: String(zone.provider_zone_id || '').trim(), server_id: Number(zone.server_id || 0) || undefined }))
-    if (!draft.name.trim() || !zones.length || zones.some((zone: any) => !zone.zone_name)) return dialogs.alert({ title: '信息不完整', message: '请填写账号名称和至少一个域名。' })
+    const zones = (draft.zones || []).map((zone: any) => ({ id: Number(zone.id || 0), zone_name: String(zone.zone_name || '').trim(), provider_zone_id: String(zone.provider_zone_id || '').trim(), server_id: Number(zone.server_id || 0) || undefined })).filter((zone: any) => zone.zone_name)
+    if (!draft.name.trim() || !zones.length) return dialogs.alert({ title: '信息不完整', message: '请填写账号名称和至少一个域名。' })
     if (provider === 'tencent_esa' && zones.some((zone: any) => !zone.provider_zone_id)) return dialogs.alert({ title: '信息不完整', message: '腾讯云 ESA 的每个域名都需要 Zone ID。' })
     if (!editingID && dnsProviderFields[provider].some(field => !field.optional && !config[field.key])) return dialogs.alert({ title: '信息不完整', message: '请填写当前服务商要求的全部账号信息。' })
     const shouldAutoVerify = Object.keys(config).length > 0
@@ -5603,12 +5606,13 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       {credentials.length ? <div className="dns-record-list">{credentials.map(credential => <div className="dns-record-row dns-credential-row" key={credential.id}><div className="dns-provider-logo-box" title={dnsProviderLabels[credential.provider]}><DNSProviderIcon provider={credential.provider} size={22} /></div><div className="record-main"><strong>{credential.name}</strong><span><small className="dns-provider-sublabel">{dnsProviderLabels[credential.provider]}</small>{(credential.zones || []).length ? ` · ${(credential.zones || []).map(zone => `${zone.zone_name}${zone.server_id ? `（${serverName(zone.server_id)}）` : ''}`).join(' · ')}` : ''}</span><small>{credential.last_error || (credential.verified_at ? `${credential.zones.length} 个域名 · 已验证 ${formatTableTime(credential.verified_at)}` : `${credential.zones.length} 个域名 · 待验证`)}</small></div><span className={`status-pill ${credential.verified_at ? 'ok' : credential.last_error ? 'warning' : ''}`}>{credential.verified_at ? '可用' : '待验证'}</span><div className="record-actions"><button className="ghost icon-button" onClick={() => verifyCredential(credential)} title="验证"><RefreshCw size={14} className={working === `verify-${credential.id}` ? 'spin' : ''} /></button><button className="ghost icon-button" onClick={() => editCredential(credential)} title="编辑"><Edit3 size={14} /></button><button className="ghost icon-button danger-text" onClick={() => deleteCredential(credential)} title="删除"><Trash2 size={14} /></button></div></div>)}</div> : <div className="dns-credential-empty">还没有解析服务账号。</div>}
     </section>}
     <AnimatePresence>{recordDialogOpen && <DNSRecordDialog zoneOptions={zoneOptions} zoneID={recordDialogZoneID} setZoneID={setRecordDialogZoneID} draft={recordDraft} setDraft={setRecordDraft} serverName={serverName} editing={Boolean(editingRecord)} saving={working === 'record-save'} onCancel={closeRecordDialog} onSubmit={saveRecord} />}</AnimatePresence>
-    <AnimatePresence>{credentialDialogOpen && <DNSCredentialDialog draft={draft} setDraft={setDraft} servers={servers} editing={editingID > 0} saving={working === 'credential-save'} onCancel={closeCredentialDialog} onSubmit={saveCredential} />}</AnimatePresence>
+    <AnimatePresence>{credentialDialogOpen && <DNSCredentialDialog draft={draft} setDraft={setDraft} editing={editingID > 0} saving={working === 'credential-save'} onCancel={closeCredentialDialog} onSubmit={saveCredential} />}</AnimatePresence>
   </div>
 }
 
-function DNSCredentialDialog({ draft, setDraft, servers, editing, saving, onCancel, onSubmit }: { draft: ReturnType<typeof emptyDNSCredentialDraft>; setDraft: React.Dispatch<React.SetStateAction<any>>; servers: Server[]; editing: boolean; saving: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
+function DNSCredentialDialog({ draft, setDraft, editing, saving, onCancel, onSubmit }: { draft: ReturnType<typeof emptyDNSCredentialDraft>; setDraft: React.Dispatch<React.SetStateAction<any>>; editing: boolean; saving: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
   const provider = draft.provider as DNSProvider
+  const needsZoneID = provider === 'cloudflare' || provider === 'tencent_esa' || provider === 'huawei_cloud'
   const update = (patch: Partial<typeof draft>) => setDraft((current: typeof draft) => ({ ...current, ...patch }))
   const updateZone = (index: number, patch: Record<string, unknown>) => update({ zones: draft.zones.map((zone: any, zoneIndex: number) => zoneIndex === index ? { ...zone, ...patch } : zone) })
   const removeZone = (index: number) => update({ zones: draft.zones.filter((_: any, zoneIndex: number) => zoneIndex !== index) })
@@ -5620,13 +5624,32 @@ function DNSCredentialDialog({ draft, setDraft, servers, editing, saving, onCanc
       <FormField label="域名服务商" required><Select value={provider} onChange={e => update({ provider: e.target.value as DNSProvider, config: {} })}>{(Object.keys(dnsProviderLabels) as DNSProvider[]).map(item => <option key={item} value={item}>{dnsProviderLabels[item]}</option>)}</Select></FormField>
       <div className="form-section-title">授权信息</div>
       {dnsProviderFields[provider].map(field => <FormField key={field.key} label={field.label} required={!editing && !field.optional} hint={editing ? '留空则不修改已有信息。' : field.optional ? '可选。' : undefined}><input type={field.key === 'region' || field.key.endsWith('_id') || field.key === 'username' || field.key === 'domain_name' ? 'text' : 'password'} autoComplete="off" value={draft.config?.[field.key] || ''} onChange={e => update({ config: { ...draft.config, [field.key]: e.target.value } })} /></FormField>)}
-      <div className="form-section-title dns-zone-section-title"><span>域名绑定</span><button className="ghost" type="button" onClick={() => update({ zones: [...draft.zones, emptyDNSZoneDraft()] })}><Plus size={14} />添加域名</button></div>
-      <div className="dns-zone-editor">{draft.zones.map((zone: any, index: number) => <div className="dns-zone-editor-row" key={zone.id || `new-${index}`}>
-        <div className="dns-zone-editor-head"><strong>域名 {index + 1}</strong>{draft.zones.length > 1 && <button className="ghost icon-button danger-text" type="button" onClick={() => removeZone(index)} title="移除域名"><Trash2 size={14} /></button>}</div>
-        <FormField label="主域名" required hint="例如 oboard.proxy"><input value={zone.zone_name} onChange={e => updateZone(index, { zone_name: e.target.value })} placeholder="example.com" autoCapitalize="none" /></FormField>
-        {(provider === 'cloudflare' || provider === 'tencent_esa' || provider === 'huawei_cloud') && <FormField label="Zone ID" required={provider === 'tencent_esa'} hint={provider === 'tencent_esa' ? '服务商要求填写。' : '留空时自动查找。'}><input value={zone.provider_zone_id} onChange={e => updateZone(index, { provider_zone_id: e.target.value })} autoComplete="off" /></FormField>}
-        <FormField className="dns-zone-server-field" label="关联服务器" hint="用于维护识别和自动解析匹配。"><Select value={Number(zone.server_id || 0)} onChange={e => updateZone(index, { server_id: Number(e.target.value) })}><option value={0}>不指定服务器</option>{servers.map(server => <option key={server.id} value={server.id}>{server.name}</option>)}</Select></FormField>
-      </div>)}</div>
+      <section className={`dns-zone-editor${needsZoneID ? '' : ' dns-zone-editor-simple'}`} aria-labelledby="dns-zone-editor-title">
+        <div className="dns-zone-editor-head">
+          <div><h3 id="dns-zone-editor-title">域名绑定</h3><span>{draft.zones.length} 个域名</span></div>
+          <button className="ghost" type="button" onClick={() => update({ zones: [...draft.zones, emptyDNSZoneDraft()] })}><Plus size={14} />添加域名</button>
+        </div>
+        <div className="dns-zone-editor-columns" aria-hidden="true">
+          <span>序号</span>
+          <span>主域名</span>
+          {needsZoneID && <span>{provider === 'tencent_esa' ? 'Zone ID' : 'Zone ID（可选）'}</span>}
+          <span>操作</span>
+        </div>
+        <div className="dns-zone-editor-list">
+          {draft.zones.map((zone: any, index: number) => <div className="dns-zone-editor-row" key={zone.client_key || `saved-${zone.id}` || `zone-${index}`}>
+            <span className="dns-zone-editor-index">{index + 1}</span>
+            <label>
+              <span>主域名</span>
+              <input value={zone.zone_name} onChange={e => updateZone(index, { zone_name: e.target.value })} placeholder="example.com" autoCapitalize="none" spellCheck={false} aria-required="true" />
+            </label>
+            {needsZoneID && <label className="dns-zone-editor-zone-id">
+              <span>Zone ID</span>
+              <input value={zone.provider_zone_id} onChange={e => updateZone(index, { provider_zone_id: e.target.value })} placeholder={provider === 'tencent_esa' ? '服务商要求填写' : '留空自动查找'} autoComplete="off" spellCheck={false} aria-required={provider === 'tencent_esa'} />
+            </label>}
+            <button className="ghost icon-button danger-text" type="button" onClick={() => removeZone(index)} disabled={draft.zones.length <= 1} aria-label={`删除第 ${index + 1} 个域名`} title={draft.zones.length <= 1 ? '至少保留一个域名' : '删除域名'}><Trash2 size={14} /></button>
+          </div>)}
+        </div>
+      </section>
     </div></div>
     <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={() => void onSubmit()} disabled={saving}>{saving ? '保存中...' : editing ? '保存修改' : '创建账号'}</button></footer>
   </MotionDialogPanel>

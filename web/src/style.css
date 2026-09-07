@@ -10336,41 +10336,105 @@ body:has(.dialog-layer) .main {
 }
 .dns-records .empty-inline { padding: 24px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); text-align: center; }
 .dns-credential-empty { padding: 30px 20px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--muted); text-align: center; }
-.dns-zone-section-title {
+.dns-zone-editor {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-solid);
+}
+.dns-zone-editor-head {
+  min-width: 0;
+  min-height: 48px;
+  padding: 7px 9px 7px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
 }
-.dns-zone-section-title button {
+.dns-zone-editor-head > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.dns-zone-editor-head h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 13px;
+}
+.dns-zone-editor-head span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.dns-zone-editor-head button {
   min-height: 32px;
   padding: 6px 10px;
 }
-.dns-zone-editor {
+.dns-zone-editor-columns,
+.dns-zone-editor-row {
+  min-width: 0;
   display: grid;
-  gap: 12px;
+  grid-template-columns: 38px minmax(0, 1.2fr) minmax(140px, 0.9fr) 38px;
+  gap: 8px;
+  align-items: center;
+}
+.dns-zone-editor-simple .dns-zone-editor-columns,
+.dns-zone-editor-simple .dns-zone-editor-row {
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+}
+.dns-zone-editor-columns {
+  min-height: 29px;
+  padding: 5px 10px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 650;
+}
+.dns-zone-editor-columns span:first-child,
+.dns-zone-editor-columns span:last-child {
+  text-align: center;
+}
+.dns-zone-editor-list {
+  min-width: 0;
+  display: grid;
 }
 .dns-zone-editor-row {
+  min-height: 48px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.dns-zone-editor-row:first-child {
+  border-top: 0;
+}
+.dns-zone-editor-index {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.dns-zone-editor-row > label {
+  min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 14px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
+  gap: 4px;
 }
-.dns-zone-editor-head {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 28px;
+.dns-zone-editor-row > label > span {
+  display: none;
 }
-.dns-zone-editor-head strong {
-  color: var(--text-strong);
-  font-size: 12px;
+.dns-zone-editor-row input {
+  min-width: 0;
+  width: 100%;
 }
-.dns-zone-server-field { grid-column: 1 / -1; }
+.dns-zone-editor-row > .icon-button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  justify-self: center;
+}
 .spin { animation: refresh-spin 0.85s linear infinite; transform-origin: center center; }
 
 @media (max-width: 640px) {
@@ -10378,8 +10442,29 @@ body:has(.dialog-layer) .main {
   .dns-record-filter-toolbar .searchable-multi-select-menu { width: 100%; }
   .dns-record-search { flex-basis: 100%; }
   .dns-record-filter-count { margin-left: 0; }
-  .dns-zone-editor-row { grid-template-columns: minmax(0, 1fr); }
-  .dns-zone-editor-head { grid-column: 1; }
+  .dns-zone-editor-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .dns-zone-editor-head button {
+    width: 100%;
+  }
+  .dns-zone-editor-columns {
+    display: none;
+  }
+  .dns-zone-editor-row,
+  .dns-zone-editor-simple .dns-zone-editor-row {
+    grid-template-columns: 28px minmax(0, 1fr) 38px;
+  }
+  .dns-zone-editor-row > label > span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 650;
+  }
+  .dns-zone-editor-zone-id {
+    grid-column: 2;
+  }
   .dns-record-row {
     display: grid;
     grid-template-columns: 44px minmax(0, 1fr);
