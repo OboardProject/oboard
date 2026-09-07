@@ -45,6 +45,7 @@ func (s *Service) ListServers(ctx context.Context, principal Principal) ([]Serve
 	if err != nil {
 		return nil, err
 	}
+	s.decorateServerDelivery(ctx, items)
 	out := make([]ServerDTO, 0, len(items))
 	for _, item := range items {
 		if principal.AllowsInt64("server_ids", item.ID) {
@@ -62,7 +63,37 @@ func (s *Service) GetServer(ctx context.Context, principal Principal, id int64) 
 	if err != nil {
 		return ServerDTO{}, err
 	}
-	return serverDTO(*item), nil
+	items := []model.Server{*item}
+	s.decorateServerDelivery(ctx, items)
+	return serverDTO(items[0]), nil
+}
+
+func (s *Service) decorateServerDelivery(ctx context.Context, items []model.Server) {
+	authStates, _ := s.store.ListAuthorizationStates(ctx)
+	userStates, _ := s.store.ListRuntimeUserStates(ctx)
+	authByID := map[int64]store.AuthorizationState{}
+	for _, state := range authStates {
+		authByID[state.ServerID] = state
+	}
+	usersByID := map[int64]store.RuntimeUserState{}
+	for _, state := range userStates {
+		usersByID[state.ServerID] = state
+	}
+	for i := range items {
+		if auth, ok := authByID[items[i].ID]; ok {
+			items[i].AuthorizationRevision = auth.DesiredRevision
+			items[i].AuthorizationConfirmed = auth.Confirmed()
+			items[i].AuthorizationPendingReason = auth.PendingReason
+		}
+		if users, ok := usersByID[items[i].ID]; ok {
+			items[i].UsersRevision = users.DesiredRevision
+			items[i].UsersConfirmed = users.Confirmed()
+			items[i].UsersPendingReason = users.PendingReason
+			if users.PendingReason == store.RuntimeUsersPendingAgentUpgrade || users.PendingReason == store.RuntimeUsersPendingCoreConfigFallback {
+				items[i].UsersFallback = "apply_core_config"
+			}
+		}
+	}
 }
 
 func (s *Service) ListUsers(ctx context.Context, principal Principal) ([]UserDTO, error) {

@@ -685,7 +685,7 @@ func (s *Server) listAccessChangesMCP(ctx context.Context, principal application
 	}
 	views := make([]map[string]any, 0, len(items))
 	for _, change := range items {
-		views = append(views, map[string]any{
+		item := map[string]any{
 			"id": change.ID, "change_type": change.ChangeType, "source_plan_id": change.SourcePlanID,
 			"candidate_revision_id":       change.CandidateRevisionID,
 			"expected_active_revision_id": change.ExpectedActiveRevisionID,
@@ -695,7 +695,8 @@ func (s *Server) listAccessChangesMCP(ctx context.Context, principal application
 			"activated_at": change.ActivatedAt, "finalized_at": change.FinalizedAt, "failed_at": change.FailedAt,
 			"retryable":   change.Status == model.AccessChangeFailed,
 			"abandonable": s.accessChangeAbandonable(ctx, &change),
-		})
+		}
+		views = append(views, s.attachAccessChangeDelivery(ctx, item, &change))
 	}
 	return map[string]any{"access_changes": views, "count": len(views)}, nil
 }

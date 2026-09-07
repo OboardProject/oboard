@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { Badge } from '../components/ui/badge'
+import { AuthorizationStatusBadge } from '../components/authorization/AuthorizationStatusBadge'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
@@ -614,6 +615,14 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
               <div><span className="muted">协议</span><div style={{ fontFamily: 'var(--font-mono)' }}>{detail.node?.entry_protocol || '—'}</div></div>
               <div><span className="muted">出口地区</span><div>{detail.node?.exit_region || '—'}</div></div>
               <div><span className="muted">状态</span><div>{statusLabels[detail.node?.status] || detail.node?.status}</div></div>
+              <div>
+                <span className="muted">授权</span>
+                <div>
+                  {detail.node?.type === 'external_outbound'
+                    ? <AuthorizationStatusBadge status="external_credential" />
+                    : <AuthorizationStatusBadge status={detail.runtime_authorization_mode === 'legacy' ? 'upgrade_required' : 'authorized'} />}
+                </div>
+              </div>
               <div><span className="muted">路径</span><div>{(detail.node?.path_summary || []).join(' → ') || '—'}</div></div>
             </div>
             <div>

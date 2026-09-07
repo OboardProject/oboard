@@ -85,6 +85,9 @@ type Server struct {
 	authorizationSyncWake      chan struct{}
 	authorizationSyncMu        sync.Mutex
 	authorizationSyncInFlight  map[int64]bool
+	runtimeUsersSyncWake       chan struct{}
+	runtimeUsersSyncMu         sync.Mutex
+	runtimeUsersSyncInFlight   map[int64]bool
 	store                      *store.Store
 	sessionSecret              string
 	staticDir                  string
@@ -267,7 +270,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, runtimeUsersSyncWake: make(chan struct{}, 1), runtimeUsersSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
@@ -520,6 +523,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent/certificate-issues", s.agentCertificateIssues)
 	mux.HandleFunc("/api/v1/agent/traffic-reports", s.agentTrafficReports)
 	mux.HandleFunc("/api/v1/agent/authorization", s.agentAuthorization)
+	mux.HandleFunc("/api/v1/agent/users-snapshot", s.agentUsersSnapshot)
 	mux.HandleFunc("/api/v1/agent/connection-reports", s.agentConnectionReports)
 	mux.HandleFunc("/api/v1/agent/dns-benchmarks", s.agentDNSBenchmarks)
 	mux.HandleFunc("/api/v1/agent/mtu-detections", s.agentMTUDetections)
@@ -2790,7 +2794,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if serverSnapshotLoaded {
-			out["configuration_sync"] = configurationSyncViews(configurationStates, serverSnapshot)
+			views := configurationSyncViews(configurationStates, serverSnapshot)
+			for i := range views {
+				s.attachLaneFields(ctx, views[i], configurationStates[i].ServerID)
+			}
+			out["configuration_sync"] = views
 		} else {
 			out["configuration_sync"] = s.configurationSyncViews(ctx, configurationStates)
 		}
@@ -3651,6 +3659,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		s.annotateServerDeliveryStatus(r.Context(), items)
 		out := map[string]any{"servers": items}
 		if r.URL.Query().Get("include_metrics") == "1" {
 			samples, err := s.store.ListServerMetricSamples(r.Context(), 0, 60)
@@ -4009,6 +4018,18 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.serverAgentConfig(w, r, id)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "delivery-retry" {
+		if r.Method != http.MethodPost {
+			method(w)
+			return
+		}
+		if err := s.retryServerDelivery(r.Context(), id); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		write(w, 200, map[string]any{"retried": true, "server_id": id})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "agent-update" {
 		s.serverAgentUpdate(w, r, id)
 		return
@@ -4047,6 +4068,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
+		s.annotateOneServerDeliveryStatus(r.Context(), srv)
 		write(w, 200, map[string]any{"server": srv})
 		return
 	}
@@ -11084,9 +11106,7 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if err := s.queueCoreConfigRefreshForUser(r.Context(), u.ID, "user_created"); err != nil {
-			logConfigurationError("queue core config for user create", err)
-		}
+		s.applyChangePlan(r.Context(), u.ID, ClassifyUserCreated())
 		resp := map[string]any{"user": u}
 		if generatedPassword != "" {
 			resp["generated_password"] = generatedPassword
@@ -11202,9 +11222,8 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
-		if err := s.queueCoreConfigRefreshForServers(r.Context(), serverIDs, "user_deleted"); err != nil {
-			logConfigurationError("queue core config for user delete", err)
-		}
+		s.applyChangePlan(r.Context(), id, ClassifyUserRemoval())
+		_ = serverIDs
 		auditReq(s, r, "delete", "user", fmt.Sprint(id))
 		write(w, 200, map[string]any{"deleted": true})
 	default:
@@ -13419,6 +13438,7 @@ type generatedServerCoreConfig struct {
 	Assets          []model.ManagedAssetReference
 	Inbounds        []model.Inbound
 	TrafficPolicies map[int64]model.TrafficRuntimePolicy
+	RuntimeUsers    *core.RuntimeUserPackage
 }
 
 // deploymentConfigErrorStatus separates desired state the operator can correct
@@ -13590,11 +13610,13 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 			return generatedServerCoreConfig{}, err
 		}
 	}
+	var runtimeUsers *core.RuntimeUserPackage
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
 		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
 		PortLedger: ledger,
+		RuntimeUsersOut: &runtimeUsers,
 	})
 	if err != nil {
 		return generatedServerCoreConfig{}, err
@@ -13605,7 +13627,7 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 			return generatedServerCoreConfig{}, err
 		}
 	}
-	return generatedServerCoreConfig{Config: config, Assets: assets, Inbounds: inbounds, TrafficPolicies: trafficPolicies}, nil
+	return generatedServerCoreConfig{Config: config, Assets: assets, Inbounds: inbounds, TrafficPolicies: trafficPolicies, RuntimeUsers: runtimeUsers}, nil
 }
 
 func requireReadyWARPForFocusedApply(data store.FullRoutingConfig, serverID int64) error {
@@ -13669,6 +13691,7 @@ func (s *Server) queueCoreConfigRefresh(ctx context.Context, userID int64, reaso
 	if err := s.queueAuthorizationRefresh(ctx, ids, reason); err != nil {
 		return err
 	}
+	s.wakeRuntimeUsersSync()
 	bindings, pathBindings, _, err := s.runtimeAccessBindings(ctx, data)
 	if err != nil {
 		return err
@@ -13914,7 +13937,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	effectiveNodes := snapshot.EffectiveNodeKeys(user.ID)
+	effectiveNodes := s.filterSubscriptionNodesByDelivery(r.Context(), *user, data, snapshot, snapshot.EffectiveNodeKeys(user.ID))
 	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
 	hiddenInbounds, err := s.store.ListHiddenInboundIDs(r.Context())
 	if err != nil {
@@ -14285,6 +14308,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	// A reconnecting Agent may have missed a revoke; the worker re-evaluates
 	// this server and pushes the current snapshot on the new socket.
 	s.wakeAuthorizationSync()
+	s.wakeRuntimeUsersSync()
 	defer func() {
 		s.unregisterAgentLive(server.ID, controlCh)
 		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
@@ -14442,6 +14466,9 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			if envelope.Type == model.AgentControlAuthorizationAck {
 				s.handleAuthorizationAck(r.Context(), server, received.message)
 			}
+			if envelope.Type == model.AgentControlUsersAck {
+				s.handleUsersAck(r.Context(), server, received.message)
+			}
 			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
 			if acceptedLatencyReportID != "" {
 				if err := writeAgentJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID}); err != nil {
@@ -14581,6 +14608,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				_ = s.store.UpsertServerRemoteAccessStatus(ctx, server.ID, h.RemoteAccess)
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
+				s.recordUsersApplied(ctx, server, h.AppliedUsers)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishServerPatch(result)
 			}

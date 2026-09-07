@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { Badge } from '../components/ui/badge'
+import { AuthorizationStatusBadge, deriveAccessChangeStatus } from '../components/authorization/AuthorizationStatusBadge'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
@@ -60,6 +61,9 @@ type Revision = { id: number; revision: number; version_no: number; status: stri
 type AccessChange = {
   id: number
   change_type: string
+  kind?: string
+  completion?: string
+  pending_reason?: string
   source_plan_id?: number
   candidate_revision_id?: number
   status: 'preparing' | 'activating' | 'finalizing' | 'finalized' | 'failed' | 'cancelled'
@@ -1541,6 +1545,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 600 }}>#{c.id} {changeTypeLabels[c.change_type] || c.change_type}</span>
                       <Badge variant={st.variant}>{st.label}</Badge>
+                      <AuthorizationStatusBadge status={deriveAccessChangeStatus({ status: c.status, kind: c.kind, completion: c.completion, pending_reason: c.pending_reason })} />
                       <span className="muted" style={{ fontSize: 12 }}>{c.affected_user_count} 用户 · {fmtDate(c.created_at)}</span>
                     </div>
                     {c.error && <p style={{ color: 'var(--color-danger)', fontSize: 12, margin: '6px 0 0' }}>{c.error}</p>}

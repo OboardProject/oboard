@@ -267,6 +267,9 @@ func defaultDescriptors() []Descriptor {
 		"display_tags":                   displayTags,
 		"time_correction_mode":           stringValue, "time_check_status": stringValue,
 		"last_seen_at": nullableString(), "created_at": stringValue, "updated_at": stringValue,
+		"authorization_revision": map[string]any{"type": "integer"}, "authorization_confirmed": boolValue,
+		"authorization_pending_reason": stringValue, "users_revision": map[string]any{"type": "integer"},
+		"users_confirmed": boolValue, "users_pending_reason": stringValue, "users_fallback": stringValue,
 	})
 	user := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "username": stringValue, "nickname": stringValue,
@@ -554,10 +557,10 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		adminRead("user_group_members.list", "列出全部用户分组与用户的成员关系", rawSchema(arrayOf(userGroupMember)), schemaObject(nil)),
 		adminRead("user_devices.list", "列出指定用户的已登记设备", schemaObject(map[string]any{"devices": arrayOf(userDevice)}, "devices"), schemaObject(map[string]any{"user_id": positiveID}, "user_id")),
 		adminRead("user_devices.list_all", "列出全部用户的已登记设备", schemaObject(map[string]any{"devices": arrayOf(userDevice), "count": map[string]any{"type": "integer"}}, "devices"), schemaObject(nil)),
-		adminWrite("users.create", "创建面板用户并分配角色与额度", schemaObject(map[string]any{"user": userCreate}, "user"), schemaObject(map[string]any{"user": userFull}, "user"), 2, false),
-		adminWrite("users.update", "修改用户角色、状态、额度与订阅设置", schemaObject(map[string]any{"user_id": positiveID, "changes": userUpdateChanges}, "user_id", "changes"), schemaObject(map[string]any{"user": userFull, "changed_fields": stringArray(1, 32)}, "user"), 2, false),
-		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID}, "deleted"), 3, true),
-		adminWrite("users.session_revoke", "吊销用户全部登录会话与访问令牌", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"session_revoked": boolValue, "user_id": positiveID}, "session_revoked"), 2, false),
+		adminWrite("users.create", "创建面板用户并分配角色与额度", schemaObject(map[string]any{"user": userCreate}, "user"), schemaObject(map[string]any{"user": userFull, "generated_password": stringValue, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "user"), 2, false),
+		adminWrite("users.update", "修改用户角色、状态、额度与订阅设置", schemaObject(map[string]any{"user_id": positiveID, "changes": userUpdateChanges}, "user_id", "changes"), schemaObject(map[string]any{"user": userFull, "changed_fields": stringArray(1, 32), "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "user"), 2, false),
+		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "deleted"), 3, true),
+		adminWrite("users.session_revoke", "吊销用户全部登录会话与访问令牌", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"session_revoked": boolValue, "user_id": positiveID, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "session_revoked"), 2, false),
 		adminWrite("user_groups.create", "创建用户分组并设置角色与策略", schemaObject(map[string]any{"user_group": closedObject(map[string]any{
 			"name":                            map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
 			"description":                     map[string]any{"type": "string", "maxLength": 200},
@@ -569,7 +572,7 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		adminWrite("user_groups.delete", "删除用户分组及其全部成员关系", schemaObject(map[string]any{"group_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "group_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "group_id": positiveID}, "deleted"), 3, true),
 		adminWrite("user_group_members.set", "新增或更新用户与分组的成员关系", schemaObject(map[string]any{"group_id": positiveID, "user_id": positiveID, "enabled": boolValue}, "group_id", "user_id"), schemaObject(map[string]any{"user_group_member": userGroupMember}, "user_group_member"), 2, false),
 		adminWrite("user_devices.update", "重命名用户已登记设备", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}}, "user_id", "device_id", "name"), schemaObject(map[string]any{"device": userDevice}, "device"), 2, false),
-		adminWrite("user_devices.revoke", "吊销用户设备凭据并撤销其代理与订阅访问", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "revoked": map[string]any{"type": "boolean", "enum": []any{true}}}, "user_id", "device_id", "revoked"), schemaObject(map[string]any{"device": userDevice, "revoked": boolValue}, "device"), 2, false),
+		adminWrite("user_devices.revoke", "吊销用户设备凭据并撤销其代理与订阅访问", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "revoked": map[string]any{"type": "boolean", "enum": []any{true}}}, "user_id", "device_id", "revoked"), schemaObject(map[string]any{"device": userDevice, "revoked": boolValue, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "device"), 2, false),
 	}
 }
 
@@ -661,11 +664,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 				"latest_revision_id": positiveID, "pending_revision_id": map[string]any{"type": "integer", "minimum": 0},
 				"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue,
 				"queued_tasks": map[string]any{"type": "integer", "minimum": 0}, "reconcile_queued": boolValue,
+				"change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue,
 			}), "subscription_plan_ids"
 	case "subscription_plans.delete":
 		return schemaObject(map[string]any{"plan_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "plan_id", "confirm"), simpleOutput(map[string]any{
 			"deleted": boolValue, "plan_id": positiveID, "unbound_user_count": map[string]any{"type": "integer", "minimum": 0},
 			"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue,
+			"change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue,
 		}), "subscription_plan_ids"
 	case "servers.onboard":
 		probeTarget := map[string]any{"type": "string", "enum": []string{"auto", "cloudflare", "12306", "google"}}

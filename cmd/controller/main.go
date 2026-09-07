@@ -128,6 +128,7 @@ func main() {
 	go app.StartDatabaseMaintenance(ctx)
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAuthorizationSyncWorker(ctx)
+	go app.StartRuntimeUsersSyncWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
 	go app.StartConfigurationReconciler(ctx)
 	go app.StartSubscriptionPlanReconciler(ctx)

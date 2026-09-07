@@ -32,6 +32,11 @@ type OBoardRuntimeMetadata struct {
 	Authorization   *model.AuthorizationLease `json:"authorization,omitempty"`
 	RateLimits      OBoardRateLimits          `json:"rate_limits,omitempty"`
 	ConnectionAudit *OBoardConnectionAudit    `json:"connection_audit,omitempty"`
+	RuntimeUsers    *OBoardRuntimeUsersMeta   `json:"runtime_users,omitempty"`
+}
+
+type OBoardRuntimeUsersMeta struct {
+	Inbounds []string `json:"inbounds,omitempty"`
 }
 
 type OBoardConnectionAudit struct {
@@ -105,6 +110,10 @@ type ConfigOptions struct {
 	// generated port is derived fresh, which keeps pure-Core callers and fixtures
 	// working without a database.
 	PortLedger *ProxyPathPortLedger
+	// RuntimeUsersOut, when non-nil, receives the runtime-user package collected
+	// from this generation. Baseline inbound users stay in the rendered config
+	// for restart; the operational digest later strips them for declared inbounds.
+	RuntimeUsersOut **RuntimeUserPackage
 }
 
 func AdapterFor(protocol model.Protocol) (Adapter, error) {
@@ -725,6 +734,9 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	}
 	if ruleSets := buildRouteRuleSets(server, opts.RoutingRules, opts.RoutingRuleSets); len(ruleSets) > 0 {
 		config.Route["rule_set"] = ruleSets
+	}
+	if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
+		*opts.RuntimeUsersOut = pkg
 	}
 	if err := ValidateGeneratedSingBoxConfig(config); err != nil {
 		return "", err

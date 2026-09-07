@@ -37,6 +37,7 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
       { label: 'Agent 命令', type: 'enroll', icon: Terminal, admin: true },
       ...(enrolled ? [{ label: '更新 Agent', type: 'update-agent', icon: RefreshCw, admin: true } satisfies Item, { label: 'Agent 维护与日志', type: 'agent-maintenance', icon: Settings2, admin: true } satisfies Item] : []),
       { label: '任务记录', type: 'tasks', icon: ClipboardList },
+      ...(enrolled && isOnline && (server.authorization_confirmed === false || server.users_confirmed === false) ? [{ label: '重试授权下发', type: 'retry-delivery', icon: RefreshCw, admin: true } satisfies Item] : []),
     ] },
     { label: '监控与诊断', dividerBefore: true, items: [
       { label: '网络探测', type: 'return-latency', icon: Gauge, admin: true },

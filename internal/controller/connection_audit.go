@@ -309,7 +309,7 @@ func (s *Server) applyConnectionAuditDeviceAction(ctx context.Context, connectio
 			log.Printf("reject risky device authentication user=%d device=%s: %v", connection.UserID, deviceID, err)
 			return
 		}
-		if err := s.queueUserDeviceCredentialDeployment(ctx); err != nil {
+		if err := s.queueUserDeviceCredentialDeployment(ctx, connection.UserID); err != nil {
 			_, _ = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "active")
 			log.Printf("queue risky device credential deployment user=%d device=%s: %v", connection.UserID, deviceID, err)
 			return

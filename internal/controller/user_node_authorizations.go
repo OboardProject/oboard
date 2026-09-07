@@ -185,11 +185,11 @@ func (s *Server) applyUserNodeAuthorizationSet(ctx context.Context, actorID *int
 			return nil, err
 		}
 	}
-	return map[string]any{
+	return s.attachAccessChangeDelivery(ctx, map[string]any{
 		"created": len(outcome.Created), "updated": len(outcome.Updated), "skipped": len(outcome.Skipped),
 		"affected_users": len(affectedUsers), "access_change_id": change.ID,
 		"access_change_status": change.Status, "queued_tasks": len(change.Targets),
-	}, nil
+	}, change), nil
 }
 
 func (s *Server) prepareUserNodeAuthorizationRevoke(ctx context.Context, principal application.Principal, input json.RawMessage) ([]model.UserNodeException, error) {
@@ -283,10 +283,10 @@ func (s *Server) revokeUserNodeAuthorizations(ctx context.Context, actorID *int6
 			return nil, err
 		}
 	}
-	return map[string]any{
+	return s.attachAccessChangeDelivery(ctx, map[string]any{
 		"revoking": true, "authorization_ids": ids, "affected_users": len(users),
 		"access_change_id": change.ID, "access_change_status": change.Status, "queued_tasks": len(change.Targets),
-	}, nil
+	}, change), nil
 }
 
 func (s *Server) userNodeAuthorizationSetRevisions(ctx context.Context, req batchUserExceptionRequest, existing []model.UserNodeException) (map[string]string, error) {

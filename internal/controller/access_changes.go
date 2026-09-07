@@ -703,11 +703,8 @@ func (s *Server) activateAccessChange(ctx context.Context, change *model.AccessC
 	default:
 		return fmt.Errorf("unknown access change type %q", change.ChangeType)
 	}
-	if revision, err := s.store.ConfigurationRevision(ctx); err == nil && revision > 0 {
-		// Activation is the desired-state commit for access changes. Draft and
-		// pending rows are intentionally ignored by configuration triggers; only
-		// the active transition enters the normal convergence coordinator.
-		s.markConfigurationRevision(ctx, revision, nil)
+	if err := s.reconcileProxyCredentials(ctx); err != nil {
+		return err
 	}
 	return nil
 }
@@ -906,7 +903,10 @@ func (s *Server) accessChanges(w http.ResponseWriter, r *http.Request) {
 				fail(w, err, 404)
 				return
 			}
-			write(w, 200, map[string]any{"access_change": change, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+			view := s.accessChangeDeliveryView(r.Context(), change)
+			view["access_change"] = change
+			view["runtime_authorization_mode"] = s.authorizationMode(r.Context())
+			write(w, 200, view)
 			return
 		}
 		limit := intQuery(r, "limit", 50)

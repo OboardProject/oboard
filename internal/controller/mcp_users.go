@@ -54,14 +54,12 @@ func (s *Server) registerUserAutomationOperations() {
 				return nil, err
 			}
 		}
-		if err := s.queueCoreConfigRefreshForUser(ctx, user.ID, "user_created"); err != nil {
-			logConfigurationError("queue core config for user create", err)
-		}
+		s.applyChangePlan(ctx, user.ID, ClassifyUserCreated())
 		result := map[string]any{"user": automationUserView(user)}
 		if generatedPassword != "" {
 			result["generated_password"] = generatedPassword
 		}
-		return result, nil
+		return s.attachDeliveryCompletion(ctx, result, user.ID, 0), nil
 	})
 
 	// ---- users.update ----
@@ -100,7 +98,7 @@ func (s *Server) registerUserAutomationOperations() {
 				return nil, err
 			}
 		}
-		return map[string]any{"user": automationUserView(user), "changed_fields": changed}, nil
+		return s.attachDeliveryCompletion(ctx, map[string]any{"user": automationUserView(user), "changed_fields": changed}, user.ID, 0), nil
 	})
 
 	// ---- users.delete ----
@@ -145,10 +143,9 @@ func (s *Server) registerUserAutomationOperations() {
 		if err := s.store.Delete(ctx, "users", user.ID); err != nil {
 			return nil, err
 		}
-		if err := s.queueCoreConfigRefreshForServers(ctx, serverIDs, "user_deleted"); err != nil {
-			logConfigurationError("queue core config for user delete", err)
-		}
-		return map[string]any{"deleted": true, "user_id": user.ID}, nil
+		s.applyChangePlan(ctx, user.ID, ClassifyUserRemoval())
+		_ = serverIDs
+		return s.attachDeliveryCompletion(ctx, map[string]any{"deleted": true, "user_id": user.ID}, user.ID, 0), nil
 	})
 
 	// ---- users.session_revoke ----
@@ -174,7 +171,7 @@ func (s *Server) registerUserAutomationOperations() {
 		if _, err := s.store.BumpSessionVersion(ctx, user.ID); err != nil {
 			return nil, err
 		}
-		return map[string]any{"session_revoked": true, "user_id": user.ID}, nil
+		return s.attachDeliveryCompletion(ctx, map[string]any{"session_revoked": true, "user_id": user.ID}, user.ID, 0), nil
 	})
 
 	// ---- user_groups.create ----
@@ -347,10 +344,10 @@ func (s *Server) registerUserAutomationOperations() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.queueUserDeviceCredentialDeployment(ctx); err != nil {
+		if err := s.queueUserDeviceCredentialDeployment(ctx, request.UserID); err != nil {
 			return nil, err
 		}
-		return map[string]any{"device": automationUserDeviceView(*device), "revoked": true}, nil
+		return s.attachDeliveryCompletion(ctx, map[string]any{"device": automationUserDeviceView(*device), "revoked": true}, request.UserID, 0), nil
 	})
 }
 

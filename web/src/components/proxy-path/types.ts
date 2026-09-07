@@ -129,6 +129,13 @@ export type Server = {
   last_seen_at?: string
   created_at?: string
   updated_at?: string
+  authorization_revision?: number
+  authorization_confirmed?: boolean
+  authorization_pending_reason?: string
+  users_revision?: number
+  users_confirmed?: boolean
+  users_pending_reason?: string
+  users_fallback?: string
 }
 
 export type Inbound = {

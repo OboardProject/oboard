@@ -103,6 +103,51 @@ func (s *Server) registerAuditAutomationOperations() {
 		s.publishRealtime("audit", "ai-reviews")
 		return map[string]any{"deleted": true, "review_id": review.ID}, nil
 	})
+
+	s.automation.RegisterValidator("access_changes.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		change, err := s.accessChangeRetryCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"access_change_id": change.ID, "status": change.Status}, nil
+	})
+	s.automation.RegisterRevisionResolver("access_changes.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		change, err := s.accessChangeRetryCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"access_change:" + strconv.FormatInt(change.ID, 10): change.CreatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("access_changes.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		change, err := s.accessChangeRetryCandidate(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		phase, queued, err := s.retryAccessChange(ctx, change.ID)
+		if err != nil {
+			return nil, err
+		}
+		refreshed, _ := s.store.GetAccessChange(ctx, change.ID)
+		result := map[string]any{"access_change_id": change.ID, "phase": phase, "queued_tasks": queued, "status": phaseStatusName(phase)}
+		return s.attachAccessChangeDelivery(ctx, result, refreshed), nil
+	})
+}
+
+func (s *Server) accessChangeRetryCandidate(ctx context.Context, input json.RawMessage) (*model.AccessChange, error) {
+	var request struct {
+		ID int64 `json:"id"`
+	}
+	if err := strictAutomationInput(input, &request); err != nil || request.ID <= 0 {
+		return nil, errors.New("id must be a positive integer")
+	}
+	change, err := s.store.GetAccessChange(ctx, request.ID)
+	if err != nil {
+		return nil, err
+	}
+	if change.Status != model.AccessChangeFailed {
+		return nil, errors.New("only failed access changes can be retried")
+	}
+	return change, nil
 }
 
 type auditReviewCreateRequest struct {

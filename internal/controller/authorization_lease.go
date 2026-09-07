@@ -83,6 +83,7 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 	s.invalidateRoutingSnapshot()
 	s.invalidateAuthorizationProjection()
 	s.wakeAuthorizationSync()
+	s.wakeRuntimeUsersSync()
 	return nil
 }
 

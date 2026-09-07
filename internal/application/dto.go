@@ -68,6 +68,13 @@ type ServerDTO struct {
 	LastSeenAt                  *time.Time                 `json:"last_seen_at,omitempty"`
 	CreatedAt                   time.Time                  `json:"created_at"`
 	UpdatedAt                   time.Time                  `json:"updated_at"`
+	AuthorizationRevision       int64                      `json:"authorization_revision,omitempty"`
+	AuthorizationConfirmed      bool                       `json:"authorization_confirmed,omitempty"`
+	AuthorizationPendingReason  string                     `json:"authorization_pending_reason,omitempty"`
+	UsersRevision               int64                      `json:"users_revision,omitempty"`
+	UsersConfirmed              bool                       `json:"users_confirmed,omitempty"`
+	UsersPendingReason          string                     `json:"users_pending_reason,omitempty"`
+	UsersFallback               string                     `json:"users_fallback,omitempty"`
 }
 
 type UserDTO struct {
@@ -263,6 +270,9 @@ func serverDTO(item model.Server) ServerDTO {
 		DisplayTags:                 append([]model.ServerDisplayTag{}, item.DisplayTags...),
 		TimeCorrectionMode:          item.TimeCorrectionMode, TimeCheckStatus: item.TimeCheckStatus,
 		LastSeenAt: item.LastSeenAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		AuthorizationRevision: item.AuthorizationRevision, AuthorizationConfirmed: item.AuthorizationConfirmed,
+		AuthorizationPendingReason: item.AuthorizationPendingReason, UsersRevision: item.UsersRevision,
+		UsersConfirmed: item.UsersConfirmed, UsersPendingReason: item.UsersPendingReason, UsersFallback: item.UsersFallback,
 	}
 }
 

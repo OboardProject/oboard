@@ -234,11 +234,12 @@ func firstUnsupportedField(object map[string]any, allowed map[string]bool) strin
 
 func ValidateGeneratedSingBoxConfig(config SingBoxConfig) error {
 	v := &configValidator{
-		tags:        map[string]string{},
-		outboundTag: map[string]bool{},
-		dnsTag:      map[string]bool{},
-		routeTarget: map[string]bool{},
-		listens:     []listenResource{},
+		tags:               map[string]string{},
+		outboundTag:        map[string]bool{},
+		dnsTag:             map[string]bool{},
+		routeTarget:        map[string]bool{},
+		listens:            []listenResource{},
+		runtimeUserInbound: runtimeUserInboundTags(config),
 	}
 	v.validateDNS(config.DNS)
 	v.validateOutbounds(config.Outbounds)
@@ -252,12 +253,35 @@ func ValidateGeneratedSingBoxConfig(config SingBoxConfig) error {
 }
 
 type configValidator struct {
-	issues      []string
-	tags        map[string]string
-	outboundTag map[string]bool
-	dnsTag      map[string]bool
-	routeTarget map[string]bool
-	listens     []listenResource
+	issues             []string
+	tags               map[string]string
+	outboundTag        map[string]bool
+	dnsTag             map[string]bool
+	routeTarget        map[string]bool
+	listens            []listenResource
+	runtimeUserInbound map[string]bool
+}
+
+func runtimeUserInboundTags(config SingBoxConfig) map[string]bool {
+	out := map[string]bool{}
+	if config.OBoard == nil || config.OBoard.RuntimeUsers == nil {
+		return out
+	}
+	for _, tag := range config.OBoard.RuntimeUsers.Inbounds {
+		tag = strings.TrimSpace(tag)
+		if tag != "" {
+			out[tag] = true
+		}
+	}
+	return out
+}
+
+func (v *configValidator) allowsEmptyRuntimeUsers(inbound map[string]any) bool {
+	if v.runtimeUserInbound[stringFromAny(inbound["tag"])] {
+		return true
+	}
+	managed, _ := inbound["managed"].(bool)
+	return managed
 }
 
 func (v *configValidator) addf(format string, args ...any) {
@@ -383,6 +407,7 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 			}
 		case "vless", "hysteria2", "anytls", "shadowsocks", "mieru", "snell", "socks":
 			v.validateRemoteAdapter(path, typ, outbound)
+		case "user-selector":
 		default:
 			v.addf("%s unsupported outbound type %q", path, typ)
 		}
@@ -397,6 +422,13 @@ func (v *configValidator) validateOutbounds(outbounds []map[string]any) {
 				target := strings.TrimSpace(stringFromAny(outbound[field]))
 				if target != "" && !v.outboundTag[target] {
 					v.addf("outbounds[%d].%s references unknown outbound %q", i, field, target)
+				}
+			}
+		}
+		if stringFromAny(outbound["type"]) == "user-selector" {
+			for user, target := range outboundUserSelectorUsers(outbound["users"]) {
+				if target == "" || !v.outboundTag[target] {
+					v.addf("outbounds[%d] user-selector user %q references unknown outbound %q", i, user, target)
 				}
 			}
 		}
@@ -706,7 +738,7 @@ func (v *configValidator) validateMieruTransport(path string, item map[string]an
 
 func (v *configValidator) validateVLESSInbound(path string, inbound map[string]any) {
 	users := mapList(inbound["users"])
-	if len(users) == 0 {
+	if len(users) == 0 && !v.allowsEmptyRuntimeUsers(inbound) {
 		v.addf("%s vless users missing", path)
 	}
 	for i, user := range users {
@@ -752,7 +784,7 @@ func (v *configValidator) validateVLESSFlowAndTransport(path string, item map[st
 
 func (v *configValidator) validatePasswordUserInbound(path, typ string, inbound map[string]any) {
 	users := mapList(inbound["users"])
-	if len(users) == 0 {
+	if len(users) == 0 && !v.allowsEmptyRuntimeUsers(inbound) {
 		v.addf("%s %s users missing", path, typ)
 	}
 	for i, user := range users {
@@ -785,7 +817,7 @@ func (v *configValidator) validateShadowsocksInbound(path string, inbound map[st
 			v.addf("%s invalid SS2022 server key length for %s", path, method)
 		}
 		users := mapList(inbound["users"])
-		if len(users) == 0 {
+		if len(users) == 0 && !v.allowsEmptyRuntimeUsers(inbound) {
 			v.addf("%s SS2022 users missing", path)
 		}
 		for i, user := range users {
@@ -919,6 +951,21 @@ func hasServerTLSKeyMaterial(tls map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func outboundUserSelectorUsers(value any) map[string]string {
+	out := map[string]string{}
+	switch users := value.(type) {
+	case map[string]string:
+		for user, target := range users {
+			out[user] = strings.TrimSpace(target)
+		}
+	case map[string]any:
+		for user, raw := range users {
+			out[user] = strings.TrimSpace(stringFromAny(raw))
+		}
+	}
+	return out
 }
 
 func mapList(value any) []map[string]any {

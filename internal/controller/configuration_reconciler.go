@@ -123,9 +123,8 @@ func (s *Server) configurationChangesetApplied(ctx context.Context, item *model.
 func configurationCapability(name string) bool {
 	switch name {
 	case "servers.onboard", "servers.update", "servers.delete", "servers.dns_policy.set",
-		"user_devices.update", "user_devices.revoke",
 		"subscription_plans.create", "subscription_plans.update", "subscription_plans.delete",
-		"subscription_plans.nodes.update", "user_node_exceptions.create", "user_node_exceptions.update", "user_node_exceptions.delete":
+		"subscription_plans.nodes.update":
 		return true
 	case "inbounds.probe", "proxy_paths.probe_egress", "routing_rule_sets.refresh":
 		return false
@@ -202,7 +201,7 @@ func configurationMutationPath(path, method string) bool {
 	case "subscription-plans":
 		return len(parts) <= 2
 	case "user-node-exceptions":
-		return len(parts) <= 2
+		return false
 	case "routing-rules":
 		return len(parts) <= 2 || len(parts) == 2 && (parts[1] == "place" || parts[1] == "reorder")
 	case "external-outbounds":
@@ -969,7 +968,11 @@ func (s *Server) configurationSyncViews(ctx context.Context, states []store.Conf
 		logConfigurationError("list servers for sync views", err)
 		return configurationSyncViews(states, nil)
 	}
-	return configurationSyncViews(states, servers)
+	views := configurationSyncViews(states, servers)
+	for i := range views {
+		s.attachLaneFields(ctx, views[i], states[i].ServerID)
+	}
+	return views
 }
 
 func configurationAgentReachable(server model.Server) bool {

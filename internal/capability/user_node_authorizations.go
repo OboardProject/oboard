@@ -22,13 +22,24 @@ func userNodeAuthorizationDescriptors(positiveID, stringValue, boolValue map[str
 		"effective": boolValue, "plan_includes": boolValue, "plan_id": positiveID, "plan_name": stringValue,
 	})
 	writeOutput := schemaObject(map[string]any{
-		"created":              map[string]any{"type": "integer", "minimum": 0},
-		"updated":              map[string]any{"type": "integer", "minimum": 0},
-		"skipped":              map[string]any{"type": "integer", "minimum": 0},
-		"affected_users":       map[string]any{"type": "integer", "minimum": 0},
-		"access_change_id":     map[string]any{"type": "integer", "minimum": 0},
-		"access_change_status": stringValue,
-		"queued_tasks":         map[string]any{"type": "integer", "minimum": 0},
+		"created":                          map[string]any{"type": "integer", "minimum": 0},
+		"updated":                          map[string]any{"type": "integer", "minimum": 0},
+		"skipped":                          map[string]any{"type": "integer", "minimum": 0},
+		"affected_users":                   map[string]any{"type": "integer", "minimum": 0},
+		"access_change_id":                 map[string]any{"type": "integer", "minimum": 0},
+		"access_change_status":             stringValue,
+		"queued_tasks":                     map[string]any{"type": "integer", "minimum": 0},
+		"change_id":                        map[string]any{"type": "integer", "minimum": 0},
+		"pending_servers":                  map[string]any{"type": "array", "items": positiveID},
+		"completion":                       stringValue,
+		"desired_state":                    stringValue,
+		"effective_state":                  stringValue,
+		"pending_reason":                   stringValue,
+		"applied_users_revision":           map[string]any{"type": "integer"},
+		"applied_authorization_revision":   map[string]any{"type": "integer"},
+		"lease_valid_until":                stringValue,
+		"last_error":                       stringValue,
+		"retryable":                        boolValue,
 	})
 	return []Descriptor{
 		{
@@ -60,6 +71,10 @@ func userNodeAuthorizationDescriptors(positiveID, stringValue, boolValue map[str
 			OutputSchema: schemaObject(map[string]any{
 				"revoking": boolValue, "authorization_ids": idArray(0, 256), "affected_users": map[string]any{"type": "integer", "minimum": 0},
 				"access_change_id": map[string]any{"type": "integer", "minimum": 0}, "access_change_status": stringValue, "queued_tasks": map[string]any{"type": "integer", "minimum": 0},
+				"change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue,
+				"desired_state": stringValue, "effective_state": stringValue, "pending_reason": stringValue,
+				"applied_users_revision": map[string]any{"type": "integer"}, "applied_authorization_revision": map[string]any{"type": "integer"},
+				"lease_valid_until": stringValue, "last_error": stringValue, "retryable": boolValue,
 			}),
 			RequiredScopes: []string{"user_node_authorizations:write"}, ResourceTypes: []string{"user", "inbound", "proxy_path", "external_outbound"}, ResourceEvaluator: "user_ids",
 			RiskClass: 3, ApprovalPolicy: "required", Idempotent: true, DataClassification: DataSensitive, SensitiveFields: []string{"user_identity"}, MCPEnabled: true, Executable: true, MinimumAccess: mcpauth.AccessOperate, RBACPermission: "admin.settings",

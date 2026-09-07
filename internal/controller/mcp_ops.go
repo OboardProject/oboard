@@ -270,6 +270,43 @@ func (s *Server) registerTaskTriggerOperations() {
 		return map[string]any{"retried": count, "server_ids": serverIDs}, nil
 	})
 
+	s.automation.RegisterValidator("servers.delivery.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var body struct {
+			ServerID int64 `json:"server_id"`
+		}
+		if err := json.Unmarshal(input, &body); err != nil || body.ServerID <= 0 {
+			return nil, errors.New("server_id is required")
+		}
+		if !principal.AllowsInt64("server_ids", body.ServerID) {
+			return nil, errors.New("server is outside the authorized boundary")
+		}
+		return map[string]any{"server_id": body.ServerID}, nil
+	})
+	s.automation.RegisterRevisionResolver("servers.delivery.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		var body struct {
+			ServerID int64 `json:"server_id"`
+		}
+		if err := json.Unmarshal(input, &body); err != nil || body.ServerID <= 0 {
+			return nil, errors.New("server_id is required")
+		}
+		return map[string]string{"server:" + strconv.FormatInt(body.ServerID, 10): time.Now().UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("servers.delivery.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		var body struct {
+			ServerID int64 `json:"server_id"`
+		}
+		if err := json.Unmarshal(input, &body); err != nil || body.ServerID <= 0 {
+			return nil, errors.New("server_id is required")
+		}
+		if !principal.AllowsInt64("server_ids", body.ServerID) {
+			return nil, errors.New("server is outside the authorized boundary")
+		}
+		if err := s.retryServerDelivery(ctx, body.ServerID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"retried": true, "server_id": body.ServerID}, nil
+	})
+
 	s.automation.RegisterValidator("deployments.dismiss_failure", func(context.Context, application.Principal, json.RawMessage) (any, error) {
 		return map[string]any{}, nil
 	})

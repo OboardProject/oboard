@@ -37,6 +37,7 @@ func opsDescriptors(positiveID map[string]any, stringValue, boolValue map[string
 		{"servers.list_network_interfaces", "读取指定服务器的网卡及地址列表", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue}, "task_id"), 2, false},
 		{"deployments.dismiss_failure", "忽略当前最新部署失败的提醒", schemaObject(nil), schemaObject(map[string]any{"dismissed": boolValue, "deployment_status": stringValue}, "dismissed"), 2, false},
 		{"configuration_sync.retry", "重试已失败的配置自动同步", schemaObject(map[string]any{"server_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": positiveID}}, "server_ids"), schemaObject(map[string]any{"retried": map[string]any{"type": "integer", "minimum": 1}, "server_ids": map[string]any{"type": "array", "items": positiveID}}, "retried"), 2, false},
+		{"servers.delivery.retry", "重试服务器授权租约与运行时用户下发", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"retried": boolValue, "server_id": positiveID}, "retried"), 2, false},
 		{"inbounds.probe", "对指定入口发起本地与公网探测任务", schemaObject(map[string]any{"inbound_id": positiveID}, "inbound_id"), schemaObject(map[string]any{"task_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}, "entry_target_count": map[string]any{"type": "integer"}}, "task_ids"), 2, false},
 		{"proxy_paths.probe_egress", "对已部署的代理分支手动重探测出口地区", schemaObject(map[string]any{"path_id": positiveID}, "path_id"), schemaObject(map[string]any{"task_id": positiveID, "region_code": stringValue, "status": stringValue}, "task_id"), 2, false},
 		{"servers.probe_latency", "对指定服务器发起延迟测试", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue, "target_count": map[string]any{"type": "integer"}, "existing": boolValue}, "task_id"), 2, false},
@@ -61,7 +62,7 @@ func opsScopeFor(name string) string {
 	switch {
 	case name == "agents.update_all":
 		return "tasks:write"
-	case name == "deployments.dismiss_failure", name == "configuration_sync.retry":
+	case name == "deployments.dismiss_failure", name == "configuration_sync.retry", name == "servers.delivery.retry":
 		return "deployments:write"
 	case name == "inbounds.probe":
 		return "topology:write"

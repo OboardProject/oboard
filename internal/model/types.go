@@ -1075,6 +1075,13 @@ type Server struct {
 	LastSeenAt                  *time.Time         `json:"last_seen_at,omitempty"`
 	CreatedAt                   time.Time          `json:"created_at"`
 	UpdatedAt                   time.Time          `json:"updated_at"`
+	AuthorizationRevision       int64              `json:"authorization_revision,omitempty"`
+	AuthorizationConfirmed      bool               `json:"authorization_confirmed,omitempty"`
+	AuthorizationPendingReason  string             `json:"authorization_pending_reason,omitempty"`
+	UsersRevision               int64              `json:"users_revision,omitempty"`
+	UsersConfirmed              bool               `json:"users_confirmed,omitempty"`
+	UsersPendingReason          string             `json:"users_pending_reason,omitempty"`
+	UsersFallback               string             `json:"users_fallback,omitempty"`
 }
 
 type Inbound struct {
@@ -3349,6 +3356,7 @@ type HealthReport struct {
 	// authorization snapshot the Agent's data plane currently enforces. It
 	// carries no grants, credentials, or task payloads.
 	AppliedAuthorization *AuthorizationAppliedSnapshot `json:"applied_authorization,omitempty"`
+	AppliedUsers         *UsersAppliedSnapshot         `json:"applied_users,omitempty"`
 }
 
 type StorageDiskInfo struct {

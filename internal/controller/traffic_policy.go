@@ -37,25 +37,7 @@ func serverSupportsTrafficPolicy(server model.Server) bool {
 }
 
 func (s *Server) syncUserChange(ctx context.Context, before, after model.User) {
-	identity := userIdentityChanged(before, after)
-	traffic := userTrafficPolicyChanged(before, after)
-	if !identity && !traffic {
-		return
-	}
-	serverIDs, err := s.userAccountingServerIDs(ctx, after.ID)
-	if err != nil {
-		logConfigurationError("user accounting servers", err)
-		return
-	}
-	if identity {
-		if err := s.queueCoreConfigRefreshForServers(ctx, serverIDs, "user_credentials_changed"); err != nil {
-			logConfigurationError("queue core config for user identity", err)
-		}
-		return
-	}
-	if err := s.queueApplyTrafficPolicy(ctx, serverIDs, "user_policy_changed", map[int64]bool{after.ID: true}); err != nil {
-		logConfigurationError("queue traffic policy", err)
-	}
+	s.applyChangePlan(ctx, after.ID, ClassifyUserChange(before, after))
 }
 
 func (s *Server) userAccountingServerIDs(ctx context.Context, userID int64) ([]int64, error) {

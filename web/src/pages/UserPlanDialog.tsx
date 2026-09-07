@@ -1,5 +1,7 @@
 import * as React from 'react'
 import { Badge } from '../components/ui/badge'
+import { AuthorizationStatusBadge } from '../components/authorization/AuthorizationStatusBadge'
+import { useAccessChangeStatus } from '../hooks/useAccessChangeStatus'
 import { Button } from '../components/ui/button'
 import { Dialog } from '../components/ui/dialog'
 import { Select } from '../components/ui/select'
@@ -56,6 +58,8 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
   const [exBusy, setExBusy] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState('')
   const [searchResults, setSearchResults] = React.useState<CatalogNode[]>([])
+  const [changeID, setChangeID] = React.useState<number | null>(null)
+  const { status: deliveryStatus } = useAccessChangeStatus(client, changeID)
 
   const reload = async () => {
     try {
@@ -110,6 +114,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
         body: JSON.stringify({ user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt) }),
       })
       setPreview(null)
+      if (res.access_change_id) setChangeID(res.access_change_id)
       setMessage(res.status === 'scheduled'
         ? `已排定：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
         : res.access_change_id ? `已保存分配：变更 #${res.access_change_id}（${res.status}）` : '已保存')
@@ -149,6 +154,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
       })
       setExForm({ node_key: '', effect: 'allow', reason: '', expires_at: '' })
       setSearchResults([])
+      if (res.access_change_id) setChangeID(res.access_change_id)
       setMessage(res.access_change_id ? `已创建例外，正在部署（变更 #${res.access_change_id}）` : '已创建例外')
       await reload()
     } catch (e: any) {
@@ -162,6 +168,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
     setMessage('')
     try {
       const res = await client.request<any>(`/user-node-exceptions/${ex.id}`, { method: 'DELETE' })
+      if (res.access_change_id) setChangeID(res.access_change_id)
       setMessage(res.revoking ? `正在撤销（变更 #${res.access_change_id}）` : '已删除例外')
       await reload()
     } catch (e: any) {
@@ -179,7 +186,10 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
             <h3 style={{ marginTop: 0 }}>当前套餐</h3>
             {currentPlan ? (
               <div>
-                <Badge variant={currentPlan.enabled ? 'success' : 'secondary'}>{currentPlan.name}</Badge>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <Badge variant={currentPlan.enabled ? 'success' : 'secondary'}>{currentPlan.name}</Badge>
+                  {changeID ? <AuthorizationStatusBadge status={deliveryStatus} /> : null}
+                </div>
                 <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                   状态：{binding?.status || 'active'} · 开始 {fmtDate(binding?.starts_at)} · 到期 {fmtDate(binding?.expires_at)}
                 </div>

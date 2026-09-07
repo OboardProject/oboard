@@ -26,6 +26,13 @@ const (
 	// the signed authorization_update control message, poll
 	// GET /api/v1/agent/authorization, and answer with authorization_ack.
 	AgentCapabilityAuthorizationControl = "authorization_control_v1"
+	// AgentCapabilityRuntimeUsers is advertised by Agents that accept the
+	// signed users_update control message, poll GET /api/v1/agent/users-snapshot,
+	// and answer with users_ack.
+	AgentCapabilityRuntimeUsers = "runtime_users_control_v1"
+	// KernelCapabilityRuntimeUsers is advertised by kernels that accept
+	// POST /users/install and expose GET /users/status.
+	KernelCapabilityRuntimeUsers = "runtime_users_v1"
 )
 
 // AuthorizationEnvelope is the signed carrier for a lease on every transport
@@ -49,6 +56,8 @@ type AuthorizationEnvelope struct {
 const (
 	AgentControlAuthorizationUpdate = "authorization_update"
 	AgentControlAuthorizationAck    = "authorization_ack"
+	AgentControlUsersUpdate         = "users_update"
+	AgentControlUsersAck            = "users_ack"
 )
 
 // AuthorizationAck is the Agent's report that an envelope was applied.
@@ -63,6 +72,36 @@ type AuthorizationAck struct {
 	Runtimes  map[string]string             `json:"runtimes,omitempty"`
 	Error     string                        `json:"error,omitempty"`
 	Applied   *AuthorizationAppliedSnapshot `json:"applied,omitempty"`
+}
+
+// UsersEnvelope is the signed carrier for a runtime-user install on every
+// transport. The signature is HMAC-SHA256 over
+//
+//	users_v1\n<server_id>\n<message_id>\n<users_revision>\n<users_digest>\n<sha256(users_json)>
+type UsersEnvelope struct {
+	Type      string `json:"type,omitempty"`
+	MessageID string `json:"message_id"`
+	ServerID  int64  `json:"server_id"`
+	UsersJSON string `json:"users_json"`
+	Signature string `json:"signature"`
+}
+
+type UsersAck struct {
+	Type      string                `json:"type,omitempty"`
+	MessageID string                `json:"message_id"`
+	Revision  int64                 `json:"revision"`
+	Digest    string                `json:"digest,omitempty"`
+	Confirmed bool                  `json:"confirmed"`
+	BootID    string                `json:"boot_id,omitempty"`
+	Runtimes  map[string]string     `json:"runtimes,omitempty"`
+	Error     string                `json:"error,omitempty"`
+	Applied   *UsersAppliedSnapshot `json:"applied,omitempty"`
+}
+
+type UsersAppliedSnapshot struct {
+	Revision int64  `json:"revision"`
+	Digest   string `json:"digest,omitempty"`
+	BootID   string `json:"boot_id,omitempty"`
 }
 
 // AuthorizationAppliedSnapshot is the opaque confirmation metadata the Agent

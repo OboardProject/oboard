@@ -97,6 +97,7 @@ import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess 
 import './style.css'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
 import { Badge } from './components/ui/badge'
+import { AuthorizationStatusBadge } from './components/authorization/AuthorizationStatusBadge'
 import { Switch } from './components/ui/switch'
 import { DateTimePicker } from './components/ui/datetime-picker'
 import logo from './assets/logo.svg'
@@ -558,6 +559,27 @@ function ServerExpiryBadge({ server }: { server: Server }) {
   const status = serverExpiryStatus(server)
   if (status.tone === 'muted') return null
   return <span className={`server-expiry-badge ${status.tone}`} title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>{status.label}</span>
+}
+
+function serverDeliveryStatus(server: Server) {
+  if (!server.agent_id) return null
+  const usersFallback = server.users_fallback === 'apply_core_config'
+    || server.users_pending_reason === 'agent_upgrade_required'
+    || server.users_pending_reason === 'core_config_fallback'
+  const authPending = server.authorization_confirmed === false
+  const usersPending = server.users_confirmed === false && !usersFallback
+  if (!authPending && !usersPending && !usersFallback) return null
+  if (usersFallback && !authPending) {
+    return { tone: 'muted' as const, label: '用户走配置', title: '运行时用户通道不可用，改走 apply_core_config' }
+  }
+  const title = [authPending ? '授权租约未确认' : '', usersPending ? '运行时用户未确认' : '', usersFallback ? '用户走配置下发' : ''].filter(Boolean).join('；')
+  return { tone: 'danger' as const, label: '授权待同步', title }
+}
+
+function ServerDeliveryBadge({ server }: { server: Server }) {
+  const status = serverDeliveryStatus(server)
+  if (!status) return null
+  return <span className={`server-expiry-badge ${status.tone}`} title={status.title}>{status.label}</span>
 }
 
 const routeActions: Exclude<RouteAction, 'source_prefix'>[] = ['direct', 'block', 'outbound', 'external', 'proxy_path', 'family_split', 'interface']
@@ -7920,6 +7942,15 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'system') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'overview' }) }
     else if (type === 'agent-config') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'settings' }) }
     else if (type === 'update-agent') void updateAgent(s)
+    else if (type === 'retry-delivery') {
+      try {
+        await client.request(`/servers/${s.id}/delivery-retry`, { method: 'POST' })
+        notify?.('已重新下发授权与运行时用户', 'success')
+        revalidateServers()
+      } catch (error: any) {
+        notify?.(localizeErrorMessage(error?.message || error), 'error')
+      }
+    }
     else if (type === 'enroll') enroll(s)
     else if (type === 'logs') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'logs' }) }
     else if (type === 'diagnose') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'diagnostics' }) }
@@ -9732,6 +9763,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
               <strong className="server-list-name">{server.name || `server-${server.id}`} <span className="server-list-name-id" style={{ fontWeight: 500, opacity: 0.55 }}>#{server.id}</span></strong>
               <span className={`server-status-dot ${isOnline ? 'online' : 'offline'}`} title={isOnline ? '在线' : '离线'} />
               {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
+              <ServerDeliveryBadge server={server} />
               <ServerExpiryBadge server={server} />
               {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
               {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
@@ -9842,6 +9874,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <RegionFlag code={serverRegionCode(server)} size={20} />
           <div className="server-card-name-row">
             <h3>{server.name || `server-${server.id}`}</h3>
+            <ServerDeliveryBadge server={server} />
             <ServerAddressBadge server={server} />
           </div>
         </div>
@@ -10684,6 +10717,8 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
             <ServerDetailItem label="运行库" value={server.libc || '—'} />
             <ServerDetailItem label="服务管理器" value={server.service_manager || '—'} />
             <ServerDetailItem label="包管理器" value={server.package_manager || '—'} />
+            <ServerDetailItem label="授权下发" value={server.agent_id ? (serverDeliveryStatus(server)?.label || '已确认') : '未接入'} />
+            <ServerDetailItem label="用户下发" value={server.users_fallback === 'apply_core_config' ? '走配置下发' : (server.users_confirmed === false ? '待确认' : (server.agent_id ? '已确认' : '未接入'))} />
             <ServerDetailItem label="CPU" value={server.cpu || '—'} />
             <ServerDetailItem label="CPU 核心" value={cpuCoresLabel(server)} />
           </dl>
@@ -18868,6 +18903,7 @@ function UserManagement({ data, client, load, notify }: any) {
                         <span className={`badge-custom ${isUnavailable ? 'badge-danger' : 'badge-success'}`}>
                           {isSuspended ? '已暂停' : isQuotaExceeded ? '已达量' : '正常'}
                         </span>
+                        {usr.status === 'disabled' ? <AuthorizationStatusBadge status="revoking" /> : null}
                       </div>
                       {(usr.traffic_period_end || isQuotaExceeded) && (
                         <span className="user-table-period">

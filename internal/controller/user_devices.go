@@ -61,7 +61,7 @@ func (s *Server) userDevices(w http.ResponseWriter, r *http.Request, userID int6
 				s.writeUserDeviceError(w, err)
 				return
 			}
-			if err := s.queueUserDeviceCredentialDeployment(r.Context()); err != nil {
+			if err := s.queueUserDeviceCredentialDeployment(r.Context(), userID); err != nil {
 				fail(w, err, http.StatusInternalServerError)
 				return
 			}
@@ -102,7 +102,7 @@ func (s *Server) userDevices(w http.ResponseWriter, r *http.Request, userID int6
 			s.writeUserDeviceError(w, err)
 			return
 		}
-		if err := s.queueUserDeviceCredentialDeployment(r.Context()); err != nil {
+		if err := s.queueUserDeviceCredentialDeployment(r.Context(), userID); err != nil {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
@@ -130,7 +130,7 @@ func (s *Server) userDeviceAction(w http.ResponseWriter, r *http.Request, userID
 			s.writeUserDeviceError(w, err)
 			return
 		}
-		if err := s.queueUserDeviceCredentialDeployment(r.Context()); err != nil {
+		if err := s.queueUserDeviceCredentialDeployment(r.Context(), userID); err != nil {
 			fail(w, err, http.StatusInternalServerError)
 			return
 		}
@@ -150,12 +150,8 @@ func (s *Server) userDeviceAction(w http.ResponseWriter, r *http.Request, userID
 	}
 }
 
-func (s *Server) queueUserDeviceCredentialDeployment(ctx context.Context) error {
-	revision, err := s.store.ConfigurationRevision(ctx)
-	if err != nil {
-		return err
-	}
-	s.markConfigurationRevision(ctx, revision, nil)
+func (s *Server) queueUserDeviceCredentialDeployment(ctx context.Context, userID int64) error {
+	s.applyChangePlan(ctx, userID, ClassifyCredentialRotation())
 	return nil
 }
 

@@ -63,7 +63,7 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		{method: "PATCH", path: "/api/v1/ui/tunnels/8", want: true},
 		{method: "POST", path: "/api/v1/ui/subscription-plans/8/changes/apply", want: false},
 		{method: "POST", path: "/api/v1/ui/subscription-plans", want: true},
-		{method: "POST", path: "/api/v1/ui/user-node-exceptions", want: true},
+		{method: "POST", path: "/api/v1/ui/user-node-exceptions", want: false},
 		{method: "POST", path: "/api/v1/changesets/cs_1/apply", want: false},
 		{method: "GET", path: "/api/v1/ui/inbounds", want: false},
 	}
@@ -95,7 +95,8 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		{name: "deployments.apply", want: false},
 		{name: "certificates.issue", want: false},
 		{name: "subscription_plans.update", want: true},
-		{name: "user_node_exceptions.update", want: true},
+		{name: "user_node_exceptions.update", want: false},
+		{name: "user_devices.revoke", want: false},
 	}
 	for _, item := range capabilities {
 		if got := configurationCapability(item.name); got != item.want {
