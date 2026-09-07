@@ -57,7 +57,7 @@
   --sidebar-collapsed-width: 72px;
   --settings-sidebar-width: minmax(176px, 208px);
   --app-viewport-height: 100dvh;
-  --app-sticky-header-clearance: 88px;
+  --app-sticky-header-clearance: 96px;
   --layout-scrollbar-gutter: stable;
 
   /* Global overlay order. Keep transient feedback above every blocking layer. */
@@ -705,7 +705,12 @@ textarea:disabled {
 .nav-item small { color: var(--muted-2); font-size: 11px; }
 .nav-item.active small { color: color-mix(in srgb, var(--primary-contrast) 78%, transparent); }
 
+/* The sticky topbar cannot be offset above its containing block, so the scroll
+   area keeps no top padding of its own: the topbar carries it and reaches the
+   scrollport edge, otherwise page content scrolls through the strip above it. */
 .main {
+  --main-pad-x: 36px;
+  --main-pad-top: 28px;
   min-width: 0;
   height: 100%;
   min-height: 0;
@@ -713,7 +718,7 @@ textarea:disabled {
   overflow-x: clip;
   overscroll-behavior-y: contain;
   scrollbar-gutter: var(--layout-scrollbar-gutter, stable);
-  padding: 28px 36px 48px;
+  padding: 0 var(--main-pad-x) 48px;
   background: var(--bg-page);
   display: flex;
   flex-direction: column;
@@ -765,8 +770,8 @@ textarea:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin: -8px -8px 22px;
-  padding: 12px 8px 14px;
+  margin: 0 calc(var(--main-pad-x, 36px) * -1) 22px;
+  padding: var(--main-pad-top, 28px) var(--main-pad-x, 36px) 14px;
   border: 0;
   border-radius: 0;
   background: var(--bg-page);
@@ -775,10 +780,27 @@ textarea:disabled {
   transition: margin-bottom 0.2s ease, padding-bottom 0.2s ease;
 }
 
+/* Content keeps scrolling underneath the header. Dissolve it into the header
+   instead of cutting it off at a hard edge. */
+.topbar::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 12px;
+  background: linear-gradient(to bottom, var(--bg-page), transparent);
+  pointer-events: none;
+}
+
 .topbar.topbar-quiet {
   align-items: center;
   margin-bottom: 8px;
   padding-bottom: 8px;
+}
+
+.topbar.topbar-quiet::after {
+  height: 8px;
 }
 
 /* Dialogs are rendered above the page stage. Flatten and dim sticky topbar
@@ -787,6 +809,11 @@ body:has(.dialog-backdrop) .topbar,
 body:has(.dialog-root) .topbar {
   background: transparent;
   backdrop-filter: none;
+}
+
+body:has(.dialog-backdrop) .topbar::after,
+body:has(.dialog-root) .topbar::after {
+  display: none;
 }
 
 body:has(.dialog-backdrop) .topbar-actions,
@@ -11299,12 +11326,14 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     height: 70vh;
   }
   .main {
+    --main-pad-x: 16px;
+    --main-pad-top: 16px;
     height: auto;
     min-height: 0;
     overflow-y: visible;
     overflow-x: hidden;
     scrollbar-gutter: auto;
-    padding: 16px;
+    padding: 0 var(--main-pad-x) 16px;
   }
   .sidebar-footer {
     flex-shrink: 0;
@@ -11425,7 +11454,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
       "title title title";
     align-items: center;
     gap: 8px;
-    border-radius: var(--radius-lg);
+    border-radius: 0;
   }
   .topbar.proxy-path-topbar {
     grid-template-areas:
@@ -11617,7 +11646,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .action-split { width: 100%; display: grid; grid-template-columns: 1fr auto; }
   .action-split > button:first-child { width: 100%; }
   .action-menu-popover { right: 0; left: auto; }
-  .main { padding: 16px; }
+  .main { --main-pad-x: 16px; --main-pad-top: 16px; padding: 0 var(--main-pad-x) 16px; }
 }
 
 .server-dialog {
@@ -20527,7 +20556,7 @@ button.deploy-status-pill.details-trigger:focus-visible {
   .dashboard-attention { display: none; }
 }
 @media (max-width: 720px) {
-  .main { padding: 18px 16px 36px; }
+  .main { --main-pad-x: 16px; --main-pad-top: 18px; padding: 0 var(--main-pad-x) 36px; }
   .dash-welcome { flex-direction: column; }
   .dash-welcome-actions { width: 100%; }
   .dash-welcome-actions button { width: 100%; }
@@ -25707,8 +25736,8 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   min-width: 0;
   align-self: start;
   position: sticky;
-  top: var(--app-sticky-header-clearance, 88px);
-  max-height: calc(100dvh - var(--app-sticky-header-clearance, 88px) - 24px);
+  top: var(--app-sticky-header-clearance, 96px);
+  max-height: calc(100dvh - var(--app-sticky-header-clearance, 96px) - 24px);
   display: flex;
   flex-direction: column;
   min-height: 0;

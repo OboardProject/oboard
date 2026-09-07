@@ -14,7 +14,7 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
     expect(stylesheet).toMatch(/--sidebar-width:\s*248px/)
     expect(stylesheet).toMatch(/--sidebar-collapsed-width:\s*72px/)
     expect(stylesheet).toMatch(/--app-viewport-height:\s*100dvh/)
-    expect(stylesheet).toMatch(/--app-sticky-header-clearance:\s*88px/)
+    expect(stylesheet).toMatch(/--app-sticky-header-clearance:\s*96px/)
     expect(stylesheet).toMatch(/--settings-sidebar-width:\s*minmax\(176px,\s*208px\)/)
     expect(stylesheet).toMatch(/--layout-scrollbar-gutter:\s*stable/)
   })
@@ -35,13 +35,27 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
     expect(stylesheet).not.toMatch(/\.topbar\s*\{[^}]*background:\s*color-mix\([^)]*var\(--bg-page\)[^}]*backdrop-filter:\s*blur/s)
   })
 
+  it('leaves no scroll-area padding above the sticky topbar, which a sticky box cannot cover', () => {
+    // A sticky box is clamped to its containing block, so any top padding on the
+    // scroll container stays uncovered and page content scrolls through it.
+    expect(stylesheet).toMatch(/\.main\s*\{[^}]*--main-pad-x:\s*36px[^}]*--main-pad-top:\s*28px[^}]*padding:\s*0 var\(--main-pad-x\) 48px/s)
+    expect(stylesheet).toMatch(/\.topbar\s*\{[^}]*margin:\s*0 calc\(var\(--main-pad-x,\s*36px\) \* -1\) 22px[^}]*padding:\s*var\(--main-pad-top,\s*28px\) var\(--main-pad-x,\s*36px\) 14px/s)
+    expect(stylesheet).not.toMatch(/\.main\s*\{[^}]*padding:\s*28px 36px 48px/s)
+  })
+
+  it('keeps the mobile scroll areas free of top padding for the same reason', () => {
+    expect(stylesheet).toMatch(/\.main\s*\{[^}]*--main-pad-top:\s*16px[^}]*padding:\s*0 var\(--main-pad-x\) 16px/s)
+    expect(stylesheet).toMatch(/\.main\s*\{\s*--main-pad-x:\s*16px;\s*--main-pad-top:\s*18px;\s*padding:\s*0 var\(--main-pad-x\) 36px;\s*\}/)
+    expect(stylesheet).not.toMatch(/\.main\s*\{\s*padding:\s*(16px|18px 16px 36px);\s*\}/)
+  })
+
   it('configures desktop .main as the primary scroll container with stable scrollbar gutter and contain overscroll', () => {
     expect(stylesheet).toMatch(/\.main\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow-y:\s*auto[^}]*overscroll-behavior-y:\s*contain[^}]*scrollbar-gutter:\s*var\(--layout-scrollbar-gutter,\s*stable\)/s)
   })
 
   it('configures settings sidebar as a persistent secondary sidebar under sticky header clearance with a single overflow box', () => {
     expect(stylesheet).toMatch(/\.settings-shell\s*\{[^}]*grid-template-columns:\s*var\(--settings-sidebar-width,\s*minmax\(176px,\s*208px\)\)\s*minmax\(0,\s*1fr\)/s)
-    expect(stylesheet).toMatch(/\.settings-sidebar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--app-sticky-header-clearance,\s*88px\)[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--app-sticky-header-clearance,\s*88px\)\s*-\s*24px\)[^}]*overflow-y:\s*auto/s)
+    expect(stylesheet).toMatch(/\.settings-sidebar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--app-sticky-header-clearance,\s*96px\)[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--app-sticky-header-clearance,\s*96px\)\s*-\s*24px\)[^}]*overflow-y:\s*auto/s)
     expect(stylesheet).toMatch(/\.settings-sidebar\s+\.settings-tabs\s*\{[^}]*overflow:\s*visible[^}]*min-height:\s*0/s)
   })
 
