@@ -184,110 +184,122 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onClose }
   const currentPlan = plans.find(p => p.id === (binding?.plan_id || 0))
 
   return (
-    <Dialog isOpen={isOpen} onClose={onClose} title={`套餐与例外：${user.username}`} size="xl">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-          <div className="card-custom" style={{ padding: 14 }}>
-            <h3 style={{ marginTop: 0 }}>当前套餐</h3>
-            {currentPlan ? (
-              <div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Badge variant={currentPlan.enabled ? 'success' : 'secondary'}>{currentPlan.name}</Badge>
-                  {changeID ? <AuthorizationStatusBadge status={deliveryStatus} /> : null}
+    <Dialog
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`套餐与例外：${user.username}`}
+      size="xl"
+      className="user-plan-dialog"
+      footer={<Button variant="outline" onClick={onClose}>关闭</Button>}
+    >
+      <div className="user-plan-dialog-stack">
+        {message && <p className="user-plan-dialog-message" style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
+        <div className="user-plan-dialog-layout">
+          <div className="user-plan-dialog-col">
+            <section className="card-custom user-plan-dialog-card">
+              <h3>当前套餐</h3>
+              {currentPlan ? (
+                <div>
+                  <div className="user-plan-dialog-plan-meta">
+                    <Badge variant={currentPlan.enabled ? 'success' : 'secondary'}>{currentPlan.name}</Badge>
+                    {changeID ? <AuthorizationStatusBadge status={deliveryStatus} /> : null}
+                  </div>
+                  <p className="muted">状态：{binding?.status || 'active'} · 开始 {fmtDate(binding?.starts_at)} · 到期 {fmtDate(binding?.expires_at)}</p>
                 </div>
-                <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  状态：{binding?.status || 'active'} · 开始 {fmtDate(binding?.starts_at)} · 到期 {fmtDate(binding?.expires_at)}
+              ) : <p className="muted">未绑定套餐</p>}
+            </section>
+            <section className="card-custom user-plan-dialog-card">
+              <h3>更换套餐</h3>
+              <div className="user-plan-dialog-assign">
+                <Select value={planID} onChange={e => setPlanID(Number(e.target.value))}>
+                  <option value={0}>选择套餐</option>
+                  {plans.filter(p => p.enabled).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </Select>
+                <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
+                <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
+                <Button variant="outline" size="sm" disabled={previewBusy} onClick={() => void runPreview()}>预览影响</Button>
+              </div>
+              {preview && (
+                <div className="user-plan-dialog-preview">
+                  <p className="muted">新增 {preview.nodes_added?.length || 0} · 移除 {preview.nodes_removed?.length || 0} · 受影响服务器 {preview.affected_servers?.length || 0} 台</p>
+                  <div className="user-plan-dialog-chips">
+                    {(preview.nodes_added || []).map((k: string) => <Badge key={k} variant="success">+ {k}</Badge>)}
+                    {(preview.nodes_removed || []).map((k: string) => <Badge key={k} variant="destructive">− {k}</Badge>)}
+                  </div>
+                  <div className="user-plan-dialog-preview-actions">
+                    <Button size="sm" disabled={applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '保存中...' : '保存分配'}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>取消</Button>
+                  </div>
                 </div>
-              </div>
-            ) : <p className="muted">未绑定套餐</p>}
+              )}
+            </section>
           </div>
-          <div className="card-custom" style={{ padding: 14 }}>
-            <h3 style={{ marginTop: 0 }}>有效节点（{nodes.length}）</h3>
-            <div style={{ maxHeight: 140, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {nodes.map(n => (
-                <div key={n.key} style={{ fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <span style={{ fontWeight: 600 }}>{n.name || n.key}</span>
-                  {n.source === 'plan' && <Badge variant="secondary">{n.plan_name || '套餐'}</Badge>}
-                  {n.source === 'exception_allow' && <Badge variant="success">允许</Badge>}
+          <div className="user-plan-dialog-col">
+            <section className="card-custom user-plan-dialog-card">
+              <h3>有效节点（{nodes.length}）</h3>
+              <div className="user-plan-dialog-nodes">
+                {nodes.map(n => (
+                  <div key={n.key} className="user-plan-dialog-node">
+                    <span>{n.name || n.key}</span>
+                    {n.source === 'plan' && <Badge variant="secondary">{n.plan_name || '套餐'}</Badge>}
+                    {n.source === 'exception_allow' && <Badge variant="success">允许</Badge>}
+                  </div>
+                ))}
+                {nodes.length === 0 && <p className="muted">暂无有效节点</p>}
+              </div>
+            </section>
+            <section className="card-custom user-plan-dialog-card is-fill">
+              <div className="section-toolbar">
+                <div>
+                  <h3>用户授权</h3>
+                  <p className="muted">allow 先部署凭据再对订阅可见；deny 立即隐藏并撤销。时间留空则永久有效。</p>
                 </div>
-              ))}
-              {nodes.length === 0 && <p className="muted" style={{ fontSize: 12 }}>暂无有效节点</p>}
-            </div>
-          </div>
-        </div>
-
-        <div className="card-custom" style={{ padding: 14 }}>
-          <h3 style={{ marginTop: 0 }}>更换套餐</h3>
-          <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
-            <Select value={planID} onChange={e => setPlanID(Number(e.target.value))}>
-              <option value={0}>选择套餐</option>
-              {plans.filter(p => p.enabled).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </Select>
-            <DateTimePicker value={startsAt} onChange={setStartsAt} placeholder="生效时间（可选）" aria-label="生效时间" title="生效时间" />
-            <DateTimePicker value={expiresAt} onChange={setExpiresAt} placeholder="到期时间（可选）" aria-label="到期时间" title="到期时间" />
-            <Button variant="outline" size="sm" disabled={previewBusy} onClick={() => void runPreview()}>预览影响</Button>
-          </div>
-          {preview && (
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <p className="muted">新增 {preview.nodes_added?.length || 0} · 移除 {preview.nodes_removed?.length || 0} · 受影响服务器 {preview.affected_servers?.length || 0} 台</p>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {(preview.nodes_added || []).map((k: string) => <Badge key={k} variant="success">+ {k}</Badge>)}
-                {(preview.nodes_removed || []).map((k: string) => <Badge key={k} variant="destructive">− {k}</Badge>)}
+                <Button variant="ghost" size="icon" onClick={() => void reload()} aria-label="刷新授权" title="刷新授权"><RefreshCw size={14} /></Button>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button size="sm" disabled={applyBusy} onClick={() => void applyAssignment()}>{applyBusy ? '保存中...' : '保存分配'}</Button>
-                <Button size="sm" variant="ghost" onClick={() => setPreview(null)}>取消</Button>
+              <div className="user-plan-dialog-table-wrap">
+                <table className="user-plan-dialog-table">
+                  <thead><tr><th>节点</th><th>效果</th><th>状态</th><th>原因</th><th>到期</th><th>操作</th></tr></thead>
+                  <tbody>
+                    {exceptions.map(ex => (
+                      <tr key={ex.id}>
+                        <td>{ex.node_type}:{ex.node_id}</td>
+                        <td><Badge variant={ex.effect === 'allow' ? 'success' : 'destructive'}>{ex.effect === 'allow' ? '允许' : '拒绝'}</Badge></td>
+                        <td><Badge variant="outline">{ex.status || 'active'}</Badge></td>
+                        <td className="muted">{ex.reason}</td>
+                        <td className="muted">{fmtDate(ex.expires_at)}</td>
+                        <td>
+                          <Button variant="ghost" size="icon" onClick={() => void revokeException(ex)} aria-label={`撤销 ${ex.node_type}:${ex.node_id}`} title="撤销">
+                            <Trash2 size={14} />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                    {exceptions.length === 0 && <tr><td colSpan={6} className="muted user-plan-dialog-empty">暂无例外</td></tr>}
+                  </tbody>
+                </table>
               </div>
-            </div>
-          )}
-        </div>
-
-        <div className="card-custom" style={{ padding: 14 }}>
-          <div className="section-toolbar">
-            <div><h3 style={{ margin: 0 }}>用户授权</h3><p className="muted">allow 先部署凭据再对订阅可见；deny 立即隐藏并撤销。时间留空则永久有效。</p></div>
-            <Button variant="ghost" size="sm" onClick={() => void reload()}><RefreshCw size={14} /></Button>
+              <div className="user-plan-dialog-exception-form">
+                <Input value={searchQuery} onChange={e => void searchNodes(e.target.value)} placeholder="搜索节点（输入至少 1 个字符）" />
+                <Select value={exForm.effect} onChange={e => setExForm(f => ({ ...f, effect: e.target.value as 'allow' | 'deny' }))}>
+                  <option value="allow">允许</option><option value="deny">拒绝</option>
+                </Select>
+                <DateTimePicker value={exForm.expires_at} onChange={val => setExForm(f => ({ ...f, expires_at: val }))} placeholder="到期时间（可选，永久）" aria-label="到期时间" title="到期时间" />
+                <Input value={exForm.reason} onChange={e => setExForm(f => ({ ...f, reason: e.target.value }))} placeholder="原因（可选）" />
+                <Button size="sm" disabled={exBusy} onClick={() => void createException()}><Plus size={14} /> 创建授权</Button>
+              </div>
+              {searchResults.length > 0 && (
+                <div className="user-plan-dialog-search-results">
+                  {searchResults.map(n => (
+                    <label key={n.key}>
+                      <input type="radio" name="exception-node" checked={exForm.node_key === n.key} onChange={() => setExForm(f => ({ ...f, node_key: n.key }))} />
+                      <span>{n.name}</span>
+                      <span className="muted">{n.entry_protocol || ''} {n.exit_region ? `· ${n.exit_region}` : ''}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
-          <table className="user-data-table" style={{ width: '100%' }}>
-            <thead><tr><th>节点</th><th>效果</th><th>状态</th><th>原因</th><th>到期</th><th style={{ textAlign: 'right' }}>操作</th></tr></thead>
-            <tbody>
-              {exceptions.map(ex => (
-                <tr key={ex.id}>
-                  <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{ex.node_type}:{ex.node_id}</td>
-                  <td><Badge variant={ex.effect === 'allow' ? 'success' : 'destructive'}>{ex.effect === 'allow' ? '允许' : '拒绝'}</Badge></td>
-                  <td><Badge variant="outline">{ex.status || 'active'}</Badge></td>
-                  <td className="muted">{ex.reason}</td>
-                  <td className="muted">{fmtDate(ex.expires_at)}</td>
-                  <td style={{ textAlign: 'right' }}><Button variant="ghost" size="sm" onClick={() => void revokeException(ex)}><Trash2 size={14} /></Button></td>
-                </tr>
-              ))}
-              {exceptions.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 12 }}>暂无例外</td></tr>}
-            </tbody>
-          </table>
-          <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Input value={searchQuery} onChange={e => void searchNodes(e.target.value)} placeholder="搜索节点（输入至少 1 个字符）" style={{ maxWidth: 220 }} />
-            <Select value={exForm.effect} onChange={e => setExForm(f => ({ ...f, effect: e.target.value as 'allow' | 'deny' }))}>
-              <option value="allow">允许</option><option value="deny">拒绝</option>
-            </Select>
-            <DateTimePicker value={exForm.expires_at} onChange={val => setExForm(f => ({ ...f, expires_at: val }))} placeholder="到期时间（可选，永久）" aria-label="到期时间" title="到期时间" style={{ maxWidth: 200 }} />
-            <Input value={exForm.reason} onChange={e => setExForm(f => ({ ...f, reason: e.target.value }))} placeholder="原因（可选）" style={{ maxWidth: 200 }} />
-            <Button size="sm" disabled={exBusy} onClick={() => void createException()}><Plus size={14} /> 创建授权</Button>
-          </div>
-          {searchResults.length > 0 && (
-            <div className="card-custom" style={{ marginTop: 8, maxHeight: 180, overflow: 'auto' }}>
-              {searchResults.map(n => (
-                <label key={n.key} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', cursor: 'pointer' }}>
-                  <input type="radio" name="exception-node" checked={exForm.node_key === n.key} onChange={() => setExForm(f => ({ ...f, node_key: n.key }))} />
-                  <span style={{ fontWeight: 600 }}>{n.name}</span>
-                  <span className="muted" style={{ fontSize: 12 }}>{n.entry_protocol || ''} {n.exit_region ? `· ${n.exit_region}` : ''}</span>
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button variant="outline" onClick={onClose}>关闭</Button>
         </div>
       </div>
     </Dialog>

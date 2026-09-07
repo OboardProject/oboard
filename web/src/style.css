@@ -24444,6 +24444,228 @@ button.dns-policy-row-main:focus {
   }
 }
 
+.dialog.user-plan-dialog {
+  width: min(72rem, calc(100vw - 40px));
+  max-width: 72rem;
+  max-height: min(90vh, 860px);
+}
+
+.dialog.user-plan-dialog .dialog-chrome-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.user-plan-dialog-stack {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 12px;
+}
+
+.user-plan-dialog-message {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.user-plan-dialog-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.18fr);
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.user-plan-dialog-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.user-plan-dialog-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  min-width: 0;
+}
+
+.user-plan-dialog-card h3 {
+  margin: 0;
+}
+
+.user-plan-dialog-card > .muted,
+.user-plan-dialog-card p.muted {
+  margin: 0;
+  font-size: 12px;
+}
+
+.user-plan-dialog-card.is-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.user-plan-dialog-plan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-plan-dialog-assign {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.user-plan-dialog-assign > :first-child,
+.user-plan-dialog-assign > :last-child {
+  grid-column: 1 / -1;
+}
+
+.user-plan-dialog-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-plan-dialog-chips,
+.user-plan-dialog-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-plan-dialog-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.user-plan-dialog-node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.user-plan-dialog-node > span:first-child {
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-plan-dialog-table-wrap {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow: auto;
+}
+
+.user-plan-dialog-table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+  text-align: left;
+  font-size: 12px;
+}
+
+.user-plan-dialog-table th,
+.user-plan-dialog-table td {
+  padding: 8px 6px;
+  vertical-align: middle;
+}
+
+.user-plan-dialog-table th:last-child,
+.user-plan-dialog-table td:last-child {
+  width: 40px;
+  text-align: right;
+}
+
+.user-plan-dialog-table td:first-child {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.user-plan-dialog-empty {
+  text-align: center;
+  padding: 16px 8px;
+}
+
+.user-plan-dialog-exception-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(88px, 0.6fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.user-plan-dialog-exception-form > :last-child {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.user-plan-dialog-search-results {
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.user-plan-dialog-search-results label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.user-plan-dialog-search-results label span:nth-child(2) {
+  font-weight: 600;
+}
+
+.user-plan-dialog-search-results .muted {
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .dialog.user-plan-dialog {
+    width: min(100%, calc(100vw - 24px));
+  }
+
+  .dialog.user-plan-dialog .dialog-chrome-body {
+    overflow-y: auto;
+  }
+
+  .user-plan-dialog-layout {
+    grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
+  }
+
+  .user-plan-dialog-card.is-fill {
+    flex: 0 0 auto;
+  }
+
+  .user-plan-dialog-assign,
+  .user-plan-dialog-exception-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .user-plan-dialog-assign > :first-child,
+  .user-plan-dialog-assign > :last-child,
+  .user-plan-dialog-exception-form > :last-child {
+    grid-column: auto;
+  }
+}
+
 .plan-node-save-row .muted {
   font-size: 12px;
 }
