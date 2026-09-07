@@ -6195,12 +6195,47 @@ func (s *Store) CompleteTask(ctx context.Context, id int64, status, result strin
 // Agent connection drops before the task result is reported. The conditional
 // update avoids racing with a late /agent/task-results report that may have
 // completed the task already.
+//
+// An update_agent task that already recorded installed_waiting_restart stays
+// running: the install report is the confirmation slot, and a restart-induced
+// disconnect must not wipe it back to pending.
 func (s *Store) RequeueTaskIfRunning(ctx context.Context, id int64, result string) error {
 	if result == "" {
 		result = "{}"
 	}
-	_, err := s.db.ExecContext(ctx, `update agent_tasks set status='pending', result_json=?, updated_at=? where id=? and status='running'`, result, now(), id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var typ, currentResult, status string
+	err = tx.QueryRowContext(ctx, `select type, result_json, status from agent_tasks where id=?`, id).Scan(&typ, &currentResult, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if status != "running" {
+		return nil
+	}
+	if typ == model.AgentTaskTypeUpdateAgent && agentTaskResultAwaitingRestart(currentResult) {
+		return nil
+	}
+	ts := now()
+	// Match the current result so a concurrent install report that flipped the
+	// task into installed_waiting_restart is left untouched.
+	if _, err := tx.ExecContext(ctx, `update agent_tasks set status='pending', result_json=?, updated_at=? where id=? and status='running' and result_json=?`, result, ts, id, currentResult); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func agentTaskResultAwaitingRestart(result string) bool {
+	var payload struct {
+		AwaitingRestart bool `json:"awaiting_restart"`
+	}
+	return json.Unmarshal([]byte(result), &payload) == nil && payload.AwaitingRestart
 }
 
 func agentTaskClaimPrioritySQL() string {

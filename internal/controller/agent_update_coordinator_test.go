@@ -343,3 +343,74 @@ func TestStuckAgentUpdateRestartTimesOut(t *testing.T) {
 		t.Fatalf("stuck update was not failed with its own reason: %#v", stored)
 	}
 }
+
+// A restart-induced disconnect must not wipe installed_waiting_restart back to
+// pending. That slot is what completeAgentUpdateAfterReconnect looks up.
+func TestRequeueDoesNotDropAgentUpdateAwaitingRestart(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task, err := srv.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUpdateAgent, model.UpdateAgentTaskPayload{ExpectedBuild: "20260904120000"}, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.NextTask(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.holdAgentUpdateForRestart(ctx, task, "succeeded", `{"installed":true}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RequeueTaskIfRunning(ctx, task.ID, `{"message":"agent connection closed before task result was acknowledged; task requeued"}`); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "running" || !agentUpdateAwaitingRestart(stored.ResultJSON) {
+		t.Fatalf("awaiting-restart update was requeued: %#v", stored)
+	}
+	srv.completeAgentUpdateAfterReconnect(ctx, server.ID, "20260904120000")
+	stored, err = db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "succeeded" {
+		t.Fatalf("task status after reconnect = %q, want succeeded", stored.Status)
+	}
+}
+
+func TestRequeueStillReturnsInFlightUpdateBeforeInstallReport(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeUpdateAgent, PayloadJSON: `{"expected_build":"20260904120000"}`, Status: "running", ResultJSON: `{}`, Nonce: "n"}
+	if err := db.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RequeueTaskIfRunning(ctx, task.ID, `{"message":"agent connection closed before task result was acknowledged; task requeued"}`); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "pending" {
+		t.Fatalf("in-flight update before the install report status = %q, want pending", stored.Status)
+	}
+}

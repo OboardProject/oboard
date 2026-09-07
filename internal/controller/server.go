@@ -14591,6 +14591,8 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			"message":  "agent connection closed before task result was acknowledged; task requeued",
 			"agent_id": server.AgentID,
 		})
+		// update_agent that already reported install stays running;
+		// RequeueTaskIfRunning refuses to clobber installed_waiting_restart.
 		if err := s.store.RequeueTaskIfRunning(context.Background(), inFlightTaskID, string(result)); err != nil {
 			log.Printf("requeue task %d after agent disconnect: %v", inFlightTaskID, err)
 		} else {
