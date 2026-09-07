@@ -167,6 +167,13 @@ func TestDefaultCatalogExposesExecutableInboundManagement(t *testing.T) {
 	if padding.RBACPermission != "admin.settings" || !strings.Contains(string(padding.InputSchema), "replace_preset") || !strings.Contains(string(padding.InputSchema), "set_custom") {
 		t.Fatalf("inbounds.padding.update contract = %#v", padding)
 	}
+	create, _ := catalog.Get("inbounds.create")
+	if strings.Contains(create.Description, "并默认开启 dns_sync_enabled") || strings.Contains(string(create.InputSchema), "default to dns_sync_enabled=true") {
+		t.Fatalf("inbounds.create still claims DNS sync defaults on: %s", create.Description)
+	}
+	if !strings.Contains(create.Description, "dns_sync_enabled 默认 false") {
+		t.Fatalf("inbounds.create should document dns_sync_enabled default false: %s", create.Description)
+	}
 }
 
 func TestDefaultCatalogExposesServerLifecycle(t *testing.T) {

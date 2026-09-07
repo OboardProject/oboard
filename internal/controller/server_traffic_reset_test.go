@@ -181,3 +181,37 @@ func TestServerResetTrafficRecipe(t *testing.T) {
 		t.Fatalf("user ledger rewrite=%#v err=%v", blocked, err)
 	}
 }
+
+func TestServerManageDeliveryRetryAndExtendExpiryRecipes(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111117", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	server := &model.Server{Name: "tokyo", ListenIP: "0.0.0.0", PortRangeStart: 12000, PortRangeEnd: 13000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	ref := fmt.Sprintf("server:%d", server.ID)
+
+	retry, err := srv.prepareServerManageRecipe(ctx, principal, mcpTaskInput{Goal: "重试授权", TargetRefs: []string{ref}})
+	if err != nil || retry.Status != "ready" || len(retry.Operations) != 1 || retry.Operations[0].Capability != "servers.delivery.retry" {
+		t.Fatalf("delivery retry=%#v err=%v", retry, err)
+	}
+
+	extend, err := srv.prepareServerManageRecipe(ctx, principal, mcpTaskInput{Goal: "续费 30 天", TargetRefs: []string{ref}})
+	if err != nil || extend.Status != "ready" || len(extend.Operations) != 1 || extend.Operations[0].Capability != "servers.extend_expiry" {
+		t.Fatalf("extend expiry=%#v err=%v", extend, err)
+	}
+	if got := taskIntParam(extend.Operations[0].Input, "days"); got != 30 {
+		t.Fatalf("days = %d, want 30", got)
+	}
+
+	missingDays, err := srv.prepareServerManageRecipe(ctx, principal, mcpTaskInput{Goal: "延长到期", TargetRefs: []string{ref}})
+	if err != nil || missingDays.Status != "needs_input" {
+		t.Fatalf("missing days=%#v err=%v", missingDays, err)
+	}
+}

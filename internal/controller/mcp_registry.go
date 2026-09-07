@@ -152,14 +152,7 @@ func (s *Server) computeMCPToolsetHashLocked() string {
 			Version: d.Version,
 		})
 	}
-	for _, name := range []string{
-		"oboard_task", "oboard_commit_task",
-		"oboard_discover", "oboard_get_capability_schema",
-		"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset",
-		"oboard_get_changeset", "oboard_get_workflow", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action",
-		"system_get_capabilities", "system_bootstrap",
-		"server_terminal_command", "server_terminal_open", "server_terminal_io", "server_terminal_resize", "server_terminal_close",
-	} {
+	for _, name := range mcpStaticHostToolNames() {
 		entries = append(entries, hashEntry{Name: name, Version: "1"})
 	}
 	for _, r := range s.mcpRecipes() {
@@ -171,13 +164,20 @@ func (s *Server) computeMCPToolsetHashLocked() string {
 	return "sha256:" + hex.EncodeToString(sum[:12])
 }
 
-func (s *Server) mcpToolCountLocked() int {
-	count := 0
-	for range s.capabilities.AllMCPDescriptors() {
-		count++
+func mcpStaticHostToolNames() []string {
+	return []string{
+		"oboard_task", "oboard_commit_task",
+		"oboard_discover", "oboard_get_capability_schema",
+		"oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset",
+		"oboard_get_changeset", "oboard_get_workflow", "oboard_cancel_workflow", "oboard_retry_workflow_step", "oboard_redeem_external_action",
+		"system_get_capabilities", "system_bootstrap",
+		"server_terminal_command", "server_terminal_open", "server_terminal_io", "server_terminal_resize", "server_terminal_close",
+		"server_remote_access_get",
 	}
-	count += 18
-	return count
+}
+
+func (s *Server) mcpToolCountLocked() int {
+	return len(s.capabilities.AllMCPDescriptors()) + len(mcpStaticHostToolNames())
 }
 
 func (s *Server) mcpInvalidateRegistry() {

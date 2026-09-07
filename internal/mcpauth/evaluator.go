@@ -36,7 +36,10 @@ func NewEvaluator(rbac RBACChecker, approvals authorization.ApprovalResolver) *E
 //  3. Shared RBAC allows the capability permission for the human role.
 //  4. Resource refs resolve from the input.
 //  5. The grant resource boundary allows every resolved ref.
-//  6. Approval rules resolve for the risk class.
+//  6. Privileged host operations also require an active Privileged Grant
+//     that includes the PrivilegeClass and whose boundary allows the refs.
+//     Success is ApprovalAutomatic (no per-command approval).
+//  7. Otherwise approval rules resolve for the risk class.
 func (e *Evaluator) Authorize(ctx context.Context, principal GrantPrincipal, spec CapabilitySpec, input any) AuthorizationDecision {
 	grant := principal.Grant
 	if grant.RevokedAt != nil {

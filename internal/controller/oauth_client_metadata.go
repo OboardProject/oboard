@@ -139,8 +139,11 @@ func parseClientMetadataURL(raw string) (*url.URL, error) {
 	if path == "" || path == "/" {
 		return nil, errors.New("client_id must include a concrete path, not a bare host")
 	}
-	if ip := net.ParseIP(parsed.Hostname()); ip != nil && ip.IsLoopback() {
-		return nil, errors.New("client_id must not use a loopback address")
+	if ip := net.ParseIP(parsed.Hostname()); ip != nil {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok || forbiddenClientMetadataIP(addr.Unmap()) {
+			return nil, errors.New("client_id must not use a private or special-purpose address")
+		}
 	}
 	return parsed, nil
 }
@@ -206,29 +209,39 @@ func forbiddenClientMetadataIP(ip netip.Addr) bool {
 	if !ip.IsValid() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true
 	}
-	if ip.Is4() {
-		if ip.IsPrivate() {
-			return true
-		}
-		value := ip.As4()
-		// 169.254.169.254 and 169.254.170.x cloud metadata.
-		if value[0] == 169 && value[1] == 254 {
-			return true
-		}
-		// 100.100.100.200 Aliyun metadata.
-		if value == [4]byte{100, 100, 100, 200} {
+	if ip.IsPrivate() {
+		return true
+	}
+	for _, prefix := range forbiddenClientMetadataPrefixes {
+		if prefix.Contains(ip) {
 			return true
 		}
 	}
-	// IPv6 unique-local and ULA private ranges.
-	if ip.Is6() && ip.IsPrivate() {
-		return true
+	if ip.Is4() {
+		value := ip.As4()
+		// 169.254.169.254 and 169.254.170.x cloud metadata (also link-local).
+		if value[0] == 169 && value[1] == 254 {
+			return true
+		}
 	}
 	// Well-known AWS IPv6 metadata.
 	if ip == netip.MustParseAddr("fd00:ec2::254") {
 		return true
 	}
 	return false
+}
+
+var forbiddenClientMetadataPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2001:10::/28"),
 }
 
 func sameOrigin(a, b *url.URL) bool {

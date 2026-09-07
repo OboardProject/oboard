@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,7 +46,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "user.traffic.ledger", Version: mcpRecipeVersion, Aliases: []string{"user.traffic.ledger", "traffic ledger", "user traffic ledger", "流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账"}, Verbs: []string{"view", "read", "query", "show", "check", "diagnose", "查看", "查询", "读取", "检查", "对账"}, Nouns: []string{"traffic ledger", "user traffic", "reconciliation", "流量账本", "用户流量", "对账"}, Prepare: s.prepareUserTrafficLedgerRecipe},
 		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
 		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
-		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "delete server", "修改服务器", "服务器设置", "删除服务器", "清零已用流量", "已用流量清零", "清零服务器流量"}, Verbs: []string{"update", "change", "set", "modify", "delete", "remove", "reset", "clear", "修改", "设置", "调整", "开启", "关闭", "删除", "清零", "重置"}, Nouns: []string{"server", "服务器", "节点", "已用流量", "used traffic"}, Prepare: s.prepareServerManageRecipe},
+		{ID: "server.manage", Version: mcpRecipeVersion, Aliases: []string{"server.manage", "update server", "server settings", "delete server", "修改服务器", "服务器设置", "删除服务器", "清零已用流量", "已用流量清零", "清零服务器流量", "重试授权", "授权没下去", "服务器续费", "延长到期"}, Verbs: []string{"update", "change", "set", "modify", "delete", "remove", "reset", "clear", "extend", "retry", "修改", "设置", "调整", "开启", "关闭", "删除", "清零", "重置", "续费", "延长", "重试"}, Nouns: []string{"server", "服务器", "节点", "已用流量", "used traffic", "到期", "到期日", "授权下发"}, Prepare: s.prepareServerManageRecipe},
 		{ID: "server.metrics.query", Version: mcpRecipeVersion, Aliases: []string{"server.metrics.query", "server query", "server metrics", "服务器指标", "看流量", "查看流量", "查询流量", "连接数", "延迟", "负载"}, Verbs: []string{"view", "read", "query", "show", "check", "查看", "看", "查询", "读取", "检查"}, Nouns: []string{"server metrics", "server traffic", "traffic", "latency", "connection count", "resource metrics", "指标", "流量", "延迟", "连接数", "负载", "资源"}, Prepare: s.prepareServerMetricsQueryRecipe},
 		{ID: "inbound.create", Version: mcpRecipeVersion, Aliases: []string{"inbound.create", "create inbound", "add inbound", "创建入口", "新增入口", "添加入口", "创建入站", "新增入站"}, Verbs: []string{"create", "add", "新增", "添加", "创建"}, Nouns: []string{"inbound", "入口", "入站"}, Prepare: s.prepareInboundCreateRecipe},
 		{ID: "subscription_plan.nodes.manage", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.nodes.manage", "plan node assignment", "套餐节点", "套餐节点分配", "订阅套餐节点"}, Verbs: []string{"add", "remove", "replace", "assign", "添加", "加入", "移除", "替换", "分配"}, Nouns: []string{"subscription plan", "plan node", "套餐", "套餐节点", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanNodesRecipe},
@@ -196,7 +197,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		tokens   []string
 	}{
 		{"user.traffic.ledger", []string{"流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账", "traffic ledger", "user traffic ledger"}},
-		{"server.manage", []string{"清零已用流量", "已用流量清零", "清零服务器流量", "清零这台服务器的流量", "重置服务器已用流量", "清零流量", "reset used traffic", "reset server traffic", "zero used traffic", "clear used traffic", "clear server traffic"}},
+		{"server.manage", []string{"清零已用流量", "已用流量清零", "清零服务器流量", "清零这台服务器的流量", "重置服务器已用流量", "清零流量", "reset used traffic", "reset server traffic", "zero used traffic", "clear used traffic", "clear server traffic", "重试授权", "授权没下去", "重推授权", "重试下发", "retry authorization", "retry delivery", "续费", "服务器续费", "延长到期", "顺延到期", "延长到期日", "extend expiry", "extend expiration"}},
 		{"routing_rule_set.manage", []string{"分流规则集", "路由规则集", "远程规则集", "routing rule set", "routing ruleset", "rule set", "规则集"}},
 		{"family_split_template.manage", []string{"双栈模板", "family split template", "dual stack template", "IPv4/IPv6 模板"}},
 		{"routing.manage", []string{"分流", "routing rule", "routing rules", "路由规则"}},
@@ -262,7 +263,8 @@ func hasServerManageParams(params map[string]any) bool {
 		"offline_notify_enabled", "server.offline_notify_enabled", "offline_after_seconds", "server.offline_after_seconds", "expires_at", "server.expires_at", "clear_expires_at", "server.clear_expires_at",
 		"auto_renew_enabled", "server.auto_renew_enabled", "renewal_cycle", "server.renewal_cycle", "expiry_notify_enabled", "server.expiry_notify_enabled",
 		"latency_probe_enabled", "latency_probe_mode", "latency_probe_public_target", "latency_probe_interval_seconds", "latency_probe_sample_count", "latency_probe_max_targets",
-		"delete", "confirm", "reset_traffic",
+		"authorization_fast_lane", "runtime_users_enabled", "display_tags", "service_start_at", "traffic_reset_mode", "traffic_reset_day",
+		"delete", "confirm", "reset_traffic", "retry_delivery", "days", "extend_days",
 	} {
 		if _, ok := params[key]; ok {
 			return true
@@ -509,13 +511,25 @@ func (s *Server) prepareServerManageRecipe(ctx context.Context, principal applic
 		operation := mcpOperationRef{Capability: "servers.reset_traffic", Input: map[string]any{"server_id": resolved.Value.ID}}
 		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "reset_server_traffic", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
 	}
+	if serverDeliveryRetryRequested(input) {
+		operation := mcpOperationRef{Capability: "servers.delivery.retry", Input: map[string]any{"server_id": resolved.Value.ID}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "retry_server_delivery", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	if serverExtendExpiryRequested(input) {
+		days := inferredExtendExpiryDays(input)
+		if days < 1 {
+			return &mcpPreparedRecipe{Status: "needs_input", Intent: "server.manage", Questions: []map[string]any{{"field": "days", "type": "integer", "reason": "延长到期需要 1–3650 的自然日天数，例如 days=30"}}}, nil
+		}
+		operation := mcpOperationRef{Capability: "servers.extend_expiry", Input: map[string]any{"server_id": resolved.Value.ID, "days": days}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "server.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "extend_server_expiry", "server": resolved.Value.Label, "server_ref": resolved.Value.Ref, "server_id": resolved.Value.ID, "days": days}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
 	changes := map[string]any{}
 	if nested, ok := input.Params["changes"].(map[string]any); ok {
 		for key, value := range nested {
 			changes[key] = value
 		}
 	}
-	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_ip": "listen_ip", "server.listen_ip": "listen_ip", "listen_mode": "listen_mode", "server.listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "mtu_probe_host": "mtu_probe_host", "server.mtu_probe_host": "mtu_probe_host", "mtu_probe_port": "mtu_probe_port", "server.mtu_probe_port": "mtu_probe_port", "mtu_overhead_bytes": "mtu_overhead_bytes", "server.mtu_overhead_bytes": "mtu_overhead_bytes", "bbr_enabled": "bbr_enabled", "server.bbr_enabled": "bbr_enabled", "time_correction_mode": "time_correction_mode", "server.time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "server.entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "server.entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "server.region_code": "region_code", "region_mode": "region_mode", "server.region_mode": "region_mode", "port_range_start": "port_range_start", "server.port_range_start": "port_range_start", "port_range_end": "port_range_end", "server.port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "server.internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "server.internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "server.connection_audit_enabled": "connection_audit_enabled", "resource_history_enabled": "resource_history_enabled", "server.resource_history_enabled": "resource_history_enabled", "offline_notify_enabled": "offline_notify_enabled", "server.offline_notify_enabled": "offline_notify_enabled", "offline_after_seconds": "offline_after_seconds", "server.offline_after_seconds": "offline_after_seconds", "expires_at": "expires_at", "server.expires_at": "expires_at", "clear_expires_at": "clear_expires_at", "server.clear_expires_at": "clear_expires_at", "auto_renew_enabled": "auto_renew_enabled", "server.auto_renew_enabled": "auto_renew_enabled", "renewal_cycle": "renewal_cycle", "server.renewal_cycle": "renewal_cycle", "expiry_notify_enabled": "expiry_notify_enabled", "server.expiry_notify_enabled": "expiry_notify_enabled", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_mode": "latency_probe_mode", "latency_probe_public_target": "latency_probe_public_target", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_max_targets": "latency_probe_max_targets", "display_tags": "display_tags", "server.display_tags": "display_tags"})
+	copyTaskParams(changes, input.Params, map[string]string{"name": "name", "server.name": "name", "ip_stack": "ip_stack", "server.ip_stack": "ip_stack", "listen_ip": "listen_ip", "server.listen_ip": "listen_ip", "listen_mode": "listen_mode", "server.listen_mode": "listen_mode", "udp_inbound_mode": "udp_inbound_mode", "mtu_mode": "mtu_mode", "mtu_value": "mtu_value", "mtu_probe_host": "mtu_probe_host", "server.mtu_probe_host": "mtu_probe_host", "mtu_probe_port": "mtu_probe_port", "server.mtu_probe_port": "mtu_probe_port", "mtu_overhead_bytes": "mtu_overhead_bytes", "server.mtu_overhead_bytes": "mtu_overhead_bytes", "bbr_enabled": "bbr_enabled", "server.bbr_enabled": "bbr_enabled", "time_correction_mode": "time_correction_mode", "server.time_correction_mode": "time_correction_mode", "entry_address": "entry_address", "server.entry_address": "entry_address", "entry_ip_mode": "entry_ip_mode", "server.entry_ip_mode": "entry_ip_mode", "region_code": "region_code", "server.region_code": "region_code", "region_mode": "region_mode", "server.region_mode": "region_mode", "port_range_start": "port_range_start", "server.port_range_start": "port_range_start", "port_range_end": "port_range_end", "server.port_range_end": "port_range_end", "internal_port_range_start": "internal_port_range_start", "server.internal_port_range_start": "internal_port_range_start", "internal_port_range_end": "internal_port_range_end", "server.internal_port_range_end": "internal_port_range_end", "connection_audit_enabled": "connection_audit_enabled", "server.connection_audit_enabled": "connection_audit_enabled", "resource_history_enabled": "resource_history_enabled", "server.resource_history_enabled": "resource_history_enabled", "offline_notify_enabled": "offline_notify_enabled", "server.offline_notify_enabled": "offline_notify_enabled", "offline_after_seconds": "offline_after_seconds", "server.offline_after_seconds": "offline_after_seconds", "expires_at": "expires_at", "server.expires_at": "expires_at", "clear_expires_at": "clear_expires_at", "server.clear_expires_at": "clear_expires_at", "auto_renew_enabled": "auto_renew_enabled", "server.auto_renew_enabled": "auto_renew_enabled", "renewal_cycle": "renewal_cycle", "server.renewal_cycle": "renewal_cycle", "expiry_notify_enabled": "expiry_notify_enabled", "server.expiry_notify_enabled": "expiry_notify_enabled", "latency_probe_enabled": "latency_probe_enabled", "latency_probe_mode": "latency_probe_mode", "latency_probe_public_target": "latency_probe_public_target", "latency_probe_interval_seconds": "latency_probe_interval_seconds", "latency_probe_sample_count": "latency_probe_sample_count", "latency_probe_max_targets": "latency_probe_max_targets", "display_tags": "display_tags", "server.display_tags": "display_tags", "authorization_fast_lane": "authorization_fast_lane", "runtime_users_enabled": "runtime_users_enabled", "service_start_at": "service_start_at", "clear_service_start_at": "clear_service_start_at", "traffic_reset_mode": "traffic_reset_mode", "traffic_reset_day": "traffic_reset_day", "traffic_limit_bytes": "traffic_limit_bytes"})
 	if _, ok := changes["ip_stack"]; !ok {
 		if value := inferredIPStack(input.Goal); value != "" {
 			changes["ip_stack"] = value
@@ -1088,6 +1102,43 @@ func serverTrafficResetRequested(input mcpTaskInput) bool {
 		"reset used traffic", "reset server traffic", "zero used traffic",
 		"clear used traffic", "clear server traffic",
 	)
+}
+
+func serverDeliveryRetryRequested(input mcpTaskInput) bool {
+	if taskBoolParam(input.Params, false, "retry_delivery") {
+		return true
+	}
+	return containsAnyFold(input.Goal,
+		"重试授权", "授权没下去", "重推授权", "重试下发",
+		"retry authorization", "retry delivery",
+	)
+}
+
+func serverExtendExpiryRequested(input mcpTaskInput) bool {
+	if taskIntParam(input.Params, "days", "extend_days") > 0 {
+		return true
+	}
+	return containsAnyFold(input.Goal,
+		"续费", "服务器续费", "延长到期", "顺延到期", "延长到期日",
+		"extend expiry", "extend expiration", "renew server expiry",
+	)
+}
+
+var extendExpiryDaysPattern = regexp.MustCompile(`(?i)(\d+)\s*(?:天|日|days?)`)
+
+func inferredExtendExpiryDays(input mcpTaskInput) int {
+	if days := taskIntParam(input.Params, "days", "extend_days"); days >= 1 && days <= 3650 {
+		return days
+	}
+	match := extendExpiryDaysPattern.FindStringSubmatch(input.Goal)
+	if len(match) < 2 {
+		return 0
+	}
+	days, _ := strconv.Atoi(match[1])
+	if days < 1 || days > 3650 {
+		return 0
+	}
+	return days
 }
 func inferredIPStack(goal string) string {
 	switch {

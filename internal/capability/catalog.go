@@ -11,6 +11,7 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/authorization"
 	"github.com/OboardProject/oboard/internal/mcpauth"
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 type DataClassification string
@@ -58,6 +59,9 @@ type Descriptor struct {
 	// operations (remote_operations / remote_exec / remote_shell) are never
 	// included in default OAuth consent and require a dedicated Privileged Grant.
 	PrivilegeClass string `json:"privilege_class,omitempty"`
+	// AdminOnly is an explicit administrator-only gate. It is independent of
+	// the permission name and does not change existing descriptors.
+	AdminOnly bool `json:"admin_only,omitempty"`
 }
 
 type Catalog struct {
@@ -72,7 +76,7 @@ func NewCatalog() *Catalog {
 			item.RBACPermission = item.Name
 		}
 		c.items[item.Name] = item
-		c.rbac.Register(item.RBACPermission, authorization.PermissionSpec{ReadOnly: item.ReadOnly, ManagementOnly: item.ManagementOnly()})
+		c.rbac.Register(item.RBACPermission, authorization.PermissionSpec{ReadOnly: item.ReadOnly, ManagementOnly: item.ManagementOnly(), AdminOnly: item.AdminOnly})
 	}
 	c.rbac.Register(PermissionServersRemoteAccess, authorization.PermissionSpec{ManagementOnly: true})
 	return c
@@ -143,6 +147,9 @@ func (c *Catalog) Authorize(principal application.Principal, name string) (Descr
 // the coarse access level plus the shared RBAC service; every other principal
 // (Service Account, Session, internal AI) keeps the legacy scope mapping.
 func (c *Catalog) authorizePrincipal(principal application.Principal, item Descriptor) bool {
+	if item.AdminOnly && principal.Role != model.RoleAdmin {
+		return false
+	}
 	if principal.AccessLevel != "" {
 		if !item.MCPEnabled {
 			return false
@@ -404,7 +411,7 @@ func defaultDescriptors() []Descriptor {
 		if domain.name == "servers.onboard" {
 			description = "创建服务器记录并可选签发一次性接入令牌；名称必须唯一，同名已存在时返回 conflict，应改用 servers.enrollment.issue。省略的字段使用与面板添加服务器相同的默认值；未提到的开关不要传 false。提交前可用 oboard_validate_form 核对 applied_defaults"
 		} else if domain.name == "inbounds.create" {
-			description = "创建入口。AnyTLS / HY2 / VLESS WebSocket 必须提交自有 dns_domain，并默认开启 dns_sync_enabled；dns_credential_id 必填（唯一凭据或 bootstrap default 可自动填充，否则 missing_dns_credential 带 available_credentials）。certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请。修改 dns_domain 会删除旧解析、写入新解析；已有覆盖证书则立刻绑定，否则下次部署申请"
+			description = "创建入口。AnyTLS / HY2 / VLESS WebSocket 必须提交证书覆盖的 SNI（certificate_domain，或由 dns_domain 继承），certificate_mode 默认 auto。dns_sync_enabled 默认 false：SNI 不必解析到本机，关闭时订阅 Host 用服务器公网 IP。只有显式同步解析（dns_sync_enabled=true 或提交 dns_domain）时 dns_credential_id 才必填（唯一凭据或 bootstrap default 可自动填充，否则 missing_dns_credential 带 available_credentials）。不要只为凑托管证书去开启解析同步。certificate_mode=auto 时主控在部署阶段匹配或申请证书，创建不等待证书就绪，不要改用 external 占位或让操作员先去面板申请。修改 dns_domain 会删除旧解析、写入新解析；已有覆盖证书则立刻绑定，否则下次部署申请"
 		} else if domain.name == "servers.reset_traffic" {
 			description = "将指定服务器当前周期已用流量清零；不影响限额、重置日、用户流量账本，也不触发部署。后续 Agent 上报会重新累计"
 		} else if domain.name == "inbounds.padding.update" {
@@ -474,6 +481,7 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, nodeOperationsDescriptors(positiveID, stringValue, boolValue, nullableString)...)
 	descriptors = append(descriptors, nodeWorkspaceDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, remoteAccessDescriptors(positiveID, stringValue, boolValue)...)
+	descriptors = append(descriptors, scriptDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	for index := range descriptors {
 		descriptors[index].Version = "1"
 		descriptors[index].Documentation = "oboard://schemas/" + descriptors[index].Name
@@ -794,7 +802,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//     per-user PSKs derive from, not a key any client uses directly.
 		//     NAT advertise_port is client-facing and is valid only while the
 		//     inbound resolves to one subscribable Snell runtime listener.
-		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws require an operator-owned dns_domain and default to dns_sync_enabled=true plus certificate_mode=auto: a covering dns_credential_id is required (a single tenant DNS credential or bootstrap default_dns_credential_id is filled automatically; otherwise create/update fail before ready with code missing_dns_credential and available_credentials [{id,name,provider}]); omit certificate_domain to follow dns_domain; changing dns_domain deletes the previous DNS records, writes the new ones, follows SNI unless a custom SNI was already set, immediately binds a ready covering certificate when one exists, and otherwise issues it on the next deploy; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
+		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws require a certificate-covering SNI (certificate_domain, or inherited from dns_domain) and default to certificate_mode=auto with dns_sync_enabled=false: SNI need not resolve to this host and subscription Host may be the server public IP; pass dns_domain or set dns_sync_enabled=true only to have Controller maintain DNS records; dns_credential_id is required only when dns_sync_enabled=true (a single tenant DNS credential or bootstrap default_dns_credential_id is filled automatically; otherwise create/update fail before ready with code missing_dns_credential and available_credentials [{id,name,provider}]); omit certificate_domain to follow dns_domain; changing dns_domain deletes the previous DNS records, writes the new ones, follows SNI unless a custom SNI was already set, immediately binds a ready covering certificate when one exists, and otherwise issues it on the next deploy; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},
@@ -812,7 +820,11 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 					"reality": map[string]any{"handshake_server": "gateway.icloud.com", "handshake_port": 443}, "enabled": true,
 				}},
 				map[string]any{"inbound": map[string]any{
-					"server_id": 1, "name": "OC AnyTLS", "kind": "anytls-basic", "port": 443,
+					"server_id": 1, "name": "OC AnyTLS SNI", "kind": "anytls-basic", "port": 443,
+					"certificate_domain": "oc.example.com", "certificate_mode": "auto", "enabled": true,
+				}},
+				map[string]any{"inbound": map[string]any{
+					"server_id": 1, "name": "OC AnyTLS DNS", "kind": "anytls-basic", "port": 443,
 					"dns_sync_enabled": true, "dns_credential_id": 1, "dns_domain": "oc.example.com",
 					"certificate_mode": "auto", "enabled": true,
 				}},

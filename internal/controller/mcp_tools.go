@@ -337,7 +337,7 @@ type mcpValidateFormInput struct {
 
 func (s *Server) addMCPValidateFormTool(server *mcp.Server, principal application.Principal) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name: "oboard_validate_form", Title: "Validate Form", Description: "Validate a management form against the same defaults as the panel create UI. Omitted fields receive panel defaults; explicit false/zero stays authoritative. Use before a fallback submit so newly added default-on switches are not JSON-false. Update forms are strict PATCH and never fill create defaults.",
+		Name: "oboard_validate_form", Title: "Validate Form", Description: "Validate a management form against the same defaults as the panel UI. Omitted create fields receive panel defaults; explicit false/zero stays authoritative. Use before a fallback submit so newly added default-on switches are not JSON-false. Update forms are strict PATCH and never fill create defaults. form_id or capability: server-create/servers.onboard, inbound-create/inbounds.create, inbound-update/inbounds.update, external-outbound-create/external_outbounds.create, external-outbound-update/external_outbounds.update.",
 		InputSchema: mustRawSchema(closedMCPSchema(map[string]any{
 			"capability": map[string]any{"type": "string"},
 			"form_id":    map[string]any{"type": "string"},

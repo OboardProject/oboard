@@ -225,6 +225,21 @@ func TestAnyTLSRecipeAcceptsSNIWithoutDNSRecord(t *testing.T) {
 	}
 }
 
+func TestMCPInboundInstructionsUseSNIDefault(t *testing.T) {
+	if strings.Contains(mcpServerInstructions, "Those kinds default to dns_sync_enabled=true") {
+		t.Fatal("mcpServerInstructions still claims TLS kinds default dns_sync_enabled=true")
+	}
+	if !strings.Contains(mcpServerInstructions, "dns_sync_enabled` defaults to false") && !strings.Contains(mcpServerInstructions, "dns_sync_enabled defaults to false") {
+		t.Fatal("mcpServerInstructions should say dns_sync_enabled defaults to false")
+	}
+	guide := mcpDocsPayload("oboard://docs/guide")
+	notes, _ := guide["notes"].([]string)
+	joined := strings.Join(notes, "\n")
+	if strings.Contains(joined, "dns_sync_enabled defaults to true") {
+		t.Fatalf("docs/guide still claims dns_sync_enabled defaults to true: %s", joined)
+	}
+}
+
 // TestSubscriptionPlanListCarriesNodes verifies the subscription-plans list
 // resource includes latest and current node sets so MCP clients can confirm
 // nodes actually entered a plan.

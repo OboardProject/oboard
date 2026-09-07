@@ -28,6 +28,8 @@ func TestMCPRecipeRouting(t *testing.T) {
 		{name: "reissue enrollment", goal: "重签发接入令牌", want: "server.onboard"},
 		{name: "delete server", goal: "删除服务器", want: "server.manage"},
 		{name: "reset server traffic", goal: "清零已用流量", want: "server.manage"},
+		{name: "retry authorization", goal: "重试授权", want: "server.manage"},
+		{name: "extend expiry", goal: "给东京服务器续费 30 天", want: "server.manage"},
 		{name: "chinese inbound", goal: "在东京节点创建 VLESS 入站", want: "inbound.create"},
 		{name: "english", goal: "deploy all configuration changes", want: "deployment.apply"},
 		{name: "structured proxy ref", goal: "", want: "proxy_path.manage"},
