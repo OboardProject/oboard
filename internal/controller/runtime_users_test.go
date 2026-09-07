@@ -221,3 +221,58 @@ func TestSubscriptionDeliveryHidesUnconfirmedNewGrant(t *testing.T) {
 		t.Fatal("confirmed delivery hid a node")
 	}
 }
+
+// A server whose inbounds are all outside the runtime lane has an empty scope,
+// and the kernel rejects an install without one. The pull endpoint used to sign
+// such a package anyway, so the Agent retried a 400 every 30 seconds forever.
+func TestRuntimeUsersPullSkipsEmptyScope(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "users-test-secret", "")
+	server := &model.Server{
+		Name: "ss-node", PublicIPv4: "203.0.113.21", AgentID: "ss-agent",
+		AgentTokenHash: security.HashSecret("ss-token"), Status: model.ServerOnline,
+		KernelCapabilities: []string{model.AgentCapabilityRuntimeUsers, model.KernelCapabilityRuntimeUsers, model.AgentCapabilityRuntimeUsersShadowsocks},
+	}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "account", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "ss", Protocol: model.ProtocolSS, Port: 8388, Enabled: true, ConfigJSON: `{"method":"aes-128-gcm"}`}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	grantTestPlanInboundNode(t, db, user.ID, inbound.ID)
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/users-snapshot", nil)
+	req.Header.Set("X-Agent-ID", server.AgentID)
+	req.Header.Set("Authorization", "Bearer ss-token")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pull status %d: %s", rec.Code, rec.Body.String())
+	}
+	var envelope model.UsersEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.UsersJSON != "" {
+		t.Fatalf("pull returned an installable package for an empty scope: %s", envelope.UsersJSON)
+	}
+	state, err := db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Confirmed() {
+		t.Fatalf("empty scope left the users lane pending: %+v", state)
+	}
+}

@@ -1760,6 +1760,21 @@ func sanitizeTLSForSubscription(value any) any {
 	} {
 		delete(out, key)
 	}
+	// sing-box carries the client hello fingerprint in tls.utls, never as a
+	// top-level tls field. An imported node may hold the flat form, which fails
+	// the kernel's unknown-field check, so it is folded into utls here.
+	if fingerprint := strings.TrimSpace(stringFromAny(out["fingerprint"])); fingerprint != "" {
+		utls, _ := out["utls"].(map[string]any)
+		if utls == nil {
+			utls = map[string]any{}
+		}
+		if strings.TrimSpace(stringFromAny(utls["fingerprint"])) == "" {
+			utls["fingerprint"] = fingerprint
+		}
+		utls["enabled"] = true
+		out["utls"] = utls
+	}
+	delete(out, "fingerprint")
 	if reality, ok := out["reality"].(map[string]any); ok {
 		clientReality := map[string]any{}
 		if enabled, ok := reality["enabled"].(bool); ok {

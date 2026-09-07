@@ -369,16 +369,23 @@ func parsePrivateSSURI(line string, index int) (ParsedPrivateNode, error) {
 }
 
 func applyPrivateURIOptions(raw map[string]any, q url.Values) {
-	network := firstPrivateNonEmpty(q.Get("type"), q.Get("network"))
-	if network != "" {
-		raw["transport"] = map[string]any{"type": network, "path": q.Get("path"), "host": q.Get("host"), "service_name": firstPrivateNonEmpty(q.Get("serviceName"), q.Get("service_name"))}
+	network := strings.ToLower(strings.TrimSpace(firstPrivateNonEmpty(q.Get("type"), q.Get("network"))))
+	if transport := singBoxTransportForSubscription(subscriptionTransport{
+		Type:        network,
+		Path:        q.Get("path"),
+		Host:        q.Get("host"),
+		ServiceName: firstPrivateNonEmpty(q.Get("serviceName"), q.Get("service_name")),
+	}); transport != nil {
+		raw["transport"] = transport
 	}
 	security := q.Get("security")
 	if security == "tls" || security == "reality" || q.Get("sni") != "" {
 		tls := map[string]any{"enabled": true, "server_name": q.Get("sni"), "insecure": q.Get("insecure") == "1" || q.Get("allowInsecure") == "1"}
+		if fingerprint := strings.TrimSpace(q.Get("fp")); fingerprint != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": fingerprint}
+		}
 		if security == "reality" {
 			tls["reality"] = map[string]any{"public_key": q.Get("pbk"), "short_id": q.Get("sid")}
-			tls["fingerprint"] = q.Get("fp")
 		}
 		raw["tls"] = tls
 	}

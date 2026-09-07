@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionProxy) map[string]any {
@@ -39,12 +40,28 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 			}
 			continue
 		}
-		if value, ok := raw[key]; ok && value != nil {
-			if key == "tls" {
-				value = sanitizeTLSForSubscription(value)
-			}
-			out[key] = cloneSubscriptionValue(value)
+		value, ok := raw[key]
+		if !ok || value == nil {
+			continue
 		}
+		switch key {
+		case "tls":
+			value = sanitizeTLSForSubscription(value)
+		case "transport":
+			// An imported node carries whatever its source wrote. sing-box
+			// decodes with unknown fields disallowed and knows no "tcp"
+			// transport, so the transport object is rebuilt from the normalized
+			// form instead of relayed verbatim.
+			if singBoxUsesV2RayTransport(proxy.Type) {
+				transport := singBoxTransportForSubscription(proxy.Transport)
+				if transport == nil {
+					continue
+				}
+				out[key] = transport
+				continue
+			}
+		}
+		out[key] = cloneSubscriptionValue(value)
 	}
 	if proxy.Type == "ss" {
 		forceShadowsocksUoTVersion(out)
@@ -52,6 +69,42 @@ func sanitizeSingBoxSubscriptionOutbound(raw map[string]any, proxy subscriptionP
 	if proxy.Type == "ssh" {
 		out["user"] = proxy.Username
 		out["password"] = proxy.Password
+	}
+	return out
+}
+
+func singBoxUsesV2RayTransport(proxyType string) bool {
+	switch proxyType {
+	case "vless", "vmess", "trojan":
+		return true
+	default:
+		return false
+	}
+}
+
+// singBoxTransportForSubscription renders the sing-box transport object for one
+// normalized transport. sing-box accepts only http, ws, quic, grpc, and
+// httpupgrade; plain TCP is the absence of the object, so any other type yields
+// nil and the outbound omits it.
+func singBoxTransportForSubscription(transport subscriptionTransport) map[string]any {
+	out := map[string]any{"type": transport.Type}
+	switch transport.Type {
+	case "ws":
+		setNonEmpty(out, "path", transport.Path)
+		if host := strings.TrimSpace(transport.Host); host != "" {
+			out["headers"] = map[string]any{"Host": host}
+		}
+	case "http":
+		setNonEmpty(out, "path", transport.Path)
+		setNonEmpty(out, "host", transport.Host)
+	case "httpupgrade":
+		setNonEmpty(out, "path", transport.Path)
+		setNonEmpty(out, "host", transport.Host)
+	case "grpc":
+		setNonEmpty(out, "service_name", transport.ServiceName)
+	case "quic":
+	default:
+		return nil
 	}
 	return out
 }

@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -115,6 +116,72 @@ func TestGenerateServerConfigRewritesCapableShadowsocksUsers(t *testing.T) {
 	}
 	if managed, _ := parsed.Inbounds[0]["managed"].(bool); !managed {
 		t.Fatalf("capable ss inbound not marked managed: %#v", parsed.Inbounds[0])
+	}
+}
+
+// A proxy-path chain service authenticates the previous hop with an internal
+// identity that never gets an authorization key, so the runtime lane cannot
+// install it. The inbound must therefore keep its static users: stripping it
+// into an empty user-selector made the kernel reject the whole snapshot and
+// refuse every chained connection.
+func TestGenerateServerConfigKeepsChainServiceInboundStatic(t *testing.T) {
+	serverA := model.Server{ID: 1, Name: "A", ChainSecret: "chain-a", PublicIPv4: "203.0.113.1", ListenIP: "0.0.0.0", IPStack: model.IPStackIPv4Only, PortRangeStart: 30000, PortRangeEnd: 30100}
+	serverB := capableRuntimeUserServer(model.AgentCapabilityRuntimeUsersShadowsocks, model.AgentCapabilityRuntimeUsersVLESS)
+	serverB.ID, serverB.Name, serverB.ChainSecret = 2, "B", "chain-b"
+	serverB.PublicIPv4, serverB.ListenIP, serverB.IPStack = "203.0.113.2", "0.0.0.0", model.IPStackIPv4Only
+	serverB.PortRangeStart, serverB.PortRangeEnd = 31000, 31100
+	root := model.Inbound{ID: 10, ServerID: serverA.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}
+	path := model.ProxyPath{ID: 40, Name: "chain", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	bID := serverB.ID
+	step := model.ProxyPathStep{ID: 41, PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &bID, TransportMode: model.ProxyPathTransportSingBox, ConfigJSON: `{}`}
+	user := model.User{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "alice-password"}
+	var pkg *RuntimeUserPackage
+	config, err := generateFixtureConfig(serverB, nil, nil, nil, []model.User{user}, ConfigOptions{
+		Servers:         []model.Server{serverA, serverB},
+		Inbounds:        []model.Inbound{root},
+		ProxyPaths:      []model.ProxyPath{path},
+		ProxyPathSteps:  []model.ProxyPathStep{step},
+		InboundUsers:    []model.InboundUser{{InboundID: root.ID, UserID: user.ID, Enabled: true}},
+		ProxyPathUsers:  []model.ProxyPathUser{{ProxyPathID: path.ID, InboundID: root.ID, UserID: user.ID, Enabled: true}},
+		RuntimeUsersOut: &pkg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := parseSingBoxConfig(t, config)
+	chain := map[string]any{}
+	for _, inbound := range parsed.Inbounds {
+		if strings.HasPrefix(stringValue(inbound, "tag", ""), "oboard-chain-") {
+			chain = inbound
+		}
+	}
+	if len(chain) == 0 {
+		t.Fatalf("no chain service inbound generated: %s", config)
+	}
+	users, ok := chain["users"].([]any)
+	if !ok || len(users) == 0 {
+		t.Fatalf("chain service inbound lost its static users: %#v", chain)
+	}
+	if managed, _ := chain["managed"].(bool); managed {
+		t.Fatalf("chain service inbound was marked runtime managed: %#v", chain)
+	}
+	if pkg != nil {
+		t.Fatalf("chain service inbound entered the runtime users lane: %+v", pkg)
+	}
+	if parsed.OBoard != nil && parsed.OBoard.RuntimeUsers != nil {
+		t.Fatalf("chain service inbound was declared in runtime_users: %#v", parsed.OBoard.RuntimeUsers)
+	}
+	for _, outbound := range parsed.Outbounds {
+		if outbound["type"] == "user-selector" {
+			t.Fatalf("chain traffic was routed to a user-selector: %#v", outbound)
+		}
+	}
+	rules, err := json.Marshal(parsed.Route["rules"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rules), "userselector-") {
+		t.Fatalf("chain route was rewritten to a user-selector: %s", rules)
 	}
 }
 

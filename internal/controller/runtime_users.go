@@ -424,6 +424,15 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pkg.Mode = "full"
+	// An empty scope means this server has no runtime-managed inbound, and the
+	// kernel rejects an install without one. Answer with an empty envelope the
+	// Agent skips instead of signing a package it can only fail to apply.
+	if len(pkg.Scope) == 0 {
+		_, _ = s.store.RecordRuntimeUsersConfirmation(r.Context(), server.ID, pkg.UsersRevision, pkg.UsersDigest, "")
+		w.Header().Set("Cache-Control", "no-store")
+		write(w, http.StatusOK, model.UsersEnvelope{ServerID: server.ID})
+		return
+	}
 	envelope, err := s.usersEnvelopeFor(*server, pkg, "")
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)

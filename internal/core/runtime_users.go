@@ -146,9 +146,13 @@ func applyRuntimeUserStructure(config *SingBoxConfig, server model.Server) *Runt
 	if config == nil || !ServerSupportsRuntimeUsers(server) {
 		return nil
 	}
+	limits := map[string]OBoardUserRuntimeLimit{}
+	if config.OBoard != nil {
+		limits = config.OBoard.RateLimits.Users
+	}
 	managed := map[string]struct{}{}
 	for _, item := range config.Inbounds {
-		if !inboundIsRuntimeManaged(server, item) {
+		if !inboundIsRuntimeManaged(server, item, limits) {
 			continue
 		}
 		tag, _ := item["tag"].(string)
@@ -168,24 +172,48 @@ func applyRuntimeUserStructure(config *SingBoxConfig, server model.Server) *Runt
 	return pkg
 }
 
-func inboundIsRuntimeManaged(server model.Server, item map[string]any) bool {
+func inboundIsRuntimeManaged(server model.Server, item map[string]any, limits map[string]OBoardUserRuntimeLimit) bool {
 	kind, _ := item["type"].(string)
 	switch kind {
 	case "vless":
-		return ServerSupportsRuntimeUserProtocol(server, model.ProtocolVLESS)
+		if !ServerSupportsRuntimeUserProtocol(server, model.ProtocolVLESS) {
+			return false
+		}
 	case "hysteria2":
-		return ServerSupportsRuntimeUserProtocol(server, model.ProtocolHY2)
+		if !ServerSupportsRuntimeUserProtocol(server, model.ProtocolHY2) {
+			return false
+		}
 	case "shadowsocks":
 		if !ServerSupportsRuntimeUserProtocol(server, model.ProtocolSS) {
 			return false
 		}
-		if _, ok := item["users"]; ok {
-			return true
+		if _, ok := item["users"]; !ok {
+			return false
 		}
-		return false
 	default:
 		return false
 	}
+	return !inboundHasUnkeyedUser(item, limits)
+}
+
+// inboundHasUnkeyedUser reports whether an inbound carries an identity that the
+// runtime lane cannot install. Every installed entry needs an authorization key,
+// and only billable panel users get one, so internal identities (proxy-path
+// chain services) have none. Stripping such an inbound into an empty
+// user-selector would make the kernel reject the whole snapshot and drop every
+// connection on it, so the inbound keeps its static users instead.
+func inboundHasUnkeyedUser(item map[string]any, limits map[string]OBoardUserRuntimeLimit) bool {
+	for _, user := range inboundUserObjects(item) {
+		name, _ := user["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" || strings.Contains(name, "__oboard_placeholder_") {
+			continue
+		}
+		if strings.TrimSpace(limits[name].AuthorizationKey) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func collectRuntimeUserPackage(config *SingBoxConfig, managed map[string]struct{}) *RuntimeUserPackage {
