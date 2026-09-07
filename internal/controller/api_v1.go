@@ -953,6 +953,34 @@ func (s *Server) registerAutomationHandlers() {
 		}
 		return s.store.ResumeSubscriptionAccess(ctx, request.UserID, *principal.UserID)
 	})
+	s.automation.RegisterValidator("subscriptions.rotate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		user, err := s.userSessionRevokeCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"user_id": user.ID, "subscription_configured": user.SubscriptionToken != ""}, nil
+	})
+	s.automation.RegisterRevisionResolver("subscriptions.rotate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		user, err := s.userSessionRevokeCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"user:" + strconv.FormatInt(user.ID, 10): user.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("subscriptions.rotate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		user, err := s.userSessionRevokeCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		token, err := security.RandomToken(24)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpdateUserSubscriptionToken(ctx, user.ID, token); err != nil {
+			return nil, err
+		}
+		return map[string]any{"user_id": user.ID, "rotated": true}, nil
+	})
 	s.automation.RegisterValidator("servers.onboard", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		if !principal.AllowsCreate("server") {
 			return nil, errors.New("resource filter does not allow creating servers")
@@ -1287,7 +1315,6 @@ func decodeServerOnboardingOperation(input json.RawMessage) (serverOnboardingOpe
 	request.Server.EnrollmentHash, request.Server.EnrollmentExpiresAt = "", nil
 	return request, nil
 }
-
 
 type topologyWriteOperation struct {
 	Path        model.ProxyPath       `json:"path"`

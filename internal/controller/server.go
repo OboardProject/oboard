@@ -11063,6 +11063,10 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		s.userSubscriptionToken(w, r, id, parts[2])
 		return
 	}
+	if len(parts) == 3 && parts[1] == "proxy-credentials" && parts[2] == "rotate" {
+		s.rotateUserProxyCredentials(w, r, id)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "traffic-ledger" {
 		s.userTrafficLedger(w, r, id)
 		return
@@ -13958,33 +13962,22 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	rateKind := "subscription-token:"
 	if custom {
 		rateKind = "subscription-custom-path:"
-	} else if strings.HasPrefix(token, "obd_") {
-		rateKind = "subscription-device:"
 	}
 	if !s.allowRate(w, r, rateKind+token, 60, time.Minute) {
 		return
 	}
 	var user *model.User
-	var device *model.UserDevice
-	deviceTokenHash := ""
 	var err error
 	if custom {
 		user = &customCredential.User
 	} else if strings.HasPrefix(token, "obd_") {
-		deviceTokenHash = security.HashAPISecret(s.sessionSecret, token)
-		device, err = s.store.GetUserDeviceByTokenHash(r.Context(), deviceTokenHash)
-		if err == nil {
-			user, err = s.store.GetUser(r.Context(), device.UserID)
-		}
+		fail(w, errors.New("invalid subscription link"), 404)
+		return
 	} else {
 		user, err = s.store.GetUserBySubscriptionToken(r.Context(), token)
 	}
 	if err != nil || user == nil || user.Status != "active" {
 		fail(w, errors.New("invalid subscription link"), 404)
-		return
-	}
-	if device == nil && !user.LegacyProxyEnabled {
-		fail(w, errors.New("this account requires a device-specific subscription link"), http.StatusForbidden)
 		return
 	}
 	credentials, err := s.store.LoadProxyCredentials(r.Context(), s.sessionSecret, []model.User{*user})
@@ -13994,9 +13987,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	*user = credentials[0]
 	subscriptionUser := *user
-	if device != nil {
-		subscriptionUser = core.UserForDevice(*user, *device)
-	}
 	resolution := core.ResolveSubscriptionFormat(model.SubscriptionFormat(r.URL.Query().Get("format")), r.UserAgent())
 	if !core.IsSupportedSubscriptionFormat(resolution.Requested) {
 		s.recordRejectedSubscriptionPull(r, user.ID, resolution, nil, false, "unsupported subscription format")
@@ -14153,10 +14143,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	event.SubscriptionRevision = subscriptionRevision
 	event.RouteID = s.subscriptionAuditRouteID(event)
 	credentialGeneration := "legacy:" + security.HashAPISecret(s.sessionSecret, token)
-	if device != nil {
-		event.DeviceIDHash = device.DeviceIDHash
-		credentialGeneration = fmt.Sprintf("device:%s:%d", device.DeviceIDHash, device.CredentialEpoch)
-	}
 	profileValue := int64(0)
 	if requestedProfileID != nil {
 		profileValue = *requestedProfileID
@@ -14171,9 +14157,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		Action:       auditState.Action,
 	}
 	var decision store.SubscriptionPullDecision
-	if device != nil {
-		decision, err = s.store.AuthorizeDeviceSubscriptionPull(r.Context(), user.ID, device.ID, deviceTokenHash, event, s.auditPolicy(r.Context()), auditOptions)
-	} else if custom {
+	if custom {
 		decision, err = s.store.AuthorizeCustomSubscriptionPull(r.Context(), user.ID, token, event, s.auditPolicy(r.Context()), auditOptions)
 	} else {
 		decision, err = s.store.AuthorizeSubscriptionPull(r.Context(), user.ID, token, event, s.auditPolicy(r.Context()), auditOptions)

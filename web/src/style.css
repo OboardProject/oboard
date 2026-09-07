@@ -16026,6 +16026,46 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   width: min(560px, calc(100vw - 28px));
 }
 
+.user-credentials-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.user-credentials-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 10px);
+}
+
+.user-credentials-action svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--primary);
+}
+
+.user-credentials-action span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.user-credentials-action strong {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.user-credentials-action small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .user-create-dialog.user-form-dialog {
   width: min(820px, calc(100vw - 28px));
 }

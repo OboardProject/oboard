@@ -97,6 +97,8 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		{name: "subscription_plans.update", want: true},
 		{name: "user_node_exceptions.update", want: false},
 		{name: "user_devices.revoke", want: false},
+		{name: "subscriptions.rotate", want: false},
+		{name: "users.credentials.rotate", want: false},
 	}
 	for _, item := range capabilities {
 		if got := configurationCapability(item.name); got != item.want {

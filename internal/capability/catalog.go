@@ -392,6 +392,7 @@ func defaultDescriptors() []Descriptor {
 		{"servers.extend_expiry", "servers:write", 1, true, DataInternal, nil},
 		{"servers.reset_traffic", "servers:write", 1, true, DataInternal, nil},
 		{"subscriptions.resume", "subscriptions:resume", 2, true, DataInternal, nil},
+		{"subscriptions.rotate", "subscriptions:manage", 2, true, DataInternal, nil},
 		{"subscriptions.custom_paths.set_alias", "subscriptions:manage", 2, true, DataSensitive, []string{"alias"}},
 		{"subscriptions.custom_paths.set_policy", "subscriptions:manage", 2, true, DataInternal, nil},
 		{"inbounds.create", "topology:write", 3, true, DataSensitive, []string{"inbound.config_json"}},
@@ -416,6 +417,8 @@ func defaultDescriptors() []Descriptor {
 			description = "将指定服务器当前周期已用流量清零；不影响限额、重置日、用户流量账本，也不触发部署。后续 Agent 上报会重新累计"
 		} else if domain.name == "inbounds.padding.update" {
 			description = "显式更换、重新生成或自定义 AnyTLS PaddingScheme；会改变流量形态并需要重新部署"
+		} else if domain.name == "subscriptions.rotate" {
+			description = "更换用户订阅地址：签发新的持久订阅令牌，旧链接立即失效。不返回明文令牌，也不把订阅吊销到空。客户端需重新复制链接。"
 		}
 		descriptors = append(descriptors, Descriptor{Name: domain.name, Description: description, InputSchema: input, OutputSchema: output, RequiredScopes: []string{domain.scope}, ResourceEvaluator: evaluator, RiskClass: domain.risk, ApprovalPolicy: "required", Idempotent: true, DataClassification: domain.classification, SensitiveFields: domain.sensitive, SensitiveInput: domain.sensitive, MCPEnabled: true, Executable: domain.executable, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: writeResolver(domain.name)})
 		if domain.name == "servers.onboard" {
@@ -570,6 +573,7 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		adminWrite("users.update", "修改用户角色、状态、额度与订阅设置", schemaObject(map[string]any{"user_id": positiveID, "changes": userUpdateChanges}, "user_id", "changes"), schemaObject(map[string]any{"user": userFull, "changed_fields": stringArray(1, 32), "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "user"), 2, false),
 		adminWrite("users.delete", "删除用户及其所有关联数据", schemaObject(map[string]any{"user_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "user_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "user_id": positiveID, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "deleted"), 3, true),
 		adminWrite("users.session_revoke", "吊销用户全部登录会话与访问令牌", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"session_revoked": boolValue, "user_id": positiveID, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "session_revoked"), 2, false),
+		adminWrite("users.credentials.rotate", "更换用户节点密码与 UUID：旧代理凭据立即失效，客户端需重新拉取订阅。不返回明文密码。", schemaObject(map[string]any{"user_id": positiveID}, "user_id"), schemaObject(map[string]any{"rotated": boolValue, "user_id": positiveID, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "rotated"), 2, false),
 		adminWrite("user_groups.create", "创建用户分组并设置角色与策略", schemaObject(map[string]any{"user_group": closedObject(map[string]any{
 			"name":                            map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
 			"description":                     map[string]any{"type": "string", "maxLength": 200},
@@ -604,7 +608,7 @@ func usersWriteResolver(name string) func(context.Context, any) ([]mcpauth.Resou
 
 func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRef, error) {
 	switch name {
-	case "subscriptions.resume", "subscriptions.custom_paths.set_alias", "subscriptions.custom_paths.set_policy":
+	case "subscriptions.resume", "subscriptions.rotate", "subscriptions.custom_paths.set_alias", "subscriptions.custom_paths.set_policy":
 		return userRefFromID
 	case "topology.write":
 		return topologyWriteRefs
@@ -653,6 +657,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 	switch name {
 	case "subscriptions.resume":
 		return schemaObject(map[string]any{"user_id": positiveID}, "user_id"), simpleOutput(map[string]any{"id": positiveID, "user_id": positiveID, "resumed": boolValue}), "user_ids"
+	case "subscriptions.rotate":
+		return schemaObject(map[string]any{"user_id": positiveID}, "user_id"), simpleOutput(map[string]any{"user_id": positiveID, "rotated": boolValue}), "user_ids"
 	case "subscriptions.custom_paths.set_alias":
 		return schemaObject(map[string]any{"user_id": positiveID, "alias": map[string]any{"type": "string", "maxLength": 64}, "delete": boolValue}, "user_id"), simpleOutput(map[string]any{"user_id": positiveID, "deleted": boolValue, "subscription_custom_path": closedObject(map[string]any{"user_id": positiveID, "alias": stringValue})}), "user_ids"
 	case "subscriptions.custom_paths.set_policy":
@@ -720,7 +726,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"offline_notify_enabled":     boolValue, "offline_after_seconds": map[string]any{"type": "integer"},
 			"service_start_at": stringValue, "clear_service_start_at": boolValue, "expires_at": stringValue, "clear_expires_at": boolValue, "auto_renew_enabled": boolValue, "renewal_cycle": map[string]any{"type": "string", "enum": []string{"monthly", "quarterly"}}, "expiry_notify_enabled": boolValue,
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导；仅设置 traffic_reset_day 时自动使用 month_day"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "单独设置时自动将 traffic_reset_mode 切换为 month_day；为空时可按账期日期推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
-			"display_tags": serverDisplayTagsSchema(),
+			"display_tags":            serverDisplayTagsSchema(),
 			"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"

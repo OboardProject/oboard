@@ -730,7 +730,7 @@ func TestSSHInboundPlanBuildsImplicitDirectRouteForStandaloneGrant(t *testing.T)
 	}
 }
 
-func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
+func TestSSHInboundPlanUsesAccountCredentialsOnly(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -779,25 +779,15 @@ func TestSSHInboundPlanExpandsDeviceCredentialsPerRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 2 {
-		t.Fatalf("SSH device plan = %#v", plan)
+	if len(plan.Inbounds) != 1 || len(plan.Inbounds[0].Users) != 1 {
+		t.Fatalf("SSH account plan = %#v", plan)
 	}
-	var legacy, bound *model.SSHInboundUser
-	for index := range plan.Inbounds[0].Users {
-		candidate := &plan.Inbounds[0].Users[index]
-		if candidate.DeviceIDHash == "" {
-			legacy = candidate
-		} else {
-			bound = candidate
-		}
-	}
-	deviceUser := core.UserForDevice(*user, *device)
-	expectedDeviceCredential := core.UserCredentialForRoute(deviceUser, inbound.ID, path.ID, model.ProtocolSSH)
-	if legacy == nil || legacy.Password != core.UserCredentialForRoute(*user, inbound.ID, path.ID, model.ProtocolSSH).ProxyPassword || bound == nil || bound.DeviceIDHash != device.DeviceIDHash || bound.CredentialEpoch != device.CredentialEpoch || bound.CredentialStatus != "active" || bound.Password != expectedDeviceCredential.ProxyPassword || bound.Password == legacy.Password {
-		t.Fatalf("SSH expanded credentials legacy=%#v device=%#v", legacy, bound)
+	account := plan.Inbounds[0].Users[0]
+	if account.DeviceIDHash != "" || account.Password != core.UserCredentialForRoute(*user, inbound.ID, path.ID, model.ProtocolSSH).ProxyPassword {
+		t.Fatalf("SSH account credential = %#v", account)
 	}
 	deployments, err := newTestServer(db, "test-secret", "").sshPasswordDeploymentsFromPlan(server.ID, plan)
-	if err != nil || len(deployments) != 2 {
+	if err != nil || len(deployments) != 1 {
 		t.Fatalf("SSH identity deployments = %#v, err=%v", deployments, err)
 	}
 }

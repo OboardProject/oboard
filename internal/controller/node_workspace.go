@@ -386,12 +386,8 @@ func (s *Server) nodeLibraryItem(w http.ResponseWriter, r *http.Request) {
 	}
 	subscriptionUser := *user
 	if request.DeviceID != "" {
-		device, deviceErr := s.store.GetUserDevice(r.Context(), user.ID, request.DeviceID)
-		if deviceErr != nil || device.Status != "active" {
-			nodeWorkspaceFail(w, sql.ErrNoRows)
-			return
-		}
-		subscriptionUser = core.UserForDevice(*user, *device)
+		fail(w, errors.New("device-specific subscriptions are no longer supported"), http.StatusGone)
+		return
 	}
 	nodes, _, err := s.workspaceAllNodes(r.Context(), subscriptionUser)
 	if err != nil {

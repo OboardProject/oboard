@@ -171,7 +171,7 @@ User hint:
 
 %s
 
-Use intent `+"`user.manage`"+`, `+"`user_group.manage`"+`, or `+"`user_device.manage`"+` when obvious. Follow needs_input or choose_candidate with the continuation_id; commit only the returned prepared_id with `+"`oboard_commit_task`"+` after confirmation and follow the Workflow until terminal.
+Use intent `+"`user.manage`"+`, `+"`user.credentials.manage`"+`, `+"`user_group.manage`"+`, or `+"`user_device.manage`"+` when obvious. Follow needs_input or choose_candidate with the continuation_id; commit only the returned prepared_id with `+"`oboard_commit_task`"+` after confirmation and follow the Workflow until terminal.
 
 Never reveal or request passwords, tokens, or other credentials beyond what the user explicitly asked to set. Do not delete protected (bootstrap admin) accounts.`, args["goal"], args["user_hint"])
 			},

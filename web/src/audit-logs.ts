@@ -163,7 +163,8 @@ function auditTitle(log: AuditLogRow, actor: string, target: { type: string; lab
   if (action === 'diagnose') return copy(`${actor} 创建了 ${target.label} 的诊断任务`)
   if (action === 'detect' && log.target === 'mtu') return copy(`${actor} 发起了 ${target.label} 的 MTU 检测`)
   if (action === 'create' && log.target === 'enroll-token') return copy(`${actor} 生成了 ${target.label} 的 Agent 安装令牌`)
-  if (action === 'rotate' && log.target === 'subscription-token') return copy(`${actor} 轮换了 ${target.label} 的订阅令牌`)
+  if (action === 'rotate' && log.target === 'subscription-token') return copy(`${actor} 更换了 ${target.label} 的订阅地址`)
+  if (action === 'rotate' && log.target === 'user-credentials') return copy(`${actor} 更换了 ${target.label} 的节点密码`)
   if (action === 'revoke' && log.target === 'subscription-token') return copy(`${actor} 吊销了 ${target.label} 的订阅令牌`)
   if (action === 'update' && log.target === 'subscription-age') return copy(`${actor} 更新了 ${target.label} 的 Age 订阅设置`)
   if (action === 'renew') return copy(`${actor} 续期了 ${target.label}`)
@@ -222,7 +223,7 @@ function auditTargetInfo(log: AuditLogRow, data: any) {
   if (target === 'inbound-access') return { type, label: auditInboundAccessLabel(detail, data) }
   if (target === 'notification_channel') return { type, label: auditNotificationLabel(detail, data) }
   if (target === 'agent-config' || target === 'mtu' || target === 'enroll-token') return { type, label: auditServerLabel(numberFromString(detail), data) }
-  if (target === 'subscription-token' || target === 'subscription-age') return { type, label: auditUserLabel(numberFromString(detail), data) }
+  if (target === 'subscription-token' || target === 'subscription-age' || target === 'user-credentials') return { type, label: auditUserLabel(numberFromString(detail), data) }
   if (target === 'totp' || target === 'totp-recovery-codes') return { type, label: auditUserLabel(numberFromString(detail), data) }
   if (target === 'oauth_grant' || target === 'oauth_client' || target === 'oauth_token') {
     return { type, label: oauthClientLabel(parsed) || type }
@@ -322,7 +323,7 @@ function auditTargetTypeLabel(target: string) {
     'user-group': '用户组', 'user-group-member': '用户组成员', 'inbound-access': '入口权限',
     routing_rule: '分流规则', routing_rules: '分流规则', routing_rule_set: '规则集',
     notification_channel: '通知渠道', port_forward: '端口转发',
-    tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅令牌', 'subscription-age': 'Age 订阅',
+    tunnel: '隧道', deployment: '配置下发', 'subscription-token': '订阅地址', 'user-credentials': '用户凭证', 'subscription-age': 'Age 订阅',
     'subscription-custom-path': '自定义订阅路径', 'subscription-custom-path-policy': '自定义路径权限',
     'subscription-plan': '订阅计划', 'subscription-profile': '订阅配置', 'subscription-assignment': '订阅分配',
     'user-device': '用户设备', 'user-device-subscription': '设备订阅', 'user-node-exception': '节点可见性例外',

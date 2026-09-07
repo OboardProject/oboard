@@ -2342,6 +2342,23 @@ func (s *Store) BumpSessionVersion(ctx context.Context, userID int64) (int64, er
 	return version, nil
 }
 
+func (s *Store) RotateUserProxyIdentity(ctx context.Context, userID int64, proxyUUID, proxyPassword string) error {
+	if userID <= 0 || strings.TrimSpace(proxyUUID) == "" || strings.TrimSpace(proxyPassword) == "" {
+		return errors.New("invalid proxy identity")
+	}
+	ts := now()
+	res, err := s.db.ExecContext(ctx, `update users set proxy_uuid=?, proxy_password=?, updated_at=? where id=?`, strings.TrimSpace(proxyUUID), strings.TrimSpace(proxyPassword), ts, userID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) UpdateUserSubscriptionToken(ctx context.Context, userID int64, token string) error {
 	ts := now()
 	tx, err := s.db.BeginTx(ctx, nil)

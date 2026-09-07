@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -46,27 +44,7 @@ func (s *Server) userDevices(w http.ResponseWriter, r *http.Request, userID int6
 			}
 			write(w, http.StatusOK, map[string]any{"devices": devices, "device_limit": user.DeviceLimit, "legacy_proxy_enabled": user.LegacyProxyEnabled})
 		case http.MethodPost:
-			if user.Status != "active" {
-				fail(w, errors.New("active user required"), http.StatusConflict)
-				return
-			}
-			var request struct {
-				Name string `json:"name"`
-			}
-			if !decode(w, r, &request) {
-				return
-			}
-			credential, err := s.createUserDevice(r, userID, request.Name)
-			if err != nil {
-				s.writeUserDeviceError(w, err)
-				return
-			}
-			if err := s.queueUserDeviceCredentialDeployment(r.Context(), userID); err != nil {
-				fail(w, err, http.StatusInternalServerError)
-				return
-			}
-			auditReq(s, r, "create", "user-device", fmt.Sprintf("%d:%s", userID, credential.Device.ID))
-			write(w, http.StatusCreated, map[string]any{"device": credential.Device, "device_token": credential.Token})
+			fail(w, errors.New("device-specific subscriptions are no longer supported"), http.StatusGone)
 		default:
 			method(w)
 		}
@@ -119,32 +97,8 @@ func (s *Server) userDeviceAction(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	switch action {
-	case "rotate":
-		token, err := newDeviceToken()
-		if err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		device, err := s.store.RotateUserDevice(r.Context(), userID, deviceID, security.HashAPISecret(s.sessionSecret, token), deviceTokenPrefix(token))
-		if err != nil {
-			s.writeUserDeviceError(w, err)
-			return
-		}
-		if err := s.queueUserDeviceCredentialDeployment(r.Context(), userID); err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		auditReq(s, r, "rotate", "user-device", fmt.Sprintf("%d:%s", userID, deviceID))
-		write(w, http.StatusOK, map[string]any{"device": device, "device_token": token})
-	case "suspend-subscription", "resume-subscription":
-		suspended := action == "suspend-subscription"
-		device, err := s.store.SetUserDeviceSubscriptionSuspended(r.Context(), userID, deviceID, suspended)
-		if err != nil {
-			s.writeUserDeviceError(w, err)
-			return
-		}
-		auditReq(s, r, map[bool]string{true: "suspend", false: "resume"}[suspended], "user-device-subscription", fmt.Sprintf("%d:%s", userID, deviceID))
-		write(w, http.StatusOK, map[string]any{"device": device})
+	case "rotate", "suspend-subscription", "resume-subscription":
+		fail(w, errors.New("device-specific subscriptions are no longer supported"), http.StatusGone)
 	default:
 		fail(w, errors.New("unsupported device action"), http.StatusNotFound)
 	}
@@ -153,53 +107,6 @@ func (s *Server) userDeviceAction(w http.ResponseWriter, r *http.Request, userID
 func (s *Server) queueUserDeviceCredentialDeployment(ctx context.Context, userID int64) error {
 	s.applyChangePlan(ctx, userID, ClassifyCredentialRotation())
 	return nil
-}
-
-func (s *Server) createUserDevice(r *http.Request, userID int64, name string) (model.UserDeviceCredential, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = "新设备"
-	}
-	if len([]rune(name)) > 80 {
-		return model.UserDeviceCredential{}, errors.New("device name must be at most 80 characters")
-	}
-	randomID, err := security.RandomToken(18)
-	if err != nil {
-		return model.UserDeviceCredential{}, err
-	}
-	deviceID := "dev_" + randomID
-	token, err := newDeviceToken()
-	if err != nil {
-		return model.UserDeviceCredential{}, err
-	}
-	device := model.UserDevice{
-		ID:              deviceID,
-		DeviceIDHash:    security.HashAPISecret(s.sessionSecret, deviceID),
-		UserID:          userID,
-		Name:            name,
-		TokenHash:       security.HashAPISecret(s.sessionSecret, token),
-		TokenPrefix:     deviceTokenPrefix(token),
-		CredentialEpoch: 1,
-	}
-	if err := s.store.CreateUserDevice(r.Context(), &device); err != nil {
-		return model.UserDeviceCredential{}, err
-	}
-	return model.UserDeviceCredential{Device: device, Token: token}, nil
-}
-
-func newDeviceToken() (string, error) {
-	value, err := security.RandomToken(24)
-	if err != nil {
-		return "", err
-	}
-	return "obd_" + value, nil
-}
-
-func deviceTokenPrefix(token string) string {
-	if len(token) <= 12 {
-		return token
-	}
-	return token[:12]
 }
 
 func (s *Server) writeUserDeviceError(w http.ResponseWriter, err error) {

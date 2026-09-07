@@ -448,8 +448,6 @@ type SubscriptionAccessState = { user_id: number; suspended: boolean; suspended_
 type SubscriptionAuditUserDetail = { summary: SubscriptionAuditUser; sources: SubscriptionAuditDimension[]; regions: SubscriptionAuditDimension[]; clients: SubscriptionAuditDimension[]; formats: SubscriptionAuditDimension[]; recent: SubscriptionPullAudit[]; access: SubscriptionAccessState }
 type CombinedAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; confidence: number; evidence_categories: string[]; counter_evidence: string[]; recommended_action: string; connection_risk_level: AuditRiskLevel; connection_risk_score: number; connection_observed: boolean; subscription_risk_level: AuditRiskLevel; subscription_risk_score: number; subscription_observed: boolean; subscription_suspended: boolean; last_seen_at: string }
 type CombinedAuditOverview = { window_hours: number; generated_at: string; elevated_risk_count: number; suspended_count: number; users: CombinedAuditUser[] }
-type UserDevice = { id: string; device_id_hash: string; user_id: number; name: string; token_prefix: string; credential_epoch: number; status: string; subscription_suspended: boolean; proxy_access_state: string; created_at: string; updated_at: string; last_subscription_at?: string; last_proxy_activity_at?: string; revoked_at?: string; subscription_suspended_at?: string }
-type UserDeviceInventory = { devices: UserDevice[]; device_limit: number; legacy_proxy_enabled: boolean }
 type AuditReviewSelector = { mode: 'all' | 'selected'; ids: number[] }
 type AuditReviewScope = { users: AuditReviewSelector; servers: AuditReviewSelector }
 type AuditReviewRiskLevel = 'low' | 'medium' | 'high' | 'critical' | 'unknown'
@@ -6237,8 +6235,8 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
         </tbody></table>
       </div>}
     </>}
-    <AnimatePresence>{connectionDetail && <ConnectionAuditUserDialog detail={connectionDetail} client={client} canManageDevices={isAdmin} notify={notify} onChanged={() => setRefreshRevision(value => value + 1)} restoreFocus={detailTriggerRef.current} onClose={() => setConnectionDetail(null)} />}</AnimatePresence>
-    <AnimatePresence>{subscriptionDetail && <SubscriptionAuditUserDialog detail={subscriptionDetail} client={client} canManageDevices={isAdmin} canResume={isAdmin} notify={notify} onChanged={() => setRefreshRevision(value => value + 1)} onResume={resumeSubscription} restoreFocus={detailTriggerRef.current} onClose={() => setSubscriptionDetail(null)} />}</AnimatePresence>
+    <AnimatePresence>{connectionDetail && <ConnectionAuditUserDialog detail={connectionDetail} restoreFocus={detailTriggerRef.current} onClose={() => setConnectionDetail(null)} />}</AnimatePresence>
+    <AnimatePresence>{subscriptionDetail && <SubscriptionAuditUserDialog detail={subscriptionDetail} canResume={isAdmin} onResume={resumeSubscription} restoreFocus={detailTriggerRef.current} onClose={() => setSubscriptionDetail(null)} />}</AnimatePresence>
   </Panel>
 }
 
@@ -6731,85 +6729,13 @@ function formatCompactAuditNumber(value: number) {
   return new Intl.NumberFormat('zh-CN', { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(Number(value || 0))
 }
 
-function AuditDeviceManager({ userID, client, canManage, notify, onChanged }: { userID: number; client: any; canManage: boolean; notify?: (message: string, tone?: ToastKind) => void; onChanged?: () => void }) {
-  const dialogs = useDialogs()
-  const [inventory, setInventory] = useState<UserDeviceInventory | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [working, setWorking] = useState('')
-  const loadDevices = async () => {
-    if (!canManage) return
-    setLoading(true)
-    try {
-      setInventory(await client.request(`/users/${userID}/devices`))
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
-  useEffect(() => { void loadDevices() }, [userID, canManage])
-  if (!canManage) return null
-  const showCredential = async (token: string, title: string) => {
-    const url = subscriptionURLForToken(token, defaultSubscriptionFormat)
-    await dialogs.alert({ title, message: <div className="audit-device-credential"><p className="muted">设备凭证只在这次操作中显示。订阅链接可以直接粘贴到客户端；Controller 只保存 token 哈希。</p><CopyBlock value={url} /><small>设备 token：{token}</small></div> })
-  }
-  const operate = async (device: UserDevice, action: 'rotate' | 'suspend-subscription' | 'resume-subscription' | 'revoke') => {
-    if (working) return
-    if (action === 'revoke' && !(await dialogs.confirm({ title: `吊销「${device.name}」？`, message: '该设备的订阅和代理凭证都会失效，其他设备不受影响。', confirmText: '吊销设备', tone: 'danger' }))) return
-    if (action === 'rotate' && !(await dialogs.confirm({ title: `轮换「${device.name}」凭证？`, message: '旧链接会立即失效，已有代理连接不会被主动断开。', confirmText: '轮换凭证' }))) return
-    setWorking(`${device.id}:${action}`)
-    try {
-      const result = action === 'revoke'
-        ? await client.request(`/users/${userID}/devices/${device.id}`, { method: 'DELETE' })
-        : await client.request(`/users/${userID}/devices/${device.id}/${action}`, { method: 'POST', body: '{}' })
-      await loadDevices()
-      onChanged?.()
-      if (action === 'rotate' && result?.device_token) await showCredential(result.device_token, '设备凭证已轮换')
-      else notify?.(action === 'revoke' ? '设备已吊销' : action === 'suspend-subscription' ? '设备订阅已暂停' : action === 'resume-subscription' ? '设备订阅已恢复' : '设备凭证已更新', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const create = async () => {
-    const name = await dialogs.prompt({ title: '绑定新设备', message: '使用设备专属订阅链接后，设备数才具备精确含义。', defaultValue: '新设备', placeholder: '例如：手机、电脑、路由器', confirmText: '绑定设备' })
-    if (name === null) return
-    setWorking('create')
-    try {
-      const result = await client.request(`/users/${userID}/devices`, { method: 'POST', body: JSON.stringify({ name }) })
-      await loadDevices()
-      onChanged?.()
-      if (result?.device_token) await showCredential(result.device_token, '设备已绑定')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  return <section className="audit-device-manager" aria-labelledby={`audit-devices-${userID}`}>
-    <div className="audit-recent-head"><div><h3 id={`audit-devices-${userID}`}>设备凭证</h3><span className="audit-section-note">设备身份与网络路径分开统计；共享出口 IP 不增加设备数。</span></div><button type="button" className="ghost" onClick={() => void create()} disabled={Boolean(working)}><Plus size={14} />绑定设备</button></div>
-    {loading && !inventory ? <p className="muted">正在读取设备...</p> : !inventory?.devices?.length ? <div className="audit-device-empty"><Fingerprint size={18} /><span>还没有设备专属凭证。旧订阅链接只能提供保守估计。</span></div> : <div className="audit-device-list">{inventory.devices.map(device => {
-      const suspended = device.subscription_suspended
-      const revoked = device.status !== 'active'
-      const busy = working.startsWith(`${device.id}:`)
-      return <article key={device.id} className={`audit-device-row ${revoked ? 'revoked' : ''}`}>
-        <div className="audit-device-main"><div className="audit-device-title"><Fingerprint size={15} aria-hidden="true" /><strong>{device.name || '未命名设备'}</strong><span className={`status-pill ${revoked ? 'danger' : suspended ? 'warning' : 'ok'}`}>{revoked ? '已吊销' : suspended ? '订阅暂停' : '正常'}</span></div><small>凭证第 {device.credential_epoch} 代 · 最近订阅 {device.last_subscription_at ? formatTableTime(device.last_subscription_at) : '暂无'} · 最近代理 {device.last_proxy_activity_at ? formatTableTime(device.last_proxy_activity_at) : '暂无'}</small></div>
-        {!revoked ? <div className="audit-device-actions"><button type="button" className="ghost" onClick={() => void operate(device, suspended ? 'resume-subscription' : 'suspend-subscription')} disabled={Boolean(working)}>{suspended ? '恢复订阅' : '暂停订阅'}</button><IconButton label="轮换设备凭证" onClick={() => void operate(device, 'rotate')} busy={busy}><RotateCcw size={14} /></IconButton><IconButton label="吊销设备" onClick={() => void operate(device, 'revoke')} busy={busy}><Trash2 size={14} /></IconButton></div> : null}
-      </article>
-    })}</div>}
-    {inventory?.device_limit ? <small className="audit-device-limit">套餐设备槽位：{inventory.devices.filter(item => item.status === 'active').length} / {inventory.device_limit}。旧凭证流量不会据此自动封禁。</small> : null}
-  </section>
-}
-
-function ConnectionAuditUserDialog({ detail, client, canManageDevices, notify, onChanged, restoreFocus, onClose }: { detail: ConnectionAuditUserDetail; client: any; canManageDevices: boolean; notify?: (message: string, tone?: ToastKind) => void; onChanged?: () => void; restoreFocus?: HTMLElement | null; onClose: () => void }) {
+function ConnectionAuditUserDialog({ detail, restoreFocus, onClose }: { detail: ConnectionAuditUserDetail; restoreFocus?: HTMLElement | null; onClose: () => void }) {
   const user = detail.summary
   return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog" ariaLabel="连接审计详情" restoreFocus={restoreFocus}>
     <header className="dialog-head"><div><h2>{user.nickname || user.username}</h2><p className="muted">{user.username} · {auditIdentityLabel(user.identity_mode)} · 当前连接审计窗口</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭连接审计详情" title="关闭"><XIcon /></button></header>
     <div className="dialog-body audit-detail-body">
       <AuditEvidenceSummary user={user} />
       <div className="audit-identity-grid"><div><span>有效在线设备</span><strong>{auditOnlineDeviceLabel(user)}</strong><small>{user.identity_mode === 'device_bound' ? '设备凭证精确去重' : '旧凭证估计区间'}</small></div><div><span>实时连接</span><strong>{formatCompactAuditNumber(user.active_connection_count || 0)}</strong><small>非测速业务存在</small></div><div><span>克隆置信度</span><strong>{formatAuditPercent(user.clone_confidence)}</strong><small>{user.concurrent_route_count || 0} 条并发有效路由</small></div><div><span>采集覆盖</span><strong>{formatAuditPercent(user.coverage_quality)}</strong><small>{user.coverage_complete ? '可参与自动动作' : '仅观察，禁止自动限制'}</small></div></div>
-      <AuditDeviceManager userID={user.user_id} client={client} canManage={canManageDevices} notify={notify} onChanged={onChanged} />
       <AuditEvidenceLists evidence={user.evidence_categories} counter={user.counter_evidence} />
       {(detail.risk_events || []).length ? <div className="audit-risk-events"><div className="audit-recent-head"><div><h3>设备克隆证据</h3><span className="audit-section-note">只在同一设备凭证的独立网络上存在有效业务重叠时形成强信号。</span></div><span>15 分钟滑动窗口</span></div>{detail.risk_events.map((event, index) => <div key={`${event.started_at}-${index}`}><span className={`audit-risk-pill ${event.level}`}>{auditRiskLabel(event.level)}</span><strong>{event.route_count || event.source_ip_count} 条独立网络 · 重叠 {event.overlap_seconds || 0} 秒</strong><time>{formatTableTime(event.started_at)} - {formatTableTime(event.ended_at)}</time></div>)}</div> : null}
       <AuditPresenceList items={detail.presence} />
@@ -6841,7 +6767,7 @@ function AuditDimensionList({ title, items }: { title: string; items: Connection
   return <section><h3>{title}</h3>{!items?.length ? <p className="muted">暂无数据</p> : <div>{items.map(item => <div key={item.key}><span><strong>{item.label || '未标记'}</strong>{item.secondary ? <small>{item.secondary}</small> : null}</span><span>{formatCompactAuditNumber(item.connection_count)} 次</span></div>)}</div>}</section>
 }
 
-function SubscriptionAuditUserDialog({ detail, client, canManageDevices, canResume, notify, onChanged, onResume, restoreFocus, onClose }: { detail: SubscriptionAuditUserDetail; client: any; canManageDevices: boolean; canResume: boolean; notify?: (message: string, tone?: ToastKind) => void; onChanged?: () => void; onResume: (user: SubscriptionAuditUser) => Promise<void>; restoreFocus?: HTMLElement | null; onClose: () => void }) {
+function SubscriptionAuditUserDialog({ detail, canResume, onResume, restoreFocus, onClose }: { detail: SubscriptionAuditUserDetail; canResume: boolean; onResume: (user: SubscriptionAuditUser) => Promise<void>; restoreFocus?: HTMLElement | null; onClose: () => void }) {
   const user = detail.summary
   const short = user.current_risk.short
   const long = user.current_risk.long
@@ -6851,7 +6777,6 @@ function SubscriptionAuditUserDialog({ detail, client, canManageDevices, canResu
       <AuditEvidenceSummary user={user} />
       {user.suspended ? <div className="audit-paused-notice"><Shield size={16} /><span>{user.suspension_reason || '订阅拉取已暂停，等待管理员恢复。'}</span></div> : null}
       <div className="audit-identity-grid"><div><span>原始请求</span><strong>{formatCompactAuditNumber(user.raw_request_count || 0)}</strong><small>每次请求独立令牌桶限制</small></div><div><span>有效逻辑拉取</span><strong>{formatAuditDecimal(user.logical_pull_weight)}</strong><small>代理/直连重试按表示合并</small></div><div><span>网络路径</span><strong>{user.route_count || 0}</strong><small>按 ASN、国家和网段归一化</small></div><div><span>设备身份</span><strong>{auditIdentityLabel(user.identity_mode)}</strong><small>{user.device_count || 0} 个绑定设备</small></div></div>
-      <AuditDeviceManager userID={user.user_id} client={client} canManage={canManageDevices} notify={notify} onChanged={onChanged} />
       <AuditEvidenceLists evidence={user.evidence_categories} counter={user.counter_evidence} />
       <div className="audit-window-grid">
         {[short, long].map(window => <div key={window.window_minutes}><span>{window.window_minutes < 60 ? `${window.window_minutes} 分钟` : `${window.window_minutes / 60} 小时`}</span><strong>{window.region_count} 个地域 · {window.route_count} 条路径</strong><small>{window.raw_request_count} 原始请求 · 逻辑权重 {formatAuditDecimal(window.logical_pull_weight)} · {window.client_family_count} 个客户端族</small></div>)}
@@ -17979,10 +17904,12 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
   } else {
     operationItems.push({ key: 'path-disabled', label: '自定义路径未开放', icon: LinkIcon, disabled: true, onClick: () => undefined })
   }
-  operationItems.push({ key: 'rotate', label: hasToken ? '轮换订阅' : '重新签发', icon: RotateCcw, onClick: () => void rotateSub(client, user, load, dialogs, notify) })
-  operationItems.push({ key: 'revoke', label: '吊销订阅', icon: Trash2, danger: true, disabled: !hasToken && !hasCustomPath, onClick: () => void revokeSub(client, user, load, dialogs, notify) })
+  const credentialItems: MenuItem[] = [
+    { key: 'rotate-address', label: hasToken ? '更换订阅地址' : '签发订阅地址', icon: RotateCcw, onClick: () => void rotateSub(client, user, load, dialogs, notify) },
+    { key: 'rotate-password', label: '更换节点密码', icon: KeyRound, onClick: () => void rotateNodePassword(client, user, load, dialogs, notify) },
+  ]
 
-  const groups: MenuGroup[] = [securityGroup, { title: '订阅操作', items: operationItems }]
+  const groups: MenuGroup[] = [securityGroup, { title: '订阅操作', items: operationItems }, { title: '用户凭证', items: credentialItems }]
 
   const totalItems = groups.reduce((acc, g) => acc + g.items.length, 0)
 
@@ -18080,7 +18007,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
 }
 
 
-function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPassword, onDelete }: any) {
+function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPassword, onCredentials, onDelete }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -18091,8 +18018,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
     { label: '基础设置', action: 'edit' },
     { label: '修改密码', action: 'password' },
     { label: user.subscription_burn_after_read ? '关闭阅后即焚' : '开启阅后即焚', action: 'burn' },
-    { label: '轮换订阅', action: 'rotate' },
-    { label: '吊销订阅', action: 'revoke' },
+    { label: '用户凭证', action: 'credentials' },
     { label: '注销所有会话', action: 'revoke-sessions', danger: true },
     ...(!user.protected ? [{ label: '删除用户', action: 'delete', danger: true }] : []),
   ];
@@ -18147,8 +18073,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
     if (action === 'edit') onEdit(user);
     else if (action === 'password') onPassword(user);
     else if (action === 'burn') await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs);
-    else if (action === 'rotate') await rotateSub(client, user, load, dialogs);
-    else if (action === 'revoke') await revokeSub(client, user, load, dialogs);
+    else if (action === 'credentials') onCredentials(user);
     else if (action === 'revoke-sessions') {
       const ok = await dialogs.confirm({ title: '注销所有会话', message: `确认注销 ${user.username} 的所有登录会话？`, tone: 'danger', confirmText: '注销' })
       if (!ok) return
@@ -18212,6 +18137,7 @@ function UserManagement({ data, client, load, notify }: any) {
   const [managingGroupID, setManagingGroupID] = useState<number | null>(null)
   const [selectedScope, setSelectedScope] = useState<UserScopeKey>('all')
   const [passwordUser, setPasswordUser] = useState<User | null>(null)
+  const [credentialsUser, setCredentialsUser] = useState<User | null>(null)
   const [planUser, setPlanUser] = useState<User | null>(null)
   const [ledgerUser, setLedgerUser] = useState<User | null>(null)
   const [createErrors, setCreateErrors] = useState<{ username?: string; password?: string }>({})
@@ -18372,7 +18298,7 @@ function UserManagement({ data, client, load, notify }: any) {
     ? (selectedGroup.description || `${sessionRoleLabel(selectedGroup.role)}权限，由组内成员共用。`)
     : scope === 'ungrouped'
       ? '这些账号还没有加入任何分组，也就没有面板权限。'
-      : '改密、轮换订阅、套餐和删除都从表格操作。'
+      : '改密、用户凭证、套餐和删除都从表格操作。'
   const emptyCopy = selectedGroup
     ? '该分组还没有成员。'
     : scope === 'ungrouped'
@@ -18533,6 +18459,7 @@ function UserManagement({ data, client, load, notify }: any) {
                         dialogs={dialogs}
                         onEdit={openEditUser}
                         onPassword={setPasswordUser}
+                        onCredentials={setCredentialsUser}
                         onDelete={(u: any) => remove(client, `/users/${u.id}`, load, dialogs, u)}
                       />
                     </div> : <span className="muted" title="操作员不能编辑或删除管理员账号">仅管理员可操作</span>}
@@ -18555,6 +18482,7 @@ function UserManagement({ data, client, load, notify }: any) {
     <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
     <AnimatePresence>{managingGroupID !== null && <UserGroupMembersDialog groupID={managingGroupID} data={data} canManageAdministrators={canManageAdministrators} selectedUserID={memberDraft[managingGroupID] || 0} onSelectUser={userID => setMemberDraft({ ...memberDraft, [managingGroupID]: userID })} onAddMember={() => addGroupMember(managingGroupID)} onDeleteMember={deleteMember} onCancel={() => setManagingGroupID(null)} />}</AnimatePresence>
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
+    <AnimatePresence>{credentialsUser && <UserCredentialsDialog user={credentialsUser} client={client} load={load} notify={notify} onCancel={() => setCredentialsUser(null)} />}</AnimatePresence>
     <AnimatePresence>{ledgerUser && <UserTrafficLedgerDialog user={ledgerUser} client={client} onCancel={() => setLedgerUser(null)} />}</AnimatePresence>
     {planDialogUser && <UserPlanDialog key={planDialogUser.id} isOpen={Boolean(planUser)} user={planDialogUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planDialogUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}
   </Panel>
@@ -18701,6 +18629,46 @@ function UserGroupMembersDialog({ groupID, data, canManageAdministrators, select
       </div>
     </div>
     <footer className="dialog-actions"><button onClick={onCancel}>完成</button></footer>
+  </MotionDialogPanel>
+}
+
+function UserCredentialsDialog({ user, client, load, notify, onCancel }: { user: User; client: ReturnType<typeof api>; load: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void; onCancel: () => void }) {
+  const dialogs = useDialogs()
+  const [working, setWorking] = useState('')
+  const run = async (kind: 'subscription' | 'password') => {
+    if (working) return
+    setWorking(kind)
+    try {
+      if (kind === 'subscription') await rotateSub(client, user, load, dialogs, notify)
+      else await rotateNodePassword(client, user, load, dialogs, notify)
+    } finally {
+      setWorking('')
+    }
+  }
+  return <MotionDialogPanel onCancel={onCancel} className="user-settings-dialog">
+    <header className="dialog-head">
+      <div><h2 id="user-credentials-title">用户凭证</h2><p className="muted">用户：{user.username}</p></div>
+      <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+    </header>
+    <div className="dialog-body">
+      <div className="user-credentials-actions">
+        <button type="button" className="ghost user-credentials-action" onClick={() => void run('subscription')} disabled={Boolean(working)}>
+          <RotateCcw size={16} aria-hidden="true" />
+          <span>
+            <strong>更换订阅地址</strong>
+            <small>旧订阅链接立即失效，并签发新地址。自定义路径保持不变。</small>
+          </span>
+        </button>
+        <button type="button" className="ghost user-credentials-action" onClick={() => void run('password')} disabled={Boolean(working)}>
+          <KeyRound size={16} aria-hidden="true" />
+          <span>
+            <strong>更换节点密码</strong>
+            <small>旧节点密码立即失效。客户端需重新拉取订阅后才能连上。</small>
+          </span>
+        </button>
+      </div>
+    </div>
+    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>关闭</button></footer>
   </MotionDialogPanel>
 }
 
@@ -22170,35 +22138,35 @@ async function setSubscriptionBurnPolicy(client: ReturnType<typeof api>, user: U
 async function rotateSub(client: ReturnType<typeof api>, u: Pick<User, 'id'> & Partial<Pick<User, 'username'>>, load: () => Promise<void>, dialogs: DialogApi, notify?: (message: string, tone?: ToastKind) => void) {
   const label = resourceLabel(u, '用户 #' + u.id)
   const confirmed = await dialogs.confirm({
-    title: '确认轮换订阅令牌',
+    title: '确认更换订阅地址',
     tone: 'danger',
-    confirmText: '轮换令牌',
+    confirmText: '更换地址',
     message: <div>
       <p>用户 <strong>{label}</strong> 的旧订阅链接会立即失效。</p>
-      <p className="muted">确认后会生成新令牌；已设置的自定义路径保持不变。</p>
+      <p className="muted">确认后会签发新地址；已设置的自定义路径保持不变。节点密码不会变。</p>
     </div>,
   })
   if (!confirmed) return
   await client.request('/users/' + u.id + '/subscription-token/rotate', { method: 'POST', body: '{}' })
   await load()
-  notify?.(`${label} 的订阅令牌已轮换，请重新复制链接`, 'success')
+  notify?.(`${label} 的订阅地址已更换，请重新复制链接`, 'success')
 }
 
-async function revokeSub(client: ReturnType<typeof api>, u: Pick<User, 'id'> & Partial<Pick<User, 'username'>>, load: () => Promise<void>, dialogs: DialogApi, notify?: (message: string, tone?: ToastKind) => void) {
+async function rotateNodePassword(client: ReturnType<typeof api>, u: Pick<User, 'id'> & Partial<Pick<User, 'username'>>, load: () => Promise<void>, dialogs: DialogApi, notify?: (message: string, tone?: ToastKind) => void) {
   const label = resourceLabel(u, '用户 #' + u.id)
   const confirmed = await dialogs.confirm({
-    title: '确认吊销全部订阅入口',
+    title: '确认更换节点密码',
     tone: 'danger',
-    confirmText: '全部吊销',
+    confirmText: '更换密码',
     message: <div>
-      <p>即将吊销用户 <strong>{label}</strong> 的普通、一次性和自定义订阅入口。</p>
-      <p className="muted">所有现有订阅链接会立即失效，不会改变代理凭据或触发节点部署。</p>
+      <p>用户 <strong>{label}</strong> 的旧节点密码会立即失效。</p>
+      <p className="muted">订阅地址不变。客户端需重新拉取订阅后才能连上。</p>
     </div>,
   })
   if (!confirmed) return
-  await client.request('/users/' + u.id + '/subscription-token/revoke', { method: 'POST', body: '{}' })
+  await client.request('/users/' + u.id + '/proxy-credentials/rotate', { method: 'POST', body: '{}' })
   await load()
-  notify?.(`${label} 的全部订阅入口已吊销`, 'success')
+  notify?.(`${label} 的节点密码已更换，请让客户端重新拉取订阅`, 'success')
 }
 
 export function OBoardAppRoot() {

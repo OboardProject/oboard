@@ -43,6 +43,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 	return []mcpRecipe{
 		{ID: "server.onboard", Version: mcpRecipeVersion, Aliases: []string{"server.onboard", "add server", "create server", "onboard server", "reissue enrollment", "新增服务器", "添加服务器", "接入服务器", "新增节点服务器", "重签发", "重新签发", "重签发接入令牌"}, Verbs: []string{"add", "create", "onboard", "enroll", "reissue", "新增", "添加", "接入", "重签发", "重新签发"}, Nouns: []string{"server", "agent", "服务器", "节点服务器", "接入令牌"}, Prepare: s.prepareServerOnboardRecipe},
 		{ID: "user.manage", Version: mcpRecipeVersion, Aliases: []string{"user.manage", "manage user", "create user", "update user", "delete user", "用户管理", "新建用户", "创建用户", "修改用户", "删除用户"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "disable", "enable", "吊销", "创建", "新建", "添加", "修改", "删除", "停用", "启用"}, Nouns: []string{"user", "account", "用户", "账号", "账户"}, Prepare: s.prepareUserManageRecipe},
+		{ID: "user.credentials.manage", Version: mcpRecipeVersion, Aliases: []string{"user.credentials.manage", "rotate subscription", "rotate node password", "更换订阅地址", "轮换订阅", "更换节点密码", "用户凭证"}, Verbs: []string{"rotate", "replace", "change", "更换", "轮换"}, Nouns: []string{"subscription", "subscription address", "node password", "proxy password", "user credentials", "订阅地址", "节点密码", "用户凭证"}, Prepare: s.prepareUserCredentialsRecipe},
 		{ID: "user.traffic.ledger", Version: mcpRecipeVersion, Aliases: []string{"user.traffic.ledger", "traffic ledger", "user traffic ledger", "流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账"}, Verbs: []string{"view", "read", "query", "show", "check", "diagnose", "查看", "查询", "读取", "检查", "对账"}, Nouns: []string{"traffic ledger", "user traffic", "reconciliation", "流量账本", "用户流量", "对账"}, Prepare: s.prepareUserTrafficLedgerRecipe},
 		{ID: "user_group.manage", Version: mcpRecipeVersion, Aliases: []string{"user_group.manage", "manage user group", "user group", "用户分组", "分组管理", "用户组"}, Verbs: []string{"create", "update", "delete", "创建", "新增", "修改", "删除"}, Nouns: []string{"user group", "group", "分组", "用户组", "群组"}, Prepare: s.prepareUserGroupRecipe},
 		{ID: "user_device.manage", Version: mcpRecipeVersion, Aliases: []string{"user_device.manage", "manage device", "rename device", "revoke device", "设备管理", "重命名设备", "吊销设备"}, Verbs: []string{"rename", "revoke", "重命名", "吊销", "删除"}, Nouns: []string{"device", "设备"}, Prepare: s.prepareUserDeviceRecipe},
@@ -196,6 +197,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		recipeID string
 		tokens   []string
 	}{
+		{"user.credentials.manage", []string{"更换订阅地址", "轮换订阅", "更换节点密码", "用户凭证", "吊销用户凭证", "吊销订阅", "rotate subscription", "rotate node password"}},
 		{"user.traffic.ledger", []string{"流量账本", "用户流量账本", "为什么流量不对", "流量看起来不对", "流量对账", "traffic ledger", "user traffic ledger"}},
 		{"server.manage", []string{"清零已用流量", "已用流量清零", "清零服务器流量", "清零这台服务器的流量", "重置服务器已用流量", "清零流量", "reset used traffic", "reset server traffic", "zero used traffic", "clear used traffic", "clear server traffic", "重试授权", "授权没下去", "重推授权", "重试下发", "retry authorization", "retry delivery", "续费", "服务器续费", "延长到期", "顺延到期", "延长到期日", "extend expiry", "extend expiration"}},
 		{"routing_rule_set.manage", []string{"分流规则集", "路由规则集", "远程规则集", "routing rule set", "routing ruleset", "rule set", "规则集"}},
@@ -1460,6 +1462,52 @@ func (s *Server) prepareUserManageRecipe(ctx context.Context, principal applicat
 	}
 	operation := mcpOperationRef{Capability: "users.update", Input: map[string]any{"user_id": userID, "changes": changes}}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "user.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "update_user", "user_id": userID, "changes": changes}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "user_revision_changed"}}}, nil
+}
+
+func (s *Server) prepareUserCredentialsRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {
+	goal := strings.ToLower(strings.TrimSpace(input.Goal))
+	kind := strings.ToLower(strings.TrimSpace(taskStringParam(input.Params, "kind", "action")))
+	rotateAddress := containsAnyFold(goal, "更换订阅地址", "轮换订阅", "rotate subscription", "吊销订阅")
+	rotatePassword := containsAnyFold(goal, "更换节点密码", "轮换节点密码", "rotate node password", "rotate proxy password")
+	if kind != "" {
+		if containsAnyFold(kind, "subscription", "address", "订阅") {
+			rotateAddress, rotatePassword = true, false
+		} else if containsAnyFold(kind, "password", "密码") {
+			rotateAddress, rotatePassword = false, true
+		}
+	}
+	userID := int64(0)
+	if target := firstTaskRef(input, "user", "target_user", "user"); target != "" {
+		resolved, err := s.resolveUserRef(ctx, principal, target)
+		if err != nil {
+			return nil, err
+		}
+		if len(resolved.Candidates) > 0 {
+			return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "user.credentials.manage", Field: "user", Candidates: resolved.Candidates}, nil
+		}
+		userID = resolved.Value.ID
+	} else if matches := s.inferUserCandidatesFromGoal(ctx, principal, input.Goal); len(matches) == 1 {
+		userID = matches[0].ID
+	} else if len(matches) > 1 {
+		return &mcpPreparedRecipe{Status: "choose_candidate", Intent: "user.credentials.manage", Field: "user", Candidates: matches}, nil
+	}
+	if userID <= 0 {
+		if id := int64(taskIntParam(input.Params, "user_id")); id > 0 {
+			userID = id
+		}
+	}
+	if userID <= 0 {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user.credentials.manage", Questions: []map[string]any{{"field": "user", "type": "resource_ref", "reason": "需要指定要更换凭证的用户"}}}, nil
+	}
+	if rotateAddress == rotatePassword {
+		return &mcpPreparedRecipe{Status: "needs_input", Intent: "user.credentials.manage", Questions: []map[string]any{{"field": "kind", "type": "enum", "options": []string{"subscription", "password"}, "reason": "请选择更换订阅地址还是更换节点密码"}}}, nil
+	}
+	if rotateAddress {
+		operation := mcpOperationRef{Capability: "subscriptions.rotate", Input: map[string]any{"user_id": userID}}
+		return &mcpPreparedRecipe{Status: "ready", Intent: "user.credentials.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "rotate_subscription", "user_id": userID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal"}}}, nil
+	}
+	operation := mcpOperationRef{Capability: "users.credentials.rotate", Input: map[string]any{"user_id": userID}}
+	return &mcpPreparedRecipe{Status: "ready", Intent: "user.credentials.manage", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "rotate_node_password", "user_id": userID}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "authorization_pending"}}}, nil
 }
 
 // prepareUserGroupRecipe routes create / update / delete for user groups.

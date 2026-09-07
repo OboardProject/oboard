@@ -9,27 +9,18 @@ import (
 )
 
 // ExpandDeviceUsers projects accounts into eligible data-plane identities.
+// Device-specific subscriptions are not issued: leftover device rows never
+// become additional proxy identities.
 func ExpandDeviceUsers(users []model.User, devices []model.UserDevice) []model.User {
 	if devices == nil {
 		return append([]model.User(nil), users...)
 	}
-	byUser := make(map[int64][]model.UserDevice)
-	for _, device := range devices {
-		if device.UserID > 0 && device.Status == "active" && device.ProxyAccessState != "revoked" && device.ProxyAccessState != "disabled" {
-			byUser[device.UserID] = append(byUser[device.UserID], device)
-		}
-	}
-	out := make([]model.User, 0, len(users)+len(devices))
+	out := make([]model.User, 0, len(users))
 	for _, user := range users {
 		if user.Status != "active" {
 			continue
 		}
-		if user.LegacyProxyEnabled {
-			out = append(out, user)
-		}
-		for _, device := range byUser[user.ID] {
-			out = append(out, UserForDevice(user, device))
-		}
+		out = append(out, user)
 	}
 	return out
 }

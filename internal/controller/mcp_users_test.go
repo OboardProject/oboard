@@ -262,6 +262,51 @@ func TestUserDeviceRevokeAndRename(t *testing.T) {
 	}
 }
 
+func TestUserCredentialAndSubscriptionRotateThroughChangeset(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused", SubscriptionToken: "old-sub-token"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "member", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "22222222-2222-4222-8222-222222222222", ProxyPassword: "old-node-password", SubscriptionToken: "keep-or-rotate"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+
+	before, err := db.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotateSubInput, _ := json.Marshal(map[string]any{"user_id": user.ID})
+	applyAutomationChangeset(t, server, principal, "subscription-rotate", automation.OperationRequest{Capability: "subscriptions.rotate", Input: rotateSubInput})
+	afterAddress, err := db.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterAddress.SubscriptionToken == "" || afterAddress.SubscriptionToken == before.SubscriptionToken {
+		t.Fatalf("subscription token was not rotated: before=%q after=%q", before.SubscriptionToken, afterAddress.SubscriptionToken)
+	}
+	if afterAddress.ProxyPassword != before.ProxyPassword || afterAddress.ProxyUUID != before.ProxyUUID {
+		t.Fatalf("node password changed during subscription rotate: %#v", afterAddress)
+	}
+
+	rotatePassInput, _ := json.Marshal(map[string]any{"user_id": user.ID})
+	applyAutomationChangeset(t, server, principal, "credentials-rotate", automation.OperationRequest{Capability: "users.credentials.rotate", Input: rotatePassInput})
+	afterPassword, err := db.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterPassword.ProxyUUID == afterAddress.ProxyUUID || afterPassword.ProxyPassword == afterAddress.ProxyPassword {
+		t.Fatalf("node password was not rotated: %#v", afterPassword)
+	}
+	if afterPassword.SubscriptionToken != afterAddress.SubscriptionToken {
+		t.Fatalf("subscription token changed during node-password rotate: %q -> %q", afterAddress.SubscriptionToken, afterPassword.SubscriptionToken)
+	}
+}
+
 func TestUserDomainReadCapabilities(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

@@ -173,6 +173,45 @@ func (s *Server) registerUserAutomationOperations() {
 		return s.attachDeliveryCompletion(ctx, map[string]any{"session_revoked": true, "user_id": user.ID}, user.ID, 0), nil
 	})
 
+	// ---- users.credentials.rotate ----
+	s.automation.RegisterValidator("users.credentials.rotate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		user, err := s.userSessionRevokeCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"user_id": user.ID}, nil
+	})
+	s.automation.RegisterRevisionResolver("users.credentials.rotate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
+		user, err := s.userSessionRevokeCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"user:" + strconv.FormatInt(user.ID, 10): user.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+	})
+	s.automation.Register("users.credentials.rotate", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		user, err := s.userSessionRevokeCandidate(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		proxyUUID, err := security.RandomUUID()
+		if err != nil {
+			return nil, err
+		}
+		proxyPassword, err := security.RandomToken(18)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.RotateUserProxyIdentity(ctx, user.ID, proxyUUID, proxyPassword); err != nil {
+			return nil, err
+		}
+		updated, err := s.store.GetUser(ctx, user.ID)
+		if err != nil {
+			return nil, err
+		}
+		s.syncUserChange(ctx, user, *updated)
+		return s.attachDeliveryCompletion(ctx, map[string]any{"rotated": true, "user_id": user.ID}, user.ID, 0), nil
+	})
+
 	// ---- user_groups.create ----
 	s.automation.RegisterValidator("user_groups.create", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		group, err := s.userGroupCreateAutomationCandidate(ctx, principal, input)
