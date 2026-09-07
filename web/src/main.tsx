@@ -242,6 +242,7 @@ import { UserPlanDialog } from './pages/UserPlanDialog'
 import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
 import { AccountPage } from './pages/AccountPage'
 import { ScriptsWorkspace } from './features/scripts/ScriptsWorkspace'
+import { automationLandingTab, isAutomationNavTab, navTabVisible as automationEntryVisible } from './automation-nav'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -1127,15 +1128,19 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
-  automation: { label: '自动化', desc: '管理 API、MCP、审批策略、变更集与内置 AI。', group: '系统' },
+  automation: { label: '自动化', desc: '管理脚本、MCP、审批策略、变更集与内置 AI。', group: '系统' },
   scripts: { label: '脚本', desc: '管理受限 JavaScript 脚本、触发器和执行记录。', group: '系统' },
   'script-triggers': { label: '脚本触发器', desc: '查看脚本定时与状态触发器。', group: '系统' },
   'script-runs': { label: '脚本执行', desc: '查看脚本执行记录与动作阶段。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
-  { label: '', tabs: ['dashboard', 'servers', 'return-latency', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'scripts', 'automation', 'settings', 'account'] }
+  { label: '', tabs: ['dashboard', 'servers', 'return-latency', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
 ]
+
+function navTabVisible(tab: string, role: Role) {
+  return automationEntryVisible(tab, page => tabAllowedForRole(page, role))
+}
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 2, admin: 2 }
 const tabMinimumRole: Record<string, Role> = {
@@ -2521,8 +2526,9 @@ export function App() {
   const current = tabMeta[tab] || { label: tab, desc: '', group: 'OBoard' }
   const canOperate = roleRanks[currentRole] >= roleRanks.operator
   const visibleNavGroups = navGroups
-    .map(group => ({ ...group, tabs: group.tabs.filter(item => tabAllowedForRole(item, currentRole)) }))
+    .map(group => ({ ...group, tabs: group.tabs.filter(item => navTabVisible(item, currentRole)) }))
     .filter(group => group.tabs.length > 0)
+  const chromeTab = isAutomationNavTab(tab) ? 'automation' : tab
 
   return (
     <DialogContext.Provider value={dialogs}>
@@ -2594,10 +2600,20 @@ export function App() {
               {visibleNavGroups.map(group => <div className="nav-section" key={group.label || group.tabs.join('-')}>
                 {group.label && <p>{group.label}</p>}
                 {group.tabs.map(x => <button
-                  className={tab === x ? 'nav-item active' : 'nav-item'}
-                  onClick={() => navigateTab(x)}
-                  onPointerEnter={() => preloadIntent(x)}
-                  onFocus={() => preloadIntent(x)}
+                  className={(x === 'automation' ? isAutomationNavTab(tab) : tab === x) ? 'nav-item active' : 'nav-item'}
+                  onClick={() => {
+                    if (x !== 'automation') {
+                      navigateTab(x)
+                      return
+                    }
+                    if (isAutomationNavTab(tab)) {
+                      setIsSidebarOpen(false)
+                      return
+                    }
+                    navigateTab(automationLandingTab())
+                  }}
+                  onPointerEnter={() => preloadIntent(x === 'automation' ? automationLandingTab() : x)}
+                  onFocus={() => preloadIntent(x === 'automation' ? automationLandingTab() : x)}
                   key={x}
                   title={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
                   aria-label={!isMobile && isSidebarCollapsed ? tabMeta[x]?.label || x : undefined}
@@ -2632,13 +2648,13 @@ export function App() {
                 <m.div className="topbar-title-stage" layout transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} aria-live="polite">
                   <AnimatePresence initial={false} mode="popLayout">
                     <m.div
-                      key={tab}
+                      key={chromeTab}
                       className="topbar-title-layer"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1, transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
                       exit={{ opacity: 0, transition: { duration: 0.16, ease: 'easeIn' } }}
                     >
-                      <h1>{tabTitles[tab] || current.label}</h1>
+                      <h1>{tabTitles[chromeTab] || tabMeta[chromeTab]?.label || current.label}</h1>
                     </m.div>
                   </AnimatePresence>
                 </m.div>
@@ -2669,7 +2685,7 @@ export function App() {
             </header>
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
-                <MotionPage key={tab}>
+                <MotionPage key={chromeTab}>
                   {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus)}
                 </MotionPage>
               </AnimatePresence>
@@ -3030,8 +3046,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
-  if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
-  if (tab === 'scripts' || tab === 'script-triggers' || tab === 'script-runs') return <ScriptsWorkspace tab={tab} data={data} client={client} notify={notify} onNavigate={goTab} />
+  if (isAutomationNavTab(tab)) return <AutomationWorkspace tab={tab} data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
   return null
 }
@@ -3132,10 +3147,14 @@ function auditPolicyMode(value: AuditPolicy): AuditPolicy['mode'] {
   return 'custom'
 }
 
-function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeResources }: any) {
+function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, realtimeResources }: any) {
   const dialogs = useDialogs()
+  const role = data?.session?.role || data?.current_user?.role
+  const isAdmin = canManageAdministratorAccounts(role)
+  const isScriptsView = tab !== 'automation' || !isAdmin
+  const scriptTab = tab === 'script-triggers' || tab === 'script-runs' ? tab : 'scripts'
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [working, setWorking] = useState('')
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
@@ -3156,11 +3175,17 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
       setLoading(false)
     }
   }
-  useEffect(() => { void refresh() }, [])
-  useRegisterPageRefresh(() => refresh())
   useEffect(() => {
+    if (tab === 'automation' && !isAdmin) goTab(automationLandingTab())
+  }, [tab, isAdmin])
+  useEffect(() => {
+    if (!isScriptsView) void refresh()
+  }, [isScriptsView])
+  useRegisterPageRefresh(() => { if (!isScriptsView) return refresh() })
+  useEffect(() => {
+    if (isScriptsView) return
     if (realtimeRevision > 0 && (realtimeResources.includes('automation') || realtimeResources.includes('all'))) void refresh()
-  }, [realtimeRevision, realtimeResources])
+  }, [realtimeRevision, realtimeResources, isScriptsView])
 
   const closeConnectDialog = () => {
     setConnectDialogOpen(false)
@@ -3179,14 +3204,22 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
   const publicControllerURL = normalizeAutomationControllerURL(controllerURL)
   const connectArtifacts = automationConnectArtifacts(publicControllerURL)
   const connectReady = true
+  const openAdminView = (next: 'access' | 'changes' | 'ai') => {
+    setView(next)
+    if (tab !== 'automation') goTab('automation')
+  }
   return <Panel title="自动化" className="automation-panel">
     <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
-      <button className={view === 'access' ? 'active' : ''} onClick={() => setView('access')}><Key size={15} />访问凭据</button>
-      <button className={view === 'changes' ? 'active' : ''} onClick={() => setView('changes')}><Workflow size={15} />审批与变更</button>
-      <button className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI Provider</button>
-      <button className="ghost icon-button automation-refresh" onClick={() => void refresh()} aria-label="刷新" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+      <button className={isScriptsView ? 'active' : ''} onClick={() => goTab(automationLandingTab())}><Code size={15} />脚本</button>
+      {isAdmin && <>
+        <button className={!isScriptsView && view === 'access' ? 'active' : ''} onClick={() => openAdminView('access')}><Key size={15} />访问凭据</button>
+        <button className={!isScriptsView && view === 'changes' ? 'active' : ''} onClick={() => openAdminView('changes')}><Workflow size={15} />审批与变更</button>
+        <button className={!isScriptsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
+      </>}
+      {!isScriptsView && <button className="ghost icon-button automation-refresh" onClick={() => void refresh()} aria-label="刷新" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>}
     </div>
-    {view === 'access' && <>
+    {isScriptsView && <div className="automation-scripts" style={{ marginTop: 14, minWidth: 0 }}><ScriptsWorkspace tab={scriptTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
+    {!isScriptsView && view === 'access' && <>
       <div className="automation-access-toolbar">
         <div><strong>MCP 客户端</strong><span>通过 OAuth 登录并授权当前用户的访问权限。</span></div>
         <button type="button" onClick={() => openConnectDialog()}><Cable size={15} />接入客户端</button>
@@ -3198,7 +3231,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         confirm={dialogs.confirm}
       />
     </>}
-    {view === 'changes' && <div className="automation-grid">
+    {!isScriptsView && view === 'changes' && <div className="automation-grid">
       <section className="settings-card automation-changesets">
         <div className="settings-card-head"><div><h3>Changeset</h3><p className="muted">校验计划哈希、影响范围并执行已批准变更。</p></div></div>
         <div className="automation-list">{snapshot.changesets.length ? snapshot.changesets.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.reason || item.id}</strong><span>{item.operations.map((operation: any) => operation.capability).join(' · ')}</span><small>{item.status} · 风险 {item.risk_class} · {formatTableTime(item.created_at)}</small></div><div>{item.status === 'draft' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'validate')} title="校验" aria-label="校验"><ShieldCheck size={15} /></button>}{item.status === 'awaiting_approval' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'approve')} title="批准" aria-label="批准"><BadgeCheck size={15} /></button>}{item.status === 'approved' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'apply')} title="执行" aria-label="执行"><Play size={15} /></button>}</div></div>) : <p className="muted">暂无变更集</p>}</div>
@@ -3208,7 +3241,7 @@ function AutomationWorkspace({ data, client, notify, realtimeRevision, realtimeR
         <div className="table-wrap"><table><thead><tr><th>时间</th><th>主体</th><th>能力</th><th>来源</th><th>结果</th></tr></thead><tbody>{snapshot.audits.map((item: any) => <tr key={item.id}><td>{formatTableTime(item.created_at)}</td><td>{item.client_name || item.principal_id}</td><td>{item.capability}</td><td>{item.source_ip || '本机'}</td><td>{item.result}</td></tr>)}</tbody></table></div>
       </section>
     </div>}
-    {view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
+    {!isScriptsView && view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">
       <header className="dialog-head"><div><h2>接入 MCP 客户端</h2><p className="muted">使用当前主控公开地址生成用户级配置。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeConnectDialog} aria-label="关闭" title="关闭"><XIcon /></button></header>
       <div className="dialog-body automation-connect-body">
