@@ -262,26 +262,29 @@ ensure_base_tools() {
   if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] && [ ! -f /etc/ssl/cert.pem ]; then
     need_ca=1
   fi
-  if [ "$need_curl$need_ca$need_tar$need_sha$need_install" = "00000" ]; then
-    return 0
+  if [ "$need_curl$need_ca$need_tar$need_sha$need_install" != "00000" ]; then
+    echo "  正在补齐系统所需组件..."
+    packages=""
+    [ "$need_curl" = 1 ] && packages="$packages curl"
+    [ "$need_ca" = 1 ] && packages="$packages ca-certificates"
+    [ "$need_tar" = 1 ] && packages="$packages tar"
+    if [ "$need_sha" = 1 ] || [ "$need_install" = 1 ]; then
+      packages="$packages coreutils"
+    fi
+    # shellcheck disable=SC2086
+    pkg_install $packages || {
+      echo "依赖安装失败，请手动安装 curl、ca-certificates、tar、sha256sum、install 后重试。" >&2
+      exit 1
+    }
   fi
-  echo "  正在补齐系统所需组件..."
-  packages=""
-  [ "$need_curl" = 1 ] && packages="$packages curl"
-  [ "$need_ca" = 1 ] && packages="$packages ca-certificates"
-  [ "$need_tar" = 1 ] && packages="$packages tar"
-  if [ "$need_sha" = 1 ] || [ "$need_install" = 1 ]; then
-    packages="$packages coreutils"
-  fi
-  # shellcheck disable=SC2086
-  pkg_install $packages || {
-    echo "依赖安装失败，请手动安装 curl、ca-certificates、tar、sha256sum、install 后重试。" >&2
-    exit 1
-  }
   if command -v update-ca-certificates >/dev/null 2>&1; then
     update-ca-certificates >/dev/null 2>&1 || true
   elif command -v update-ca-trust >/dev/null 2>&1; then
     update-ca-trust extract >/dev/null 2>&1 || true
+  fi
+  if ! command -v ip >/dev/null 2>&1; then
+    echo "  正在安装网络探测组件..."
+    pkg_install iproute2 || true
   fi
 }
 
@@ -385,14 +388,57 @@ detect_virt_hint() {
   echo bare
 }
 
+script_isolation_unavailable() {
+  echo "$1" | tee -a "$INSTALL_LOG"
+}
+
+script_uidmap_package() {
+  if command -v apk >/dev/null 2>&1; then
+    printf '%s\n' shadow
+  elif command -v apt-get >/dev/null 2>&1; then
+    printf '%s\n' uidmap
+  elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 || command -v microdnf >/dev/null 2>&1; then
+    printf '%s\n' shadow-utils
+  elif command -v zypper >/dev/null 2>&1 || command -v pacman >/dev/null 2>&1; then
+    printf '%s\n' shadow
+  fi
+}
+
+ensure_script_isolation_deps() {
+  need_bwrap=0
+  need_uidmap=0
+  command -v bwrap >/dev/null 2>&1 || need_bwrap=1
+  command -v newuidmap >/dev/null 2>&1 || need_uidmap=1
+  uidmap_pkg=
+  if [ "$need_uidmap" = 1 ]; then
+    uidmap_pkg=$(script_uidmap_package)
+  fi
+  if [ "$need_bwrap" = 1 ] || [ -n "$uidmap_pkg" ]; then
+    echo "  正在安装脚本隔离组件..."
+  fi
+  if [ "$need_bwrap" = 1 ]; then
+    if ! pkg_install bubblewrap; then
+      script_isolation_unavailable "未能自动安装 bubblewrap。脚本执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
+    fi
+  fi
+  if [ -n "$uidmap_pkg" ]; then
+    pkg_install "$uidmap_pkg" || script_isolation_unavailable "未能自动安装 $uidmap_pkg。非特权用户命名空间可能不可用；这不影响现有面板、Agent 和代理服务。"
+  fi
+  if ! command -v bwrap >/dev/null 2>&1; then
+    script_isolation_unavailable "安装后仍未检测到 bubblewrap (bwrap)。脚本执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
+    return 0
+  fi
+  if [ ! -e /sys/fs/cgroup/cgroup.controllers ]; then
+    script_isolation_unavailable "未检测到 cgroup v2。脚本执行将保持禁用，直到具备 cgroup v2；这不影响现有面板、Agent 和代理服务。"
+  fi
+}
+
 prepare_script_worker_user() {
   create_system_user oboard-scripts "$CONTROLLER_DATA_DIR"
   if id oboard-scripts >/dev/null 2>&1 && getent group oboard >/dev/null 2>&1; then
     usermod -aG oboard oboard-scripts 2>/dev/null || addgroup oboard-scripts oboard 2>/dev/null || true
   fi
-  if ! command -v bwrap >/dev/null 2>&1; then
-    echo "未检测到 bubblewrap (bwrap)。脚本执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。" | tee -a "$INSTALL_LOG"
-  fi
+  ensure_script_isolation_deps
   set_controller_env_value OBOARD_SCRIPT_WORKER_SOCKET /run/oboard/script-worker/rpc.sock
 }
 

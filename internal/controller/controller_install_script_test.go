@@ -80,6 +80,13 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"oboard-ai-worker",
 		"oboard-script-worker",
 		"prepare_script_worker_user",
+		"ensure_script_isolation_deps",
+		"script_uidmap_package",
+		"pkg_install bubblewrap",
+		"pkg_install iproute2",
+		"uidmap",
+		"shadow-utils",
+		"/sys/fs/cgroup/cgroup.controllers",
 		"oboard-scripts",
 		"prepare_controller_updater_runtime",
 		"wait_for_controller_updater",
@@ -127,6 +134,113 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate test file")
+	}
+	path := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "scripts", "install.sh"))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	shell, err := exec.LookPath("dash")
+	if err != nil {
+		shell, err = exec.LookPath("sh")
+	}
+	if err != nil {
+		t.Skip("a POSIX shell is unavailable")
+	}
+	functions := strings.Join([]string{
+		extractShellFunction(t, script, "script_isolation_unavailable"),
+		extractShellFunction(t, script, "script_uidmap_package"),
+		extractShellFunction(t, script, "ensure_script_isolation_deps"),
+	}, "\n")
+
+	t.Run("installs bubblewrap and uidmap when missing", func(t *testing.T) {
+		root := t.TempDir()
+		fakeBin := filepath.Join(root, "bin")
+		if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(fakeBin, "apt-get"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		packageLog := filepath.Join(root, "packages.log")
+		installLog := filepath.Join(root, "install.log")
+		harness := strings.Join([]string{
+			"set -eu",
+			"FAKE_BIN=" + shellQuote(fakeBin),
+			"PATH=" + shellQuote(fakeBin) + ":$PATH",
+			"PACKAGE_LOG=" + shellQuote(packageLog),
+			"INSTALL_LOG=" + shellQuote(installLog),
+			"export FAKE_BIN PATH PACKAGE_LOG INSTALL_LOG",
+			functions,
+			`pkg_install() {
+  printf '%s\n' "$*" >> "$PACKAGE_LOG"
+  for pkg in "$@"; do
+    case "$pkg" in
+      bubblewrap)
+        printf '#!/bin/sh\n' > "$FAKE_BIN/bwrap"
+        chmod 0755 "$FAKE_BIN/bwrap"
+        ;;
+      uidmap)
+        printf '#!/bin/sh\n' > "$FAKE_BIN/newuidmap"
+        chmod 0755 "$FAKE_BIN/newuidmap"
+        ;;
+    esac
+  done
+}`,
+			": > \"$PACKAGE_LOG\"",
+			"ensure_script_isolation_deps",
+		}, "\n")
+		cmd := exec.Command(shell, "-c", harness)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("script isolation bootstrap failed: %v\n%s", err, output)
+		}
+		log, err := os.ReadFile(packageLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(log)
+		if !containsShellWord(got, "bubblewrap") || !containsShellWord(got, "uidmap") {
+			t.Fatalf("missing script isolation packages: %q", got)
+		}
+	})
+
+	t.Run("skips packages when isolation tools exist", func(t *testing.T) {
+		root := t.TempDir()
+		fakeBin := filepath.Join(root, "bin")
+		if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"bwrap", "newuidmap", "apt-get"} {
+			if err := os.WriteFile(filepath.Join(fakeBin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		packageLog := filepath.Join(root, "packages.log")
+		installLog := filepath.Join(root, "install.log")
+		harness := strings.Join([]string{
+			"set -eu",
+			"PATH=" + shellQuote(fakeBin) + ":$PATH",
+			"PACKAGE_LOG=" + shellQuote(packageLog),
+			"INSTALL_LOG=" + shellQuote(installLog),
+			"export PATH PACKAGE_LOG INSTALL_LOG",
+			functions,
+			`pkg_install() { printf '%s\n' "$*" >> "$PACKAGE_LOG"; }`,
+			": > \"$PACKAGE_LOG\"",
+			"ensure_script_isolation_deps",
+			"test ! -s \"$PACKAGE_LOG\"",
+		}, "\n")
+		cmd := exec.Command(shell, "-c", harness)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("existing isolation tools still requested packages: %v\n%s", err, output)
+		}
+	})
 }
 
 func TestControllerInstallScriptACMEFallback(t *testing.T) {
@@ -812,8 +926,9 @@ func assertInstallToolBootstrap(t *testing.T, script string) {
 		"export PATH PACKAGE_LOG",
 		extractShellFunction(t, script, "ensure_base_tools"),
 		`pkg_install() {
-  printf '%s\n' "$*" > "$PACKAGE_LOG"
+  printf '%s\n' "$*" >> "$PACKAGE_LOG"
 }`,
+		": > \"$PACKAGE_LOG\"",
 		"ensure_base_tools",
 	}, "\n")
 	cmd := exec.Command(shell, "-c", harness)
