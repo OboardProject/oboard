@@ -81,6 +81,8 @@ func main() {
 		log.Fatal(err)
 	}
 	sqliteOptions := store.DefaultSQLiteOptions()
+	// Default is 8. A busy fleet can raise this (max 16) when Agent callbacks
+	// wait on the pool instead of SQLite itself.
 	sqliteOptions.MaxOpenConns = envIntRange("OBOARD_SQLITE_MAX_OPEN_CONNS", sqliteOptions.MaxOpenConns, 1, 16)
 	sqliteOptions.MaxIdleConns = sqliteOptions.MaxOpenConns
 	sqliteOptions.BusyTimeout = time.Duration(envIntRange("OBOARD_SQLITE_BUSY_TIMEOUT_MS", int(sqliteOptions.BusyTimeout/time.Millisecond), 1000, 30000)) * time.Millisecond

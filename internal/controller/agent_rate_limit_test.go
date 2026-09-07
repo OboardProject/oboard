@@ -2,25 +2,81 @@ package controller
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/OboardProject/oboard/internal/store"
 )
 
-// The per-Agent budget is keyed by an identity a failed request never
-// establishes, so before this gate every retry from a decommissioned node still
-// cost a credential lookup.
+// Distinct unknown identities still cost one lookup each; the same
+// decommissioned agent_id is answered from the negative cache and must not
+// fill the per-address budget by itself.
 func TestAgentAuthFailureBudgetStopsReachingTheCredentialLookup(t *testing.T) {
 	db, _, _, _, h := trafficLedgerHTTPFixture(t)
 	defer db.Close()
 	body := map[string]any{"reports": []map[string]any{}}
 	for i := 0; i < agentAuthFailureLimit; i++ {
-		postAgentTraffic(t, h, "ghost-agent", "revoked", body, http.StatusUnauthorized)
+		postAgentTraffic(t, h, fmt.Sprintf("ghost-agent-%d", i), "revoked", body, http.StatusUnauthorized)
 	}
-	postAgentTraffic(t, h, "ghost-agent", "revoked", body, http.StatusTooManyRequests)
+	postAgentTraffic(t, h, "ghost-agent-last", "revoked", body, http.StatusTooManyRequests)
+}
+
+func TestUnknownAgentIdentityIsRejectedWithoutAnotherLookup(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	body := map[string]any{"reports": []map[string]any{}}
+	postAgentTraffic(t, h, "ghost-agent", "revoked", body, http.StatusUnauthorized)
+	if got := srv.agentAuthLookups.Load(); got != 1 {
+		t.Fatalf("lookups = %d, want 1", got)
+	}
+	postAgentTraffic(t, h, "ghost-agent", "revoked", body, http.StatusUnauthorized)
+	if got := srv.agentAuthLookups.Load(); got != 1 {
+		t.Fatalf("cached unknown identity issued another lookup: %d", got)
+	}
+}
+
+func TestAgentAuthBanOutlivesTheFailureWindow(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	srv := newTestServer(db, "test-secret", "")
+	srv.authClock = func() time.Time { return now }
+	h := srv.Handler()
+	body := map[string]any{"reports": []map[string]any{}}
+	for i := 0; i < agentAuthFailureLimit; i++ {
+		postAgentTraffic(t, h, fmt.Sprintf("ghost-agent-%d", i), "revoked", body, http.StatusUnauthorized)
+	}
+	postAgentTraffic(t, h, "ghost-agent-last", "revoked", body, http.StatusTooManyRequests)
+	now = now.Add(2 * time.Minute)
+	postAgentTraffic(t, h, "ghost-agent-after-window", "revoked", body, http.StatusTooManyRequests)
+	now = now.Add(agentAuthBanTTL)
+	postAgentTraffic(t, h, "ghost-agent-after-ban", "revoked", body, http.StatusUnauthorized)
+}
+
+func TestFailMapsCanceledContextToServiceUnavailable(t *testing.T) {
+	rr := httptest.NewRecorder()
+	fail(rr, context.Canceled, http.StatusInternalServerError)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "internal server error") || !strings.Contains(rr.Body.String(), "request canceled") {
+		t.Fatalf("body = %s", rr.Body.String())
+	}
 }
 
 // A valid Agent is never blocked by another source address spending the budget,

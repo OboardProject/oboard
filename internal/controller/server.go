@@ -217,8 +217,15 @@ type Server struct {
 	agentCallbackRate *memoryRateLimiter
 	// agentAuthFailures counts failed Agent authentications per source address
 	// so a decommissioned node holding a revoked token stops reaching the
-	// credential lookup.
+	// credential lookup. unknownAgents remembers agent IDs that are not in
+	// the database; agentAuthBans keeps an address quiet after it spends the
+	// per-window budget, so the 1-minute window cannot reset into another
+	// lookup storm.
 	agentAuthFailures   *memoryRateLimiter
+	unknownAgents       *ttlCache
+	agentAuthBans       *ttlCache
+	authClock           func() time.Time
+	agentAuthLookups    atomic.Uint64
 	agentDiagnosticRate *memoryRateLimiter
 	// auditRisk is the bounded, userID-coalescing audit risk evaluation queue.
 	auditRisk *auditRiskQueue
@@ -276,7 +283,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, runtimeUsersSyncWake: make(chan struct{}, 1), runtimeUsersSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), unknownAgents: newTTLCache(), agentAuthBans: newTTLCache(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, runtimeUsersSyncWake: make(chan struct{}, 1), runtimeUsersSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
@@ -14263,6 +14270,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	// instead of waiting for a manual deployment. Brand-new servers without any
 	// topology are skipped by the relevance gate inside the helper.
 	s.evictAgentSessions(server.ID)
+	s.noteAgentAuthSuccess(clientIP(r))
 	s.queueDeploymentAfterReconnect(r.Context(), server.ID)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
@@ -15450,22 +15458,31 @@ func (s *Server) portForwardForAgentReport(ctx context.Context, id int64) (*mode
 // retries still cost a SQLite read, and no per-Agent budget applied because
 // the budget is keyed by an identity the request never established.
 func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Server, bool) {
-	agentID := r.Header.Get("X-Agent-ID")
+	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	ip := clientIP(r)
+	if s.unknownAgentIdentity(agentID) {
+		s.logAgentRestriction("invalid_credentials", ip, http.StatusUnauthorized)
+		fail(w, errors.New("invalid agent credentials"), 401)
+		return nil, false
+	}
 	if s.agentAuthBlocked(ip) {
 		s.logAgentRestriction("authentication_budget", ip, http.StatusTooManyRequests)
 		fail(w, errors.New("too many failed agent authentications"), http.StatusTooManyRequests)
 		return nil, false
 	}
-	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(token) == "" {
+	if agentID == "" || strings.TrimSpace(token) == "" {
 		s.noteAgentAuthFailure(ip)
 		fail(w, errors.New("invalid agent credentials"), 401)
 		return nil, false
 	}
-	server, err := s.store.GetServerByAgent(r.Context(), agentID)
+	s.agentAuthLookups.Add(1)
+	lookupCtx, cancel := context.WithTimeout(r.Context(), agentAuthLookupTimeout)
+	defer cancel()
+	server, err := s.store.GetServerByAgent(lookupCtx, agentID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			s.rememberUnknownAgent(agentID)
 			s.noteAgentAuthFailure(ip)
 			fail(w, errors.New("invalid agent credentials"), 401)
 		} else {
@@ -15479,6 +15496,7 @@ func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Serve
 		fail(w, errors.New("invalid agent credentials"), 401)
 		return nil, false
 	}
+	s.forgetUnknownAgent(agentID)
 	s.noteAgentAuthSuccess(ip)
 	return server, true
 }
@@ -17790,6 +17808,13 @@ func write(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 func fail(w http.ResponseWriter, err error, status int) {
+	if status >= http.StatusInternalServerError && isRequestAbort(err) {
+		if requestAbortLog.allow("abort", 1, time.Minute, time.Now()) {
+			log.Printf("request aborted: %v", err)
+		}
+		write(w, http.StatusServiceUnavailable, map[string]any{"error": "request canceled"})
+		return
+	}
 	if status >= http.StatusInternalServerError {
 		log.Printf("internal API error status=%d: %v", status, err)
 		write(w, status, map[string]any{"error": "internal server error"})

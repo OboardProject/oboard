@@ -36,6 +36,11 @@ type Store struct {
 }
 
 type SQLiteOptions struct {
+	// MaxOpenConns is the database/sql pool size. WAL allows concurrent
+	// readers beside one writer; IMMEDIATE transactions occupy a pool slot
+	// for their whole busy-wait, so a pool of four filled immediately when
+	// several Agents reported at once. Eight keeps readers moving without
+	// pushing per-connection page cache too high.
 	MaxOpenConns int
 	MaxIdleConns int
 	BusyTimeout  time.Duration
@@ -52,8 +57,8 @@ type SQLiteOptions struct {
 
 func DefaultSQLiteOptions() SQLiteOptions {
 	return SQLiteOptions{
-		MaxOpenConns:            4,
-		MaxIdleConns:            4,
+		MaxOpenConns:            8,
+		MaxIdleConns:            8,
 		BusyTimeout:             5 * time.Second,
 		MetricSampleMinInterval: defaultMetricSampleMinInterval,
 		CacheKB:                 defaultSQLiteCacheKB,
