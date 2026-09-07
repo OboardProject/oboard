@@ -34,6 +34,7 @@ type ServiceConfig struct {
 	ControllerBinary   string
 	UpdaterBinary      string
 	AIWorkerBinary     string
+	ScriptWorkerBinary string
 	WebRoot            string
 	DownloadsRoot      string
 	WorkRoot           string
@@ -74,6 +75,7 @@ func DefaultServiceConfig() ServiceConfig {
 		ControllerBinary:   filepath.Join(installDir, "oboard-controller"),
 		UpdaterBinary:      filepath.Join(installDir, "oboard-controller-updater"),
 		AIWorkerBinary:     filepath.Join(installDir, "oboard-ai-worker"),
+		ScriptWorkerBinary: filepath.Join(installDir, "oboard-script-worker"),
 		WebRoot:            filepath.Join(installDir, "web/dist"),
 		DownloadsRoot:      filepath.Join(installDir, "downloads"),
 		WorkRoot:           filepath.Join(dataDir, "controller-update"),
@@ -154,6 +156,9 @@ func NewService(config ServiceConfig) *Service {
 	}
 	if config.AIWorkerBinary == "" {
 		config.AIWorkerBinary = defaults.AIWorkerBinary
+	}
+	if config.ScriptWorkerBinary == "" {
+		config.ScriptWorkerBinary = defaults.ScriptWorkerBinary
 	}
 	if config.WebRoot == "" {
 		config.WebRoot = defaults.WebRoot
@@ -1032,7 +1037,7 @@ func extractControllerArchive(archivePath, stage string) error {
 	var entries int
 	var extracted int64
 	allowed := func(path string) bool {
-		return path == "bin/oboard-controller" || path == "bin/oboard-controller-updater" || path == "bin/oboard-ai-worker" || strings.HasPrefix(path, "web/dist/") || strings.HasPrefix(path, "downloads/")
+		return path == "bin/oboard-controller" || path == "bin/oboard-controller-updater" || path == "bin/oboard-ai-worker" || path == "bin/oboard-script-worker" || strings.HasPrefix(path, "web/dist/") || strings.HasPrefix(path, "downloads/")
 	}
 	for {
 		header, err := reader.Next()
@@ -1086,7 +1091,7 @@ func extractControllerArchive(archivePath, stage string) error {
 			return fmt.Errorf("truncated controller archive entry %q", name)
 		}
 	}
-	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
+	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "bin/oboard-script-worker", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
 		if info, err := stageRoot.Stat(filepath.FromSlash(required)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("controller package is missing %s", required)
 		}
@@ -1096,7 +1101,7 @@ func extractControllerArchive(archivePath, stage string) error {
 
 func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error {
 	type target struct{ source, destination string }
-	targets := []target{{filepath.Join(stage, "bin/oboard-controller"), s.config.ControllerBinary}, {filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary}, {filepath.Join(stage, "bin/oboard-ai-worker"), s.config.AIWorkerBinary}, {filepath.Join(stage, "web/dist"), s.config.WebRoot}, {filepath.Join(stage, "downloads"), s.config.DownloadsRoot}}
+	targets := []target{{filepath.Join(stage, "bin/oboard-controller"), s.config.ControllerBinary}, {filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary}, {filepath.Join(stage, "bin/oboard-ai-worker"), s.config.AIWorkerBinary}, {filepath.Join(stage, "bin/oboard-script-worker"), s.config.ScriptWorkerBinary}, {filepath.Join(stage, "web/dist"), s.config.WebRoot}, {filepath.Join(stage, "downloads"), s.config.DownloadsRoot}}
 	rollback := []func(){}
 	runRollback := func() {
 		for i := len(rollback) - 1; i >= 0; i-- {
@@ -1104,7 +1109,7 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 		}
 	}
 	for index, item := range targets {
-		if _, err := os.Stat(item.source); os.IsNotExist(err) && index == 4 {
+		if _, err := os.Stat(item.source); os.IsNotExist(err) && index == 5 {
 			continue
 		} else if err != nil {
 			runRollback()
@@ -1261,7 +1266,12 @@ func (s *Service) restartController(ctx context.Context) error {
 			return err
 		}
 		if _, err := os.Stat("/etc/systemd/system/oboard-ai-worker.service"); err == nil {
-			return s.config.RunCommand(ctx, "systemctl", "restart", "oboard-ai-worker.service")
+			if err := s.config.RunCommand(ctx, "systemctl", "restart", "oboard-ai-worker.service"); err != nil {
+				return err
+			}
+		}
+		if _, err := os.Stat("/etc/systemd/system/oboard-script-worker.service"); err == nil {
+			return s.config.RunCommand(ctx, "systemctl", "restart", "oboard-script-worker.service")
 		}
 		return nil
 	}
@@ -1270,7 +1280,12 @@ func (s *Service) restartController(ctx context.Context) error {
 			return err
 		}
 		if _, err := os.Stat("/etc/init.d/oboard-ai-worker"); err == nil {
-			return s.config.RunCommand(ctx, "rc-service", "oboard-ai-worker", "restart")
+			if err := s.config.RunCommand(ctx, "rc-service", "oboard-ai-worker", "restart"); err != nil {
+				return err
+			}
+		}
+		if _, err := os.Stat("/etc/init.d/oboard-script-worker"); err == nil {
+			return s.config.RunCommand(ctx, "rc-service", "oboard-script-worker", "restart")
 		}
 		return nil
 	}

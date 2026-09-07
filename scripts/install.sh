@@ -385,6 +385,17 @@ detect_virt_hint() {
   echo bare
 }
 
+prepare_script_worker_user() {
+  create_system_user oboard-scripts "$CONTROLLER_DATA_DIR"
+  if id oboard-scripts >/dev/null 2>&1 && getent group oboard >/dev/null 2>&1; then
+    usermod -aG oboard oboard-scripts 2>/dev/null || addgroup oboard-scripts oboard 2>/dev/null || true
+  fi
+  if ! command -v bwrap >/dev/null 2>&1; then
+    echo "未检测到 bubblewrap (bwrap)。脚本执行将保持禁用，直到安装 bubblewrap 并具备 cgroup v2；这不影响现有面板、Agent 和代理服务。" | tee -a "$INSTALL_LOG"
+  fi
+  set_controller_env_value OBOARD_SCRIPT_WORKER_SOCKET /run/oboard/script-worker/rpc.sock
+}
+
 create_system_user() {
   # Portable system user creation across Debian/Ubuntu, Alpine, RHEL-family.
   user=$1
@@ -1015,30 +1026,36 @@ uninstall_controller() {
       systemctl disable --now oboard-controller.service >/dev/null 2>&1 || true
       systemctl disable --now oboard-controller-updater.service >/dev/null 2>&1 || true
       systemctl disable --now oboard-ai-worker.service >/dev/null 2>&1 || true
+      systemctl disable --now oboard-script-worker.service >/dev/null 2>&1 || true
       ;;
     openrc)
       rc-service oboard-controller stop >/dev/null 2>&1 || true
       rc-service oboard-controller-updater stop >/dev/null 2>&1 || true
       rc-service oboard-ai-worker stop >/dev/null 2>&1 || true
+      rc-service oboard-script-worker stop >/dev/null 2>&1 || true
       rc-update del oboard-controller default >/dev/null 2>&1 || true
       rc-update del oboard-controller-updater default >/dev/null 2>&1 || true
       rc-update del oboard-ai-worker default >/dev/null 2>&1 || true
+      rc-update del oboard-script-worker default >/dev/null 2>&1 || true
       ;;
   esac
 
   rm -f /etc/systemd/system/oboard-controller.service \
     /etc/systemd/system/oboard-controller-updater.service \
     /etc/systemd/system/oboard-ai-worker.service \
+    /etc/systemd/system/oboard-script-worker.service \
     /etc/init.d/oboard-controller \
     /etc/init.d/oboard-controller-updater \
-    /etc/init.d/oboard-ai-worker
+    /etc/init.d/oboard-ai-worker \
+    /etc/init.d/oboard-script-worker
   if [ "$service_manager" = systemd ]; then
     systemctl daemon-reload >/dev/null 2>&1
-    systemctl reset-failed oboard-controller.service oboard-controller-updater.service oboard-ai-worker.service >/dev/null 2>&1 || true
+    systemctl reset-failed oboard-controller.service oboard-controller-updater.service oboard-ai-worker.service oboard-script-worker.service >/dev/null 2>&1 || true
   fi
   rm -f "$INSTALL_DIR/oboard-controller" \
     "$INSTALL_DIR/oboard-controller-updater" \
     "$INSTALL_DIR/oboard-ai-worker" \
+    "$INSTALL_DIR/oboard-script-worker" \
     "$INSTALL_DIR/oboard-controller.update-backup" \
     "$INSTALL_DIR/oboard-controller.update-new" \
     "$INSTALL_DIR/oboard-controller-updater.update-backup" \
@@ -1129,6 +1146,7 @@ install_component() {
   if [ "$component" = controller ]; then
     install_file_atomic "$work/bin/oboard-controller-updater" "$INSTALL_DIR/oboard-controller-updater" 0755
     install_file_atomic "$work/bin/oboard-ai-worker" "$INSTALL_DIR/oboard-ai-worker" 0755
+    install_file_atomic "$work/bin/oboard-script-worker" "$INSTALL_DIR/oboard-script-worker" 0755
   fi
 
   if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -d "$work/deploy/systemd" ]; then
@@ -1149,9 +1167,11 @@ install_component() {
         configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
         configure_bootstrap_admin
+        prepare_script_worker_user
         render_service_file "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
         render_service_file "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
         render_service_file "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
+        render_service_file "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
         prepare_controller_updater_runtime
         systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
         systemctl enable oboard-controller-updater >> "$INSTALL_LOG" 2>&1
@@ -1161,6 +1181,8 @@ install_component() {
         start_controller_systemd
         systemctl enable oboard-ai-worker >> "$INSTALL_LOG" 2>&1
         systemctl restart oboard-ai-worker >> "$INSTALL_LOG" 2>&1
+        systemctl enable oboard-script-worker >> "$INSTALL_LOG" 2>&1
+        systemctl restart oboard-script-worker >> "$INSTALL_LOG" 2>&1
         clear_bootstrap_admin_password
         ;;
       agent)
@@ -1193,9 +1215,11 @@ install_component() {
         configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
         configure_bootstrap_admin
+        prepare_script_worker_user
         render_service_file "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller 0755
         render_service_file "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater 0755
         render_service_file "$work/deploy/openrc/oboard-ai-worker" /etc/init.d/oboard-ai-worker 0755
+        render_service_file "$work/deploy/openrc/oboard-script-worker" /etc/init.d/oboard-script-worker 0755
         prepare_controller_updater_runtime
         rc-update add oboard-controller-updater default >> "$INSTALL_LOG" 2>&1
         rc-service oboard-controller-updater restart >> "$INSTALL_LOG" 2>&1
@@ -1204,6 +1228,8 @@ install_component() {
         start_controller_openrc
         rc-update add oboard-ai-worker default >> "$INSTALL_LOG" 2>&1
         rc-service oboard-ai-worker restart >> "$INSTALL_LOG" 2>&1
+        rc-update add oboard-script-worker default >> "$INSTALL_LOG" 2>&1
+        rc-service oboard-script-worker restart >> "$INSTALL_LOG" 2>&1
         clear_bootstrap_admin_password
         ;;
       agent)

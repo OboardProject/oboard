@@ -681,6 +681,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
+	if err := s.migrateScriptingSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.migrateAgentUpdateIndexes(ctx); err != nil {
 		return err
 	}

@@ -1,0 +1,29 @@
+[Unit]
+Description=OBoard Script Worker
+After=network-online.target oboard-controller.service
+Wants=network-online.target
+Requires=oboard-controller.service
+
+[Service]
+Type=simple
+ExecStart=/opt/oboard/oboard-script-worker --poll-interval 2s
+Restart=on-failure
+RestartSec=5
+User=oboard-scripts
+Group=oboard
+SupplementaryGroups=oboard
+EnvironmentFile=-/opt/oboard/config/controller.env
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/oboard/script-worker
+LockPersonality=true
+MemoryDenyWriteExecute=true
+Delegate=yes
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

@@ -204,6 +204,9 @@ fi
 if [ -f "$work/bin/oboard-ai-worker" ]; then
   install -m 0755 "$work/bin/oboard-ai-worker" /opt/oboard/oboard-ai-worker
 fi
+if [ -f "$work/bin/oboard-script-worker" ]; then
+  install -m 0755 "$work/bin/oboard-script-worker" /opt/oboard/oboard-script-worker
+fi
 rm -rf /opt/oboard/web/dist.new
 cp -R "$work/web/dist" /opt/oboard/web/dist.new
 chown -R oboard:oboard /opt/oboard/web/dist.new
@@ -272,6 +275,9 @@ fi
 if ! grep -q '^OBOARD_AI_WORKER_SOCKET=' /opt/oboard/config/controller.env; then
   printf 'OBOARD_AI_WORKER_SOCKET=/run/oboard/ai-worker/rpc.sock\n' >> /opt/oboard/config/controller.env
 fi
+if ! grep -q '^OBOARD_SCRIPT_WORKER_SOCKET=' /opt/oboard/config/controller.env; then
+  printf 'OBOARD_SCRIPT_WORKER_SOCKET=/run/oboard/script-worker/rpc.sock\n' >> /opt/oboard/config/controller.env
+fi
 if ! grep -q '^OBOARD_BACKUP_DIR=' /opt/oboard/config/controller.env; then
   printf 'OBOARD_BACKUP_DIR=/opt/oboard/data/backups\n' >> /opt/oboard/config/controller.env
 fi
@@ -280,6 +286,9 @@ chmod 0600 /opt/oboard/config/controller.env
 cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
 if [ -f "$work/deploy/systemd/oboard-ai-worker.service" ]; then
   cp "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
+fi
+if [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
+  cp "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
 fi
 if [ -f "$work/deploy/systemd/oboard-controller-updater.service" ]; then
   cp "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
@@ -294,6 +303,10 @@ systemctl restart oboard-controller
 if [ -f /etc/systemd/system/oboard-ai-worker.service ]; then
   systemctl enable oboard-ai-worker >/dev/null
   systemctl restart oboard-ai-worker
+fi
+if [ -f /etc/systemd/system/oboard-script-worker.service ]; then
+  systemctl enable oboard-script-worker >/dev/null
+  systemctl restart oboard-script-worker
 fi
 sleep 1
 systemctl --no-pager --full status oboard-controller | sed -n '1,18p'

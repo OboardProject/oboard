@@ -121,6 +121,11 @@ func main() {
 	if err := app.StartAIWorkerRPC(ctx, aiWorkerSocket); err != nil {
 		log.Printf("configure AI Worker RPC: %v", err)
 	}
+	scriptWorkerSocket := env("OBOARD_SCRIPT_WORKER_SOCKET", "/run/oboard/script-worker/rpc.sock")
+	if err := app.StartScriptWorkerRPC(ctx, scriptWorkerSocket); err != nil {
+		log.Printf("configure Script Worker RPC: %v", err)
+	}
+	go app.StartScriptScheduler(ctx)
 	app.SetControllerBackupRestart(stop)
 	go app.StartMonitor(ctx)
 	go app.StartDNSDDNS(ctx)

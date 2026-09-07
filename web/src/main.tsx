@@ -112,7 +112,7 @@ import {
   PanelLeftClose, PanelLeftOpen, RotateCcw, Bot, Cable, Key, Play, PauseCircle, AlertTriangle, Star, Loader2, Terminal,
   ArrowUpDown, GripVertical, ListFilter, Layers, LocateFixed, Network, Package,
   ArrowUpCircle, SlidersHorizontal, SquareTerminal, Unlink, GitBranch, Save, MemoryStick,
-  Clock, Power, WifiOff, Building2, MapPin
+  Clock, Power, WifiOff, Building2, MapPin, Code
 } from 'lucide-react'
 
 // Import shadcn/ui style components
@@ -241,6 +241,7 @@ import { SubscriptionPlansPage } from './pages/SubscriptionPlansPage'
 import { UserPlanDialog } from './pages/UserPlanDialog'
 import { UserDashboardPage, type UserDashboardOverview } from './pages/UserDashboardPage'
 import { AccountPage } from './pages/AccountPage'
+import { ScriptsWorkspace } from './features/scripts/ScriptsWorkspace'
 
 const appBasePath = (() => {
   const href = document.querySelector('base')?.getAttribute('href') || '/'
@@ -1129,10 +1130,13 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
   automation: { label: '自动化', desc: '管理 API、MCP、审批策略、变更集与内置 AI。', group: '系统' },
+  scripts: { label: '脚本', desc: '管理受限 JavaScript 脚本、触发器和执行记录。', group: '系统' },
+  'script-triggers': { label: '脚本触发器', desc: '查看脚本定时与状态触发器。', group: '系统' },
+  'script-runs': { label: '脚本执行', desc: '查看脚本执行记录与动作阶段。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
-  { label: '', tabs: ['dashboard', 'servers', 'return-latency', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'automation', 'settings', 'account'] }
+  { label: '', tabs: ['dashboard', 'servers', 'return-latency', 'proxy-paths', 'dns', 'dns-records', 'users', 'plans', 'nodes', 'notifications', 'tasks', 'audit', 'scripts', 'automation', 'settings', 'account'] }
 ]
 
 const roleRanks: Record<Role, number> = { none: -1, viewer: 0, operator: 2, admin: 2 }
@@ -1140,6 +1144,7 @@ const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
+  scripts: 'operator', 'script-triggers': 'operator', 'script-runs': 'operator',
   nodes: 'none',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
@@ -1226,6 +1231,7 @@ function getTabIcon(x: string) {
   if (x === 'tasks') return <CheckSquare size={18} />
   if (x === 'audit') return <ClipboardList size={18} />
   if (x === 'automation') return <Bot size={18} />
+  if (x === 'scripts' || x === 'script-triggers' || x === 'script-runs') return <Code size={18} />
   if (x === 'dns') return <Globe size={18} />
   if (x === 'dns-records') return <Database size={18} />
   if (x === 'settings') return <SettingsIcon size={18} />
@@ -3027,6 +3033,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
   if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
   if (tab === 'automation') return <AutomationWorkspace data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
+  if (tab === 'scripts' || tab === 'script-triggers' || tab === 'script-runs') return <ScriptsWorkspace tab={tab} data={data} client={client} notify={notify} onNavigate={goTab} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
   return null
 }

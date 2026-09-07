@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -69,6 +70,9 @@ func (s *Store) OpenOrReopenNodeIncident(ctx context.Context, server model.Serve
 		id, _ := res.LastInsertId()
 		item, err = scanNodeIncident(tx.QueryRowContext(ctx, nodeIncidentSelect+` where id=?`, id))
 		if err != nil {
+			return model.NodeIncident{}, false, err
+		}
+		if err := enqueueScriptIncidentEventTx(ctx, tx, "script.server.offline", item); err != nil {
 			return model.NodeIncident{}, false, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -155,10 +159,28 @@ func (s *Store) ResolveNodeIncident(ctx context.Context, incidentID, expectedVer
 	if err != nil {
 		return nil, err
 	}
+	if err := enqueueScriptIncidentEventTx(ctx, tx, "script.server.recovered", item); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &item, nil
+}
+
+func enqueueScriptIncidentEventTx(ctx context.Context, tx *sql.Tx, topic string, item model.NodeIncident) error {
+	payload, err := json.Marshal(map[string]any{
+		"event":       strings.TrimPrefix(topic, "script."),
+		"server_id":   item.ServerID,
+		"incident_id": item.ID,
+	})
+	if err != nil {
+		return err
+	}
+	id := fmt.Sprintf("evt_%d_server_%d_incident_%d_%s", time.Now().UTC().UnixNano(), item.ServerID, item.ID, strings.TrimPrefix(topic, "script."))
+	_, err = tx.ExecContext(ctx, `insert into event_outbox(id,topic,aggregate_id,payload_json,status,available_at,created_at) values(?,?,?,?,'pending',?,?)`,
+		id, topic, fmt.Sprintf("server:%d:incident:%d", item.ServerID, item.ID), string(payload), now(), now())
+	return err
 }
 
 func (s *Store) GetNodeIncident(ctx context.Context, id int64) (*model.NodeIncident, error) {

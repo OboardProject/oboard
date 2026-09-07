@@ -43,6 +43,7 @@ import (
 	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/scripting"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
@@ -94,6 +95,10 @@ type Server struct {
 	application                *application.Service
 	capabilities               *capability.Catalog
 	automation                 *automation.Service
+	scripts                    *scripting.Service
+	scriptGateway              *scripting.Gateway
+	scriptIsolation            scripting.IsolationStatus
+	scriptWorkerConnected      atomic.Bool
 	auditIntel                 *auditintel.Service
 	auditReviews               *auditreview.Service
 	aiModelDiscoveries         *aiModelDiscoveryQueue
@@ -291,6 +296,8 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.remoteExecHub = newRemoteExecResultHub()
 	s.terminalHub = newTerminalSessionHub()
 	s.agentUpdates = newAgentUpdateCoordinator(s)
+	s.scripts = scripting.NewService(store, catalog.RBAC())
+	s.scriptGateway = scripting.NewGateway(store, s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.recoverControllerUpdateRun(context.Background())
@@ -2756,6 +2763,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+		}
+	case "scripts", "script-triggers", "script-runs":
+		if err = require(model.RoleOperator); err == nil {
+			err = addServers()
 		}
 	case "settings":
 		if err = require(model.RoleAdmin); err == nil {

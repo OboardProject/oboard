@@ -6,6 +6,10 @@ export function canManageAdministratorAccounts(role?: string) {
   return role === 'admin'
 }
 
+export function canAuthorizeScripts(role?: string) {
+  return role === 'admin'
+}
+
 type UserRoleSubject = { id: number; role?: string }
 type UserRoleGroup = { id: number; role?: string; enabled?: boolean }
 type UserRoleMembership = { user_id: number; group_id: number; enabled?: boolean }

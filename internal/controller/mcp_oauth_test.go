@@ -1334,7 +1334,7 @@ func TestOAuthReauthorizeWithoutOfflineDoesNotIssueRefresh(t *testing.T) {
 
 func TestMCPServerInstructionsStatic(t *testing.T) {
 	instructions := mcpServerInstructions
-	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate", "subscription_plan.delete", "user_node_authorizations.list/set/revoke", "explicit host-level diagnosis", "server_terminal_command", "native MCP names", "prefix or sanitize"} {
+	for _, fragment := range []string{"oboard_task", "oboard_commit_task", "fallback_required", "Changeset", "Workflow", "one-time", "approval", "Never perform SSH", "Never request, reveal, persist, repeat, or log", "certificate_mode=auto", "Do not wait for a ready certificate", "subscription_plan.delete", "user_node_authorizations.list/set/revoke", "explicit host-level diagnosis", "server_terminal_command", "native MCP names", "prefix or sanitize", "oboard-js-v1", "scripts.list/get/create/update", "Do not invent a tool per script"} {
 		if !strings.Contains(instructions, fragment) {
 			t.Fatalf("instructions missing %q", fragment)
 		}

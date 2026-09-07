@@ -49,6 +49,7 @@ func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
 	if config.ControllerBinary != "/data/oboard/oboard-controller" ||
 		config.UpdaterBinary != "/data/oboard/oboard-controller-updater" ||
 		config.AIWorkerBinary != "/data/oboard/oboard-ai-worker" ||
+		config.ScriptWorkerBinary != "/data/oboard/oboard-script-worker" ||
 		config.BinaryEnvPath != "/data/oboard/config/controller.env" ||
 		config.StatePath != "/data/oboard/data/controller-update/status.json" ||
 		config.RuntimeStatePath != "/data/oboard/data/controller-runtime.json" ||
@@ -60,7 +61,7 @@ func TestDefaultServiceConfigUsesSelectedInstallDirectory(t *testing.T) {
 
 	t.Setenv("OBOARD_INSTALL_DIR", "../tmp/unsafe")
 	config = DefaultServiceConfig()
-	if config.ControllerBinary != "/opt/oboard/oboard-controller" || config.UpdaterBinary != "/opt/oboard/oboard-controller-updater" || config.AIWorkerBinary != "/opt/oboard/oboard-ai-worker" {
+	if config.ControllerBinary != "/opt/oboard/oboard-controller" || config.UpdaterBinary != "/opt/oboard/oboard-controller-updater" || config.AIWorkerBinary != "/opt/oboard/oboard-ai-worker" || config.ScriptWorkerBinary != "/opt/oboard/oboard-script-worker" {
 		t.Fatalf("unsafe install directory was accepted: %#v", config)
 	}
 

@@ -193,6 +193,9 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		}
 		return s.agentFleetStatus(ctx)
 	default:
+		if strings.HasPrefix(capabilityName, "scripts.") || strings.HasPrefix(capabilityName, "script_") {
+			return s.queryScriptCapability(ctx, principal, capabilityName, input)
+		}
 		result, err := s.application.Query(ctx, principal, capabilityName, input)
 		if err == nil {
 			return result, nil

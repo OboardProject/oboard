@@ -55,6 +55,7 @@ func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/approval-policies", s.auth(s.apiV1ApprovalPolicies, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/approval-policies/", s.auth(s.apiV1ApprovalPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/tool-audits", s.auth(s.apiV1ToolAudits, model.RoleAdmin))
+	s.registerScriptRoutes(mux)
 }
 
 func (s *Server) apiV1LatencyProbes(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +758,7 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerNodeIncidentAutomationOperations()
 	s.registerNodeWorkspaceAutomationOperations()
 	s.registerRemoteAccessPolicyOperation()
+	s.registerScriptAutomationOperations()
 	s.automation.RegisterValidator("subscriptions.custom_paths.set_alias", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		var request struct {
 			UserID int64  `json:"user_id"`
