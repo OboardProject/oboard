@@ -45,7 +45,7 @@ func TestSQLiteDSNPreservesSupportedPathsAndQueries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sqliteDSN(%q): %v", path, err)
 		}
-		if !strings.Contains(dsn, "_pragma=busy_timeout%285000%29") || !strings.Contains(dsn, "_pragma=foreign_keys%281%29") || !strings.Contains(dsn, "_txlock=immediate") {
+		if !strings.Contains(dsn, "_pragma=busy_timeout%285000%29") || !strings.Contains(dsn, "_pragma=foreign_keys%281%29") || !strings.Contains(dsn, "_txlock=immediate") || !strings.Contains(dsn, "_pragma=journal_size_limit%2867108864%29") {
 			t.Fatalf("sqliteDSN(%q) = %q, missing pragmas", path, dsn)
 		}
 		// WAL commits stop fsyncing individually, and the page cache is sized

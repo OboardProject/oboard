@@ -325,3 +325,37 @@ func TestConnectivityTelemetryDeleteAndBootstrapIdempotency(t *testing.T) {
 		t.Fatalf("connectivity events after telemetry delete = %d, want 0", remaining)
 	}
 }
+
+func TestCloseOpenControllerConnectionsUsesLatestEventOnly(t *testing.T) {
+	ctx := context.Background()
+	db, openServer := newConnectivityTestStore(t)
+	closedServer := &model.Server{Name: "already-closed", AgentID: "closed-agent", Status: model.ServerOnline, LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, closedServer); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := db.RecordControllerConnectionEvent(ctx, openServer.ID, true, now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordControllerConnectionEvent(ctx, openServer.ID, false, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordControllerConnectionEvent(ctx, openServer.ID, true, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordControllerConnectionEvent(ctx, closedServer.ID, true, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordControllerConnectionEvent(ctx, closedServer.ID, false, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CloseOpenControllerConnections(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := connectivityEventCount(t, db, openServer.ID, model.ConnectivityEventControllerDisconnected); got != 2 {
+		t.Fatalf("open server disconnects = %d, want 2", got)
+	}
+	if got := connectivityEventCount(t, db, closedServer.ID, model.ConnectivityEventControllerDisconnected); got != 1 {
+		t.Fatalf("closed server disconnects = %d, want 1", got)
+	}
+}

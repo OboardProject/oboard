@@ -443,8 +443,49 @@ const (
 )
 
 func (s *Server) annotateServerDeliveryStatus(ctx context.Context, items []model.Server) {
+	if len(items) == 0 {
+		return
+	}
+	auths, err := s.store.ListAuthorizationStates(ctx)
+	if err != nil {
+		for i := range items {
+			s.annotateOneServerDeliveryStatus(ctx, &items[i])
+		}
+		return
+	}
+	users, err := s.store.ListRuntimeUserStates(ctx)
+	if err != nil {
+		for i := range items {
+			s.annotateOneServerDeliveryStatus(ctx, &items[i])
+		}
+		return
+	}
+	flags, err := s.store.ListServerDeliveryFlags(ctx)
+	if err != nil {
+		flags = map[int64]store.ServerDeliveryFlags{}
+	}
+	authByID := make(map[int64]store.AuthorizationState, len(auths))
+	for _, auth := range auths {
+		authByID[auth.ServerID] = auth
+	}
+	usersByID := make(map[int64]store.RuntimeUserState, len(users))
+	for _, state := range users {
+		usersByID[state.ServerID] = state
+	}
 	for i := range items {
-		s.annotateOneServerDeliveryStatus(ctx, &items[i])
+		auth := authByID[items[i].ID]
+		if auth.ServerID == 0 {
+			auth = store.AuthorizationState{ServerID: items[i].ID, Retryable: true}
+		}
+		userState := usersByID[items[i].ID]
+		if userState.ServerID == 0 {
+			userState = store.RuntimeUserState{ServerID: items[i].ID, Retryable: true}
+		}
+		deliveryFlags, ok := flags[items[i].ID]
+		if !ok {
+			deliveryFlags = store.ServerDeliveryFlags{ServerID: items[i].ID, AuthorizationFastLane: true, RuntimeUsersEnabled: true}
+		}
+		applyServerDeliveryAnnotation(&items[i], auth, userState, deliveryFlags)
 	}
 }
 
@@ -452,22 +493,35 @@ func (s *Server) annotateOneServerDeliveryStatus(ctx context.Context, server *mo
 	if server == nil {
 		return
 	}
-	if auth, err := s.store.AuthorizationState(ctx, server.ID); err == nil {
-		server.AuthorizationRevision = auth.DesiredRevision
-		server.AuthorizationConfirmed = auth.Confirmed()
-		server.AuthorizationPendingReason = auth.PendingReason
+	auth, err := s.store.AuthorizationState(ctx, server.ID)
+	if err != nil {
+		auth = store.AuthorizationState{ServerID: server.ID, Retryable: true}
 	}
-	if users, err := s.store.RuntimeUserState(ctx, server.ID); err == nil {
-		server.UsersRevision = users.DesiredRevision
-		server.UsersConfirmed = users.Confirmed()
-		server.UsersPendingReason = users.PendingReason
-		if users.PendingReason == store.RuntimeUsersPendingAgentUpgrade || users.PendingReason == store.RuntimeUsersPendingCoreConfigFallback {
-			server.UsersFallback = "apply_core_config"
-		}
+	users, err := s.store.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		users = store.RuntimeUserState{ServerID: server.ID, Retryable: true}
 	}
 	flags, err := s.store.ServerDeliveryFlags(ctx, server.ID)
 	if err != nil {
-		flags = store.ServerDeliveryFlags{AuthorizationFastLane: true, RuntimeUsersEnabled: true}
+		flags = store.ServerDeliveryFlags{ServerID: server.ID, AuthorizationFastLane: true, RuntimeUsersEnabled: true}
+	}
+	applyServerDeliveryAnnotation(server, auth, users, flags)
+}
+
+func applyServerDeliveryAnnotation(server *model.Server, auth store.AuthorizationState, users store.RuntimeUserState, flags store.ServerDeliveryFlags) {
+	if server == nil {
+		return
+	}
+	server.AuthorizationRevision = auth.DesiredRevision
+	server.AuthorizationConfirmed = auth.Confirmed()
+	server.AuthorizationPendingReason = auth.PendingReason
+	server.UsersRevision = users.DesiredRevision
+	server.UsersConfirmed = users.Confirmed()
+	server.UsersPendingReason = users.PendingReason
+	if users.PendingReason == store.RuntimeUsersPendingAgentUpgrade || users.PendingReason == store.RuntimeUsersPendingCoreConfigFallback {
+		server.UsersFallback = "apply_core_config"
+	} else {
+		server.UsersFallback = ""
 	}
 	applyDeliveryFlagsToServer(server, flags)
 }

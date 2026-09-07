@@ -45,7 +45,7 @@ type SQLiteOptions struct {
 	MaxIdleConns int
 	BusyTimeout  time.Duration
 	// MetricSampleMinInterval bounds server_metric_samples writes to at most
-	// one sample per server per interval. Zero keeps the default 60 seconds.
+	// one sample per server per interval. Zero keeps the default 120 seconds.
 	MetricSampleMinInterval time.Duration
 	// CacheKB is the per-connection SQLite page cache in kibibytes. The SQLite
 	// default is 2 MiB, which is far below the working set of an installation
@@ -70,7 +70,7 @@ const (
 	UserGroupSystemUsers           = "users"
 	bootstrapAdminSetting          = "system.bootstrap_admin_user_id"
 	configVersionSetting           = "system.config_version_sequence"
-	defaultMetricSampleMinInterval = 60 * time.Second
+	defaultMetricSampleMinInterval = 120 * time.Second
 	defaultSQLiteCacheKB           = 16384
 	minSQLiteCacheKB               = 2048
 	maxSQLiteCacheKB               = 262144
@@ -78,6 +78,9 @@ const (
 	// index scans over the reporting tables stop issuing a read syscall per
 	// page. It is virtual address space, not resident memory.
 	sqliteMmapBytes = 128 * 1024 * 1024
+	// sqliteJournalSizeLimitBytes caps the WAL after a successful checkpoint
+	// so a busy reader cannot leave a multi-GB log on disk indefinitely.
+	sqliteJournalSizeLimitBytes = 64 * 1024 * 1024
 	// sqliteAutoVacuumIncremental is SQLite's numeric auto_vacuum mode 2.
 	sqliteAutoVacuumIncremental        = 2
 	serverConnectivityEventsColumnsSQL = `(id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, kind text not null check(kind in ('probe_result','server_offline','probe_enabled','probe_disabled','probe_target_changed','controller_connected','controller_disconnected')), available integer check(available is null or available in (0,1)), latency_ms integer not null default 0, error text not null default '', source text not null default '', effective_at text not null, event_key text not null, created_at text not null, unique(server_id,event_key))`
@@ -221,6 +224,7 @@ func sqliteDSN(path string, busyTimeout time.Duration, cacheKB int, restore bool
 	// so the budget stays fixed regardless of page size.
 	pragmas.Add("_pragma", fmt.Sprintf("cache_size(-%d)", cacheKB))
 	pragmas.Add("_pragma", fmt.Sprintf("mmap_size(%d)", sqliteMmapBytes))
+	pragmas.Add("_pragma", fmt.Sprintf("journal_size_limit(%d)", sqliteJournalSizeLimitBytes))
 	if !restore {
 		// synchronous=NORMAL is the WAL-mode setting: commits no longer fsync
 		// individually, and durability is provided by the checkpoint. The
@@ -397,7 +401,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists configuration_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists traffic_policy_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`insert or ignore into traffic_policy_revision(id,revision) values(1,0)`,
-		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', interval_seconds integer not null default 60, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
+		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', interval_seconds integer not null default 120, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
 		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
 		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
 		`create table if not exists latency_probe_tasks (id integer primary key autoincrement, name text not null, province text not null, carrier text not null, method text not null default 'tcp', address text not null default '', port integer not null default 80, interval_seconds integer not null default 60, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -597,6 +601,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_server_metric_samples_server_time on server_metric_samples(server_id, sampled_at desc)`,
 		`create index if not exists idx_server_metric_samples_time on server_metric_samples(sampled_at)`,
 		`create index if not exists idx_server_latency_probe_results_checked on server_latency_probe_results(checked_at)`,
+		`create index if not exists idx_agent_tasks_type_config_version on agent_tasks(type, config_version desc)`,
 		`create index if not exists idx_server_connectivity_events_server_time on server_connectivity_events(server_id,effective_at)`,
 		`create index if not exists idx_server_connectivity_events_server_kind_time on server_connectivity_events(server_id,kind,effective_at desc)`,
 		`create index if not exists idx_server_connectivity_events_kind_time on server_connectivity_events(kind,effective_at)`,
@@ -777,6 +782,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `create unique index if not exists idx_server_latency_probe_results_report_target on server_latency_probe_results(server_id,report_id,probe_id) where report_id<>''`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_server_latency_probe_results_server_kind_checked on server_latency_probe_results(server_id,kind,checked_at)`); err != nil {
 		return err
 	}
 	if err := s.ensureConnectivityEventKinds(ctx); err != nil {
@@ -6287,6 +6295,10 @@ func (s *Store) listTaskTimelinePage(ctx context.Context, offset, limit int) ([]
 		return nil, err
 	}
 	defer rows.Close()
+	return scanTaskTimeline(rows)
+}
+
+func scanTaskTimeline(rows *sql.Rows) ([]model.AgentTask, error) {
 	out := []model.AgentTask{}
 	for rows.Next() {
 		var item model.AgentTask
@@ -6326,7 +6338,16 @@ func (s *Store) LatestDeploymentTasks(ctx context.Context) ([]model.AgentTask, e
 	if !version.Valid || version.Int64 <= 0 {
 		return []model.AgentTask{}, nil
 	}
-	return s.ListTasksByConfigVersion(ctx, version.Int64)
+	return s.listTaskSummariesByConfigVersion(ctx, version.Int64)
+}
+
+func (s *Store) listTaskSummariesByConfigVersion(ctx context.Context, version int64) ([]model.AgentTask, error) {
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,status,config_version,created_at,updated_at,completed_at from agent_tasks where config_version=? order by id`, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTaskTimeline(rows)
 }
 
 func (s *Store) DismissDeploymentFailure(ctx context.Context, configVersion, actorID int64) error {

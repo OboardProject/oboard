@@ -22,7 +22,7 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
     latency_probe_enabled: server.latency_probe_enabled !== false,
     latency_probe_mode: (server.latency_probe_mode || 'tcp') as LatencyProbeMode,
     latency_probe_public_target: (server.latency_probe_public_target || 'auto') as ConnectivityProbeTarget,
-    latency_probe_interval_seconds: (server.latency_probe_interval_seconds || 60) as number | '',
+    latency_probe_interval_seconds: (server.latency_probe_interval_seconds || 120) as number | '',
     latency_probe_sample_count: (server.latency_probe_sample_count || 3) as number | '',
     latency_probe_max_targets: (server.latency_probe_max_targets || 64) as number | '',
   })
@@ -82,7 +82,7 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
             </Select>
           </FormField>
           <FormField label="公网基准间隔（秒）" hint="公网目标的探测周期（30–86400 秒）。各任务的间隔单独设置。">
-            <input aria-label="公网基准探测间隔（秒）" type="number" min={30} max={86400} placeholder="60" value={values.latency_probe_interval_seconds} onChange={event => updateParam({ latency_probe_interval_seconds: event.target.value === '' ? '' : Number(event.target.value) })} onBlur={event => updateParam({ latency_probe_interval_seconds: clamp(event.target.value === '' ? '' : Number(event.target.value), 30, 86400, 60) })} />
+            <input aria-label="公网基准探测间隔（秒）" type="number" min={30} max={86400} placeholder="120" value={values.latency_probe_interval_seconds} onChange={event => updateParam({ latency_probe_interval_seconds: event.target.value === '' ? '' : Number(event.target.value) })} onBlur={event => updateParam({ latency_probe_interval_seconds: clamp(event.target.value === '' ? '' : Number(event.target.value), 30, 86400, 120) })} />
           </FormField>
           <FormField label="每个目标样本数" hint="连续探测样本数（1–10）。">
             <input aria-label="每个延迟目标样本数" type="number" min={1} max={10} placeholder="3" value={values.latency_probe_sample_count} onChange={event => updateParam({ latency_probe_sample_count: event.target.value === '' ? '' : Number(event.target.value) })} onBlur={event => updateParam({ latency_probe_sample_count: clamp(event.target.value === '' ? '' : Number(event.target.value), 1, 10, 3) })} />

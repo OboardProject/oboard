@@ -74,7 +74,7 @@ func (s *Server) panelServerFormDefaults(ctx context.Context) (panelServerFormDe
 		LatencyProbeEnabled:         true,
 		LatencyProbeMode:            model.LatencyProbeModeTCP,
 		LatencyProbePublicTarget:    model.ConnectivityProbeTargetAuto,
-		LatencyProbeIntervalSeconds: 60,
+		LatencyProbeIntervalSeconds: 120,
 		LatencyProbeSampleCount:     3,
 		LatencyProbeMaxTargets:      64,
 		ConnectionAuditEnabled:      settingBool(settings, settingConnectionAuditEnabled, true),

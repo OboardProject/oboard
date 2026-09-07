@@ -75,8 +75,8 @@ func TestMaintenancePrunesConnectionAudits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.ConnectionAuditsDeleted != maintenanceBatchSize+1 {
-		t.Fatalf("deleted = %d, want %d", result.ConnectionAuditsDeleted, maintenanceBatchSize+1)
+	if result.ConnectionAuditsDeleted != int64(maintenanceBatchSize)+1 {
+		t.Fatalf("deleted = %d, want %d", result.ConnectionAuditsDeleted, int64(maintenanceBatchSize)+1)
 	}
 	var remaining int
 	if err := s.db.QueryRow(`select count(*) from connection_audit_reports`).Scan(&remaining); err != nil || remaining != 2 {
@@ -195,7 +195,7 @@ func TestServerMonitoringMaintenanceIndexesMigrateFromPreviousSchema(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, index := range []string{"idx_server_latency_probe_results_checked", "idx_server_connectivity_events_kind_time"} {
+		for _, index := range []string{"idx_server_latency_probe_results_checked", "idx_server_latency_probe_results_server_kind_checked", "idx_server_connectivity_events_kind_time", "idx_agent_tasks_type_config_version"} {
 			var found string
 			if err := s.db.QueryRowContext(ctx, `select name from sqlite_master where type='index' and name=?`, index).Scan(&found); err != nil {
 				t.Fatalf("monitoring maintenance index %s missing after reopen %d: %v", index, reopen+1, err)
@@ -336,6 +336,70 @@ func TestAuditWritesDoNotRunRetentionCleanup(t *testing.T) {
 	_ = s.db.QueryRow(`select count(*) from subscription_rate_buckets where bucket_key='old-hot-path'`).Scan(&oldBuckets)
 	if oldConnections != 0 || oldSubscriptions != 0 || oldBuckets != 0 {
 		t.Fatalf("maintenance retained expired data: connection=%d subscription=%d bucket=%d", oldConnections, oldSubscriptions, oldBuckets)
+	}
+}
+
+func TestMaintenanceSignalsCatchUpWhenBacklogExceedsBatchCap(t *testing.T) {
+	oldSize, oldMax := maintenanceBatchSize, maintenanceMaxBatches
+	maintenanceBatchSize, maintenanceMaxBatches = 10, 2
+	t.Cleanup(func() {
+		maintenanceBatchSize, maintenanceMaxBatches = oldSize, oldMax
+	})
+	s, server, _ := newMaintenanceTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	old := at.Add(-8 * 24 * time.Hour)
+	for i := 0; i < 25; i++ {
+		ts := old.Add(time.Duration(i) * time.Second).Format(time.RFC3339Nano)
+		if _, err := s.db.Exec(`insert into server_metric_samples(server_id,sampled_at) values(?,?)`, server.ID, ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := s.RunMaintenance(ctx, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ServerMetricSamplesDeleted != 20 {
+		t.Fatalf("deleted = %d, want 20", result.ServerMetricSamplesDeleted)
+	}
+	if !result.NeedsCatchUp {
+		t.Fatal("expected catch-up after hitting the batch cap")
+	}
+	var remaining int
+	if err := s.db.QueryRow(`select count(*) from server_metric_samples where sampled_at < ?`, at.Add(-7*24*time.Hour).Format(time.RFC3339Nano)).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 5 {
+		t.Fatalf("remaining expired samples = %d, want 5", remaining)
+	}
+}
+
+func TestMaintenancePrunesOldControllerEventsPerKind(t *testing.T) {
+	s, server, _ := newMaintenanceTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
+	cutoff := at.Add(-7 * 24 * time.Hour)
+	for i := 0; i < 6; i++ {
+		effective := cutoff.Add(-time.Duration(6-i) * time.Hour)
+		if err := s.RecordControllerConnectionEvent(ctx, server.ID, i%2 == 0, effective); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RecordControllerConnectionEvent(ctx, server.ID, true, cutoff.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.RunMaintenance(ctx, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ConnectivityProbesDeleted < 4 {
+		t.Fatalf("controller events deleted = %d, want at least 4", result.ConnectivityProbesDeleted)
+	}
+	if got := connectivityEventCount(t, s, server.ID, model.ConnectivityEventControllerConnected); got != 2 {
+		t.Fatalf("connected events = %d, want 2 (one baseline + one in window)", got)
+	}
+	if got := connectivityEventCount(t, s, server.ID, model.ConnectivityEventControllerDisconnected); got != 1 {
+		t.Fatalf("disconnected events = %d, want 1 baseline", got)
 	}
 }
 

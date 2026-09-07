@@ -136,7 +136,11 @@ func (s *Store) CloseOpenControllerConnections(ctx context.Context, effectiveAt 
 }
 
 func (s *Store) CloseOpenControllerConnectionsWithSource(ctx context.Context, effectiveAt time.Time, source string) error {
-	rows, err := s.db.QueryContext(ctx, `select e.server_id from server_connectivity_events e where e.kind=? and not exists(select 1 from server_connectivity_events newer where newer.server_id=e.server_id and newer.kind in (?,?) and (newer.effective_at>e.effective_at or (newer.effective_at=e.effective_at and newer.id>e.id)))`, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected)
+	rows, err := s.db.QueryContext(ctx, `select id from servers where (
+		select kind from server_connectivity_events
+		where server_id=servers.id and kind in (?,?)
+		order by effective_at desc,id desc limit 1
+	)=?`, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected, model.ConnectivityEventControllerConnected)
 	if err != nil {
 		return err
 	}
@@ -321,7 +325,7 @@ func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, fro
 		return history, err
 	}
 	var dataStart sql.NullString
-	if err := s.db.QueryRowContext(ctx, `select min(effective_at) from server_connectivity_events where server_id=?`, serverID).Scan(&dataStart); err != nil && err != sql.ErrNoRows {
+	if err := s.db.QueryRowContext(ctx, `select effective_at from server_connectivity_events where server_id=? order by effective_at asc,id asc limit 1`, serverID).Scan(&dataStart); err != nil && err != sql.ErrNoRows {
 		return history, err
 	}
 	if dataStart.Valid && dataStart.String != "" {

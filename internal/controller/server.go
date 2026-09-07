@@ -2358,7 +2358,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = timing.run("servers", addServerSnapshot)
 		}
 		if err == nil && serverSnapshotLoaded {
-			s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+			err = timing.run("delivery", func() error {
+				s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+				return nil
+			})
 		}
 		if err == nil {
 			err = timing.run("inbounds", func() error {
@@ -2394,7 +2397,10 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			err = addServers()
 		}
 		if err == nil && serverSnapshotLoaded {
-			s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+			err = timing.run("delivery", func() error {
+				s.annotateServerDeliveryStatus(ctx, serverSnapshot)
+				return nil
+			})
 		}
 		if err == nil {
 			err = addServerCreationDefaults()
@@ -2797,30 +2803,37 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if roleAllows(role, model.RoleOperator) {
-		latestDeployment, err := s.store.LatestDeploymentTasks(ctx)
-		if err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		deploymentStatus, err := s.deploymentStatus(ctx, latestDeployment)
-		if err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		out["deployment_status"] = deploymentStatus
-		configurationStates, syncErr := s.store.ListAllConfigurationSyncStates(ctx)
-		if syncErr != nil {
-			fail(w, syncErr, http.StatusInternalServerError)
-			return
-		}
-		if serverSnapshotLoaded {
-			views := configurationSyncViews(configurationStates, serverSnapshot)
-			for i := range views {
-				s.attachLaneFields(ctx, views[i], configurationStates[i].ServerID)
+		if err = timing.run("deployment", func() error {
+			latestDeployment, depErr := s.store.LatestDeploymentTasks(ctx)
+			if depErr != nil {
+				return depErr
 			}
-			out["configuration_sync"] = views
-		} else {
+			deploymentStatus, depErr := s.deploymentStatus(ctx, latestDeployment)
+			if depErr != nil {
+				return depErr
+			}
+			out["deployment_status"] = deploymentStatus
+			return nil
+		}); err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
+		if err = timing.run("config_sync", func() error {
+			configurationStates, syncErr := s.store.ListAllConfigurationSyncStates(ctx)
+			if syncErr != nil {
+				return syncErr
+			}
+			if serverSnapshotLoaded {
+				views := configurationSyncViews(configurationStates, serverSnapshot)
+				s.attachLaneFieldsToSyncViews(ctx, views, configurationStates)
+				out["configuration_sync"] = views
+				return nil
+			}
 			out["configuration_sync"] = s.configurationSyncViews(ctx, configurationStates)
+			return nil
+		}); err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
 		}
 	}
 	w.Header().Set("Server-Timing", timing.serverTiming())
@@ -5435,7 +5448,7 @@ func validateServer(v *model.Server) error {
 		return errors.New("延迟测试间隔必须在 30 到 86400 秒之间")
 	}
 	if v.LatencyProbeIntervalSeconds == 0 {
-		v.LatencyProbeIntervalSeconds = 60
+		v.LatencyProbeIntervalSeconds = 120
 	}
 	if v.LatencyProbeSampleCount < 0 || v.LatencyProbeSampleCount > 10 {
 		return errors.New("延迟测试的每个目标样本数必须在 1 到 10 之间")

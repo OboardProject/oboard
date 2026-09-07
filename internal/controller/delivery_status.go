@@ -121,6 +121,59 @@ func (s *Server) attachLaneFields(ctx context.Context, item map[string]any, serv
 	}
 	auth, _ := s.store.AuthorizationState(ctx, serverID)
 	users, _ := s.store.RuntimeUserState(ctx, serverID)
+	attachLaneFieldsFromStates(item, auth, users)
+}
+
+func (s *Server) attachLaneFieldsToSyncViews(ctx context.Context, views []map[string]any, states []store.ConfigurationSyncState) {
+	if len(views) == 0 {
+		return
+	}
+	auths, err := s.store.ListAuthorizationStates(ctx)
+	if err != nil {
+		for i := range views {
+			if i < len(states) {
+				s.attachLaneFields(ctx, views[i], states[i].ServerID)
+			}
+		}
+		return
+	}
+	users, err := s.store.ListRuntimeUserStates(ctx)
+	if err != nil {
+		for i := range views {
+			if i < len(states) {
+				s.attachLaneFields(ctx, views[i], states[i].ServerID)
+			}
+		}
+		return
+	}
+	authByID := make(map[int64]store.AuthorizationState, len(auths))
+	for _, auth := range auths {
+		authByID[auth.ServerID] = auth
+	}
+	usersByID := make(map[int64]store.RuntimeUserState, len(users))
+	for _, state := range users {
+		usersByID[state.ServerID] = state
+	}
+	for i := range views {
+		if i >= len(states) {
+			break
+		}
+		auth := authByID[states[i].ServerID]
+		if auth.ServerID == 0 {
+			auth = store.AuthorizationState{ServerID: states[i].ServerID, Retryable: true}
+		}
+		userState := usersByID[states[i].ServerID]
+		if userState.ServerID == 0 {
+			userState = store.RuntimeUserState{ServerID: states[i].ServerID, Retryable: true}
+		}
+		attachLaneFieldsFromStates(views[i], auth, userState)
+	}
+}
+
+func attachLaneFieldsFromStates(item map[string]any, auth store.AuthorizationState, users store.RuntimeUserState) {
+	if item == nil {
+		return
+	}
 	item["desired_state"] = laneDesiredState(auth, users)
 	item["effective_state"] = laneEffectiveState(auth, users)
 	item["pending_reason"] = firstNonEmpty(auth.PendingReason, users.PendingReason)

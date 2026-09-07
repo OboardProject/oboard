@@ -11,6 +11,8 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+const defaultLatencyProbeIntervalSeconds = 120
+
 func normalizeLatencyProbeSettings(server *model.Server) {
 	if server.LatencyProbeMode != model.LatencyProbeModeICMP {
 		server.LatencyProbeMode = model.LatencyProbeModeTCP
@@ -21,7 +23,7 @@ func normalizeLatencyProbeSettings(server *model.Server) {
 		server.LatencyProbePublicTarget = model.ConnectivityProbeTargetAuto
 	}
 	if server.LatencyProbeIntervalSeconds < 30 || server.LatencyProbeIntervalSeconds > 86400 {
-		server.LatencyProbeIntervalSeconds = 60
+		server.LatencyProbeIntervalSeconds = defaultLatencyProbeIntervalSeconds
 	}
 	if server.LatencyProbeSampleCount < 1 || server.LatencyProbeSampleCount > 10 {
 		server.LatencyProbeSampleCount = 3
@@ -40,7 +42,7 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 		servers[i].LatencyProbeEnabled = true
 		servers[i].LatencyProbeMode = model.LatencyProbeModeTCP
 		servers[i].LatencyProbePublicTarget = model.ConnectivityProbeTargetAuto
-		servers[i].LatencyProbeIntervalSeconds = 60
+		servers[i].LatencyProbeIntervalSeconds = defaultLatencyProbeIntervalSeconds
 		servers[i].LatencyProbeSampleCount = 3
 		servers[i].LatencyProbeMaxTargets = 64
 		byID[servers[i].ID] = &servers[i]
@@ -202,7 +204,7 @@ func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, f
 	}
 
 	var dataStartText sql.NullString
-	if err := s.db.QueryRowContext(ctx, `select min(checked_at) from server_latency_probe_results where server_id=? and kind in ('regional','custom')`, serverID).Scan(&dataStartText); err != nil {
+	if err := s.db.QueryRowContext(ctx, `select checked_at from server_latency_probe_results where server_id=? and kind in ('regional','custom') order by checked_at asc,id asc limit 1`, serverID).Scan(&dataStartText); err != nil && err != sql.ErrNoRows {
 		return nil, nil, err
 	}
 	var dataStart *time.Time

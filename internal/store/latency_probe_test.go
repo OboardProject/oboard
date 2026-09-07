@@ -11,6 +11,26 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func TestCreateServerDefaultsLatencyProbeIntervalToTwoMinutes(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "latency-probe-default.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "latency-default", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.LatencyProbeIntervalSeconds != defaultLatencyProbeIntervalSeconds {
+		t.Fatalf("default interval = %d, want %d", stored.LatencyProbeIntervalSeconds, defaultLatencyProbeIntervalSeconds)
+	}
+}
+
 func TestLatencyProbeSettingsAndResultsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(filepath.Join(t.TempDir(), "latency-probe.sqlite"))

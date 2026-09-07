@@ -141,7 +141,7 @@ func (s *Service) PlanServerOnboarding(ctx context.Context, principal Principal,
 		input.LatencyProbePublicTarget = model.ConnectivityProbeTargetAuto
 	}
 	if input.LatencyProbeIntervalSeconds == 0 {
-		input.LatencyProbeIntervalSeconds = 60
+		input.LatencyProbeIntervalSeconds = 120
 	}
 	if input.LatencyProbeSampleCount == 0 {
 		input.LatencyProbeSampleCount = 3

@@ -71,3 +71,29 @@ func firstNamedServer(t *testing.T, raw any, name string) map[string]any {
 	t.Fatalf("server %q not found in %#v", name, raw)
 	return nil
 }
+
+func TestAnnotateServerDeliveryStatusUsesConstantQueries(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	var servers []model.Server
+	for i := 0; i < 8; i++ {
+		item := &model.Server{Name: "delivery-const-" + string(rune('a'+i)), ListenIP: "0.0.0.0", PortRangeStart: 20000 + i*10, PortRangeEnd: 20009 + i*10, Status: model.ServerOnline}
+		if err := db.CreateServer(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+		servers = append(servers, *item)
+	}
+	before := db.SQLStatementCount()
+	srv.annotateServerDeliveryStatus(ctx, servers)
+	if delta := db.SQLStatementCount() - before; delta != 3 {
+		t.Fatalf("SQL statements = %d, want 3 list queries", delta)
+	}
+	if !servers[0].AuthorizationFastLane || !servers[7].RuntimeUsersEnabled {
+		t.Fatalf("delivery flags were not applied: %#v", servers[0])
+	}
+}

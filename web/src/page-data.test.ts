@@ -108,8 +108,8 @@ describe('page-data cache freshness', () => {
 
 describe('idle page-data prefetch', () => {
   it('warms only common next pages instead of downloading every admin page', () => {
-    expect(idlePrefetchPages('admin', 'dashboard')).toEqual(['servers', 'proxy-paths', 'users', 'tasks'])
-    expect(idlePrefetchPages('admin', 'servers')).toEqual(['proxy-paths', 'users', 'tasks'])
+    expect(idlePrefetchPages('admin', 'dashboard')).toEqual(['servers', 'users', 'tasks'])
+    expect(idlePrefetchPages('admin', 'servers')).toEqual(['users', 'tasks'])
     expect(idlePrefetchPages('admin', 'dashboard')).not.toContain('audit')
     expect(idlePrefetchPages('admin', 'dashboard')).not.toContain('settings')
   })

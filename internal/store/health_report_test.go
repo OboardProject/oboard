@@ -172,7 +172,7 @@ func TestApplyHealthReportPreservesSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 10s apart with the default 60s sample interval: exactly one sample.
+	// 10s apart with the default 120s sample interval: exactly one sample.
 	if len(samples) != 1 {
 		t.Fatalf("metric samples = %d, want 1 (rate limited)", len(samples))
 	}

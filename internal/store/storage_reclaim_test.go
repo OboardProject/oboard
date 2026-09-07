@@ -36,6 +36,9 @@ func TestNewDatabaseUsesIncrementalAutoVacuum(t *testing.T) {
 	if got := sqlitePragmaInt(t, s, "cache_size"); got != -int64(defaultSQLiteCacheKB) {
 		t.Fatalf("cache_size = %d, want -%d", got, defaultSQLiteCacheKB)
 	}
+	if got := sqlitePragmaInt(t, s, "journal_size_limit"); got != sqliteJournalSizeLimitBytes {
+		t.Fatalf("journal_size_limit = %d, want %d", got, sqliteJournalSizeLimitBytes)
+	}
 }
 
 // An installation created before incremental auto-vacuum existed opens with

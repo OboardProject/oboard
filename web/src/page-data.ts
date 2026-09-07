@@ -9,8 +9,8 @@ export type PageDataRole = 'admin' | 'operator' | 'viewer' | 'none'
 const IDLE_PREFETCH_PAGES: Record<PageDataRole, string[]> = {
   none: ['nodes', 'account'],
   viewer: ['nodes', 'notifications', 'account'],
-  operator: ['servers', 'proxy-paths', 'tasks'],
-  admin: ['servers', 'proxy-paths', 'users', 'tasks'],
+  operator: ['servers', 'tasks'],
+  admin: ['servers', 'users', 'tasks'],
 }
 
 export function idlePrefetchPages(role: PageDataRole, activePage: string) {
