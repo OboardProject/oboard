@@ -4943,6 +4943,15 @@ func (s *Server) serverAgentConfig(w http.ResponseWriter, r *http.Request, id in
 	write(w, 202, map[string]any{"task": task})
 }
 
+// unsafeAgentManagedPathRune mirrors the Agent's managed-path character policy
+// so both sides reject the same values.
+func unsafeAgentManagedPathRune(r rune) bool {
+	if r < 0x20 || r == 0x7f {
+		return true
+	}
+	return strings.ContainsRune("'\"`$\\;&|<>()*?[]{}!#~ \t\n\r", r)
+}
+
 func validateAgentManagedPath(field, value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -4957,6 +4966,12 @@ func validateAgentManagedPath(field, value string) error {
 	}
 	if strings.Contains(cleaned, "..") {
 		return fmt.Errorf("%s must not contain dot-dot segments", field)
+	}
+	// The Agent renders these paths into a root shell script during uninstall,
+	// so a quote or substitution character is never a legitimate installation
+	// directory. Reject it here as well so the value cannot reach a signed task.
+	if i := strings.IndexFunc(cleaned, unsafeAgentManagedPathRune); i >= 0 {
+		return fmt.Errorf("%s must not contain %q", field, cleaned[i:i+1])
 	}
 	switch field {
 	case "state_dir":
@@ -14110,7 +14125,11 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	if decision.Burned {
 		w.Header().Set("X-OBoard-Subscription", "burned-after-read")
 	}
-	if event.ConditionalRequest {
+	// A burned credential is spent by this request, so its single payload must
+	// be delivered. Honouring If-None-Match here would consume the one-time or
+	// burn-after-read token and answer 304 with no body, leaving the client
+	// without content and no way to ask again.
+	if event.ConditionalRequest && !decision.Burned {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

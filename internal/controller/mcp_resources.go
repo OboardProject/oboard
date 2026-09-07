@@ -750,10 +750,13 @@ func (s *Server) authorizeResourceRead(ctx context.Context, capabilityName, uri 
 	if err != nil {
 		return err
 	}
+	// A collection capability URI carries no arguments, so it authorizes with a
+	// nil input. It must still reach the evaluator below: the singleton MCP
+	// server registers every read-only capability resource under a synthetic
+	// admin, and resources/read is not filtered by the per-principal list
+	// middleware, so this is the only place the grant's access level, role,
+	// resource boundary, and approval policy are checked.
 	var input any
-	if uri == "oboard://capability/"+capabilityName {
-		return nil
-	}
 	if strings.HasPrefix(uri, "oboard://capability/"+capabilityName+"/") {
 		property := mcpCapabilitySingleScalarID(descriptor)
 		if property == "" {

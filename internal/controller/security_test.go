@@ -1050,6 +1050,35 @@ func TestValidateAgentManagedPathHelpers(t *testing.T) {
 	}
 }
 
+// TestValidateAgentManagedPathRejectsShellMetacharacters keeps managed paths
+// free of shell syntax, because the Agent renders them into a root /bin/sh
+// script when it uninstalls itself.
+func TestValidateAgentManagedPathRejectsShellMetacharacters(t *testing.T) {
+	for _, value := range []string{
+		"/var/lib/oboard-agent/x'$(touch /tmp/pwned)'",
+		"/var/lib/oboard-agent/x;reboot",
+		"/var/lib/oboard-agent/x`id`",
+		"/var/lib/oboard-agent/x|tee /tmp/out",
+		"/var/lib/oboard-agent/x&",
+		"/var/lib/oboard-agent/x>/tmp/out",
+		"/var/lib/oboard-agent/x*",
+		"/var/lib/oboard-agent/x y",
+		"/var/lib/oboard-agent/x\nrm -rf /",
+	} {
+		if err := validateAgentManagedPath("state_dir", value); err == nil {
+			t.Fatalf("state_dir %q accepted", value)
+		}
+	}
+	for _, value := range []string{
+		"/usr/local/bin/oboard-sb",
+		"/opt/oboard/oboard-sb",
+	} {
+		if err := validateAgentManagedPath("core_binary", value); err != nil {
+			t.Fatalf("core_binary %q rejected: %v", value, err)
+		}
+	}
+}
+
 func TestFailRedactsInternalErrors(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	fail(recorder, errors.New("sqlite: secret database path"), http.StatusInternalServerError)
