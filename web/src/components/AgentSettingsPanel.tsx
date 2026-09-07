@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Switch } from './ui/switch'
 import { Select } from './ui/select'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './settings/SettingsLayout'
+import type { DialogApi } from './ui/dialog-context'
 
 export interface AgentSettingsPanelProps {
   data: any
   client: any
   load: (section?: string, options?: any) => Promise<void>
   notify: (message: string, tone?: 'success' | 'warning' | 'danger' | 'error' | 'info') => void
-  confirm?: (options: { title: string; message: string; confirmText?: string; tone?: string }) => Promise<boolean>
+  confirm?: DialogApi['confirm']
 }
 
 type TimeCorrectionMode = 'off' | 'auto' | 'ntp'

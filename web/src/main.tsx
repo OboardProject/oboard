@@ -3902,7 +3902,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </SettingsGroup>
       </section>}
-      {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={options => dialogs.confirm(options)} />}
+      {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
