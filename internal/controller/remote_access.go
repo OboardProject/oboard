@@ -356,6 +356,38 @@ func (s *Server) closeMCPTerminalsForServer(serverID int64) {
 	}, "remote_access_disabled")
 }
 
+func (s *Server) closeHumanTerminalsForServer(serverID int64) {
+	s.closeMatchingHumanTerminals(func(sess *terminalSession) bool {
+		return sess.ServerID == serverID
+	}, "remote_access_disabled")
+}
+
+func (s *Server) closeAllHumanTerminals(reason string) {
+	s.closeMatchingHumanTerminals(func(*terminalSession) bool { return true }, reason)
+}
+
+func (s *Server) closeMatchingHumanTerminals(match func(*terminalSession) bool, reason string) {
+	if s.terminalHub == nil {
+		return
+	}
+	s.terminalHub.mu.Lock()
+	matching := []*terminalSession{}
+	for _, sess := range s.terminalHub.sessions {
+		if sess.OwnerType != InteractiveOwnerHuman || !match(sess) {
+			continue
+		}
+		matching = append(matching, sess)
+	}
+	for _, sess := range matching {
+		delete(s.terminalHub.sessions, sess.ID)
+	}
+	s.terminalHub.mu.Unlock()
+	for _, sess := range matching {
+		sess.close(reason)
+		_ = s.sendAgentControl(sess.ServerID, map[string]any{"type": "interactive_close", "session_id": sess.ID})
+	}
+}
+
 func (s *Server) enforceMCPTerminalsForGrant(grantID string, grant *model.MCPPrivilegedGrant) {
 	if s.terminalHub == nil {
 		return
@@ -502,9 +534,7 @@ func (s *Server) updateServerRemoteAccessPolicy(ctx context.Context, server *mod
 		s.closeMCPTerminalsForServer(server.ID)
 	}
 	if before.RemoteTerminalEnabled && !next.RemoteTerminalEnabled {
-		// For Web terminals, we could close human terminals similarly, but spec says MCP and Web are isolated.
-		// We keep Web revocation separate if needed in future; currently no Web session tracking beyond terminalHub human sessions.
-		// We intentionally do NOT close MCP when Web is disabled and vice versa.
+		s.closeHumanTerminalsForServer(server.ID)
 	}
 	view, err := s.remoteAccessViewFromContext(ctx, server)
 	if err != nil {
@@ -707,17 +737,31 @@ func (s *Server) closeAllMCPTerminals(reason string) {
 
 func (s *Server) handleGlobalRemoteAccessChange(ctx context.Context, changedKeys []string, settings map[string]string) {
 	for _, key := range changedKeys {
-		if key == settingMCPEnabled {
+		switch key {
+		case settingMCPEnabled:
 			enabled := settingBool(settings, settingMCPEnabled, false)
 			if !enabled {
 				s.closeAllMCPTerminals("remote_access_global_disabled")
 			}
 			audit := model.RemoteAccessAuditEvent{
-				EventType: "remote_access.global_policy.updated",
-				ActorType: "system",
-				Result: stringBool(enabled),
+				EventType:  "remote_access.global_policy.updated",
+				ActorType:  "system",
+				Result:     stringBool(enabled),
 				Capability: "mcp",
-				MetadataJSON: json.RawMessage(`{"setting":"mcp_enabled","enabled":`+stringBoolJSON(enabled)+`}`),
+				MetadataJSON: json.RawMessage(`{"setting":"mcp_enabled","enabled":` + stringBoolJSON(enabled) + `}`),
+			}
+			_ = s.store.InsertRemoteAccessAudit(ctx, audit)
+		case settingRemoteTerminalEnabled:
+			enabled := settingBool(settings, settingRemoteTerminalEnabled, true)
+			if !enabled {
+				s.closeAllHumanTerminals("remote_access_global_disabled")
+			}
+			audit := model.RemoteAccessAuditEvent{
+				EventType:  "remote_access.global_policy.updated",
+				ActorType:  "system",
+				Result:     stringBool(enabled),
+				Capability: "remote_terminal",
+				MetadataJSON: json.RawMessage(`{"setting":"remote_terminal_enabled","enabled":` + stringBoolJSON(enabled) + `}`),
 			}
 			_ = s.store.InsertRemoteAccessAudit(ctx, audit)
 		}

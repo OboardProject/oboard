@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -124,7 +125,99 @@ func newRemoteExecPayload(serverID, grantID int64, privilege, mode string, argv 
 	if mode != model.RemoteExecModeArgv && mode != model.RemoteExecModeShell {
 		return model.RemoteExecTaskPayload{}, errors.New("unsupported exec mode")
 	}
+	if mode == model.RemoteExecModeArgv && remoteExecArgvInvokesShell(argv) {
+		return model.RemoteExecTaskPayload{}, errors.New("structured exec cannot invoke a shell; use remote_shell")
+	}
 	return payload, nil
+}
+
+func remoteExecArgvInvokesShell(argv []string) bool {
+	return remoteExecArgvInvokesShellDepth(argv, 0)
+}
+
+func remoteExecArgvInvokesShellDepth(argv []string, depth int) bool {
+	if len(argv) == 0 || depth > 3 {
+		return false
+	}
+	if remoteExecArgvIsShellName(argv[0]) {
+		return true
+	}
+	if !remoteExecArgvIsCommandWrapper(argv[0]) {
+		return false
+	}
+	cmd, rest, ok := remoteExecSplitWrappedCommand(argv)
+	if !ok {
+		return false
+	}
+	return remoteExecArgvInvokesShellDepth(append([]string{cmd}, rest...), depth+1)
+}
+
+func remoteExecArgvBase(arg string) string {
+	return strings.ToLower(filepath.Base(strings.TrimSpace(arg)))
+}
+
+func remoteExecArgvIsShellName(arg string) bool {
+	switch remoteExecArgvBase(arg) {
+	case "sh", "bash", "dash", "ash", "zsh", "ksh", "csh", "tcsh", "fish", "busybox":
+		return true
+	}
+	return false
+}
+
+func remoteExecArgvIsCommandWrapper(arg string) bool {
+	switch remoteExecArgvBase(arg) {
+	case "env", "nice", "nohup", "timeout", "stdbuf", "ionice", "chrt", "time", "watch", "xargs", "sudo", "doas", "flock", "setpriv", "capsh", "unshare", "nsenter":
+		return true
+	}
+	return false
+}
+
+func remoteExecLooksLikeTimeoutDuration(arg string) bool {
+	if arg == "" {
+		return false
+	}
+	digits := 0
+	for i, r := range arg {
+		if r >= '0' && r <= '9' || r == '.' {
+			digits++
+			continue
+		}
+		if i > 0 && (r == 's' || r == 'm' || r == 'h' || r == 'd') && i == len(arg)-1 {
+			return digits > 0
+		}
+		return false
+	}
+	return digits > 0
+}
+
+func remoteExecSplitWrappedCommand(argv []string) (string, []string, bool) {
+	if len(argv) < 2 {
+		return "", nil, false
+	}
+	wrapper := remoteExecArgvBase(argv[0])
+	for i := 1; i < len(argv); i++ {
+		arg := strings.TrimSpace(argv[i])
+		if arg == "" {
+			continue
+		}
+		if arg == "--" {
+			if i+1 >= len(argv) {
+				return "", nil, false
+			}
+			return argv[i+1], argv[i+2:], true
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if wrapper == "env" && strings.Contains(arg, "=") && !strings.HasPrefix(arg, "/") {
+			continue
+		}
+		if wrapper == "timeout" && remoteExecLooksLikeTimeoutDuration(arg) {
+			continue
+		}
+		return arg, argv[i+1:], true
+	}
+	return "", nil, false
 }
 
 func newRemoteOperationPayload(serverID, grantID int64, kind, service string, lines int) (model.RemoteOperationTaskPayload, error) {

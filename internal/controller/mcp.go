@@ -189,6 +189,22 @@ func (s *Server) mcpPrincipalFromRequest(ctx context.Context, req mcp.Request) (
 	return application.Principal{}, errors.New("authenticated OBoard principal is required")
 }
 
+func (s *Server) mcpGrantStillActive(ctx context.Context, grantID string, privilegedGrantID int64) bool {
+	if strings.TrimSpace(grantID) == "" || privilegedGrantID == 0 {
+		return false
+	}
+	grant, _, active, err := s.store.ResolveActiveGrant(ctx, grantID, time.Now().UTC())
+	if err != nil || !active || grant == nil {
+		return false
+	}
+	item, err := s.store.GetMCPPrivilegedGrantByOAuthGrant(ctx, grant.ID)
+	if err != nil {
+		return false
+	}
+	policy := loadPrivilegedGrantPolicy(item)
+	return policy != nil && policy.ID == privilegedGrantID && policy.HasCapability(model.PrivilegeRemoteInteractive)
+}
+
 func (s *Server) mcpGrantPrincipalFromRequest(ctx context.Context, req mcp.Request) (mcpauth.GrantPrincipal, error) {
 	// Prefer the current request token over the session context. Stateful MCP
 	// sessions retain their initialize context, while role and Privileged Grant

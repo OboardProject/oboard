@@ -283,23 +283,13 @@ func (s *Store) CreateOAuthAuthorizationCode(ctx context.Context, item *model.OA
 }
 
 func (s *Store) ConsumeOAuthAuthorizationCode(ctx context.Context, codeHash string) (*model.OAuthAuthorizationCode, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	var item model.OAuthAuthorizationCode
+	var expires, created, scopesJSON string
+	err := s.db.QueryRowContext(ctx, `delete from oauth_authorization_codes where code_hash=? returning code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at`, codeHash).Scan(&item.CodeHash, &item.GrantID, &item.ClientID, &item.UserID, &item.PrincipalID, &item.RedirectURI, &item.Resource, &item.CodeChallenge, &scopesJSON, &expires, &created)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
-	var item model.OAuthAuthorizationCode
-	var expires, created, scopesJSON string
-	if err := tx.QueryRowContext(ctx, `select code_hash,grant_id,client_id,user_id,principal_id,redirect_uri,resource,code_challenge,requested_scopes_json,expires_at,created_at from oauth_authorization_codes where code_hash=?`, codeHash).Scan(&item.CodeHash, &item.GrantID, &item.ClientID, &item.UserID, &item.PrincipalID, &item.RedirectURI, &item.Resource, &item.CodeChallenge, &scopesJSON, &expires, &created); err != nil {
-		return nil, err
-	}
 	_ = json.Unmarshal([]byte(scopesJSON), &item.Scopes)
-	if _, err := tx.ExecContext(ctx, `delete from oauth_authorization_codes where code_hash=?`, codeHash); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 	item.ExpiresAt, item.CreatedAt = parseTime(expires), parseTime(created)
 	return &item, nil
 }

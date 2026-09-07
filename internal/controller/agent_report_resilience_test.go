@@ -171,7 +171,7 @@ func TestAgentTrafficRejectsReportForDeletedUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(user.ID, inbound.ID, "tr-deleted-user", 0, 100, 0, 200), http.StatusOK)
-	assertTrafficRejection(t, response, "tr-deleted-user", "user_deleted")
+	assertTrafficRejection(t, response, "tr-deleted-user", "unattributable_traffic")
 }
 
 func TestAgentTrafficRejectsReportForInactiveUser(t *testing.T) {

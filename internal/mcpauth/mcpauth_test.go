@@ -66,6 +66,21 @@ func TestResourceBoundaryDenied(t *testing.T) {
 	}
 }
 
+func TestResourceBoundaryDeniedIncludeFutureFalseUsesSnapshot(t *testing.T) {
+	boundary := ResourceBoundary{
+		Version: ResourceBoundaryVersion,
+		Resources: map[string]ResourceSelection{
+			"server": {Selection: SelectionAll, IncludeFuture: false, IDs: []string{"1", "2"}},
+		},
+	}.Normalized()
+	if len(boundary.Denied([]ResourceRef{{Type: "server", ID: "1"}})) != 0 {
+		t.Fatal("snapshotted current server must stay allowed")
+	}
+	if len(boundary.Denied([]ResourceRef{{Type: "server", ID: "99"}})) != 1 {
+		t.Fatal("all + include_future=false must deny servers outside the snapshot")
+	}
+}
+
 func TestResourceBoundaryAllowsCreateNotImplied(t *testing.T) {
 	boundary := ResourceBoundary{Version: 1, Resources: map[string]ResourceSelection{"server": {Selection: SelectionAll}}}.Normalized()
 	if boundary.AllowsCreate("server") {

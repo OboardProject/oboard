@@ -281,6 +281,7 @@ func TestTrafficLedgerV2MigratesFromPreviousSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range []string{
+		`drop trigger if exists traffic_tail_on_user_delete`,
 		`drop index if exists idx_traffic_reports_range`,
 		`drop index if exists idx_traffic_reports_v2_range`,
 		`drop table if exists traffic_counter_streams`,

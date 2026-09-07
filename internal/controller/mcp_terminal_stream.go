@@ -174,8 +174,10 @@ func (s *Server) mcpTerminalStream(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		// Re-check liveness on every client frame (hot auth).
-		if grantNow, err := mcpGrantPrincipal(r.Context()); err != nil || grantNow.PrivilegedGrant == nil || grantNow.PrivilegedGrant.ID != session.PrivilegedGrantID {
+		// Re-check liveness on every client frame (hot auth). Reload the grant
+		// from the store so an OAuth or Privileged Grant revoke takes effect
+		// even though the handshake principal stays in the request context.
+		if !s.mcpGrantStillActive(r.Context(), session.OAuthGrantID, session.PrivilegedGrantID) {
 			s.closeMCPTerminalSession(sessionID, "privileged_grant_revoked")
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"closed","reason":"privileged_grant_revoked"}`))

@@ -738,6 +738,11 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	if value, ok := updates[agentAutoUpdateSetting]; ok && value == "true" && s.agentUpdates != nil {
 		s.agentUpdates.Wake()
 	}
+	items, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.handleGlobalRemoteAccessChange(ctx, changed, items)
 	return changed, nil
 }
 

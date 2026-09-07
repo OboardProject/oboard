@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -77,6 +79,48 @@ func TestRemoteAccessDefaults(t *testing.T) {
 	}
 }
 
+func TestPrivilegedGrantRemoteExecDoesNotImplyRawShell(t *testing.T) {
+	grant := &model.OAuthGrant{ID: "grt_exec", ClientID: "oc_1", UserID: 1}
+	got, err := normalizePrivilegedGrantInput(grant, 1, privilegedAccessInput{Capabilities: []string{model.PrivilegeRemoteExec}}, []string{"12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.HasCapability(model.PrivilegeRemoteExec) {
+		t.Fatalf("exec grant missing remote_exec: %#v", got.Capabilities)
+	}
+	if got.HasCapability(model.PrivilegeRemoteShell) || got.HasCapability(model.PrivilegeRemoteInteractive) {
+		t.Fatalf("exec-only grant expanded to shell/pty: %#v", got.Capabilities)
+	}
+}
+
+func TestPrivilegedGrantSnapshotsServersWhenIncludeFutureFalse(t *testing.T) {
+	grant := &model.OAuthGrant{ID: "grt_snap", ClientID: "oc_1", UserID: 1}
+	boundary, _ := json.Marshal(mcpauth.ResourceBoundary{
+		Version: mcpauth.ResourceBoundaryVersion,
+		Resources: map[string]mcpauth.ResourceSelection{
+			"server": {Selection: mcpauth.SelectionAll, IncludeFuture: false},
+		},
+	})
+	got, err := normalizePrivilegedGrantInput(grant, 1, privilegedAccessInput{
+		Capabilities:     []string{model.PrivilegeRemoteExec},
+		ResourceBoundary: boundary,
+	}, []string{"12", "15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := mcpauth.ParseBoundary(got.ResourceBoundaryJSON)
+	sel := parsed.Selection("server")
+	if sel.Selection != mcpauth.SelectionSelected || sel.IncludeFuture {
+		t.Fatalf("expected selected snapshot, got %#v", sel)
+	}
+	if !slices.Contains(sel.IDs, "12") || !slices.Contains(sel.IDs, "15") {
+		t.Fatalf("snapshot ids=%v", sel.IDs)
+	}
+	if parsed.AllowsResource(mcpauth.ResourceRef{Type: "server", ID: "99"}) {
+		t.Fatal("new server must be denied when include_future is false")
+	}
+}
+
 func TestPrivilegedGrantElevation(t *testing.T) {
 	next := model.MCPPrivilegedGrant{Capabilities: []string{model.PrivilegeRemoteExec}}
 	if !privilegedGrantElevates(nil, next) {
@@ -121,6 +165,69 @@ func TestMCPEvaluatorRequiresPrivilegedGrant(t *testing.T) {
 	denied := eval.Authorize(context.Background(), grant, spec, map[string]any{"server_id": 99})
 	if denied.Allowed || denied.Code != mcpauth.CodeResourceDenied {
 		t.Fatalf("privileged boundary must deny other servers: %#v", denied)
+	}
+}
+
+func TestHumanTerminalsCloseWhenServerTerminalDisabled(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "human-pty.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	node := &model.Server{Name: "human-pty", AgentID: "agent-human", AgentTokenHash: security.HashSecret("token"), ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(db, "test-secret", "")
+	srv.terminalHub.sessions["human-1"] = &terminalSession{ID: "human-1", ServerID: node.ID, OwnerType: InteractiveOwnerHuman}
+	disabled := false
+	if _, err := srv.updateServerRemoteAccessPolicy(ctx, node, RemoteAccessPolicyPatch{RemoteTerminalEnabled: &disabled}, "user", "127.0.0.1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if srv.terminalHub.countForServer(node.ID) != 0 {
+		t.Fatal("disabling remote terminal left a human PTY open")
+	}
+}
+
+func TestHumanTerminalsCloseWhenGlobalTerminalDisabled(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "human-pty-global.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	node := &model.Server{Name: "human-pty-global", AgentID: "agent-human-global", AgentTokenHash: security.HashSecret("token"), ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(db, "test-secret", "")
+	srv.terminalHub.sessions["human-global"] = &terminalSession{ID: "human-global", ServerID: node.ID, OwnerType: InteractiveOwnerHuman}
+	srv.handleGlobalRemoteAccessChange(ctx, []string{settingRemoteTerminalEnabled}, map[string]string{settingRemoteTerminalEnabled: "false"})
+	if srv.terminalHub.countForServer(node.ID) != 0 {
+		t.Fatal("disabling global remote terminal left a human PTY open")
+	}
+}
+
+func TestSettingsUpdateCandidateClosesHumanTerminals(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "settings-pty.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	node := &model.Server{Name: "settings-pty", AgentID: "agent-settings-pty", AgentTokenHash: security.HashSecret("token"), ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(db, "test-secret", "")
+	srv.terminalHub.sessions["human-settings"] = &terminalSession{ID: "human-settings", ServerID: node.ID, OwnerType: InteractiveOwnerHuman}
+	input, _ := json.Marshal(map[string]any{"changes": map[string]any{settingRemoteTerminalEnabled: false}})
+	if _, err := srv.settingsUpdateCandidate(ctx, input, true); err != nil {
+		t.Fatal(err)
+	}
+	if srv.terminalHub.countForServer(node.ID) != 0 {
+		t.Fatal("settings.update left a human PTY open after global disable")
 	}
 }
 

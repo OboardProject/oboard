@@ -1047,6 +1047,73 @@ func TestOAuthAuthorizationCodePKCESingleUseAndCoarseScopes(t *testing.T) {
 	}
 }
 
+func TestOAuthAuthorizationCodeConcurrentExchangeIsSingleUse(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(db, "test-secret", "")
+	handler := server.Handler()
+	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	sessionToken := login["token"].(string)
+	client := testOAuthClient(t, db, "oc_pkce_race", "PKCE race", []string{"https://client.example/callback"})
+	verifier := strings.Repeat("b", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	form := url.Values{"client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "response_type": {"code"}, "scope": {"oboard:read offline_access"}, "state": {"state-race"}, "resource": {"https://panel.example.com/api/v1/mcp"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "decision": {"approve"}}
+	authorize := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	authorize.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	authorize.Header.Set("Authorization", "Bearer "+sessionToken)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, authorize)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("authorize status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	location, err := oauthSuccessRedirectURL(recorder.Body.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := location.Query().Get("code")
+	if code == "" {
+		t.Fatal("missing authorization code")
+	}
+	var wg sync.WaitGroup
+	results := make([]int, 8)
+	for i := range results {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			values := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {client.ID}, "redirect_uri": {client.RedirectURIs[0]}, "code_verifier": {verifier}, "resource": {"https://panel.example.com/api/v1/mcp"}}
+			req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			out := httptest.NewRecorder()
+			handler.ServeHTTP(out, req)
+			results[index] = out.Code
+		}(i)
+	}
+	wg.Wait()
+	ok := 0
+	denied := 0
+	for _, status := range results {
+		switch status {
+		case http.StatusOK:
+			ok++
+		case http.StatusBadRequest:
+			denied++
+		default:
+			t.Fatalf("unexpected token status %d from %#v", status, results)
+		}
+	}
+	if ok != 1 || denied != 7 {
+		t.Fatalf("concurrent code exchange statuses=%v want one 200 and seven 400", results)
+	}
+}
+
 func TestMCPRejectsInvalidOriginHeader(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

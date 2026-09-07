@@ -55,8 +55,9 @@ func TestTimeCheckSettingsAndServerModeChangeQueueImmediately(t *testing.T) {
 	if err := db.UpdateServer(context.Background(), server); err != nil {
 		t.Fatal(err)
 	}
-	server.TimeCorrectionMode = model.TimeCorrectionNTP
-	response := request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+itoa(serverID), token, server, http.StatusOK)
+	response := request(t, h, http.MethodPatch, "/api/v1/ui/servers/"+itoa(serverID), token, map[string]any{
+		"time_correction_mode": model.TimeCorrectionNTP,
+	}, http.StatusOK)
 	if response["time_check_task"] == nil {
 		t.Fatalf("mode change did not queue an immediate time check: %#v", response)
 	}

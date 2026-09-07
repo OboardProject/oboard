@@ -124,6 +124,8 @@ type Server struct {
 	agentConnectionCount          map[int64]int
 	agentLiveMu                   sync.Mutex
 	agentLive                     map[int64][]chan any
+	agentConnsMu                  sync.Mutex
+	agentConns                    map[int64][]agentConnSession
 	remoteExecHub                 *remoteExecResultHub
 	terminalHub                   *terminalSessionHub
 	notificationMu                sync.Mutex
@@ -278,6 +280,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
+	s.agentConns = map[int64][]agentConnSession{}
 	s.remoteExecHub = newRemoteExecResultHub()
 	s.terminalHub = newTerminalSessionHub()
 	s.agentUpdates = newAgentUpdateCoordinator(s)
@@ -435,7 +438,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/warp-profiles/", s.auth(s.warpProfiles, model.RoleOperator))
 	mux.HandleFunc("/api/v1/users", s.auth(s.users, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/users/", s.auth(s.users, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/traffic-ledger", s.auth(s.trafficLedger, model.RoleViewer))
+	mux.HandleFunc("/api/v1/traffic-ledger", s.auth(s.trafficLedger, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/traffic-ledger/reconcile", s.auth(s.trafficLedgerReconcile, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/assignable-nodes", s.auth(s.assignableNodes, model.RoleOperator))
 	mux.HandleFunc("/api/v1/assignable-nodes/", s.auth(s.assignableNodeDetail, model.RoleOperator))
@@ -1485,8 +1488,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 					fail(w, errors.New("默认注册用户组不存在"), http.StatusBadRequest)
 					return
 				}
-				if group.SystemKey == store.UserGroupSystemAdmins {
-					fail(w, errors.New("默认注册用户组不能是系统管理员组"), http.StatusBadRequest)
+				if registrationGroupGrantsAdmin(*group) {
+					fail(w, errors.New("默认注册用户组不能授予管理员角色"), http.StatusBadRequest)
 					return
 				}
 			}
@@ -3022,12 +3025,16 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if groupID := registrationDefaultGroupID(settings); groupID > 0 {
-		if group, err := s.store.GetUserGroup(r.Context(), groupID); err == nil && group.SystemKey != store.UserGroupSystemAdmins {
+		if group, err := s.store.GetUserGroup(r.Context(), groupID); err == nil && !registrationGroupGrantsAdmin(*group) {
 			_ = s.store.CreateUserGroupMember(r.Context(), &model.UserGroupMember{GroupID: group.ID, UserID: u.ID, Enabled: true})
 		}
 	}
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{ActorID: &u.ID, Action: "register", Target: "user", Detail: u.Username, IP: clientIP(r)})
 	write(w, http.StatusCreated, map[string]any{"user": map[string]any{"id": u.ID, "username": u.Username, "nickname": u.Nickname, "role": u.Role}})
+}
+
+func registrationGroupGrantsAdmin(group model.UserGroup) bool {
+	return group.SystemKey == store.UserGroupSystemAdmins || group.Role == model.RoleAdmin
 }
 
 func registrationDefaultGroupID(settings map[string]string) int64 {
@@ -5377,9 +5384,23 @@ func scrubSensitiveValue(v any) {
 			lower := strings.ToLower(key)
 			if strings.Contains(lower, "password") || strings.Contains(lower, "token") || strings.Contains(lower, "secret") ||
 				strings.Contains(lower, "private") || lower == "config" || lower == "config_json" ||
-				strings.Contains(lower, "authorization") || strings.Contains(lower, "key_path") || strings.Contains(lower, "uuid") {
+				strings.Contains(lower, "authorization") || strings.Contains(lower, "key_path") || strings.Contains(lower, "uuid") ||
+				lower == "key" || lower == "psk" {
 				node[key] = "<redacted>"
 				continue
+			}
+			if text, ok := child.(string); ok {
+				trimmed := strings.TrimSpace(text)
+				if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+					var nested any
+					if json.Unmarshal([]byte(trimmed), &nested) == nil {
+						scrubSensitiveValue(nested)
+						if encoded, err := json.Marshal(nested); err == nil {
+							node[key] = string(encoded)
+							continue
+						}
+					}
+				}
 			}
 			scrubSensitiveValue(child)
 		}
@@ -14241,6 +14262,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	// desired state immediately so its first connection applies the topology
 	// instead of waiting for a manual deployment. Brand-new servers without any
 	// topology are skipped by the relevance gate inside the helper.
+	s.evictAgentSessions(server.ID)
 	s.queueDeploymentAfterReconnect(r.Context(), server.ID)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
@@ -14334,11 +14356,14 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	s.trackAgentConnection(r.Context(), server.ID, true, connectedAt.UTC())
 	controlCh := make(chan any, 16)
 	s.registerAgentLive(server.ID, controlCh)
+	s.registerAgentConn(server.ID, server.AgentID, conn)
+	connectedAgentID := server.AgentID
 	// A reconnecting Agent may have missed a revoke; the worker re-evaluates
 	// this server and pushes the current snapshot on the new socket.
 	s.wakeAuthorizationSync()
 	s.wakeRuntimeUsersSync()
 	defer func() {
+		s.unregisterAgentConn(server.ID, conn)
 		s.unregisterAgentLive(server.ID, controlCh)
 		s.trackAgentConnection(context.Background(), server.ID, false, time.Now().UTC())
 		log.Printf("agent disconnected server=%d(%s) connected_for=%s", server.ID, safeLogField(server.Name), time.Since(connectedAt).Round(time.Second))
@@ -14429,6 +14454,11 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	notifyCh := s.tasks.channel(server.ID)
 	claimTask := func() {
 		for inFlightTaskID == 0 {
+			latest, loadErr := s.store.GetServer(r.Context(), server.ID)
+			if loadErr != nil || latest.AgentID != connectedAgentID {
+				return
+			}
+			server = latest
 			task, err := s.store.NextTask(r.Context(), server.ID)
 			if err != nil {
 				return

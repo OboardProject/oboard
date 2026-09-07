@@ -268,6 +268,37 @@ func TestHermesStableTerminalToolsAuthorizeWithoutRelist(t *testing.T) {
 	}
 }
 
+func TestOAuthGrantRevocationClosesMCPTerminal(t *testing.T) {
+	db, app, _, principal, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
+	defer closeServer()
+	ctx := context.Background()
+	node := &model.Server{Name: "oauth-revoke-pty", AgentID: "agent-revoke", AgentTokenHash: security.HashSecret("agent-token"), ListenIP: "0.0.0.0", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	privileged := upsertInteractiveTestGrant(t, db, principal.ID)
+	grants, err := db.ListOAuthGrants(ctx)
+	if err != nil || len(grants) == 0 {
+		t.Fatalf("grants=%#v err=%v", grants, err)
+	}
+	grantID := privileged.OAuthGrantID
+	app.terminalHub.sessions["sess-oauth-revoke"] = &terminalSession{
+		ID: "sess-oauth-revoke", ServerID: node.ID, OwnerType: InteractiveOwnerMCP,
+		OAuthGrantID: grantID, OAuthClientID: privileged.OAuthClientID, PrivilegedGrantID: privileged.ID,
+	}
+	if app.terminalHub.countForGrant(grantID) != 1 {
+		t.Fatal("expected one MCP terminal for the grant")
+	}
+	adminToken := request(t, app.Handler(), http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	request(t, app.Handler(), http.MethodDelete, "/api/v1/oauth-grants/"+grantID, adminToken, nil, http.StatusOK)
+	if app.terminalHub.countForGrant(grantID) != 0 {
+		t.Fatal("OAuth grant revoke left a live MCP PTY")
+	}
+	if app.mcpGrantStillActive(ctx, grantID, privileged.ID) {
+		t.Fatal("revoked OAuth grant still looked active to the stream hot-auth check")
+	}
+}
+
 func TestHermesCLIInitialDiscoveryIncludesStableTerminalTools(t *testing.T) {
 	hermesBin := strings.TrimSpace(os.Getenv("HERMES_BIN"))
 	if hermesBin == "" {

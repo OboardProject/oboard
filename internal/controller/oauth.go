@@ -254,6 +254,7 @@ func (s *Server) oauthGrant(w http.ResponseWriter, r *http.Request) {
 		v2HandleError(w, r, err)
 		return
 	}
+	s.closeMCPTerminalsForGrant(id)
 	auditReq(s, r, "revoke", "oauth_grant", id)
 	v2Write(w, r, http.StatusOK, map[string]any{"id": id, "revoked": true}, nil)
 }

@@ -1,9 +1,11 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,7 +69,7 @@ func (s *Server) putPrivilegedAccess(w http.ResponseWriter, r *http.Request, gra
 	if !decode(w, r, &req) {
 		return
 	}
-	next, err := normalizePrivilegedGrantInput(grant, user.ID, req)
+	next, err := normalizePrivilegedGrantInput(grant, user.ID, req, s.currentServerIDs(r.Context()))
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
 		return
@@ -125,7 +127,7 @@ func (s *Server) deletePrivilegedAccess(w http.ResponseWriter, r *http.Request, 
 	write(w, http.StatusOK, map[string]any{"revoked": true})
 }
 
-func normalizePrivilegedGrantInput(grant *model.OAuthGrant, actorID int64, req privilegedAccessInput) (model.MCPPrivilegedGrant, error) {
+func normalizePrivilegedGrantInput(grant *model.OAuthGrant, actorID int64, req privilegedAccessInput, currentServerIDs []string) (model.MCPPrivilegedGrant, error) {
 	remoteCaps := map[string]bool{}
 	seen := map[string]bool{}
 	hasExplicitAll := false
@@ -154,11 +156,8 @@ func normalizePrivilegedGrantInput(grant *model.OAuthGrant, actorID int64, req p
 			return model.MCPPrivilegedGrant{}, errors.New("unsupported privileged capability")
 		}
 	}
-	// Build caps list: remote operations bundle remains, manage is independent
 	caps := []string{}
-	if hasExplicitAll || len(remoteCaps) == 0 && !manageRequested && len(req.Capabilities) == 0 {
-		caps = []string{model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive}
-	} else if len(remoteCaps) > 0 && len(remoteCaps) < 4 {
+	if hasExplicitAll || (len(remoteCaps) == 0 && !manageRequested && len(req.Capabilities) == 0) {
 		caps = []string{model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive}
 	} else {
 		for _, c := range []string{model.PrivilegeRemoteOperations, model.PrivilegeRemoteExec, model.PrivilegeRemoteShell, model.PrivilegeRemoteInteractive} {
@@ -182,7 +181,13 @@ func normalizePrivilegedGrantInput(grant *model.OAuthGrant, actorID int64, req p
 	if sel, ok := boundary.Resources["server"]; ok {
 		sel.AllowCreate = false
 		if sel.Selection == mcpauth.SelectionAll && !sel.IncludeFuture {
-			// keep include_future as provided; default false
+			if len(currentServerIDs) == 0 {
+				sel.Selection = mcpauth.SelectionNone
+				sel.IDs = nil
+			} else {
+				sel.Selection = mcpauth.SelectionSelected
+				sel.IDs = append([]string(nil), currentServerIDs...)
+			}
 		}
 		if sel.Selection == "" {
 			sel.Selection = mcpauth.SelectionSelected
@@ -253,6 +258,21 @@ func privilegedAccessView(item model.MCPPrivilegedGrant) map[string]any {
 		"expires_at": item.ExpiresAt, "revoked_at": item.RevokedAt, "revision": item.Revision,
 		"last_step_up_at": item.LastStepUpAt, "updated_at": item.UpdatedAt,
 	}
+}
+
+func (s *Server) currentServerIDs(ctx context.Context) []string {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	items, err := s.store.ListServers(ctx)
+	if err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, strconv.FormatInt(item.ID, 10))
+	}
+	return ids
 }
 
 func loadPrivilegedGrantPolicy(item *model.MCPPrivilegedGrant) *mcpauth.PrivilegedGrantPolicy {

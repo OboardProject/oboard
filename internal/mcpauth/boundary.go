@@ -105,7 +105,9 @@ func (b ResourceBoundary) Denied(refs []ResourceRef) []ResourceRef {
 		}
 		switch sel.Selection {
 		case SelectionAll:
-			// all allows current and (when include_future) future objects.
+			if !sel.IncludeFuture && len(sel.IDs) > 0 && !slices.Contains(sel.IDs, ref.ID) {
+				denied = append(denied, ref)
+			}
 		case SelectionSelected:
 			if !slices.Contains(sel.IDs, ref.ID) {
 				denied = append(denied, ref)
