@@ -452,12 +452,24 @@ script_runtime_installed() {
   [ -f /etc/systemd/system/oboard-script-worker.service ] || [ -f /etc/init.d/oboard-script-worker ]
 }
 
+write_script_runtime_opt_in() {
+  [ -n "${CONTROLLER_CONFIG_DIR:-}" ] || return 0
+  install -d -m 0750 -o root -g root "$CONTROLLER_CONFIG_DIR"
+  : > "$CONTROLLER_CONFIG_DIR/script-runtime.wanted"
+  chmod 0644 "$CONTROLLER_CONFIG_DIR/script-runtime.wanted"
+}
+
+script_runtime_opted_in() {
+  [ -n "${CONTROLLER_CONFIG_DIR:-}" ] && [ -f "$CONTROLLER_CONFIG_DIR/script-runtime.wanted" ]
+}
+
 want_script_runtime() {
-  case "${OBOARD_INSTALL_SCRIPTS:-0}" in
+  case "${OBOARD_INSTALL_SCRIPTS:-}" in
+    0|false|no) return 1 ;;
     1|true|yes) return 0 ;;
   esac
-  [ "$ACTION" = enable-scripts ] && return 0
-  script_runtime_installed
+  [ "${ACTION:-}" = enable-scripts ] && return 0
+  script_runtime_opted_in
 }
 
 install_script_runtime() {
@@ -467,6 +479,7 @@ install_script_runtime() {
     return 1
   fi
   echo "  正在安装脚本运行环境..."
+  write_script_runtime_opt_in
   install_file_atomic "$work/bin/oboard-script-worker" "$INSTALL_DIR/oboard-script-worker" 0755
   prepare_script_worker_user
   if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
@@ -1204,7 +1217,8 @@ uninstall_controller() {
     systemctl daemon-reload >/dev/null 2>&1
     systemctl reset-failed oboard-controller.service oboard-controller-updater.service oboard-ai-worker.service oboard-script-worker.service >/dev/null 2>&1 || true
   fi
-  rm -f "$INSTALL_DIR/oboard-controller" \
+  rm -f "$CONTROLLER_CONFIG_DIR/script-runtime.wanted" \
+    "$INSTALL_DIR/oboard-controller" \
     "$INSTALL_DIR/oboard-controller-updater" \
     "$INSTALL_DIR/oboard-ai-worker" \
     "$INSTALL_DIR/oboard-script-worker" \
@@ -1337,6 +1351,8 @@ install_component() {
         systemctl restart oboard-ai-worker >> "$INSTALL_LOG" 2>&1
         if want_script_runtime; then
           install_script_runtime "$work" "$os" "$service_manager"
+        else
+          echo "  未安装脚本运行环境（默认关闭）。"
         fi
         clear_bootstrap_admin_password
         ;;
@@ -1383,6 +1399,8 @@ install_component() {
         rc-service oboard-ai-worker restart >> "$INSTALL_LOG" 2>&1
         if want_script_runtime; then
           install_script_runtime "$work" "$os" "$service_manager"
+        else
+          echo "  未安装脚本运行环境（默认关闭）。"
         fi
         clear_bootstrap_admin_password
         ;;

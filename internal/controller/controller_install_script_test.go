@@ -87,6 +87,8 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"want_script_runtime",
 		"install_script_runtime",
 		"script_runtime_installed",
+		"script-runtime.wanted",
+		"未安装脚本运行环境（默认关闭）。",
 		"正在安装脚本运行环境",
 		"请回到面板启用脚本执行",
 		"prepare_script_worker_user",
@@ -431,12 +433,12 @@ func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
 	}
 	root := t.TempDir()
 	unit := filepath.Join(root, "oboard-script-worker.service")
-	missing := filepath.Join(root, "missing-openrc")
-	installed := extractShellFunction(t, script, "script_runtime_installed")
-	installed = strings.ReplaceAll(installed, "/etc/systemd/system/oboard-script-worker.service", shellQuote(unit))
-	installed = strings.ReplaceAll(installed, "/etc/init.d/oboard-script-worker", shellQuote(missing))
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	functions := strings.Join([]string{
-		installed,
+		extractShellFunction(t, script, "script_runtime_opted_in"),
 		extractShellFunction(t, script, "want_script_runtime"),
 	}, "\n")
 	run := func(t *testing.T, env string) string {
@@ -444,6 +446,7 @@ func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
 		harness := strings.Join([]string{
 			"set -eu",
 			functions,
+			"CONTROLLER_CONFIG_DIR=" + shellQuote(configDir),
 			env,
 			`if want_script_runtime; then printf yes; else printf no; fi`,
 		}, "\n")
@@ -459,17 +462,29 @@ func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
 	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
 		t.Fatalf("default update selected script runtime: %s", got)
 	}
+	if err := os.WriteFile(unit, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
+		t.Fatalf("leftover unit selected script runtime on install: %s", got)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
+		t.Fatalf("leftover unit selected script runtime on update: %s", got)
+	}
 	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS=1"); got != "yes" {
 		t.Fatalf("OBOARD_INSTALL_SCRIPTS=1 did not select script runtime: %s", got)
 	}
 	if got := run(t, "ACTION=enable-scripts\nOBOARD_INSTALL_SCRIPTS="); got != "yes" {
 		t.Fatalf("enable-scripts did not select script runtime: %s", got)
 	}
-	if err := os.WriteFile(unit, []byte("[Unit]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "script-runtime.wanted"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "yes" {
-		t.Fatalf("existing unit did not keep script runtime: %s", got)
+		t.Fatalf("wanted marker did not keep script runtime: %s", got)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS=0"); got != "no" {
+		t.Fatalf("OBOARD_INSTALL_SCRIPTS=0 did not skip script runtime: %s", got)
 	}
 }
 
@@ -761,7 +776,16 @@ func controllerInstallScript(t *testing.T) string {
 
 func extractShellFunction(t *testing.T, script, name string) string {
 	t.Helper()
-	start := strings.Index(script, name+"() {")
+	needle := name + "() {"
+	start := -1
+	if strings.HasPrefix(script, needle) {
+		start = 0
+	} else {
+		start = strings.Index(script, "\n"+needle)
+		if start >= 0 {
+			start++
+		}
+	}
 	if start < 0 {
 		t.Fatalf("script is missing %s", name)
 	}
