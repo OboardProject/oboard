@@ -14,6 +14,9 @@ const (
 	defaultAgentSocketPingInterval = 30 * time.Second
 	defaultAgentSocketReadTimeout  = 90 * time.Second
 	defaultAgentSocketWriteTimeout = 20 * time.Second
+	// defaultAgentSocketReadLimit is the reassembled application-message cap
+	// for the authenticated Agent WebSocket. Keep this identical to Agent.
+	defaultAgentSocketReadLimit = 16 << 20
 )
 
 func (s *Server) agentSocketKeepalive() (ping, read, write time.Duration) {
@@ -28,6 +31,13 @@ func (s *Server) agentSocketKeepalive() (ping, read, write time.Duration) {
 		write = defaultAgentSocketWriteTimeout
 	}
 	return ping, read, write
+}
+
+func (s *Server) agentSocketMessageLimit() int {
+	if s != nil && s.agentSocketReadLimit > 0 {
+		return s.agentSocketReadLimit
+	}
+	return defaultAgentSocketReadLimit
 }
 
 // One server can hold several agent sockets at once: agentConnect counts

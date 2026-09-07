@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -353,5 +354,42 @@ func TestDuplicateAgentConnectionClaimsTaskOnce(t *testing.T) {
 	}
 	if msg := other.readMessageMaybe(800 * time.Millisecond); msg != nil && msg["type"] == "task_request" {
 		t.Fatalf("duplicate task dispatched on second connection: %#v", msg)
+	}
+}
+
+func TestTaskDispatchFailsOversizedRequestWithoutDroppingControlChannel(t *testing.T) {
+	db, srv, server, httpServer := newTaskDispatchServer(t)
+	srv.agentSocketReadLimit = 2048
+	ctx := context.Background()
+	oversized := &model.AgentTask{
+		ServerID: server.ID, Type: model.AgentTaskTypeCollectLogs,
+		PayloadJSON: `{"blob":"` + strings.Repeat("a", 4000) + `"}`,
+		Status:      "pending", ResultJSON: "{}", ConfigVersion: 1, Nonce: "oversized-nonce",
+	}
+	if err := db.CreateTask(ctx, oversized); err != nil {
+		t.Fatal(err)
+	}
+	small := pendingTestTask(server.ID, 3)
+	if err := db.CreateTask(ctx, small); err != nil {
+		t.Fatal(err)
+	}
+	socket := connectTestAgent(t, srv, httpServer.URL, server)
+	defer socket.close()
+	dispatched := socket.expectTaskRequest(2 * time.Second)
+	if taskID(dispatched) != small.ID {
+		t.Fatalf("dispatched task %d, want small task %d", taskID(dispatched), small.ID)
+	}
+	failed, err := db.GetTask(ctx, oversized.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != "failed" || !strings.Contains(failed.ResultJSON, "task_request_too_large") {
+		t.Fatalf("oversized task status=%s result=%s", failed.Status, failed.ResultJSON)
+	}
+	if !srv.agentControlOnline(server.ID) {
+		t.Fatal("oversized task_request must not drop the control channel")
+	}
+	if !srv.sendAgentControl(server.ID, map[string]any{"type": "interactive_prepare"}) {
+		t.Fatal("control payload must still reach the agent after an oversized task is rejected")
 	}
 }

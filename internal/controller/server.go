@@ -195,6 +195,10 @@ type Server struct {
 	agentSocketPingInterval time.Duration
 	agentSocketReadTimeout  time.Duration
 	agentSocketWriteTimeout time.Duration
+	// agentSocketReadLimit overrides the reassembled Agent websocket message
+	// cap. Tests lower it so an oversized task_request can be failed without
+	// writing a multi-megabyte frame.
+	agentSocketReadLimit int
 	// configurationWake is a coalesced hint for the durable desired-state
 	// reconciler. SQLite configuration_sync_states remains authoritative.
 	configurationWake  chan struct{}
@@ -13636,7 +13640,7 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
 		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
-		PortLedger: ledger,
+		PortLedger:      ledger,
 		RuntimeUsersOut: &runtimeUsers,
 	})
 	if err != nil {
@@ -14315,7 +14319,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	conn.SetReadLimit(1 << 20) // 1 MiB max agent websocket frame
+	conn.SetReadLimit(int64(s.agentSocketMessageLimit()))
 	pingInterval, readTimeout, writeTimeout := s.agentSocketKeepalive()
 	// Any frame from the Agent proves the socket is alive, so both ordinary
 	// reads and pongs extend the deadline. A host killed without closing TCP
@@ -14424,26 +14428,43 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	// NextTask remains the atomic, database-backed claim.
 	notifyCh := s.tasks.channel(server.ID)
 	claimTask := func() {
-		if inFlightTaskID != 0 {
-			return
-		}
-		task, err := s.store.NextTask(r.Context(), server.ID)
-		if err != nil {
-			return
-		}
-		inFlightTaskID = task.ID
-		inFlightTaskType = task.Type
-		log.Printf("task dispatched server=%d(%s) id=%d type=%s version=%d", server.ID, safeLogField(server.Name), task.ID, task.Type, task.ConfigVersion)
-		s.publishRealtime(realtimeResourcesForTask(task.Type)...)
-		taskTimeout := 10 * time.Minute
-		if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
-			taskTimeout = 20 * time.Minute
-		}
-		inFlightTimer = time.NewTimer(taskTimeout)
-		inFlightTimeout = inFlightTimer.C
-		if err := writeAgentJSON(map[string]any{"type": "task_request", "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}); err != nil {
-			// The socket is broken; the read side observes the failure and
-			// the deferred requeue returns the task to the queue.
+		for inFlightTaskID == 0 {
+			task, err := s.store.NextTask(r.Context(), server.ID)
+			if err != nil {
+				return
+			}
+			payload := map[string]any{"type": "task_request", "task": task, "signature_version": 2, "signature": signAgentTaskEnvelope(server.AgentTokenHash, *task)}
+			encoded, encodeErr := json.Marshal(s.withControllerTime(payload))
+			if encodeErr == nil && len(encoded) > s.agentSocketMessageLimit() {
+				result, _ := json.Marshal(map[string]any{
+					"message": "task_request exceeds the agent websocket message limit",
+					"code":    "task_request_too_large",
+					"bytes":   len(encoded),
+					"limit":   s.agentSocketMessageLimit(),
+				})
+				if completeErr := s.store.CompleteTask(r.Context(), task.ID, "failed", string(result)); completeErr != nil {
+					log.Printf("fail oversized task %d: %v", task.ID, completeErr)
+					return
+				}
+				log.Printf("task rejected server=%d(%s) id=%d type=%s bytes=%d limit=%d", server.ID, safeLogField(server.Name), task.ID, task.Type, len(encoded), s.agentSocketMessageLimit())
+				s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+				continue
+			}
+			inFlightTaskID = task.ID
+			inFlightTaskType = task.Type
+			log.Printf("task dispatched server=%d(%s) id=%d type=%s version=%d", server.ID, safeLogField(server.Name), task.ID, task.Type, task.ConfigVersion)
+			s.publishRealtime(realtimeResourcesForTask(task.Type)...)
+			taskTimeout := 10 * time.Minute
+			if task.Type == model.AgentTaskTypeIssueCertificateHTTP {
+				taskTimeout = 20 * time.Minute
+			}
+			inFlightTimer = time.NewTimer(taskTimeout)
+			inFlightTimeout = inFlightTimer.C
+			if err := writeAgentJSON(payload); err != nil {
+				// The socket is broken; the read side observes the failure and
+				// the deferred requeue returns the task to the queue.
+				return
+			}
 			return
 		}
 	}
