@@ -1,6 +1,6 @@
 module github.com/OboardProject/oboard
 
-go 1.25.13
+go 1.26.7
 
 require (
 	github.com/go-webauthn/webauthn v0.17.4
@@ -11,8 +11,8 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	go.yaml.in/yaml/v3 v3.0.5
-	golang.org/x/crypto v0.53.0
-	golang.org/x/net v0.55.0
+	golang.org/x/crypto v0.56.0
+	golang.org/x/net v0.57.0
 	modernc.org/sqlite v1.53.0
 )
 
@@ -39,9 +39,9 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	modernc.org/gc/v3 v3.1.5 // indirect
 	modernc.org/libc v1.73.5 // indirect
