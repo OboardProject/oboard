@@ -57,7 +57,7 @@
   --sidebar-collapsed-width: 72px;
   --settings-sidebar-width: minmax(176px, 208px);
   --app-viewport-height: 100dvh;
-  --app-sticky-header-clearance: 76px;
+  --app-sticky-header-clearance: 88px;
   --layout-scrollbar-gutter: stable;
 
   /* Global overlay order. Keep transient feedback above every blocking layer. */
@@ -607,10 +607,10 @@ textarea:disabled {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-height: 0;
-  overflow-y: auto;
   overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
@@ -769,9 +769,9 @@ textarea:disabled {
   padding: 12px 8px 14px;
   border: 0;
   border-radius: 0;
-  background: color-mix(in srgb, var(--bg-page) 88%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--bg-page);
   box-shadow: none;
+  isolation: isolate;
   transition: margin-bottom 0.2s ease, padding-bottom 0.2s ease;
 }
 
@@ -11095,7 +11095,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     display: flex;
     flex-direction: column;
     gap: 6px;
-    flex: 1;
+    flex: 0 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding-right: 4px;
@@ -25484,11 +25484,15 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   min-width: 0;
   align-self: start;
   position: sticky;
-  top: var(--app-sticky-header-clearance, 76px);
-  max-height: calc(100dvh - var(--app-sticky-header-clearance, 76px) - 32px);
+  top: var(--app-sticky-header-clearance, 88px);
+  max-height: calc(100dvh - var(--app-sticky-header-clearance, 88px) - 24px);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .settings-nav {
@@ -25504,10 +25508,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   gap: 4px;
   padding: 0;
   margin: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
+  overflow: visible;
   min-height: 0;
   border: 0;
 }
