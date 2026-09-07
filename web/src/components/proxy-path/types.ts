@@ -1,3 +1,4 @@
+import type { MonitoringDisplay } from '../../server-monitoring'
 // Wire types shared between the proxy-path canvas components and the main app.
 // These mirror the Controller JSON contracts; keep them in sync with
 // oboard/internal/model/types.go.
@@ -96,6 +97,8 @@ export type Server = {
   traffic_download_bytes: number
   traffic_period_start?: string
   traffic_period_end?: string
+  monitoring_target_task_id?: number
+  monitoring_display?: MonitoringDisplay
   latency_probe_enabled: boolean
   latency_probe_mode: LatencyProbeMode
   latency_probe_public_target: ConnectivityProbeTarget

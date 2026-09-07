@@ -28269,3 +28269,21 @@ button.probe-preset-option:active {
   }
   .return-latency-switch-row { gap: 12px; }
 }
+
+.server-monitor-target-button {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+  padding: 4px;
+  border-radius: 6px;
+  vertical-align: middle;
+  color: var(--text-secondary);
+}
+.server-monitor-target-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}

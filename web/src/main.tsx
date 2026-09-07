@@ -1,3 +1,5 @@
+import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
+import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
 import { ReturnLatencyPage } from './components/server/ReturnLatencyPage'
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -1020,9 +1022,6 @@ function connectivityStatusLabel(status: string) {
   return '等待检测'
 }
 
-function connectivityLatencyLabel(status: string, latencyMS: number | null | undefined) {
-  return status === 'available' && Number(latencyMS) > 0 ? `${Math.round(Number(latencyMS))} ms` : '—'
-}
 
 function exitRegionStatusLabel(status?: string, code?: string) {
   const effectiveCode = normalizeRegionCode(code)
@@ -7308,40 +7307,6 @@ function offlineAgoLabel(lastSeen?: string, now = new Date()) {
   return `${Math.floor(hours / 24)}天前离线`
 }
 
-function connectivityLossPercent(samples: ServerMetricSample[]) {
-  const probed = samples.filter(sample => sample.connectivity_available === true || sample.connectivity_available === false)
-  if (!probed.length) return null
-  const lost = probed.filter(sample => sample.connectivity_available === false).length
-  return (lost / probed.length) * 100
-}
-
-function qualitySegments(samples: ServerMetricSample[], count = 20) {
-  const window = samples.slice(-count)
-  if (!window.length) return Array.from({ length: count }, () => '')
-  const segs = window.map(sample => {
-    if (sample.connectivity_available === false) return 'poor'
-    const latency = Number(sample.connectivity_latency_ms || 0)
-    if (!sample.connectivity_available || latency <= 0) return ''
-    if (latency < 80) return 'ok'
-    if (latency < 180) return 'fair'
-    return 'poor'
-  })
-  while (segs.length < count) segs.unshift('')
-  return segs
-}
-
-function lossSegments(samples: ServerMetricSample[], count = 20) {
-  const window = samples.slice(-count)
-  if (!window.length) return Array.from({ length: count }, () => '')
-  const segs = window.map(sample => {
-    if (sample.connectivity_available === false) return 'poor'
-    if (sample.connectivity_available === true) return 'ok'
-    return ''
-  })
-  while (segs.length < count) segs.unshift('')
-  return segs
-}
-
 const displayTagTones = [
   { id: 'blue', label: '蓝' },
   { id: 'orange', label: '橙' },
@@ -7463,6 +7428,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [tasksServer, setTasksServer] = useState<Server | null>(null)
   const [terminalWorkspace, setTerminalWorkspace] = useState<{ serverId: number | null } | null>(null)
   const [timeDetailServer, setTimeDetailServer] = useState<Server | null>(null)
+  const [monitoringServer, setMonitoringServer] = useState<Server | null>(null)
   const [connectivityServer, setConnectivityServer] = useState<{ server: Server } | null>(null)
   const [view, setViewState] = useState<'grid' | 'list'>(() => {
     try {
@@ -7978,6 +7944,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       window.dispatchEvent(new PopStateEvent('popstate'))
     }
     else if (type === 'terminal') setTerminalWorkspace({ serverId: s.id })
+    else if (type === 'monitoring-target') setMonitoringServer(s)
     else if (type === 'resource-details') setConnectivityServer({ server: s })
     else if (type === 'time-details') setTimeDetailServer(s)
     else if (type === 'connectivity-details') setConnectivityServer({ server: s })
@@ -8245,6 +8212,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
       }}
       onClose={() => setTimeDetailServer(null)}
     />}</AnimatePresence>
+    {monitoringServer && <ServerMonitoringTargetDialog key={monitoringServer.id} server={monitoringServer} client={client} onClose={() => setMonitoringServer(null)} onSaved={updated => { setServers(current => current.map(server => server.id === updated.id ? updated : server)); notify?.('默认监控目标已保存', 'success') }} />}
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
     <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
@@ -9787,6 +9755,9 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const [updateInfoOpen, setUpdateInfoOpen] = useState(false)
   const outdated = Boolean(expectedBuild && server.agent_build && expectedBuild !== server.agent_build)
   const isOnline = server.status.toLowerCase() === 'online';
+  const monitoring = serverMonitoring(server.monitoring_display, isOnline)
+  const monitorTitle = `${monitoring.name} · 最近 20 轮探测${monitoring.latest ? ` · ${new Date(monitoring.latest.checked_at).toLocaleString()}` : ''}`
+  const targetButton = role === 'admin' || role === 'operator' ? <button type="button" className="ghost server-monitor-target-button" aria-label={`选择 ${server.name} 的监控目标，当前：${monitoring.name}`} title={`选择监控目标：${monitoring.name}`} onClick={() => onAction('monitoring-target', server)}><Settings2 size={12} aria-hidden="true" /></button> : null
   const timeIssue = getServerTimeIssue(server)
   const trafficTotalBytes = (Number(server.traffic_upload_bytes) || 0) + (Number(server.traffic_download_bytes) || 0)
   const trafficLimitBytes = Number(server.traffic_limit_bytes || 0)
@@ -9860,12 +9831,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
 
         {/* Latency */}
         <div className="server-list-metric-item server-list-metric-latency">
-          <span className="server-list-metric-label">延迟测试</span>
-          {server.latency_probe_enabled ? (
+          <span className="server-list-metric-label" title={monitorTitle}>延迟测试{targetButton}</span>
+          {server.monitoring_display?.enabled ? (
             <div className="server-list-latency-btn">
-              <strong>{connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
-              <Badge variant={server.connectivity_status === 'available' ? 'success' : server.connectivity_status === 'unavailable' || server.connectivity_status === 'offline' ? 'destructive' : 'secondary'} className="latency-status-badge">
-                {connectivityStatusLabel(server.connectivity_status)}
+              <strong>{monitoring.latency}</strong>
+              <Badge variant={monitoring.status === 'available' ? 'success' : monitoring.status === 'unavailable' || monitoring.status === 'offline' ? 'destructive' : 'secondary'} className="latency-status-badge">
+                {connectivityStatusLabel(monitoring.status)}
               </Badge>
             </div>
           ) : (
@@ -9900,16 +9871,16 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
   const diskPercent = resourcePercent(server.disk_bytes, server.disk_total_bytes)
   const enrolled = enrolledDaysLabel(server)
   const expiry = cardExpiryStatus(server)
-  const qualitySegs = qualitySegments(samples)
-  const lossSegs = lossSegments(samples)
-  const lossPercent = connectivityLossPercent(samples)
+  const qualitySegs = monitoring.qualitySegments
+  const lossSegs = monitoring.lossSegments
+  const lossPercent = monitoring.loss
   const tags = (server.display_tags || []).filter(tag => String(tag.text || '').trim())
   const na = !isOnline
   let healthTone: 'ok' | 'fair' | 'poor' | 'off' = 'off'
   if (isOnline && server.latency_probe_enabled) {
     if (server.connectivity_status === 'available') {
       const ms = Number(server.connectivity_latency_ms || 0)
-      healthTone = ms > 0 && ms < 80 ? 'ok' : ms < 180 ? 'fair' : 'poor'
+      healthTone = ms >= 0 && ms < 80 ? 'ok' : ms < 180 ? 'fair' : 'poor'
     } else if (server.connectivity_status === 'unavailable' || server.connectivity_status === 'offline') {
       healthTone = 'poor'
     } else {
@@ -9971,11 +9942,11 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           <small>{formatBytes(server.traffic_upload_bytes || 0)}</small>
         </div>
       </div>
-      <div className="server-card-quality-pair">
+      <div className="server-card-quality-pair" title={monitorTitle}>
         <div className="server-card-quality">
           <div className="server-card-quality-head">
             <span><Clock size={12} aria-hidden="true" />延迟</span>
-            <strong>{na || !server.latency_probe_enabled ? '—' : connectivityLatencyLabel(server.connectivity_status, server.connectivity_latency_ms)}</strong>
+            <strong>{monitoring.latency}</strong>
           </div>
           <div className="server-quality-bar" aria-hidden="true">
             {qualitySegs.map((tone, index) => (

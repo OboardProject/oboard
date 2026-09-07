@@ -77,6 +77,9 @@ type ServerDTO struct {
 	UsersFallback               string                     `json:"users_fallback,omitempty"`
 	AuthorizationFastLane       bool                       `json:"authorization_fast_lane"`
 	RuntimeUsersEnabled         bool                       `json:"runtime_users_enabled"`
+
+	MonitoringTargetTaskID int64                          `json:"monitoring_target_task_id"`
+	MonitoringDisplay     *model.ServerMonitoringDisplay `json:"monitoring_display,omitempty"`
 }
 
 type UserDTO struct {
@@ -264,6 +267,7 @@ func serverDTO(item model.Server) ServerDTO {
 		OfflineNotifyEnabled: item.OfflineNotifyEnabled, OfflineAfterSeconds: item.OfflineAfterSeconds,
 		ExpiresAt: item.ExpiresAt, RenewalCycle: item.RenewalCycle, AutoRenewEnabled: item.AutoRenewEnabled,
 		ExpiryNotifyEnabled: item.ExpiryNotifyEnabled, LastAutoRenewedAt: item.LastAutoRenewedAt,
+		MonitoringTargetTaskID: item.MonitoringTargetTaskID, MonitoringDisplay: item.MonitoringDisplay,
 		LatencyProbeEnabled: item.LatencyProbeEnabled, LatencyProbeMode: item.LatencyProbeMode,
 		LatencyProbePublicTarget: item.LatencyProbePublicTarget, LatencyProbeIntervalSeconds: item.LatencyProbeIntervalSeconds,
 		LatencyProbeSampleCount:     item.LatencyProbeSampleCount,

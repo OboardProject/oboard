@@ -401,6 +401,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/force-finish", s.auth(s.controllerUpdateForceFinish, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/diagnostics", s.auth(s.controllerUpdateDiagnostics, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups", s.auth(s.controllerUpdateBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups/", s.auth(s.controllerUpdateBackupSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
@@ -2410,6 +2411,9 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err = require(model.RoleOperator); err == nil {
 			err = addServers()
 		}
+		if err == nil {
+			err = s.store.AttachServerMonitoringDisplays(ctx, serverSnapshot)
+		}
 		if err == nil && serverSnapshotLoaded {
 			err = timing.run("delivery", func() error {
 				s.annotateServerDeliveryStatusFromLaneStates(ctx, serverSnapshot, loadLaneStates())
@@ -3714,6 +3718,10 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
+			fail(w, err, 500)
+			return
+		}
 		s.annotateServerDeliveryStatus(r.Context(), items)
 		out := map[string]any{"servers": items}
 		if r.URL.Query().Get("include_metrics") == "1" {
@@ -4123,6 +4131,12 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 404)
 			return
 		}
+		items := []model.Server{*srv}
+		if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
+			fail(w, err, 500)
+			return
+		}
+		srv = &items[0]
 		s.annotateOneServerDeliveryStatus(r.Context(), srv)
 		write(w, 200, map[string]any{"server": srv})
 		return
@@ -4365,6 +4379,14 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
 		updated, _ := s.store.GetServer(r.Context(), v.ID)
+		if updated != nil {
+			items := []model.Server{*updated}
+			if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
+				fail(w, err, 500)
+				return
+			}
+			updated = &items[0]
+		}
 		s.annotateOneServerDeliveryStatus(r.Context(), updated)
 		response := map[string]any{"server": updated}
 		if current.TimeCorrectionMode != v.TimeCorrectionMode {
@@ -5455,6 +5477,9 @@ func scrubSensitiveValue(v any) {
 	}
 }
 func validateServer(v *model.Server) error {
+	if v.MonitoringTargetTaskID < 0 || (v.ID == 0 && v.MonitoringTargetTaskID != 0) {
+		return errors.New("监控目标任务编号无效")
+	}
 	if v.Name == "" {
 		return errors.New("name required")
 	}

@@ -45,6 +45,9 @@ func (s *Service) ListServers(ctx context.Context, principal Principal) ([]Serve
 	if err != nil {
 		return nil, err
 	}
+	if err := s.store.AttachServerMonitoringDisplays(ctx, items); err != nil {
+		return nil, err
+	}
 	s.decorateServerDelivery(ctx, items)
 	out := make([]ServerDTO, 0, len(items))
 	for _, item := range items {
@@ -64,6 +67,9 @@ func (s *Service) GetServer(ctx context.Context, principal Principal, id int64) 
 		return ServerDTO{}, err
 	}
 	items := []model.Server{*item}
+	if err := s.store.AttachServerMonitoringDisplays(ctx, items); err != nil {
+		return ServerDTO{}, err
+	}
 	s.decorateServerDelivery(ctx, items)
 	return serverDTO(items[0]), nil
 }

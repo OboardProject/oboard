@@ -1084,6 +1084,9 @@ type Server struct {
 	UsersFallback               string             `json:"users_fallback,omitempty"`
 	AuthorizationFastLane       bool               `json:"authorization_fast_lane"`
 	RuntimeUsersEnabled         bool               `json:"runtime_users_enabled"`
+
+	MonitoringTargetTaskID int64                    `json:"monitoring_target_task_id"`
+	MonitoringDisplay     *ServerMonitoringDisplay `json:"monitoring_display,omitempty"`
 }
 
 type Inbound struct {

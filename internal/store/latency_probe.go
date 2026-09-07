@@ -48,22 +48,23 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 		byID[servers[i].ID] = &servers[i]
 	}
 	serverIDs, placeholders := serverIDQueryArgs(servers)
-	rows, err := s.db.QueryContext(ctx, `select server_id,enabled,mode,public_target,interval_seconds,sample_count,max_targets,resource_version from server_latency_probe_settings where server_id in (`+placeholders+`)`, serverIDs...)
+	rows, err := s.db.QueryContext(ctx, `select server_id,enabled,mode,public_target,interval_seconds,sample_count,max_targets,resource_version,monitoring_target_task_id from server_latency_probe_settings where server_id in (`+placeholders+`)`, serverIDs...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id int64
+		var id, targetTaskID int64
 		var enabled, interval, samples, maxTargets int
 		var mode, publicTarget, resourceVersion string
-		if err := rows.Scan(&id, &enabled, &mode, &publicTarget, &interval, &samples, &maxTargets, &resourceVersion); err != nil {
+		if err := rows.Scan(&id, &enabled, &mode, &publicTarget, &interval, &samples, &maxTargets, &resourceVersion, &targetTaskID); err != nil {
 			return err
 		}
 		server := byID[id]
 		if server == nil {
 			continue
 		}
+		server.MonitoringTargetTaskID = targetTaskID
 		server.LatencyProbeEnabled = enabled != 0
 		server.LatencyProbeMode = model.LatencyProbeMode(mode)
 		server.LatencyProbePublicTarget = model.ConnectivityTarget(publicTarget)
@@ -107,7 +108,7 @@ func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *mo
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
-	if _, err := tx.ExecContext(ctx, `insert into server_latency_probe_settings(server_id,enabled,mode,public_target,interval_seconds,sample_count,max_targets,resource_version,updated_at) values(?,?,?,?,?,?,?,?,?) on conflict(server_id) do update set enabled=excluded.enabled,mode=excluded.mode,public_target=excluded.public_target,interval_seconds=excluded.interval_seconds,sample_count=excluded.sample_count,max_targets=excluded.max_targets,resource_version=excluded.resource_version,updated_at=excluded.updated_at`, server.ID, boolInt(server.LatencyProbeEnabled), server.LatencyProbeMode, server.LatencyProbePublicTarget, server.LatencyProbeIntervalSeconds, server.LatencyProbeSampleCount, server.LatencyProbeMaxTargets, server.LatencyProbeResourceVersion, updatedAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `insert into server_latency_probe_settings(server_id,enabled,mode,public_target,interval_seconds,sample_count,max_targets,resource_version,updated_at,monitoring_target_task_id) values(?,?,?,?,?,?,?,?,?,?) on conflict(server_id) do update set enabled=excluded.enabled,mode=excluded.mode,public_target=excluded.public_target,interval_seconds=excluded.interval_seconds,sample_count=excluded.sample_count,max_targets=excluded.max_targets,resource_version=excluded.resource_version,updated_at=excluded.updated_at,monitoring_target_task_id=excluded.monitoring_target_task_id`, server.ID, boolInt(server.LatencyProbeEnabled), server.LatencyProbeMode, server.LatencyProbePublicTarget, server.LatencyProbeIntervalSeconds, server.LatencyProbeSampleCount, server.LatencyProbeMaxTargets, server.LatencyProbeResourceVersion, updatedAt.Format(time.RFC3339Nano), server.MonitoringTargetTaskID); err != nil {
 		return err
 	}
 	newEnabled := boolInt(server.LatencyProbeEnabled)

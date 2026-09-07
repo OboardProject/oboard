@@ -35,6 +35,7 @@ type serverUpdateChanges struct {
 	InternalPortRangeEnd     *int                        `json:"internal_port_range_end,omitempty"`
 	ConnectionAuditEnabled   *bool                       `json:"connection_audit_enabled,omitempty"`
 	ResourceHistoryEnabled   *bool                       `json:"resource_history_enabled,omitempty"`
+	MonitoringTargetTaskID   *int64                      `json:"monitoring_target_task_id,omitempty"`
 	LatencyProbeEnabled      *bool                       `json:"latency_probe_enabled,omitempty"`
 	LatencyProbeMode         *model.LatencyProbeMode     `json:"latency_probe_mode,omitempty"`
 	LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target,omitempty"`
@@ -92,6 +93,24 @@ func (s *Server) validateServerUpdateOperation(ctx context.Context, principal ap
 	if !principal.AllowsInt64("server_ids", request.ServerID) {
 		return nil, nil, errors.New("authorized server_id is required")
 	}
+	if target := request.Changes.MonitoringTargetTaskID; target != nil && *target > 0 {
+		task, err := s.latencyProbeTaskBoundary(ctx, principal, *target)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !task.Enabled {
+			return nil, nil, errors.New("探测任务已停用")
+		}
+		assigned := false
+		for _, serverID := range task.ServerIDs {
+			if serverID == request.ServerID {
+				assigned = true
+			}
+		}
+		if !assigned {
+			return nil, nil, errors.New("探测任务未分配给该服务器")
+		}
+	}
 	if request.Changes.TrafficUsedBytes != nil && *request.Changes.TrafficUsedBytes < 0 {
 		return nil, nil, errors.New("traffic_used_bytes must be >= 0")
 	}
@@ -129,6 +148,24 @@ func (s *Server) validateServerUpdateOperation(ctx context.Context, principal ap
 }
 
 func (s *Server) validateServerUpdateCandidate(ctx context.Context, current model.Server, next *model.Server) error {
+	if next.MonitoringTargetTaskID < 0 {
+		return errors.New("监控目标任务编号无效")
+	}
+	if next.MonitoringTargetTaskID != current.MonitoringTargetTaskID && next.MonitoringTargetTaskID != 0 {
+		tasks, err := s.store.ListLatencyProbeTasksForServer(ctx, next.ID)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, task := range tasks {
+			if task.ID == next.MonitoringTargetTaskID {
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("请选择已启用且分配给该服务器的探测任务")
+		}
+	}
 	if err := validateServer(next); err != nil {
 		return err
 	}
@@ -183,6 +220,7 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("internal_port_range_end", changes.InternalPortRangeEnd != nil, func() { next.InternalPortRangeEnd = *changes.InternalPortRangeEnd })
 	set("connection_audit_enabled", changes.ConnectionAuditEnabled != nil, func() { next.ConnectionAuditEnabled = *changes.ConnectionAuditEnabled })
 	set("resource_history_enabled", changes.ResourceHistoryEnabled != nil, func() { next.ResourceHistoryEnabled = *changes.ResourceHistoryEnabled })
+	set("monitoring_target_task_id", changes.MonitoringTargetTaskID != nil, func() { next.MonitoringTargetTaskID = *changes.MonitoringTargetTaskID })
 	set("latency_probe_enabled", changes.LatencyProbeEnabled != nil, func() { next.LatencyProbeEnabled = *changes.LatencyProbeEnabled })
 	set("latency_probe_mode", changes.LatencyProbeMode != nil, func() { next.LatencyProbeMode = *changes.LatencyProbeMode })
 	set("latency_probe_public_target", changes.LatencyProbePublicTarget != nil, func() { next.LatencyProbePublicTarget = *changes.LatencyProbePublicTarget })
@@ -233,7 +271,15 @@ func (s *Server) registerServerUpdateOperation() {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]string{"server:" + strconv.FormatInt(server.ID, 10): server.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
+		revisions := map[string]string{"server:" + strconv.FormatInt(server.ID, 10): server.UpdatedAt.UTC().Format(time.RFC3339Nano)}
+		if target := request.Changes.MonitoringTargetTaskID; target != nil && *target > 0 {
+			task, err := s.latencyProbeTaskBoundary(ctx, principal, *target)
+			if err != nil {
+				return nil, err
+			}
+			revisions["latency_probe_task:"+strconv.FormatInt(task.ID, 10)] = task.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		return revisions, nil
 	})
 	s.automation.Register("servers.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		request, err := decodeServerUpdateOperation(input)
