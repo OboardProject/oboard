@@ -246,3 +246,61 @@ func TestAgentsUpdateAllCapability(t *testing.T) {
 		t.Fatalf("update_agent task was not queued for update-all: %#v", tasks)
 	}
 }
+
+func TestServersRuntimeRefreshCapability(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	server := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	node := &model.Server{Name: "entry", PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 11000, Status: model.ServerOnline, AgentID: "agent_1"}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "servers.runtime.refresh", Input: json.RawMessage(`{}`)}}}); err == nil {
+		t.Fatal("expected confirm to be required")
+	}
+	input := json.RawMessage(`{"confirm":true}`)
+	draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "servers.runtime.refresh", Input: input}}})
+	if err != nil {
+		t.Fatalf("validate servers.runtime.refresh: %v", err)
+	}
+	base, _ := json.Marshal(draft.ExpectedRevisions)
+	changeset, err := server.automation.Create(ctx, principal, automation.CreateRequest{IdempotencyKey: "ops-runtime-refresh", BaseRevisions: base, Operations: []automation.OperationRequest{{Capability: "servers.runtime.refresh", Input: input}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Validate(ctx, principal, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Approve(ctx, principal, changeset.ID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.automation.Apply(ctx, principal, changeset.ID); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := db.ListTasksByServer(ctx, node.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, task := range tasks {
+		if task.Type != model.AgentTaskTypeApplyDeployment {
+			continue
+		}
+		var payload model.DeploymentTaskPayload
+		if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.ForceRefresh && payload.ConfigChanged && payload.TriggerReason == "runtime_refresh" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("runtime refresh deployment was not queued: %#v", tasks)
+	}
+}

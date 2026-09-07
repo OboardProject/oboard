@@ -203,6 +203,28 @@ func TestDefaultCatalogExposesServerLifecycle(t *testing.T) {
 	if resetTraffic.MinimumAccess != "operate" || resetTraffic.ApprovalPolicy != "required" || !strings.Contains(resetTraffic.Description, "已用流量清零") {
 		t.Fatalf("servers.reset_traffic contract=%#v", resetTraffic)
 	}
+	refresh, ok := catalog.Get("servers.runtime.refresh")
+	if !ok || !refresh.Executable || !refresh.Destructive || refresh.AdminOnly || refresh.ReadOnly {
+		t.Fatalf("servers.runtime.refresh=%#v ok=%v", refresh, ok)
+	}
+	if refresh.RBACPermission != "admin.settings" || refresh.MinimumAccess != mcpauth.AccessOperate || refresh.ApprovalPolicy != "required" || refresh.RiskClass != 3 {
+		t.Fatalf("servers.runtime.refresh authorization=%#v", refresh)
+	}
+	if !strings.Contains(string(refresh.InputSchema), `"const":true`) || !strings.Contains(refresh.Description, "confirm=true") {
+		t.Fatalf("servers.runtime.refresh confirm contract=%#v schema=%s", refresh, refresh.InputSchema)
+	}
+	viewer := application.Principal{AccessLevel: mcpauth.AccessRead, Role: model.RoleViewer, Scopes: []string{"*"}}
+	if _, allowed := catalog.Authorize(viewer, refresh.Name); allowed {
+		t.Fatal("viewer must not receive servers.runtime.refresh")
+	}
+	operator := application.Principal{AccessLevel: mcpauth.AccessOperate, Role: model.RoleOperator, Scopes: []string{"*"}}
+	if _, allowed := catalog.Authorize(operator, refresh.Name); !allowed {
+		t.Fatal("operator did not receive servers.runtime.refresh")
+	}
+	admin := application.Principal{AccessLevel: mcpauth.AccessOperate, Role: model.RoleAdmin, Scopes: []string{"*"}}
+	if _, allowed := catalog.Authorize(admin, refresh.Name); !allowed {
+		t.Fatal("admin did not receive servers.runtime.refresh")
+	}
 }
 
 // TestInboundSchemaCarriesProtocolGuidance verifies that callers can select a

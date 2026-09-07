@@ -110,7 +110,7 @@ Requested strategy:
 
 %s
 
-Call `+"`oboard_task`"+` first with intent `+"`deployment.apply`"+` and the exact server refs. Let OBoard resolve the target boundary, current revisions, topology, validation, risk, and approval. If ready, confirm the returned summary, commit only its prepared_id, and follow the Workflow until terminal.
+Call `+"`oboard_task`"+` first with intent `+"`deployment.apply`"+` and the exact server refs. Let OBoard resolve the target boundary, current revisions, topology, validation, risk, and approval. If the operator asked to wipe and rebuild Agent runtime (刷新全部节点配置 / 清理 Agent 配置), use intent `+"`servers.runtime.refresh`"+` instead. If ready, confirm the returned summary, commit only its prepared_id, and follow the Workflow until terminal.
 
 Never send raw Agent tasks, never broaden the target set, and never claim deployment completion from Changeset creation. Use capability discovery only after fallback_required.`, args["server_ids"], args["reason"], args["strategy"])
 			},

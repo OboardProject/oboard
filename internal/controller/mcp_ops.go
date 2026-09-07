@@ -15,8 +15,8 @@ import (
 
 // registerOpsAutomationOperations wires the task-center and host-operation
 // capability operations of the MCP automation layer: diagnostics, agent
-// updates, log collection/management, deployment failure dismissal, and
-// inbound / egress probes.
+// updates, runtime refresh, log collection/management, deployment failure
+// dismissal, and inbound / egress probes.
 
 func (s *Server) registerOpsAutomationOperations() {
 	s.registerTaskTriggerOperations()
@@ -216,6 +216,32 @@ func (s *Server) registerTaskTriggerOperations() {
 		}
 		summary := map[string]int{"total": result.Enrolled, "created": created, "existing": existing, "skipped": result.Offline, "failed": 0}
 		return map[string]any{"summary": summary, "created_count": created}, nil
+	})
+
+	s.automation.RegisterValidator("servers.runtime.refresh", func(_ context.Context, _ application.Principal, input json.RawMessage) (any, error) {
+		if err := decodeRuntimeRefreshConfirm(input); err != nil {
+			return nil, err
+		}
+		return map[string]any{"confirm": true}, nil
+	})
+	s.automation.RegisterRevisionResolver("servers.runtime.refresh", func(context.Context, application.Principal, json.RawMessage) (map[string]string, error) {
+		return map[string]string{}, nil
+	})
+	s.automation.Register("servers.runtime.refresh", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
+		if err := decodeRuntimeRefreshConfirm(input); err != nil {
+			return nil, err
+		}
+		result, err := s.refreshAllServerRuntime(ctx, func(id int64) bool {
+			return principal.AllowsInt64("server_ids", id)
+		})
+		if err != nil {
+			var herr *deploymentHTTPError
+			if errors.As(err, &herr) {
+				return nil, herr.err
+			}
+			return nil, err
+		}
+		return result, nil
 	})
 
 	s.automation.RegisterValidator("configuration_sync.retry", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
@@ -676,4 +702,17 @@ func proxyPathTaskID(input json.RawMessage) int64 {
 		return 0
 	}
 	return request.PathID
+}
+
+func decodeRuntimeRefreshConfirm(input json.RawMessage) error {
+	var body struct {
+		Confirm bool `json:"confirm"`
+	}
+	if err := strictAutomationInput(input, &body); err != nil {
+		return err
+	}
+	if !body.Confirm {
+		return errors.New("confirm is required")
+	}
+	return nil
 }

@@ -152,6 +152,7 @@ function auditTitle(log: AuditLogRow, actor: string, target: { type: string; lab
   if (action === 'notify_failed') return copy(`通知发送失败：${target.label}`)
   if (action === 'notification_broadcast') return copy(`${actor} 群发了通知`)
   if (action === 'apply' && log.target === 'deployment') return copy(`${actor} 下发了配置版本 ${String(log.detail || '').trim() || target.label}`)
+  if (action === 'refresh' && log.target === 'runtime-config') return copy(`${actor} 刷新了全部节点运行配置 ${String(log.detail || '').trim() || target.label}`.trim())
   if (action === 'dismiss' && log.target === 'deployment') return copy(`${actor} 忽略了配置版本 ${String(log.detail || '').trim() || target.label} 的失败提醒`)
   if (action === 'grant' && log.target === 'inbound-user') return copy(`${actor} 授权了 ${target.label}`)
   if (action === 'grant' && log.target === 'user-group-member') return copy(`${actor} 加入了 ${target.label}`)
@@ -318,7 +319,7 @@ function auditActionTone(action: string): AuditTone {
 
 function auditTargetTypeLabel(target: string) {
   const labels: Record<string, string> = {
-    settings: '设置', user: '用户', server: '服务器', agent: 'Agent', 'agent-config': 'Agent 设置',
+    settings: '设置', user: '用户', server: '服务器', agent: 'Agent', 'agent-config': 'Agent 设置', 'runtime-config': '运行配置',
     mtu: 'MTU', 'enroll-token': 'Agent 命令', inbound: '入口节点', 'inbound-user': '入口用户',
     'user-group': '用户组', 'user-group-member': '用户组成员', 'inbound-access': '入口权限',
     routing_rule: '分流规则', routing_rules: '分流规则', routing_rule_set: '规则集',

@@ -480,7 +480,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 			logConfigurationError("supersede stale task", err)
 		}
 	}
-	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, plan.changed, nil)
+	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, plan.changed, nil, false)
 	if deployErr != nil {
 		if s.reconcileConfigurationAroundDuplicateDirectPaths(ctx, claimed) {
 			s.publishRealtime("configuration", "deployments", "tasks")
@@ -792,7 +792,7 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 	if len(validServerIDs) == 0 {
 		return true
 	}
-	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, validServerIDs, ignoredPathIDs)
+	preparedTasks, version, deployErr := s.deployConfigurationScoped(withAutomaticConfigurationSync(ctx), 0, true, validServerIDs, ignoredPathIDs, false)
 	if deployErr != nil {
 		for serverID := range validServerIDs {
 			if state, ok := claimedByServer[serverID]; ok {

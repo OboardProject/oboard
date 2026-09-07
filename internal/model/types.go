@@ -2157,6 +2157,7 @@ type DeploymentTaskPayload struct {
 	Version              int64                      `json:"version"`
 	Config               ApplyCoreConfigTaskPayload `json:"config"`
 	ConfigChanged        bool                       `json:"config_changed"`
+	ForceRefresh         bool                       `json:"force_refresh,omitempty"`
 	TriggerReason        string                     `json:"trigger_reason,omitempty"`
 	WARPRequests         []WARPRequestPlan          `json:"warp_requests,omitempty"`
 	TimeCheck            *TimeCheckPlan             `json:"time_check,omitempty"`

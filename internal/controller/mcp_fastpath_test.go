@@ -32,6 +32,8 @@ func TestMCPRecipeRouting(t *testing.T) {
 		{name: "extend expiry", goal: "给东京服务器续费 30 天", want: "server.manage"},
 		{name: "chinese inbound", goal: "在东京节点创建 VLESS 入站", want: "inbound.create"},
 		{name: "english", goal: "deploy all configuration changes", want: "deployment.apply"},
+		{name: "refresh all runtime", goal: "刷新全部节点配置", want: "servers.runtime.refresh"},
+		{name: "rebuild agent runtime", goal: "清理 Agent 配置", want: "servers.runtime.refresh"},
 		{name: "structured proxy ref", goal: "", want: "proxy_path.manage"},
 		{name: "structured server settings", goal: "", want: "server.manage"},
 		{name: "structured server expiry", goal: "", want: "server.manage"},

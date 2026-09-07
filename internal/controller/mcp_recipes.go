@@ -54,6 +54,7 @@ func (s *Server) mcpRecipes() []mcpRecipe {
 		{ID: "user_node_authorization.manage", Version: mcpRecipeVersion, Aliases: []string{"user_node_authorization.manage", "node user authorization", "节点用户授权", "授权用户", "用户节点授权"}, Verbs: []string{"allow", "deny", "authorize", "revoke", "remove", "允许", "拒绝", "授权", "撤销", "移除"}, Nouns: []string{"node authorization", "user authorization", "节点授权", "用户授权", "授权用户"}, Prepare: s.prepareUserNodeAuthorizationRecipe},
 		{ID: "subscription_plan.delete", Version: mcpRecipeVersion, Aliases: []string{"subscription_plan.delete", "delete subscription plan", "删除套餐", "删除订阅套餐"}, Verbs: []string{"delete", "remove", "删除"}, Nouns: []string{"subscription plan", "套餐", "订阅套餐"}, Prepare: s.prepareSubscriptionPlanDeleteRecipe},
 		{ID: "proxy_path.manage", Version: mcpRecipeVersion, Aliases: []string{"proxy_path.manage", "proxy path", "proxy chain", "代理链", "代理路径", "链路", "direct branch"}, Verbs: []string{"create", "add", "connect", "route", "创建", "增加", "连接", "经过", "通过"}, Nouns: []string{"proxy path", "chain", "branch", "代理链", "链路", "路径", "wireguard", "ssh"}, Prepare: s.prepareProxyPathRecipe},
+		{ID: "servers.runtime.refresh", Version: mcpRecipeVersion, Aliases: []string{"servers.runtime.refresh", "refresh all node configs", "force refresh runtime", "刷新全部节点配置", "清理 Agent 配置", "强制刷新运行配置", "重新拉取全部节点配置"}, Verbs: []string{"refresh", "rebuild", "flush", "刷新", "清理", "重建"}, Nouns: []string{"runtime config", "agent runtime", "运行配置", "节点配置"}, Prepare: s.prepareRuntimeRefreshRecipe},
 		{ID: "deployment.apply", Version: mcpRecipeVersion, Aliases: []string{"deployment.apply", "deploy all", "apply deployment", "部署全部", "部署所有", "下发修改", "重新应用配置"}, Verbs: []string{"deploy", "apply", "redeploy", "部署", "下发", "应用"}, Nouns: []string{"deployment", "configuration", "changes", "部署", "配置", "修改"}, Prepare: s.prepareDeploymentRecipe},
 		{ID: "outbound.manage", Version: mcpRecipeVersion, Aliases: []string{"outbound.manage", "manage outbound", "出口管理", "服务器出口"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "创建", "新增", "添加", "修改", "删除"}, Nouns: []string{"outbound", "出口", "下一跳"}, Prepare: s.prepareOutboundRecipe},
 		{ID: "routing_rule_set.manage", Version: mcpRecipeVersion, Aliases: []string{"routing_rule_set.manage", "routing rule set", "routing ruleset", "rule set", "分流规则集", "路由规则集", "远程规则集"}, Verbs: []string{"create", "add", "update", "change", "delete", "remove", "refresh", "reload", "创建", "新增", "添加", "修改", "删除", "刷新", "重新拉取"}, Nouns: []string{"routing rule set", "routing ruleset", "rule set", "分流规则集", "路由规则集", "远程规则集"}, Prepare: s.prepareRoutingRuleSetRecipe},
@@ -211,6 +212,7 @@ func (s *Server) matchDistinctiveRecipeGoal(goal string) (mcpRecipe, bool) {
 		{"certificate.manage", []string{"证书", "certificate"}},
 		{"notification.manage", []string{"通知频道", "notification channel", "公告"}},
 		{"settings.manage", []string{"全局设置", "global settings", "面板设置", "面板路径", "base path"}},
+		{"servers.runtime.refresh", []string{"刷新全部节点配置", "清理 Agent 配置", "强制刷新运行配置", "重新拉取全部节点配置", "force refresh runtime", "refresh all node configs", "rebuild agent runtime"}},
 		{"controller_update.manage", []string{"主控更新", "主控升级", "主控更新通道", "controller update", "controller channel"}},
 		{"host_ops.manage", []string{"诊断", "diagnose", "日志", "logs", "升级 agent", "卸载 agent", "uninstall agent", "拉取", "网卡", "网络接口", "network interface"}},
 		{"outbound.manage", []string{"出口", "outbound"}},
@@ -901,6 +903,19 @@ func (s *Server) prepareDeploymentRecipe(ctx context.Context, principal applicat
 	}
 	operation := mcpOperationRef{Capability: "deployments.apply", Input: map[string]any{"server_ids": serverIDs, "reason": reason}}
 	return &mcpPreparedRecipe{Status: "ready", Intent: "deployment.apply", Operations: []mcpOperationRef{operation}, Summary: map[string]any{"action": "apply_deployment", "targets": labels, "server_count": len(serverIDs)}, Verification: map[string]any{"after_commit": []string{"workflow_terminal", "deployment_tasks_terminal"}}}, nil
+}
+
+func (s *Server) prepareRuntimeRefreshRecipe(_ context.Context, _ application.Principal, _ mcpTaskInput) (*mcpPreparedRecipe, error) {
+	return &mcpPreparedRecipe{
+		Status: "ready",
+		Intent: "servers.runtime.refresh",
+		Operations: []mcpOperationRef{{
+			Capability: "servers.runtime.refresh",
+			Input:      map[string]any{"confirm": true},
+		}},
+		Summary:      map[string]any{"action": "refresh_runtime", "confirm": true},
+		Verification: map[string]any{"after_commit": []string{"workflow_terminal", "deployment_tasks_terminal"}},
+	}, nil
 }
 
 func (s *Server) prepareProxyPathRecipe(ctx context.Context, principal application.Principal, input mcpTaskInput) (*mcpPreparedRecipe, error) {

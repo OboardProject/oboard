@@ -51,6 +51,8 @@ describe('AgentSettingsPanel', () => {
     expect(container.textContent).toContain('NTP 时间源')
     expect(container.textContent).toContain('统计时区')
     expect(container.textContent).toContain('达量后处理')
+    expect(container.textContent).toContain('运行配置')
+    expect(container.textContent).toContain('刷新全部节点配置')
   })
 
   it('auto-saves when MTU setting is changed', async () => {
@@ -135,5 +137,46 @@ describe('AgentSettingsPanel', () => {
       body: JSON.stringify({ server_default_bbr_enabled: false }),
     })
     expect(mockNotify).toHaveBeenCalledWith('BBR + FQ 设置已保存', 'success')
+  })
+
+  it('confirms before refreshing all node runtime configs', async () => {
+    const mockClient = { request: vi.fn(async () => ({ delivery_retried: 3 })) }
+    const mockLoad = vi.fn(async () => undefined)
+    const mockNotify = vi.fn()
+    const mockConfirm = vi.fn(async () => true)
+
+    act(() => {
+      root.render(<AgentSettingsPanel data={mockData} client={mockClient} load={mockLoad} notify={mockNotify} confirm={mockConfirm} />)
+    })
+
+    const refreshButton = Array.from(container.querySelectorAll('button')).find(btn => btn.textContent === '刷新全部节点配置')!
+    await act(async () => {
+      refreshButton.click()
+    })
+
+    expect(mockConfirm).toHaveBeenCalled()
+    expect(mockClient.request).toHaveBeenCalledWith('/deployments/refresh-runtime', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    })
+    expect(mockNotify).toHaveBeenCalledWith('已向 3 台已接入服务器重新下发配置与授权', 'success')
+    expect(mockLoad).toHaveBeenCalled()
+  })
+
+  it('does not refresh when the confirm dialog is cancelled', async () => {
+    const mockClient = { request: vi.fn() }
+    const mockConfirm = vi.fn(async () => false)
+
+    act(() => {
+      root.render(<AgentSettingsPanel data={mockData} client={mockClient} load={vi.fn()} notify={vi.fn()} confirm={mockConfirm} />)
+    })
+
+    const refreshButton = Array.from(container.querySelectorAll('button')).find(btn => btn.textContent === '刷新全部节点配置')!
+    await act(async () => {
+      refreshButton.click()
+    })
+
+    expect(mockConfirm).toHaveBeenCalled()
+    expect(mockClient.request).not.toHaveBeenCalled()
   })
 })

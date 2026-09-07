@@ -32,6 +32,7 @@ func opsDescriptors(positiveID map[string]any, stringValue, boolValue map[string
 		{"servers.update_agent", "升级指定服务器的 Agent 与内核", schemaObject(map[string]any{"server_id": positiveID, "source": stringValue, "github_repo": stringValue}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue, "existing": boolValue}, "task_id"), 2, true},
 		{"servers.uninstall_agent", "远程卸载指定服务器的 Agent 与内核，成功后删除服务器记录", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue, "existing": boolValue}, "task_id"), 3, true},
 		{"agents.update_all", "滚动升级全部已接入服务器的 Agent 与内核（按并发槽位填满后自动继续）", schemaObject(nil), schemaObject(map[string]any{"summary": closedObject(map[string]any{"total": map[string]any{"type": "integer"}, "created": map[string]any{"type": "integer"}, "existing": map[string]any{"type": "integer"}, "skipped": map[string]any{"type": "integer"}, "failed": map[string]any{"type": "integer"}}), "created_count": map[string]any{"type": "integer"}}, "summary"), 2, true},
+		{"servers.runtime.refresh", "强制重建全部已接入 Agent 的运行配置与授权凭证并重启内核；连接会短暂中断。需要 confirm=true。不要用普通 deployments.apply 代替", schemaObject(map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}}, "confirm"), schemaObject(map[string]any{"config_version": map[string]any{"type": "integer"}, "queued_tasks": map[string]any{"type": "integer"}, "queued_servers": map[string]any{"type": "integer"}, "failed_immediate": map[string]any{"type": "integer"}, "delivery_retried": map[string]any{"type": "integer"}, "skipped_unenrolled": map[string]any{"type": "integer"}, "server_ids": map[string]any{"type": "array", "items": positiveID}}, "config_version"), 3, true},
 		{"servers.collect_logs", "拉取指定服务器的 Agent/内核日志", schemaObject(map[string]any{"server_id": positiveID, "services": map[string]any{"type": "string", "enum": []string{"all", "agent", "core"}}, "lines": map[string]any{"type": "integer", "minimum": 1, "maximum": 2000}}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue}, "task_id"), 2, true},
 		{"servers.manage_logs", "轮转或清空指定服务器的日志", schemaObject(map[string]any{"server_id": positiveID, "action": map[string]any{"type": "string", "enum": []string{"rotate", "clear"}}, "services": map[string]any{"type": "string", "enum": []string{"all", "agent", "core"}}}, "server_id", "action"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue}, "task_id"), 2, true},
 		{"servers.list_network_interfaces", "读取指定服务器的网卡及地址列表", schemaObject(map[string]any{"server_id": positiveID}, "server_id"), schemaObject(map[string]any{"task_id": positiveID, "task_status": stringValue}, "task_id"), 2, false},
@@ -53,6 +54,9 @@ func opsDescriptors(positiveID map[string]any, stringValue, boolValue map[string
 		if write.admin {
 			descriptor.RBACPermission = "admin.settings"
 		}
+		if write.name == "servers.runtime.refresh" {
+			descriptor.Destructive = true
+		}
 		reads = append(reads, descriptor)
 	}
 	return reads
@@ -62,6 +66,8 @@ func opsScopeFor(name string) string {
 	switch {
 	case name == "agents.update_all":
 		return "tasks:write"
+	case name == "servers.runtime.refresh":
+		return "deployments:apply"
 	case name == "deployments.dismiss_failure", name == "configuration_sync.retry", name == "servers.delivery.retry":
 		return "deployments:write"
 	case name == "inbounds.probe":

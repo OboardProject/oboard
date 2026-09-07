@@ -505,6 +505,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/configuration-sync", s.auth(s.configurationSync, model.RoleOperator))
 	mux.HandleFunc("/api/v1/configuration-sync/retry", s.auth(s.configurationSyncRetry, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/apply", s.auth(s.applyDeployment, model.RoleOperator))
+	mux.HandleFunc("/api/v1/deployments/refresh-runtime", s.auth(s.refreshRuntime, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/deployments/", s.auth(s.deployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent-tasks", s.auth(s.agentTasks, model.RoleOperator))
 	mux.HandleFunc("/api/v1/agent-tasks/", s.auth(s.agentTask, model.RoleOperator))
@@ -12433,6 +12434,94 @@ func (s *Server) applyDeployment(w http.ResponseWriter, r *http.Request) {
 	write(w, 202, map[string]any{"config_version": version, "tasks": sanitizeTasksForRole(tasks, currentRole(r)), "summary": taskSummary(tasks)})
 }
 
+func (s *Server) refreshRuntime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		method(w)
+		return
+	}
+	var request struct {
+		Confirm bool `json:"confirm"`
+	}
+	if r.Body != nil && r.ContentLength != 0 && !decode(w, r, &request) {
+		return
+	}
+	if !request.Confirm {
+		fail(w, errors.New("confirm is required"), http.StatusBadRequest)
+		return
+	}
+	result, err := s.refreshAllServerRuntime(r.Context(), nil)
+	if err != nil {
+		var herr *deploymentHTTPError
+		if errors.As(err, &herr) {
+			fail(w, herr.err, herr.status)
+			return
+		}
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "refresh", "runtime-config", fmt.Sprint(result["config_version"]))
+	write(w, 202, result)
+}
+
+func (s *Server) refreshAllServerRuntime(ctx context.Context, allowServer func(int64) bool) (map[string]any, error) {
+	servers, err := s.store.ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var allowedIDs map[int64]bool
+	if allowServer != nil {
+		allowedIDs = make(map[int64]bool)
+		for _, server := range servers {
+			if allowServer(server.ID) {
+				allowedIDs[server.ID] = true
+			}
+		}
+		if len(allowedIDs) == 0 {
+			return nil, errors.New("no authorized servers to refresh")
+		}
+	}
+	tasks, version, err := s.deployConfigurationScoped(ctx, 0, false, allowedIDs, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	deliveryRetried := 0
+	skippedUnenrolled := 0
+	for _, server := range servers {
+		if allowServer != nil && !allowServer(server.ID) {
+			continue
+		}
+		if strings.TrimSpace(server.AgentID) == "" {
+			skippedUnenrolled++
+			continue
+		}
+		if err := s.retryServerDelivery(ctx, server.ID); err != nil {
+			return nil, err
+		}
+		deliveryRetried++
+	}
+	queued := 0
+	failedImmediate := 0
+	serverIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		serverIDs = append(serverIDs, task.ServerID)
+		if task.Status == "failed" {
+			failedImmediate++
+			continue
+		}
+		queued++
+	}
+	s.publishRealtime("configuration", "deployments", "tasks", "servers")
+	return map[string]any{
+		"config_version":     version,
+		"queued_tasks":       len(tasks),
+		"queued_servers":     queued,
+		"failed_immediate":   failedImmediate,
+		"delivery_retried":   deliveryRetried,
+		"skipped_unenrolled": skippedUnenrolled,
+		"server_ids":         serverIDs,
+	}, nil
+}
+
 // deploymentHTTPError carries the HTTP status a failed deployment preparation
 // should report so the REST handler preserves operator-facing semantics while
 // recovery and enrollment callers just log the failure.
@@ -12453,10 +12542,10 @@ func deploymentFail(status int, err error) error {
 // deployment when the selected server belongs to a trusted transparent
 // forwarding prefix, because those members must change together.
 func (s *Server) deployConfiguration(ctx context.Context, selectedServerID int64, expandTransparentScope bool) ([]model.AgentTask, int64, error) {
-	return s.deployConfigurationScoped(ctx, selectedServerID, expandTransparentScope, nil, nil)
+	return s.deployConfigurationScoped(ctx, selectedServerID, expandTransparentScope, nil, nil, false)
 }
 
-func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID int64, expandTransparentScope bool, allowedServerIDs, ignoredPathIDs map[int64]bool) ([]model.AgentTask, int64, error) {
+func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID int64, expandTransparentScope bool, allowedServerIDs, ignoredPathIDs map[int64]bool, forceRefresh bool) ([]model.AgentTask, int64, error) {
 	if err := s.reconcileProxyCredentials(ctx); err != nil {
 		return nil, 0, deploymentFail(500, err)
 	}
@@ -12674,12 +12763,16 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		configChanged := true
 		if cmp, err := s.compareServerConfigState(ctx, server.ID, cfg); err != nil {
 			return nil, 0, deploymentFail(500, err)
-		} else if cmp.DataPlaneEqual {
+		} else if cmp.DataPlaneEqual && !forceRefresh {
 			configChanged = false
 		}
 		triggerReason := "manual_deploy"
 		if automaticConfigurationSync(ctx) {
 			triggerReason = "configuration_recovery"
+		}
+		if forceRefresh {
+			triggerReason = "runtime_refresh"
+			configChanged = true
 		}
 
 		forwardPlan, err := core.BuildPortForwardPlan(version, server, servers, forwards)
@@ -12746,6 +12839,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			Version:              version,
 			Config:               model.ApplyCoreConfigTaskPayload{Config: cfg, Assets: managedAssets},
 			ConfigChanged:        configChanged,
+			ForceRefresh:         forceRefresh,
 			TriggerReason:        triggerReason,
 			WARPRequests:         warpRequests,
 			TimeCheck:            &timePlan,

@@ -8,6 +8,7 @@ export interface AgentSettingsPanelProps {
   client: any
   load: (section?: string, options?: any) => Promise<void>
   notify: (message: string, tone?: 'success' | 'warning' | 'danger' | 'error' | 'info') => void
+  confirm?: (options: { title: string; message: string; confirmText?: string; tone?: string }) => Promise<boolean>
 }
 
 type TimeCorrectionMode = 'off' | 'auto' | 'ntp'
@@ -76,7 +77,7 @@ function parseNTPServers(value: unknown): string[] {
   return value.map(item => String(item || ''))
 }
 
-export function AgentSettingsPanel({ data, client, load, notify }: AgentSettingsPanelProps) {
+export function AgentSettingsPanel({ data, client, load, notify, confirm }: AgentSettingsPanelProps) {
   const [serverDefaultMTUMode, setServerDefaultMTUMode] = useState<string>(String(data.settings?.server_default_mtu_mode || 'detect'))
   const [serverDefaultBBREnabled, setServerDefaultBBREnabled] = useState<boolean>(String(data.settings?.server_default_bbr_enabled ?? 'true') === 'true')
   const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'auto') as TimeCorrectionMode)
@@ -154,6 +155,31 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
     void autoSaveSetting({ server_monitoring_retention_days: days }, '监控数据保留时间已保存')
   }
 
+  const refreshAllRuntime = async () => {
+    if (savingKey) return
+    const ok = await confirm?.({
+      title: '刷新全部节点配置？',
+      message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证也会重新从主控下发。',
+      confirmText: '刷新全部节点',
+      tone: 'danger',
+    })
+    if (!ok) return
+    setSavingKey('refresh-runtime')
+    try {
+      const result = await client.request('/deployments/refresh-runtime', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: true }),
+      })
+      const count = Number(result?.delivery_retried ?? 0)
+      notify(`已向 ${count} 台已接入服务器重新下发配置与授权`, 'success')
+      await load()
+    } catch (error: any) {
+      notify(error?.message || String(error), 'error')
+    } finally {
+      setSavingKey('')
+    }
+  }
+
   const saveNTPServers = async () => {
     if (savingKey) return
     setSavingKey('ntp-servers')
@@ -215,6 +241,15 @@ export function AgentSettingsPanel({ data, client, load, notify }: AgentSettings
           <Select id="server-monitoring-retention-days" value={monitoringRetentionDays} onChange={handleMonitoringRetentionChange} disabled={Boolean(savingKey)} aria-label="服务器监控数据保留时间" aria-describedby="server-monitoring-retention-help">
             {monitoringRetentionOptions.map(days => <option key={days} value={days}>{days} 天</option>)}
           </Select>
+        </SettingsRow>
+      </SettingsGroup>
+      <SettingsGroup title="运行配置" description="更新后或节点异常时，可清理 Agent 本地运行配置并从主控重新下发。">
+        <SettingsRow label="刷新全部节点" description="重建内核、转发、隧道、SSH 与授权凭证。每台已接入节点会短暂中断连接。">
+          <div className="settings-actions">
+            <button type="button" className="danger-ghost" onClick={() => void refreshAllRuntime()} disabled={Boolean(savingKey)}>
+              {savingKey === 'refresh-runtime' ? '下发中...' : '刷新全部节点配置'}
+            </button>
+          </div>
         </SettingsRow>
       </SettingsGroup>
     </section>

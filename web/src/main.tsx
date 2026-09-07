@@ -3771,7 +3771,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
   const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
     { key: 'connection', label: '基础设置', icon: LinkIcon, description: '连接、代理和远程控制。' },
     { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
-    { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量和监控策略。' },
+    { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量、监控策略，以及刷新全部节点运行配置。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
     { key: 'subscriptions', label: '订阅', icon: Shield, description: '订阅加密、入口 Host 和独立订阅入口。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
@@ -3902,7 +3902,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveRegistration()} disabled={Boolean(saving)}>{saving === 'registration' ? '保存中...' : '保存注册设置'}</button></div>
         </SettingsGroup>
       </section>}
-      {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} />}
+      {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={options => dialogs.confirm(options)} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
       {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
