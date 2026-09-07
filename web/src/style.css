@@ -13021,6 +13021,307 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   border-radius: var(--radius-xl, 16px);
 }
 
+.connectivity-dialog.is-latency {
+  width: min(1480px, 98vw);
+  max-height: min(96vh, 1080px);
+}
+
+.latency-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.latency-overview,
+.latency-targets,
+.latency-trend,
+.latency-anomalies {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-solid);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.latency-overview { padding: 12px 14px 14px; }
+.latency-overview-head,
+.latency-targets-head,
+.latency-trend-head,
+.latency-anomalies-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.latency-overview-head h3,
+.latency-targets-head h3,
+.latency-trend-head h3,
+.latency-anomalies-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.latency-overview-head span,
+.latency-targets-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latency-overview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latency-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.latency-overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.latency-overview-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latency-overview-card strong {
+  color: var(--text-strong);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.latency-overview-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latency-dashboard-main {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.latency-targets,
+.latency-trend { display: flex; flex-direction: column; min-height: 0; }
+
+.latency-targets { padding: 12px; }
+.latency-trend { padding: 12px 14px 10px; }
+
+.latency-targets-actions,
+.latency-trend-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.latency-targets-actions button {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.latency-targets-actions button.active,
+.latency-targets-actions button:hover {
+  color: var(--text-strong);
+  background: var(--surface-solid);
+  border-color: color-mix(in srgb, var(--color-primary, #3b82f6) 35%, var(--border));
+}
+
+.latency-target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.latency-target-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--surface-2);
+  text-align: start;
+  cursor: pointer;
+}
+
+.latency-target-item.active {
+  border-color: var(--border);
+  background: var(--surface-solid);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.latency-target-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.latency-target-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.latency-target-copy strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.latency-target-copy small {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.latency-target-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.latency-target-spark {
+  width: 72px;
+  height: 22px;
+  display: block;
+}
+
+.latency-target-empty {
+  padding: 18px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.latency-granularity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latency-granularity .custom-select,
+.latency-granularity select {
+  min-width: 88px;
+}
+
+.latency-trend .komari-chart-container {
+  flex: 1;
+  min-height: 240px;
+  border: 0;
+  box-shadow: none;
+  padding: 6px 0 0;
+}
+
+.latency-anomalies { padding: 12px 14px; }
+.latency-percentile-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latency-percentile-row strong {
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.latency-anomaly-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.latency-anomaly-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.latency-anomaly-list time {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.latency-anomaly-empty {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1080px) {
+  .latency-dashboard-main { grid-template-columns: 1fr; }
+  .latency-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .latency-target-list { max-height: 240px; }
+}
+
+@media (max-width: 640px) {
+  .connectivity-dialog.is-latency {
+    width: 100%;
+    max-height: 96vh;
+  }
+  .latency-overview-grid { grid-template-columns: 1fr 1fr; }
+  .latency-overview-card strong { font-size: 22px; }
+  .latency-target-item { grid-template-columns: 8px minmax(0, 1fr) auto; }
+  .latency-target-spark { display: none; }
+}
+
 .server-monitor-tabs {
   width: fit-content;
   display: flex;

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, formatBucketTime, splitSeriesSegments } from './server-unified-chart'
 
-const monitorSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+const monitorSource = readFileSync(new URL('./components/server/ServerUnifiedTelemetryChart.tsx', import.meta.url), 'utf8')
 const monitorStyles = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
 
 describe('server-unified-chart helper', () => {
@@ -87,6 +87,7 @@ describe('server-unified-chart helper', () => {
       'reg_北京 · 联通',
       'reg_广东 · 电信',
     ])
+    expect(result.seriesList.find(series => series.id === 'public_latency')?.label).toBe('公网探测')
     expect(result.buckets).toHaveLength(60)
 
     // Find bucket with populated data
@@ -165,6 +166,28 @@ describe('server-unified-chart helper', () => {
     })
 
     expect(result.buckets[0].values.public_latency).toBe(25)
+  })
+
+  it('includes custom probe tasks that have no province or carrier', () => {
+    const now = new Date('2026-09-07T12:00:00Z').getTime()
+    const result = alignUnifiedMetrics({
+      regionalProbes: [{
+        kind: 'custom',
+        task_id: 8,
+        task_name: '网站',
+        checked_at: '2026-09-07T11:30:00Z',
+        available: true,
+        latency_ms: 18,
+      }],
+      includeResources: false,
+      windowHours: 1,
+      bucketCount: 6,
+      now,
+    })
+    expect(result.seriesList.map(series => series.id)).toEqual(['public_latency', 'reg_task_8'])
+    expect(result.seriesList[1].label).toBe('网站')
+    const populated = result.buckets.find(bucket => bucket.values.reg_task_8 != null)
+    expect(populated?.values.reg_task_8).toBe(18)
   })
 
   it('computes max latency dynamically for scaling right Y-axis', () => {

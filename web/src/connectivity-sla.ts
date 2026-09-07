@@ -48,10 +48,35 @@ export type ConnectivityResponse = {
   buckets: ConnectivityBucket[]
   latency_points: { at: string; avg_ms: number; min_ms: number; max_ms: number; count: number }[]
   failed_probe_points: { at: string; count: number }[]
-  regional_latency_points: { kind: 'regional'; province: string; carrier: string; available: true; latency_ms: number; min_latency_ms: number; max_latency_ms: number; count: number; checked_at: string }[]
+  regional_latency_points: { kind: 'regional' | 'custom'; task_id?: number; task_name?: string; province: string; carrier: string; available: true; latency_ms: number; min_latency_ms: number; max_latency_ms: number; count: number; checked_at: string }[]
+  probe_target_stats: LatencyProbeTargetStat[]
   regional_data_start_at: string | null
   outages: { started_at: string; ended_at: string | null; duration_seconds: number; cause: string; started_before_window: boolean }[]
   data_start_at: string | null
+}
+
+export type LatencyProbeTargetStat = {
+  key: string
+  kind: 'public' | 'regional' | 'custom' | string
+  task_id?: number
+  task_name?: string
+  mode?: string
+  province?: string
+  carrier?: string
+  avg_ms: number | null
+  min_ms: number | null
+  max_ms: number | null
+  jitter_ms: number | null
+  sample_count: number
+  success_count: number
+  report_count: number
+  available_count: number
+  loss_percent: number | null
+  success_percent: number | null
+  peak_latency_ms?: number | null
+  peak_latency_at?: string | null
+  peak_loss_percent?: number | null
+  peak_loss_at?: string | null
 }
 
 export function connectivityRequestPath(serverID: number | string, window: ConnectivityWindowKey = '24h') {

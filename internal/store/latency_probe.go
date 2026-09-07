@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -242,6 +243,202 @@ func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, f
 		return nil, nil, err
 	}
 	return points, dataStart, nil
+}
+
+func LatencyProbeTargetKey(kind string, taskID int64, province, carrier string) string {
+	if kind == "public" {
+		return "public"
+	}
+	if taskID > 0 {
+		return "task_" + strconv.FormatInt(taskID, 10)
+	}
+	return strings.TrimSpace(province) + " · " + strings.TrimSpace(carrier)
+}
+
+func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) ([]model.LatencyProbeTargetStat, error) {
+	from = from.UTC()
+	to = to.UTC()
+	if serverID <= 0 || from.IsZero() || to.IsZero() || !to.After(from) || bucket < time.Second {
+		return nil, errors.New("invalid latency probe target stat query")
+	}
+	bucketSeconds := int64(bucket / time.Second)
+	bucketCount := int64((to.Sub(from) + bucket - 1) / bucket)
+	if bucketSeconds <= 0 || bucketCount > maxRegionalLatencyPointBuckets {
+		return nil, errors.New("latency probe target stat query exceeds 360 buckets")
+	}
+
+	fromText := from.Format(time.RFC3339Nano)
+	toText := to.Format(time.RFC3339Nano)
+	rows, err := s.db.QueryContext(ctx, `
+		select
+			max(kind),
+			max(task_id),
+			max(case when kind='public' then '公网探测' when trim(task_name)<>'' then task_name else trim(province)||' · '||trim(carrier) end),
+			max(mode),
+			max(province),
+			max(carrier),
+			avg(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end),
+			min(case when available=1 and latency_ms>0 then latency_ms end),
+			max(case when available=1 and latency_ms>0 then latency_ms end),
+			sum(sample_count),
+			sum(success_count),
+			count(*),
+			sum(case when available=1 then 1 else 0 end)
+		from server_latency_probe_results
+		where server_id=? and checked_at>=? and checked_at<? and kind in ('public','regional','custom')
+		group by case
+			when kind='public' then 'public'
+			when task_id>0 then 'task_'||task_id
+			else trim(province)||' · '||trim(carrier)
+		end
+		order by max(kind)='public' desc, max(case when kind='public' then '公网探测' when trim(task_name)<>'' then task_name else trim(province)||' · '||trim(carrier) end)`, serverID, fromText, toText)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byKey := make(map[string]*model.LatencyProbeTargetStat)
+	order := make([]string, 0)
+	for rows.Next() {
+		var (
+			stat                        model.LatencyProbeTargetStat
+			avg                         sql.NullFloat64
+			minMS, maxMS                sql.NullInt64
+			sampleCount, successCount   sql.NullInt64
+			reportCount, availableCount sql.NullInt64
+		)
+		if err := rows.Scan(&stat.Kind, &stat.TaskID, &stat.TaskName, &stat.Mode, &stat.Province, &stat.Carrier, &avg, &minMS, &maxMS, &sampleCount, &successCount, &reportCount, &availableCount); err != nil {
+			return nil, err
+		}
+		stat.Key = LatencyProbeTargetKey(stat.Kind, stat.TaskID, stat.Province, stat.Carrier)
+		if strings.TrimSpace(stat.Key) == "" || stat.Key == " · " {
+			continue
+		}
+		if avg.Valid {
+			value := avg.Float64
+			stat.AvgMS = &value
+		}
+		if minMS.Valid {
+			value := minMS.Int64
+			stat.MinMS = &value
+		}
+		if maxMS.Valid {
+			value := maxMS.Int64
+			stat.MaxMS = &value
+		}
+		if minMS.Valid && maxMS.Valid {
+			jitter := float64(maxMS.Int64 - minMS.Int64)
+			stat.JitterMS = &jitter
+		}
+		stat.SampleCount = sampleCount.Int64
+		stat.SuccessCount = successCount.Int64
+		stat.ReportCount = reportCount.Int64
+		stat.AvailableCount = availableCount.Int64
+		attachLatencyProbeTargetRates(&stat)
+		copy := stat
+		byKey[stat.Key] = &copy
+		order = append(order, stat.Key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	peakRows, err := s.db.QueryContext(ctx, `
+		with filtered as (
+			select
+				case
+					when kind='public' then 'public'
+					when task_id>0 then 'task_'||task_id
+					else trim(province)||' · '||trim(carrier)
+				end as target_key,
+				cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,
+				latency_ms,
+				available,
+				sample_count,
+				success_count,
+				checked_at
+			from server_latency_probe_results
+			where server_id=? and checked_at>=? and checked_at<? and kind in ('public','regional','custom')
+		)
+		select target_key, bucket_index,
+			avg(case when available=1 and latency_ms>0 then latency_ms end),
+			sum(sample_count),
+			sum(success_count),
+			sum(case when available=1 then 1 else 0 end),
+			count(*),
+			min(checked_at)
+		from filtered
+		where bucket_index>=0 and bucket_index<?
+		group by target_key, bucket_index`, fromText, bucketSeconds, serverID, fromText, toText, bucketCount)
+	if err != nil {
+		return nil, err
+	}
+	defer peakRows.Close()
+	for peakRows.Next() {
+		var (
+			key                         string
+			bucketIndex                 int64
+			avg                         sql.NullFloat64
+			sampleCount, successCount   sql.NullInt64
+			availableCount, reportCount sql.NullInt64
+			checkedAt                   string
+		)
+		if err := peakRows.Scan(&key, &bucketIndex, &avg, &sampleCount, &successCount, &availableCount, &reportCount, &checkedAt); err != nil {
+			return nil, err
+		}
+		stat := byKey[key]
+		if stat == nil {
+			continue
+		}
+		at := parseTime(checkedAt)
+		if avg.Valid && (stat.PeakLatencyMS == nil || avg.Float64 > *stat.PeakLatencyMS) {
+			value := avg.Float64
+			stat.PeakLatencyMS = &value
+			stat.PeakLatencyAt = &at
+		}
+		loss := latencyProbeLossPercent(sampleCount.Int64, successCount.Int64, reportCount.Int64, availableCount.Int64)
+		if loss != nil && (stat.PeakLossPercent == nil || *loss > *stat.PeakLossPercent) {
+			stat.PeakLossPercent = loss
+			stat.PeakLossAt = &at
+		}
+	}
+	if err := peakRows.Err(); err != nil {
+		return nil, err
+	}
+	stats := make([]model.LatencyProbeTargetStat, 0, len(order))
+	for _, key := range order {
+		if item := byKey[key]; item != nil {
+			stats = append(stats, *item)
+		}
+	}
+	return stats, nil
+}
+
+func attachLatencyProbeTargetRates(stat *model.LatencyProbeTargetStat) {
+	stat.LossPercent = latencyProbeLossPercent(stat.SampleCount, stat.SuccessCount, stat.ReportCount, stat.AvailableCount)
+	if stat.LossPercent == nil {
+		return
+	}
+	success := 100 - *stat.LossPercent
+	stat.SuccessPercent = &success
+}
+
+func latencyProbeLossPercent(sampleCount, successCount, reportCount, availableCount int64) *float64 {
+	if sampleCount > 0 {
+		value := (1 - float64(successCount)/float64(sampleCount)) * 100
+		if value < 0 {
+			value = 0
+		}
+		return &value
+	}
+	if reportCount > 0 {
+		value := (1 - float64(availableCount)/float64(reportCount)) * 100
+		if value < 0 {
+			value = 0
+		}
+		return &value
+	}
+	return nil
 }
 
 func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, report model.LatencyProbeResultReport) error {

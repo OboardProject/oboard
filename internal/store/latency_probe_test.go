@@ -151,6 +151,61 @@ func TestRegionalLatencyPointsAverageSuccessfulTargets(t *testing.T) {
 	}
 }
 
+func TestLatencyProbeTargetStatsExcludeFailuresFromAverageAndCountLoss(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "latency-target-stats.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "target-stats", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, time.September, 7, 0, 0, 0, 0, time.UTC)
+	insertLatencyProbeResult(t, db, server.ID, "public-ok", "public", 0, "公网探测", "tcp", "", "", true, 20, 3, 3, from.Add(10*time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "public-fail", "public", 0, "公网探测", "tcp", "", "", false, 0, 3, 0, from.Add(20*time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "task-ok", "custom", 8, "网站", "http", "", "", true, 40, 2, 2, from.Add(30*time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "task-slow", "custom", 8, "网站", "http", "", "", true, 80, 2, 2, from.Add(90*time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "task-fail", "custom", 8, "网站", "http", "", "", false, 0, 2, 0, from.Add(100*time.Second))
+	insertRegionalLatencyResult(t, db, server.ID, "region-ok", "上海", "中国电信", true, 12, 3, from.Add(40*time.Second))
+
+	stats, err := db.ListLatencyProbeTargetStats(ctx, server.ID, from, from.Add(2*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 3 {
+		t.Fatalf("target stats = %#v, want public, custom, and regional", stats)
+	}
+	byKey := map[string]model.LatencyProbeTargetStat{}
+	for _, stat := range stats {
+		byKey[stat.Key] = stat
+	}
+	public := byKey["public"]
+	if public.Kind != "public" || public.TaskName != "公网探测" || public.AvgMS == nil || *public.AvgMS != 20 || public.SampleCount != 6 || public.SuccessCount != 3 || public.LossPercent == nil || *public.LossPercent != 50 {
+		t.Fatalf("public stat = %#v", public)
+	}
+	task := byKey["task_8"]
+	if task.Kind != "custom" || task.TaskName != "网站" || task.Mode != "http" || task.AvgMS == nil || *task.AvgMS != 60 || task.JitterMS == nil || *task.JitterMS != 40 || task.SampleCount != 6 || task.SuccessCount != 4 {
+		t.Fatalf("task stat = %#v", task)
+	}
+	if task.PeakLatencyMS == nil || *task.PeakLatencyMS != 80 || task.PeakLatencyAt == nil {
+		t.Fatalf("task peak = %#v", task)
+	}
+	region := byKey["上海 · 中国电信"]
+	if region.Kind != "regional" || region.AvgMS == nil || *region.AvgMS != 12 || region.LossPercent == nil || *region.LossPercent != 0 {
+		t.Fatalf("regional stat = %#v", region)
+	}
+}
+
+func insertLatencyProbeResult(t *testing.T, db *Store, serverID int64, probeID, kind string, taskID int64, taskName, mode, province, carrier string, available bool, latencyMS int64, sampleCount, successCount int, checkedAt time.Time) {
+	t.Helper()
+	ts := checkedAt.UTC().Format(time.RFC3339Nano)
+	if _, err := db.db.Exec(`insert into server_latency_probe_results(server_id,resource_version,probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,sample_count,success_count,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, "stats-v1", probeID, kind, taskID, taskName, mode, province, carrier, "192.0.2.1", "192.0.2.1", 443, boolInt(available), latencyMS, sampleCount, successCount, ts, ts); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRegionalLatencyPointsRejectsUnboundedWindow(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "regional-latency-bounds.sqlite"))
 	if err != nil {

@@ -296,6 +296,9 @@ func TestServerConnectivityAPIWindowsAndErrors(t *testing.T) {
 		if outages, ok := response["outages"].([]any); !ok || outages == nil {
 			t.Fatalf("outages must be a JSON array: %#v", response["outages"])
 		}
+		if stats, ok := response["probe_target_stats"].([]any); !ok || stats == nil {
+			t.Fatalf("probe_target_stats must be a JSON array: %#v", response["probe_target_stats"])
+		}
 	}
 	request(t, handler, http.MethodGet, "/api/v1/ui/servers/"+strconv.FormatInt(server.ID, 10)+"/connectivity?window=1y", token, nil, http.StatusBadRequest)
 	request(t, handler, http.MethodGet, "/api/v1/ui/servers/999999/connectivity", token, nil, http.StatusNotFound)

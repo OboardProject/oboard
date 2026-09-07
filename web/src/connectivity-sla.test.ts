@@ -32,15 +32,17 @@ describe('connectivity API contract', () => {
 
 describe('connectivity dialog data source', () => {
   const source = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+  const dashboard = readFileSync(new URL('./components/server/LatencyDashboard.tsx', import.meta.url), 'utf8')
 
   it('does not request heartbeat metrics for SLA', () => {
     expect(source).not.toContain('/metrics?limit=1440')
     expect(source).not.toContain('buildSlaTimeline')
   })
 
-  it('renders authoritative coverage, buckets, and latency points', () => {
-    expect(source).toContain('response.summary.coverage_percent')
-    expect(source).toContain('response?.buckets')
-    expect(source).toContain('response.latency_points')
+  it('renders latency history from the connectivity window response', () => {
+    expect(source).toContain('LatencyDashboard')
+    expect(dashboard).toContain('response.latency_points')
+    expect(dashboard).toContain('response.regional_latency_points')
+    expect(dashboard).toContain('response.probe_target_stats')
   })
 })

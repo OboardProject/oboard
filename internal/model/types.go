@@ -2264,6 +2264,30 @@ type ServerRegionalLatencyPoint struct {
 	CheckedAt    time.Time `json:"checked_at"`
 }
 
+type LatencyProbeTargetStat struct {
+	Key             string     `json:"key"`
+	Kind            string     `json:"kind"`
+	TaskID          int64      `json:"task_id,omitempty"`
+	TaskName        string     `json:"task_name,omitempty"`
+	Mode            string     `json:"mode,omitempty"`
+	Province        string     `json:"province,omitempty"`
+	Carrier         string     `json:"carrier,omitempty"`
+	AvgMS           *float64   `json:"avg_ms"`
+	MinMS           *int64     `json:"min_ms"`
+	MaxMS           *int64     `json:"max_ms"`
+	JitterMS        *float64   `json:"jitter_ms"`
+	SampleCount     int64      `json:"sample_count"`
+	SuccessCount    int64      `json:"success_count"`
+	ReportCount     int64      `json:"report_count"`
+	AvailableCount  int64      `json:"available_count"`
+	LossPercent     *float64   `json:"loss_percent"`
+	SuccessPercent  *float64   `json:"success_percent"`
+	PeakLatencyMS   *float64   `json:"peak_latency_ms,omitempty"`
+	PeakLatencyAt   *time.Time `json:"peak_latency_at,omitempty"`
+	PeakLossPercent *float64   `json:"peak_loss_percent,omitempty"`
+	PeakLossAt      *time.Time `json:"peak_loss_at,omitempty"`
+}
+
 type LatencyProbeResultReport struct {
 	ReportID        string               `json:"report_id"`
 	ResourceVersion string               `json:"resource_version"`

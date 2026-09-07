@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const settingsSource = readFileSync(new URL('./components/AgentSettingsPanel.tsx', import.meta.url), 'utf8')
 const mainSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+const dashboardSource = readFileSync(new URL('./components/server/LatencyDashboard.tsx', import.meta.url), 'utf8')
 
 describe('server monitoring retention', () => {
   it('saves the shared monitoring retention setting from the Agent settings panel', () => {
@@ -16,8 +17,8 @@ describe('server monitoring retention', () => {
   it('uses aggregated regional history for every visible latency window', () => {
     expect(mainSource).not.toContain('/latency-probe?limit=512')
     expect(mainSource).toContain("['1h', '6h', '12h', '24h', '7d', '30d']")
-    expect(mainSource).toContain('regionalProbes={response.regional_latency_points || []}')
-    expect(mainSource).toContain('windowEndAt={response.window.to}')
     expect(mainSource).toContain('response?.retention_days) || 7')
+    expect(dashboardSource).toContain('regionalProbes={response.regional_latency_points || []}')
+    expect(dashboardSource).toContain('windowEndAt={response.window.to}')
   })
 })

@@ -95,6 +95,7 @@ type connectivityResponse struct {
 	LatencyPoints         []connectivityLatencyPoint         `json:"latency_points"`
 	FailedProbePoints     []connectivityFailedProbePoint     `json:"failed_probe_points"`
 	RegionalLatencyPoints []model.ServerRegionalLatencyPoint `json:"regional_latency_points"`
+	ProbeTargetStats      []model.LatencyProbeTargetStat     `json:"probe_target_stats"`
 	Outages               []connectivityOutage               `json:"outages"`
 	DataStartAt           *time.Time                         `json:"data_start_at"`
 	RegionalDataStartAt   *time.Time                         `json:"regional_data_start_at"`
@@ -550,17 +551,19 @@ func BuildConnectivityResponse(serverID int64, window connectivityWindow, histor
 	current.CheckedAt = currentState.lastProbeAt
 	current.Error = currentState.lastProbeError
 	response := connectivityResponse{
-		ServerID:          serverID,
-		Window:            window,
-		Summary:           connectivitySummary{SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds(), ObservedSeconds: observed.Seconds(), CoveragePercent: coverage, OutageCount: len(outages), LongestOutageSecond: longest},
-		Probes:            probes,
-		Latency:           connectivityLatencyStats(successfulProbes),
-		Current:           current,
-		Buckets:           buildConnectivityBuckets(window, segments, successfulProbes),
-		LatencyPoints:     buildConnectivityLatencyPoints(window.From, window.Duration, successfulProbes),
-		FailedProbePoints: buildConnectivityFailedProbePoints(window.From, window.Duration, history.Events),
-		Outages:           outages,
-		DataStartAt:       history.DataStart,
+		ServerID:              serverID,
+		Window:                window,
+		Summary:               connectivitySummary{SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds(), ObservedSeconds: observed.Seconds(), CoveragePercent: coverage, OutageCount: len(outages), LongestOutageSecond: longest},
+		Probes:                probes,
+		Latency:               connectivityLatencyStats(successfulProbes),
+		Current:               current,
+		Buckets:               buildConnectivityBuckets(window, segments, successfulProbes),
+		LatencyPoints:         buildConnectivityLatencyPoints(window.From, window.Duration, successfulProbes),
+		FailedProbePoints:     buildConnectivityFailedProbePoints(window.From, window.Duration, history.Events),
+		RegionalLatencyPoints: make([]model.ServerRegionalLatencyPoint, 0),
+		ProbeTargetStats:      make([]model.LatencyProbeTargetStat, 0),
+		Outages:               outages,
+		DataStartAt:           history.DataStart,
 	}
 	if len(response.Outages) > 10 {
 		response.Outages = response.Outages[len(response.Outages)-10:]
@@ -600,7 +603,13 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	regionalPoints, regionalDataStart, err := s.store.ListRegionalLatencyPoints(r.Context(), serverID, retainedFrom, window.To, connectivityLatencyPointInterval(window.To.Sub(retainedFrom)))
+	interval := connectivityLatencyPointInterval(window.To.Sub(retainedFrom))
+	regionalPoints, regionalDataStart, err := s.store.ListRegionalLatencyPoints(r.Context(), serverID, retainedFrom, window.To, interval)
+	if err != nil {
+		fail(w, err, http.StatusInternalServerError)
+		return
+	}
+	targetStats, err := s.store.ListLatencyProbeTargetStats(r.Context(), serverID, retainedFrom, window.To, interval)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -612,5 +621,6 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 	response.RetentionDays = retentionDays
 	response.RegionalLatencyPoints = regionalPoints
 	response.RegionalDataStartAt = regionalDataStart
+	response.ProbeTargetStats = targetStats
 	write(w, http.StatusOK, response)
 }

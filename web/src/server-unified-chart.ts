@@ -8,23 +8,29 @@ export interface MetricSeries {
 
 // regionalSeriesKey identifies the probe task that produced a sample. Several
 // tasks may share one province+carrier target, so the task id wins when present.
-export function regionalSeriesKey(probe: { task_id?: number; province?: string; carrier?: string }): string {
+export function regionalSeriesKey(probe: { kind?: string; task_id?: number; province?: string; carrier?: string }): string {
+  if (probe.kind === 'public') return 'public'
   if (probe.task_id && probe.task_id > 0) return `task_${probe.task_id}`
   return `${probe.province || ''} · ${probe.carrier || ''}`
 }
 
+export function isLatencySeriesKey(key: string): boolean {
+  return Boolean(key) && key !== ' · '
+}
+
 // regionalSeriesLabel prefers the probe task name so charts stay readable when
 // several tasks watch the same province and carrier.
-export function regionalSeriesLabel(probe: { task_name?: string; province?: string; carrier?: string }): string {
+export function regionalSeriesLabel(probe: { kind?: string; task_name?: string; province?: string; carrier?: string }): string {
   const name = (probe.task_name || '').trim()
   if (name) return name
+  if (probe.kind === 'public') return '公网探测'
   return `${probe.province || ''} · ${probe.carrier || ''}`
 }
 
 export interface LatencyProbeResultSample {
   probe_id?: number | string
   server_id?: number
-  kind?: 'public' | 'regional'
+  kind?: 'public' | 'regional' | 'custom'
   task_id?: number
   task_name?: string
   province?: string
@@ -193,23 +199,23 @@ export function alignUnifiedMetrics({
   const startTime = now - windowMs
   const bucketDuration = windowMs / bucketCount
 
-  // 1. Discover all regional probe targets. A probe task owns one target, so the
-  // task identity is the series key and the task name is the series label.
+  // 1. Discover all probe-task series. A task owns one target, so the task
+  // identity is the series key and the task name is the series label.
   const regionalTargets = new Map<string, string>()
   regionalProbes.forEach(probe => {
-    if ((probe.kind === 'regional' || probe.at) && probe.province && probe.carrier) {
-      const key = regionalSeriesKey(probe)
-      if (!regionalTargets.has(key)) regionalTargets.set(key, regionalSeriesLabel(probe))
-    }
+    if (probe.kind === 'public') return
+    const key = regionalSeriesKey(probe)
+    if (!isLatencySeriesKey(key)) return
+    if (!regionalTargets.has(key)) regionalTargets.set(key, regionalSeriesLabel(probe))
   })
 
   // 2. Build series list
   const seriesList: MetricSeries[] = includeResources ? [
     { id: 'cpu', label: 'CPU 使用率', color: '#3b82f6', unit: '%', yAxis: 'left' },
     { id: 'memory', label: '内存使用率', color: '#10b981', unit: '%', yAxis: 'left' },
-    { id: 'public_latency', label: '公网延迟', color: '#f59e0b', unit: 'ms', yAxis: 'right' },
+    { id: 'public_latency', label: '公网探测', color: '#f59e0b', unit: 'ms', yAxis: 'right' },
   ] : [
-    { id: 'public_latency', label: '公网延迟', color: '#f59e0b', unit: 'ms', yAxis: 'right' },
+    { id: 'public_latency', label: '公网探测', color: '#f59e0b', unit: 'ms', yAxis: 'right' },
   ]
 
   let colorIdx = 0
@@ -280,22 +286,23 @@ export function alignUnifiedMetrics({
     }
   })
 
-  // 6. Map regionalProbes
+  // 6. Map regional and custom probe tasks
   regionalProbes.forEach(probe => {
-    if (!probe.province || !probe.carrier) return
+    if (probe.kind === 'public') return
+    const key = regionalSeriesKey(probe)
+    if (!isLatencySeriesKey(key)) return
 
     const isAggregated = Boolean(probe.at)
     const timeString = isAggregated ? probe.at : probe.checked_at
     const rawValue = isAggregated ? probe.avg_ms : probe.latency_ms
     if (!timeString || rawValue == null) return
-    if (!isAggregated && (probe.kind !== 'regional' || !probe.available)) return
+    if (!isAggregated && probe.available === false) return
 
     const value = Number(rawValue)
     if (!Number.isFinite(value)) return
     const idx = getBucketIndex(new Date(timeString).getTime())
     if (idx >= 0) {
-      const seriesId = `reg_${regionalSeriesKey(probe)}`
-      addLatency(idx, seriesId, value, Number(probe.count || 1))
+      addLatency(idx, `reg_${key}`, value, Number(probe.count || 1))
     }
   })
 

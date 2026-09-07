@@ -95,7 +95,7 @@ import { TELEGRAM_BINDING_PROMPT, telegramBindingCommand } from './telegram-bind
 import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from './error-localization'
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
-import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, splitSeriesSegments, type LatencyProbeResultSample, type MetricSeries, type ServerLatencyPoint, type ServerResourcePoint } from './server-unified-chart'
+import { LatencyDashboard } from './components/server/LatencyDashboard'
 import { Badge } from './components/ui/badge'
 import { AuthorizationStatusBadge } from './components/authorization/AuthorizationStatusBadge'
 import { Switch } from './components/ui/switch'
@@ -188,7 +188,7 @@ import {
 import { useControllerUpdatePromptAutoDismiss } from './controller-update-prompt'
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
-import { connectivityBucketTone as backendConnectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
+import { connectivityRequestPath, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   compareDNSPolicyStatus,
@@ -10058,369 +10058,10 @@ function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose
   </MotionDialogPanel>
 }
 
-function connectivitySlaTone(rate: number | null | undefined) {
-  if (rate == null) return 'fair'
-  if (rate >= 99) return 'great'
-  if (rate >= 95) return 'fair'
-  return 'poor'
-}
-
-function ServerUnifiedTelemetryChart({
-  resourcePoints = [],
-  latencyPoints = [],
-  regionalProbes = [],
-  failedProbePoints = [],
-  includeResources = true,
-  windowHours = 24,
-  windowEndAt,
-}: {
-  resourcePoints?: ServerResourcePoint[]
-  latencyPoints?: ServerLatencyPoint[]
-  regionalProbes?: LatencyProbeResultSample[]
-  failedProbePoints?: ConnectivityResponse['failed_probe_points']
-  includeResources?: boolean
-  windowHours?: number
-  windowEndAt?: string
-}) {
-  const { seriesList, buckets } = useMemo(() => {
-    const responseEnd = windowEndAt ? new Date(windowEndAt).getTime() : Number.NaN
-    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, now: Number.isFinite(responseEnd) ? responseEnd : Date.now() })
-  }, [resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndAt])
-
-  const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
-  const [connectGaps, setConnectGaps] = useState(DEFAULT_CONNECT_GAPS)
-  const [smoothLines, setSmoothLines] = useState(DEFAULT_SMOOTH_LINES)
-
-  useEffect(() => {
-    setEnabledSeries(prev => {
-      const next = { ...prev }
-      seriesList.forEach(s => {
-        if (next[s.id] === undefined) {
-          next[s.id] = true
-        }
-      })
-      return next
-    })
-  }, [seriesList])
-
-  const toggleSeries = (id: string) => {
-    setEnabledSeries(prev => ({ ...prev, [id]: !prev[id] }))
-  }
-
-  const toggleAll = (enable: boolean) => {
-    const next: Record<string, boolean> = {}
-    seriesList.forEach(s => { next[s.id] = enable })
-    setEnabledSeries(next)
-  }
-
-  const maxLatency = useMemo(() => computeMaxLatency(buckets, enabledSeries), [buckets, enabledSeries])
-
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const svgRef = useRef<SVGSVGElement | null>(null)
-  const chartTitleID = React.useId()
-  const chartDescriptionID = React.useId()
-  const gradientPrefix = React.useId().replace(/:/g, '')
-
-  const hasPercentageSeries = includeResources
-  const activeSeries = seriesList.filter(s => enabledSeries[s.id] !== false)
-
-  const W = 1000
-  const H = 160
-  const padL = hasPercentageSeries ? 45 : 12
-  const padR = 56
-  const padT = 12
-  const padB = 135
-  const plotW = W - padL - padR
-  const plotH = padB - padT
-
-  const getX = (idx: number) => padL + (idx / Math.max(1, buckets.length - 1)) * plotW
-  const getBucketStartX = (idx: number) => idx <= 0 ? padL : (getX(idx - 1) + getX(idx)) / 2
-  const getBucketEndX = (idx: number) => idx >= buckets.length - 1 ? W - padR : (getX(idx) + getX(idx + 1)) / 2
-  const windowEndMS = windowEndAt ? new Date(windowEndAt).getTime() : Date.now()
-  const failedProbeBuckets = useMemo(() => alignFailedProbePoints({
-    points: failedProbePoints,
-    windowHours,
-    bucketCount: buckets.length,
-    now: Number.isFinite(windowEndMS) ? windowEndMS : Date.now(),
-  }), [failedProbePoints, windowHours, buckets.length, windowEndMS])
-  const failedProbeCountByBucket = useMemo(
-    () => new Map(failedProbeBuckets.map(point => [point.index, point.count])),
-    [failedProbeBuckets],
-  )
-
-  const getY = (val: number, s: MetricSeries) => {
-    if (s.yAxis === 'left') {
-      const clamped = Math.max(0, Math.min(100, val))
-      return padB - (clamped / 100) * plotH
-    } else {
-      const clamped = Math.max(0, Math.min(maxLatency, val))
-      return padB - (clamped / maxLatency) * plotH
-    }
-  }
-
-  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!svgRef.current || !buckets.length) return
-    const rect = svgRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const fraction = Math.max(0, Math.min(1, (x - (padL / W) * rect.width) / ((plotW / W) * rect.width)))
-    const idx = Math.round(fraction * (buckets.length - 1))
-    setHoveredIdx(idx)
-  }
-
-  const handlePointerLeave = () => {
-    setHoveredIdx(null)
-  }
-
-  const hoveredBucket = hoveredIdx !== null ? buckets[hoveredIdx] : null
-  const hoveredFailedProbeCount = hoveredIdx !== null ? failedProbeCountByBucket.get(hoveredIdx) || 0 : 0
-
-  return (
-    <div className="komari-chart-container">
-      <div className="komari-chart-header">
-        <div className="komari-chart-legend">
-          {seriesList.map(s => {
-            const active = enabledSeries[s.id] !== false
-            return (
-              <button
-                key={s.id}
-                type="button"
-                className={`komari-legend-chip${active ? ' active' : ''}`}
-                aria-pressed={active}
-                onClick={() => toggleSeries(s.id)}
-                title={`点击切换 ${s.label} 显示`}
-              >
-                <span className="komari-legend-dot" style={{ backgroundColor: s.color }} />
-                <span>{s.label}</span>
-              </button>
-            )
-          })}
-          <div className="komari-legend-actions">
-            <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(true)}>全选</button>
-            <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(false)}>清空</button>
-          </div>
-          <div className="komari-chart-options" aria-label="延迟图绘制选项">
-            <button
-              type="button"
-              className={`komari-chart-option${connectGaps ? ' active' : ''}`}
-              aria-pressed={connectGaps}
-              title="连接缺失时间桶两侧的有效延迟点；阴影始终保留"
-              onClick={() => setConnectGaps(value => !value)}
-            >断点连接</button>
-            <button
-              type="button"
-              className={`komari-chart-option${smoothLines ? ' active' : ''}`}
-              aria-pressed={smoothLines}
-              title="使用平滑曲线显示延迟趋势"
-              onClick={() => setSmoothLines(value => !value)}
-            >平滑</button>
-          </div>
-        </div>
-      </div>
-
-      <div className="komari-chart-canvas-wrap">
-        <svg
-          ref={svgRef}
-          className="komari-chart-svg"
-          viewBox={`0 0 ${W} ${H}`}
-          preserveAspectRatio="none"
-          role="img"
-          aria-labelledby={`${chartTitleID} ${chartDescriptionID}`}
-          onPointerMove={handlePointerMove}
-          onPointerLeave={handlePointerLeave}
-        >
-          <title id={chartTitleID}>服务器监控趋势</title>
-          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色异常区块表示该时间桶发生实际公网探测丢包，普通缺报不会标记为丢包。</desc>
-          <defs>
-            {activeSeries.map((series, index) => (
-              <linearGradient key={series.id} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={series.color} stopOpacity="0.2" />
-                <stop offset="88%" stopColor={series.color} stopOpacity="0.035" />
-                <stop offset="100%" stopColor={series.color} stopOpacity="0" />
-              </linearGradient>
-            ))}
-          </defs>
-
-          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
-            const y = padB - pct * plotH
-            return (
-              <g key={i}>
-                <line x1={padL} y1={y} x2={W - padR} y2={y} className="komari-chart-grid-line" strokeDasharray="3 3" />
-                {hasPercentageSeries && (
-                  <text x={padL - 6} y={y + 3} textAnchor="end" className="komari-chart-axis-text">
-                    {Math.round(pct * 100)}%
-                  </text>
-                )}
-                <text x={W - padR + 6} y={y + 3} textAnchor="start" className="komari-chart-axis-text">
-                  {Math.round(pct * maxLatency)} ms
-                </text>
-              </g>
-            )
-          })}
-
-          <g className="komari-loss-bands" aria-hidden="true">
-            {failedProbeBuckets.map(point => {
-              const startX = getBucketStartX(point.index)
-              return (
-                <rect
-                  key={point.index}
-                  x={startX}
-                  y={padT}
-                  width={Math.max(1, getBucketEndX(point.index) - startX)}
-                  height={plotH}
-                  rx="1.5"
-                  fill="var(--danger, #ef4444)"
-                  fillOpacity="0.14"
-                  pointerEvents="none"
-                />
-              )
-            })}
-          </g>
-
-          {activeSeries.map((series, seriesIndex) => {
-            const segments = splitSeriesSegments(buckets, series.id, connectGaps)
-            if (segments.length === 0) return null
-            return (
-              <g key={series.id}>
-                {segments.map((segment, segmentIndex) => {
-                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
-                  const linePath = buildLinePath(points, smoothLines)
-                  const areaPath = buildAreaPath(points, padB, smoothLines)
-                  const singlePoint = points.length === 1 ? points[0] : null
-                  return (
-                    <React.Fragment key={segmentIndex}>
-                      {singlePoint ? (
-                        <rect
-                          x={getBucketStartX(segment[0].index)}
-                          y={singlePoint.y}
-                          width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
-                          height={Math.max(0, padB - singlePoint.y)}
-                          fill={`url(#${gradientPrefix}-${seriesIndex})`}
-                          className="komari-chart-area"
-                        />
-                      ) : areaPath ? (
-                        <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" />
-                      ) : null}
-                      {singlePoint ? (
-                        <circle cx={singlePoint.x} cy={singlePoint.y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                      ) : (
-                        <path
-                          d={linePath}
-                          fill="none"
-                          stroke={series.color}
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="komari-chart-polyline"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                      )}
-                    </React.Fragment>
-                  )
-                })}
-              </g>
-            )
-          })}
-
-          {hoveredIdx !== null && (
-            <g>
-              <line
-                x1={getX(hoveredIdx)}
-                y1={padT}
-                x2={getX(hoveredIdx)}
-                y2={padB}
-                className="komari-crosshair"
-                strokeDasharray="2 2"
-              />
-              {activeSeries.map(s => {
-                const val = buckets[hoveredIdx]?.values[s.id]
-                if (val == null) return null
-                const px = getX(hoveredIdx)
-                const py = getY(val, s)
-                return (
-                  <circle
-                    key={s.id}
-                    cx={px}
-                    cy={py}
-                    r="4.5"
-                    fill={s.color}
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                    className="server-monitor-dot-glow"
-                  />
-                )
-              })}
-            </g>
-          )}
-
-          {buckets.length > 0 && (
-            <g>
-              <text x={padL} y={H - 6} textAnchor="start" className="komari-chart-axis-text">
-                {buckets[0].timeLabel}
-              </text>
-              <text x={padL + plotW / 2} y={H - 6} textAnchor="middle" className="komari-chart-axis-text">
-                {buckets[Math.floor(buckets.length / 2)].timeLabel}
-              </text>
-              <text x={W - padR} y={H - 6} textAnchor="end" className="komari-chart-axis-text">
-                {buckets[buckets.length - 1].timeLabel}
-              </text>
-            </g>
-          )}
-        </svg>
-
-        {hoveredBucket && (
-          (() => {
-            const crosshairPct = (getX(hoveredIdx!) / W) * 100
-            const isRightSide = crosshairPct > 50
-            return (
-              <div
-                className={`komari-tooltip-popover ${isRightSide ? 'place-left' : 'place-right'}`}
-                style={{
-                  left: isRightSide ? `calc(${crosshairPct}% - 14px)` : `calc(${crosshairPct}% + 14px)`,
-                  top: '8px',
-                }}
-              >
-                <div className="komari-tooltip-time">{hoveredBucket.timeLabel}</div>
-                <div className="komari-tooltip-list">
-                  {hoveredFailedProbeCount > 0 && (
-                    <div className="komari-tooltip-row">
-                      <span className="komari-tooltip-label">
-                        <span className="komari-legend-dot" style={{ backgroundColor: 'var(--danger, #ef4444)' }} />
-                        公网探测
-                      </span>
-                      <span className="komari-tooltip-val">丢包{hoveredFailedProbeCount > 1 ? ` × ${hoveredFailedProbeCount}` : ''}</span>
-                    </div>
-                  )}
-                  {activeSeries.map(s => {
-                    const val = hoveredBucket.values[s.id]
-                    if (val == null) return null
-                    let formattedVal = s.unit === '%' ? `${val.toFixed(1)}%` : `${Math.round(val)} ms`
-                    if (s.id === 'memory' && hoveredBucket.memoryUsedBytes && hoveredBucket.memoryTotalBytes) {
-                      formattedVal = `${val.toFixed(1)}% (${formatBytes(hoveredBucket.memoryUsedBytes)} / ${formatBytes(hoveredBucket.memoryTotalBytes)})`
-                    }
-                    return (
-                      <div key={s.id} className="komari-tooltip-row">
-                        <span className="komari-tooltip-label">
-                          <span className="komari-legend-dot" style={{ backgroundColor: s.color }} />
-                          {s.label}
-                        </span>
-                        <span className="komari-tooltip-val">{formattedVal}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })()
-        )}
-      </div>
-    </div>
-  )
-}
-
 function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialView = 'load' }: { server: Server; client: any; onClose: () => void; onUpdated: () => void; initialView?: 'load' | 'latency' }) {
   const [activeView, setActiveView] = useState<'load' | 'latency'>(initialView)
   const [loadWindowHours, setLoadWindowHours] = useState(1)
-  const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('1h')
+  const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
   const [response, setResponse] = useState<ConnectivityResponse | null>(null)
   const [resourceResponse, setResourceResponse] = useState<ServerResourceMetricsResponse | null>(null)
   const [resourceLoading, setResourceLoading] = useState(true)
@@ -10510,28 +10151,9 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
 
   useEffect(() => { void loadResourceData(loadWindowHours) }, [loadResourceData, loadWindowHours])
 
-  const currentStatusLabels: Record<ConnectivityResponse['current']['status'], string> = {
-    available: '可用',
-    unavailable: '公网不可用',
-    offline: '服务器离线',
-    disabled: '检测已关闭',
-    pending: '等待首次检测',
-  }
   const currentStatus = response?.current.status || (server.latency_probe_enabled ? 'pending' : 'disabled')
   const currentTone = currentStatus === 'available' ? 'great' : currentStatus === 'unavailable' || currentStatus === 'offline' ? 'poor' : 'fair'
-  const slaTone = connectivitySlaTone(response?.summary.sla_percent)
-  const buckets = response?.buckets || []
-  const firstBucket = buckets[0]
-  const midBucket = buckets[Math.floor(buckets.length / 2)]
-  const lastBucket = buckets[buckets.length - 1]
   const windowLabels: Record<ConnectivityWindowKey, string> = { '1h': '1 小时', '6h': '6 小时', '12h': '12 小时', '24h': '1 天', '7d': '7 天', '30d': '30 天' }
-  const causeLabels: Record<string, string> = { probe_failed: '公网探测失败', controller_disconnected: '主控连接断开', server_offline: '服务器离线', mixed: '多种可用性异常' }
-  const formatLatency = (value: number | null | undefined) => value == null ? '—' : `${Math.round(value)} ms`
-  const bucketTitle = (bucket: ConnectivityResponse['buckets'][number]) => {
-    const observed = bucket.available_seconds + bucket.unavailable_seconds
-    const coverage = observed + bucket.unknown_seconds > 0 ? observed / (observed + bucket.unknown_seconds) * 100 : 0
-    return `${formatTableTime(bucket.start_at)} 至 ${formatTableTime(bucket.end_at)} · SLA ${connectivitySlaDisplay(bucket.sla_percent)} · 可用 ${formatConnectivityDuration(bucket.available_seconds)} · 不可用 ${formatConnectivityDuration(bucket.unavailable_seconds)} · 未观测 ${formatConnectivityDuration(bucket.unknown_seconds)} · 覆盖率 ${coverage.toFixed(1)}%`
-  }
   const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 7)
   const latencyWindowOptions = (['1h', '6h', '12h', '24h', '7d', '30d'] as ConnectivityWindowKey[]).filter(key => windowHoursMap[key] <= retentionDays * 24)
   const selectMonitorView = (view: 'load' | 'latency') => {
@@ -10566,7 +10188,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
     }
   }
 
-  return <MotionDialogPanel onCancel={onClose} className="connectivity-dialog">
+  return <MotionDialogPanel onCancel={onClose} className={`connectivity-dialog${activeView === 'latency' ? ' is-latency' : ''}`}>
     <header className="dialog-head connectivity-head">
       <div className="connectivity-title">
         <span className={`connectivity-head-icon ${currentTone}`}><Activity size={17} aria-hidden="true" /></span>
@@ -10594,125 +10216,19 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
     </header>
     <div className="dialog-body connectivity-body">
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
-        <div className="server-monitor-window-row">
-          <div className="server-monitor-window-toggle" role="radiogroup" aria-label="延迟时间范围">
-            {latencyWindowOptions.map((key, index) => (
-              <button
-                id={`server-latency-window-${key}`}
-                key={key}
-                type="button"
-                role="radio"
-                aria-checked={windowKey === key}
-                tabIndex={windowKey === key ? 0 : -1}
-                className={windowKey === key ? 'active' : ''}
-                onClick={() => setWindowKey(key)}
-                onKeyDown={event => handleLatencyWindowKeyDown(event, index)}
-                disabled={loading && windowKey === key}
-              >
-                {windowLabels[key]}
-              </button>
-            ))}
-          </div>
-          <span className="server-monitor-window-note">保留 {retentionDays} 天{response?.regional_data_start_at ? ` · 探测数据始于 ${formatTableTime(response.regional_data_start_at)}` : ''}</span>
-        </div>
         {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
-
         {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
           : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadAllData(windowKey)}>重试</button></div>
-          : response ? <>
-            {/* Komari Style Unified Telemetry Chart */}
-            <ServerUnifiedTelemetryChart
-              latencyPoints={response.latency_points || []}
-              regionalProbes={response.regional_latency_points || []}
-              failedProbePoints={response.failed_probe_points || []}
-              includeResources={false}
-              windowHours={currentWindowHours}
-              windowEndAt={response.window.to}
-            />
-
-            <div className={`connectivity-sla-bar-card ${slaTone}`} role="img" aria-label={`统计期 SLA ${connectivitySlaDisplay(response.summary.sla_percent)}`}>
-              <div className="connectivity-sla-bar-head">
-                <div className="connectivity-sla-value-block"><span className="sla-rate-number">{connectivitySlaDisplay(response.summary.sla_percent)}</span><span className="sla-rate-label">可用性 SLA</span></div>
-                <div className="connectivity-hero-status-row"><span className={`connectivity-status-chip ${currentTone}`}><i aria-hidden="true" />{currentStatusLabels[currentStatus]}</span><span className="connectivity-current-latency">{connectivityLatencyLabel(currentStatus, response.current.latency_ms)}</span></div>
-              </div>
-              <div className="connectivity-sla-progress-track" aria-hidden="true">{response.summary.sla_percent != null && <div className={`connectivity-sla-progress-fill ${slaTone}`} style={{ width: `${Math.min(100, Math.max(0, response.summary.sla_percent))}%` }} />}</div>
-              {loadError && <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} /><span>{loadError}</span></div>}
-            </div>
-
-            <section className="connectivity-section">
-              <div className="connectivity-section-head"><Activity size={14} aria-hidden="true" /><h3>可用性时间线</h3><span className="connectivity-section-note">{buckets.length} 个时间段</span></div>
-              <div className="connectivity-hour-strip" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} role="img" aria-label={`近 ${windowLabels[windowKey]}可用性分段`}>
-                {buckets.map(bucket => {
-                  const observed = bucket.available_seconds + bucket.unavailable_seconds
-                  return <span key={bucket.start_at} className={`connectivity-hour-cell ${backendConnectivityBucketTone(bucket.sla_percent, bucket.unknown_seconds, observed)}`} title={bucketTitle(bucket)} aria-label={bucketTitle(bucket)} />
-                })}
-              </div>
-              {firstBucket && midBucket && lastBucket && <div className="connectivity-hour-axis"><span>{formatTableTime(firstBucket.start_at)}</span><span>{formatTableTime(midBucket.start_at)}</span><span>{formatTableTime(lastBucket.end_at)}</span></div>}
-              <div className="connectivity-hour-legend"><span><i className="great" />正常</span><span><i className="fair" />波动</span><span><i className="poor" />不可用</span><span><i className="none" />无数据</span></div>
-            </section>
-
-            <section className="connectivity-section">
-              <div className="connectivity-section-head"><Database size={14} aria-hidden="true" /><h3>检测统计</h3><span className="connectivity-section-note">{response.probes.total} 次实际探测</span></div>
-              <div className="connectivity-stats">
-                <div className="connectivity-stat ok">
-                  <div className="connectivity-stat-head">
-                    <span className="connectivity-stat-label">可用时长</span>
-                    {response.summary.unavailable_seconds > 0 && <span className="connectivity-stat-badge danger">异常 {formatConnectivityDuration(response.summary.unavailable_seconds)}</span>}
-                  </div>
-                  <strong>{formatConnectivityDuration(response.summary.available_seconds)}</strong>
-                  <span className="connectivity-stat-detail">
-                    {response.summary.unknown_seconds > 0
-                      ? `未观测 ${formatConnectivityDuration(response.summary.unknown_seconds)} · 覆盖率 ${response.summary.coverage_percent.toFixed(1)}%`
-                      : `统计覆盖率 ${response.summary.coverage_percent.toFixed(1)}%`}
-                  </span>
-                </div>
-
-                <div className={`connectivity-stat ${response.summary.outage_count > 0 ? 'danger' : 'ok'}`}>
-                  <div className="connectivity-stat-head">
-                    <span className="connectivity-stat-label">中断情况</span>
-                    <span className={`connectivity-stat-badge ${response.summary.outage_count > 0 ? 'danger' : 'ok'}`}>
-                      {response.summary.outage_count > 0 ? `${response.summary.outage_count} 次` : '正常'}
-                    </span>
-                  </div>
-                  <strong>{response.summary.outage_count > 0 ? `${response.summary.outage_count} 次中断` : '无中断'}</strong>
-                  <span className="connectivity-stat-detail">
-                    {response.summary.outage_count > 0 && response.summary.longest_outage_seconds > 0
-                      ? `最长中断 ${formatConnectivityDuration(response.summary.longest_outage_seconds)}`
-                      : '监测期间未出现服务中断'}
-                  </span>
-                </div>
-
-                <div className={`connectivity-stat ${response.probes.failed > 0 ? 'danger' : 'ok'}`}>
-                  <div className="connectivity-stat-head">
-                    <span className="connectivity-stat-label">探测结果</span>
-                    <span className={`connectivity-stat-badge ${response.probes.failed > 0 ? 'danger' : 'ok'}`}>
-                      {response.probes.total > 0 ? `${((response.probes.available / response.probes.total) * 100).toFixed(1)}%` : '—'}
-                    </span>
-                  </div>
-                  <strong>{response.probes.available} / {response.probes.total} 次</strong>
-                  <span className="connectivity-stat-detail">
-                    成功 {response.probes.available} · 失败 {response.probes.failed}
-                  </span>
-                </div>
-
-                <div className="connectivity-stat">
-                  <div className="connectivity-stat-head">
-                    <span className="connectivity-stat-label">延迟表现</span>
-                    <span className="connectivity-stat-badge">P95 {formatLatency(response.latency.p95_ms)}</span>
-                  </div>
-                  <strong>{formatLatency(response.latency.avg_ms)}</strong>
-                  <span className="connectivity-stat-detail">
-                    最低 {formatLatency(response.latency.min_ms)} · 最高 {formatLatency(response.latency.max_ms)}
-                  </span>
-                </div>
-              </div>
-            </section>
-
-            {response.outages.length > 0 && <section className="connectivity-section">
-              <div className="connectivity-section-head"><AlertTriangle size={14} aria-hidden="true" /><h3>最近中断</h3></div>
-              <ul className="connectivity-outages">{response.outages.map((outage, index) => <li key={`${outage.started_at}-${index}`}><span>{formatTableTime(outage.started_at)} 至 {outage.ended_at ? formatTableTime(outage.ended_at) : '持续中'} · {causeLabels[outage.cause] || '公网异常'}{outage.started_before_window ? ' · 开始于窗口前' : ''}</span><strong>{formatConnectivityDuration(outage.duration_seconds)}</strong></li>)}</ul>
-            </section>}
-          </> : null}
+          : response ? <LatencyDashboard
+            response={response}
+            windowKey={windowKey}
+            windowHours={currentWindowHours}
+            windowLabels={windowLabels}
+            latencyWindowOptions={latencyWindowOptions}
+            onWindowChange={setWindowKey}
+            onWindowKeyDown={handleLatencyWindowKeyDown}
+            publicMode={server.latency_probe_mode}
+          /> : null}
       </div>}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
