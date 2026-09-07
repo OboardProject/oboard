@@ -17766,44 +17766,35 @@ function groupToDraft(group: UserGroup): UserGroupDraft {
   return { name: group.name, description: group.description || '', role: group.role || 'viewer', enabled: group.enabled !== false }
 }
 
-function CopySubscriptionButton({ user }: { user: User }) {
-  const [copied, setCopied] = useState(false);
+function userSubscriptionStatus(user: User) {
+  if (user.subscription_suspended) return { tone: 'danger' as const, label: '风控暂停' }
+  if (user.subscription_token) {
+    return user.subscription_burn_after_read
+      ? { tone: 'warn' as const, label: '一次性' }
+      : { tone: 'ok' as const, label: '长期有效' }
+  }
+  if (user.subscription_burned_at) return { tone: 'danger' as const, label: '已焚毁' }
+  return { tone: 'warn' as const, label: '已吊销' }
+}
+
+async function copyManagedUserSubscription(user: User, notify?: (message: string, tone?: ToastKind) => void) {
   const token = user.subscription_token
   const ageRequired = user.subscription_age_policy === 'required'
-  const missingRequiredAgeKey = ageRequired && !user.subscription_age_public_key
-  const handleCopy = async () => {
-    if (!token || missingRequiredAgeKey) return;
-    const url = subscriptionURLForToken(token, defaultSubscriptionFormat, ageRequired)
-    if (await copyText(url)) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const idleLabel = !token
-    ? user.subscription_burned_at ? '已焚毁' : '已吊销'
-    : user.subscription_burn_after_read ? '复制单次订阅' : '复制订阅'
-
-  return (
-    <button
-      onClick={handleCopy}
-      disabled={!token || missingRequiredAgeKey || user.subscription_suspended}
-      className="btn-custom btn-secondary user-subscription-button"
-      title={user.subscription_suspended ? '订阅拉取已暂停' : missingRequiredAgeKey ? '请先配置 Age 公钥' : user.subscription_burn_after_read ? '首次成功获取订阅内容后，此链接立即失效' : '复制 Mihomo 订阅链接'}
-    >
-      {copied ? (
-        <>
-          <Check size={12} style={{ color: 'var(--color-success)' }} />
-          <span style={{ color: 'var(--color-success)' }}>已复制</span>
-        </>
-      ) : (
-        <>
-          <Copy size={12} />
-          <span>{idleLabel}</span>
-        </>
-      )}
-    </button>
-  );
+  if (user.subscription_suspended) {
+    notify?.(`${user.username} 的订阅拉取已暂停`, 'warning')
+    return
+  }
+  if (!token) {
+    notify?.(`${user.username} 尚无有效订阅令牌`, 'warning')
+    return
+  }
+  if (ageRequired && !user.subscription_age_public_key) {
+    notify?.('请先配置 Age 公钥', 'warning')
+    return
+  }
+  const ok = await copyText(subscriptionURLForToken(token, defaultSubscriptionFormat, ageRequired))
+  const copiedMessage = `${ageRequired ? 'Age 加密' : '普通'}订阅链接已复制${user.subscription_burn_after_read ? '，首次读取后失效' : ''}`
+  notify?.(ok ? copiedMessage : '复制失败，请重试', ok ? 'success' : 'error')
 }
 
 function QuickOneTimeSubscriptionButton({ user, client, format = defaultSubscriptionFormat, encrypted = false, notify, className = 'ghost' }: { user: User; client: ReturnType<typeof api>; format?: SubscriptionFormat; encrypted?: boolean; notify?: (message: string, tone?: ToastKind) => void; className?: string }) {
@@ -18100,7 +18091,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
 }
 
 
-function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPassword, onCredentials, onDelete }: any) {
+function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, onPassword, onCredentials, onDelete }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -18110,6 +18101,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
   const items = [
     { label: '基础设置', action: 'edit' },
     { label: '修改密码', action: 'password' },
+    { label: '复制订阅', action: 'copy-sub' },
     { label: user.subscription_burn_after_read ? '关闭阅后即焚' : '开启阅后即焚', action: 'burn' },
     { label: '用户凭证', action: 'credentials' },
     { label: '注销所有会话', action: 'revoke-sessions', danger: true },
@@ -18165,6 +18157,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, onEdit, onPasswo
     setIsOpen(false);
     if (action === 'edit') onEdit(user);
     else if (action === 'password') onPassword(user);
+    else if (action === 'copy-sub') await copyManagedUserSubscription(user, notify)
     else if (action === 'burn') await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs);
     else if (action === 'credentials') onCredentials(user);
     else if (action === 'revoke-sessions') {
@@ -18427,13 +18420,13 @@ function UserManagement({ data, client, load, notify }: any) {
       <div className="user-table-scroll">
         <table className={`user-data-table${showGroupsColumn ? '' : ' is-scoped'}`}>
           <colgroup>
-            <col style={{ width: showGroupsColumn ? '15%' : '18%' }} />
-            <col style={{ width: showGroupsColumn ? '9%' : '12%' }} />
+            <col style={{ width: showGroupsColumn ? '18%' : '22%' }} />
+            <col style={{ width: showGroupsColumn ? '10%' : '12%' }} />
             <col style={{ width: showGroupsColumn ? '8%' : '10%' }} />
-            {showGroupsColumn && <col style={{ width: '10%' }} />}
-            <col style={{ width: showGroupsColumn ? '14%' : '16%' }} />
-            <col style={{ width: showGroupsColumn ? '30%' : '30%' }} />
-            <col style={{ width: showGroupsColumn ? '14%' : '14%' }} />
+            {showGroupsColumn && <col style={{ width: '12%' }} />}
+            <col style={{ width: showGroupsColumn ? '18%' : '20%' }} />
+            <col style={{ width: showGroupsColumn ? '16%' : '18%' }} />
+            <col style={{ width: showGroupsColumn ? '18%' : '18%' }} />
           </colgroup>
           <thead>
             <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>
@@ -18468,6 +18461,7 @@ function UserManagement({ data, client, load, notify }: any) {
 
               // Traffic details
               const usagePercent = limits.traffic > 0 ? (usr.traffic_used_bytes / limits.traffic) * 100 : 0;
+              const subscriptionStatus = userSubscriptionStatus(usr)
               
               return (
                 <tr key={usr.id} style={{ 
@@ -18518,13 +18512,12 @@ function UserManagement({ data, client, load, notify }: any) {
                           <div className={usagePercent > 90 ? 'is-danger' : usagePercent > 70 ? 'is-warning' : ''} style={{ width: `${Math.min(100, usagePercent)}%` }} />
                         </div>
                       )}
-                      <button type="button" className="btn-custom btn-secondary" style={{ fontSize: 12, marginTop: 6 }} onClick={() => setLedgerUser(usr)}>查看明细</button>
+                      <button type="button" className="user-table-compact-button" onClick={() => setLedgerUser(usr)}>查看明细</button>
                     </div>
                   </td>
                   <td className="user-col-subscription" data-label="订阅凭证">
-                    <div className="user-subscription-actions">
-                      <CopySubscriptionButton user={usr} />
-                      <QuickOneTimeSubscriptionButton user={usr} client={client} className="btn-custom btn-secondary user-subscription-button" />
+                    <div className="user-subscription-status">
+                      <span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label}</span>
                     </div>
                   </td>
                   <td className="user-col-actions" style={{ textAlign: 'right' }}>
@@ -18550,6 +18543,7 @@ function UserManagement({ data, client, load, notify }: any) {
                         client={client} 
                         load={load} 
                         dialogs={dialogs}
+                        notify={notify}
                         onEdit={openEditUser}
                         onPassword={setPasswordUser}
                         onCredentials={setCredentialsUser}
@@ -18577,7 +18571,7 @@ function UserManagement({ data, client, load, notify }: any) {
     <AnimatePresence>{passwordUser && <UserPasswordDialog user={passwordUser} onCancel={() => setPasswordUser(null)} onSubmit={updatePassword} />}</AnimatePresence>
     <AnimatePresence>{credentialsUser && <UserCredentialsDialog user={credentialsUser} client={client} load={load} notify={notify} onCancel={() => setCredentialsUser(null)} />}</AnimatePresence>
     <AnimatePresence>{ledgerUser && <UserTrafficLedgerDialog user={ledgerUser} client={client} onCancel={() => setLedgerUser(null)} />}</AnimatePresence>
-    {planDialogUser && <UserPlanDialog key={planDialogUser.id} isOpen={Boolean(planUser)} user={planDialogUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planDialogUser.id)} plans={data.subscription_plans || []} client={client} onClose={() => setPlanUser(null)} />}
+    {planDialogUser && <UserPlanDialog key={planDialogUser.id} isOpen={Boolean(planUser)} user={planDialogUser} binding={(data.user_plan_bindings || []).find((b: any) => b.user_id === planDialogUser.id)} plans={data.subscription_plans || []} client={client} onRefresh={load} onClose={() => setPlanUser(null)} />}
   </Panel>
 }
 
