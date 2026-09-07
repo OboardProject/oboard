@@ -19,6 +19,8 @@ import (
 
 const defaultConfigurationReconcileDelay = 150 * time.Millisecond
 const certificateConfigurationRetryDelay = time.Second
+const configurationSyncBusyRetryDelay = 2 * time.Second
+const configurationSyncBusyWaitReason = "主控数据库正忙，稍后自动重试"
 
 type automaticConfigurationSyncContextKey struct{}
 
@@ -468,7 +470,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 	for _, state := range plan.retrySame {
 		if err := s.requeueUnchangedDeployment(ctx, state); err != nil {
 			logConfigurationError("requeue unchanged deployment", err)
-			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, err.Error())
+			s.recordConfigurationPrepareError(ctx, state, err)
 		}
 	}
 	if len(plan.changed) == 0 {
@@ -490,7 +492,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 			if !plan.changed[state.ServerID] {
 				continue
 			}
-			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, deployErr.Error())
+			s.recordConfigurationPrepareError(ctx, state, deployErr)
 		}
 		s.publishRealtime("configuration", "deployments", "tasks")
 		return
@@ -796,7 +798,7 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 	if deployErr != nil {
 		for serverID := range validServerIDs {
 			if state, ok := claimedByServer[serverID]; ok {
-				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, deployErr.Error())
+				s.recordConfigurationPrepareError(ctx, state, deployErr)
 			}
 		}
 		return true
@@ -1014,5 +1016,32 @@ func configurationSyncViews(states []store.ConfigurationSyncState, servers []mod
 func logConfigurationError(operation string, err error) {
 	if err != nil {
 		log.Printf("configuration reconciler %s: %v", operation, err)
+	}
+}
+
+func configurationSyncTransientBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	if store.IsSQLiteBusy(err) {
+		return true
+	}
+	message := err.Error()
+	return strings.Contains(message, "SQLITE_BUSY") || strings.Contains(message, "database is locked")
+}
+
+func (s *Server) recordConfigurationPrepareError(ctx context.Context, state store.ConfigurationSyncState, err error) {
+	if err == nil {
+		return
+	}
+	if configurationSyncTransientBusy(err) {
+		log.Printf("configuration reconciler waiting for SQLite writer on server %d: %v", state.ServerID, err)
+		if waitErr := s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(configurationSyncBusyRetryDelay), configurationSyncBusyWaitReason); waitErr != nil {
+			logConfigurationError("mark busy wait", waitErr)
+		}
+		return
+	}
+	if markErr := s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, err.Error()); markErr != nil {
+		logConfigurationError("mark preparation failure", markErr)
 	}
 }

@@ -12532,6 +12532,8 @@ type deploymentHTTPError struct {
 
 func (e *deploymentHTTPError) Error() string { return e.err.Error() }
 
+func (e *deploymentHTTPError) Unwrap() error { return e.err }
+
 func deploymentFail(status int, err error) error {
 	return &deploymentHTTPError{status: status, err: err}
 }

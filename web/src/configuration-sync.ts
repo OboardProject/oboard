@@ -25,6 +25,7 @@ export type ConfigurationSyncPresentation = {
 
 export type ConfigurationSyncFailureIssue = {
   key: string
+  kind: 'busy' | 'config'
   title: string
   explanation: string
   resolution: string
@@ -37,12 +38,27 @@ export type ConfigurationSyncFailureIssue = {
   targetLabel: string
 }
 
+export function isConfigurationSyncBusyError(rawError: string) {
+  return /SQLITE_BUSY|database is locked/i.test(String(rawError || ''))
+}
+
 function describeConfigurationSyncError(rawError: string) {
+  if (isConfigurationSyncBusyError(rawError)) {
+    return {
+      kind: 'busy' as const,
+      title: '主控数据库正忙',
+      explanation: '配置已经保存。主控在生成下发任务时遇到短暂的数据库写锁冲突，不是节点配置错误，也不需要改拓扑或服务器环境。',
+      resolution: '直接重试同步即可。新版本会自动等待写锁并重试，不再把这类冲突显示成配置失败。',
+      targetTab: 'tasks' as const,
+      targetLabel: '查看任务记录',
+    }
+  }
   const directBranch = rawError.match(/入口\s+(\d+).*(?:相同位置的直接出口分支|同一分支位置存在多条直接出口|直接出口分支.*位于同一位置)/)
   if (directBranch) {
     const inboundID = directBranch[1]
     const namedPaths = rawError.match(/直接出口分支「([^」]+)」与「([^」]+)」位于同一位置/)
     return {
+      kind: 'config' as const,
       title: `入口 ${inboundID} 存在重复的直接出口分支`,
       explanation: '同一个入口在同一分叉位置只能保留一条直接出口分支，否则无法确定应使用哪条直出路由。',
       resolution: `前往「代理拓扑」，找到入口 ${inboundID}，删除或停用同一位置的重复直出分支。保存后系统会自动重新同步。`,
@@ -53,6 +69,7 @@ function describeConfigurationSyncError(rawError: string) {
     }
   }
   return {
+    kind: 'config' as const,
     title: '配置生成或下发失败',
     explanation: rawError || 'Controller 没有返回具体错误信息。',
     resolution: '请在「任务部署中心」查看对应任务和服务器日志，修正配置或运行环境后再重试。',

@@ -225,7 +225,14 @@ func (s *Store) RecoverConfigurationSyncStates(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='failed',next_retry_at=null,updated_at=? where state in ('preparing','queued') and last_config_version>0 and exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status='failed') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running'))`, now); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',next_retry_at=null,updated_at=? where state in ('preparing','queued') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running','failed'))`, now)
+	if _, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',next_retry_at=null,updated_at=? where state in ('preparing','queued') and not exists (select 1 from agent_tasks where agent_tasks.server_id=configuration_sync_states.server_id and agent_tasks.type in ('apply_deployment','apply_core_config') and agent_tasks.config_version=configuration_sync_states.last_config_version and agent_tasks.status in ('pending','running','failed'))`, now); err != nil {
+		return err
+	}
+	// A prepare-time SQLITE_BUSY is a Controller writer conflict, not a broken
+	// desired state. Reopen those rows so a restart (or a code upgrade) does
+	// not leave the fleet blocked after the six-attempt budget was spent on
+	// the same transient lock.
+	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='pending',retry_count=0,next_retry_at=null,last_error='',updated_at=? where state='failed' and last_config_version=0 and (instr(last_error,'SQLITE_BUSY')>0 or instr(last_error,'database is locked')>0)`, now)
 	return err
 }
 

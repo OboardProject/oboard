@@ -137,6 +137,28 @@ describe('ConfigurationSyncStatus', () => {
     expect(locateInbound).toHaveBeenCalledWith(15)
   })
 
+  it('explains a fleet SQLITE_BUSY failure as a controller lock, not 17 config problems', () => {
+    const retry = vi.fn()
+    const rows = Array.from({ length: 17 }, (_, index) => ({
+      server_id: index + 1,
+      state: 'failed' as const,
+      error: 'database is locked (5) (SQLITE_BUSY)',
+    }))
+    act(() => root.render(<ConfigurationSyncStatus
+      rows={rows}
+      servers={[{ id: 1, name: 'SJC' }, { id: 17, name: 'Starhub' }]}
+      onRetry={retry}
+    />))
+    act(() => (container.querySelector('button') as HTMLButtonElement).click())
+    expect(document.body.textContent).toContain('同步准备被主控数据库写锁打断')
+    expect(document.body.textContent).toContain('主控数据库正忙')
+    expect(document.body.textContent).toContain('不是这些服务器各自的配置错误')
+    expect(document.body.textContent).not.toContain('修正配置或运行环境')
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find(item => item.textContent?.includes('重新尝试 17 个同步任务'))
+    act(() => retryButton?.click())
+    expect(retry).toHaveBeenCalledTimes(1)
+  })
+
   it('rolls back the rendered entity and exposes an actionable error after a failed save', async () => {
     function Harness() {
       const [saving, setSaving] = useState(false)

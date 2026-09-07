@@ -1046,3 +1046,69 @@ func TestConfigurationReconcileProcessesIndependentRevisionsTogether(t *testing.
 		}
 	}
 }
+
+type sqliteBusyTestError int
+
+func (e sqliteBusyTestError) Error() string { return "database is locked (5) (SQLITE_BUSY)" }
+func (e sqliteBusyTestError) Code() int     { return int(e) }
+
+func TestConfigurationSyncTransientBusyRecognizesWrappedWriterConflicts(t *testing.T) {
+	if configurationSyncTransientBusy(nil) {
+		t.Fatal("nil error was treated as busy")
+	}
+	if !configurationSyncTransientBusy(deploymentFail(500, sqliteBusyTestError(5))) {
+		t.Fatal("wrapped SQLITE_BUSY was not recognized")
+	}
+	if !store.IsSQLiteBusy(deploymentFail(500, sqliteBusyTestError(5))) {
+		t.Fatal("deploymentHTTPError did not unwrap SQLITE_BUSY")
+	}
+	if !configurationSyncTransientBusy(fmt.Errorf("prepare: database is locked (5) (SQLITE_BUSY)")) {
+		t.Fatal("string SQLITE_BUSY was not recognized")
+	}
+	if configurationSyncTransientBusy(fmt.Errorf("invalid desired state")) {
+		t.Fatal("configuration error was treated as busy")
+	}
+}
+
+func TestRecordConfigurationPrepareErrorWaitsOnSQLiteBusy(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	srv := newTestServer(db, "test-secret", "")
+	server := &model.Server{Name: "busy-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.MarkConfigurationSyncPending(ctx, 80, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.ClaimConfigurationSync(ctx, server.ID, 80); err != nil || !ok {
+		t.Fatalf("claim=%v err=%v", ok, err)
+	}
+	srv.recordConfigurationPrepareError(ctx, store.ConfigurationSyncState{ServerID: server.ID, WantedRevision: 80}, deploymentFail(500, sqliteBusyTestError(5)))
+	state, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != "pending" || state.RetryCount != 0 || state.LastError != configurationSyncBusyWaitReason || state.NextRetryAt == nil {
+		t.Fatalf("busy prepare was recorded as a failure = %#v", state)
+	}
+	if !state.NextRetryAt.After(time.Now().UTC()) {
+		t.Fatalf("busy wait was immediately due = %#v", state)
+	}
+
+	if _, err := db.MarkConfigurationSyncPending(ctx, 81, []int64{server.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := db.ClaimConfigurationSync(ctx, server.ID, 81); err != nil || !ok {
+		t.Fatalf("second claim=%v err=%v", ok, err)
+	}
+	srv.recordConfigurationPrepareError(ctx, store.ConfigurationSyncState{ServerID: server.ID, WantedRevision: 81}, fmt.Errorf("invalid desired state"))
+	failed, err := db.ConfigurationSyncState(ctx, server.ID)
+	if err != nil || failed.State != "failed" || failed.RetryCount != 1 || failed.LastError != "invalid desired state" {
+		t.Fatalf("real prepare error = %#v err=%v", failed, err)
+	}
+}

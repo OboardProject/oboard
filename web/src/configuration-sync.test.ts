@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { configurationSyncAgentReachable, configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
+import { configurationSyncAgentReachable, configurationSyncBusyRows, configurationSyncBusyStateLabel, configurationSyncFailureIssues, configurationSyncPresentation, isConfigurationSyncBusyError, mergeConfigurationMutationResponse, mergeConfigurationSyncResponse, MutationActivityTracker } from './configuration-sync'
 
 describe('configuration sync feedback', () => {
   it('shows local saving feedback synchronously before a response exists', () => {
@@ -25,6 +25,7 @@ describe('configuration sync feedback', () => {
     const issues = configurationSyncFailureIssues(rows)
     expect(issues).toHaveLength(1)
     expect(issues[0]).toMatchObject({
+      kind: 'config',
       title: '入口 15 存在重复的直接出口分支',
       serverIDs: [1, 2, 3, 4, 5, 6, 7, 8],
       targetTab: 'proxy-paths',
@@ -35,6 +36,29 @@ describe('configuration sync feedback', () => {
     expect(issues[0].resolution).toContain('删除或停用同一位置的重复直出分支')
     expect(configurationSyncPresentation(rows).label).toBe('配置同步被阻塞 · 1 个问题')
     expect(configurationSyncFailureIssues([{ server_id: 1, state: 'failed', error: '入口 15 已存在相同位置的直接出口分支' }])[0].inboundID).toBe(15)
+  })
+
+  it('explains SQLITE_BUSY as a controller writer conflict, not a config error', () => {
+    expect(isConfigurationSyncBusyError('database is locked (5) (SQLITE_BUSY)')).toBe(true)
+    const issues = configurationSyncFailureIssues(Array.from({ length: 17 }, (_, index) => ({
+      server_id: index + 1,
+      state: 'failed',
+      error: 'database is locked (5) (SQLITE_BUSY)',
+    })))
+    expect(issues).toHaveLength(1)
+    expect(issues[0]).toMatchObject({
+      kind: 'busy',
+      title: '主控数据库正忙',
+      serverIDs: expect.arrayContaining([1, 17]),
+      targetLabel: '查看任务记录',
+    })
+    expect(issues[0].explanation).toContain('不是节点配置错误')
+    expect(issues[0].resolution).toContain('直接重试同步即可')
+    expect(configurationSyncPresentation(issues[0].serverIDs.map(server_id => ({
+      server_id,
+      state: 'failed' as const,
+      error: 'database is locked (5) (SQLITE_BUSY)',
+    }))).label).toBe('配置同步被阻塞 · 1 个问题')
   })
 
   it('lists busy sync rows and labels their in-flight state', () => {

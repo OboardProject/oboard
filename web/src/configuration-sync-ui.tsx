@@ -58,8 +58,10 @@ export function ConfigurationSyncStatus({ rows, saving = false, retrying = false
             <div className="configuration-sync-summary">
               <AlertTriangle size={20} aria-hidden="true" />
               <div>
-                <strong>最新配置在部署准备阶段被阻塞</strong>
-                <p>{issues.length} 个配置问题阻塞了 {failed.length} 个同步任务。这不表示 {failed.length} 台服务器各自都有问题。</p>
+                <strong>{issues.every(issue => issue.kind === 'busy') ? '同步准备被主控数据库写锁打断' : '最新配置在部署准备阶段被阻塞'}</strong>
+                <p>{issues.every(issue => issue.kind === 'busy')
+                  ? `主控在准备 ${failed.length} 个同步任务时遇到短暂写锁冲突。这不是这些服务器各自的配置错误。`
+                  : `${issues.length} 个配置问题阻塞了 ${failed.length} 个同步任务。这不表示 ${failed.length} 台服务器各自都有问题。`}</p>
               </div>
             </div>
             <ol className="configuration-sync-issue-list">

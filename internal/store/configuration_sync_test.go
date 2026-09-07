@@ -224,3 +224,45 @@ func TestConfigurationSyncRecoveryKeepsFailedExecution(t *testing.T) {
 		t.Fatalf("failed execution was reopened as pending = %#v, err=%v", state, err)
 	}
 }
+
+func TestConfigurationSyncRecoveryReopensPreparationBusyFailures(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	busy := &model.Server{Name: "busy-prep-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, busy); err != nil {
+		t.Fatal(err)
+	}
+	config := &model.Server{Name: "config-fail-node", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+	if err := db.CreateServer(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	for _, server := range []*model.Server{busy, config} {
+		if _, err := db.MarkConfigurationSyncPending(ctx, 50, []int64{server.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := db.ClaimConfigurationSync(ctx, server.ID, 50); err != nil || !ok {
+			t.Fatalf("claim %d = %v err=%v", server.ID, ok, err)
+		}
+	}
+	if err := db.MarkConfigurationSyncPreparationFailure(ctx, busy.ID, 50, "database is locked (5) (SQLITE_BUSY)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkConfigurationSyncPreparationFailure(ctx, config.ID, 50, "invalid desired state"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecoverConfigurationSyncStates(ctx); err != nil {
+		t.Fatal(err)
+	}
+	busyState, err := db.ConfigurationSyncState(ctx, busy.ID)
+	if err != nil || busyState.State != "pending" || busyState.RetryCount != 0 || busyState.LastError != "" {
+		t.Fatalf("busy preparation was not reopened = %#v err=%v", busyState, err)
+	}
+	configState, err := db.ConfigurationSyncState(ctx, config.ID)
+	if err != nil || configState.State != "failed" || configState.LastError != "invalid desired state" {
+		t.Fatalf("real preparation failure was reopened = %#v err=%v", configState, err)
+	}
+}
