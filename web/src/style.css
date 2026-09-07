@@ -24712,6 +24712,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .latency-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px 10px;
   min-height: 28px;
   font-size: 12px;
@@ -27120,6 +27123,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   flex-direction: column;
   gap: 4px;
 }
+.probe-task-form .ui-segmented-select.full-width { width: 100%; }
 .probe-task-layout,
 .probe-task-secondary { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .probe-task-interval { display: flex; flex-direction: column; gap: 8px; }
@@ -27144,18 +27148,86 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .return-latency-toolbar-secondary button { width: 100%; min-height: 42px; }
   .return-latency-filters { flex-direction: column; align-items: stretch; gap: 8px; }
   .return-latency-filters > .custom-select { width: 100%; min-width: 0; }
-  .return-latency-search { min-height: 42px; }
-  .return-latency-search input { font-size: 16px; }
+  .return-latency-search { min-height: 44px; }
+  .return-latency-search > svg { width: 16px; height: 16px; }
+  .return-latency-search input {
+    align-self: stretch;
+    height: auto;
+    min-height: 0;
+    font-size: 16px;
+  }
   .probe-task-cards, .return-latency-server-list { grid-template-columns: minmax(0, 1fr); }
   .probe-task-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .probe-task-card-actions button, .return-latency-row-actions button { flex: 1 1 auto; min-height: 40px; justify-content: center; }
-  .return-latency-page .latency-params-grid, .probe-task-form-grid { grid-template-columns: minmax(0, 1fr); }
-  .probe-task-server-tools { flex-direction: column; align-items: stretch; }
-  .probe-task-server-quick button { flex: 1 1 auto; min-height: 38px; }
-  .probe-task-server-list { max-height: 300px; }
-  .return-latency-form-actions { flex-direction: column-reverse; }
-  .return-latency-form-actions button { width: 100%; min-height: 44px; }
-  .return-latency-switch-row { gap: 12px; }
+  .return-latency-page .latency-params-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .dialog-layer.dialog-root:has(.probe-task-dialog) {
+    padding: 8px 0 0;
+    align-items: end;
+  }
+  .dialog.probe-task-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 8px);
+    padding: 14px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .probe-task-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .probe-task-form .ui-segmented-select button { padding-inline: 8px; }
+  .probe-preset-filters { grid-template-columns: minmax(0, 1fr); }
+  .probe-preset-picker > button {
+    min-height: 36px;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .probe-task-interval-presets {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .probe-task-interval-presets .latency-pill-btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+  .probe-task-server-tools {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .probe-task-server-tools .return-latency-search,
+  .probe-preset-panel .return-latency-search {
+    flex: none;
+    width: 100%;
+    min-height: 44px;
+  }
+  .probe-task-server-quick {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+  .probe-task-server-quick .latency-pill-btn {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+  .probe-task-server-quick .latency-pill-btn:nth-child(1) { grid-column: 1; grid-row: 1; }
+  .probe-task-server-quick .latency-pill-btn:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .probe-task-server-quick .latency-pill-btn:nth-child(3) { grid-column: 2; grid-row: 1; }
+  .return-latency-form-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+    padding-top: 8px;
+  }
+  .return-latency-form-actions button {
+    width: 100%;
+    min-height: 44px;
+  }
 }
 
 .network-probe-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); }
@@ -27242,4 +27314,63 @@ button.probe-preset-option:active {
   .probe-task-form.is-preset-open .probe-task-servers { grid-row: 2 / span 2; }
   .probe-preset-results { max-height: min(280px, 36vh); }
   .probe-task-server-list { max-height: min(360px, 42vh); }
+}
+
+@container probe-task (max-width: 679px) {
+  .probe-task-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .probe-task-form .ui-segmented-select button { padding-inline: 8px; }
+  .probe-preset-filters { grid-template-columns: minmax(0, 1fr); }
+  .probe-preset-picker > button {
+    min-height: 36px;
+    padding: 8px 0;
+    font-size: 13px;
+  }
+  .probe-task-interval-presets {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .probe-task-interval-presets .latency-pill-btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+  .probe-task-server-tools {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .probe-task-server-tools .return-latency-search,
+  .probe-preset-panel .return-latency-search {
+    flex: none;
+    width: 100%;
+    min-height: 44px;
+  }
+  .probe-task-server-quick {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+  .probe-task-server-quick .latency-pill-btn {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+    padding-inline: 10px;
+  }
+  .probe-task-server-quick .latency-pill-btn:nth-child(1) { grid-column: 1; grid-row: 1; }
+  .probe-task-server-quick .latency-pill-btn:nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .probe-task-server-quick .latency-pill-btn:nth-child(3) { grid-column: 2; grid-row: 1; }
+  .probe-task-server-list { max-height: min(280px, 38vh); }
+  .return-latency-form-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+    padding-top: 8px;
+  }
+  .return-latency-form-actions button {
+    width: 100%;
+    min-height: 44px;
+  }
+  .return-latency-switch-row { gap: 12px; }
 }

@@ -86,6 +86,8 @@ describe('return latency probe tasks', () => {
     await click(buttonIn(container, '从预设中选择')!)
     expect(container.querySelector('.probe-task-form')?.classList.contains('is-preset-open')).toBe(true)
     expect(container.querySelector('.probe-task-layout')).toBeTruthy()
+    const presetSearch = container.querySelector<HTMLInputElement>('[aria-label="搜索预设目标"]')
+    expect(presetSearch?.closest('.return-latency-search')).toBeTruthy()
     await pickOption('探测目标省份', '广东')
     await pickOption('探测目标运营商', '中国电信')
     expect(container.querySelectorAll('.probe-preset-option')).toHaveLength(1)

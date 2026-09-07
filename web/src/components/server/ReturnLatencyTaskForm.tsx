@@ -106,7 +106,7 @@ export function ReturnLatencyTaskForm({ task, regions, targets = [], servers, lo
           <div className="probe-task-primary">
             <div className="probe-task-form-grid">
               <FormField label="探测方式" required full>
-                <Select variant="segmented" aria-label="探测方式" value={method} onChange={event => { setMethod(event.target.value as NetworkProbeMethod) }}>
+                <Select variant="segmented" className="full-width" aria-label="探测方式" value={method} onChange={event => { setMethod(event.target.value as NetworkProbeMethod) }}>
                   <option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option>
                 </Select>
                 <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测公网 IPv4 的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
@@ -128,7 +128,10 @@ export function ReturnLatencyTaskForm({ task, regions, targets = [], servers, lo
                 <Select aria-label="探测目标省份" value={province} onChange={event => { setProvince(event.target.value); setCarrier('') }}><option value="">全部省份</option>{provinces.map(item => <option key={item} value={item}>{item}</option>)}</Select>
                 <Select aria-label="探测目标运营商" value={carrier} onChange={event => setCarrier(event.target.value)}><option value="">全部运营商</option>{carriers.map(item => <option key={item} value={item}>{item}</option>)}</Select>
               </div>
-              <input type="search" aria-label="搜索预设目标" placeholder="搜索省份、运营商或地址" value={targetQuery} onChange={event => setTargetQuery(event.target.value)} />
+              <div className="return-latency-search">
+                <Search size={15} aria-hidden="true" />
+                <input type="search" aria-label="搜索预设目标" placeholder="搜索省份、运营商或地址" value={targetQuery} onChange={event => setTargetQuery(event.target.value)} />
+              </div>
               <div className="probe-preset-results">
                 {loading ? <p className="muted" role="status">正在加载预设…</p> : !visibleTargets.length ? <p className="muted">{error ? '预设暂不可用，仍可手动填写地址。' : legacyRegion ? '当前任务使用所选地区的预设地址。填写地址可改为指定目标。' : '没有匹配的预设目标。'}</p> : visibleTargets.map(target => <button type="button" className="probe-preset-option" key={`${target.province}-${target.carrier}-${target.address}`} onClick={() => selectTarget(target)}><strong>{targetLabel(target.province, target.carrier)}</strong><span>{target.address}</span></button>)}
               </div>
