@@ -676,7 +676,7 @@ func (s *Service) EnqueueSimulate(ctx context.Context, actor application.Princip
 	return s.EnqueueManualRun(ctx, actor, scriptID, revisionID, params, env, idempotencyKey, model.ScriptRunModeSimulate)
 }
 
-func (s *Service) RuntimeStatus(ctx context.Context, actor application.Principal, isolation IsolationStatus, workerConnected bool) (model.ScriptRuntimeStatus, error) {
+func (s *Service) RuntimeStatus(ctx context.Context, actor application.Principal, isolation IsolationStatus, workerConnected bool, runtimeInstalled bool, installCommand string) (model.ScriptRuntimeStatus, error) {
 	if err := s.require(actor, "scripts.read"); err != nil {
 		return model.ScriptRuntimeStatus{}, err
 	}
@@ -688,6 +688,8 @@ func (s *Service) RuntimeStatus(ctx context.Context, actor application.Principal
 		HostActionsEnabled: settings.HostActionsEnabled,
 		SchedulerPaused:    settings.SchedulerPaused,
 		RecoveryGeneration: settings.RecoveryGeneration,
+		RuntimeInstalled:   runtimeInstalled,
+		InstallCommand:     installCommand,
 		WorkerConnected:    workerConnected,
 		IsolationAvailable: isolation.Available,
 		IsolationMode:      isolation.Mode,

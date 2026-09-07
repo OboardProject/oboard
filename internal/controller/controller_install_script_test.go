@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/scripting"
 )
 
 func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
@@ -79,6 +82,13 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"oboard-controller-updater",
 		"oboard-ai-worker",
 		"oboard-script-worker",
+		"enable-scripts",
+		"OBOARD_INSTALL_SCRIPTS",
+		"want_script_runtime",
+		"install_script_runtime",
+		"script_runtime_installed",
+		"正在安装脚本运行环境",
+		"请回到面板启用脚本执行",
 		"prepare_script_worker_user",
 		"ensure_script_isolation_deps",
 		"script_uidmap_package",
@@ -241,6 +251,96 @@ func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
 			t.Fatalf("existing isolation tools still requested packages: %v\n%s", err, output)
 		}
 	})
+}
+
+func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate test file")
+	}
+	path := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "scripts", "install.sh"))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	if strings.Count(script, `install_file_atomic "$work/bin/oboard-script-worker"`) != 1 {
+		t.Fatal("script-worker binary must be installed only from install_script_runtime")
+	}
+	if !strings.Contains(script, "if want_script_runtime; then") {
+		t.Fatal("controller install must gate script runtime on want_script_runtime")
+	}
+	shell, err := exec.LookPath("dash")
+	if err != nil {
+		shell, err = exec.LookPath("sh")
+	}
+	if err != nil {
+		t.Skip("a POSIX shell is unavailable")
+	}
+	root := t.TempDir()
+	unit := filepath.Join(root, "oboard-script-worker.service")
+	missing := filepath.Join(root, "missing-openrc")
+	installed := extractShellFunction(t, script, "script_runtime_installed")
+	installed = strings.ReplaceAll(installed, "/etc/systemd/system/oboard-script-worker.service", shellQuote(unit))
+	installed = strings.ReplaceAll(installed, "/etc/init.d/oboard-script-worker", shellQuote(missing))
+	functions := strings.Join([]string{
+		installed,
+		extractShellFunction(t, script, "want_script_runtime"),
+	}, "\n")
+	run := func(t *testing.T, env string) string {
+		t.Helper()
+		harness := strings.Join([]string{
+			"set -eu",
+			functions,
+			env,
+			`if want_script_runtime; then printf yes; else printf no; fi`,
+		}, "\n")
+		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
+		if err != nil {
+			t.Fatalf("want_script_runtime failed: %v\n%s", err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
+		t.Fatalf("default install selected script runtime: %s", got)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
+		t.Fatalf("default update selected script runtime: %s", got)
+	}
+	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS=1"); got != "yes" {
+		t.Fatalf("OBOARD_INSTALL_SCRIPTS=1 did not select script runtime: %s", got)
+	}
+	if got := run(t, "ACTION=enable-scripts\nOBOARD_INSTALL_SCRIPTS="); got != "yes" {
+		t.Fatalf("enable-scripts did not select script runtime: %s", got)
+	}
+	if err := os.WriteFile(unit, []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "yes" {
+		t.Fatalf("existing unit did not keep script runtime: %s", got)
+	}
+}
+
+func TestScriptRuntimeInstallCommandUsesUpdateChannel(t *testing.T) {
+	t.Setenv("OBOARD_UPDATE_CHANNEL", "dev")
+	command := (&Server{}).scriptRuntimeInstallCommand()
+	if !strings.Contains(command, "OBOARD_ACTION=enable-scripts") || !strings.Contains(command, "VERSION=dev") {
+		t.Fatalf("unexpected install command: %s", command)
+	}
+}
+
+func TestEnsureScriptRuntimeForEnableRejectsMissingRuntime(t *testing.T) {
+	s := &Server{}
+	if s.scriptRuntimeInstalled() {
+		t.Skip("host already has a script runtime unit or connected worker")
+	}
+	if err := s.ensureScriptRuntimeForEnable(false); err != nil {
+		t.Fatal(err)
+	}
+	err := s.ensureScriptRuntimeForEnable(true)
+	if err == nil || scripting.CodeOf(err) != model.ScriptErrorRuntimeUnavailable {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestControllerInstallScriptACMEFallback(t *testing.T) {

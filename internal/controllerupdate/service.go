@@ -1091,7 +1091,7 @@ func extractControllerArchive(archivePath, stage string) error {
 			return fmt.Errorf("truncated controller archive entry %q", name)
 		}
 	}
-	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "bin/oboard-script-worker", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
+	for _, required := range []string{"bin/oboard-controller", "bin/oboard-controller-updater", "bin/oboard-ai-worker", "web/dist/index.html", "downloads/geoip/manifest.json", "downloads/geoip/ip2region_v4.xdb", "downloads/geoip/ip2region_v6.xdb", "downloads/oboard-subscription-relay-linux-amd64.tar.gz", "downloads/oboard-subscription-relay-linux-arm64.tar.gz", "downloads/subscription-relay-sha256s.txt"} {
 		if info, err := stageRoot.Stat(filepath.FromSlash(required)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("controller package is missing %s", required)
 		}
@@ -1100,20 +1100,42 @@ func extractControllerArchive(archivePath, stage string) error {
 }
 
 func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error {
-	type target struct{ source, destination string }
-	targets := []target{{filepath.Join(stage, "bin/oboard-controller"), s.config.ControllerBinary}, {filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary}, {filepath.Join(stage, "bin/oboard-ai-worker"), s.config.AIWorkerBinary}, {filepath.Join(stage, "bin/oboard-script-worker"), s.config.ScriptWorkerBinary}, {filepath.Join(stage, "web/dist"), s.config.WebRoot}, {filepath.Join(stage, "downloads"), s.config.DownloadsRoot}}
+	type target struct {
+		source, destination string
+		optional            bool
+	}
+	targets := []target{
+		{filepath.Join(stage, "bin/oboard-controller"), s.config.ControllerBinary, false},
+		{filepath.Join(stage, "bin/oboard-controller-updater"), s.config.UpdaterBinary, false},
+		{filepath.Join(stage, "bin/oboard-ai-worker"), s.config.AIWorkerBinary, false},
+		{filepath.Join(stage, "bin/oboard-script-worker"), s.config.ScriptWorkerBinary, true},
+		{filepath.Join(stage, "web/dist"), s.config.WebRoot, false},
+		{filepath.Join(stage, "downloads"), s.config.DownloadsRoot, true},
+	}
 	rollback := []func(){}
 	runRollback := func() {
 		for i := len(rollback) - 1; i >= 0; i-- {
 			rollback[i]()
 		}
 	}
-	for index, item := range targets {
-		if _, err := os.Stat(item.source); os.IsNotExist(err) && index == 5 {
-			continue
+	for _, item := range targets {
+		if _, err := os.Stat(item.source); os.IsNotExist(err) {
+			if item.optional {
+				continue
+			}
+			runRollback()
+			return err
 		} else if err != nil {
 			runRollback()
 			return err
+		}
+		if item.destination == s.config.ScriptWorkerBinary {
+			if _, err := os.Stat(item.destination); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				runRollback()
+				return err
+			}
 		}
 		backup := item.destination + ".update-backup"
 		pending := item.destination + ".update-new"

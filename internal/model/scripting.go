@@ -314,6 +314,8 @@ type ScriptRuntimeStatus struct {
 	HostActionsEnabled bool   `json:"host_actions_enabled"`
 	SchedulerPaused    bool   `json:"scheduler_paused"`
 	RecoveryGeneration int64  `json:"recovery_generation"`
+	RuntimeInstalled   bool   `json:"runtime_installed"`
+	InstallCommand     string `json:"install_command,omitempty"`
 	WorkerConnected    bool   `json:"worker_connected"`
 	IsolationAvailable bool   `json:"isolation_available"`
 	IsolationMode      string `json:"isolation_mode"`

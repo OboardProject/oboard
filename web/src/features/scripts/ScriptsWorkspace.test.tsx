@@ -32,7 +32,7 @@ describe('ScriptsWorkspace', () => {
     const requestV2 = vi.fn(async (path: string, init?: RequestInit) => {
       if (path === '/scripts') return { scripts: [{ id: 3, name: '离线通知', description: '', status: 'enabled', owner_user_id: 1, created_at: '', updated_at: '' }] }
       if (path === '/script-triggers') return { triggers: [{ id: 8, script_id: 3, revision_id: 4, name: 'offline', enabled: false, kind: 'event', binding_revision: 1 }] }
-      if (path === '/script-runtime/status') return { status: { enabled: false, worker_connected: false, isolation_available: false, isolation_reason: 'bubblewrap missing' } }
+      if (path === '/script-runtime/status') return { status: { enabled: false, runtime_installed: true, worker_connected: false, isolation_available: false, isolation_reason: 'bubblewrap missing' } }
       if (path.startsWith('/scripts/3/runs')) return { runs: [{ id: 11, uuid: 'srun_1', script_id: 3, revision_id: 4, status: 'succeeded', mode: 'simulate', trigger_kind: 'manual', created_at: '2026-09-07T00:00:00Z' }] }
       if (path === '/scripts/3') return { script: { id: 3, name: '离线通知', status: 'enabled' }, draft: { id: 5, source: 'function main(){return {ok:true}}', manifest: { capabilities: ['servers.status'] } }, published: { id: 4 }, revisions: [] }
       if (path === '/scripts/3/revisions') return { revision: { id: 5 } }
@@ -58,5 +58,37 @@ describe('ScriptsWorkspace', () => {
     await act(async () => { validate?.click() })
     await flush()
     expect(notify).toHaveBeenCalled()
+  })
+
+  it('shows a host install command instead of enable when the runtime is missing', async () => {
+    const requestV2 = vi.fn(async (path: string) => {
+      if (path === '/scripts') return { scripts: [] }
+      if (path === '/script-triggers') return { triggers: [] }
+      if (path === '/script-runtime/status') {
+        return {
+          status: {
+            enabled: false,
+            runtime_installed: false,
+            worker_connected: false,
+            isolation_available: false,
+            install_command: "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env OBOARD_ACTION=enable-scripts VERSION=dev sh",
+          },
+        }
+      }
+      return {}
+    })
+    await act(async () => {
+      root.render(<ScriptsWorkspace tab="scripts" data={{ session: { role: 'admin' }, servers: [] }} client={{ requestV2 }} notify={vi.fn()} onNavigate={vi.fn()} />)
+    })
+    await flush()
+    expect(container.textContent).toContain('未安装')
+    expect(container.textContent).toContain('安装运行环境')
+    const enable = Array.from(container.querySelectorAll('button')).find(item => item.textContent === '启用执行')
+    expect(enable).toBeUndefined()
+    const install = Array.from(container.querySelectorAll('button')).find(item => item.textContent === '安装运行环境')
+    await act(async () => { install?.click() })
+    await flush()
+    expect(document.body.textContent).toContain('OBOARD_ACTION=enable-scripts')
+    expect(document.body.textContent).toContain('安装不会自动开启脚本')
   })
 })

@@ -697,3 +697,90 @@ func TestPreparedInstallationWaitsForExplicitApproval(t *testing.T) {
 		t.Fatal("approved installation did not advance")
 	}
 }
+
+func TestReplaceBinaryProgramSkipsUninstalledScriptWorker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/healthz") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	root := t.TempDir()
+	fakeBin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeBin, "rc-service"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	stage := filepath.Join(root, "stage")
+	install := filepath.Join(root, "install")
+	for _, dir := range []string{filepath.Join(stage, "bin"), filepath.Join(stage, "web", "dist"), filepath.Join(stage, "downloads"), install} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, content string, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(stage, "bin/oboard-controller"), "controller-new", 0o755)
+	write(filepath.Join(stage, "bin/oboard-controller-updater"), "updater-new", 0o755)
+	write(filepath.Join(stage, "bin/oboard-ai-worker"), "ai-new", 0o755)
+	write(filepath.Join(stage, "bin/oboard-script-worker"), "scripts-new", 0o755)
+	write(filepath.Join(stage, "web/dist/index.html"), "web-new", 0o644)
+	write(filepath.Join(stage, "downloads/release-manifest.json"), "{}", 0o644)
+	write(filepath.Join(install, "oboard-controller"), "controller-old", 0o755)
+	write(filepath.Join(install, "oboard-controller-updater"), "updater-old", 0o755)
+	write(filepath.Join(install, "oboard-ai-worker"), "ai-old", 0o755)
+	if err := os.MkdirAll(filepath.Join(install, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(install, "web/index.html"), "web-old", 0o644)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	binaryEnv := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(binaryEnv, []byte("OBOARD_ADDR="+addr+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{
+		BinaryEnvPath:      binaryEnv,
+		StatePath:          filepath.Join(root, "status.json"),
+		ControllerBinary:   filepath.Join(install, "oboard-controller"),
+		UpdaterBinary:      filepath.Join(install, "oboard-controller-updater"),
+		AIWorkerBinary:     filepath.Join(install, "oboard-ai-worker"),
+		ScriptWorkerBinary: filepath.Join(install, "oboard-script-worker"),
+		WebRoot:            filepath.Join(install, "web"),
+		DownloadsRoot:      filepath.Join(install, "downloads"),
+		HealthClient:       server.Client(),
+		HealthTimeout:      time.Second,
+		HealthPollInterval: 10 * time.Millisecond,
+		RunCommand:         func(context.Context, string, ...string) error { return nil },
+	})
+	if err := service.replaceBinaryProgram(context.Background(), stage); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(install, "oboard-script-worker")); !os.IsNotExist(err) {
+		t.Fatalf("self-update installed optional script worker: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(install, "oboard-controller"))
+	if err != nil || string(got) != "controller-new" {
+		t.Fatalf("controller binary was not replaced: %q %v", got, err)
+	}
+
+	write(filepath.Join(install, "oboard-script-worker"), "scripts-old", 0o755)
+	if err := service.replaceBinaryProgram(context.Background(), stage); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(filepath.Join(install, "oboard-script-worker"))
+	if err != nil || string(got) != "scripts-new" {
+		t.Fatalf("existing script worker was not updated: %q %v", got, err)
+	}
+}

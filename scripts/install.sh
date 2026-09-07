@@ -71,15 +71,21 @@ select_installation() {
   binary_installation_exists && INSTALLATION_EXISTS=1
 
   case "$ACTION_INPUT" in
-    ""|install|update|uninstall) ;;
-    *) echo "操作方式无效，请选择安装、更新或卸载。" >&2; exit 1 ;;
+    ""|install|update|uninstall|enable-scripts) ;;
+    *) echo "操作方式无效，请选择安装、更新、卸载或安装脚本运行环境。" >&2; exit 1 ;;
   esac
-  if [ "$INSTALLATION_EXISTS" = 1 ] && [ "$ACTION_INPUT" != uninstall ]; then
+  if [ "$ACTION_INPUT" = enable-scripts ]; then
+    ACTION=enable-scripts
+  elif [ "$INSTALLATION_EXISTS" = 1 ] && [ "$ACTION_INPUT" != uninstall ]; then
     ACTION=update
   else
     ACTION=${ACTION_INPUT:-install}
   fi
   if [ "$ACTION" = update ] && [ "$INSTALLATION_EXISTS" = 0 ]; then
+    echo "没有找到已安装的主控，请先完成安装。" >&2
+    exit 1
+  fi
+  if [ "$ACTION" = enable-scripts ] && [ "$INSTALLATION_EXISTS" = 0 ]; then
     echo "没有找到已安装的主控，请先完成安装。" >&2
     exit 1
   fi
@@ -440,6 +446,41 @@ prepare_script_worker_user() {
   fi
   ensure_script_isolation_deps
   set_controller_env_value OBOARD_SCRIPT_WORKER_SOCKET /run/oboard/script-worker/rpc.sock
+}
+
+script_runtime_installed() {
+  [ -f /etc/systemd/system/oboard-script-worker.service ] || [ -f /etc/init.d/oboard-script-worker ]
+}
+
+want_script_runtime() {
+  case "${OBOARD_INSTALL_SCRIPTS:-0}" in
+    1|true|yes) return 0 ;;
+  esac
+  [ "$ACTION" = enable-scripts ] && return 0
+  script_runtime_installed
+}
+
+install_script_runtime() {
+  local work=$1 os=$2 service_manager=$3
+  if [ ! -f "$work/bin/oboard-script-worker" ]; then
+    echo "安装包缺少 oboard-script-worker。" >&2
+    return 1
+  fi
+  echo "  正在安装脚本运行环境..."
+  install_file_atomic "$work/bin/oboard-script-worker" "$INSTALL_DIR/oboard-script-worker" 0755
+  prepare_script_worker_user
+  if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
+    render_service_file "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
+    systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
+    systemctl enable oboard-script-worker >> "$INSTALL_LOG" 2>&1
+    systemctl restart oboard-script-worker >> "$INSTALL_LOG" 2>&1
+  elif [ "$os" = linux ] && [ "$service_manager" = openrc ] && [ -f "$work/deploy/openrc/oboard-script-worker" ]; then
+    render_service_file "$work/deploy/openrc/oboard-script-worker" /etc/init.d/oboard-script-worker 0755
+    rc-update add oboard-script-worker default >> "$INSTALL_LOG" 2>&1
+    rc-service oboard-script-worker restart >> "$INSTALL_LOG" 2>&1
+  else
+    echo "未识别可用的服务管理器，已安装脚本程序文件；请手动配置并启动 oboard-script-worker。" >&2
+  fi
 }
 
 create_system_user() {
@@ -1187,12 +1228,16 @@ install_component() {
   verify_archive_paths "$TMP_DIR/$archive"
   tar -xzf "$TMP_DIR/$archive" -C "$work" >> "$INSTALL_LOG" 2>&1
   echo "[4/4] 配置并启动主控服务"
+  if [ "$ACTION" = enable-scripts ]; then
+    install_script_runtime "$work" "$os" "$service_manager"
+    echo "脚本运行环境已安装。请回到面板启用脚本执行。"
+    return 0
+  fi
   install -d -m 0755 -o root -g root "$INSTALL_DIR"
   install_file_atomic "$work/bin/oboard-$component" "$INSTALL_DIR/oboard-$component" 0755
   if [ "$component" = controller ]; then
     install_file_atomic "$work/bin/oboard-controller-updater" "$INSTALL_DIR/oboard-controller-updater" 0755
     install_file_atomic "$work/bin/oboard-ai-worker" "$INSTALL_DIR/oboard-ai-worker" 0755
-    install_file_atomic "$work/bin/oboard-script-worker" "$INSTALL_DIR/oboard-script-worker" 0755
   fi
 
   if [ "$os" = linux ] && [ "$service_manager" = systemd ] && [ -d "$work/deploy/systemd" ]; then
@@ -1213,11 +1258,9 @@ install_component() {
         configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
         configure_bootstrap_admin
-        prepare_script_worker_user
         render_service_file "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-controller.service
         render_service_file "$work/deploy/systemd/oboard-controller-updater.service" /etc/systemd/system/oboard-controller-updater.service
         render_service_file "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
-        render_service_file "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
         prepare_controller_updater_runtime
         systemctl daemon-reload >> "$INSTALL_LOG" 2>&1
         systemctl enable oboard-controller-updater >> "$INSTALL_LOG" 2>&1
@@ -1227,8 +1270,9 @@ install_component() {
         start_controller_systemd
         systemctl enable oboard-ai-worker >> "$INSTALL_LOG" 2>&1
         systemctl restart oboard-ai-worker >> "$INSTALL_LOG" 2>&1
-        systemctl enable oboard-script-worker >> "$INSTALL_LOG" 2>&1
-        systemctl restart oboard-script-worker >> "$INSTALL_LOG" 2>&1
+        if want_script_runtime; then
+          install_script_runtime "$work" "$os" "$service_manager"
+        fi
         clear_bootstrap_admin_password
         ;;
       agent)
@@ -1261,11 +1305,9 @@ install_component() {
         configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
         configure_bootstrap_admin
-        prepare_script_worker_user
         render_service_file "$work/deploy/openrc/oboard-controller" /etc/init.d/oboard-controller 0755
         render_service_file "$work/deploy/openrc/oboard-controller-updater" /etc/init.d/oboard-controller-updater 0755
         render_service_file "$work/deploy/openrc/oboard-ai-worker" /etc/init.d/oboard-ai-worker 0755
-        render_service_file "$work/deploy/openrc/oboard-script-worker" /etc/init.d/oboard-script-worker 0755
         prepare_controller_updater_runtime
         rc-update add oboard-controller-updater default >> "$INSTALL_LOG" 2>&1
         rc-service oboard-controller-updater restart >> "$INSTALL_LOG" 2>&1
@@ -1274,8 +1316,9 @@ install_component() {
         start_controller_openrc
         rc-update add oboard-ai-worker default >> "$INSTALL_LOG" 2>&1
         rc-service oboard-ai-worker restart >> "$INSTALL_LOG" 2>&1
-        rc-update add oboard-script-worker default >> "$INSTALL_LOG" 2>&1
-        rc-service oboard-script-worker restart >> "$INSTALL_LOG" 2>&1
+        if want_script_runtime; then
+          install_script_runtime "$work" "$os" "$service_manager"
+        fi
         clear_bootstrap_admin_password
         ;;
       agent)
@@ -1309,16 +1352,22 @@ if [ "$ACTION" = uninstall ]; then
   drain_piped_script
   exit 0
 fi
-if [ "$ACTION" = update ] && [ -z "$VERSION_INPUT" ]; then
-  installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' "$CONTROLLER_ENV" 2>/dev/null | tail -n1 | tr -d "'\"")
-  case "$installed_channel" in
-    dev) VERSION_VALUE=dev ;;
-    pinned)
-      echo "当前主控使用固定版本。请设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
-      exit 1
-      ;;
-    *) VERSION_VALUE=latest ;;
-  esac
+if [ "$ACTION" = update ] || [ "$ACTION" = enable-scripts ]; then
+  if [ -z "$VERSION_INPUT" ]; then
+    installed_channel=$(sed -n 's/^OBOARD_UPDATE_CHANNEL=//p' "$CONTROLLER_ENV" 2>/dev/null | tail -n1 | tr -d "'\"")
+    case "$installed_channel" in
+      dev) VERSION_VALUE=dev ;;
+      pinned)
+        if [ "$ACTION" = enable-scripts ]; then
+          VERSION_VALUE=latest
+        else
+          echo "当前主控使用固定版本。请设置 VERSION=latest 或 VERSION=dev 后再更新。" >&2
+          exit 1
+        fi
+        ;;
+      *) VERSION_VALUE=latest ;;
+    esac
+  fi
 fi
 
 TMP_DIR=$(make_install_tmp)
@@ -1330,6 +1379,8 @@ case "$COMPONENT" in
     echo "-----------"
     if [ "$ACTION" = update ]; then
       echo "正在更新，现有账号、配置和数据将保留。"
+    elif [ "$ACTION" = enable-scripts ]; then
+      echo "正在安装脚本运行环境。脚本执行开关仍保持关闭。"
     else
       echo "正在开始安装。"
     fi

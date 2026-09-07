@@ -1,6 +1,7 @@
 package capability
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -24,5 +25,9 @@ func TestScriptGrantCapabilitiesAreAdminOnlyAndNotMCP(t *testing.T) {
 	list, ok := catalog.Get("scripts.list")
 	if !ok || !list.MCPEnabled || list.AdminOnly {
 		t.Fatalf("script list must stay MCP-enabled for operators: %#v", list)
+	}
+	status, ok := catalog.Get("script_runtime.status")
+	if !ok || !status.MCPEnabled || !strings.Contains(string(status.OutputSchema), "runtime_installed") || !strings.Contains(status.Description, "install_command") {
+		t.Fatalf("script runtime status must advertise install state: %#v", status)
 	}
 }

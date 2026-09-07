@@ -32,6 +32,7 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
   const [grantCaps, setGrantCaps] = useState('servers.status')
   const [grantServers, setGrantServers] = useState('')
   const [loading, setLoading] = useState(false)
+  const [installOpen, setInstallOpen] = useState(false)
 
   const refresh = async () => {
     setLoading(true)
@@ -183,22 +184,54 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
       {runtime && (
         <div className="rounded-2xl border border-border/70 p-4 text-sm">
           <strong>运行环境</strong>
-          <div className="mt-1 text-muted-foreground">Worker {runtime.worker_connected ? '已连接' : '未连接'} · 沙箱 {runtime.isolation_available ? runtime.isolation_mode : (runtime.isolation_reason || '不可用')} · 执行 {runtime.enabled ? '已启用' : '已关闭'}</div>
+          {runtime.runtime_installed ? (
+            <div className="mt-1 text-muted-foreground">Worker {runtime.worker_connected ? '已连接' : '未连接'} · 沙箱 {runtime.isolation_available ? runtime.isolation_mode : (runtime.isolation_reason || '不可用')} · 执行 {runtime.enabled ? '已启用' : '已关闭'}</div>
+          ) : (
+            <div className="mt-1 text-muted-foreground">未安装。默认安装主控时不带脚本运行环境；在主控主机上执行安装命令后再启用执行。</div>
+          )}
           {isAdmin && (
             <div className="mt-3 flex gap-2">
-              <Button size="sm" variant="outline" onClick={async () => {
-                try {
-                  await api.updateRuntimeSettings(requestV2, { ...runtime, enabled: !runtime.enabled })
-                  notify(runtime.enabled ? '已关闭脚本执行' : '已启用脚本执行', 'success')
-                  void refresh()
-                } catch (error: any) {
-                  notify(error.message || '更新运行环境失败', 'error')
-                }
-              }}>{runtime.enabled ? '关闭执行' : '启用执行'}</Button>
+              {!runtime.runtime_installed && (
+                <Button size="sm" onClick={() => setInstallOpen(true)}>安装运行环境</Button>
+              )}
+              {runtime.runtime_installed && (
+                <Button size="sm" variant="outline" onClick={async () => {
+                  try {
+                    await api.updateRuntimeSettings(requestV2, { enabled: !runtime.enabled })
+                    notify(runtime.enabled ? '已关闭脚本执行' : '已启用脚本执行', 'success')
+                    void refresh()
+                  } catch (error: any) {
+                    notify(error.message || '更新运行环境失败', 'error')
+                  }
+                }}>{runtime.enabled ? '关闭执行' : '启用执行'}</Button>
+              )}
             </div>
           )}
         </div>
       )}
+
+      <Dialog isOpen={installOpen} onClose={() => setInstallOpen(false)} title="安装脚本运行环境" size="lg">
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground">在主控主机上以 root 执行下面的命令。安装完成后回到本页刷新，再打开「启用执行」。安装不会自动开启脚本。</p>
+          <pre className="overflow-x-auto rounded-xl bg-secondary/50 p-3 font-mono text-xs whitespace-pre-wrap">{runtime?.install_command || ''}</pre>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setInstallOpen(false)}>关闭</Button>
+            <Button onClick={async () => {
+              const command = String(runtime?.install_command || '')
+              if (!command) {
+                notify('暂时没有安装命令，请刷新后重试', 'warning')
+                return
+              }
+              try {
+                await navigator.clipboard.writeText(command)
+                notify('已复制安装命令', 'success')
+              } catch {
+                notify('复制失败，请手动选择命令', 'warning')
+              }
+            }}>复制命令</Button>
+          </div>
+        </div>
+      </Dialog>
 
       <Dialog isOpen={createOpen} onClose={() => setCreateOpen(false)} title="新建脚本" size="lg">
         <div className="space-y-3">

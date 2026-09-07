@@ -24,6 +24,7 @@ Environment:
   OBOARD_BASE_PATH=/abc Optional path prefix for every Controller endpoint.
   SSH_PORT=22           SSH port; overridden by third argument.
   OBOARD_FORCE_BUILD=1  Rebuild matching release artifact before upload.
+  OBOARD_INSTALL_SCRIPTS=1  Also install the optional script worker runtime.
   OBOARD_ARTIFACT_VERSION=dev  Override artifact version, e.g. for dev builds.
   OBOARD_AGENT_RELEASE_DIR=...    Directory containing a signed Agent release.
   OBOARD_RELEASE_PUBLIC_KEY=...   Matching Ed25519 public key for that release.
@@ -173,7 +174,7 @@ upload_artifact "$artifact" "$REMOTE_TMP"
 
 echo "==> Installing and starting OBoard controller on $SSH_TARGET"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "OBOARD_HTTP_PORT='$HTTP_PORT' OBOARD_PUBLIC_PORT='$PUBLIC_PORT' OBOARD_BASE_PATH='$BASE_PATH' OBOARD_SESSION_SECRET_NEW='$session_secret' OBOARD_ARCHIVE='$REMOTE_TMP' bash -s" <<'REMOTE'
+  "OBOARD_HTTP_PORT='$HTTP_PORT' OBOARD_PUBLIC_PORT='$PUBLIC_PORT' OBOARD_BASE_PATH='$BASE_PATH' OBOARD_SESSION_SECRET_NEW='$session_secret' OBOARD_ARCHIVE='$REMOTE_TMP' OBOARD_INSTALL_SCRIPTS='${OBOARD_INSTALL_SCRIPTS:-0}' bash -s" <<'REMOTE'
 set -euo pipefail
 
 if [ "$(id -u)" != "0" ]; then
@@ -191,6 +192,14 @@ trap cleanup EXIT
 
 tar -xzf "$OBOARD_ARCHIVE" -C "$work"
 
+install_scripts=0
+case "${OBOARD_INSTALL_SCRIPTS:-0}" in
+  1|true|yes) install_scripts=1 ;;
+esac
+if [ "$install_scripts" != 1 ] && [ -f /etc/systemd/system/oboard-script-worker.service ]; then
+  install_scripts=1
+fi
+
 if ! id oboard >/dev/null 2>&1; then
   useradd --system --home /opt/oboard/data --shell /usr/sbin/nologin oboard
 fi
@@ -204,7 +213,7 @@ fi
 if [ -f "$work/bin/oboard-ai-worker" ]; then
   install -m 0755 "$work/bin/oboard-ai-worker" /opt/oboard/oboard-ai-worker
 fi
-if [ -f "$work/bin/oboard-script-worker" ]; then
+if [ "$install_scripts" = 1 ] && [ -f "$work/bin/oboard-script-worker" ]; then
   install -m 0755 "$work/bin/oboard-script-worker" /opt/oboard/oboard-script-worker
 fi
 rm -rf /opt/oboard/web/dist.new
@@ -287,7 +296,7 @@ cp "$work/deploy/systemd/oboard-controller.service" /etc/systemd/system/oboard-c
 if [ -f "$work/deploy/systemd/oboard-ai-worker.service" ]; then
   cp "$work/deploy/systemd/oboard-ai-worker.service" /etc/systemd/system/oboard-ai-worker.service
 fi
-if [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
+if [ "$install_scripts" = 1 ] && [ -f "$work/deploy/systemd/oboard-script-worker.service" ]; then
   cp "$work/deploy/systemd/oboard-script-worker.service" /etc/systemd/system/oboard-script-worker.service
 fi
 if [ -f "$work/deploy/systemd/oboard-controller-updater.service" ]; then
@@ -304,7 +313,7 @@ if [ -f /etc/systemd/system/oboard-ai-worker.service ]; then
   systemctl enable oboard-ai-worker >/dev/null
   systemctl restart oboard-ai-worker
 fi
-if [ -f /etc/systemd/system/oboard-script-worker.service ]; then
+if [ "$install_scripts" = 1 ] && [ -f /etc/systemd/system/oboard-script-worker.service ]; then
   systemctl enable oboard-script-worker >/dev/null
   systemctl restart oboard-script-worker
 fi

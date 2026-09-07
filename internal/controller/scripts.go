@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -405,7 +406,7 @@ func (s *Server) apiV1ScriptRunItem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiV1ScriptRuntime(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		principal, _ := apiPrincipal(r)
-		status, err := s.scripts.RuntimeStatus(r.Context(), principal, s.scriptIsolation, s.scriptWorkerConnected.Load())
+		status, err := s.loadScriptRuntimeStatus(r.Context(), principal)
 		if err != nil {
 			scriptErr(w, r, err)
 			return
@@ -417,16 +418,42 @@ func (s *Server) apiV1ScriptRuntime(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	var input scripting.Settings
+	var input struct {
+		Enabled            *bool `json:"enabled"`
+		HostActionsEnabled *bool `json:"host_actions_enabled"`
+		SchedulerPaused    *bool `json:"scheduler_paused"`
+		MaxConcurrency     int   `json:"max_concurrency"`
+		MaxTimeoutSeconds  int   `json:"max_timeout_seconds"`
+	}
 	if !decodeV2(w, r, &input) {
 		return
 	}
 	principal, _ := apiPrincipal(r)
-	if err := s.scripts.UpdateSettings(r.Context(), principal, input); err != nil {
+	next := s.scripts.Settings(r.Context())
+	if input.Enabled != nil {
+		next.Enabled = *input.Enabled
+	}
+	if input.HostActionsEnabled != nil {
+		next.HostActionsEnabled = *input.HostActionsEnabled
+	}
+	if input.SchedulerPaused != nil {
+		next.SchedulerPaused = *input.SchedulerPaused
+	}
+	if input.MaxConcurrency > 0 {
+		next.MaxConcurrency = input.MaxConcurrency
+	}
+	if input.MaxTimeoutSeconds > 0 {
+		next.MaxTimeoutSeconds = input.MaxTimeoutSeconds
+	}
+	if err := s.ensureScriptRuntimeForEnable(next.Enabled); err != nil {
 		scriptErr(w, r, err)
 		return
 	}
-	status, _ := s.scripts.RuntimeStatus(r.Context(), principal, s.scriptIsolation, s.scriptWorkerConnected.Load())
+	if err := s.scripts.UpdateSettings(r.Context(), principal, next); err != nil {
+		scriptErr(w, r, err)
+		return
+	}
+	status, _ := s.loadScriptRuntimeStatus(r.Context(), principal)
 	scriptOK(w, r, http.StatusOK, map[string]any{"status": status})
 }
 
@@ -541,10 +568,13 @@ func (s *Server) registerScriptAutomationOperations() {
 		if in.MaxTimeoutSeconds > 0 {
 			next.MaxTimeoutSeconds = in.MaxTimeoutSeconds
 		}
+		if err := s.ensureScriptRuntimeForEnable(next.Enabled); err != nil {
+			return nil, err
+		}
 		if err := s.scripts.UpdateSettings(ctx, principal, next); err != nil {
 			return nil, err
 		}
-		status, err := s.scripts.RuntimeStatus(ctx, principal, s.scriptIsolation, s.scriptWorkerConnected.Load())
+		status, err := s.loadScriptRuntimeStatus(ctx, principal)
 		return map[string]any{"status": status}, err
 	})
 	register("servers.script_policy.update", func(ctx context.Context, principal application.Principal, in idInput) (any, error) {
@@ -615,7 +645,7 @@ func (s *Server) queryScriptCapability(ctx context.Context, principal applicatio
 		items, err := s.scripts.ListTriggers(ctx, principal, request.ScriptID)
 		return map[string]any{"triggers": items}, err
 	case "script_runtime.status":
-		status, err := s.scripts.RuntimeStatus(ctx, principal, s.scriptIsolation, s.scriptWorkerConnected.Load())
+		status, err := s.loadScriptRuntimeStatus(ctx, principal)
 		return map[string]any{"status": status}, err
 	default:
 		return nil, errors.New("unsupported query capability")
@@ -672,6 +702,48 @@ func (s *Server) apiV1ServerScriptPolicies(w http.ResponseWriter, r *http.Reques
 	scriptOK(w, r, http.StatusOK, map[string]any{"policy": item})
 }
 
+func (s *Server) scriptRuntimeInstalled() bool {
+	if s.scriptWorkerConnected.Load() {
+		return true
+	}
+	if _, err := os.Stat("/etc/systemd/system/oboard-script-worker.service"); err == nil {
+		return true
+	}
+	_, err := os.Stat("/etc/init.d/oboard-script-worker")
+	return err == nil
+}
+
+func (s *Server) scriptRuntimeInstallCommand() string {
+	channel := strings.ToLower(strings.TrimSpace(os.Getenv("OBOARD_UPDATE_CHANNEL")))
+	version := "latest"
+	switch channel {
+	case "dev", "development", "nightly":
+		version = "dev"
+	case "pinned":
+		version = strings.TrimSpace(os.Getenv("OBOARD_VERSION"))
+		if version == "" {
+			version = "latest"
+		}
+	}
+	return "curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/OboardProject/oboard/main/scripts/install.sh | sudo env OBOARD_ACTION=enable-scripts VERSION=" + version + " sh"
+}
+
+func (s *Server) loadScriptRuntimeStatus(ctx context.Context, principal application.Principal) (model.ScriptRuntimeStatus, error) {
+	installed := s.scriptRuntimeInstalled()
+	command := ""
+	if !installed {
+		command = s.scriptRuntimeInstallCommand()
+	}
+	return s.scripts.RuntimeStatus(ctx, principal, s.scriptIsolation, s.scriptWorkerConnected.Load(), installed, command)
+}
+
+func (s *Server) ensureScriptRuntimeForEnable(enabled bool) error {
+	if !enabled || s.scriptRuntimeInstalled() {
+		return nil
+	}
+	return scripting.Coded(model.ScriptErrorRuntimeUnavailable, "尚未安装脚本运行环境，请先在主控主机上执行安装命令")
+}
+
 func scriptOK(w http.ResponseWriter, r *http.Request, status int, data any) {
 	v2Write(w, r, status, data, nil)
 }
@@ -687,6 +759,8 @@ func scriptHTTPStatus(err error) int {
 	case "not_found":
 		return http.StatusNotFound
 	case "conflict", "idempotency_conflict":
+		return http.StatusConflict
+	case "runtime_unavailable":
 		return http.StatusConflict
 	case "invalid_input":
 		return http.StatusBadRequest

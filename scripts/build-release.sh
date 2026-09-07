@@ -113,7 +113,7 @@ package_controller() {
   # Keep the self-update payload compatible with the updater's extraction
   # allowlist. Installation-only service files and scripts live in a separate
   # archive and are never exposed to the privileged self-update extractor.
-  create_tar_archive "$stage" "$archive" bin/oboard-controller bin/oboard-controller-updater bin/oboard-ai-worker bin/oboard-script-worker web downloads
+	create_tar_archive "$stage" "$archive" bin/oboard-controller bin/oboard-controller-updater bin/oboard-ai-worker web downloads
   create_tar_archive "$stage" "$install_archive" .
   rm -rf "$stage"
   echo "$archive"
