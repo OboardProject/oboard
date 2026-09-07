@@ -2297,14 +2297,15 @@ func (s *Server) userEffectiveNodes(w http.ResponseWriter, r *http.Request, user
 		EgressResults:     data.config.ProxyPathEgressResults,
 		ExternalOutbounds: data.config.ExternalOutbounds,
 		ServerOnline:      data.serverOnline,
+		NodeMetadata:      data.nodeMetadata,
 	})
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
-	nameByKey := map[string]string{}
+	nodeByKey := map[string]core.AssignableNode{}
 	for _, node := range nodes {
-		nameByKey[node.Key] = node.Name
+		nodeByKey[node.Key] = node
 	}
 	views := []userEffectiveNodeView{}
 	grants := data.snapshot.UserNodes[userID]
@@ -2314,8 +2315,12 @@ func (s *Server) userEffectiveNodes(w http.ResponseWriter, r *http.Request, user
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
+		node, ok := nodeByKey[key]
+		if !ok || !node.Renderable {
+			continue
+		}
 		grant := grants[key]
-		view := userEffectiveNodeView{Key: key, NodeType: grant.NodeType, NodeID: grant.NodeID, Name: nameByKey[key], Source: grant.Source}
+		view := userEffectiveNodeView{Key: key, NodeType: grant.NodeType, NodeID: grant.NodeID, Name: node.Name, Source: grant.Source}
 		if grant.Source == "plan" {
 			view.PlanID = grant.PlanID
 			view.PlanName = grant.PlanName
