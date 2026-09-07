@@ -3173,14 +3173,12 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
   const isScriptsView = tab !== 'automation' || !isAdmin
   const scriptTab = tab === 'script-triggers' || tab === 'script-runs' ? tab : 'scripts'
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
-  const [loading, setLoading] = useState(false)
   const [working, setWorking] = useState('')
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [controllerURL, setControllerURL] = useState(() => data?.settings?.controller_url || '')
   const [aiRawLogOpen, setAiRawLogOpen] = useState(false)
   const refresh = async () => {
-    setLoading(true)
     try {
       const [changesets, providers, audits, settings] = await Promise.all([
         client.requestV2('/changesets'), client.requestV2('/ai/providers'), client.requestV2('/tool-audits'),
@@ -3190,8 +3188,6 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
       setControllerURL(settings?.settings?.controller_url || '')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setLoading(false)
     }
   }
   useEffect(() => {
@@ -3227,7 +3223,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
     setView(next)
     if (tab !== 'automation') goTab('automation')
   }
-  return <Panel title="自动化" className="automation-panel">
+  return <Panel className="automation-panel">
     <div className="audit-console-tabs automation-tabs" role="tablist" aria-label="自动化视图">
       <button className={isScriptsView ? 'active' : ''} onClick={() => goTab(automationLandingTab())}><Code size={15} />脚本</button>
       {isAdmin && <>
@@ -3235,7 +3231,6 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
         <button className={!isScriptsView && view === 'changes' ? 'active' : ''} onClick={() => openAdminView('changes')}><Workflow size={15} />审批与变更</button>
         <button className={!isScriptsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
       </>}
-      {!isScriptsView && <button className="ghost icon-button automation-refresh" onClick={() => void refresh()} aria-label="刷新" title="刷新"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>}
     </div>
     {isScriptsView && <div className="automation-scripts" style={{ marginTop: 14, minWidth: 0 }}><ScriptsWorkspace tab={scriptTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
     {!isScriptsView && view === 'access' && <>
@@ -3250,14 +3245,16 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
         confirm={dialogs.confirm}
       />
     </>}
-    {!isScriptsView && view === 'changes' && <div className="automation-grid">
+    {!isScriptsView && view === 'changes' && <div className="automation-grid automation-changes-grid">
       <section className="settings-card automation-changesets">
         <div className="settings-card-head"><div><h3>Changeset</h3><p className="muted">校验计划哈希、影响范围并执行已批准变更。</p></div></div>
         <div className="automation-list">{snapshot.changesets.length ? snapshot.changesets.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.reason || item.id}</strong><span>{item.operations.map((operation: any) => operation.capability).join(' · ')}</span><small>{item.status} · 风险 {item.risk_class} · {formatTableTime(item.created_at)}</small></div><div>{item.status === 'draft' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'validate')} title="校验" aria-label="校验"><ShieldCheck size={15} /></button>}{item.status === 'awaiting_approval' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'approve')} title="批准" aria-label="批准"><BadgeCheck size={15} /></button>}{item.status === 'approved' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'apply')} title="执行" aria-label="执行"><Play size={15} /></button>}</div></div>) : <p className="muted">暂无变更集</p>}</div>
       </section>
-      <section className="settings-card automation-wide">
+      <section className="settings-card automation-tool-audits">
         <div className="settings-card-head"><div><h3>Agent 调用审计</h3><p className="muted">记录主体、来源、能力和结果，不保存请求参数正文。</p></div></div>
-        <div className="table-wrap"><table><thead><tr><th>时间</th><th>主体</th><th>能力</th><th>来源</th><th>结果</th></tr></thead><tbody>{snapshot.audits.map((item: any) => <tr key={item.id}><td>{formatTableTime(item.created_at)}</td><td>{item.client_name || item.principal_id}</td><td>{item.capability}</td><td>{item.source_ip || '本机'}</td><td>{item.result}</td></tr>)}</tbody></table></div>
+        {snapshot.audits.length
+          ? <div className="table-wrap"><table><thead><tr><th>时间</th><th>主体</th><th>能力</th><th>来源</th><th>结果</th></tr></thead><tbody>{snapshot.audits.map((item: any) => <tr key={item.id}><td>{formatTableTime(item.created_at)}</td><td>{item.client_name || item.principal_id}</td><td>{item.capability}</td><td>{item.source_ip || '本机'}</td><td>{item.result}</td></tr>)}</tbody></table></div>
+          : <p className="muted">暂无调用记录</p>}
       </section>
     </div>}
     {!isScriptsView && view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
