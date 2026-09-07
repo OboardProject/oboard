@@ -930,16 +930,81 @@ latest_version() {
   return 1
 }
 
-download_file() {
-  local url=$1 destination=$2 attempt
-  for attempt in 1 2 3 4 5; do
-    if curl --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 300 -fsL "$url" -o "$destination"; then
-      return 0
+format_download_value() {
+  awk -v bytes="${1:-0}" 'BEGIN {
+    split("B KB MB GB TB", units, " ")
+    value = bytes + 0
+    unit = 1
+    while (value >= 1024 && unit < 5) {
+      value /= 1024
+      unit++
+    }
+    if (unit == 1) printf "%.0f %s", value, units[unit]
+    else printf "%.1f %s", value, units[unit]
+  }'
+}
+
+download_component() {
+  label=$1
+  url=$2
+  destination=$3
+  echo "  $label"
+  if [ -t 2 ]; then
+    meter=--progress-bar
+  else
+    meter=--silent
+  fi
+
+  attempt=1
+  while :; do
+    if stats=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      --fail --location --show-error --connect-timeout 15 --continue-at - "$meter" \
+      --write-out '%{size_download} %{speed_download}' "$url" -o "$destination"); then
+      break
+    else
+      curl_status=$?
     fi
-    rm -f "$destination"
-    [ "$attempt" = 5 ] || sleep 2
+    case "$curl_status" in
+      5|6|7|16|18|28|35|52|55|56|92) ;;
+      *) echo "下载失败：$label" >&2; return 1 ;;
+    esac
+    if [ "$attempt" -ge 3 ]; then
+      echo "下载失败：$label（连续 3 次连接失败）" >&2
+      return 1
+    fi
+    echo "  连接中断，保留已下载内容并重试（$attempt/3）..." >&2
+    sleep "$attempt"
+    attempt=$((attempt + 1))
   done
-  return 1
+  if [ "$attempt" -gt 1 ]; then
+    size=$(wc -c < "$destination" | tr -d '[:space:]')
+  else
+    size=${stats%% *}
+  fi
+  speed=${stats#* }
+  printf '  完成：%s · %s/s\n' "$(format_download_value "$size")" "$(format_download_value "$speed")"
+}
+
+download_quiet() {
+  quiet_url=$1
+  quiet_destination=$2
+  quiet_attempt=1
+  while :; do
+    if curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      --fail --silent --show-error --location --connect-timeout 15 --continue-at - \
+      "$quiet_url" -o "$quiet_destination"; then
+      return 0
+    else
+      quiet_status=$?
+    fi
+    case "$quiet_status" in
+      5|6|7|16|18|28|35|52|55|56|92) ;;
+      *) return 1 ;;
+    esac
+    [ "$quiet_attempt" -lt 3 ] || return 1
+    sleep "$quiet_attempt"
+    quiet_attempt=$((quiet_attempt + 1))
+  done
 }
 
 verify_archive_paths() {
@@ -960,7 +1025,7 @@ verify_checksum() {
   local release_tag="v$version"
   [ "$version" = dev ] && release_tag=dev
   local sums_url="https://github.com/$REPO/releases/download/$release_tag/sha256sums.txt"
-  if ! download_file "$sums_url" "$sums"; then
+  if ! download_quiet "$sums_url" "$sums"; then
     if [ "${OBOARD_SKIP_CHECKSUM:-0}" != "1" ]; then
       echo "无法下载安装包校验文件，已停止安装。" >&2
       echo "请检查服务器是否可以访问 GitHub，然后稍后重试。" >&2
@@ -1218,7 +1283,7 @@ install_component() {
 
   echo "[2/4] 下载主控安装包"
   mkdir -p "$work"
-  if ! download_file "$url" "$TMP_DIR/$archive"; then
+  if ! download_component "主控安装包" "$url" "$TMP_DIR/$archive"; then
     echo "安装包下载失败：$archive" >&2
     echo "请检查服务器是否可以访问 GitHub，然后稍后重试。" >&2
     return 1

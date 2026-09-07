@@ -117,6 +117,12 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"[3/4] 校验安装包",
 		"[4/4] 配置并启动主控服务",
 		"详细日志：$INSTALL_LOG",
+		"format_download_value",
+		"download_component",
+		"download_quiet",
+		"--progress-bar",
+		"--continue-at -",
+		"完成：",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("controller installer missing %q", want)
@@ -131,6 +137,9 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 	if strings.Contains(text, `install_component agent`) || strings.Contains(text, `install_component sb`) {
 		t.Fatal("controller installer still installs Agent artifacts from the controller release")
 	}
+	if strings.Contains(text, "download_file()") {
+		t.Fatal("controller installer still uses silent download_file")
+	}
 	for _, obsolete := range []string{"/etc/oboard/controller.env", "/var/lib/oboard/oboard.sqlite", "/var/lib/oboard/controller-update", "/opt/oboard/web /opt/oboard/downloads"} {
 		if strings.Contains(text, obsolete) {
 			t.Fatalf("controller installer still contains obsolete split path %q", obsolete)
@@ -143,6 +152,149 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 				t.Fatalf("controller installer %s syntax error: %v\n%s", shellName, err, output)
 			}
 		}
+	}
+}
+
+func TestControllerDownloadProgressOutput(t *testing.T) {
+	script := controllerInstallScript(t)
+	if !strings.Contains(script, "--progress-bar") {
+		t.Fatal("interactive download progress bar is missing")
+	}
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	curlLog := filepath.Join(root, "curl.log")
+	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+printf '%s\n' "$*" > "$CURL_LOG"
+destination=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then
+    shift
+    destination=$1
+  fi
+  shift
+done
+printf payload > "$destination"
+printf '1048576 524288'
+`)
+	harness := strings.Join([]string{
+		"set -eu",
+		extractShellFunction(t, script, "format_download_value"),
+		extractShellFunction(t, script, "download_component"),
+		"download_component 主控安装包 https://github.com/OboardProject/oboard/releases/download/dev/package " + shellQuote(filepath.Join(root, "package")),
+	}, "\n")
+	cmd := exec.Command(testPOSIXShell(t), "-c", harness)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_LOG="+curlLog)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("download helper failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "完成：1.0 MB · 512.0 KB/s") {
+		t.Fatalf("download summary missing size or speed:\n%s", output)
+	}
+	log, err := os.ReadFile(curlLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--silent", "--write-out", "%{size_download} %{speed_download}", "--continue-at -"} {
+		if !strings.Contains(string(log), want) {
+			t.Errorf("curl invocation missing %q: %s", want, log)
+		}
+	}
+}
+
+func TestControllerDownloadResumesInterruptedTransferAndStopsAfterThreeAttempts(t *testing.T) {
+	script := controllerInstallScript(t)
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	attempts := filepath.Join(root, "attempts")
+	curlLog := filepath.Join(root, "curl.log")
+	writeExecutable(t, filepath.Join(bin, "sleep"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+count=0
+[ ! -f "$CURL_ATTEMPTS" ] || count=$(cat "$CURL_ATTEMPTS")
+count=$((count + 1))
+printf '%s\n' "$count" > "$CURL_ATTEMPTS"
+printf '%s\n' "$*" >> "$CURL_LOG"
+destination=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then shift; destination=$1; fi
+  shift
+done
+if [ "$count" -eq 1 ]; then
+  printf partial > "$destination"
+  exit 18
+fi
+printf '%s' '-rest' >> "$destination"
+printf '5 1024'
+`)
+	destination := filepath.Join(root, "package")
+	harness := strings.Join([]string{
+		"set -eu",
+		extractShellFunction(t, script, "format_download_value"),
+		extractShellFunction(t, script, "download_component"),
+		"download_component 主控安装包 https://github.com/OboardProject/oboard/releases/download/dev/package " + shellQuote(destination),
+	}, "\n")
+	cmd := exec.Command(testPOSIXShell(t), "-c", harness)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("resumed download failed: %v\n%s", err, output)
+	}
+	if raw, err := os.ReadFile(attempts); err != nil || strings.TrimSpace(string(raw)) != "2" {
+		t.Fatalf("attempt count = %q, err=%v", raw, err)
+	}
+	if log, err := os.ReadFile(curlLog); err != nil || strings.Count(string(log), "--continue-at -") != 2 {
+		t.Fatalf("curl did not resume both attempts: %q, err=%v", log, err)
+	}
+	if raw, err := os.ReadFile(destination); err != nil || string(raw) != "partial-rest" {
+		t.Fatalf("resumed content = %q, err=%v", raw, err)
+	}
+	for _, path := range []string{attempts, curlLog, destination} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	quietHarness := strings.Join([]string{
+		"set -eu",
+		extractShellFunction(t, script, "download_quiet"),
+		"download_quiet https://github.com/OboardProject/oboard/releases/download/dev/sha256sums.txt " + shellQuote(destination),
+	}, "\n")
+	cmd = exec.Command(testPOSIXShell(t), "-c", quietHarness)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("quiet resumed download failed: %v\n%s", err, output)
+	}
+	if raw, err := os.ReadFile(attempts); err != nil || strings.TrimSpace(string(raw)) != "2" {
+		t.Fatalf("quiet attempt count = %q, err=%v", raw, err)
+	}
+	if raw, err := os.ReadFile(destination); err != nil || string(raw) != "partial-rest" {
+		t.Fatalf("quiet resumed content = %q, err=%v", raw, err)
+	}
+
+	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+count=0
+[ ! -f "$CURL_ATTEMPTS" ] || count=$(cat "$CURL_ATTEMPTS")
+count=$((count + 1))
+printf '%s\n' "$count" > "$CURL_ATTEMPTS"
+exit 18
+`)
+	for _, path := range []string{attempts, destination} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	cmd = exec.Command(testPOSIXShell(t), "-c", harness)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "CURL_ATTEMPTS="+attempts, "CURL_LOG="+curlLog)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("three interrupted attempts unexpectedly succeeded:\n%s", output)
+	}
+	if raw, err := os.ReadFile(attempts); err != nil || strings.TrimSpace(string(raw)) != "3" {
+		t.Fatalf("exhausted attempt count = %q, err=%v", raw, err)
 	}
 }
 
@@ -591,6 +743,20 @@ func TestControllerUpdaterRuntimePreparationPreservesDataRoot(t *testing.T) {
 			})
 		})
 	}
+}
+
+func controllerInstallScript(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate test file")
+	}
+	path := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "scripts", "install.sh"))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(content)
 }
 
 func extractShellFunction(t *testing.T, script, name string) string {
