@@ -171,7 +171,7 @@ import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pa
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
 import { createServerRecord, deleteServerRecord, ServerMutationUncertainError } from './server-mutations'
-import { getServerTimeIssue } from './server-time'
+import { getServerTimeIssue, hasServerTimeMeasurement } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue, type ServerExpiryTone } from './server-expiry'
 import { collectRegionStats, orderRegions, orderServerRegions } from './region-order'
@@ -9742,6 +9742,7 @@ function timeCheckStatusLabel(server: Server) {
     case 'corrected': return server.time_logical_active ? '逻辑校时生效' : '系统时间已校准'
     case 'skewed': return '偏差过大'
     case 'unavailable': return '检测失败'
+    case 'config_error': return '配置保存失败'
     case 'pending': return '等待检测'
     default: return '尚未检测'
   }
@@ -9789,7 +9790,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
                 {outdated && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>有更新</Badge>}
                 <ServerDeliveryBadge server={server} />
                 <ServerExpiryBadge server={server} />
-                {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>时间异常</Badge>}
+                {timeIssue && <Badge variant="destructive" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>{timeIssue.summary}</Badge>}
                 {uninstalling && <Badge variant="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '14px' }}>卸载中</Badge>}
               </div>
             </div>
@@ -9916,12 +9917,12 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
           {timeIssue && <button
             type="button"
             className={`server-time-issue ${timeIssue.tone}`}
-            aria-label={`时间异常：${timeIssue.summary}，点击查看详情`}
+            aria-label={`${timeIssue.summary}，点击查看详情`}
             title={`${timeIssue.summary}，点击查看详情`}
             onClick={() => onAction('time-details', server)}
           >
             <AlertTriangle size={12} aria-hidden="true" />
-            <span>时间异常</span>
+            <span>{timeIssue.summary}</span>
           </button>}
           {uninstalling && <span className="status-pill warning">卸载中</span>}
           <span className={`server-health-ring ${healthTone}`} title={server.latency_probe_enabled ? connectivityStatusLabel(server.connectivity_status) : '未配置延迟测试'} aria-hidden="true" />
@@ -10015,7 +10016,7 @@ function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose
       <div className="server-time-detail-title">
         <span className={`server-time-detail-icon ${issue?.tone || 'warning'}`}><AlertTriangle size={17} aria-hidden="true" /></span>
         <div>
-          <h2>时间异常</h2>
+          <h2>{issue?.summary || '时间检测'}</h2>
           <p>{server.name || `服务器 #${server.id}`} · {issue?.summary || timeCheckStatusLabel(server)}</p>
         </div>
       </div>
@@ -10025,14 +10026,15 @@ function ServerTimeDetailDialog({ server, role = 'viewer', onEnableAuto, onClose
       <dl className="server-time-detail-grid">
         <ServerDetailItem label="时间状态" value={timeCheckStatusLabel(server)} />
         <ServerDetailItem label="校准模式" value={timeCorrectionModeLabel(server.time_correction_mode)} />
-        <ServerDetailItem label="检测偏差" value={server.time_checked_at ? formatTimeOffset(server.time_offset_ms) : '—'} />
-        <ServerDetailItem label="生效后偏差" value={server.time_checked_at ? formatTimeOffset(server.time_effective_offset_ms) : '—'} />
+        <ServerDetailItem label="检测偏差" value={hasServerTimeMeasurement(server) ? formatTimeOffset(server.time_offset_ms) : '—'} />
+        <ServerDetailItem label="生效后偏差" value={hasServerTimeMeasurement(server) ? formatTimeOffset(server.time_effective_offset_ms) : '—'} />
         <ServerDetailItem label="时间来源" value={server.time_check_source || '—'} />
         <ServerDetailItem label="最近检测" value={server.time_checked_at ? formatTableTime(server.time_checked_at) : '尚未检测'} />
       </dl>
       <div className={`server-time-detail-notice ${issue?.tone || 'warning'}`} role="alert">
         <strong>{issue?.summary || '时间状态异常'}</strong>
         {server.time_check_status === 'skewed' && <span>当前检测偏差为 {formatTimeOffset(server.time_offset_ms)}，部分安全协议可能无法连接。</span>}
+        {server.time_check_status === 'config_error' && <span>校时模式未能保存，尚未执行时间检测。请检查 Agent 配置目录的写入权限；若配置文件为单文件挂载，请改为挂载配置目录或使用可原子替换的配置文件。</span>}
         {server.time_check_status === 'unavailable' && !server.time_check_error && <span>最近一次时间检测未能完成，请检查 Agent 与时间源的连接。</span>}
         {server.time_check_error && <span>{server.time_check_error}</span>}
         {unsupportedPaths.length > 0 && <span>以下路径无法完整使用逻辑时间：{unsupportedPaths.join('、')}</span>}
@@ -10344,13 +10346,13 @@ function ServerDetailDialog({ server, role = 'viewer', onResetTraffic, onClose }
             <ServerDetailItem label="上传速率" value={formatByteRate(server.network_upload_bps || 0)} />
             <ServerDetailItem label="时间校准" value={timeCorrectionModeLabel(server.time_correction_mode)} />
             <ServerDetailItem label="时间状态" value={timeCheckStatusLabel(server)} />
-            <ServerDetailItem label="检测偏差" value={server.time_checked_at ? formatTimeOffset(server.time_offset_ms) : '—'} />
-            <ServerDetailItem label="生效后偏差" value={server.time_checked_at ? formatTimeOffset(server.time_effective_offset_ms) : '—'} />
+            <ServerDetailItem label="检测偏差" value={hasServerTimeMeasurement(server) ? formatTimeOffset(server.time_offset_ms) : '—'} />
+            <ServerDetailItem label="生效后偏差" value={hasServerTimeMeasurement(server) ? formatTimeOffset(server.time_effective_offset_ms) : '—'} />
             <ServerDetailItem label="时间来源" value={server.time_check_source || '—'} />
             <ServerDetailItem label="时间检测" value={server.time_checked_at ? formatTableTime(server.time_checked_at) : '尚未检测'} />
             <ServerDetailItem label="数据更新时间" value={server.telemetry_updated_at ? formatTableTime(server.telemetry_updated_at) : '—'} wide />
           </dl>
-          {server.time_check_error && <div className="server-time-alert limitation"><div><strong>时间检测未完整生效</strong><span>{server.time_check_error}</span></div></div>}
+          {server.time_check_error && <div className="server-time-alert limitation"><div><strong>{server.time_check_status === 'config_error' ? '配置保存失败' : '时间检测未完整生效'}</strong><span>{server.time_check_error}</span></div></div>}
           {server.time_logical_active && (server.time_unsupported_paths || []).length > 0 && <div className="server-time-alert limitation"><div><strong>部分路径无法完整使用逻辑时间</strong><span>{(server.time_unsupported_paths || []).join('、')}</span></div></div>}
         </section>
       </div>

@@ -2469,6 +2469,10 @@ type TimeCheckPlan struct {
 	Force            bool               `json:"force,omitempty"`
 }
 
+// TimeCheckStatusConfigError means the requested mode could not be saved;
+// no time measurement or correction was attempted.
+const TimeCheckStatusConfigError = "config_error"
+
 type TimeCheckResult struct {
 	Status               string             `json:"status"`
 	CorrectionMode       TimeCorrectionMode `json:"correction_mode"`

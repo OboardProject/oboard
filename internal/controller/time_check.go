@@ -72,7 +72,8 @@ func (s *Server) applyTimeCheckTaskResult(ctx context.Context, task model.AgentT
 	if err != nil {
 		return err
 	}
-	if !found || taskStatus != "succeeded" {
+	configError := found && taskStatus == "failed" && result.Status == model.TimeCheckStatusConfigError
+	if !found || (taskStatus != "succeeded" && !configError) {
 		result = model.TimeCheckResult{
 			Status:         "unavailable",
 			CorrectionMode: server.TimeCorrectionMode,
@@ -89,7 +90,7 @@ func (s *Server) applyTimeCheckTaskResult(ctx context.Context, task model.AgentT
 	if err := s.store.UpdateServerTimeCheck(ctx, task.ServerID, result); err != nil {
 		return err
 	}
-	if server.TimeCorrectionMode == model.TimeCorrectionOff && result.CorrectionMode == model.TimeCorrectionOff && absInt64(result.RawOffsetMS) >= int64(timeCheckThresholdSeconds*1000) && result.Status != "unavailable" {
+	if server.TimeCorrectionMode == model.TimeCorrectionOff && result.CorrectionMode == model.TimeCorrectionOff && absInt64(result.RawOffsetMS) >= int64(timeCheckThresholdSeconds*1000) && result.Status == "skewed" {
 		s.notifyServerClockSkew(ctx, *server, result)
 	}
 	return nil

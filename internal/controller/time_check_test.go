@@ -203,3 +203,69 @@ func TestTimedOutTimeCheckRecordsAttemptAndDoesNotImmediatelyRequeue(t *testing.
 		t.Fatalf("timed out check was immediately requeued: %#v", tasks)
 	}
 }
+
+func TestTimeCheckConfigErrorSurvivesTaskResultAndMCP(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	admin := &model.User{Username: "time-admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111119", ProxyPassword: "unused"}
+	if err := db.CreateUser(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	principal := userAutomationPrincipal(t, db, admin.ID)
+	const reason = "保存 Agent 校时配置失败: rename config.json.tmp config.json: device or resource busy"
+	for _, test := range []struct {
+		name       string
+		taskType   string
+		taskStatus string
+		raw        string
+		wantStatus string
+		wantError  string
+	}{
+		{"standalone", model.AgentTaskTypeCheckTime, "failed", `{"status":"config_error","error":"` + reason + `"}`, model.TimeCheckStatusConfigError, reason},
+		{"deployment warning", model.AgentTaskTypeApplyDeployment, "succeeded", `{"steps":[{"key":"time_check","result":{"status":"config_error","error":"` + reason + `"}}]}`, model.TimeCheckStatusConfigError, reason},
+		{"failed deployment", model.AgentTaskTypeApplyDeployment, "failed", `{"steps":[{"key":"time_check","result":{"status":"config_error","error":"` + reason + `"}}]}`, model.TimeCheckStatusConfigError, reason},
+		{"source failure", model.AgentTaskTypeCheckTime, "failed", `{"status":"unavailable","error":"NTP unavailable"}`, "unavailable", "NTP unavailable"},
+		{"missing result", model.AgentTaskTypeCheckTime, "failed", `{}`, "unavailable", "时间检测任务未完成"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &model.Server{Name: test.name, AgentID: "agent-time-" + test.name, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline, TimeCorrectionMode: model.TimeCorrectionNTP}
+			if err := db.CreateServer(ctx, server); err != nil {
+				t.Fatal(err)
+			}
+			task := model.AgentTask{ServerID: server.ID, Type: test.taskType}
+			if err := srv.applyTimeCheckTaskResult(ctx, task, test.taskStatus, test.raw); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.TimeCheckStatus != test.wantStatus || stored.TimeCheckError != test.wantError || stored.TimeCheckedAt == nil {
+				t.Fatalf("stored status=%s error=%q checked_at=%v", stored.TimeCheckStatus, stored.TimeCheckError, stored.TimeCheckedAt)
+			}
+			dto, err := srv.application.GetServer(ctx, principal, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dto.TimeCheckStatus != test.wantStatus || dto.TimeCheckError != test.wantError {
+				t.Fatalf("MCP status=%s error=%q", dto.TimeCheckStatus, dto.TimeCheckError)
+			}
+			assertCapabilityOutputSchema(t, srv, "servers.get", dto)
+			list, err := srv.application.ListServers(ctx, principal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCapabilityOutputSchema(t, srv, "servers.list", list)
+
+			task.Type = model.AgentTaskTypeCheckTime
+			if err := srv.applyTimeCheckTaskResult(ctx, task, "succeeded", `{"status":"ok","correction_mode":"ntp","raw_offset_ms":-13,"effective_offset_ms":-13,"source":"ntp:test"}`); err != nil {
+				t.Fatal(err)
+			}
+			stored, err = db.GetServer(ctx, server.ID)
+			if err != nil || stored.TimeCheckStatus != "ok" || stored.TimeCheckError != "" || stored.TimeOffsetMS != -13 {
+				t.Fatalf("recovered time state = %#v, err=%v", stored, err)
+			}
+		})
+	}
+}

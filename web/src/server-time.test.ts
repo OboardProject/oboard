@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { getServerTimeIssue } from './server-time'
+import { getServerTimeIssue, hasServerTimeMeasurement } from './server-time'
 
 describe('getServerTimeIssue', () => {
+  it('reports config persistence failures without claiming a clock problem', () => {
+    expect(getServerTimeIssue({
+      time_check_status: 'config_error',
+      time_check_error: 'rename config.json.tmp config.json: device or resource busy',
+    })).toEqual({ kind: 'config_error', summary: '配置保存失败', tone: 'danger' })
+  })
   it.each([
     ['normal', { time_check_status: 'ok' }],
     ['corrected', { time_check_status: 'corrected' }],
@@ -50,5 +56,16 @@ describe('getServerTimeIssue', () => {
 
   it('ignores empty error and path values', () => {
     expect(getServerTimeIssue({ time_check_status: 'ok', time_check_error: '  ', time_unsupported_paths: ['', ' '] })).toBeNull()
+  })
+})
+
+describe('hasServerTimeMeasurement', () => {
+  it.each(['config_error', 'unavailable', 'pending', 'unknown'])('does not show zero offsets for %s even with an attempt timestamp', status => {
+    expect(hasServerTimeMeasurement({ time_check_status: status, time_checked_at: '2026-09-08T00:00:00Z' })).toBe(false)
+  })
+
+  it.each(['ok', 'skewed', 'corrected'])('shows offsets for a measured %s result', status => {
+    expect(hasServerTimeMeasurement({ time_check_status: status, time_checked_at: '2026-09-08T00:00:00Z' })).toBe(true)
+    expect(hasServerTimeMeasurement({ time_check_status: status })).toBe(false)
   })
 })

@@ -1,11 +1,12 @@
 export type ServerTimeSnapshot = {
   time_check_status?: string
   time_check_error?: string
+  time_checked_at?: string
   time_unsupported_paths?: string[]
 }
 
 export type ServerTimeIssue = {
-  kind: 'skewed' | 'unavailable' | 'error' | 'unsupported'
+  kind: 'skewed' | 'unavailable' | 'config_error' | 'error' | 'unsupported'
   summary: string
   tone: 'warning' | 'danger'
 }
@@ -17,9 +18,14 @@ export function getServerTimeIssue(server: ServerTimeSnapshot): ServerTimeIssue 
     ? server.time_unsupported_paths.filter(path => String(path).trim())
     : []
 
+  if (status === 'config_error') return { kind: 'config_error', summary: '配置保存失败', tone: 'danger' }
   if (status === 'unavailable') return { kind: 'unavailable', summary: '时间检测失败', tone: 'danger' }
   if (status === 'skewed') return { kind: 'skewed', summary: '时间偏差过大', tone: 'warning' }
   if (error) return { kind: 'error', summary: '时间同步异常', tone: 'danger' }
   if (unsupportedPaths.length) return { kind: 'unsupported', summary: '部分路径时间受限', tone: 'warning' }
   return null
+}
+
+export function hasServerTimeMeasurement(server: ServerTimeSnapshot): boolean {
+  return Boolean(server.time_checked_at) && ['ok', 'skewed', 'corrected'].includes(server.time_check_status || '')
 }
