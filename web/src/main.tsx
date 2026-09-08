@@ -573,11 +573,8 @@ function serverDeliveryStatus(server: Server) {
     || server.users_pending_reason === 'core_config_fallback'
   const authPending = server.authorization_confirmed === false
   const usersPending = server.users_confirmed === false && !usersFallback
-  if (!authPending && !usersPending && !usersFallback) return null
-  if (usersFallback && !authPending) {
-    return { tone: 'muted' as const, label: '用户走配置', title: '运行时用户通道不可用，改走 apply_core_config' }
-  }
-  const title = [authPending ? '授权租约未确认' : '', usersPending ? '运行时用户未确认' : '', usersFallback ? '用户走配置下发' : ''].filter(Boolean).join('；')
+  if (!authPending && !usersPending) return null
+  const title = [authPending ? '授权租约未确认' : '', usersPending ? '运行时用户未确认' : ''].filter(Boolean).join('；')
   return { tone: 'danger' as const, label: '授权待同步', title }
 }
 
