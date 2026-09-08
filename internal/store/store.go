@@ -25,7 +25,8 @@ import (
 )
 
 type Store struct {
-	db *countingDB
+	db   *countingDB
+	path string
 	// settingsRevision is a process-local monotonic counter bumped on every
 	// settings write. The Controller caches ListSettings behind it so hot
 	// paths (health reports, audit gates) avoid a per-message settings query.
@@ -161,7 +162,7 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 			}
 		}
 	}
-	s := &Store{db: newCountingDB(db)}
+	s := &Store{db: newCountingDB(db), path: strings.TrimSpace(path)}
 	if opts.MetricSampleMinInterval < 0 {
 		opts.MetricSampleMinInterval = 0
 	}

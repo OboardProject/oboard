@@ -108,6 +108,10 @@ type Server struct {
 	apiGateMu                  sync.Mutex
 	apiInFlight                map[string]int
 	databaseMaintenanceStarted atomic.Bool
+	storageDiagnosticsMu       sync.Mutex
+	storageDiagnosticsAt       time.Time
+	storageDiagnostics         store.StorageDiagnostics
+	storageDiagnosticsOK       bool
 	// basePath is the immutable startup fallback for direct test constructors.
 	// Runtime request handling reads basePaths instead.
 	basePath                      string
@@ -1585,7 +1589,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID {
+		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting {
 			continue
 		}
 		out[key] = value
@@ -1660,7 +1664,31 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 			out["database_maintenance_hint"] = "建议进行数据库维护"
 		}
 	}
+	if diagnostics, err := s.cachedStorageDiagnostics(ctx); err == nil {
+		out["storage_diagnostics"] = diagnostics
+		if hint := strings.TrimSpace(diagnostics.MaintenanceHint); hint != "" {
+			out["database_maintenance_hint"] = hint
+		}
+	}
 	return out
+}
+
+const storageDiagnosticsCacheTTL = 30 * time.Second
+
+func (s *Server) cachedStorageDiagnostics(ctx context.Context) (store.StorageDiagnostics, error) {
+	s.storageDiagnosticsMu.Lock()
+	defer s.storageDiagnosticsMu.Unlock()
+	if s.storageDiagnosticsOK && time.Since(s.storageDiagnosticsAt) < storageDiagnosticsCacheTTL {
+		return s.storageDiagnostics, nil
+	}
+	diagnostics, err := s.store.GetStorageDiagnostics(ctx)
+	if err != nil {
+		return store.StorageDiagnostics{}, err
+	}
+	s.storageDiagnostics = diagnostics
+	s.storageDiagnosticsAt = time.Now()
+	s.storageDiagnosticsOK = true
+	return diagnostics, nil
 }
 
 func serverCreationDefaults(settings map[string]string) (model.MTUMode, bool, model.TimeCorrectionMode) {

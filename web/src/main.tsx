@@ -164,8 +164,9 @@ import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData
 import { createPageRefreshRegistry, pageRefreshIncludesLiveServers } from './page-refresh'
 import { PageRefreshProvider, useRegisterPageRefresh } from './page-refresh-context'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
+import { useCoalescedReadRequest } from './request-coalesce'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
-import { usePausedInterval } from './visibility'
+import { useDocumentVisible, usePausedInterval } from './visibility'
 import { ConfigurationSyncStatus } from './configuration-sync-ui'
 import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pages'
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
@@ -3955,7 +3956,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </SettingsGroup>
       </section>}
-      {activeSection === 'backups' && <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />}
+      {activeSection === 'backups' && <>
+        <StorageDiagnosticsCard settings={data.settings} />
+        <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />
+      </>}
       {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
@@ -4737,6 +4741,41 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       {phase === 'failed' && <button type="button" onClick={onCancel}>关闭</button>}
     </footer>
   </MotionDialogPanel>
+}
+
+
+function StorageDiagnosticsCard({ settings }: { settings?: any }) {
+  const diagnostics = settings?.storage_diagnostics
+  if (!diagnostics || typeof diagnostics !== 'object') return null
+  const rollup = diagnostics.audit_rollup_state || {}
+  const retentionHours = Number(diagnostics.connection_audit_retention_hours || 30 * 24)
+  const retentionDays = Math.round(retentionHours / 24)
+  const monitoringDays = Number(diagnostics.server_monitoring_retention_days || 7)
+  const dirty = Number(diagnostics.dirty_hourly_count || 0)
+  const lastAt = String(diagnostics.last_maintenance_at || '').trim()
+  const hint = String(diagnostics.maintenance_hint || settings?.database_maintenance_hint || '').trim()
+  const readPath = String(rollup.read_path || 'raw')
+  const backfillComplete = Boolean(rollup.backfill_complete)
+  return <section className="settings-card" id="settings-panel-storage-diagnostics">
+    <div className="settings-card-head">
+      <div><h3>存储诊断</h3><p className="muted">数据库体积、审计汇总状态和保留策略。维护由主控后台自动执行，不在面板内直接触发。</p></div>
+      {hint ? <span className="status-pill warning">{hint}</span> : <span className="status-pill ok">正常</span>}
+    </div>
+    <div className="controller-update-meta">
+      <span>数据库<strong>{formatBytes(Number(diagnostics.db_bytes || 0))}</strong></span>
+      <span>WAL<strong>{formatBytes(Number(diagnostics.wal_bytes || 0))}</strong></span>
+      <span>SHM<strong>{formatBytes(Number(diagnostics.shm_bytes || 0))}</strong></span>
+      <span>脏小时桶<strong>{dirty}</strong></span>
+    </div>
+    <div className="backup-settings-summary" style={{ marginTop: 12 }}>
+      <span className={`backup-settings-summary-icon${backfillComplete ? ' active' : ''}`}><Database size={18} /></span>
+      <div>
+        <strong>审计汇总 · {backfillComplete ? '回填完成' : '回填中'} · 读路径 {readPath}</strong>
+        <span>连接审计原始保留 {retentionDays} 天（{retentionHours} 小时），监控样本保留 {monitoringDays} 天。缩短原始保留前需确认小时汇总可用。</span>
+        <small>{lastAt ? `最近维护 ${formatDate(lastAt)}` : '尚未记录维护结果'}{diagnostics.analyzed_at ? ` · 分析于 ${formatDate(diagnostics.analyzed_at)}` : ''}</small>
+      </div>
+    </div>
+  </section>
 }
 
 function ControllerBackupPanel({ client, notify, dialogs }: any) {
@@ -6117,21 +6156,26 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const isAdmin = hasManagementAccess(data.session?.role || data.current_user?.role)
 
-  useEffect(() => {
-    let cancelled = false
-    setRefreshing(true)
-    setLoadError('')
-    client.request(`/audit/risk-overview?window_hours=${windowHours}`).then((overview: any) => {
-      if (cancelled) return
-      setConnectionOverview(overview.connection_audit || null)
-      setSubscriptionOverview(overview.subscription_audit || null)
-      setCombinedOverview(overview.audit_risk || null)
-    }).catch((error: any) => {
-      if (!cancelled) setLoadError(localizeErrorMessage(error?.message || error))
-    }).finally(() => { if (!cancelled) setRefreshing(false) })
-    return () => { cancelled = true }
-  }, [client, windowHours, refreshRevision])
-  useRegisterPageRefresh(() => { setRefreshRevision(value => value + 1) })
+  const pageVisible = useDocumentVisible()
+
+  useCoalescedReadRequest(
+    `audit/risk-overview?window_hours=${windowHours}&r=${refreshRevision}`,
+    signal => client.request(`/audit/risk-overview?window_hours=${windowHours}`, { signal }),
+    {
+      onStart: () => { setRefreshing(true); setLoadError('') },
+      onSuccess: (overview: any) => {
+        setConnectionOverview(overview.connection_audit || null)
+        setSubscriptionOverview(overview.subscription_audit || null)
+        setCombinedOverview(overview.audit_risk || null)
+      },
+      onError: (error: any) => { setLoadError(localizeErrorMessage(error?.message || error)) },
+      onSettled: () => { setRefreshing(false) },
+    },
+  )
+  useRegisterPageRefresh(() => {
+    if (!pageVisible) return
+    setRefreshRevision(value => value + 1)
+  })
 
   const filteredUsers = useMemo(() => {
     const needle = query.trim().toLowerCase()

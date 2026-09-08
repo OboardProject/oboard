@@ -32,6 +32,10 @@ export function shouldRevalidatePageData(fetchedAt: number | undefined, dirty: b
   return dirty || !fetchedAt || now - fetchedAt >= ttlMS
 }
 
+// PageDataRequestCoordinator coalesces in-flight reads by key and aborts
+// obsolete ones. It does not cache response bodies — never route subscription
+// content or one-time tokens through a long-lived client cache; only reuse the
+// in-flight promise for identical concurrent reads.
 export class PageDataRequestCoordinator<T> {
   private epochs = new Map<string, number>()
   private requests = new Map<string, PendingRequest<T>>()

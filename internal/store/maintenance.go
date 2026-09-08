@@ -192,6 +192,9 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 	if err := s.recordWALCheckpoint(ctx, &result); err != nil {
 		return result, err
 	}
+	if err := s.recordMaintenanceResult(ctx, at, result); err != nil {
+		return result, fmt.Errorf("record maintenance result: %w", err)
+	}
 	return result, nil
 }
 
