@@ -4698,10 +4698,6 @@ button.server-address-line.copied:hover {
   white-space: nowrap;
 }
 
-.proxy-path-entry-picker .server-related-jumps {
-  grid-column: 2;
-  margin-top: -4px;
-}
 .graph-entry-select { width: 100%; }
 .graph-path-select { width: 100%; }
 .proxy-path-entry-picker .custom-select-trigger,
@@ -10486,9 +10482,6 @@ body:has(.dialog-layer) .main {
 .server-related-jumps button:hover {
   background: none;
   color: var(--text-strong);
-}
-.server-related-jumps.is-compact {
-  gap: 4px 8px;
 }
 button.server-related-jump-pill {
   min-height: 0;

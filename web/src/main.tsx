@@ -1232,9 +1232,9 @@ function openServerPanel(serverID: number, panel: string, tab?: string) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-function ServerRelatedJumps({ serverID, compact = false }: { serverID?: number; compact?: boolean }) {
+function ServerRelatedJumps({ serverID }: { serverID?: number }) {
   const id = Number(serverID || 0)
-  return <div className={`server-related-jumps${compact ? ' is-compact' : ''}`}>
+  return <div className="server-related-jumps">
     {id > 0 && <button type="button" className="ghost" onClick={() => openServerPanel(id, 'network', 'dns')}>服务器 DNS</button>}
     <button type="button" className="ghost" onClick={() => goTab('dns-records')}>域名账号</button>
   </div>
@@ -12876,7 +12876,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
               emptyMessage="没有匹配的入口服务器"
               ariaLabel="选择当前入口服务器"
             />
-            {selected?.id ? <ServerRelatedJumps serverID={selected.id} compact /> : null}
           </div>
 		  {visibleProxyPaths.length > 0 && <div className="proxy-path-focus-picker">
 		    <span className="proxy-path-entry-label">路径聚焦</span>
