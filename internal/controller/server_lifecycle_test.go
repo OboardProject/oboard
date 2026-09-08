@@ -7,12 +7,74 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 )
+
+func TestServerLifecycleDoesNotWaitForCredentialReconciliation(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+
+	// Hold the worker lock until the request returns; the timeout also makes
+	// this regression fail without leaving a blocked handler behind.
+	withBusyWorker := func(operation func()) {
+		t.Helper()
+		srv.proxyCredentialMu.Lock()
+		release := make(chan struct{})
+		released := make(chan struct{})
+		go func() {
+			defer close(released)
+			timer := time.NewTimer(2 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-release:
+			case <-timer.C:
+			}
+			srv.proxyCredentialMu.Unlock()
+		}()
+		defer func() { close(release); <-released }()
+		start := time.Now()
+		operation()
+		if elapsed := time.Since(start); elapsed >= time.Second {
+			t.Fatalf("server mutation waited for credential worker: %s", elapsed)
+		}
+	}
+	var serverID int64
+	withBusyWorker(func() {
+		created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "fast-create", "traffic_used_bytes": 2048}, http.StatusCreated)
+		serverID = int64(created["server"].(map[string]any)["id"].(float64))
+		stored, err := db.GetServer(context.Background(), serverID)
+		if err != nil || stored.TrafficUploadBytes != 2048 {
+			t.Fatalf("initial traffic not committed: server=%+v err=%v", stored, err)
+		}
+	})
+	withBusyWorker(func() {
+		request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverID), token, nil, http.StatusOK)
+	})
+	user := &model.User{Username: "machine-owner", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
+	if err := db.CreateUser(context.Background(), user); err != nil {
+		t.Fatal(err)
+	}
+	principal := application.HumanPrincipal(*user, model.RoleAdmin, netip.MustParseAddr("127.0.0.1"))
+	withBusyWorker(func() {
+		applyAutomationChangeset(t, srv, principal, "fast-mcp-create", automation.OperationRequest{Capability: "servers.onboard", Input: json.RawMessage(`{"server":{"name":"fast-mcp"},"issue_enrollment_token":false}`)})
+	})
+	servers, err := db.ListServers(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("servers=%+v err=%v", servers, err)
+	}
+	withBusyWorker(func() {
+		applyAutomationChangeset(t, srv, principal, "fast-mcp-delete", automation.OperationRequest{Capability: "servers.delete", Input: json.RawMessage(`{"server_id":` + itoa(servers[0].ID) + `,"confirm":true}`)})
+	})
+}
 
 func TestAgentInstallCommandInlinesBBRLiteral(t *testing.T) {
 	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true))

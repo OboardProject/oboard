@@ -154,12 +154,7 @@ func (s *Server) markConfigurationChanged(ctx context.Context, path, method stri
 }
 
 func (s *Server) markConfigurationRevision(ctx context.Context, revision uint64, serverIDs []int64) {
-	if err := s.reconcileProxyCredentials(context.WithoutCancel(ctx)); err != nil {
-		logConfigurationError("reconcile committed credentials", err)
-	}
-	if current, err := s.store.ConfigurationRevision(ctx); err == nil {
-		revision = current
-	}
+	defer s.signalConfigurationReconcile()
 
 	ids, err := s.store.MarkConfigurationSyncPending(context.WithoutCancel(ctx), revision, serverIDs)
 	if err != nil {
@@ -170,7 +165,6 @@ func (s *Server) markConfigurationRevision(ctx context.Context, revision uint64,
 		return
 	}
 	s.publishRealtime("configuration", "deployments", "tasks")
-	s.signalConfigurationReconcile()
 }
 
 func configurationMutationPath(path, method string) bool {
@@ -420,6 +414,10 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		logConfigurationError("read credential revision", err)
 		return
 	} else if revision != s.proxyCredentialRevision.Load() {
+		if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
+			logConfigurationError("reconcile path names", err)
+			return
+		}
 		if err := s.reconcileProxyCredentials(ctx); err != nil {
 			logConfigurationError("reconcile proxy credentials", err)
 			return

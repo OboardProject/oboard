@@ -3877,22 +3877,22 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		if v.Status == "" {
 			v.Status = model.ServerUnknown
 		}
-		if err := s.store.CreateServer(r.Context(), &v); err != nil {
-			fail(w, err, 500)
+		if trafficUsedBytes != nil {
+			k, start, end := trafficWindow(time.Now(), v.TrafficResetMode, v.TrafficResetDay, time.Time{}, trafficLocation(settings))
+			err = s.store.CreateServerWithTraffic(r.Context(), &v, *trafficUsedBytes, model.ServerTrafficWindow{Key: k, Start: start, End: end})
+		} else {
+			err = s.store.CreateServer(r.Context(), &v)
+		}
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
 			return
 		}
-		if trafficUsedBytes != nil {
-			loc := trafficLocation(settings)
-			k, sTime, eTime := trafficWindow(time.Now(), v.TrafficResetMode, v.TrafficResetDay, time.Time{}, loc)
-			window := model.ServerTrafficWindow{Key: k, Start: sTime, End: eTime}
-			if err := s.store.SetServerTrafficUsed(r.Context(), v.ID, *trafficUsedBytes, window); err != nil {
-				fail(w, err, 500)
-				return
-			}
-		}
 		auditReq(s, r, "create", "server", fmt.Sprint(v.ID))
-		created, _ := s.store.GetServer(r.Context(), v.ID)
-		write(w, 201, map[string]any{"server": created})
+		created := &v
+		if snapshot, err := s.store.GetServer(r.Context(), v.ID); err == nil {
+			created = snapshot
+		}
+		write(w, http.StatusCreated, map[string]any{"server": created})
 	default:
 		method(w)
 	}
@@ -4418,40 +4418,34 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int64, ip string) (int, error) {
-	if err := s.store.CleanupRoutingForServer(ctx, id); err != nil {
-		return 500, err
+	inbounds, err := s.store.ListInbounds(ctx)
+	if err != nil {
+		return http.StatusInternalServerError, err
 	}
-	if err := s.reconcileProxyPathNameTemplates(ctx); err != nil {
-		return 500, err
+	for _, inbound := range inbounds {
+		if inbound.ServerID != id {
+			continue
+		}
+		refs, err := s.store.PlanNodeReferences(ctx, model.AssignableNodeInbound, inbound.ID)
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		if len(refs.Pending) > 0 {
+			return http.StatusConflict, store.ErrPlanVersionApplying
+		}
 	}
-	if err := s.store.DeleteServerTelemetry(ctx, id); err != nil {
-		return 500, err
-	}
-	if inbounds, err := s.store.ListInbounds(ctx); err != nil {
-		return 500, err
-	} else {
-		for _, inbound := range inbounds {
-			if inbound.ServerID == id {
-				if _, err := s.store.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeInbound, inbound.ID); err != nil {
-					return http.StatusConflict, err
-				}
-				if err := s.deleteDNSInboundRecords(ctx, inbound); err != nil {
-					return http.StatusBadGateway, err
-				}
-				if err := s.store.DeleteProxyPathsForInbound(ctx, inbound.ID); err != nil {
-					return 500, err
-				}
-				if err := s.store.DeleteInboundProbeResults(ctx, inbound.ID); err != nil {
-					return 500, err
-				}
-				if err := s.store.Delete(ctx, "inbounds", inbound.ID); err != nil {
-					return 500, err
-				}
+	for _, inbound := range inbounds {
+		if inbound.ServerID == id {
+			if err := s.deleteDNSInboundRecords(ctx, inbound); err != nil {
+				return http.StatusBadGateway, err
 			}
 		}
 	}
-	if err := s.store.Delete(ctx, "servers", id); err != nil {
-		return 500, err
+	if err := s.store.DeleteServer(ctx, id); err != nil {
+		if errors.Is(err, store.ErrPlanVersionApplying) {
+			return http.StatusConflict, err
+		}
+		return http.StatusInternalServerError, err
 	}
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil

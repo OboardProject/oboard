@@ -98,6 +98,14 @@ func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *mo
 		return err
 	}
 	defer tx.Rollback()
+	if err := updateServerLatencyProbeSettingsTx(ctx, tx, server); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func updateServerLatencyProbeSettingsTx(ctx context.Context, tx *sql.Tx, server *model.Server) error {
+	normalizeLatencyProbeSettings(server)
 	var oldEnabled int
 	var oldMode, oldPublicTarget string
 	oldErr := tx.QueryRowContext(ctx, `select enabled,mode,public_target from server_latency_probe_settings where server_id=?`, server.ID).Scan(&oldEnabled, &oldMode, &oldPublicTarget)
@@ -135,7 +143,7 @@ func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *mo
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) migrateUnifiedLatencyProbeSettings(ctx context.Context) error {

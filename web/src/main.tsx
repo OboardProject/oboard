@@ -170,6 +170,7 @@ import { ConfigurationSyncStatus } from './configuration-sync-ui'
 import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pages'
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
+import { createServerRecord, deleteServerRecord, ServerMutationUncertainError } from './server-mutations'
 import { getServerTimeIssue } from './server-time'
 import { filterServerList, moveServerOrder, reconcileCustomServerOrder, sortServerList, type ServerSortMode, type ServerStatusFilter } from './server-list'
 import { addDaysToExpiryDate, serverExpiryDateLabel, serverExpiryInputValue, serverExpiryOutputValue, serverExpiryStatusValue, type ServerExpiryTone } from './server-expiry'
@@ -7684,15 +7685,14 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const createServer = async () => {
     try {
       const payload = { ...draft, service_start_at: draft.service_start_at ? serverExpiryOutputValue(draft.service_start_at) : null, expires_at: draft.expires_at ? serverExpiryOutputValue(draft.expires_at) : null }
-      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(payload) }) as { server?: Server }
-      if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
+      const result = await createServerRecord<Server>(client, payload, servers)
       setServers(current => upsertServerSnapshot(current, result.server as Server))
       setCreateOpen(false)
       setDraft(defaultServerDraft(creationDefaults))
       revalidateServers()
-      notify?.(`服务器 ${result.server.name || `#${result.server.id}`} 已添加`, 'success')
+      notify?.(result.recovered ? `已找到服务器 ${result.server.name}，请核对服务器信息` : `服务器 ${result.server.name || `#${result.server.id}`} 已添加`, result.recovered ? 'info' : 'success')
     } catch (error: any) {
-      await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(error?.message || error) })
+      await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '添加服务器失败', message: localizeErrorMessage(error?.message || error) })
     }
   }
   const updateServer = async (next: any) => {
@@ -7927,15 +7927,15 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     pendingDeleteServerIDsRef.current.add(server.id)
     setServers(current => removeServerSnapshot(current, server.id))
     try {
-      await client.request(`/servers/${server.id}`, { method: 'DELETE' })
+      await deleteServerRecord(client, server.id)
       pendingDeleteServerIDsRef.current.delete(server.id)
       revalidateServers()
       notify?.(`服务器 ${server.name || `#${server.id}`} 已删除`, 'success')
     } catch (error: any) {
       pendingDeleteServerIDsRef.current.delete(server.id)
-      setServers(current => upsertServerSnapshot(current, server))
+      if (!(error instanceof ServerMutationUncertainError)) setServers(current => upsertServerSnapshot(current, server))
       revalidateServers()
-      await dialogs.alert({ title: '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
+      await dialogs.alert({ title: error instanceof ServerMutationUncertainError ? '服务器状态待确认' : '删除服务器失败', message: localizeErrorMessage(error?.message || error) })
     }
   }
   const clearServerWorkspaces = () => { setAboutServer(null); setBasicServer(null); setNetworkServer(null); setSystemServer(null); setTasksServer(null) }
@@ -11951,8 +11951,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
     if (!serverDraft) return
     try {
       const payload = { ...serverDraft, expires_at: serverDraft.expires_at ? serverExpiryOutputValue(serverDraft.expires_at) : null }
-      const result = await client.request('/servers', { method: 'POST', body: JSON.stringify(payload) }) as { server?: Server }
-      if (!result.server?.id) throw new Error('服务器已创建，但接口未返回服务器数据')
+      const result = await createServerRecord<Server>(client, payload, servers)
       applyMutationResult(result)
       onServerSnapshot(result.server)
       placeGraphNode(`server-${result.server.id}`, serverDraftPosition.current || nextServerGraphPosition(data))
@@ -11960,7 +11959,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
       serverDraftPosition.current = null
       reconcileTopology()
     } catch (e: any) {
-      await dialogs.alert({ title: '添加服务器失败', message: localizeErrorMessage(e.message || e) })
+      await dialogs.alert({ title: e instanceof ServerMutationUncertainError ? '服务器状态待确认' : '添加服务器失败', message: localizeErrorMessage(e.message || e) })
     }
   }
   // TLS inbounds keep whatever DNS record choice they were saved with: the

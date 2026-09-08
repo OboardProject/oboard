@@ -2645,6 +2645,17 @@ func scanUsers(rows *sql.Rows) ([]model.User, error) {
 }
 
 func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
+	return s.createServer(ctx, v, nil, model.ServerTrafficWindow{})
+}
+
+func (s *Store) CreateServerWithTraffic(ctx context.Context, v *model.Server, used int64, window model.ServerTrafficWindow) error {
+	if used < 0 || window.Key == "" {
+		return errors.New("valid initial server traffic and window required")
+	}
+	return s.createServer(ctx, v, &used, window)
+}
+
+func (s *Store) createServer(ctx context.Context, v *model.Server, used *int64, window model.ServerTrafficWindow) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
 	v.UpdatedAt = v.CreatedAt
@@ -2664,27 +2675,50 @@ func (s *Store) CreateServer(ctx context.Context, v *model.Server) error {
 	if v.PortPolicyRevision <= 0 {
 		v.PortPolicyRevision = 1
 	}
-	res, err := s.db.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,connection_audit_enabled,port_policy_revision,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), v.PortPolicyRevision, nilTime(v.LastSeenAt), ts, ts)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result := v
+	created := *v
+	v = &created
+	res, err := tx.ExecContext(ctx, `insert into servers(name,agent_id,agent_token_hash,chain_secret,enrollment_hash,entry_address,public_ipv4,public_ipv6,interface_ipv6,region_code,detected_region_code,region_mode,entry_ip_mode,listen_ip,listen_mode,ip_stack,udp_inbound_mode,mtu_mode,mtu_value,mtu_probe_host,mtu_probe_port,mtu_overhead_bytes,bbr_enabled,port_range_start,port_range_end,internal_port_range_start,internal_port_range_end,status,os,distro_id,distro_version,distro_name,libc,service_manager,package_manager,arch,kernel,cpu,memory_bytes,cpu_usage_percent,memory_used_bytes,memory_total_bytes,agent_memory_bytes,disk_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,agent_version,agent_build,sing_box_version,connection_audit_enabled,port_policy_revision,last_seen_at,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.Name, nullEmpty(v.AgentID), nullEmpty(v.AgentTokenHash), v.ChainSecret, nullEmpty(v.EnrollmentHash), v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, boolInt(v.ConnectionAuditEnabled), v.PortPolicyRevision, nilTime(v.LastSeenAt), ts, ts)
 	if err != nil {
 		return err
 	}
 	v.ID, _ = res.LastInsertId()
 	if len(v.KernelCapabilities) > 0 {
-		if _, err := s.db.ExecContext(ctx, `update servers set kernel_capabilities_json=? where id=?`, stringSliceJSON(v.KernelCapabilities), v.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `update servers set kernel_capabilities_json=? where id=?`, stringSliceJSON(v.KernelCapabilities), v.ID); err != nil {
 			return err
 		}
 	}
-	if err := s.saveServerDisplayTags(ctx, v.ID, v.DisplayTags); err != nil {
+	if _, err := tx.ExecContext(ctx, `update servers set display_tags_json=? where id=?`, displayTagsJSON(v.DisplayTags), v.ID); err != nil {
 		return err
 	}
-	if err := s.initializeServerTelemetrySettings(ctx, v); err != nil {
+	if err := initializeServerTelemetrySettings(ctx, tx, v); err != nil {
 		return err
 	}
-	if err := s.UpdateServerLatencyProbeSettings(ctx, v); err != nil {
+	if err := updateServerLatencyProbeSettingsTx(ctx, tx, v); err != nil {
 		return err
 	}
-	_, err = s.EnsureServerDNSPolicy(ctx, v.ID)
-	return err
+	if _, err := ensureServerDNSPolicy(ctx, tx, v.ID); err != nil {
+		return err
+	}
+	if used != nil {
+		if err := setServerTrafficUsed(ctx, tx, v.ID, *used, window); err != nil {
+			return err
+		}
+		v.TrafficUploadBytes = uint64(*used)
+		v.TrafficDownloadBytes = 0
+		v.TrafficPeriodStart = window.Start.UTC().Format(time.RFC3339Nano)
+		v.TrafficPeriodEnd = window.End.UTC().Format(time.RFC3339Nano)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	*result = *v
+	return nil
 }
 
 func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
@@ -2978,16 +3012,11 @@ func (s *Store) UpdateServerTelemetrySettings(ctx context.Context, server *model
 	return s.updateServerTelemetrySettingsWithTransition(ctx, server)
 }
 
-func (s *Store) initializeServerTelemetrySettings(ctx context.Context, server *model.Server) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+func initializeServerTelemetrySettings(ctx context.Context, tx *sql.Tx, server *model.Server) error {
 	if _, err := tx.ExecContext(ctx, `insert into server_telemetry(server_id,monitoring_mode,resource_history_enabled,traffic_reset_mode,traffic_reset_day,traffic_limit_bytes,time_correction_mode,offline_notify_enabled,offline_after_seconds,service_start_at,expires_at,renewal_cycle,auto_renew_enabled,expiry_notify_enabled,last_auto_renewed_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, server.ID, normalizeServerMonitoringMode(server.MonitoringMode), boolInt(server.ResourceHistoryEnabled), normalizeTrafficResetMode(server.TrafficResetMode), normalizeTrafficResetDay(server.TrafficResetDay), server.TrafficLimitBytes, normalizeTimeCorrectionMode(server.TimeCorrectionMode), boolInt(server.OfflineNotifyEnabled), server.OfflineAfterSeconds, timePtrString(server.ServiceStartAt), timePtrString(server.ExpiresAt), normalizeRenewalCycle(server.RenewalCycle), boolInt(server.AutoRenewEnabled), boolInt(server.ExpiryNotifyEnabled), timePtrString(server.LastAutoRenewedAt), server.CreatedAt.UTC().Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context, server *model.Server) error {
@@ -3025,6 +3054,10 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 }
 
 func (s *Store) SetServerTrafficUsed(ctx context.Context, serverID int64, used int64, window model.ServerTrafficWindow) error {
+	return setServerTrafficUsed(ctx, s.db, serverID, used, window)
+}
+
+func setServerTrafficUsed(ctx context.Context, db serverLifecycleDB, serverID int64, used int64, window model.ServerTrafficWindow) error {
 	if serverID <= 0 {
 		return errors.New("server id required")
 	}
@@ -3035,7 +3068,7 @@ func (s *Store) SetServerTrafficUsed(ctx context.Context, serverID int64, used i
 		return errors.New("traffic window required")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `update server_telemetry set period_key=?, period_start=?, period_end=?, traffic_upload_bytes=?, traffic_download_bytes=?, updated_at=? where server_id=?`, window.Key, window.Start.UTC().Format(time.RFC3339Nano), window.End.UTC().Format(time.RFC3339Nano), uint64(used), uint64(0), now, serverID)
+	_, err := db.ExecContext(ctx, `update server_telemetry set period_key=?, period_start=?, period_end=?, traffic_upload_bytes=?, traffic_download_bytes=?, updated_at=? where server_id=?`, window.Key, window.Start.UTC().Format(time.RFC3339Nano), window.End.UTC().Format(time.RFC3339Nano), uint64(used), uint64(0), now, serverID)
 	return err
 }
 
@@ -4726,6 +4759,13 @@ func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64)
 		return err
 	}
 	defer tx.Rollback()
+	if err := deleteProxyPathsForInboundTx(ctx, tx, inboundID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func deleteProxyPathsForInboundTx(ctx context.Context, tx *sql.Tx, inboundID int64) error {
 	// A path rooted at this inbound loses its entry point entirely.
 	rootPathIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_paths where inbound_id=?`, inboundID)
 	if err != nil {
@@ -4742,7 +4782,7 @@ func (s *Store) DeleteProxyPathsForInbound(ctx context.Context, inboundID int64)
 	if err := truncateProxyPathStepsTx(ctx, tx, `select path_id,min(position) from proxy_path_steps where inbound_id=? group by path_id`, inboundID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) DeleteProxyPathStepsForExternal(ctx context.Context, externalID int64) error {
@@ -4766,6 +4806,13 @@ func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) err
 		return err
 	}
 	defer tx.Rollback()
+	if err := cleanupRoutingForServerTx(ctx, tx, serverID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func cleanupRoutingForServerTx(ctx context.Context, tx *sql.Tx, serverID int64) error {
 	if err := truncateProxyPathStepsTx(ctx, tx, `select s.path_id,min(s.position) from proxy_path_steps s left join inbounds i on i.id=s.inbound_id where s.server_id=? or i.server_id=? group by s.path_id`, serverID, serverID); err != nil {
 		return err
 	}
@@ -4785,7 +4832,7 @@ func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) err
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // PruneOrphanedProxyPathSteps repairs topology left by older Controller builds
@@ -5190,25 +5237,34 @@ func (s *Store) SetDefaultDNSList(ctx context.Context, id int64) (*model.DNSList
 	return s.GetDNSList(ctx, id)
 }
 
+type serverLifecycleDB interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func (s *Store) EnsureServerDNSPolicy(ctx context.Context, serverID int64) (*model.ServerDNSPolicy, error) {
-	if item, err := s.GetServerDNSPolicy(ctx, serverID); err == nil {
+	return ensureServerDNSPolicy(ctx, s.db, serverID)
+}
+
+func ensureServerDNSPolicy(ctx context.Context, db serverLifecycleDB, serverID int64) (*model.ServerDNSPolicy, error) {
+	if item, err := scanDNSPolicy(db.QueryRowContext(ctx, dnsPolicySelectSQL+` where server_id=?`, serverID)); err == nil {
 		return item, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	var encryptedID, bootstrapID int64
-	if err := s.db.QueryRowContext(ctx, `select id from dns_lists where kind=? and protected=1 and enabled=1 order by id limit 1`, model.DNSListEncrypted).Scan(&encryptedID); err != nil {
+	if err := db.QueryRowContext(ctx, `select id from dns_lists where kind=? and protected=1 and enabled=1 order by id limit 1`, model.DNSListEncrypted).Scan(&encryptedID); err != nil {
 		return nil, err
 	}
-	if err := s.db.QueryRowContext(ctx, `select id from dns_lists where kind=? and protected=1 and enabled=1 order by id limit 1`, model.DNSListBootstrap).Scan(&bootstrapID); err != nil {
+	if err := db.QueryRowContext(ctx, `select id from dns_lists where kind=? and protected=1 and enabled=1 order by id limit 1`, model.DNSListBootstrap).Scan(&bootstrapID); err != nil {
 		return nil, err
 	}
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into server_dns_policies(server_id,encrypted_list_id,bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,created_at,updated_at) values(?,?,?,1,'auto','first_apply',3600,?,?) on conflict(server_id) do nothing`, serverID, encryptedID, bootstrapID, ts, ts)
+	_, err := db.ExecContext(ctx, `insert into server_dns_policies(server_id,encrypted_list_id,bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,created_at,updated_at) values(?,?,?,1,'auto','first_apply',3600,?,?) on conflict(server_id) do nothing`, serverID, encryptedID, bootstrapID, ts, ts)
 	if err != nil {
 		return nil, err
 	}
-	return s.GetServerDNSPolicy(ctx, serverID)
+	return scanDNSPolicy(db.QueryRowContext(ctx, dnsPolicySelectSQL+` where server_id=?`, serverID))
 }
 
 const dnsPolicySelectSQL = `select server_id,coalesce(encrypted_list_id,0),bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,encrypted_selected_json,bootstrap_selected_json,encrypted_selection_revision,bootstrap_selection_revision,last_attempt_at,last_success_at,last_error,needs_benchmark,created_at,updated_at from server_dns_policies`
