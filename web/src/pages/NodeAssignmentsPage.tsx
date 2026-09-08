@@ -76,54 +76,32 @@ const protocolOptions = ['vless', 'hysteria2', 'anytls', 'shadowsocks', 'mieru',
 const statusLabels: Record<string, string> = { ok: '正常', offline: '离线', disabled: '已禁用' }
 
 function PlanBadgesCell({ plans }: { plans: Array<{ plan_id: number; name: string }> }) {
-  const [expanded, setExpanded] = React.useState(false)
   if (!plans || plans.length === 0) {
     return <span className="muted" style={{ fontSize: 12 }}>未分配</span>
   }
 
-  const allNames = plans.map(p => p.name).join('、')
-
-  if (plans.length <= 2 || expanded) {
-    return (
-      <div className="plan-badges-wrap" title={allNames}>
-        {plans.map(p => (
-          <span key={p.plan_id} className="plan-badge-pill">
-            {p.name}
-          </span>
-        ))}
-        {expanded && plans.length > 2 && (
-          <button
-            type="button"
-            className="plan-more-chip"
-            onClick={() => setExpanded(false)}
-            title="收起"
-            style={{ fontSize: 10, padding: '1px 5px' }}
-          >
-            收起
-          </button>
-        )}
-      </div>
-    )
-  }
-
   const visiblePlans = plans.slice(0, 2)
-  const remainingCount = plans.length - 2
+  const remainingPlans = plans.slice(2)
 
   return (
-    <div className="plan-badges-wrap" title={`包含全部 ${plans.length} 个套餐：${allNames}`}>
+    <div className="plan-badges-wrap">
       {visiblePlans.map(p => (
         <span key={p.plan_id} className="plan-badge-pill">
           {p.name}
         </span>
       ))}
-      <button
-        type="button"
-        className="plan-more-chip"
-        onClick={() => setExpanded(true)}
-        aria-label={`展开剩余 ${remainingCount} 个套餐：${allNames}`}
-      >
-        +{remainingCount}
-      </button>
+      {remainingPlans.length > 0 && (
+        <span
+          className="plan-more-chip"
+          tabIndex={0}
+          aria-label={`其余 ${remainingPlans.length} 个套餐：${remainingPlans.map(p => p.name).join('、')}`}
+        >
+          +{remainingPlans.length}
+          <div className="plan-more-popover" role="tooltip" aria-hidden="true">
+            {remainingPlans.map(p => <span key={p.plan_id}>{p.name}</span>)}
+          </div>
+        </span>
+      )}
     </div>
   )
 }
