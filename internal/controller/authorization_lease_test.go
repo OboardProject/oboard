@@ -67,7 +67,10 @@ func TestAuthorizationLeaseRevokesWithoutRenderingOrCredentialAllocation(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renewed.Revision != lease.Revision || renewed.Sequence != lease.Sequence+1 || renewed.Digest != lease.Digest {
+	// An unchanged grant set is answered from the issued lease, so a fleet
+	// renewing on every traffic report and authorization poll allocates no new
+	// sequence and writes no ledger row.
+	if renewed.Revision != lease.Revision || renewed.Sequence != lease.Sequence || renewed.Digest != lease.Digest || renewed.IssuedAt != lease.IssuedAt {
 		t.Fatalf("renewal changed the semantic revision: first=%+v renewed=%+v", lease, renewed)
 	}
 	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: user.ID}}); err != nil {

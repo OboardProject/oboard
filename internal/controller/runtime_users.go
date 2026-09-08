@@ -127,12 +127,8 @@ func (s *Server) reconcileRuntimeUsersSync(ctx context.Context, full bool) {
 	}
 }
 
-func (s *Server) currentRuntimeUserPackage(ctx context.Context, server model.Server, revision int64) (core.RuntimeUserPackage, error) {
+func (s *Server) buildRuntimeUserPackage(ctx context.Context, server model.Server, revision int64) (core.RuntimeUserPackage, error) {
 	data, err := s.store.FullRoutingConfigData(ctx)
-	if err != nil {
-		return core.RuntimeUserPackage{}, err
-	}
-	data, err = s.loadProxyCredentialData(ctx, data)
 	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
@@ -188,7 +184,7 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64) {
 	if probeRevision <= 0 {
 		probeRevision = 1
 	}
-	pkg, err := s.currentRuntimeUserPackage(ctx, *server, probeRevision)
+	pkg, routingRevision, err := s.currentRuntimeUserPackage(ctx, *server, probeRevision)
 	if err != nil {
 		log.Printf("runtime users sync server=%d: build package: %v", serverID, err)
 		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingDeliveryFailed, err.Error(), true)
@@ -197,10 +193,6 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64) {
 	contentDigest, err := core.UsersDigest(0, pkg.Scope, pkg.Entries)
 	if err != nil {
 		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingDeliveryFailed, err.Error(), true)
-		return
-	}
-	routingRevision, err := s.store.RoutingCacheRevision(ctx)
-	if err != nil {
 		return
 	}
 	evaluation, err := s.store.EvaluateRuntimeUsersDesired(ctx, serverID, routingRevision, contentDigest, time.Now().UTC())
@@ -397,17 +389,12 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 	if revision <= 0 {
 		revision = 1
 	}
-	pkg, err := s.currentRuntimeUserPackage(r.Context(), *server, revision)
+	pkg, routingRevision, err := s.currentRuntimeUserPackage(r.Context(), *server, revision)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
 	contentDigest, err := core.UsersDigest(0, pkg.Scope, pkg.Entries)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	routingRevision, err := s.store.RoutingCacheRevision(r.Context())
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return

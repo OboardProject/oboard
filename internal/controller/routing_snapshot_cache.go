@@ -83,6 +83,8 @@ func (r *routingSnapshot) allowedAccessPairs() map[accessPair]struct{} {
 // routingSnapshotTTL. The database revision is authoritative: any routing
 // mutation bumps it in the same transaction as the write.
 func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) {
+	s.routingSnapshotMu.Lock()
+	defer s.routingSnapshotMu.Unlock()
 	revision, err := s.store.RoutingCacheRevision(ctx)
 	if err != nil {
 		return nil, err

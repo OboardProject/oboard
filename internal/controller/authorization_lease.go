@@ -18,6 +18,13 @@ import (
 
 const authorizationLeaseDuration = 5 * time.Minute
 
+// authorizationLeaseReissueAfter bounds how long an issued lease answers a
+// renewal for an unchanged grant set. Every traffic report and every
+// authorization poll renews, so reissuing each time cost two write
+// transactions per request; the window stays far inside the lease lifetime, so
+// the Agent's installed grants never approach their deadlines.
+const authorizationLeaseReissueAfter = 30 * time.Second
+
 // authorizationProjectionTTL bounds how long a projection built from one
 // routing revision is reused. Time-driven transitions are encoded as intervals
 // inside the projection, so the TTL only guards against clock skew in the
@@ -124,6 +131,8 @@ type authorizationProjection struct {
 	routingRevision uint64
 	builtAt         time.Time
 	entries         []authorizationEntry
+	leaseMu         sync.Mutex
+	leases          map[int64]*model.AuthorizationLease
 }
 
 // serverGrant is the per-server, per-credential outcome at one instant.
@@ -391,6 +400,16 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 	now := time.Now().UTC()
 	grants := projection.grantsAt(serverID, now)
 	digest, keys := authorizationDigest(grants)
+	projection.leaseMu.Lock()
+	defer projection.leaseMu.Unlock()
+	// A grant-set change alters the digest and a routing change replaces the
+	// whole projection, so a reused lease can never hide a revoke.
+	if lease := projection.leases[serverID]; lease != nil && lease.Digest == digest {
+		issued, err := time.Parse(time.RFC3339Nano, lease.IssuedAt)
+		if elapsed := now.Sub(issued); err == nil && elapsed >= 0 && elapsed < authorizationLeaseReissueAfter {
+			return lease, nil
+		}
+	}
 	evaluation, err := s.store.EvaluateAuthorizationDesired(ctx, serverID, projection.routingRevision, digest, keys, now)
 	if err != nil {
 		return nil, err
@@ -422,6 +441,10 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 		lease.Denied = append(lease.Denied, denial.CredentialID)
 	}
 	sort.Strings(lease.Denied)
+	if projection.leases == nil {
+		projection.leases = make(map[int64]*model.AuthorizationLease)
+	}
+	projection.leases[serverID] = lease
 	return lease, nil
 }
 

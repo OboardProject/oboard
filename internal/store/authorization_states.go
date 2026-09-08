@@ -115,6 +115,9 @@ func (s *Store) EvaluateAuthorizationDesired(ctx context.Context, serverID int64
 	}
 	out := AuthorizationDesiredEvaluation{State: current}
 	if current.DesiredDigest == digest && current.DesiredRevision > 0 {
+		if current.EvaluatedRoutingRevision == routingRevision {
+			return out, nil
+		}
 		if _, err := tx.ExecContext(ctx, `update authorization_states set evaluated_routing_revision=?,updated_at=? where server_id=?`, routingRevision, ts, serverID); err != nil {
 			return AuthorizationDesiredEvaluation{}, err
 		}

@@ -447,12 +447,11 @@ func (s *Server) connectionAuditOverview(w http.ResponseWriter, r *http.Request)
 		method(w)
 		return
 	}
-	overview, err := s.store.ConnectionAuditOverview(r.Context(), intQuery(r, "window_hours", 24), s.connectionAuditEnabled(r.Context()), s.auditPolicy(r.Context()))
+	overview, _, _, err := s.auditOverviewData(r.Context(), intQuery(r, "window_hours", 24))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	overview.GeoDatabase = s.geoIPStatus
 	write(w, http.StatusOK, map[string]any{"connection_audit": overview})
 }
 

@@ -194,7 +194,7 @@ func (s *Server) subscriptionAuditOverview(w http.ResponseWriter, r *http.Reques
 		method(w)
 		return
 	}
-	overview, err := s.subscriptionAuditOverviewData(r.Context(), intQuery(r, "window_hours", 24))
+	_, overview, _, err := s.auditOverviewData(r.Context(), intQuery(r, "window_hours", 24))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -250,7 +250,7 @@ func (s *Server) combinedAuditOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) auditOverviewData(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, model.SubscriptionAuditOverview, model.CombinedAuditOverview, error) {
+func (s *Server) buildAuditOverviewData(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, model.SubscriptionAuditOverview, model.CombinedAuditOverview, error) {
 	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
 	if err != nil {
 		return model.ConnectionAuditOverview{}, model.SubscriptionAuditOverview{}, model.CombinedAuditOverview{}, err

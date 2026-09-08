@@ -80,6 +80,9 @@ func (s *Store) recordRuntimeUserDesiredAt(ctx context.Context, serverID int64, 
 	}
 	out := RuntimeUserDesiredEvaluation{State: current}
 	if current.DesiredDigest == digest && current.DesiredRevision > 0 {
+		if current.EvaluatedRoutingRevision == routingRevision {
+			return out, nil
+		}
 		if _, err := tx.ExecContext(ctx, `update runtime_user_states set evaluated_routing_revision=?,updated_at=? where server_id=?`, routingRevision, ts, serverID); err != nil {
 			return RuntimeUserDesiredEvaluation{}, err
 		}

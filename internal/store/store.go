@@ -33,6 +33,10 @@ type Store struct {
 	// metricSampleMinInterval bounds server_metric_samples writes; zero means
 	// the default applies. Resolved from SQLiteOptions at open time.
 	metricSampleMinInterval time.Duration
+	// leaseExpirySweepAt is the last instant the traffic lease expiry sweep
+	// scanned the table, in Unix nanoseconds. The sweep used to run once per
+	// user per traffic report even though a lease stays valid for 24 hours.
+	leaseExpirySweepAt atomic.Int64
 }
 
 type SQLiteOptions struct {
@@ -7003,9 +7007,66 @@ type TrafficLeaseAllocation struct {
 	ResetBytes     int64
 }
 
+// trafficLeaseChunk is the allocation unit for one user's quota on one server.
+// A lease is topped up only once its remaining half is spent.
+func trafficLeaseChunk(limitBytes int64) int64 {
+	chunk := limitBytes / 10
+	if chunk < 64<<20 {
+		chunk = 64 << 20
+	}
+	if chunk > 2<<30 {
+		chunk = 2 << 30
+	}
+	if chunk > limitBytes {
+		chunk = limitBytes
+	}
+	return chunk
+}
+
+// trafficLeaseExpirySweepInterval bounds the full-table expiry scan. A lease is
+// issued for 24 hours and re-validated on every policy sync, so a sweep this
+// coarse still marks an abandoned lease long before anything reads it.
+const trafficLeaseExpirySweepInterval = 30 * time.Second
+
+// trafficLeaseRefreshBefore is how much of a lease's 24-hour validity may be
+// spent before a policy sync rewrites its validity window. A reporting server
+// therefore refreshes the row a few times a day instead of on every report.
+const trafficLeaseRefreshBefore = 12 * time.Hour
+
+// currentTrafficLeaseAllocation answers the common case without touching the
+// writer lock: the lease exists, is active, is far from expiry, and still holds
+// more than half a chunk, so the write path would have changed nothing but the
+// sync timestamps. It reports false whenever any of that is untrue.
+func (s *Store) currentTrafficLeaseAllocation(ctx context.Context, serverID, userID int64, periodKey string, limitBytes int64, at time.Time) (TrafficLeaseAllocation, bool) {
+	var leaseBytes, consumedBytes int64
+	var state, validUntil string
+	if err := s.db.QueryRowContext(ctx, `select lease_bytes, consumed_bytes, coalesce(nullif(state,''),'active'), coalesce(valid_until,'') from traffic_leases where server_id=? and user_id=? and period_key=?`, serverID, userID, periodKey).Scan(&leaseBytes, &consumedBytes, &state, &validUntil); err != nil {
+		return TrafficLeaseAllocation{}, false
+	}
+	if state != trafficLeaseActive || validUntil == "" {
+		return TrafficLeaseAllocation{}, false
+	}
+	expiry, err := time.Parse(time.RFC3339Nano, validUntil)
+	if err != nil || !expiry.After(at.Add(trafficLeaseRefreshBefore)) {
+		return TrafficLeaseAllocation{}, false
+	}
+	remaining := leaseBytes - consumedBytes
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining < trafficLeaseChunk(limitBytes)/2 {
+		return TrafficLeaseAllocation{}, false
+	}
+	return TrafficLeaseAllocation{RemainingBytes: remaining, ResetBytes: leaseBytes}, true
+}
+
 func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, userID int64, periodKey string, limitBytes, usedBytes int64) (TrafficLeaseAllocation, error) {
 	if limitBytes <= 0 || serverID <= 0 || userID <= 0 || periodKey == "" {
 		return TrafficLeaseAllocation{}, nil
+	}
+	sweepAt := time.Now().UTC()
+	if allocation, ok := s.currentTrafficLeaseAllocation(ctx, serverID, userID, periodKey, limitBytes, sweepAt); ok {
+		return allocation, nil
 	}
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
@@ -7018,8 +7079,10 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 	if _, err := conn.ExecContext(ctx, `begin immediate`); err != nil {
 		return TrafficLeaseAllocation{}, err
 	}
-	if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, updated_at=? where coalesce(nullif(state,''),'active')=? and valid_until<>'' and valid_until<?`, trafficLeaseExpiredUnsettled, now(), trafficLeaseActive, now()); err != nil {
-		return TrafficLeaseAllocation{}, err
+	if last := s.leaseExpirySweepAt.Load(); sweepAt.Sub(time.Unix(0, last)) >= trafficLeaseExpirySweepInterval && s.leaseExpirySweepAt.CompareAndSwap(last, sweepAt.UnixNano()) {
+		if _, err := conn.ExecContext(ctx, `update traffic_leases set state=?, updated_at=? where coalesce(nullif(state,''),'active')=? and valid_until<>'' and valid_until<?`, trafficLeaseExpiredUnsettled, now(), trafficLeaseActive, now()); err != nil {
+			return TrafficLeaseAllocation{}, err
+		}
 	}
 	committed := false
 	defer func() {
@@ -7063,16 +7126,7 @@ func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, user
 	if available < 0 {
 		available = 0
 	}
-	chunk := limitBytes / 10
-	if chunk < 64<<20 {
-		chunk = 64 << 20
-	}
-	if chunk > 2<<30 {
-		chunk = 2 << 30
-	}
-	if chunk > limitBytes {
-		chunk = limitBytes
-	}
+	chunk := trafficLeaseChunk(limitBytes)
 	if currentRemaining < chunk/2 && available > 0 {
 		grant := chunk - currentRemaining
 		if grant > available {
@@ -7221,9 +7275,18 @@ func (s *Store) PreviousTrafficPeriodKey(ctx context.Context, userID int64, targ
 	return source, err == nil && source != ""
 }
 
+// trafficPeriodConflictState is the state an existing period row takes when the
+// window is re-ensured. It reads the stored limit and counters and compares
+// them against the incoming limit, exactly as the original upsert did.
+const trafficPeriodConflictState = `case when traffic_periods.traffic_limit_bytes>0 and traffic_periods.upload_bytes+traffic_periods.download_bytes>=excluded.traffic_limit_bytes then 'quota_exceeded' else 'active' end`
+
+// Every traffic report re-ensures the window of every accounting user on the
+// server, so the conflict branch only writes when the window, the limit, or the
+// derived state actually moved. Rewriting an identical row produced one WAL
+// frame per user per report and dominated the checkpoint load.
 func (s *Store) EnsureTrafficPeriod(ctx context.Context, userID int64, periodKey string, start, end time.Time, limit int64) (model.TrafficPeriod, error) {
 	ts := now()
-	if _, err := s.db.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,0,0,?,'active',?) on conflict(user_id,period_key) do update set started_at=excluded.started_at,ends_at=excluded.ends_at,traffic_limit_bytes=excluded.traffic_limit_bytes,state=case when traffic_limit_bytes>0 and upload_bytes+download_bytes>=excluded.traffic_limit_bytes then 'quota_exceeded' else 'active' end,updated_at=excluded.updated_at`, userID, periodKey, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), limit, ts); err != nil {
+	if _, err := s.db.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,0,0,?,'active',?) on conflict(user_id,period_key) do update set started_at=excluded.started_at,ends_at=excluded.ends_at,traffic_limit_bytes=excluded.traffic_limit_bytes,state=`+trafficPeriodConflictState+`,updated_at=excluded.updated_at where traffic_periods.started_at<>excluded.started_at or traffic_periods.ends_at<>excluded.ends_at or traffic_periods.traffic_limit_bytes<>excluded.traffic_limit_bytes or traffic_periods.state<>(`+trafficPeriodConflictState+`)`, userID, periodKey, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), limit, ts); err != nil {
 		return model.TrafficPeriod{}, err
 	}
 	return s.GetTrafficPeriod(ctx, userID, periodKey)

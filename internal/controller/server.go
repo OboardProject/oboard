@@ -213,6 +213,15 @@ type Server struct {
 	// routingSnapshotCache is the immutable FullRoutingConfigData + effective
 	// access snapshot cache, keyed by the store routing revision.
 	routingSnapshotCache atomic.Pointer[routingSnapshot]
+	// routingSnapshotMu serializes rebuilds so a burst of Agent reports pays
+	// for one snapshot instead of one per concurrent request.
+	routingSnapshotMu sync.Mutex
+	// runtimeUserPackages caches the generated per-server runtime user package
+	// so a snapshot pull and the recovery scan share one configuration build.
+	runtimeUserPackages runtimeUserPackageCache
+	// auditOverviews caches the audit console summaries, which three polling
+	// endpoints request for the same reporting window.
+	auditOverviews auditOverviewCache
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
 	settingsCache atomic.Pointer[settingsSnapshot]
