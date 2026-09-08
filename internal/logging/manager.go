@@ -183,6 +183,39 @@ func (m *Manager) Clear() error {
 }
 
 func (m *Manager) Snapshot(limit int, query string) (Snapshot, error) {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return m.snapshot(limit, nil)
+	}
+	return m.snapshot(limit, []string{needle})
+}
+
+// SnapshotMatching returns the most recent lines that contain any of the given
+// case-insensitive markers. Empty markers select every line.
+func (m *Manager) SnapshotMatching(limit int, markers []string) (Snapshot, error) {
+	needles := make([]string, 0, len(markers))
+	for _, marker := range markers {
+		if value := strings.ToLower(strings.TrimSpace(marker)); value != "" {
+			needles = append(needles, value)
+		}
+	}
+	return m.snapshot(limit, needles)
+}
+
+// SnapshotSelect returns the most recent lines that keep accepts. A caller that
+// needs to reach a specific point in the past uses this instead of a line count:
+// on a busy Controller the newest few hundred lines can span well under a
+// minute, so counting lines never reaches an event from minutes ago. Scanning
+// stays bounded by the per-file scan budget and the rotated backup count.
+func (m *Manager) SnapshotSelect(limit int, keep func(line string) bool) (Snapshot, error) {
+	return m.snapshot(limit, nil, keep)
+}
+
+func (m *Manager) snapshot(limit int, needles []string, filters ...func(line string) bool) (Snapshot, error) {
+	var keep func(line string) bool
+	if len(filters) > 0 {
+		keep = filters[0]
+	}
 	if limit <= 0 {
 		limit = 500
 	}
@@ -201,10 +234,9 @@ func (m *Manager) Snapshot(limit int, query string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	needle := strings.ToLower(strings.TrimSpace(query))
 	selected := make([]string, 0, limit)
 	scanLimit := limit
-	if needle != "" {
+	if len(needles) > 0 || keep != nil {
 		scanLimit = limit * 20
 		if scanLimit < 5000 {
 			scanLimit = 5000
@@ -223,9 +255,13 @@ func (m *Manager) Snapshot(limit int, query string) (Snapshot, error) {
 			return Snapshot{}, readErr
 		}
 		for j := len(lines) - 1; j >= 0 && len(selected) < limit; j-- {
-			if needle == "" || strings.Contains(strings.ToLower(lines[j]), needle) {
-				selected = append(selected, lines[j])
+			if !matchesAnyNeedle(lines[j], needles) {
+				continue
 			}
+			if keep != nil && !keep(lines[j]) {
+				continue
+			}
+			selected = append(selected, lines[j])
 		}
 	}
 	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
@@ -236,6 +272,19 @@ func (m *Manager) Snapshot(limit int, query string) (Snapshot, error) {
 		content += "\n"
 	}
 	return Snapshot{Content: content, LineCount: len(selected), Files: files, TotalSizeBytes: total, MaxSizeBytes: m.config.MaxBytes, Backups: m.config.Backups}, nil
+}
+
+func matchesAnyNeedle(line string, needles []string) bool {
+	if len(needles) == 0 {
+		return true
+	}
+	lowered := strings.ToLower(line)
+	for _, needle := range needles {
+		if strings.Contains(lowered, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) WriteZIP(dst io.Writer) error {
