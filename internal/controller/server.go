@@ -6717,10 +6717,17 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		tz = "Asia/Shanghai"
 	}
 	policies := map[int64]model.TrafficRuntimePolicy{}
+	// This runs once per server on every fleet poll cycle, so it resolves the
+	// whole user population in batches. Doing it per user cost four SQLite round
+	// trips each (transition lookup, period upsert, period read, lease read),
+	// repeated by every server for the same users.
+	//
 	// One EnsureTrafficPeriod / lease allocation per (user, resolved period)
 	// inside this response — never redo the same window when the input user
 	// list somehow repeats an id.
-	seenPeriods := map[string]struct{}{}
+	billable := make([]model.User, 0, len(users))
+	userIDs := make([]int64, 0, len(users))
+	limits := make(map[int64]core.UserLimitPolicy, len(users))
 	for _, user := range users {
 		if user.ID <= 0 || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 			continue
@@ -6728,11 +6735,35 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		if accountingUsers != nil && !accountingUsers[user.ID] {
 			continue
 		}
+		if _, seen := limits[user.ID]; seen {
+			continue
+		}
 		limit, okLimit := userPolicies[user.ID]
 		if !okLimit {
 			limit = defaultUserLimitPolicy(user)
 		}
-		periodKey, start, end, err := s.resolvedTrafficWindow(ctx, user.ID, time.Now(), limit, loc)
+		limits[user.ID] = limit
+		billable = append(billable, user)
+		userIDs = append(userIDs, user.ID)
+	}
+	if len(billable) == 0 {
+		return policies, nil
+	}
+	transitions, err := s.store.TrafficPeriodTransitions(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	at := time.Now()
+	type resolvedWindow struct {
+		periodKey  string
+		start, end time.Time
+	}
+	windows := make(map[int64]resolvedWindow, len(billable))
+	periodRequests := make([]store.TrafficPeriodRequest, 0, len(billable))
+	seenPeriods := make(map[string]struct{}, len(billable))
+	for _, user := range billable {
+		limit := limits[user.ID]
+		periodKey, start, end, err := s.resolvedTrafficWindowFrom(ctx, transitions[user.ID], user.ID, at, limit, loc)
 		if err != nil {
 			return nil, err
 		}
@@ -6741,20 +6772,43 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 			continue
 		}
 		seenPeriods[periodIndex] = struct{}{}
-		period, err := s.store.EnsureTrafficPeriod(ctx, user.ID, periodKey, start, end, limit.TrafficLimitBytes)
-		if err != nil {
-			return nil, err
+		windows[user.ID] = resolvedWindow{periodKey: periodKey, start: start, end: end}
+		periodRequests = append(periodRequests, store.TrafficPeriodRequest{UserID: user.ID, PeriodKey: periodKey, StartedAt: start, EndsAt: end, LimitBytes: limit.TrafficLimitBytes})
+	}
+	periods, err := s.store.EnsureTrafficPeriods(ctx, periodRequests)
+	if err != nil {
+		return nil, err
+	}
+	probes := make([]store.TrafficLeaseProbe, 0, len(periodRequests))
+	for _, request := range periodRequests {
+		probes = append(probes, store.TrafficLeaseProbe{UserID: request.UserID, PeriodKey: request.PeriodKey, LimitBytes: request.LimitBytes})
+	}
+	healthyLeases, err := s.store.CurrentTrafficLeaseAllocations(ctx, serverID, probes, at.UTC())
+	if err != nil {
+		return nil, err
+	}
+	for _, user := range billable {
+		window, ok := windows[user.ID]
+		if !ok {
+			continue
 		}
+		limit := limits[user.ID]
+		period := periods[user.ID]
 		used := period.Upload + period.Download
-		lease, err := s.store.EnsureTrafficLeaseAllocation(ctx, serverID, user.ID, periodKey, limit.TrafficLimitBytes, used)
-		if err != nil {
-			return nil, err
+		lease, healthy := healthyLeases[user.ID]
+		if !healthy {
+			// No healthy lease on file: fall back to the serialized grant path,
+			// which is the only writer allowed to hand out new quota.
+			lease, err = s.store.EnsureTrafficLeaseAllocation(ctx, serverID, user.ID, window.periodKey, limit.TrafficLimitBytes, used)
+			if err != nil {
+				return nil, err
+			}
 		}
-		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: periodKey, PeriodStart: start.UTC().Format(time.RFC3339Nano), PeriodEnd: end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
+		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: window.periodKey, PeriodStart: window.start.UTC().Format(time.RFC3339Nano), PeriodEnd: window.end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
 		if !limit.TrafficResetAnchor.IsZero() {
 			policy.ResetAnchor = limit.TrafficResetAnchor.UTC().Format(time.RFC3339Nano)
 		}
-		if previous, ok := s.store.PreviousTrafficPeriodKey(ctx, user.ID, periodKey); ok {
+		if previous, ok := transitions[user.ID].Previous(window.periodKey); ok {
 			policy.PreviousPeriodKey = previous
 		}
 		policies[user.ID] = policy
@@ -6916,6 +6970,26 @@ func (s *Server) resolvedTrafficWindow(ctx context.Context, userID int64, at tim
 	if err != nil {
 		return "", time.Time{}, time.Time{}, err
 	}
+	return s.trafficWindowForResolvedKey(ctx, userID, periodKey, resolved, changed, start, end)
+}
+
+// resolvedTrafficWindowFrom is resolvedTrafficWindow against a preloaded
+// transition set, so a fleet-wide policy pass does not query the transition
+// table once per user. The table is empty unless a reset cycle was migrated,
+// in which case the rare stored-window read still happens per affected user.
+func (s *Server) resolvedTrafficWindowFrom(ctx context.Context, transitions store.TrafficPeriodTransitionSet, userID int64, at time.Time, limit core.UserLimitPolicy, loc *time.Location) (string, time.Time, time.Time, error) {
+	periodKey, start, end := trafficWindow(at, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
+	resolved, changed, err := transitions.Resolve(periodKey)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, err
+	}
+	return s.trafficWindowForResolvedKey(ctx, userID, periodKey, resolved, changed, start, end)
+}
+
+// trafficWindowForResolvedKey turns a resolved period key into its effective
+// window. A redirected or migration key takes its bounds from the stored row so
+// the accounting window keeps matching the period the counters live in.
+func (s *Server) trafficWindowForResolvedKey(ctx context.Context, userID int64, periodKey, resolved string, changed bool, start, end time.Time) (string, time.Time, time.Time, error) {
 	if !changed && !strings.Contains(resolved, "#migration-") {
 		return periodKey, start, end, nil
 	}

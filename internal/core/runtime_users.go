@@ -18,6 +18,11 @@ type RuntimeUserPackage struct {
 	BaseRevision  int64                     `json:"base_revision,omitempty"`
 	Chunk         *model.UsersInstallChunk  `json:"chunk,omitempty"`
 	Entries       []model.UsersInstallEntry `json:"entries"`
+
+	// ContentDigest is the cached UsersContentDigest of Scope+Entries. It is
+	// Controller-local bookkeeping so a cached package does not re-sort, re-encode
+	// and re-hash every entry on each Agent pull; Request() never carries it.
+	ContentDigest string `json:"-"`
 }
 
 func ServerSupportsRuntimeUsers(server model.Server) bool {
@@ -28,6 +33,31 @@ func ServerSupportsRuntimeUsers(server model.Server) bool {
 
 func UsersDigest(revision int64, scope []string, entries []model.UsersInstallEntry) (string, error) {
 	return UsersSnapshotDigest(revision, scope, entries)
+}
+
+// UsersContentDigest is the users-lane desired-state gate. It deliberately
+// ignores the lease-accounting counters the traffic lane owns.
+//
+// Those three fields move on every accepted traffic report. Hashing them made
+// each report advance the server's desired users revision, which forced a
+// redelivery, left the Agent's acknowledgement pointing at an already-superseded
+// revision, and woke the sync worker to rebuild the whole fleet again — a loop
+// paced by the report rate rather than by any timer. The Agent already receives
+// the current quota numbers in every traffic-report response and through
+// apply_traffic_policy, so the users lane only has to react to identity,
+// credential, route, and policy-configuration changes.
+//
+// The delivered payload is unchanged: it still carries the values current at
+// delivery time. Only the change-detection gate is narrower.
+func UsersContentDigest(scope []string, entries []model.UsersInstallEntry) (string, error) {
+	stable := make([]model.UsersInstallEntry, len(entries))
+	for i, entry := range entries {
+		entry.Policy.UsedBaselineBytes = 0
+		entry.Policy.LeaseBytes = 0
+		entry.Policy.ResetLeaseBytes = 0
+		stable[i] = entry
+	}
+	return UsersSnapshotDigest(0, scope, stable)
 }
 
 func ProtocolSupportsRuntimeUsers(protocol model.Protocol, inbound model.Inbound) bool {

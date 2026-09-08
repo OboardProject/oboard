@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"strconv"
 	"sync"
 	"time"
 
@@ -31,22 +30,13 @@ type routingSnapshot struct {
 	data     store.FullRoutingConfig
 	snapshot *core.EffectiveAccessSnapshot
 
-	usersByID       map[int64]model.User
-	inboundsByID    map[int64]model.Inbound
-	pathsByID       map[int64]model.ProxyPath
-	serversByID     map[int64]model.Server
-	devicesByHash   map[string]model.UserDevice
-	outboundsByID   map[int64]model.Outbound
-	externalByID    map[int64]model.ExternalOutbound
-	ruleSetsByID    map[int64]model.RoutingRuleSet
-	ruleSetsByName  map[string]model.RoutingRuleSet
-	warpByServerID  map[int64]model.WARPProfile
-	groupsByID      map[int64]model.UserGroup
-	membersByID     map[int64]model.UserGroupMember
-	dnsListsByID    map[int64]model.DNSList
-	dnsPoliciesByID map[int64]model.ServerDNSPolicy
-	egressByPathID  map[int64]model.ProxyPathEgressResult
-	portAllocByKey  map[string]model.ProxyPathPortAllocation
+	// Only the lookups the Agent report paths actually use are indexed. Every
+	// entry here is a value copy of a routing row, so an index nobody reads is
+	// pure rebuild cost on each routing revision.
+	usersByID     map[int64]model.User
+	inboundsByID  map[int64]model.Inbound
+	pathsByID     map[int64]model.ProxyPath
+	devicesByHash map[string]model.UserDevice
 
 	// allowedOnce guards the authorized-pair index. Every Agent report path
 	// needs the same set, so it is built once per snapshot instead of once per
@@ -54,6 +44,42 @@ type routingSnapshot struct {
 	// valid for the snapshot's whole lifetime.
 	allowedOnce  sync.Once
 	allowedPairs map[accessPair]struct{}
+
+	// projectionOnce guards the inputs every per-server runtime-user projection
+	// needs. They are server-independent, so a fleet poll cycle derives them
+	// once per revision instead of once per server.
+	projectionOnce sync.Once
+	projection     runtimeProjectionInputs
+}
+
+// runtimeProjectionInputs is the server-independent part of a runtime-user
+// projection: display-resolved proxy paths plus the effective access bindings
+// and per-user limit policies.
+type runtimeProjectionInputs struct {
+	proxyPaths      []model.ProxyPath
+	inboundBindings []model.InboundUser
+	pathBindings    []model.ProxyPathUser
+	userPolicies    map[int64]core.UserLimitPolicy
+}
+
+// runtimeProjectionInputs derives the shared projection inputs on first use.
+//
+// Every one of these used to be recomputed per server inside the package build:
+// ResolveProxyPathNames rebuilt three lookup maps and the whole path slice, and
+// the binding/policy derivations walked the effective access snapshot again. On
+// a fleet poll cycle that is the same answer computed once per server.
+func (r *routingSnapshot) runtimeProjectionInputs() runtimeProjectionInputs {
+	r.projectionOnce.Do(func() {
+		r.projection = runtimeProjectionInputs{
+			proxyPaths: core.ResolveProxyPathNames(r.data.ProxyPaths, r.data.ProxyPathSteps, r.data.Servers, r.data.Inbounds, r.data.ExternalOutbounds),
+			// The snapshot's access view is already time-effective for this
+			// revision; rebuilding it per server produced the same bindings.
+			inboundBindings: r.snapshot.InboundUserBindings(),
+			pathBindings:    r.snapshot.ProxyPathUserBindings(),
+			userPolicies:    r.snapshot.UserLimitPolicyMap(),
+		}
+	})
+	return r.projection
 }
 
 // allowedAccessPairs returns the authorized (inbound, user, path) triples for
@@ -167,26 +193,14 @@ func (s *Server) invalidateRoutingSnapshot() {
 
 func buildRoutingSnapshot(revision uint64, data store.FullRoutingConfig, snap *core.EffectiveAccessSnapshot) *routingSnapshot {
 	entry := &routingSnapshot{
-		revision:        revision,
-		builtAt:         time.Now(),
-		data:            data,
-		snapshot:        snap,
-		usersByID:       make(map[int64]model.User, len(data.Users)),
-		inboundsByID:    make(map[int64]model.Inbound, len(data.Inbounds)),
-		pathsByID:       make(map[int64]model.ProxyPath, len(data.ProxyPaths)),
-		serversByID:     make(map[int64]model.Server, len(data.Servers)),
-		devicesByHash:   make(map[string]model.UserDevice, len(data.UserDevices)),
-		outboundsByID:   make(map[int64]model.Outbound, len(data.Outbounds)),
-		externalByID:    make(map[int64]model.ExternalOutbound, len(data.ExternalOutbounds)),
-		ruleSetsByID:    make(map[int64]model.RoutingRuleSet, len(data.RoutingRuleSets)),
-		ruleSetsByName:  make(map[string]model.RoutingRuleSet, len(data.RoutingRuleSets)),
-		warpByServerID:  make(map[int64]model.WARPProfile, len(data.WARPProfiles)),
-		groupsByID:      make(map[int64]model.UserGroup, len(data.UserGroups)),
-		membersByID:     make(map[int64]model.UserGroupMember, len(data.UserGroupMembers)),
-		dnsListsByID:    make(map[int64]model.DNSList, len(data.DNSLists)),
-		dnsPoliciesByID: make(map[int64]model.ServerDNSPolicy, len(data.ServerDNSPolicies)),
-		egressByPathID:  make(map[int64]model.ProxyPathEgressResult, len(data.ProxyPathEgressResults)),
-		portAllocByKey:  make(map[string]model.ProxyPathPortAllocation, len(data.ProxyPathPortAllocations)),
+		revision:      revision,
+		builtAt:       time.Now(),
+		data:          data,
+		snapshot:      snap,
+		usersByID:     make(map[int64]model.User, len(data.Users)),
+		inboundsByID:  make(map[int64]model.Inbound, len(data.Inbounds)),
+		pathsByID:     make(map[int64]model.ProxyPath, len(data.ProxyPaths)),
+		devicesByHash: make(map[string]model.UserDevice, len(data.UserDevices)),
 	}
 	for _, item := range data.Users {
 		entry.usersByID[item.ID] = item
@@ -197,46 +211,8 @@ func buildRoutingSnapshot(revision uint64, data store.FullRoutingConfig, snap *c
 	for _, item := range data.ProxyPaths {
 		entry.pathsByID[item.ID] = item
 	}
-	for _, item := range data.Servers {
-		entry.serversByID[item.ID] = item
-	}
 	for _, item := range data.UserDevices {
 		entry.devicesByHash[item.DeviceIDHash] = item
 	}
-	for _, item := range data.Outbounds {
-		entry.outboundsByID[item.ID] = item
-	}
-	for _, item := range data.ExternalOutbounds {
-		entry.externalByID[item.ID] = item
-	}
-	for _, item := range data.RoutingRuleSets {
-		entry.ruleSetsByID[item.ID] = item
-		entry.ruleSetsByName[item.Name] = item
-	}
-	for _, item := range data.WARPProfiles {
-		entry.warpByServerID[item.ServerID] = item
-	}
-	for _, item := range data.UserGroups {
-		entry.groupsByID[item.ID] = item
-	}
-	for _, item := range data.UserGroupMembers {
-		entry.membersByID[item.ID] = item
-	}
-	for _, item := range data.DNSLists {
-		entry.dnsListsByID[item.ID] = item
-	}
-	for _, item := range data.ServerDNSPolicies {
-		entry.dnsPoliciesByID[item.ServerID] = item
-	}
-	for _, item := range data.ProxyPathEgressResults {
-		entry.egressByPathID[item.PathID] = item
-	}
-	for _, item := range data.ProxyPathPortAllocations {
-		entry.portAllocByKey[proxyPathPortAllocationKey(item)] = item
-	}
 	return entry
-}
-
-func proxyPathPortAllocationKey(item model.ProxyPathPortAllocation) string {
-	return item.Kind + "\x00" + item.ScopeKey + "\x00" + strconv.FormatInt(item.ServerID, 10)
 }

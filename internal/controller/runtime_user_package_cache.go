@@ -102,7 +102,18 @@ func (s *Server) currentRuntimeUserPackage(ctx context.Context, server model.Ser
 	if err != nil {
 		return core.RuntimeUserPackage{}, 0, err
 	}
-	pkg := cloneRuntimeUserPackage(entry.value.pkg)
+	// The cached package is immutable: the build path already handed the cache
+	// its own copy, and every consumer (Request, the digests, the chunker)
+	// copies Scope/Entries before touching them. Only the scalar revision and
+	// digest are rebound here, on this caller's own struct copy, so a reader
+	// does not duplicate every entry on each Agent pull.
+	pkg := entry.value.pkg
+	if pkg.UsersRevision == revision && pkg.UsersDigest != "" {
+		// The cached package was built for this revision, so its delivered
+		// digest already covers it. Recomputing meant sorting and re-encoding
+		// every entry on each Agent pull.
+		return pkg, entry.value.routingRevision, nil
+	}
 	pkg.UsersRevision = revision
 	pkg.UsersDigest, err = core.UsersDigest(revision, pkg.Scope, pkg.Entries)
 	return pkg, entry.value.routingRevision, err

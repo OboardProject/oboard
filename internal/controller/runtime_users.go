@@ -139,7 +139,7 @@ func (s *Server) buildRuntimeUserPackage(ctx context.Context, server model.Serve
 	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
-	pkg, err := s.projectRuntimeUserPackage(ctx, server, snap.data, revision)
+	pkg, err := s.projectRuntimeUserPackage(ctx, server, snap, revision)
 	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
@@ -150,16 +150,17 @@ func (s *Server) buildRuntimeUserPackage(ctx context.Context, server model.Serve
 // deploy-side side effects of a full core-config generation: no certificate
 // materialization, no DNS policy hard-fail, no port allocation persistence,
 // and no authorization-lease attachment.
-func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Server, data store.FullRoutingConfig, revision int64) (core.RuntimeUserPackage, error) {
-	data, err := s.loadProxyCredentialData(ctx, data)
-	if err != nil {
-		return core.RuntimeUserPackage{}, err
-	}
-	resolveRoutingProxyPathNames(&data)
-	bindings, pathBindings, userPolicies, err := s.runtimeAccessBindings(ctx, data)
-	if err != nil {
-		return core.RuntimeUserPackage{}, err
-	}
+//
+// Everything server-independent comes from the shared routing snapshot: its
+// users already carry decrypted proxy credentials, and its projection inputs
+// are derived once per revision. This path must not decrypt credentials or
+// rebuild the access snapshot again, because it runs once per server on every
+// fleet poll cycle.
+func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Server, snap *routingSnapshot, revision int64) (core.RuntimeUserPackage, error) {
+	data := snap.data
+	shared := snap.runtimeProjectionInputs()
+	data.ProxyPaths = shared.proxyPaths
+	bindings, pathBindings, userPolicies := shared.inboundBindings, shared.pathBindings, shared.userPolicies
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
 	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, accountingUsers, userPolicies)
 	if err != nil {
@@ -191,8 +192,22 @@ func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Ser
 		return core.RuntimeUserPackage{}, err
 	}
 	pkg.UsersDigest = digest
+	// Both delivery paths gate on the content digest; computing it here keeps a
+	// cached package from re-hashing every entry on each Agent pull.
+	if pkg.ContentDigest, err = core.UsersContentDigest(pkg.Scope, pkg.Entries); err != nil {
+		return core.RuntimeUserPackage{}, err
+	}
 	pkg.Mode = "full"
 	return pkg, nil
+}
+
+// runtimeUserContentDigest returns the package's cached users-lane gate,
+// computing it only for a package that did not come from the build path.
+func runtimeUserContentDigest(pkg core.RuntimeUserPackage) (string, error) {
+	if pkg.ContentDigest != "" {
+		return pkg.ContentDigest, nil
+	}
+	return core.UsersContentDigest(pkg.Scope, pkg.Entries)
 }
 
 func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, forceRebuild bool) {
@@ -241,7 +256,7 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 		return
 	}
 	routingRevision = builtRevision
-	contentDigest, err := core.UsersDigest(0, pkg.Scope, pkg.Entries)
+	contentDigest, err := runtimeUserContentDigest(pkg)
 	if err != nil {
 		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingDeliveryFailed, err.Error(), true)
 		return
@@ -251,10 +266,12 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 		return
 	}
 	state = evaluation.State
-	pkg.UsersRevision = state.DesiredRevision
-	pkg.UsersDigest, err = core.UsersDigest(pkg.UsersRevision, pkg.Scope, pkg.Entries)
-	if err != nil {
-		return
+	if pkg.UsersRevision != state.DesiredRevision {
+		pkg.UsersRevision = state.DesiredRevision
+		pkg.UsersDigest, err = core.UsersDigest(pkg.UsersRevision, pkg.Scope, pkg.Entries)
+		if err != nil {
+			return
+		}
 	}
 	pkg.Mode = "full"
 	if !s.runtimeUsersLaneEnabled(ctx, *server) {
@@ -308,10 +325,15 @@ const (
 )
 
 func chunkRuntimeUserPackages(pkg core.RuntimeUserPackage) []core.RuntimeUserPackage {
-	if len(pkg.Entries) <= runtimeUsersChunkEntryLimit {
-		if raw, err := json.Marshal(pkg.Request()); err == nil && len(raw) <= runtimeUsersChunkBytesLimit {
-			return []core.RuntimeUserPackage{pkg}
-		}
+	// The encoded size does not depend on the chunk size, so it is measured once
+	// and reused. Re-encoding the whole package inside the halving loop below
+	// produced the same bytes up to seven times per delivery.
+	encodedSize := -1
+	if raw, err := json.Marshal(pkg.Request()); err == nil {
+		encodedSize = len(raw)
+	}
+	if len(pkg.Entries) <= runtimeUsersChunkEntryLimit && encodedSize >= 0 && encodedSize <= runtimeUsersChunkBytesLimit {
+		return []core.RuntimeUserPackage{pkg}
 	}
 	if len(pkg.Entries) == 0 {
 		return []core.RuntimeUserPackage{pkg}
@@ -321,7 +343,7 @@ func chunkRuntimeUserPackages(pkg core.RuntimeUserPackage) []core.RuntimeUserPac
 		size = 1
 	}
 	for size > 1 {
-		if raw, err := json.Marshal(pkg.Request()); err == nil && len(raw)/((len(pkg.Entries)+size-1)/size) <= runtimeUsersChunkBytesLimit {
+		if encodedSize < 0 || encodedSize/((len(pkg.Entries)+size-1)/size) <= runtimeUsersChunkBytesLimit {
 			break
 		}
 		size /= 2
@@ -445,7 +467,7 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	contentDigest, err := core.UsersDigest(0, pkg.Scope, pkg.Entries)
+	contentDigest, err := runtimeUserContentDigest(pkg)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -455,11 +477,13 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	pkg.UsersRevision = evaluation.State.DesiredRevision
-	pkg.UsersDigest, err = core.UsersDigest(pkg.UsersRevision, pkg.Scope, pkg.Entries)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
+	if pkg.UsersRevision != evaluation.State.DesiredRevision {
+		pkg.UsersRevision = evaluation.State.DesiredRevision
+		pkg.UsersDigest, err = core.UsersDigest(pkg.UsersRevision, pkg.Scope, pkg.Entries)
+		if err != nil {
+			fail(w, err, http.StatusInternalServerError)
+			return
+		}
 	}
 	pkg.Mode = "full"
 	// An empty scope means this server has no runtime-managed inbound, and the

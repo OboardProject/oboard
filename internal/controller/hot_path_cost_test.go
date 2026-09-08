@@ -15,7 +15,7 @@ import (
 // hotPathFixture is one enrolled server with one authorized user, the shape
 // every Agent hot path (traffic report, authorization poll, users snapshot)
 // repeats several times a second across the fleet.
-func hotPathFixture(t *testing.T) (*store.Store, *Server, *model.Server, *model.Inbound, *model.User) {
+func hotPathFixture(t testing.TB) (*store.Store, *Server, *model.Server, *model.Inbound, *model.User) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))

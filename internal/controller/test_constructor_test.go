@@ -55,13 +55,13 @@ func bindTestTelegramChannel(t *testing.T, server *Server, db *store.Store, chan
 
 // grantTestPlanInboundNode binds the user to a fresh plan containing the
 // inbound node so the effective access snapshot authorizes the user.
-func grantTestPlanInboundNode(t *testing.T, db *store.Store, userID, inboundID int64) {
+func grantTestPlanInboundNode(t testing.TB, db *store.Store, userID, inboundID int64) {
 	t.Helper()
 	grantTestPlanNode(t, db, userID, model.AssignableNodeInbound, inboundID)
 }
 
 // grantTestPlanNode binds the user to a fresh plan containing one node.
-func grantTestPlanNode(t *testing.T, db *store.Store, userID int64, nodeType model.AssignableNodeType, nodeID int64) {
+func grantTestPlanNode(t testing.TB, db *store.Store, userID int64, nodeType model.AssignableNodeType, nodeID int64) {
 	t.Helper()
 	ctx := context.Background()
 	plan := &model.SubscriptionPlan{Name: fmt.Sprintf("test-plan-%s-%d", nodeType, nodeID), Enabled: true}

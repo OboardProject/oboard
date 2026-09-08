@@ -7153,21 +7153,7 @@ func (s *Store) currentTrafficLeaseAllocation(ctx context.Context, serverID, use
 	if err := s.db.QueryRowContext(ctx, `select lease_bytes, consumed_bytes, coalesce(nullif(state,''),'active'), coalesce(valid_until,'') from traffic_leases where server_id=? and user_id=? and period_key=?`, serverID, userID, periodKey).Scan(&leaseBytes, &consumedBytes, &state, &validUntil); err != nil {
 		return TrafficLeaseAllocation{}, false
 	}
-	if state != trafficLeaseActive || validUntil == "" {
-		return TrafficLeaseAllocation{}, false
-	}
-	expiry, err := time.Parse(time.RFC3339Nano, validUntil)
-	if err != nil || !expiry.After(at.Add(trafficLeaseRefreshBefore)) {
-		return TrafficLeaseAllocation{}, false
-	}
-	remaining := leaseBytes - consumedBytes
-	if remaining < 0 {
-		remaining = 0
-	}
-	if remaining < trafficLeaseChunk(limitBytes)/2 {
-		return TrafficLeaseAllocation{}, false
-	}
-	return TrafficLeaseAllocation{RemainingBytes: remaining, ResetBytes: leaseBytes}, true
+	return trafficLeaseIsHealthy(leaseBytes, consumedBytes, state, validUntil, limitBytes, at)
 }
 
 func (s *Store) EnsureTrafficLeaseAllocation(ctx context.Context, serverID, userID int64, periodKey string, limitBytes, usedBytes int64) (TrafficLeaseAllocation, error) {
@@ -7312,32 +7298,18 @@ func (s *Store) ListTrafficPeriodsByUsers(ctx context.Context, userIDs []int64) 
 }
 
 // ListTrafficPeriodTransitionsByUsers loads period-key remaps for listing so
-// ResolveTrafficPeriodKey is not one query per user.
+// ResolveTrafficPeriodKey is not one query per user. It is the source→target
+// projection of the transition sets the runtime policy pass already loads.
 func (s *Store) ListTrafficPeriodTransitionsByUsers(ctx context.Context, userIDs []int64) (map[int64]map[string]string, error) {
-	out := map[int64]map[string]string{}
-	args, placeholders := int64IDQueryArgs(userIDs)
-	if len(args) == 0 {
-		return out, nil
-	}
-	rows, err := s.db.QueryContext(ctx, `select user_id,source_period_key,target_period_key from traffic_period_transitions where user_id in (`+placeholders+`)`, args...)
+	sets, err := s.TrafficPeriodTransitions(ctx, userIDs)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var userID int64
-		var source, target string
-		if err := rows.Scan(&userID, &source, &target); err != nil {
-			return nil, err
-		}
-		bySource := out[userID]
-		if bySource == nil {
-			bySource = map[string]string{}
-			out[userID] = bySource
-		}
-		bySource[source] = target
+	out := make(map[int64]map[string]string, len(sets))
+	for userID, set := range sets {
+		out[userID] = set.Forward()
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func int64IDQueryArgs(ids []int64) ([]any, string) {
@@ -7376,8 +7348,10 @@ func (s *Store) ResolveTrafficPeriodKey(ctx context.Context, userID int64, perio
 		current = next
 		changed = true
 	}
-	return "", false, errors.New("traffic period transition chain is too deep")
+	return "", false, errTrafficPeriodTransitionTooDeep
 }
+
+var errTrafficPeriodTransitionTooDeep = errors.New("traffic period transition chain is too deep")
 
 func (s *Store) PreviousTrafficPeriodKey(ctx context.Context, userID int64, targetPeriodKey string) (string, bool) {
 	var source string
@@ -7394,9 +7368,14 @@ const trafficPeriodConflictState = `case when traffic_periods.traffic_limit_byte
 // server, so the conflict branch only writes when the window, the limit, or the
 // derived state actually moved. Rewriting an identical row produced one WAL
 // frame per user per report and dominated the checkpoint load.
+// trafficPeriodUpsertSQL writes one desired accounting window. The WHERE clause
+// makes an unchanged window a no-op; trafficPeriodNeedsWrite mirrors it so the
+// batched form can skip the statement entirely.
+const trafficPeriodUpsertSQL = `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,0,0,?,'active',?) on conflict(user_id,period_key) do update set started_at=excluded.started_at,ends_at=excluded.ends_at,traffic_limit_bytes=excluded.traffic_limit_bytes,state=` + trafficPeriodConflictState + `,updated_at=excluded.updated_at where traffic_periods.started_at<>excluded.started_at or traffic_periods.ends_at<>excluded.ends_at or traffic_periods.traffic_limit_bytes<>excluded.traffic_limit_bytes or traffic_periods.state<>(` + trafficPeriodConflictState + `)`
+
 func (s *Store) EnsureTrafficPeriod(ctx context.Context, userID int64, periodKey string, start, end time.Time, limit int64) (model.TrafficPeriod, error) {
 	ts := now()
-	if _, err := s.db.ExecContext(ctx, `insert into traffic_periods(user_id,period_key,started_at,ends_at,upload_bytes,download_bytes,traffic_limit_bytes,state,updated_at) values(?,?,?,?,0,0,?,'active',?) on conflict(user_id,period_key) do update set started_at=excluded.started_at,ends_at=excluded.ends_at,traffic_limit_bytes=excluded.traffic_limit_bytes,state=`+trafficPeriodConflictState+`,updated_at=excluded.updated_at where traffic_periods.started_at<>excluded.started_at or traffic_periods.ends_at<>excluded.ends_at or traffic_periods.traffic_limit_bytes<>excluded.traffic_limit_bytes or traffic_periods.state<>(`+trafficPeriodConflictState+`)`, userID, periodKey, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), limit, ts); err != nil {
+	if _, err := s.db.ExecContext(ctx, trafficPeriodUpsertSQL, userID, periodKey, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), limit, ts); err != nil {
 		return model.TrafficPeriod{}, err
 	}
 	return s.GetTrafficPeriod(ctx, userID, periodKey)
