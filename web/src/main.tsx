@@ -213,7 +213,6 @@ import {
 import { ProviderEditor } from './components/ai-provider/ProviderEditor'
 import { capabilityOutputModeLabel } from './components/ai-provider/CapabilityBadge'
 import { auditHealthScoreTone, normalizeAuditHealthScore } from './ai-audit-score'
-import { getDashboardAttention, type DashboardAttention } from './dashboard-attention'
 import { dashboardServerTrafficBytes } from './dashboard-traffic'
 import {
   deploymentStatusFromSummary,
@@ -1691,24 +1690,6 @@ function sleep(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
-function DashboardAttentionNotice({ parts, className = '', onDismiss }: { parts: string[]; className?: string; onDismiss: () => void }) {
-  return (
-    <button
-      type="button"
-      className={`page-announce dismissable ${className}`.trim()}
-      onClick={onDismiss}
-      title="点击忽略此前问题"
-      aria-label={`需要关注：${parts.join('，')}，点击忽略此前问题`}
-    >
-      <Info size={16} />
-      <span className="page-announce-copy">
-        <strong>需要关注</strong>
-        <span> · {parts.join('，')}</span>
-      </span>
-    </button>
-  )
-}
-
 class SupersededAuthRequestError extends Error {
   constructor() {
     super('superseded authentication request')
@@ -1867,7 +1848,6 @@ export function App() {
   subscriptionPublicBaseURL = subscriptionBaseURL(String(data.subscription_public_base_url || data.settings?.subscription_relay_url || activeSubscriptionRelay?.public_url || ''), appControllerURL())
   const [restoringSession, setRestoringSession] = useState(() => !sessionStorage.getItem('oboard.token'))
   const [restoreError, setRestoreError] = useState('')
-  const [, setAttentionDismissRevision] = useState(0)
   const loadSeq = useRef(0)
   const pageRequestsRef = useRef(new PageDataRequestCoordinator<any>())
   // Per-tab page-data cache so tab switches can crossfade into last-known content
@@ -2519,15 +2499,6 @@ export function App() {
   const configurationSyncServers = Array.isArray(data.servers) ? data.servers : cachedTopologyData?.servers || []
   const configurationSyncInbounds = Array.isArray(data.inbounds) ? data.inbounds : cachedTopologyData?.inbounds || []
   const failedSync = configurationSync.filter(item => item.state === 'failed')
-  const dashboardAttention = getDashboardAttention(data)
-  const dashboardAttentionStorageKey = `oboard.dashboard-attention.${sessionUser?.id || data.current_user?.id || sessionUser?.username || data.current_user?.username || 'anonymous'}`
-  const dismissedDashboardAttention = localStorage.getItem(dashboardAttentionStorageKey) || ''
-  const showDashboardAttention = tab === 'dashboard' && dashboardAttention.parts.length > 0 && dismissedDashboardAttention !== dashboardAttention.fingerprint
-  const dismissDashboardAttention = () => {
-    if (!dashboardAttention.fingerprint) return
-    localStorage.setItem(dashboardAttentionStorageKey, dashboardAttention.fingerprint)
-    setAttentionDismissRevision(value => value + 1)
-  }
   const retryFailedSync = async () => {
     if (!failedSync.length || syncRetrying) return
     setSyncRetrying(true)
@@ -2679,13 +2650,6 @@ export function App() {
                 </m.div>
               </div>
               <div className="topbar-actions">
-                {showDashboardAttention && (
-                  <DashboardAttentionNotice
-                    parts={dashboardAttention.parts}
-                    className="topbar-attention"
-                    onDismiss={dismissDashboardAttention}
-                  />
-                )}
                 <ConfigurationSyncStatus
                   rows={configurationSync}
                   saving={mutationSaving}
@@ -2705,7 +2669,7 @@ export function App() {
             <div className="page-stage">
               <AnimatePresence initial={false} mode="popLayout">
                 <MotionPage key={chromeTab}>
-                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, showDashboardAttention ? dashboardAttention : null, dismissDashboardAttention, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus)}
+                  {renderTab(tab, data, client, load, loading, (message, tone) => showToast(setToast, message, tone), sessionUser, proxyPathTopbarTarget, realtimeStatus, serverTelemetryStatus, realtimeRevision, realtimeResources, handleControllerUpdateInProgressChange, patchPageData, proxyInboundFocus)}
                 </MotionPage>
               </AnimatePresence>
             </div>
@@ -3022,7 +2986,7 @@ $ _`}</pre>
   )
 }
 
-function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify: (message: string, tone?: ToastKind) => void = () => {}, sessionUser?: SessionUser | null, dashboardAttention?: DashboardAttention | null, dismissDashboardAttention?: () => void, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null) {
+function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load: PageLoad, loading?: boolean, notify: (message: string, tone?: ToastKind) => void = () => {}, sessionUser?: SessionUser | null, proxyPathTopbarTarget?: HTMLDivElement | null, realtimeStatus: RealtimeStatus = 'fallback', serverTelemetryStatus: RealtimeStatus = 'fallback', realtimeRevision = 0, realtimeResources: string[] = [], onControllerUpdateInProgressChange?: ControllerUpdateInProgressChange, patchPageData?: PageDataPatch, proxyInboundFocus?: ProxyInboundFocusRequest | null) {
   if (tab === 'account') return (
     <AccountPage
       data={data}
@@ -3043,7 +3007,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'dashboard') {
     const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
     return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
-      ? <Dashboard data={data} loading={loading} displayName={displayName} attention={dashboardAttention} dismissAttention={dismissDashboardAttention} />
+      ? <Dashboard data={data} loading={loading} displayName={displayName} />
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
   if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
@@ -6958,7 +6922,7 @@ function AuditLogs({ data, loading, embedded = false }: any) {
   return embedded ? content : <Panel title="审计日志">{content}</Panel>
 }
 
-function Dashboard({ data, loading, displayName: preferredDisplayName, attention, dismissAttention }: any) {
+function Dashboard({ data, loading, displayName: preferredDisplayName }: any) {
   const summary = data.summary || {}
   const servers = data.servers || []
   const displayName = String(preferredDisplayName || data.current_user?.nickname || data.current_user?.username || 'Admin')
@@ -7000,14 +6964,6 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, attention
 
   return (
     <div className="dashboard-page">
-      {attention?.parts?.length > 0 && (
-        <DashboardAttentionNotice
-          parts={attention.parts}
-          className="dashboard-attention"
-          onDismiss={dismissAttention}
-        />
-      )}
-
       <section className="dash-welcome">
         <div className="dash-welcome-copy">
           <div className="dash-welcome-kicker">

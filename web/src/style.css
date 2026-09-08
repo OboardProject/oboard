@@ -19841,47 +19841,6 @@ button[aria-busy="true"] {
 }
 
 /* ===== HyVPS-style dashboard & shell helpers ===== */
-.page-announce {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 18px;
-  padding: 12px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--surface-solid) 92%, var(--warning-soft));
-  color: var(--text-strong);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.page-announce.dismissable {
-  width: 100%;
-  box-shadow: none;
-  cursor: pointer;
-  text-align: left;
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.45;
-  letter-spacing: inherit;
-}
-.page-announce.dismissable:hover {
-  border-color: color-mix(in srgb, var(--warning) 28%, var(--border));
-  background: color-mix(in srgb, var(--surface-solid) 88%, var(--warning-soft));
-  box-shadow: none;
-  transform: none;
-}
-.page-announce.dismissable:active { transform: scale(0.995); }
-.page-announce.dismissable:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--warning) 40%, transparent);
-  outline-offset: 2px;
-}
-.page-announce-copy { min-width: 0; }
-.page-announce svg { flex: 0 0 auto; margin-top: 1px; color: var(--warning); }
-.page-announce strong { font-weight: 650; }
-.page-announce span { color: var(--text-secondary); }
-.page-announce-copy > strong { color: var(--text-strong); }
-.topbar-attention { display: none; }
-
 .dash-welcome {
   display: flex;
   align-items: flex-start;
@@ -20546,25 +20505,6 @@ button.deploy-status-pill.details-trigger:focus-visible {
   .user-overview-band { grid-template-columns: 1fr; }
   .user-overview-cell { min-height: 188px; border-left: 0; border-top: 1px solid var(--border); }
   .user-overview-cell:first-child { border-top: 0; }
-}
-@media (min-width: 1200px) {
-  .page-announce.topbar-attention {
-    display: inline-flex;
-    width: auto;
-    max-width: min(34vw, 440px);
-    min-height: 38px;
-    margin: 0;
-    padding: 8px 14px;
-    align-items: center;
-    border-radius: var(--radius-full);
-    white-space: nowrap;
-    overflow: hidden;
-  }
-  .topbar-attention .page-announce-copy {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .dashboard-attention { display: none; }
 }
 @media (max-width: 720px) {
   .main { --main-pad-x: 16px; --main-pad-top: 18px; padding: 0 var(--main-pad-x) 36px; }
