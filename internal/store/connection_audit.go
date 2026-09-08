@@ -1348,15 +1348,23 @@ func connectionAuditNodeFanout(reports []model.ConnectionAuditReport) int {
 	maximum := 0
 	for _, items := range byIdentity {
 		sort.SliceStable(items, func(i, j int) bool { return items[i].StartedAt.Before(items[j].StartedAt) })
+		// Sliding 10s window with a node occurrence map: enter increments,
+		// leave decrements, and distinct count is the map size. Equivalent to
+		// rescanning each window, but O(n) after the per-identity sort.
+		nodeCounts := map[string]int{}
 		for left, right := 0, 0; right < len(items); right++ {
+			rightNode := connectionAuditNode(items[right])
+			nodeCounts[rightNode]++
 			for left <= right && items[right].StartedAt.Sub(items[left].StartedAt) > 10*time.Second {
+				leftNode := connectionAuditNode(items[left])
+				if nodeCounts[leftNode] <= 1 {
+					delete(nodeCounts, leftNode)
+				} else {
+					nodeCounts[leftNode]--
+				}
 				left++
 			}
-			nodes := map[string]struct{}{}
-			for index := left; index <= right; index++ {
-				nodes[connectionAuditNode(items[index])] = struct{}{}
-			}
-			maximum = max(maximum, len(nodes))
+			maximum = max(maximum, len(nodeCounts))
 		}
 	}
 	return maximum

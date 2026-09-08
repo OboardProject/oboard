@@ -78,13 +78,21 @@ func (r *routingSnapshot) allowedAccessPairs() map[accessPair]struct{} {
 	return r.allowedPairs
 }
 
+type routingSnapshotBuild struct {
+	done  chan struct{}
+	entry *routingSnapshot
+	err   error
+}
+
 // routingSnapshot returns the current immutable routing snapshot, rebuilding
 // it only when the store revision changed or the entry aged past
 // routingSnapshotTTL. The database revision is authoritative: any routing
 // mutation bumps it in the same transaction as the write.
+//
+// Concurrent misses coalesce into one build that runs outside the management
+// lock so Agent traffic reports that already hold a fresh snapshot are not
+// blocked by a slow rebuild.
 func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) {
-	s.routingSnapshotMu.Lock()
-	defer s.routingSnapshotMu.Unlock()
 	revision, err := s.store.RoutingCacheRevision(ctx)
 	if err != nil {
 		return nil, err
@@ -92,6 +100,43 @@ func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) 
 	if current := s.routingSnapshotCache.Load(); current != nil && current.revision == revision && time.Since(current.builtAt) < routingSnapshotTTL {
 		return current, nil
 	}
+
+	s.routingSnapshotMu.Lock()
+	if current := s.routingSnapshotCache.Load(); current != nil && current.revision == revision && time.Since(current.builtAt) < routingSnapshotTTL {
+		s.routingSnapshotMu.Unlock()
+		return current, nil
+	}
+	if build := s.routingSnapshotInflight; build != nil {
+		s.routingSnapshotMu.Unlock()
+		select {
+		case <-build.done:
+			return build.entry, build.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	build := &routingSnapshotBuild{done: make(chan struct{})}
+	s.routingSnapshotInflight = build
+	s.routingSnapshotMu.Unlock()
+
+	entry, buildErr := s.buildRoutingSnapshotLocked(ctx, revision)
+	s.routingSnapshotMu.Lock()
+	if buildErr == nil {
+		if current := s.routingSnapshotCache.Load(); current == nil || current.revision <= entry.revision {
+			s.routingSnapshotCache.Store(entry)
+		} else {
+			entry = current
+		}
+	}
+	build.entry = entry
+	build.err = buildErr
+	s.routingSnapshotInflight = nil
+	close(build.done)
+	s.routingSnapshotMu.Unlock()
+	return entry, buildErr
+}
+
+func (s *Server) buildRoutingSnapshotLocked(ctx context.Context, revision uint64) (*routingSnapshot, error) {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
 		return nil, err
@@ -104,9 +149,14 @@ func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) 
 	if err != nil {
 		return nil, err
 	}
-	entry := buildRoutingSnapshot(revision, data, snap)
-	s.routingSnapshotCache.Store(entry)
-	return entry, nil
+	currentRevision, err := s.store.RoutingCacheRevision(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if currentRevision != revision {
+		revision = currentRevision
+	}
+	return buildRoutingSnapshot(revision, data, snap), nil
 }
 
 // invalidateRoutingSnapshot drops the cached entry so the next use rebuilds

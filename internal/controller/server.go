@@ -213,9 +213,10 @@ type Server struct {
 	// routingSnapshotCache is the immutable FullRoutingConfigData + effective
 	// access snapshot cache, keyed by the store routing revision.
 	routingSnapshotCache atomic.Pointer[routingSnapshot]
-	// routingSnapshotMu serializes rebuilds so a burst of Agent reports pays
-	// for one snapshot instead of one per concurrent request.
-	routingSnapshotMu sync.Mutex
+	// routingSnapshotMu protects inflight coalescing; the build itself runs
+	// outside the lock so cache hits are not blocked by a slow rebuild.
+	routingSnapshotMu       sync.Mutex
+	routingSnapshotInflight *routingSnapshotBuild
 	// runtimeUserPackages caches the generated per-server runtime user package
 	// so a snapshot pull and the recovery scan share one configuration build.
 	runtimeUserPackages runtimeUserPackageCache
@@ -410,6 +411,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/force-finish", s.auth(s.controllerUpdateForceFinish, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/controller-update/diagnostics", s.auth(s.controllerUpdateDiagnostics, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups", s.auth(s.controllerUpdateBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups/", s.auth(s.controllerUpdateBackupSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
@@ -6672,6 +6674,10 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		tz = "Asia/Shanghai"
 	}
 	policies := map[int64]model.TrafficRuntimePolicy{}
+	// One EnsureTrafficPeriod / lease allocation per (user, resolved period)
+	// inside this response — never redo the same window when the input user
+	// list somehow repeats an id.
+	seenPeriods := map[string]struct{}{}
 	for _, user := range users {
 		if user.ID <= 0 || user.Status != "active" || strings.HasPrefix(user.Username, "__oboard_") {
 			continue
@@ -6687,6 +6693,11 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 		if err != nil {
 			return nil, err
 		}
+		periodIndex := store.TrafficLedgerPeriodKey(user.ID, periodKey)
+		if _, seen := seenPeriods[periodIndex]; seen {
+			continue
+		}
+		seenPeriods[periodIndex] = struct{}{}
 		period, err := s.store.EnsureTrafficPeriod(ctx, user.ID, periodKey, start, end, limit.TrafficLimitBytes)
 		if err != nil {
 			return nil, err

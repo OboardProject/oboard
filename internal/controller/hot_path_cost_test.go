@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -156,5 +157,33 @@ func TestAuthorizationLeaseRenewalOpensNoWriteTransaction(t *testing.T) {
 	}
 	if len(revoked.Grants) != 0 || revoked.Revision != lease.Revision+1 {
 		t.Fatalf("revocation was hidden by the renewal cache: %+v", revoked)
+	}
+}
+
+// Concurrent package misses for one server must coalesce into a single build.
+func TestRuntimeUserPackageConcurrentMissBuildsOnce(t *testing.T) {
+	ctx := context.Background()
+	_, srv, server, _, _ := hotPathFixture(t)
+	before := srv.runtimeUserPackageBuildCount()
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := srv.currentRuntimeUserPackage(ctx, *server, 1)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	builds := srv.runtimeUserPackageBuildCount() - before
+	if builds != 1 {
+		t.Fatalf("concurrent misses built %d packages, want 1", builds)
 	}
 }

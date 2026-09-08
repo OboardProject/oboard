@@ -30,8 +30,8 @@ func TestNewDatabaseUsesIncrementalAutoVacuum(t *testing.T) {
 	if got := sqlitePragmaInt(t, s, "auto_vacuum"); got != sqliteAutoVacuumIncremental {
 		t.Fatalf("auto_vacuum = %d, want %d", got, sqliteAutoVacuumIncremental)
 	}
-	if got := sqlitePragmaInt(t, s, "synchronous"); got != 1 {
-		t.Fatalf("synchronous = %d, want NORMAL (1) in WAL mode", got)
+	if got := sqlitePragmaInt(t, s, "synchronous"); got != 2 {
+		t.Fatalf("synchronous = %d, want FULL (2) for accounting durability", got)
 	}
 	if got := sqlitePragmaInt(t, s, "cache_size"); got != -int64(defaultSQLiteCacheKB) {
 		t.Fatalf("cache_size = %d, want -%d", got, defaultSQLiteCacheKB)

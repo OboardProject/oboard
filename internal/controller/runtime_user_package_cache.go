@@ -9,34 +9,63 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-const runtimeUserPackageTTL = 30 * time.Second
+const (
+	runtimeUserPackageTTL         = 30 * time.Second
+	runtimeUserPackageMaxEntries  = 512
+	runtimeUserPackageMaxBuilds   = 4
+	runtimeUserPackageBuildBudget = coalesceBuildTimeout
+)
 
-type runtimeUserPackageEntry struct {
-	pkg     core.RuntimeUserPackage
-	builtAt time.Time
+type runtimeUserPackageValue struct {
+	pkg             core.RuntimeUserPackage
+	routingRevision uint64
 }
 
 type runtimeUserPackageCache struct {
-	mu              sync.Mutex
+	once   sync.Once
+	cache  *coalesceCache[int64, runtimeUserPackageValue]
+	genMu  sync.Mutex
 	routingRevision uint64
 	policyRevision  uint64
-	entries         map[int64]runtimeUserPackageEntry
+	generation      uint64
+}
+
+func (c *runtimeUserPackageCache) init() {
+	c.once.Do(func() {
+		c.cache = newCoalesceCache[int64, runtimeUserPackageValue](runtimeUserPackageTTL, runtimeUserPackageMaxEntries, runtimeUserPackageMaxBuilds)
+		c.cache.maxStale = 0 // enforcement path: never serve expired packages
+	})
+}
+
+func cloneRuntimeUserPackage(pkg core.RuntimeUserPackage) core.RuntimeUserPackage {
+	out := pkg
+	if pkg.Scope != nil {
+		out.Scope = append([]string(nil), pkg.Scope...)
+	}
+	if pkg.Entries != nil {
+		out.Entries = append([]model.UsersInstallEntry(nil), pkg.Entries...)
+	}
+	if pkg.Chunk != nil {
+		chunk := *pkg.Chunk
+		out.Chunk = &chunk
+	}
+	return out
 }
 
 // Building a package regenerates the whole server configuration, which a
 // snapshot pull, the periodic recovery scan, and every wake of the sync worker
-// each used to pay for separately. Pulls and scans now share one build, and the
-// lock also collapses a fleet-wide burst into a single generation instead of
-// one per concurrent request.
+// each used to pay for separately. Concurrent misses for one server coalesce
+// into a single build that runs outside the cache management lock, so a slow
+// build on one server cannot block a cache hit for another.
 //
-// Routing and quota-policy edits invalidate the entry immediately, so only
+// Routing and quota-policy edits invalidate entries immediately, so only
 // time-driven access transitions can be up to the TTL stale here; the
 // authorization lease still evaluates those deadlines per renewal and remains
 // the enforcement boundary.
 func (s *Server) currentRuntimeUserPackage(ctx context.Context, server model.Server, revision int64) (core.RuntimeUserPackage, uint64, error) {
 	c := &s.runtimeUserPackages
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.init()
+
 	routingRevision, err := s.store.RoutingCacheRevision(ctx)
 	if err != nil {
 		return core.RuntimeUserPackage{}, 0, err
@@ -45,30 +74,59 @@ func (s *Server) currentRuntimeUserPackage(ctx context.Context, server model.Ser
 	if err != nil {
 		return core.RuntimeUserPackage{}, 0, err
 	}
-	if c.routingRevision != routingRevision || c.policyRevision != policyRevision {
-		c.entries = nil
-		c.routingRevision, c.policyRevision = routingRevision, policyRevision
+
+	generation := c.observeRevisions(routingRevision, policyRevision)
+	entry, err := c.cache.getOrBuild(ctx, server.ID, generation, func(buildCtx context.Context) (runtimeUserPackageValue, time.Time, error) {
+		dataAsOf := time.Now().UTC()
+		pkg, buildErr := s.buildRuntimeUserPackage(buildCtx, server, revision)
+		if buildErr != nil {
+			return runtimeUserPackageValue{}, time.Time{}, buildErr
+		}
+		// Re-check revisions after the expensive build so a superseded result
+		// is not published as current.
+		currentRouting, revErr := s.store.RoutingCacheRevision(buildCtx)
+		if revErr != nil {
+			return runtimeUserPackageValue{}, time.Time{}, revErr
+		}
+		currentPolicy, revErr := s.store.TrafficPolicyRevision(buildCtx)
+		if revErr != nil {
+			return runtimeUserPackageValue{}, time.Time{}, revErr
+		}
+		if currentRouting != routingRevision || currentPolicy != policyRevision {
+			// Still return the value to waiters that started under the old
+			// revisions; finish() will refuse to overwrite a newer generation.
+			return runtimeUserPackageValue{pkg: cloneRuntimeUserPackage(pkg), routingRevision: currentRouting}, dataAsOf, nil
+		}
+		return runtimeUserPackageValue{pkg: cloneRuntimeUserPackage(pkg), routingRevision: routingRevision}, dataAsOf, nil
+	})
+	if err != nil {
+		return core.RuntimeUserPackage{}, 0, err
 	}
-	now := time.Now()
-	entry, found := c.entries[server.ID]
-	if !found || now.Sub(entry.builtAt) < 0 || now.Sub(entry.builtAt) >= runtimeUserPackageTTL {
-		pkg, err := s.buildRuntimeUserPackage(ctx, server, revision)
-		if err != nil {
-			return core.RuntimeUserPackage{}, 0, err
-		}
-		if c.entries == nil {
-			c.entries = make(map[int64]runtimeUserPackageEntry)
-		}
-		for id, old := range c.entries {
-			if now.Sub(old.builtAt) >= runtimeUserPackageTTL {
-				delete(c.entries, id)
-			}
-		}
-		entry = runtimeUserPackageEntry{pkg: pkg, builtAt: now}
-		c.entries[server.ID] = entry
-	}
-	pkg := entry.pkg
+	pkg := cloneRuntimeUserPackage(entry.value.pkg)
 	pkg.UsersRevision = revision
 	pkg.UsersDigest, err = core.UsersDigest(revision, pkg.Scope, pkg.Entries)
-	return pkg, routingRevision, err
+	return pkg, entry.value.routingRevision, err
+}
+
+func (c *runtimeUserPackageCache) observeRevisions(routingRevision, policyRevision uint64) uint64 {
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	if c.routingRevision != routingRevision || c.policyRevision != policyRevision {
+		c.routingRevision = routingRevision
+		c.policyRevision = policyRevision
+		c.generation++
+		if c.cache != nil {
+			c.cache.clear()
+		}
+	}
+	if c.generation == 0 {
+		c.generation = 1
+	}
+	return c.generation
+}
+
+// runtimeUserPackageBuildCount exposes coalesced build attempts for tests.
+func (s *Server) runtimeUserPackageBuildCount() int64 {
+	s.runtimeUserPackages.init()
+	return s.runtimeUserPackages.cache.builds.Load()
 }

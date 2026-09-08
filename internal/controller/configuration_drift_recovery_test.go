@@ -180,6 +180,12 @@ func TestAgentTrafficReportNeverTriggersDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	beforeTasks := agentTaskCount(t, db, server.ID)
+	// Establish the config-version sequence, then prove traffic reports do not
+	// call NextConfigVersion / mark configuration sync / queue deployments.
+	if _, err := db.NextConfigVersion(ctx); err != nil {
+		t.Fatal(err)
+	}
+	beforeSequence := readConfigVersionSequence(t, db)
 
 	postAgentTraffic(t, h, server.AgentID, "token-a", ledgerTrafficBody(user.ID, inbound.ID, "tr-no-deploy", 0, 100, 0, 200), http.StatusOK)
 	stored, err := db.GetUser(ctx, user.ID)
@@ -209,6 +215,24 @@ func TestAgentTrafficReportNeverTriggersDeployment(t *testing.T) {
 	if len(states) != 0 {
 		t.Fatalf("traffic report created configuration sync state: %#v", states)
 	}
+	if afterSequence := readConfigVersionSequence(t, db); afterSequence != beforeSequence {
+		t.Fatalf("traffic advanced config version sequence: %q -> %q", beforeSequence, afterSequence)
+	}
+	if got := countTasksByType(t, db, model.AgentTaskTypeApplyDeployment); got != 0 {
+		t.Fatalf("traffic queued apply_deployment: %d", got)
+	}
+	if got := countTasksByType(t, db, model.AgentTaskTypeApplyCoreConfig); got != 0 {
+		t.Fatalf("traffic queued apply_core_config: %d", got)
+	}
+}
+
+func readConfigVersionSequence(t *testing.T, db *store.Store) string {
+	t.Helper()
+	value, err := db.GetSetting(context.Background(), "system.config_version_sequence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func agentTaskCount(t *testing.T, db *store.Store, serverID int64) int {

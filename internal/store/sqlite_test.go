@@ -48,19 +48,19 @@ func TestSQLiteDSNPreservesSupportedPathsAndQueries(t *testing.T) {
 		if !strings.Contains(dsn, "_pragma=busy_timeout%285000%29") || !strings.Contains(dsn, "_pragma=foreign_keys%281%29") || !strings.Contains(dsn, "_txlock=immediate") || !strings.Contains(dsn, "_pragma=journal_size_limit%2867108864%29") {
 			t.Fatalf("sqliteDSN(%q) = %q, missing pragmas", path, dsn)
 		}
-		// WAL commits stop fsyncing individually, and the page cache is sized
-		// for an installation that records traffic, metrics and audits.
-		if !strings.Contains(dsn, "_pragma=synchronous%281%29") || !strings.Contains(dsn, "_pragma=cache_size%28-16384%29") {
+		// Accounting and authorization commits fsync the WAL (FULL). Compare
+		// benchmarks against the prior NORMAL (1) setting explicitly.
+		if !strings.Contains(dsn, "_pragma=synchronous%282%29") || !strings.Contains(dsn, "_pragma=cache_size%28-16384%29") {
 			t.Fatalf("sqliteDSN(%q) = %q, missing storage tuning pragmas", path, dsn)
 		}
-		// Restore runs in DELETE journal mode, where NORMAL does not carry the
-		// same guarantee, so it keeps the FULL default.
+		// Restore runs in DELETE journal mode and keeps the driver FULL default
+		// by omitting an explicit synchronous pragma.
 		restoreDSN, err := sqliteDSN(path, 5*time.Second, defaultSQLiteCacheKB, true)
 		if err != nil {
 			t.Fatalf("sqliteDSN(%q, restore): %v", path, err)
 		}
 		if strings.Contains(restoreDSN, "synchronous") {
-			t.Fatalf("sqliteDSN(%q, restore) = %q, relaxed durability during restore", path, restoreDSN)
+			t.Fatalf("sqliteDSN(%q, restore) = %q, unexpected synchronous override during restore", path, restoreDSN)
 		}
 		if strings.Contains(dsn, "_txlock=deferred") {
 			t.Fatalf("sqliteDSN(%q) = %q, deferred transaction override survived", path, dsn)

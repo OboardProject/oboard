@@ -3247,6 +3247,9 @@ type CombinedAuditUserSummary struct {
 type CombinedAuditOverview struct {
 	WindowHours       int                        `json:"window_hours"`
 	GeneratedAt       time.Time                  `json:"generated_at"`
+	BuildCompletedAt  time.Time                  `json:"build_completed_at,omitempty"`
+	CacheExpiresAt    time.Time                  `json:"cache_expires_at,omitempty"`
+	CacheStatus       string                     `json:"cache_status,omitempty"`
 	ElevatedRiskCount int                        `json:"elevated_risk_count"`
 	SuspendedCount    int                        `json:"suspended_count"`
 	Users             []CombinedAuditUserSummary `json:"users"`

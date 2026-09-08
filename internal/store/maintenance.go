@@ -207,6 +207,9 @@ func (s *Store) CheckpointWAL(ctx context.Context) (MaintenanceResult, error) {
 }
 
 func (s *Store) recordWALCheckpoint(ctx context.Context, result *MaintenanceResult) error {
+	// wal_checkpoint returns (busy, log, checkpointed). busy=0 does not mean
+	// every frame was backfilled into the main database; compare log vs
+	// checkpointed. A database with no WAL reports (0, 0, 0).
 	if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(passive)`).Scan(
 		&result.WALBusyFrames,
 		&result.WALLogFrames,
@@ -214,12 +217,15 @@ func (s *Store) recordWALCheckpoint(ctx context.Context, result *MaintenanceResu
 	); err != nil {
 		return fmt.Errorf("passive WAL checkpoint: %w", err)
 	}
-	// Truncate only after passive already copied every frame. A truncating
-	// checkpoint on a multi-GB WAL with busy readers waits for those readers
-	// and then materializes the log into the main file; that can fill a nearly
-	// full disk. journal_size_limit plus a successful truncate here only
-	// shrinks leftover WAL after the pages are already in the database.
-	if result.WALBusyFrames == 0 && result.WALLogFrames > maintenanceWALTruncateFrames {
+	pending := result.WALLogFrames - result.WALCheckpointedFrames
+	if pending < 0 {
+		pending = 0
+	}
+	// Truncate only when passive already advanced through the log and the
+	// remaining size still exceeds the threshold. A truncating checkpoint
+	// against busy readers waits for them and can materialize a multi-GB WAL
+	// into the main file on a nearly full disk.
+	if result.WALBusyFrames == 0 && pending == 0 && result.WALLogFrames > maintenanceWALTruncateFrames {
 		var busy, log, checkpointed int
 		if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
 			result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames = busy, log, checkpointed

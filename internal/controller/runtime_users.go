@@ -128,31 +128,76 @@ func (s *Server) reconcileRuntimeUsersSync(ctx context.Context, full bool) {
 }
 
 func (s *Server) buildRuntimeUserPackage(ctx context.Context, server model.Server, revision int64) (core.RuntimeUserPackage, error) {
-	data, err := s.store.FullRoutingConfigData(ctx)
+	span := startHotPath("runtime_user_package_build")
+	var err error
+	defer func() { span.end(err) }()
+
+	// Prefer the shared routing snapshot so concurrent package builds across
+	// servers reuse one consistent FullRoutingConfig + access view instead of
+	// each paying FullRoutingConfigData + credential decrypt again.
+	snap, err := s.routingSnapshot(ctx)
 	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
+	pkg, err := s.projectRuntimeUserPackage(ctx, server, snap.data, revision)
+	if err != nil {
+		return core.RuntimeUserPackage{}, err
+	}
+	return pkg, nil
+}
+
+// projectRuntimeUserPackage builds the installable user package without the
+// deploy-side side effects of a full core-config generation: no certificate
+// materialization, no DNS policy hard-fail, no port allocation persistence,
+// and no authorization-lease attachment.
+func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Server, data store.FullRoutingConfig, revision int64) (core.RuntimeUserPackage, error) {
+	data, err := s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return core.RuntimeUserPackage{}, err
+	}
+	resolveRoutingProxyPathNames(&data)
+	bindings, pathBindings, userPolicies, err := s.runtimeAccessBindings(ctx, data)
+	if err != nil {
+		return core.RuntimeUserPackage{}, err
+	}
+	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, bindings, pathBindings)
+	trafficPolicies, err := s.trafficRuntimePolicies(ctx, server.ID, data.Users, accountingUsers, userPolicies)
+	if err != nil {
+		return core.RuntimeUserPackage{}, err
+	}
+	// Read-only ledger: generation may consult existing allocations but this
+	// path must never persist new ports.
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
-	generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
+	var runtimeUsers *core.RuntimeUserPackage
+	// DNS is optional for user projection. BuildDNSConfig already substitutes a
+	// default state when nil, so a missing per-server policy must not block
+	// delivering users for an otherwise valid topology.
+	var dnsState *core.DNSConfigState
+	if state, dnsErr := core.DNSConfigStateForServer(server.ID, data.DNSLists, data.ServerDNSPolicies); dnsErr == nil {
+		dnsState = state
+	}
+	_, err = core.GenerateServerConfigWithOptions(server, data.Inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
+		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds,
+		ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, Servers: data.Servers, Inbounds: data.Inbounds,
+		WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
+		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		PortLedger: ledger, RuntimeUsersOut: &runtimeUsers,
+	})
 	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
-	if generated.RuntimeUsers != nil {
-		pkg := *generated.RuntimeUsers
-		pkg.UsersRevision = revision
-		digest, err := core.UsersDigest(revision, pkg.Scope, pkg.Entries)
-		if err != nil {
-			return core.RuntimeUserPackage{}, err
-		}
-		pkg.UsersDigest = digest
-		pkg.Mode = "full"
-		return pkg, nil
+	if runtimeUsers == nil {
+		return core.RuntimeUserPackage{UsersRevision: revision, Mode: "full"}, nil
 	}
-	var config core.SingBoxConfig
-	if err := json.Unmarshal([]byte(generated.Config), &config); err != nil {
+	pkg := *runtimeUsers
+	pkg.UsersRevision = revision
+	digest, err := core.UsersDigest(revision, pkg.Scope, pkg.Entries)
+	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
-	return core.RuntimeUserPackageFromConfig(config, revision)
+	pkg.UsersDigest = digest
+	pkg.Mode = "full"
+	return pkg, nil
 }
 
 func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64) {

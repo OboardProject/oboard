@@ -230,13 +230,12 @@ func sqliteDSN(path string, busyTimeout time.Duration, cacheKB int, restore bool
 	pragmas.Add("_pragma", fmt.Sprintf("mmap_size(%d)", sqliteMmapBytes))
 	pragmas.Add("_pragma", fmt.Sprintf("journal_size_limit(%d)", sqliteJournalSizeLimitBytes))
 	if !restore {
-		// synchronous=NORMAL is the WAL-mode setting: commits no longer fsync
-		// individually, and durability is provided by the checkpoint. The
-		// window it gives up is losing the most recent commits on host power
-		// loss or kernel panic - not corruption. Restore runs in DELETE
-		// journal mode, where NORMAL does not carry that guarantee, so it
-		// keeps the FULL default.
-		pragmas.Add("_pragma", "synchronous(1)")
+		// synchronous=FULL: every commit fsyncs the WAL. Accounting confirmation
+		// and authorization state share this connection pool, so durability for
+		// those writes is preferred over the NORMAL-mode host-crash window.
+		// Performance reports must compare against the prior NORMAL (1) setting
+		// explicitly and must not attribute FULL's cost as algorithmic regression.
+		pragmas.Add("_pragma", "synchronous(2)")
 	}
 	// Store transactions are read-modify-write operations. Reserving the single
 	// SQLite writer before their first read avoids deferred-transaction upgrade
@@ -1260,7 +1259,59 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureDefaultDNSLists(ctx); err != nil {
 		return err
 	}
+	if err := s.backfillServerDNSPolicies(ctx); err != nil {
+		return err
+	}
 	return s.SeedConnectivityHistory(ctx, time.Now().UTC())
+}
+
+// backfillServerDNSPolicies repairs servers that hold no DNS policy row.
+// CreateServer writes one in the same transaction, but resetLegacyDNSSchema
+// drops the whole table when it retires the legacy DNS schema, and nothing ever
+// recreated the rows for servers that already existed. Those servers then fail
+// every core-config build with "server N has no dns policy", which breaks
+// users-snapshot and runtime user delivery for that node permanently.
+//
+// A missing policy is repaired from the same protected default lists a new
+// server binds, so the panel and the node agree on one visible, editable
+// policy. Generating config from an implicit default instead would leave the
+// node resolving through resolvers the panel never shows.
+func (s *Store) backfillServerDNSPolicies(ctx context.Context) error {
+	var missing int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from servers s where not exists(select 1 from server_dns_policies p where p.server_id=s.id)`).Scan(&missing); err != nil {
+		return err
+	}
+	if missing == 0 {
+		return nil
+	}
+	var encryptedID, bootstrapID int64
+	if err := s.db.QueryRowContext(ctx, `select id from dns_lists where kind=? and protected=1 and enabled=1 order by id limit 1`, model.DNSListEncrypted).Scan(&encryptedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Without a protected default there is nothing correct to bind. A
+			// panel that refuses to start would be worse than a node that keeps
+			// reporting the existing error, so this only warns.
+			log.Printf("server dns policy backfill skipped for %d server(s): no protected encrypted DNS list", missing)
+			return nil
+		}
+		return err
+	}
+	if err := s.db.QueryRowContext(ctx, `select id from dns_lists where kind=? and protected=1 and enabled=1 order by id limit 1`, model.DNSListBootstrap).Scan(&bootstrapID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			log.Printf("server dns policy backfill skipped for %d server(s): no protected bootstrap DNS list", missing)
+			return nil
+		}
+		return err
+	}
+	ts := now()
+	result, err := s.db.ExecContext(ctx, `insert into server_dns_policies(server_id,encrypted_list_id,bootstrap_list_id,revision,strategy,auto_test,test_interval_seconds,created_at,updated_at)
+		select s.id,?,?,1,'auto','first_apply',3600,?,? from servers s
+		where not exists(select 1 from server_dns_policies p where p.server_id=s.id)`, encryptedID, bootstrapID, ts, ts)
+	if err != nil {
+		return err
+	}
+	repaired, _ := result.RowsAffected()
+	log.Printf("server dns policy backfill created %d missing policy row(s)", repaired)
+	return nil
 }
 
 func (s *Store) migrateSnellServerPSK(ctx context.Context) error {
@@ -7542,6 +7593,8 @@ func deleteSQLForTable(t string) (string, bool) {
 		return `delete from tunnels where id=?`, true
 	case "notification_channels":
 		return `delete from notification_channels where id=?`, true
+	case "server_dns_policies":
+		return `delete from server_dns_policies where server_id=?`, true
 	default:
 		return "", false
 	}

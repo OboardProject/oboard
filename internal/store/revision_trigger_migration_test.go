@@ -68,7 +68,7 @@ func TestCommitTrafficLedgerDoesNotAdvanceConfigurationOrRoutingRevision(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: map[int64]model.TrafficPeriod{user.ID: period}, Reports: []model.TrafficReport{v2Report("tr-storm", server.ID, user.ID, 0, 100, 0, 200)}})
+	result, err := s.CommitTrafficLedger(ctx, TrafficLedgerCommit{ServerID: server.ID, Periods: TrafficPeriods(period), Reports: []model.TrafficReport{v2Report("tr-storm", server.ID, user.ID, 0, 100, 0, 200)}})
 	if err != nil {
 		t.Fatal(err)
 	}

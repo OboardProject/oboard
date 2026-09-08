@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,14 +30,40 @@ const (
 type TrafficLedgerCommit struct {
 	ServerID        int64
 	AgentInstanceID string
-	Periods         map[int64]model.TrafficPeriod
-	Streams         []model.TrafficStreamObservation
-	Reports         []model.TrafficReport
+	// Periods is keyed by TrafficLedgerPeriodKey(user_id, resolved_period_key).
+	// A single batch may span a period boundary, so user_id alone is not enough.
+	Periods map[string]model.TrafficPeriod
+	Streams []model.TrafficStreamObservation
+	Reports []model.TrafficReport
 }
 
 type TrafficLedgerResult struct {
 	StreamCheckpoints []model.TrafficStreamCheckpoint
 	AcceptedReports   []model.TrafficAcceptedReport
+}
+
+// TrafficLedgerPeriodKey identifies one user billing window inside a ledger batch.
+func TrafficLedgerPeriodKey(userID int64, periodKey string) string {
+	return strconv.FormatInt(userID, 10) + "\x00" + strings.TrimSpace(periodKey)
+}
+
+// TrafficPeriods builds the commit Periods map from one or more windows.
+func TrafficPeriods(periods ...model.TrafficPeriod) map[string]model.TrafficPeriod {
+	out := make(map[string]model.TrafficPeriod, len(periods))
+	for _, period := range periods {
+		if period.UserID <= 0 || strings.TrimSpace(period.PeriodKey) == "" {
+			continue
+		}
+		out[TrafficLedgerPeriodKey(period.UserID, period.PeriodKey)] = period
+	}
+	return out
+}
+
+func (commit TrafficLedgerCommit) periodFor(userID int64, periodKey string) model.TrafficPeriod {
+	if len(commit.Periods) == 0 {
+		return model.TrafficPeriod{}
+	}
+	return commit.Periods[TrafficLedgerPeriodKey(userID, periodKey)]
 }
 
 func (s *Store) migrateTrafficLedgerV2(ctx context.Context) error {
@@ -247,7 +274,7 @@ func (s *Store) CommitTrafficLedger(ctx context.Context, commit TrafficLedgerCom
 	}
 	touchedUsers := map[int64]string{}
 	for _, report := range commit.Reports {
-		accepted, checkpoint, err := commitTrafficReportTx(tx, ctx, commit.ServerID, commit.AgentInstanceID, report, commit.Periods[report.UserID], ts)
+		accepted, checkpoint, err := commitTrafficReportTx(tx, ctx, commit.ServerID, commit.AgentInstanceID, report, commit.periodFor(report.UserID, report.PeriodKey), ts)
 		if err != nil {
 			return result, err
 		}

@@ -65,7 +65,9 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	snapshot := routing.snapshot
 	planPolicies := snapshot.UserLimitPolicyMap()
 	access := newTrafficReportAccess(server, routing)
-	periods := map[int64]model.TrafficPeriod{}
+	// Bounded per-request indexes: period work is keyed by (user_id,
+	// resolved_period_key) because one batch can cross a billing boundary.
+	batch := newTrafficLedgerBatch(len(req.Reports) + len(req.Streams))
 	reports := make([]model.TrafficReport, 0, len(req.Reports))
 	// Reports whose user, binding, inbound, or path is gone can never be
 	// accounted. They are answered as terminally rejected so the Agent drops
@@ -73,7 +75,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	rejected := make([]model.TrafficAcceptedReport, 0)
 	tailAccepted := make([]model.TrafficAcceptedReport, 0)
 	for _, item := range req.Reports {
-		report, period, err := s.validateAgentTrafficRangeItem(r, server, item, req.PeriodKey, access, planPolicies, loc)
+		report, period, err := s.validateAgentTrafficRangeItemCached(r, server, item, req.PeriodKey, access, planPolicies, loc, batch)
 		if err != nil {
 			var rejection *trafficRejection
 			if errors.As(err, &rejection) {
@@ -86,10 +88,10 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 					continue
 				}
 				if ok && kind == trafficTailActiveCheckpoint {
-					report, period, err = s.validateAgentTrafficRangeItemAllowInactive(r, server, item, req.PeriodKey, access, planPolicies, loc)
+					report, period, err = s.validateAgentTrafficRangeItemAllowInactiveCached(r, server, item, req.PeriodKey, access, planPolicies, loc, batch)
 					if err == nil {
 						reports = append(reports, report)
-						periods[report.UserID] = period
+						batch.rememberPeriod(period)
 						continue
 					}
 					if !errors.As(err, &rejection) {
@@ -108,7 +110,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 			return
 		}
 		reports = append(reports, report)
-		periods[report.UserID] = period
+		batch.rememberPeriod(period)
 	}
 	streams := make([]model.TrafficStreamObservation, 0, len(req.Streams))
 	skippedStreams := 0
@@ -121,10 +123,8 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 				if ok && kind == trafficTailActiveCheckpoint {
 					if err := access.validateStreamAllowInactive(stream); err == nil {
 						streams = append(streams, stream)
-						if _, exists := periods[stream.UserID]; !exists {
-							if period, periodErr := s.trafficPeriodForUser(r, stream.UserID, stream.PeriodKey, planPolicies, loc); periodErr == nil {
-								periods[stream.UserID] = period
-							}
+						if period, periodErr := batch.periodFor(r, s, stream.UserID, stream.PeriodKey, planPolicies, loc); periodErr == nil {
+							batch.rememberPeriod(period)
 						}
 						continue
 					}
@@ -142,10 +142,8 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 			return
 		}
 		streams = append(streams, stream)
-		if _, ok := periods[stream.UserID]; !ok {
-			if period, periodErr := s.trafficPeriodForUser(r, stream.UserID, stream.PeriodKey, planPolicies, loc); periodErr == nil {
-				periods[stream.UserID] = period
-			}
+		if period, periodErr := batch.periodFor(r, s, stream.UserID, stream.PeriodKey, planPolicies, loc); periodErr == nil {
+			batch.rememberPeriod(period)
 		}
 	}
 	if skippedStreams > 0 {
@@ -156,7 +154,7 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 			skippedStreams, server.AgentID, server.ID, skippedStreamReason)
 	}
 	result, err := s.store.CommitTrafficLedger(r.Context(), store.TrafficLedgerCommit{
-		ServerID: server.ID, AgentInstanceID: strings.TrimSpace(req.AgentInstanceID), Periods: periods, Streams: streams, Reports: reports,
+		ServerID: server.ID, AgentInstanceID: strings.TrimSpace(req.AgentInstanceID), Periods: batch.periods, Streams: streams, Reports: reports,
 	})
 	if err != nil {
 		log.Printf("agent traffic sync failed stage=ledger_commit server_id=%d agent=%q reports=%d streams=%d error=%v", server.ID, server.AgentID, len(req.Reports), len(req.Streams), err)
@@ -174,14 +172,30 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	for range tailAccepted {
 		s.trafficReportsAcceptedTotal.Add(1)
 	}
+	reportUserByID := make(map[string]int64, len(reports))
+	for _, report := range reports {
+		reportUserByID[report.ReportID] = report.UserID
+	}
+	// Quota notifications are evaluated once per accepted (user, period), not
+	// once per report that landed in that window.
 	for _, accepted := range result.AcceptedReports {
 		if accepted.Status != "accepted" {
 			continue
 		}
-		if u, ok := access.userByID[userIDFromAccepted(accepted, reports)]; ok {
-			if period, err := s.store.GetTrafficPeriod(r.Context(), u.ID, accepted.PeriodKey); err == nil {
-				s.notifyTrafficQuotaExceeded(r.Context(), u, period)
-			}
+		userID := reportUserByID[accepted.ReportID]
+		if userID <= 0 {
+			continue
+		}
+		notifyKey := store.TrafficLedgerPeriodKey(userID, accepted.PeriodKey)
+		if !batch.markNotify(notifyKey) {
+			continue
+		}
+		u, ok := access.userByID[userID]
+		if !ok {
+			continue
+		}
+		if period, err := s.store.GetTrafficPeriod(r.Context(), u.ID, accepted.PeriodKey); err == nil {
+			s.notifyTrafficQuotaExceeded(r.Context(), u, period)
 		}
 	}
 	accountingUsers := core.TrafficAccountingUsersForServer(server.ID, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, snapshot.InboundUserBindings(), snapshot.ProxyPathUserBindings())
@@ -214,15 +228,124 @@ func (s *Server) handleAgentTrafficLedger(w http.ResponseWriter, r *http.Request
 	}
 	revision, _ := s.store.TrafficPolicyRevision(r.Context())
 	write(w, 200, map[string]any{
-		"authorization":       authorization,
+		"authorization":          authorization,
 		"authorization_envelope": authorizationEnvelope,
-		"ok":                  true,
-		"policy_revision":     revision,
-		"stream_checkpoints":  result.StreamCheckpoints,
-		"accepted_reports":    acceptedReports,
-		"accepted_report_ids": acceptedReportIDs(acceptedReports),
-		"policies":            policies,
+		"ok":                     true,
+		"policy_revision":        revision,
+		"stream_checkpoints":     result.StreamCheckpoints,
+		"accepted_reports":       acceptedReports,
+		"accepted_report_ids":    acceptedReportIDs(acceptedReports),
+		"policies":               policies,
 	})
+}
+
+// trafficLedgerBatch holds request-scoped indexes so period resolution, quota
+// notification, and ledger metadata are not repeated for every report that
+// shares a (user_id, resolved_period_key).
+type trafficLedgerBatch struct {
+	periods       map[string]model.TrafficPeriod
+	byReportedKey map[string]model.TrafficPeriod
+	notifySeen    map[string]struct{}
+}
+
+func newTrafficLedgerBatch(hint int) *trafficLedgerBatch {
+	if hint < 4 {
+		hint = 4
+	}
+	return &trafficLedgerBatch{
+		periods:       make(map[string]model.TrafficPeriod, hint),
+		byReportedKey: make(map[string]model.TrafficPeriod, hint),
+		notifySeen:    make(map[string]struct{}, hint),
+	}
+}
+
+func (b *trafficLedgerBatch) rememberPeriod(period model.TrafficPeriod) {
+	if b == nil || period.UserID <= 0 || strings.TrimSpace(period.PeriodKey) == "" {
+		return
+	}
+	b.periods[store.TrafficLedgerPeriodKey(period.UserID, period.PeriodKey)] = period
+}
+
+func (b *trafficLedgerBatch) markNotify(key string) bool {
+	if b == nil || key == "" {
+		return false
+	}
+	if _, ok := b.notifySeen[key]; ok {
+		return false
+	}
+	b.notifySeen[key] = struct{}{}
+	return true
+}
+
+func (b *trafficLedgerBatch) periodFor(r *http.Request, s *Server, userID int64, reportedPeriodKey string, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficPeriod, error) {
+	reportedPeriodKey = strings.TrimSpace(reportedPeriodKey)
+	cacheKey := store.TrafficLedgerPeriodKey(userID, reportedPeriodKey)
+	if period, ok := b.byReportedKey[cacheKey]; ok {
+		return period, nil
+	}
+	period, err := s.trafficPeriodForUser(r, userID, reportedPeriodKey, planPolicies, loc)
+	if err != nil {
+		return model.TrafficPeriod{}, err
+	}
+	b.byReportedKey[cacheKey] = period
+	b.rememberPeriod(period)
+	return period, nil
+}
+
+func (s *Server) validateAgentTrafficRangeItemCached(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location, batch *trafficLedgerBatch) (model.TrafficReport, model.TrafficPeriod, error) {
+	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
+	}
+	if item.ToUpload < item.FromUpload || item.ToDownload < item.FromDownload || item.FromUpload < 0 || item.FromDownload < 0 {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
+	}
+	source := strings.TrimSpace(item.Source)
+	if source != "core" && source != "ssh" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report source is invalid")
+	}
+	if err := access.validateIdentity(item.UserID, item.InboundID, item.PathID); err != nil {
+		return model.TrafficReport{}, model.TrafficPeriod{}, err
+	}
+	return s.finishAgentTrafficRangeItemCached(r, server, item, requestPeriod, planPolicies, loc, batch)
+}
+
+func (s *Server) validateAgentTrafficRangeItemAllowInactiveCached(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location, batch *trafficLedgerBatch) (model.TrafficReport, model.TrafficPeriod, error) {
+	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
+	}
+	if item.ToUpload < item.FromUpload || item.ToDownload < item.FromDownload || item.FromUpload < 0 || item.FromDownload < 0 {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
+	}
+	source := strings.TrimSpace(item.Source)
+	if source != "core" && source != "ssh" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report source is invalid")
+	}
+	if err := access.validateIdentityAllowInactive(item.UserID, item.InboundID, item.PathID); err != nil {
+		return model.TrafficReport{}, model.TrafficPeriod{}, err
+	}
+	return s.finishAgentTrafficRangeItemCached(r, server, item, requestPeriod, planPolicies, loc, batch)
+}
+
+func (s *Server) finishAgentTrafficRangeItemCached(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location, batch *trafficLedgerBatch) (model.TrafficReport, model.TrafficPeriod, error) {
+	source := strings.TrimSpace(item.Source)
+	reportedPeriodKey := strings.TrimSpace(item.PeriodKey)
+	if reportedPeriodKey == "" {
+		reportedPeriodKey = strings.TrimSpace(requestPeriod)
+	}
+	period, err := batch.periodFor(r, s, item.UserID, reportedPeriodKey, planPolicies, loc)
+	if err != nil {
+		return model.TrafficReport{}, model.TrafficPeriod{}, err
+	}
+	if strings.TrimSpace(period.PeriodKey) == "" {
+		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_stream", "traffic report has no resolvable period")
+	}
+	report := model.TrafficReport{
+		ReportID: item.ReportID, ServerID: server.ID, UserID: item.UserID, InboundID: item.InboundID, PathID: item.PathID,
+		PeriodKey: period.PeriodKey, StartedAt: parseReportTime(item.StartedAt), EndedAt: parseReportTime(item.EndedAt),
+		CounterSource: source, StreamID: item.StreamID, CounterEpoch: item.CounterEpoch,
+		FromUploadBytes: item.FromUpload, ToUploadBytes: item.ToUpload, FromDownloadBytes: item.FromDownload, ToDownloadBytes: item.ToDownload,
+	}
+	return report, period, nil
 }
 
 const (
@@ -420,65 +543,15 @@ func (a trafficReportAccess) validateStreamAccess(stream model.TrafficStreamObse
 }
 
 func (s *Server) validateAgentTrafficRangeItem(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
-	// Structural malformations are terminal for the one report, never the
-	// batch: the Agent keeps a rejected batch in its local state, so a
-	// request-fatal 400 would wedge the same batch on every retry forever.
-	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
-	}
-	if item.ToUpload < item.FromUpload || item.ToDownload < item.FromDownload || item.FromUpload < 0 || item.FromDownload < 0 {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
-	}
-	source := strings.TrimSpace(item.Source)
-	if source != "core" && source != "ssh" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report source is invalid")
-	}
-	if err := access.validateIdentity(item.UserID, item.InboundID, item.PathID); err != nil {
-		return model.TrafficReport{}, model.TrafficPeriod{}, err
-	}
-	return s.finishAgentTrafficRangeItem(r, server, item, requestPeriod, planPolicies, loc)
+	return s.validateAgentTrafficRangeItemCached(r, server, item, requestPeriod, access, planPolicies, loc, newTrafficLedgerBatch(1))
 }
 
 func (s *Server) validateAgentTrafficRangeItemAllowInactive(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, access trafficReportAccess, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
-	if item.UserID <= 0 || strings.TrimSpace(item.ReportID) == "" || strings.TrimSpace(item.StreamID) == "" || strings.TrimSpace(item.CounterEpoch) == "" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
-	}
-	if item.ToUpload < item.FromUpload || item.ToDownload < item.FromDownload || item.FromUpload < 0 || item.FromDownload < 0 {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report is invalid")
-	}
-	source := strings.TrimSpace(item.Source)
-	if source != "core" && source != "ssh" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_report", "traffic report source is invalid")
-	}
-	if err := access.validateIdentityAllowInactive(item.UserID, item.InboundID, item.PathID); err != nil {
-		return model.TrafficReport{}, model.TrafficPeriod{}, err
-	}
-	return s.finishAgentTrafficRangeItem(r, server, item, requestPeriod, planPolicies, loc)
+	return s.validateAgentTrafficRangeItemAllowInactiveCached(r, server, item, requestPeriod, access, planPolicies, loc, newTrafficLedgerBatch(1))
 }
 
 func (s *Server) finishAgentTrafficRangeItem(r *http.Request, server *model.Server, item agentTrafficRangeItem, requestPeriod string, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficReport, model.TrafficPeriod, error) {
-	source := strings.TrimSpace(item.Source)
-	reportedPeriodKey := strings.TrimSpace(item.PeriodKey)
-	if reportedPeriodKey == "" {
-		reportedPeriodKey = strings.TrimSpace(requestPeriod)
-	}
-	period, err := s.trafficPeriodForUser(r, item.UserID, reportedPeriodKey, planPolicies, loc)
-	if err != nil {
-		return model.TrafficReport{}, model.TrafficPeriod{}, err
-	}
-	// The ledger stores the period key as part of the stream identity, so a
-	// report that resolves to none can never be committed. Reject this one
-	// report instead of failing the batch inside the transaction.
-	if strings.TrimSpace(period.PeriodKey) == "" {
-		return model.TrafficReport{}, model.TrafficPeriod{}, trafficReject("invalid_stream", "traffic report has no resolvable period")
-	}
-	report := model.TrafficReport{
-		ReportID: item.ReportID, ServerID: server.ID, UserID: item.UserID, InboundID: item.InboundID, PathID: item.PathID,
-		PeriodKey: period.PeriodKey, StartedAt: parseReportTime(item.StartedAt), EndedAt: parseReportTime(item.EndedAt),
-		CounterSource: source, StreamID: item.StreamID, CounterEpoch: item.CounterEpoch,
-		FromUploadBytes: item.FromUpload, ToUploadBytes: item.ToUpload, FromDownloadBytes: item.FromDownload, ToDownloadBytes: item.ToDownload,
-	}
-	return report, period, nil
+	return s.finishAgentTrafficRangeItemCached(r, server, item, requestPeriod, planPolicies, loc, newTrafficLedgerBatch(1))
 }
 
 func (s *Server) trafficPeriodForUser(r *http.Request, userID int64, reportedPeriodKey string, planPolicies map[int64]core.UserLimitPolicy, loc *time.Location) (model.TrafficPeriod, error) {
@@ -524,15 +597,6 @@ func acceptedReportIDs(items []model.TrafficAcceptedReport) []string {
 		}
 	}
 	return out
-}
-
-func userIDFromAccepted(accepted model.TrafficAcceptedReport, reports []model.TrafficReport) int64 {
-	for _, report := range reports {
-		if report.ReportID == accepted.ReportID {
-			return report.UserID
-		}
-	}
-	return 0
 }
 
 func (s *Server) userTrafficLedger(w http.ResponseWriter, r *http.Request, userID int64) {
