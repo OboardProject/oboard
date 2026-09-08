@@ -4804,7 +4804,6 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   </MotionDialogPanel>
 }
 
-
 function StorageDiagnosticsCard({ settings }: { settings?: any }) {
   const diagnostics = settings?.storage_diagnostics
   if (!diagnostics || typeof diagnostics !== 'object') return null
@@ -6216,7 +6215,6 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
   const [detailLoading, setDetailLoading] = useState(false)
   const detailTriggerRef = useRef<HTMLElement | null>(null)
   const isAdmin = hasManagementAccess(data.session?.role || data.current_user?.role)
-
   const pageVisible = useDocumentVisible()
 
   useCoalescedReadRequest(
@@ -8012,8 +8010,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     else if (type === 'extend-expiry') { clearServerWorkspaces(); setBasicServer(s) }
     else if (type === 'reset-traffic') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'traffic' }) }
     else if (type === 'mtu') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'mtu' }) }
-    else if (type === 'dns') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'dns' }) }
-    else if (type === 'dns-records') goTab('dns-records')
     else if (type === 'network') { clearServerWorkspaces(); setNetworkServer({ server: s, tab: 'overview' }) }
     else if (type === 'agent-maintenance') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'agent' }) }
     else if (type === 'system') { clearServerWorkspaces(); setSystemServer({ server: s, tab: 'overview' }) }
@@ -10018,7 +10014,7 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         </div>
         <div className="server-card-quality">
           <div className="server-card-quality-head">
-            <span><WifiOff size={12} aria-hidden="true" />丢包率</span>
+            <span><WifiOff size={12} aria-hidden="true" />丢包率{targetButton}</span>
             <strong>{na || lossPercent == null ? '—' : `${lossPercent.toFixed(lossPercent >= 10 ? 0 : 1)}%`}</strong>
           </div>
           <div className="server-quality-bar" aria-hidden="true">

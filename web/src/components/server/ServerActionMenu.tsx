@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Gauge, RefreshCw, MoreVertical, Globe, KeyRound } from 'lucide-react'
+import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Gauge, RefreshCw, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
 
 type Role = 'admin' | 'operator' | 'viewer' | 'none'
@@ -31,8 +31,6 @@ export function ServerActionMenu({ server, role = 'viewer', onAction }: { server
     { label: '资料与设置', items: [
       { label: '服务器资料', type: 'about', icon: Info },
       { label: '服务器设置', type: 'edit', icon: SlidersHorizontal, admin: true },
-      { label: '服务器 DNS', type: 'dns', icon: Globe, admin: true },
-      { label: '域名账号', type: 'dns-records', icon: KeyRound, admin: true },
     ] },
     { label: '运维操作', dividerBefore: true, items: [
       { label: '远程终端', type: 'terminal', icon: SquareTerminal, admin: true },
