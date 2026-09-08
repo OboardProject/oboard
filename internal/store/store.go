@@ -3837,12 +3837,16 @@ func (s *Store) GetInbound(ctx context.Context, id int64) (*model.Inbound, error
 	return nil, sql.ErrNoRows
 }
 
-func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, deployments []model.SSHPasswordDeployment) error {
+func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHServerHostKey, deployments []model.SSHPasswordDeployment, taskID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if current, err := sshDeploymentWriteCurrent(ctx, tx, hostKey.ServerID, hostKey.ConfigVersion, taskID); !current || err != nil {
+		return err
+	}
+
 	ts := now()
 	if _, err := tx.ExecContext(ctx, `insert into ssh_server_host_keys(server_id,public_key,fingerprint,config_version,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set public_key=excluded.public_key,fingerprint=excluded.fingerprint,config_version=excluded.config_version,updated_at=excluded.updated_at`, hostKey.ServerID, hostKey.PublicKey, hostKey.Fingerprint, hostKey.ConfigVersion, ts); err != nil {
 		return err
@@ -3868,12 +3872,17 @@ func (s *Store) ApplySSHDeploymentState(ctx context.Context, hostKey model.SSHSe
 	return tx.Commit()
 }
 
-func (s *Store) ClearSSHDeploymentState(ctx context.Context, serverID int64) error {
+func (s *Store) ClearSSHDeploymentState(ctx context.Context, task model.AgentTask) error {
+	serverID := task.ServerID
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if current, err := sshDeploymentWriteCurrent(ctx, tx, serverID, task.ConfigVersion, task.ID); !current || err != nil {
+		return err
+	}
+
 	if _, err := tx.ExecContext(ctx, `delete from ssh_password_deployments where server_id=?`, serverID); err != nil {
 		return err
 	}

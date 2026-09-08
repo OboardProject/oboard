@@ -1079,7 +1079,7 @@ type Server struct {
 	AuthorizationConfirmed      bool               `json:"authorization_confirmed,omitempty"`
 	AuthorizationPendingReason  string             `json:"authorization_pending_reason,omitempty"`
 	UsersRevision               int64              `json:"users_revision,omitempty"`
-	UsersConfirmed              bool               `json:"users_confirmed,omitempty"`
+	UsersConfirmed              bool               `json:"users_confirmed"`
 	UsersPendingReason          string             `json:"users_pending_reason,omitempty"`
 	UsersFallback               string             `json:"users_fallback,omitempty"`
 	AuthorizationFastLane       bool               `json:"authorization_fast_lane"`
@@ -1987,6 +1987,14 @@ type TunnelPlan struct {
 
 // SSHInboundPlan is separate from TunnelPlan: tunnels are private Agent
 // plumbing, while SSH inbounds are user-facing public services.
+type SSHAuthenticationVerification struct {
+	AuthenticationPlanDigest string `json:"authentication_plan_digest"`
+	Version                  int64  `json:"version"`
+	AuthenticationVerified   bool   `json:"authentication_verified"`
+	AuthenticatedUsers       int    `json:"authenticated_users"`
+	RejectedUsers            int    `json:"rejected_users"`
+}
+
 type SSHInboundPlan struct {
 	Version  int64        `json:"version"`
 	Inbounds []SSHInbound `json:"inbounds"`

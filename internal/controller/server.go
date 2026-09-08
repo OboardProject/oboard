@@ -13418,6 +13418,13 @@ func (s *Server) matchingDeployedSSHPlan(ctx context.Context, serverID int64, cu
 	if err != nil {
 		return nil, model.SSHInboundPlan{}, false, err
 	}
+	latest, latestErr := s.store.LatestSSHDeploymentTask(ctx, serverID)
+	if latestErr != nil && !errors.Is(latestErr, sql.ErrNoRows) {
+		return nil, model.SSHInboundPlan{}, false, latestErr
+	}
+	if latest != nil && (latest.ConfigVersion > hostKey.ConfigVersion || latest.ConfigVersion == hostKey.ConfigVersion && latest.Status != "succeeded") {
+		return nil, model.SSHInboundPlan{}, false, nil
+	}
 	taskPlan, version, err := s.lastAppliedSSHPlan(ctx, serverID)
 	if err != nil {
 		return nil, model.SSHInboundPlan{}, false, err
@@ -15207,6 +15214,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	validatedStatus, validatedResult, validationErr := s.validateSSHAuthenticationTaskResult(r.Context(), *task, req.Status, req.ResultJSON)
+	if validationErr != nil {
+		fail(w, validationErr, http.StatusInternalServerError)
+		return
+	}
+	req.Status, req.ResultJSON = validatedStatus, validatedResult
 	if task.Type == model.AgentTaskTypeApplyDeployment {
 		if err := s.applyDeploymentWARPReports(r.Context(), server.ID, req.ResultJSON); err != nil {
 			fail(w, err, http.StatusBadRequest)
@@ -15342,6 +15355,12 @@ func (s *Server) applyDeploymentWARPReports(ctx context.Context, serverID int64,
 }
 
 func (s *Server) applyDeploymentSSHState(ctx context.Context, serverID int64, task model.AgentTask, resultJSON string) error {
+	if stale, err := s.sshTaskSuperseded(ctx, task); stale || err != nil {
+		return err
+	}
+	if host, err := s.store.GetSSHServerHostKey(ctx, serverID); err == nil && task.ConfigVersion > 0 && host.ConfigVersion > task.ConfigVersion {
+		return nil
+	}
 	var result struct {
 		Steps []struct {
 			Key    string          `json:"key"`
@@ -15368,7 +15387,7 @@ func (s *Server) applyDeploymentSSHState(ctx context.Context, serverID int64, ta
 		break
 	}
 	if !found || strings.TrimSpace(report.HostPublicKey) == "" {
-		return s.store.ClearSSHDeploymentState(ctx, serverID)
+		return s.store.ClearSSHDeploymentState(ctx, task)
 	}
 	hostPublicKey, rest, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(report.HostPublicKey)))
 	if err != nil || len(strings.TrimSpace(string(rest))) != 0 {
@@ -15387,11 +15406,14 @@ func (s *Server) applyDeploymentSSHState(ctx context.Context, serverID int64, ta
 	if version == 0 {
 		version = task.ConfigVersion
 	}
+	if !sshTaskAuthenticationVerified(model.AgentTask{Type: model.AgentTaskTypeApplyDeployment, ResultJSON: resultJSON}, payload.SSHInbounds) {
+		return errors.New("SSH deployment is missing matching authentication verification")
+	}
 	passwordDeployments, err := s.sshPasswordDeploymentsFromPlan(serverID, payload.SSHInbounds)
 	if err != nil {
 		return err
 	}
-	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, PlanDigest: sshInboundPlanDigest(payload.SSHInbounds), ConfigVersion: version}, passwordDeployments)
+	return s.store.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: serverID, PublicKey: canonicalHostKey, Fingerprint: hostFingerprint, PlanDigest: sshInboundPlanDigest(payload.SSHInbounds), ConfigVersion: version}, passwordDeployments, task.ID)
 }
 
 func allowedTaskStatus(status string) bool {

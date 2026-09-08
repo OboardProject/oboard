@@ -12,6 +12,7 @@ import (
 func (s *Server) lastAppliedSSHPlan(ctx context.Context, serverID int64) (model.SSHInboundPlan, int64, error) {
 	var plan model.SSHInboundPlan
 	var version int64
+	var selected *model.AgentTask
 	for _, kind := range []string{model.AgentTaskTypeApplyDeployment, model.AgentTaskTypeApplyCoreConfig} {
 		task, err := s.store.LastSuccessfulTaskByServerType(ctx, serverID, kind)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -30,6 +31,7 @@ func (s *Server) lastAppliedSSHPlan(ctx context.Context, serverID int64) (model.
 			}
 			plan = payload.SSHInbounds
 			version = task.ConfigVersion
+			selected = task
 		} else {
 			var payload model.ApplyCoreConfigTaskPayload
 			if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
@@ -38,8 +40,12 @@ func (s *Server) lastAppliedSSHPlan(ctx context.Context, serverID int64) (model.
 			if payload.SSHInbounds != nil {
 				plan = *payload.SSHInbounds
 				version = task.ConfigVersion
+				selected = task
 			}
 		}
+	}
+	if selected != nil && !sshTaskAuthenticationVerified(*selected, plan) {
+		return model.SSHInboundPlan{}, 0, nil
 	}
 	return plan, version, nil
 }

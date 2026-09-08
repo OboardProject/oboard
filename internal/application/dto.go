@@ -73,7 +73,7 @@ type ServerDTO struct {
 	AuthorizationConfirmed      bool                       `json:"authorization_confirmed,omitempty"`
 	AuthorizationPendingReason  string                     `json:"authorization_pending_reason,omitempty"`
 	UsersRevision               int64                      `json:"users_revision,omitempty"`
-	UsersConfirmed              bool                       `json:"users_confirmed,omitempty"`
+	UsersConfirmed              bool                       `json:"users_confirmed"`
 	UsersPendingReason          string                     `json:"users_pending_reason,omitempty"`
 	UsersFallback               string                     `json:"users_fallback,omitempty"`
 	AuthorizationFastLane       bool                       `json:"authorization_fast_lane"`

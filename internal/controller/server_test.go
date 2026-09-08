@@ -690,14 +690,14 @@ func TestSSHInboundPlanBuildsImplicitDirectRouteForStandaloneGrant(t *testing.T)
 	if err != nil || len(deployments) != 1 {
 		t.Fatalf("implicit SSH deployments = %#v, err=%v", deployments, err)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, hostIdentity, deployments); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, hostIdentity, deployments, 0); err != nil {
 		t.Fatal(err)
 	}
 	payloadJSON, err := json.Marshal(model.DeploymentTaskPayload{Version: plan.Version, SSHInbounds: plan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payloadJSON), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: plan.Version, Nonce: "implicit-ssh-baseline"}); err != nil {
+	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payloadJSON), Status: "succeeded", ResultJSON: verifiedSSHTestResult(t, plan), ConfigVersion: plan.Version, Nonce: "implicit-ssh-baseline"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -870,6 +870,7 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 		encoded, err := json.Marshal(map[string]any{"steps": []any{map[string]any{
 			"key": "ssh_inbounds", "status": "succeeded", "result": map[string]any{
 				"host_public_key": publicKey, "host_key_fingerprint": fingerprint,
+				"version": payload.SSHInbounds.Version, "authentication_verified": true, "authenticated_users": 1, "rejected_users": 0, "authentication_plan_digest": model.SSHAuthenticationPlanDigest(payload.SSHInbounds),
 				"users": map[string]string{strconv.FormatInt(user.ID, 10): "SHA256:agent-supplied-value-must-be-ignored"},
 			},
 		}}})
@@ -1036,21 +1037,42 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	}
 	staleDeployments := append([]model.SSHPasswordDeployment(nil), expectedDeployments...)
 	staleDeployments[0].PasswordDigest = "stale-password-digest"
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, staleDeployments); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, staleDeployments, 0); err != nil {
 		t.Fatal(err)
 	}
 	if nodes := readSubscription(); len(nodes) != 0 {
 		t.Fatalf("SSH subscription appeared for stale deployed password: %#v", nodes)
 	}
-	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, expectedDeployments); err != nil {
+	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, expectedDeployments, 0); err != nil {
 		t.Fatal(err)
 	}
 	payloadJSON, err := json.Marshal(model.DeploymentTaskPayload{Version: 24, SSHInbounds: plan})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateTask(ctx, &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payloadJSON), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: 24, Nonce: "ssh-subscription-baseline"}); err != nil {
+	baseline := &model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment, PayloadJSON: string(payloadJSON), Status: "succeeded", ResultJSON: `{}`, ConfigVersion: 24, Nonce: "ssh-subscription-baseline"}
+	if err := db.CreateTask(ctx, baseline); err != nil {
 		t.Fatal(err)
+	}
+	if nodes := readSubscription(); len(nodes) != 0 {
+		t.Fatal("legacy success without SSH authentication evidence exposed credentials")
+	}
+	server.UsersConfirmed = true
+	srv.annotateSSHUserDelivery(ctx, server)
+	if server.UsersConfirmed || server.UsersPendingReason != "ssh_authentication_unverified" {
+		t.Fatal("runtime users ACK incorrectly confirmed unverified SSH")
+	}
+	baseline.ID = 0
+	baseline.Nonce = "ssh-subscription-verified"
+	baseline.ResultJSON = verifiedSSHTestResult(t, plan)
+	if err := db.CreateTask(ctx, baseline); err != nil {
+		t.Fatal(err)
+	}
+	server.UsersConfirmed = true
+	server.UsersPendingReason = ""
+	srv.annotateSSHUserDelivery(ctx, server)
+	if !server.UsersConfirmed {
+		t.Fatal("matching SSH verification not confirmed")
 	}
 	nodes := readSubscription()
 	if len(nodes) != 1 || nodes[0]["type"] != "ssh" || nodes[0]["user"] != expectedCredential.ProxyUsername || nodes[0]["server"] != server.PublicIPv4 || nodes[0]["password"] != expectedCredential.ProxyPassword {

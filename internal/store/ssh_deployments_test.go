@@ -76,7 +76,7 @@ func TestSSHPasswordDeploymentsMigrateFromLegacySchema(t *testing.T) {
 	}
 	deviceHostKey := model.SSHServerHostKey{ServerID: server.ID, PublicKey: "pub", Fingerprint: "fp", PlanDigest: "plan", ConfigVersion: 9}
 	deviceDeployment := model.SSHPasswordDeployment{ServerID: server.ID, UserID: user.ID, DeviceIDHash: "device-hash", CredentialEpoch: 3, CredentialStatus: "active", PasswordDigest: "device-digest", ConfigVersion: 9}
-	if err := s.ApplySSHDeploymentState(ctx, deviceHostKey, []model.SSHPasswordDeployment{deviceDeployment}); err != nil {
+	if err := s.ApplySSHDeploymentState(ctx, deviceHostKey, []model.SSHPasswordDeployment{deviceDeployment}, 0); err != nil {
 		t.Fatalf("apply device deployment after migration: %v", err)
 	}
 	deployments, err = s.ListSSHPasswordDeploymentsForUser(ctx, user.ID)

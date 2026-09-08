@@ -552,6 +552,13 @@ func (s *Server) annotateServerDeliveryStatusFromLaneStates(ctx context.Context,
 		}
 		applyServerDeliveryAnnotation(&items[i], auth, userState, deliveryFlags)
 	}
+	hasSSH := false
+	for _, item := range items {
+		hasSSH = hasSSH || states.flags[item.ID].HasSSHInbounds
+	}
+	if hasSSH {
+		s.annotateSSHUserDeliveryStatuses(ctx, items)
+	}
 }
 
 func (s *Server) annotateOneServerDeliveryStatus(ctx context.Context, server *model.Server) {
@@ -571,6 +578,9 @@ func (s *Server) annotateOneServerDeliveryStatus(ctx context.Context, server *mo
 		flags = store.ServerDeliveryFlags{ServerID: server.ID, AuthorizationFastLane: true, RuntimeUsersEnabled: true}
 	}
 	applyServerDeliveryAnnotation(server, auth, users, flags)
+	if flags.HasSSHInbounds {
+		s.annotateSSHUserDelivery(ctx, server)
+	}
 }
 
 func applyServerDeliveryAnnotation(server *model.Server, auth store.AuthorizationState, users store.RuntimeUserState, flags store.ServerDeliveryFlags) {

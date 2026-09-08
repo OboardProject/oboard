@@ -7,9 +7,10 @@ import (
 )
 
 type ServerDeliveryFlags struct {
-	ServerID               int64
-	AuthorizationFastLane  bool
-	RuntimeUsersEnabled    bool
+	HasSSHInbounds        bool
+	ServerID              int64
+	AuthorizationFastLane bool
+	RuntimeUsersEnabled   bool
 }
 
 func defaultServerDeliveryFlags(serverID int64) ServerDeliveryFlags {
@@ -35,7 +36,7 @@ func (s *Store) ServerDeliveryFlags(ctx context.Context, serverID int64) (Server
 		return flags, nil
 	}
 	var authLane, usersLane int
-	err := s.db.QueryRowContext(ctx, `select authorization_fast_lane, runtime_users_enabled from server_delivery_flags where server_id=?`, serverID).Scan(&authLane, &usersLane)
+	err := s.db.QueryRowContext(ctx, `select coalesce(f.authorization_fast_lane,1), coalesce(f.runtime_users_enabled,1), exists(select 1 from inbounds i where i.server_id=s.id and i.protocol='ssh' and i.enabled=1) from servers s left join server_delivery_flags f on f.server_id=s.id where s.id=?`, serverID).Scan(&authLane, &usersLane, &flags.HasSSHInbounds)
 	if errors.Is(err, sql.ErrNoRows) {
 		return flags, nil
 	}
@@ -48,7 +49,7 @@ func (s *Store) ServerDeliveryFlags(ctx context.Context, serverID int64) (Server
 }
 
 func (s *Store) ListServerDeliveryFlags(ctx context.Context) (map[int64]ServerDeliveryFlags, error) {
-	rows, err := s.db.QueryContext(ctx, `select server_id, authorization_fast_lane, runtime_users_enabled from server_delivery_flags`)
+	rows, err := s.db.QueryContext(ctx, `select s.id, coalesce(f.authorization_fast_lane,1), coalesce(f.runtime_users_enabled,1), exists(select 1 from inbounds i where i.server_id=s.id and i.protocol='ssh' and i.enabled=1) from servers s left join server_delivery_flags f on f.server_id=s.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +58,7 @@ func (s *Store) ListServerDeliveryFlags(ctx context.Context) (map[int64]ServerDe
 	for rows.Next() {
 		var flags ServerDeliveryFlags
 		var authLane, usersLane int
-		if err := rows.Scan(&flags.ServerID, &authLane, &usersLane); err != nil {
+		if err := rows.Scan(&flags.ServerID, &authLane, &usersLane, &flags.HasSSHInbounds); err != nil {
 			return nil, err
 		}
 		flags.AuthorizationFastLane = authLane != 0
