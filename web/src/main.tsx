@@ -1471,7 +1471,7 @@ function useDialogController() {
   return { dialogs, dialog, setDialog }
 }
 
-function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: () => void }) {
+export function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: () => void }) {
   const [value, setValue] = useState('')
   const lastDialogRef = useRef<DialogState | null>(null)
   if (dialog) lastDialogRef.current = dialog
@@ -1499,9 +1499,26 @@ function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: 
       size="sm"
       className={[
         'dialog-host',
-        isPrompt ? 'dialog-host-prompt' : 'dialog-host-compact',
+        'dialog-host-compact',
+        isPrompt ? 'dialog-host-prompt' : '',
         renderedDialog.tone === 'danger' ? 'dialog-host-danger' : '',
       ].filter(Boolean).join(' ')}
+      footer={(
+        <div className="dialog-actions dialog-host-actions">
+          {renderedDialog.kind !== 'alert' && (
+            <button type="button" className="ghost" onClick={() => close(renderedDialog.kind === 'confirm' ? false : null)}>
+              {renderedDialog.cancelText || '取消'}
+            </button>
+          )}
+          <button
+            type="button"
+            className={renderedDialog.tone === 'danger' ? 'danger-button' : ''}
+            onClick={() => close(renderedDialog.kind === 'prompt' ? value : true)}
+          >
+            {confirmText}
+          </button>
+        </div>
+      )}
     >
       {(hasMessage || isPrompt) && (
         <div className="dialog-host-body">
@@ -1530,20 +1547,6 @@ function DialogHost({ dialog, onClose }: { dialog: DialogState | null; onClose: 
           )}
         </div>
       )}
-      <div className="dialog-actions dialog-host-actions">
-        {renderedDialog.kind !== 'alert' && (
-          <button type="button" className="ghost" onClick={() => close(renderedDialog.kind === 'confirm' ? false : null)}>
-            {renderedDialog.cancelText || '取消'}
-          </button>
-        )}
-        <button
-          type="button"
-          className={renderedDialog.tone === 'danger' ? 'danger-button' : ''}
-          onClick={() => close(renderedDialog.kind === 'prompt' ? value : true)}
-        >
-          {confirmText}
-        </button>
-      </div>
     </Dialog>
   )
 }
