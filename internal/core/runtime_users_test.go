@@ -204,6 +204,40 @@ func TestUsersDigestMatchesSortedCanonicalForm(t *testing.T) {
 	}
 }
 
+func TestProjectServerRuntimeUsersMatchesFullGeneration(t *testing.T) {
+	users := []model.User{
+		{ID: 1, Username: "alice", Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "pass-a", AuthorizationKey: "auth-alice"},
+	}
+	server := capableRuntimeUserServer(model.AgentCapabilityRuntimeUsersVLESS)
+	inbounds := []model.Inbound{{ID: 1, ServerID: 1, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: `{}`, Enabled: true}}
+	opts := ConfigOptions{InboundUsers: []model.InboundUser{{InboundID: 1, UserID: 1, Enabled: true}}}
+
+	var fromFull *RuntimeUserPackage
+	fullOpts := opts
+	fullOpts.RuntimeUsersOut = &fromFull
+	if _, err := GenerateServerConfigWithOptions(server, inbounds, nil, testDNSState(1), users, fullOpts); err != nil {
+		t.Fatal(err)
+	}
+	projected, err := ProjectServerRuntimeUsers(server, inbounds, nil, testDNSState(1), users, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromFull == nil {
+		t.Fatal("full generation produced no runtime package")
+	}
+	if projected.Mode != fromFull.Mode || len(projected.Entries) != len(fromFull.Entries) || len(projected.Scope) != len(fromFull.Scope) {
+		t.Fatalf("projection mismatch: full=%+v projected=%+v", fromFull, projected)
+	}
+	for i := range projected.Entries {
+		if projected.Entries[i].AuthUser != fromFull.Entries[i].AuthUser ||
+			projected.Entries[i].InboundTag != fromFull.Entries[i].InboundTag ||
+			projected.Entries[i].RouteOutbound != fromFull.Entries[i].RouteOutbound ||
+			projected.Entries[i].AuthorizationKey != fromFull.Entries[i].AuthorizationKey {
+			t.Fatalf("entry[%d] mismatch: full=%+v projected=%+v", i, fromFull.Entries[i], projected.Entries[i])
+		}
+	}
+}
+
 func BenchmarkUsersDigest(b *testing.B) {
 	entries := make([]model.UsersInstallEntry, 128)
 	scope := make([]string, 8)

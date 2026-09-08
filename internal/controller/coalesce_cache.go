@@ -201,6 +201,12 @@ func (c *coalesceCache[K, V]) clear() {
 	c.entries = make(map[K]coalesceEntry[V])
 }
 
+func (c *coalesceCache[K, V]) delete(key K) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
 func (c *coalesceCache[K, V]) acquireBuild(ctx context.Context) error {
 	select {
 	case c.buildSem <- struct{}{}:

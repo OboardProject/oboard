@@ -23,21 +23,22 @@ const (
 // stats database files and reads small control rows — never a heavy ANALYZE or
 // full-table scan on every refresh.
 type StorageDiagnostics struct {
-	DBBytes                         int64           `json:"db_bytes"`
-	WALBytes                        int64           `json:"wal_bytes"`
-	SHMBytes                        int64           `json:"shm_bytes"`
-	PageCount                       int64           `json:"page_count,omitempty"`
-	PageSize                        int64           `json:"page_size,omitempty"`
-	FreelistCount                   int64           `json:"freelist_count,omitempty"`
-	MaintenanceHint                 string          `json:"maintenance_hint,omitempty"`
-	AuditRollupState                map[string]any  `json:"audit_rollup_state"`
-	DirtyHourlyCount                int64           `json:"dirty_hourly_count"`
-	ConnectionAuditRetentionHours   int             `json:"connection_audit_retention_hours"`
-	SubscriptionAuditRetentionHours int             `json:"subscription_audit_retention_hours"`
-	ServerMonitoringRetentionDays   int             `json:"server_monitoring_retention_days"`
-	LastMaintenanceAt               string          `json:"last_maintenance_at,omitempty"`
-	LastMaintenanceSummary          map[string]any  `json:"last_maintenance_summary,omitempty"`
-	AnalyzedAt                      time.Time       `json:"analyzed_at"`
+	DBBytes                         int64          `json:"db_bytes"`
+	WALBytes                        int64          `json:"wal_bytes"`
+	SHMBytes                        int64          `json:"shm_bytes"`
+	PageCount                       int64          `json:"page_count,omitempty"`
+	PageSize                        int64          `json:"page_size,omitempty"`
+	FreelistCount                   int64          `json:"freelist_count,omitempty"`
+	MaintenanceHint                 string         `json:"maintenance_hint,omitempty"`
+	IncrementalVacuumPending        bool           `json:"incremental_vacuum_pending"`
+	AuditRollupState                map[string]any `json:"audit_rollup_state"`
+	DirtyHourlyCount                int64          `json:"dirty_hourly_count"`
+	ConnectionAuditRetentionHours   int            `json:"connection_audit_retention_hours"`
+	SubscriptionAuditRetentionHours int            `json:"subscription_audit_retention_hours"`
+	ServerMonitoringRetentionDays   int            `json:"server_monitoring_retention_days"`
+	LastMaintenanceAt               string         `json:"last_maintenance_at,omitempty"`
+	LastMaintenanceSummary          map[string]any `json:"last_maintenance_summary,omitempty"`
+	AnalyzedAt                      time.Time      `json:"analyzed_at"`
 }
 
 // GetStorageDiagnostics returns recent storage analysis without heavy scans.
@@ -95,7 +96,30 @@ func (s *Store) GetStorageDiagnostics(ctx context.Context) (StorageDiagnostics, 
 	} else {
 		out.DirtyHourlyCount = count
 	}
+	if pending, err := s.incrementalVacuumPending(ctx); err != nil {
+		return out, err
+	} else if pending {
+		out.IncrementalVacuumPending = true
+		if out.MaintenanceHint == "" {
+			out.MaintenanceHint = "增量 vacuum 转换待显式维护"
+		}
+	}
 	return out, nil
+}
+
+func (s *Store) incrementalVacuumPending(ctx context.Context) (bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `select value from oboard_maintenance_flags where name='incremental_vacuum_pending'`).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return false, nil
+		}
+		return false, err
+	}
+	return value == "1", nil
 }
 
 func (s *Store) readAuditRollupStateForDiagnostics(ctx context.Context) (map[string]any, bool, error) {
@@ -142,6 +166,9 @@ func (s *Store) recordMaintenanceResult(ctx context.Context, at time.Time, resul
 		"rate_buckets_deleted":        result.RateBucketsDeleted,
 		"server_metrics_deleted":      result.ServerMetricSamplesDeleted,
 		"pages_reclaimed":             result.FreePagesReclaimed,
+		"hourly_dirty_drained":        result.HourlyDirtyDrained,
+		"hourly_backfill_advanced":    result.HourlyBackfillAdvanced,
+		"rollup_budget_exhausted":     result.RollupBudgetExhausted,
 		"wal_busy":                    result.WALBusyFrames,
 		"wal_log":                     result.WALLogFrames,
 		"wal_checkpointed":            result.WALCheckpointedFrames,

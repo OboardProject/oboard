@@ -461,6 +461,7 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 	if err != nil {
 		return nil, err
 	}
+	s.invalidateAccessServers(ctx, draft.serverIDs)
 	s.wakeAccessWorkers()
 	return change, nil
 }
@@ -836,6 +837,7 @@ func (s *Server) wakeAccessWorkers() {
 	case s.accessWorkersWake <- struct{}{}:
 	default:
 	}
+	s.wakeAccessDeadlineScheduler()
 }
 
 func (s *Server) reconcileAccessChanges(ctx context.Context) {
@@ -1141,15 +1143,7 @@ func (s *Server) createPlanPublishChangeForActor(ctx context.Context, r *http.Re
 	}
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
 	finalize := newSnap.Projection()
-	diffKeys := map[string]bool{}
-	for _, key := range planNodeKeyDiff(oldSnap, newSnap) {
-		diffKeys[key] = true
-	}
-	serverOnline := make(map[int64]bool, len(data.Servers))
-	for _, server := range data.Servers {
-		serverOnline[server.ID] = server.Status == model.ServerOnline
-	}
-	servers, _, _ := core.AffectedAuthServers(diffKeys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
+	servers := accessServersFromProjections(oldSnap.Projection(), finalize, data)
 	affectedUsers := 0
 	for _, binding := range bindings {
 		if binding.PlanID == plan.ID {
@@ -1203,19 +1197,7 @@ func (s *Server) createPlanDisableChange(ctx context.Context, r *http.Request, p
 	oldSnap := s.snapshotFromConfig(data, bindings, data.ActivePlanNodes, exceptions, now)
 	newSnap := s.planSnapshotDisabled(data, plan, bindings, exceptions, now)
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
-	activeNodes, err := s.store.ListActivePlanNodes(ctx, plan.ID)
-	if err != nil {
-		return nil, err
-	}
-	keys := map[string]bool{}
-	for _, pn := range activeNodes {
-		keys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
-	}
-	serverOnline := make(map[int64]bool, len(data.Servers))
-	for _, server := range data.Servers {
-		serverOnline[server.ID] = server.Status == model.ServerOnline
-	}
-	servers, _, _ := core.AffectedAuthServers(keys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
+	servers := accessServersFromProjections(oldSnap.Projection(), newSnap.Projection(), data)
 	affectedUsers := 0
 	for _, binding := range bindings {
 		if binding.PlanID == plan.ID {
@@ -1289,19 +1271,7 @@ func (s *Server) createPlanDeleteChange(ctx context.Context, r *http.Request, ac
 	oldSnap := s.snapshotFromConfig(data, bindings, data.ActivePlanNodes, exceptions, now)
 	newSnap := s.planSnapshotDisabled(data, plan, bindings, exceptions, now)
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
-	activeNodes, err := s.store.ListActivePlanNodes(ctx, plan.ID)
-	if err != nil {
-		return nil, err
-	}
-	keys := map[string]bool{}
-	for _, pn := range activeNodes {
-		keys[core.NodeKeyOf(pn.NodeType, pn.NodeID)] = true
-	}
-	serverOnline := make(map[int64]bool, len(data.Servers))
-	for _, server := range data.Servers {
-		serverOnline[server.ID] = server.Status == model.ServerOnline
-	}
-	servers, _, _ := core.AffectedAuthServers(keys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
+	servers := accessServersFromProjections(oldSnap.Projection(), newSnap.Projection(), data)
 	return s.createAccessChange(ctx, r, accessChangeDraft{
 		changeType:         model.AccessChangePlanDelete,
 		sourcePlanID:       plan.ID,
@@ -1336,15 +1306,7 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 	newSnap := s.snapshotFromConfig(data, newEffective, data.ActivePlanNodes, exceptions, at)
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
 	finalize := newSnap.Projection()
-	diffKeys := map[string]bool{}
-	for _, key := range planNodeKeyDiff(oldSnap, newSnap) {
-		diffKeys[key] = true
-	}
-	serverOnline := make(map[int64]bool, len(data.Servers))
-	for _, server := range data.Servers {
-		serverOnline[server.ID] = server.Status == model.ServerOnline
-	}
-	servers, _, _ := core.AffectedAuthServers(diffKeys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
+	servers := accessServersFromProjections(oldSnap.Projection(), finalize, data)
 	change, err := s.createAccessChange(ctx, r, accessChangeDraft{
 		changeType:         model.AccessChangeUserBindings,
 		affectedUserCount:  len(userIDs),
@@ -1395,15 +1357,7 @@ func (s *Server) createExceptionChangesForActor(ctx context.Context, r *http.Req
 	newSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, after, at)
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
 	finalize := newSnap.Projection()
-	diffKeys := map[string]bool{}
-	for _, key := range planNodeKeyDiff(oldSnap, newSnap) {
-		diffKeys[key] = true
-	}
-	serverOnline := make(map[int64]bool, len(data.Servers))
-	for _, server := range data.Servers {
-		serverOnline[server.ID] = server.Status == model.ServerOnline
-	}
-	servers, _, _ := core.AffectedAuthServers(diffKeys, data.ProxyPaths, data.ProxyPathSteps, data.Inbounds, serverOnline)
+	servers := accessServersFromProjections(oldSnap.Projection(), finalize, data)
 	change, err := s.createAccessChange(ctx, r, accessChangeDraft{
 		changeType:         model.AccessChangeExceptions,
 		affectedUserCount:  affectedUserCount,

@@ -137,6 +137,7 @@ func main() {
 	go app.StartAuthorizationSyncWorker(ctx)
 	go app.StartRuntimeUsersSyncWorker(ctx)
 	go app.StartAccessLifecycleWorker(ctx)
+	go app.StartAccessDeadlineScheduler(ctx)
 	go app.StartConfigurationReconciler(ctx)
 	go app.StartSubscriptionPlanReconciler(ctx)
 	go app.StartTaskRecoveryScan(ctx)

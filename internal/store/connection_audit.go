@@ -75,6 +75,7 @@ func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []m
 	defer tx.Rollback()
 	ts := now()
 	affectedUsers := map[int64]struct{}{}
+	dirtyHours := map[int64][]time.Time{}
 	for _, report := range reports {
 		if strings.TrimSpace(report.ReportID) == "" || report.ServerID <= 0 || report.UserID <= 0 {
 			continue
@@ -111,7 +112,16 @@ func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []m
 		if inserted == 1 {
 			result.InsertedReportIDs = append(result.InsertedReportIDs, report.ReportID)
 			affectedUsers[report.UserID] = struct{}{}
+			if !report.StartedAt.IsZero() {
+				dirtyHours[report.UserID] = append(dirtyHours[report.UserID], report.StartedAt)
+			}
+			if !report.EndedAt.IsZero() && ConnectionAuditHourKey(report.EndedAt) != ConnectionAuditHourKey(report.StartedAt) {
+				dirtyHours[report.UserID] = append(dirtyHours[report.UserID], report.EndedAt)
+			}
 		}
+	}
+	if err := markConnectionAuditHoursDirtyTx(tx, ctx, dirtyHours); err != nil {
+		return result, err
 	}
 	if err := tx.Commit(); err != nil {
 		return result, err
@@ -1526,9 +1536,54 @@ type auditHourBucket struct {
 }
 
 // batchConnectionAuditRobustZBuckets loads the 28-day hourly connection-count
-// buckets for many users in one grouped query, mirroring the WHERE filters of
-// connectionAuditRobustZ.
+// buckets for many users. When the hourly rollup read path is active and a
+// user has no dirty hours in range, buckets come from connection_audit_hourly.
+// Otherwise the original raw GROUP BY path remains the source of truth.
 func (s *Store) batchConnectionAuditRobustZBuckets(ctx context.Context, userIDs []int64, at time.Time) (map[int64][]auditHourBucket, error) {
+	at = at.UTC()
+	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
+	since := currentStart.Add(-28 * 24 * time.Hour)
+	until := currentStart.Add(time.Hour)
+	state, err := s.GetAuditRollupState(ctx)
+	if err == nil && state.BackfillComplete && state.ReadPath == "hourly" && state.AlgorithmVersion == connectionAuditHourlyAlgorithm {
+		dirty, dirtyErr := s.connectionAuditHourlyDirtyUsers(ctx, userIDs, since, until)
+		if dirtyErr != nil {
+			return nil, dirtyErr
+		}
+		hourlyUsers := make([]int64, 0, len(userIDs))
+		rawUsers := make([]int64, 0)
+		for _, userID := range userIDs {
+			if _, ok := dirty[userID]; ok {
+				rawUsers = append(rawUsers, userID)
+				continue
+			}
+			hourlyUsers = append(hourlyUsers, userID)
+		}
+		out := map[int64][]auditHourBucket{}
+		if len(hourlyUsers) > 0 {
+			hourly, loadErr := s.loadConnectionAuditHourlyBuckets(ctx, hourlyUsers, since, until)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			for userID, buckets := range hourly {
+				out[userID] = buckets
+			}
+		}
+		if len(rawUsers) > 0 {
+			raw, rawErr := s.batchConnectionAuditRobustZBucketsRaw(ctx, rawUsers, at)
+			if rawErr != nil {
+				return nil, rawErr
+			}
+			for userID, buckets := range raw {
+				out[userID] = buckets
+			}
+		}
+		return out, nil
+	}
+	return s.batchConnectionAuditRobustZBucketsRaw(ctx, userIDs, at)
+}
+
+func (s *Store) batchConnectionAuditRobustZBucketsRaw(ctx context.Context, userIDs []int64, at time.Time) (map[int64][]auditHourBucket, error) {
 	at = at.UTC()
 	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
 	args := []any{currentStart.Add(-28 * 24 * time.Hour).Format(time.RFC3339Nano), currentStart.Add(time.Hour).Format(time.RFC3339Nano)}
@@ -1590,29 +1645,11 @@ func computeConnectionAuditRobustZ(buckets []auditHourBucket, at time.Time) floa
 }
 
 func (s *Store) connectionAuditRobustZ(ctx context.Context, userID int64, at time.Time) (float64, error) {
-	at = at.UTC()
-	currentStart := time.Date(at.Year(), at.Month(), at.Day(), at.Hour(), 0, 0, 0, time.UTC)
-	rows, err := s.db.QueryContext(ctx, `select strftime('%Y-%m-%dT%H:00:00Z',started_at) as hour_bucket,coalesce(sum(connection_count),0)
-		from connection_audit_reports
-		where user_id=? and started_at>=? and started_at<? and internal_probe=0 and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0
-		group by hour_bucket`, userID, currentStart.Add(-28*24*time.Hour).Format(time.RFC3339Nano), currentStart.Add(time.Hour).Format(time.RFC3339Nano))
+	buckets, err := s.batchConnectionAuditRobustZBuckets(ctx, []int64{userID}, at)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
-	buckets := []auditHourBucket{}
-	for rows.Next() {
-		var rawBucket string
-		var value float64
-		if err := rows.Scan(&rawBucket, &value); err != nil {
-			return 0, err
-		}
-		buckets = append(buckets, auditHourBucket{at: parseTime(rawBucket), value: value})
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	return computeConnectionAuditRobustZ(buckets, at), nil
+	return computeConnectionAuditRobustZ(buckets[userID], at), nil
 }
 
 func medianAuditValues(values []float64) float64 {
@@ -1680,6 +1717,7 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 	if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state='' where user_id=? and ended_at>=? and internal_probe=0`, userID, cutoffRaw); err != nil {
 		return err
 	}
+	dirtyHours := map[int64][]time.Time{}
 	for key, items := range byIdentity {
 		sort.SliceStable(items, func(i, j int) bool { return items[i].StartedAt.Before(items[j].StartedAt) })
 		for start := 0; start < len(items); {
@@ -1695,6 +1733,7 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 					if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state=? where report_id=?`, state, report.ReportID); err != nil {
 						return err
 					}
+					dirtyHours[userID] = append(dirtyHours[userID], report.StartedAt)
 				}
 				if _, err := tx.ExecContext(ctx, `insert into connection_probe_episodes(id,user_id,device_id_hash,state,score,node_count,connection_count,upload_bytes,download_bytes,started_at,ended_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, episode.ID, episode.UserID, episode.DeviceIDHash, episode.State, episode.Score, episode.NodeCount, episode.ConnectionCount, episode.UploadBytes, episode.DownloadBytes, episode.StartedAt.UTC().Format(time.RFC3339Nano), episode.EndedAt.UTC().Format(time.RFC3339Nano), now()); err != nil {
 					return err
@@ -1702,6 +1741,16 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 			}
 			start = end
 		}
+	}
+	// Clearing probe_state for the window also changes Robust-Z eligibility.
+	for _, report := range reports {
+		if report.InternalProbe {
+			continue
+		}
+		dirtyHours[userID] = append(dirtyHours[userID], report.StartedAt)
+	}
+	if err := markConnectionAuditHoursDirtyTx(tx, ctx, dirtyHours); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

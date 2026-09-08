@@ -64,22 +64,22 @@ func (s *Server) applyChangePlan(ctx context.Context, userID int64, plan ChangeP
 }
 
 func (s *Server) applyChangePlanOn(ctx context.Context, userID int64, serverIDs []int64, plan ChangePlan) {
-	if plan.Authorization {
-		s.wakeAuthorizationSync()
+	if !plan.Authorization && !plan.RuntimeUsers && !plan.TrafficPolicy && !plan.CoreConfig {
+		return
 	}
-	if plan.RuntimeUsers {
-		s.wakeRuntimeUsersSync()
+	ids := serverIDs
+	if ids == nil && (plan.Authorization || plan.RuntimeUsers || plan.TrafficPolicy) {
+		var err error
+		ids, err = s.userAccountingServerIDs(ctx, userID)
+		if err != nil {
+			logConfigurationError("user accounting servers", err)
+			ids = nil
+		}
+	}
+	if plan.Authorization || plan.RuntimeUsers {
+		s.invalidateAccessServers(ctx, ids)
 	}
 	if plan.TrafficPolicy {
-		ids := serverIDs
-		if ids == nil {
-			var err error
-			ids, err = s.userAccountingServerIDs(ctx, userID)
-			if err != nil {
-				logConfigurationError("user accounting servers", err)
-				return
-			}
-		}
 		if err := s.queueApplyTrafficPolicy(ctx, ids, plan.Reason, map[int64]bool{userID: true}); err != nil {
 			logConfigurationError("queue traffic policy", err)
 		}
@@ -97,7 +97,7 @@ func (s *Server) applyChangePlanOn(ctx context.Context, userID int64, serverIDs 
 		return
 	}
 	if plan.RuntimeUsers {
-		s.queueRuntimeUsersFallbackIfNeededOn(ctx, userID, serverIDs, plan.Reason)
+		s.queueRuntimeUsersFallbackIfNeededOn(ctx, userID, ids, plan.Reason)
 	}
 }
 

@@ -264,6 +264,13 @@ func (s *Server) configurationMutationServerIDs(ctx context.Context, path, metho
 }
 
 func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs, pathIDs []int64) []int64 {
+	return s.configurationTopologyServerIDsWithBefore(ctx, inboundIDs, pathIDs, nil, nil)
+}
+
+// configurationTopologyServerIDsWithBefore unions authentication servers from
+// the live topology with optional before-state inbound/path owners so inbound
+// moves, transparent processing changes, and path deletes keep both sides.
+func (s *Server) configurationTopologyServerIDsWithBefore(ctx context.Context, inboundIDs, pathIDs []int64, beforeInbounds []model.Inbound, beforeSteps []model.ProxyPathStep) []int64 {
 	inbounds, err := s.store.ListInbounds(ctx)
 	if err != nil {
 		return nil
@@ -293,6 +300,23 @@ func (s *Server) configurationTopologyServerIDs(ctx context.Context, inboundIDs,
 			pathSet[path.ID] = true
 		}
 	}
+	keys := map[string]bool{}
+	for inboundID := range inboundSet {
+		keys[core.NodeKeyOf(model.AssignableNodeInbound, inboundID)] = true
+	}
+	for pathID := range pathSet {
+		keys[core.NodeKeyOf(model.AssignableNodeProxyPath, pathID)] = true
+	}
+	afterServers := s.configurationTopologyServerIDsFromMaps(ctx, inboundSet, pathSet, inbounds, paths, steps)
+	if len(beforeInbounds) == 0 && len(beforeSteps) == 0 {
+		return afterServers
+	}
+	beforePaths := paths
+	union := core.AffectedServersFromTopologyUnion(keys, beforePaths, paths, beforeSteps, steps, beforeInbounds, inbounds, nil)
+	return core.UnionInt64IDs(afterServers, union)
+}
+
+func (s *Server) configurationTopologyServerIDsFromMaps(ctx context.Context, inboundSet, pathSet map[int64]bool, inbounds []model.Inbound, paths []model.ProxyPath, steps []model.ProxyPathStep) []int64 {
 	inboundByID := make(map[int64]model.Inbound, len(inbounds))
 	for _, inbound := range inbounds {
 		inboundByID[inbound.ID] = inbound

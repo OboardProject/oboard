@@ -175,7 +175,7 @@ func (s *Server) createBindingExpiryChange(ctx context.Context, binding model.Us
 	oldSnap := s.snapshotFromConfig(data, append(effective, binding), data.ActivePlanNodes, exceptions, oldAt)
 	finalizeSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, exceptions, now)
 	prepare := core.MergeProjections(oldSnap.Projection(), finalizeSnap.Projection())
-	servers := s.authServersForUserSnapshot(data, oldSnap, binding.UserID)
+	servers := accessServersFromProjections(oldSnap.Projection(), finalizeSnap.Projection(), data)
 	change, err := s.createAccessChange(ctx, nil, accessChangeDraft{
 		changeType:         model.AccessChangeUserBindings,
 		affectedUserCount:  1,
@@ -259,7 +259,7 @@ func (s *Server) createExceptionExpiryChange(ctx context.Context, ex model.UserN
 	oldSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, exceptions, oldAt)
 	finalizeSnap := s.snapshotFromConfig(data, effective, data.ActivePlanNodes, exceptionsWithout(exceptions, ex.ID), now)
 	prepare := core.MergeProjections(oldSnap.Projection(), finalizeSnap.Projection())
-	servers := s.authServersForNode(data, ex.NodeType, ex.NodeID)
+	servers := accessServersFromProjections(oldSnap.Projection(), finalizeSnap.Projection(), data)
 	change, err := s.createAccessChange(ctx, nil, accessChangeDraft{
 		changeType:         model.AccessChangeExceptions,
 		affectedUserCount:  1,

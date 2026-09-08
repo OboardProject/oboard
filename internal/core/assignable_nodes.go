@@ -573,6 +573,115 @@ func AffectedAuthServers(keys map[string]bool, paths []model.ProxyPath, steps []
 	return affectedAuthServers(keys, paths, steps, inbounds, serverOnline)
 }
 
+// NodeKeysFromAccessProjection returns every inbound/path node key that has at
+// least one authorized user in the projection.
+func NodeKeysFromAccessProjection(projection AccessProjection) map[string]bool {
+	keys := map[string]bool{}
+	for inboundID, users := range projection.InboundUsers {
+		if inboundID > 0 && len(users) > 0 {
+			keys[NodeKeyOf(model.AssignableNodeInbound, inboundID)] = true
+		}
+	}
+	for pathID, users := range projection.ProxyPathUsers {
+		if pathID > 0 && len(users) > 0 {
+			keys[NodeKeyOf(model.AssignableNodeProxyPath, pathID)] = true
+		}
+	}
+	return keys
+}
+
+// AccessProjectionMembershipDiffKeys returns node keys whose authorized user
+// sets differ between before and after. Keys present on only one side are
+// included.
+func AccessProjectionMembershipDiffKeys(before, after AccessProjection) map[string]bool {
+	keys := map[string]bool{}
+	for key := range NodeKeysFromAccessProjection(before) {
+		keys[key] = true
+	}
+	for key := range NodeKeysFromAccessProjection(after) {
+		keys[key] = true
+	}
+	diff := map[string]bool{}
+	for key := range keys {
+		nodeType, nodeID, ok := ParseNodeKey(key)
+		if !ok {
+			continue
+		}
+		var beforeUsers, afterUsers []int64
+		switch nodeType {
+		case model.AssignableNodeInbound:
+			beforeUsers = before.InboundUsers[nodeID]
+			afterUsers = after.InboundUsers[nodeID]
+		case model.AssignableNodeProxyPath:
+			beforeUsers = before.ProxyPathUsers[nodeID]
+			afterUsers = after.ProxyPathUsers[nodeID]
+		default:
+			continue
+		}
+		if !sameInt64Set(beforeUsers, afterUsers) {
+			diff[key] = true
+		}
+	}
+	return diff
+}
+
+func sameInt64Set(left, right []int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[int64]int, len(left))
+	for _, id := range left {
+		seen[id]++
+	}
+	for _, id := range right {
+		if seen[id] == 0 {
+			return false
+		}
+		seen[id]--
+	}
+	return true
+}
+
+// AffectedServersFromAccessProjections returns the authentication servers for
+// the union of membership-diff node keys in before and after. Callers that
+// already hold a topology snapshot from either side of a move should prefer
+// AffectedServersFromTopologyUnion so servers that only appear on one side of
+// an inbound/processing move stay in the set.
+func AffectedServersFromAccessProjections(before, after AccessProjection, paths []model.ProxyPath, steps []model.ProxyPathStep, inbounds []model.Inbound, serverOnline map[int64]bool) []int64 {
+	keys := AccessProjectionMembershipDiffKeys(before, after)
+	if len(keys) == 0 {
+		return nil
+	}
+	servers, _, _ := affectedAuthServers(keys, paths, steps, inbounds, serverOnline)
+	return servers
+}
+
+// AffectedServersFromTopologyUnion resolves the same node keys against two
+// topology snapshots and returns the union of authentication servers. Use this
+// for inbound moves, transparent processing-role changes, and path deletes
+// where the node key may be unchanged while the auth server moves.
+func AffectedServersFromTopologyUnion(keys map[string]bool, beforePaths, afterPaths []model.ProxyPath, beforeSteps, afterSteps []model.ProxyPathStep, beforeInbounds, afterInbounds []model.Inbound, serverOnline map[int64]bool) []int64 {
+	if len(keys) == 0 {
+		return nil
+	}
+	beforeServers, _, _ := affectedAuthServers(keys, beforePaths, beforeSteps, beforeInbounds, serverOnline)
+	afterServers, _, _ := affectedAuthServers(keys, afterPaths, afterSteps, afterInbounds, serverOnline)
+	return UnionInt64IDs(beforeServers, afterServers)
+}
+
+// UnionInt64IDs merges positive identifiers and returns them sorted uniquely.
+func UnionInt64IDs(parts ...[]int64) []int64 {
+	set := map[int64]bool{}
+	for _, part := range parts {
+		for _, id := range part {
+			if id > 0 {
+				set[id] = true
+			}
+		}
+	}
+	return sortedInt64Keys(set)
+}
+
 func sortedKeys(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for key := range set {

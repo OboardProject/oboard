@@ -27,6 +27,13 @@ const (
 	// WAL while it is the only thing shrinking the reporting tables.
 	maintenanceCheckpointEveryBatches = 5
 
+	// Low-priority audit rollup budget: accounting retention always runs
+	// first; dirty drain and hourly backfill are capped so they cannot starve
+	// writer availability under backlog.
+	maintenanceHourlyDirtyDrainLimit   = 64
+	maintenanceHourlyBackfillPageLimit = 200
+	maintenanceRollupMaxWall           = 2 * time.Second
+
 	ServerMonitoringRetentionDaysSetting = "server_monitoring_retention_days"
 	DefaultServerMonitoringRetentionDays = 7
 	MinServerMonitoringRetentionDays     = 1
@@ -51,6 +58,9 @@ type MaintenanceResult struct {
 	InboundProbesDeleted          int64
 	PortForwardProbesDeleted      int64
 	NotificationDeliveriesDeleted int64
+	HourlyDirtyDrained            int
+	HourlyBackfillAdvanced        int
+	RollupBudgetExhausted         bool
 	WALBusyFrames                 int
 	WALLogFrames                  int
 	WALCheckpointedFrames         int
@@ -176,6 +186,35 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			}
 			return result, fmt.Errorf("%s: %w", job.name, jobErr)
 		}
+	}
+	// Hourly rollups follow the same 30-day raw retention; never purge raw
+	// reports early just because hourly rows exist.
+	if _, err := s.PurgeConnectionAuditHourlyBefore(ctx, at.Add(-connectionAuditRetention)); err != nil {
+		return result, fmt.Errorf("connection audit hourly retention: %w", err)
+	}
+	// Low-priority rollup work after accounting deletes. Cap wall time so a
+	// dirty backlog cannot monopolize the writer during maintenance.
+	rollupStarted := time.Now()
+	drained, err := s.DrainConnectionAuditHourlyDirty(ctx, maintenanceHourlyDirtyDrainLimit)
+	if err != nil {
+		return result, fmt.Errorf("connection audit hourly dirty drain: %w", err)
+	}
+	result.HourlyDirtyDrained = drained
+	if time.Since(rollupStarted) < maintenanceRollupMaxWall {
+		advanced, complete, backfillErr := s.BackfillConnectionAuditHourlyPages(ctx, maintenanceHourlyBackfillPageLimit)
+		if backfillErr != nil {
+			return result, fmt.Errorf("connection audit hourly backfill: %w", backfillErr)
+		}
+		result.HourlyBackfillAdvanced = advanced
+		if !complete && advanced >= maintenanceHourlyBackfillPageLimit {
+			result.NeedsCatchUp = true
+		}
+	} else {
+		result.RollupBudgetExhausted = true
+		result.NeedsCatchUp = true
+	}
+	if drained >= maintenanceHourlyDirtyDrainLimit {
+		result.NeedsCatchUp = true
 	}
 	if _, err := s.db.ExecContext(ctx, `pragma optimize`); err != nil {
 		return result, fmt.Errorf("optimize SQLite database: %w", err)

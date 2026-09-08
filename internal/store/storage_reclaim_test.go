@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -42,8 +41,8 @@ func TestNewDatabaseUsesIncrementalAutoVacuum(t *testing.T) {
 }
 
 // An installation created before incremental auto-vacuum existed opens with
-// auto_vacuum=NONE and a file full of free pages. Opening it must convert the
-// mode once and reclaim the space, without losing data.
+// auto_vacuum=NONE and a file full of free pages. Opening it must not block on
+// a full rewrite; conversion is deferred to RunIncrementalVacuumConversion.
 func TestExistingDatabaseIsConvertedAndCompactedOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.sqlite")
 	legacy, err := sql.Open("sqlite", "file:"+path)
@@ -78,25 +77,34 @@ func TestExistingDatabaseIsConvertedAndCompactedOnce(t *testing.T) {
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if got := sqlitePragmaInt(t, s, "auto_vacuum"); got != sqliteAutoVacuumIncremental {
-		t.Fatalf("auto_vacuum = %d after open, want %d", got, sqliteAutoVacuumIncremental)
-	}
-	after, err := os.Stat(path)
+	pending, err := s.incrementalVacuumPending(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Size() >= before.Size() {
-		t.Fatalf("database did not shrink: %d -> %d bytes", before.Size(), after.Size())
+	if !pending {
+		t.Fatal("expected incremental vacuum conversion to be deferred on open")
+	}
+	if got := sqlitePragmaInt(t, s, "auto_vacuum"); got == sqliteAutoVacuumIncremental {
+		t.Fatal("open must not rewrite an existing database into incremental vacuum")
+	}
+	if err := s.RunIncrementalVacuumConversion(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := sqlitePragmaInt(t, s, "auto_vacuum"); got != sqliteAutoVacuumIncremental {
+		t.Fatalf("auto_vacuum = %d after explicit conversion, want %d", got, sqliteAutoVacuumIncremental)
+	}
+	pending, err = s.incrementalVacuumPending(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending {
+		t.Fatal("pending flag should clear after explicit conversion")
 	}
 	var rows int
 	if err := s.db.QueryRowContext(ctx, `select count(*) from bulk`).Scan(&rows); err != nil {
@@ -104,6 +112,31 @@ func TestExistingDatabaseIsConvertedAndCompactedOnce(t *testing.T) {
 	}
 	if rows != 20 {
 		t.Fatalf("compaction changed the data: %d rows, want 20", rows)
+	}
+	// Open already ran migrate, which can reuse the legacy free list before the
+	// deferred rewrite. Prove incremental reclaim works after conversion by
+	// deleting a large temporary table and asking maintenance to return pages.
+	if _, err := s.db.ExecContext(ctx, `create table reclaim_probe(id integer primary key, blob text)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 800; i++ {
+		if _, err := s.db.ExecContext(ctx, `insert into reclaim_probe(blob) values(?)`, string(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `drop table reclaim_probe`); err != nil {
+		t.Fatal(err)
+	}
+	beforeReclaim := sqlitePragmaInt(t, s, "freelist_count")
+	if beforeReclaim == 0 {
+		t.Fatal("expected free pages after drop")
+	}
+	reclaimed, err := s.reclaimFreePages(ctx, maintenanceReclaimPages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed <= 0 {
+		t.Fatalf("incremental vacuum reclaimed %d pages, want > 0 (freelist was %d)", reclaimed, beforeReclaim)
 	}
 }
 

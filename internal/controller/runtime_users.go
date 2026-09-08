@@ -123,7 +123,7 @@ func (s *Server) reconcileRuntimeUsersSync(ctx context.Context, full bool) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.syncServerRuntimeUsers(ctx, serverID)
+		s.syncServerRuntimeUsers(ctx, serverID, full)
 	}
 }
 
@@ -168,7 +168,6 @@ func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Ser
 	// Read-only ledger: generation may consult existing allocations but this
 	// path must never persist new ports.
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
-	var runtimeUsers *core.RuntimeUserPackage
 	// DNS is optional for user projection. BuildDNSConfig already substitutes a
 	// default state when nil, so a missing per-server policy must not block
 	// delivering users for an otherwise valid topology.
@@ -176,20 +175,16 @@ func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Ser
 	if state, dnsErr := core.DNSConfigStateForServer(server.ID, data.DNSLists, data.ServerDNSPolicies); dnsErr == nil {
 		dnsState = state
 	}
-	_, err = core.GenerateServerConfigWithOptions(server, data.Inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
+	pkg, err := core.ProjectServerRuntimeUsers(server, data.Inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds,
 		ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, Servers: data.Servers, Inbounds: data.Inbounds,
 		WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
 		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
-		PortLedger: ledger, RuntimeUsersOut: &runtimeUsers,
+		PortLedger: ledger,
 	})
 	if err != nil {
 		return core.RuntimeUserPackage{}, err
 	}
-	if runtimeUsers == nil {
-		return core.RuntimeUserPackage{UsersRevision: revision, Mode: "full"}, nil
-	}
-	pkg := *runtimeUsers
 	pkg.UsersRevision = revision
 	digest, err := core.UsersDigest(revision, pkg.Scope, pkg.Entries)
 	if err != nil {
@@ -200,7 +195,7 @@ func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Ser
 	return pkg, nil
 }
 
-func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64) {
+func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, forceRebuild bool) {
 	s.runtimeUsersSyncMu.Lock()
 	if s.runtimeUsersSyncInFlight[serverID] {
 		s.runtimeUsersSyncMu.Unlock()
@@ -225,16 +220,27 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64) {
 	if err != nil {
 		return
 	}
+	routingRevision, err := s.store.RoutingCacheRevision(ctx)
+	if err != nil {
+		return
+	}
+	// Wake path revision gate: confirmed servers already evaluated for the
+	// current routing revision skip full package generation. Periodic full
+	// scans still rebuild so a missed deadline cannot stick.
+	if !forceRebuild && state.EvaluatedRoutingRevision == routingRevision && state.Confirmed() {
+		return
+	}
 	probeRevision := state.DesiredRevision
 	if probeRevision <= 0 {
 		probeRevision = 1
 	}
-	pkg, routingRevision, err := s.currentRuntimeUserPackage(ctx, *server, probeRevision)
+	pkg, builtRevision, err := s.currentRuntimeUserPackage(ctx, *server, probeRevision)
 	if err != nil {
 		log.Printf("runtime users sync server=%d: build package: %v", serverID, err)
 		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingDeliveryFailed, err.Error(), true)
 		return
 	}
+	routingRevision = builtRevision
 	contentDigest, err := core.UsersDigest(0, pkg.Scope, pkg.Entries)
 	if err != nil {
 		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingDeliveryFailed, err.Error(), true)

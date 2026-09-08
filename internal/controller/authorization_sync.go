@@ -166,7 +166,7 @@ func (s *Server) reconcileAuthorizationSync(ctx context.Context, full bool) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.syncServerAuthorization(ctx, serverID)
+		s.syncServerAuthorization(ctx, serverID, full)
 	}
 	if _, err := s.store.PruneAuthorizationDenials(ctx, time.Now().UTC()); err != nil {
 		log.Printf("authorization sync: prune denials: %v", err)
@@ -176,7 +176,7 @@ func (s *Server) reconcileAuthorizationSync(ctx context.Context, full bool) {
 // syncServerAuthorization computes the current lease for one server, records
 // the ledger, and pushes the signed envelope when the desired revision is not
 // yet confirmed. It never blocks on the Agent task slot.
-func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64) {
+func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64, forceRebuild bool) {
 	s.authorizationSyncMu.Lock()
 	if s.authorizationSyncInFlight[serverID] {
 		s.authorizationSyncMu.Unlock()
@@ -197,13 +197,24 @@ func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64) {
 		_ = s.store.MarkAuthorizationPending(ctx, serverID, store.AuthorizationPendingUnenrolled, "", false)
 		return
 	}
+	state, err := s.store.AuthorizationState(ctx, serverID)
+	if err != nil {
+		return
+	}
+	routingRevision, err := s.store.RoutingCacheRevision(ctx)
+	if err != nil {
+		return
+	}
+	if !forceRebuild && state.EvaluatedRoutingRevision == routingRevision && state.Confirmed() {
+		return
+	}
 	lease, err := s.currentAuthorizationLease(ctx, serverID)
 	if err != nil {
 		log.Printf("authorization sync server=%d: issue lease: %v", serverID, err)
 		_ = s.store.MarkAuthorizationPending(ctx, serverID, store.AuthorizationPendingDeliveryFailed, err.Error(), true)
 		return
 	}
-	state, err := s.store.AuthorizationState(ctx, serverID)
+	state, err = s.store.AuthorizationState(ctx, serverID)
 	if err != nil {
 		return
 	}

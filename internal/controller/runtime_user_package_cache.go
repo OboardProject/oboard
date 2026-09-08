@@ -125,6 +125,41 @@ func (c *runtimeUserPackageCache) observeRevisions(routingRevision, policyRevisi
 	return c.generation
 }
 
+func (c *runtimeUserPackageCache) invalidateServers(serverIDs []int64) {
+	c.init()
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	if c.cache == nil {
+		return
+	}
+	for _, serverID := range serverIDs {
+		if serverID > 0 {
+			c.cache.delete(serverID)
+		}
+	}
+}
+
+func (c *runtimeUserPackageCache) bumpGeneration() {
+	c.init()
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	c.generation++
+	if c.cache != nil {
+		c.cache.clear()
+	}
+	if c.generation == 0 {
+		c.generation = 1
+	}
+}
+
+func (s *Server) invalidateRuntimeUserPackagesFor(serverIDs []int64) {
+	s.runtimeUserPackages.invalidateServers(serverIDs)
+}
+
+func (s *Server) bumpRuntimeUserPackageGeneration() {
+	s.runtimeUserPackages.bumpGeneration()
+}
+
 // runtimeUserPackageBuildCount exposes coalesced build attempts for tests.
 func (s *Server) runtimeUserPackageBuildCount() int64 {
 	s.runtimeUserPackages.init()

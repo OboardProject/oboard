@@ -248,16 +248,11 @@ func sqliteDSN(path string, busyTimeout time.Duration, cacheKB int, restore bool
 // enableIncrementalVacuum puts the database into incremental auto-vacuum so
 // deleted reporting rows can be returned to the filesystem.
 //
-// Retention has always deleted old audit, metric, latency and connectivity
-// rows, but SQLite only moved those pages onto the free list: with the default
-// auto_vacuum=NONE the file never shrinks below its historical high-water
-// mark, so an installation that once accumulated a large backlog keeps paying
-// for it in page-cache misses and backup size forever.
-//
-// On an empty database the mode is a free property change. On an existing one
-// SQLite requires a VACUUM to rewrite the file, which is why this runs once at
-// open, before the Controller serves anything: after it succeeds the mode is
-// persistent and RunMaintenance reclaims incrementally from then on.
+// On an empty database the mode is a free property change and VACUUM is cheap.
+// On an existing database SQLite requires a full rewrite; that must not block
+// ordinary Controller startup. Existing libraries set a pending flag and let
+// explicit maintenance (`RunIncrementalVacuumConversion`) finish the rewrite
+// under an operator-visible budget.
 func enableIncrementalVacuum(ctx context.Context, db *sql.DB) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -271,8 +266,6 @@ func enableIncrementalVacuum(ctx context.Context, db *sql.DB) error {
 	if mode == sqliteAutoVacuumIncremental {
 		return nil
 	}
-	// The pragma must be issued on the same connection that runs the VACUUM,
-	// which is why the connection is pinned above.
 	if _, err := conn.ExecContext(ctx, `pragma auto_vacuum=incremental`); err != nil {
 		return fmt.Errorf("set SQLite auto_vacuum: %w", err)
 	}
@@ -280,13 +273,23 @@ func enableIncrementalVacuum(ctx context.Context, db *sql.DB) error {
 	if err := conn.QueryRowContext(ctx, `select count(*) from sqlite_master`).Scan(&tables); err != nil {
 		return fmt.Errorf("inspect SQLite schema: %w", err)
 	}
-	// The mode lives in the database header, and the pragma alone only holds
-	// it on this connection. VACUUM is what writes it, which on an empty
-	// database is immediate and on an existing one also reclaims the free
-	// pages retention already produced.
-	startedAt := time.Now()
 	if tables > 0 {
-		log.Printf("compacting SQLite database once to enable incremental vacuum; this can take a while on a large database")
+		// Persist the pending conversion via a one-row marker table so
+		// maintenance can finish without rewriting on every open.
+		if _, err := conn.ExecContext(ctx, `create table if not exists oboard_maintenance_flags (
+			name text primary key,
+			value text not null,
+			updated_at text not null
+		)`); err != nil {
+			return fmt.Errorf("create maintenance flags: %w", err)
+		}
+		ts := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err := conn.ExecContext(ctx, `insert into oboard_maintenance_flags(name,value,updated_at) values('incremental_vacuum_pending','1',?)
+			on conflict(name) do update set value='1', updated_at=excluded.updated_at`, ts); err != nil {
+			return fmt.Errorf("mark incremental vacuum pending: %w", err)
+		}
+		log.Printf("SQLite incremental vacuum conversion deferred to explicit maintenance (existing database)")
+		return nil
 	}
 	if _, err := conn.ExecContext(ctx, `vacuum`); err != nil {
 		return fmt.Errorf("compact SQLite database: %w", err)
@@ -296,12 +299,50 @@ func enableIncrementalVacuum(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("verify SQLite auto_vacuum: %w", err)
 	}
 	if confirmed != sqliteAutoVacuumIncremental {
-		return fmt.Errorf("SQLite auto_vacuum is %d after compaction", confirmed)
-	}
-	if tables > 0 {
-		log.Printf("SQLite database compacted in %s; incremental vacuum is active", time.Since(startedAt).Truncate(time.Millisecond))
+		return fmt.Errorf("SQLite auto_vacuum=%d after vacuum, want %d", confirmed, sqliteAutoVacuumIncremental)
 	}
 	return nil
+}
+
+// RunIncrementalVacuumConversion performs the deferred full-database rewrite
+// when startup left incremental vacuum pending. Callers must ensure enough
+// free disk (roughly 2x database size) before invoking this.
+func (s *Store) RunIncrementalVacuumConversion(ctx context.Context) error {
+	var pending string
+	err := s.db.QueryRowContext(ctx, `select value from oboard_maintenance_flags where name='incremental_vacuum_pending'`).Scan(&pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return nil
+		}
+		return err
+	}
+	if pending != "1" {
+		return nil
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `pragma auto_vacuum=incremental`); err != nil {
+		return err
+	}
+	log.Printf("running deferred SQLite incremental vacuum conversion")
+	if _, err := conn.ExecContext(ctx, `vacuum`); err != nil {
+		return fmt.Errorf("compact SQLite database: %w", err)
+	}
+	var confirmed int
+	if err := conn.QueryRowContext(ctx, `pragma auto_vacuum`).Scan(&confirmed); err != nil {
+		return err
+	}
+	if confirmed != sqliteAutoVacuumIncremental {
+		return fmt.Errorf("SQLite auto_vacuum=%d after vacuum, want %d", confirmed, sqliteAutoVacuumIncremental)
+	}
+	_, err = conn.ExecContext(ctx, `delete from oboard_maintenance_flags where name='incremental_vacuum_pending'`)
+	return err
 }
 
 // IsSQLiteBusy reports transient SQLite writer conflicts, including extended
@@ -534,6 +575,11 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists connection_presence_agents (agent_id text primary key, server_id integer not null references servers(id) on delete cascade, dropped_count integer not null default 0, updated_at text not null)`,
 		`create table if not exists connection_probe_episodes (id text primary key, user_id integer not null references users(id) on delete cascade, device_id_hash text not null default '', state text not null, score integer not null, node_count integer not null, connection_count integer not null, upload_bytes integer not null default 0, download_bytes integer not null default 0, started_at text not null, ended_at text not null, updated_at text not null)`,
 		`create index if not exists idx_connection_probe_user_time on connection_probe_episodes(user_id,ended_at desc)`,
+		`create table if not exists connection_audit_hourly (user_id integer not null references users(id) on delete cascade, utc_hour text not null, connection_count integer not null default 0, algorithm_version integer not null default 1, source_watermark text not null default '', updated_at text not null, primary key(user_id, utc_hour))`,
+		`create index if not exists idx_connection_audit_hourly_hour on connection_audit_hourly(utc_hour)`,
+		`create table if not exists connection_audit_hourly_dirty (user_id integer not null references users(id) on delete cascade, utc_hour text not null, dirty_at text not null, primary key(user_id, utc_hour))`,
+		`create index if not exists idx_connection_audit_hourly_dirty_at on connection_audit_hourly_dirty(dirty_at)`,
+		`create table if not exists audit_rollup_state (id integer primary key check(id=1), backfill_cursor text not null default '', backfill_complete integer not null default 0, read_path text not null default 'raw', algorithm_version integer not null default 1, updated_at text not null)`,
 		`create table if not exists traffic_leases (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, user_id integer not null references users(id) on delete cascade, period_key text not null, lease_bytes integer not null default 0, consumed_bytes integer not null default 0, updated_at text not null, unique(server_id,user_id,period_key))`,
 		`create table if not exists server_telemetry (server_id integer primary key references servers(id) on delete cascade, monitoring_mode text not null default 'lightweight', resource_history_enabled integer not null default 1, traffic_reset_mode text not null default 'monthly', traffic_reset_day integer not null default 1, traffic_limit_bytes integer not null default 0, connectivity_probe_enabled integer not null default 0, connectivity_probe_target text not null default 'auto', time_correction_mode text not null default 'off', time_check_status text not null default 'unknown', time_offset_ms integer not null default 0, time_effective_offset_ms integer not null default 0, time_check_source text not null default '', time_check_error text not null default '', time_logical_active integer not null default 0, time_unsupported_paths_json text not null default '[]', time_checked_at text, period_key text not null default '', period_start text not null default '', period_end text not null default '', traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, raw_upload_bytes integer not null default 0, raw_download_bytes integer not null default 0, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, last_reported_at text, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, connectivity_checked_at text, connectivity_error text not null default '', service_start_at text, expires_at text, renewal_cycle text not null default 'monthly', auto_renew_enabled integer not null default 0, expiry_notify_enabled integer not null default 1, last_auto_renewed_at text, updated_at text not null)`,
 		`create table if not exists server_metric_samples (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, cpu_usage_percent real not null default 0, memory_used_bytes integer not null default 0, memory_total_bytes integer not null default 0, disk_used_bytes integer not null default 0, disk_total_bytes integer not null default 0, tcp_connection_count integer not null default 0, udp_connection_count integer not null default 0, process_count integer not null default 0, resource_recorded integer not null default 1, network_upload_bps integer not null default 0, network_download_bps integer not null default 0, traffic_upload_bytes integer not null default 0, traffic_download_bytes integer not null default 0, connectivity_available integer not null default -1, connectivity_latency_ms integer not null default 0, sampled_at text not null)`,
@@ -1261,6 +1307,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.backfillServerDNSPolicies(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureConnectionAuditHourlySchema(ctx); err != nil {
 		return err
 	}
 	return s.SeedConnectivityHistory(ctx, time.Now().UTC())

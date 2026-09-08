@@ -252,6 +252,10 @@ type Server struct {
 	// authorization lifecycle workers; the database remains the recovery
 	// fallback for both.
 	accessWorkersWake chan struct{}
+	// accessDeadlineWake coalesces reschedule hints for the time-boundary
+	// authorization/runtime-users scheduler. SQLite remains authoritative after
+	// restart.
+	accessDeadlineWake chan struct{}
 	// planReconcileWake coalesces hints for the durable subscription-plan
 	// reconciler. SQLite plan state remains authoritative.
 	planReconcileWake chan struct{}
@@ -302,7 +306,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	if pollerID == "" {
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
-	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), unknownAgents: newTTLCache(), agentAuthBans: newTTLCache(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, runtimeUsersSyncWake: make(chan struct{}, 1), runtimeUsersSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), unknownAgents: newTTLCache(), agentAuthBans: newTTLCache(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), accessDeadlineWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, runtimeUsersSyncWake: make(chan struct{}, 1), runtimeUsersSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
@@ -6237,6 +6241,11 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		if current.ServerID != v.ServerID {
+			beforeInbounds := []model.Inbound{*current}
+			ids := s.configurationTopologyServerIDsWithBefore(r.Context(), []int64{v.ID}, nil, beforeInbounds, nil)
+			s.invalidateAccessServers(r.Context(), ids)
+		}
 		if err := s.saveInboundCertificateBinding(r.Context(), v); err != nil {
 			fail(w, err, 500)
 			return
@@ -9469,10 +9478,13 @@ func (s *Server) proxyPaths(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, http.StatusConflict)
 			return
 		}
+		beforeSteps, _ := s.store.ListProxyPathStepsForPath(r.Context(), id)
+		affected := s.configurationTopologyServerIDsWithBefore(r.Context(), nil, []int64{id}, nil, beforeSteps)
 		if err := s.store.DeleteProxyPath(r.Context(), id); err != nil {
 			fail(w, err, 500)
 			return
 		}
+		s.invalidateAccessServers(r.Context(), affected)
 		if err := s.reconcileProxyPathNameTemplates(r.Context()); err != nil {
 			fail(w, err, 500)
 			return
@@ -10765,6 +10777,7 @@ func (s *Server) normalizeProxyPathProcessingRoles(ctx context.Context, pathID i
 	if err != nil {
 		return err
 	}
+	beforeSteps := append([]model.ProxyPathStep(nil), steps...)
 	stored := make([]bool, len(steps))
 	for i := range steps {
 		stored[i] = steps[i].ProcessingRole
@@ -10772,13 +10785,19 @@ func (s *Server) normalizeProxyPathProcessingRoles(ctx context.Context, pathID i
 	if err := normalizeProxyPathProcessingRolesInMemory(steps, pathID); err != nil {
 		return err
 	}
+	changed := false
 	for i := range steps {
 		if steps[i].ProcessingRole == stored[i] {
 			continue
 		}
+		changed = true
 		if err := s.store.UpdateProxyPathStep(ctx, &steps[i]); err != nil {
 			return err
 		}
+	}
+	if changed {
+		ids := s.configurationTopologyServerIDsWithBefore(ctx, nil, []int64{pathID}, nil, beforeSteps)
+		s.invalidateAccessServers(ctx, ids)
 	}
 	return nil
 }

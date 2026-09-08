@@ -116,6 +116,13 @@ type ConfigOptions struct {
 	RuntimeUsersOut **RuntimeUserPackage
 }
 
+type configBuildMode int
+
+const (
+	configBuildFull configBuildMode = iota
+	configBuildUsersProjection
+)
+
 func AdapterFor(protocol model.Protocol) (Adapter, error) {
 	switch protocol {
 	case model.ProtocolVLESS:
@@ -532,6 +539,37 @@ func ValidatePortRange(start, end int) error {
 }
 
 func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbound, outbounds []model.Outbound, dnsState *DNSConfigState, users []model.User, opts ConfigOptions) (string, error) {
+	config, err := buildServerConfig(server, inbounds, outbounds, dnsState, users, opts, configBuildFull)
+	if err != nil {
+		return "", err
+	}
+	if err := ValidateGeneratedSingBoxConfig(config); err != nil {
+		return "", err
+	}
+	b, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ProjectServerRuntimeUsers builds the installable runtime-user package without
+// calling GenerateServerConfigWithOptions: it shares the inbound/path user
+// assembly path but skips DNS hard-fail, unrelated outbound/WARP rendering,
+// full route-set compilation, config validation, and JSON serialization.
+func ProjectServerRuntimeUsers(server model.Server, inbounds []model.Inbound, outbounds []model.Outbound, dnsState *DNSConfigState, users []model.User, opts ConfigOptions) (RuntimeUserPackage, error) {
+	var pkg *RuntimeUserPackage
+	opts.RuntimeUsersOut = &pkg
+	if _, err := buildServerConfig(server, inbounds, outbounds, dnsState, users, opts, configBuildUsersProjection); err != nil {
+		return RuntimeUserPackage{}, err
+	}
+	if pkg == nil {
+		return RuntimeUserPackage{Mode: "full"}, nil
+	}
+	return *pkg, nil
+}
+
+func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds []model.Outbound, dnsState *DNSConfigState, users []model.User, opts ConfigOptions, mode configBuildMode) (SingBoxConfig, error) {
 	if opts.AccessSnapshot != nil {
 		opts.InboundUsers = opts.AccessSnapshot.InboundUserBindings()
 		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
@@ -547,11 +585,11 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		pathStepsByPath[step.PathID] = append(pathStepsByPath[step.PathID], step)
 	}
 	if err := validateProxyPathTransportSet(opts.ProxyPaths, pathStepsByPath, pathInboundByID); err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	pathWARPServers, err := ProxyPathWARPServerIDs(opts.ProxyPaths, opts.ProxyPathSteps, opts.Inbounds)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	warpReferenced := pathWARPServers[server.ID]
 	config := SingBoxConfig{
@@ -563,9 +601,20 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	if server.ConnectionAuditEnabled {
 		config.OBoard = &OBoardRuntimeMetadata{ConnectionAudit: &OBoardConnectionAudit{Enabled: true}}
 	}
-	dns, err := BuildDNSConfig(server, dnsState)
-	if err != nil {
-		return "", err
+	var dns map[string]any
+	if mode == configBuildUsersProjection {
+		// Projection must not fail closed on DNS policy gaps; use a soft default
+		// so auth_user → outbound tags can still be derived from path rules.
+		if stateDNS, dnsErr := BuildDNSConfig(server, dnsState); dnsErr == nil {
+			dns = stateDNS
+		} else {
+			dns = map[string]any{"servers": []any{}, "final": "local"}
+		}
+	} else {
+		dns, err = BuildDNSConfig(server, dnsState)
+		if err != nil {
+			return SingBoxConfig{}, err
+		}
 	}
 	config.DNS = dns
 	config.Route["default_domain_resolver"] = defaultDomainResolver(dns, server)
@@ -576,7 +625,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	// conflicts through the inbound set they are handed.
 	snellPlan, snellReservations, err := planSnellUserListeners(configProjectionInbounds(inbounds, opts.Inbounds), configProjectionServers(server, opts.Servers), users, opts)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	if len(snellReservations) > 0 {
 		opts.Inbounds = append(append([]model.Inbound{}, opts.Inbounds...), snellReservations...)
@@ -594,15 +643,15 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			continue
 		}
 		if err := validateServerUDPForInbound(server, inbound); err != nil {
-			return "", err
+			return SingBoxConfig{}, err
 		}
 		adapter, err := AdapterFor(inbound.Protocol)
 		if err != nil {
-			return "", err
+			return SingBoxConfig{}, err
 		}
 		accountedUsers, inboundUsers, err := resolveInboundUsers(inbound, users, opts, server.ChainSecret)
 		if err != nil {
-			return "", err
+			return SingBoxConfig{}, err
 		}
 		// Snell does not have one listener with a user table: each identity
 		// owns a dedicated single-user listener rendered from the plan above,
@@ -611,7 +660,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			for _, listener := range snellPlan[inbound.ID] {
 				item, err := snellListenerInbound(inbound, listener)
 				if err != nil {
-					return "", err
+					return SingBoxConfig{}, err
 				}
 				item["listen"] = EffectiveListenIP(server, inbound.ListenIP)
 				applyServerNetworkPolicy(item, server, inbound.Protocol, true)
@@ -622,11 +671,11 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 		}
 		addRuntimeLimitsForInbound(&config, inbound, accountedUsers, opts)
 		if !InboundSupportsMultipleUsers(inbound) && len(inboundUsers) > 1 {
-			return "", fmt.Errorf("inbound %s supports only one user", inbound.Name)
+			return SingBoxConfig{}, fmt.Errorf("inbound %s supports only one user", inbound.Name)
 		}
 		item, err := adapter.Inbound(inbound, inboundUsers)
 		if err != nil {
-			return "", err
+			return SingBoxConfig{}, err
 		}
 		item["listen"] = EffectiveListenIP(server, inbound.ListenIP)
 		applyServerNetworkPolicy(item, server, inbound.Protocol, true)
@@ -637,27 +686,41 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	// derivations could pick different ports for the same hop.
 	_, plannedPathInbounds, err := buildProxyPathPlansWithInbounds(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	internalInbounds, err := buildProxyPathInternalInbounds(server, opts, users, &config, plannedPathInbounds)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	config.Inbounds = append(config.Inbounds, internalInbounds...)
+	if mode == configBuildUsersProjection {
+		pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds, policyCtx)
+		if err != nil {
+			return SingBoxConfig{}, err
+		}
+		config.Outbounds = append(config.Outbounds, pathOutbounds...)
+		if len(pathRules) > 0 {
+			config.Route["rules"] = pathRules
+		}
+		if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
+			*opts.RuntimeUsersOut = pkg
+		}
+		return config, nil
+	}
 	for _, outbound := range outbounds {
 		if outbound.ServerID != server.ID || !outbound.Enabled {
 			continue
 		}
 		if err := ValidateAddressForIPStack(EffectiveIPStack(server), outbound.TargetAddress); err != nil {
-			return "", markInvalidDesiredState(fmt.Errorf("outbound %s: %w", outbound.Name, err))
+			return SingBoxConfig{}, markInvalidDesiredState(fmt.Errorf("outbound %s: %w", outbound.Name, err))
 		}
 		adapter, err := AdapterFor(outbound.Protocol)
 		if err != nil {
-			return "", err
+			return SingBoxConfig{}, err
 		}
 		item, err := adapter.Outbound(outbound, firstActiveUser(users))
 		if err != nil {
-			return "", err
+			return SingBoxConfig{}, err
 		}
 		applyServerNetworkPolicy(item, server, outbound.Protocol, false)
 		config.Outbounds = append(config.Outbounds, item)
@@ -667,33 +730,33 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			continue
 		}
 		if err := ValidateAddressForIPStack(EffectiveIPStack(server), external.TargetAddress); err != nil {
-			return "", markInvalidDesiredState(fmt.Errorf("external outbound %s: %w", external.Name, err))
+			return SingBoxConfig{}, markInvalidDesiredState(fmt.Errorf("external outbound %s: %w", external.Name, err))
 		}
 		item, err := externalOutboundToSingBox(external, server, firstActiveUser(users))
 		if err != nil {
-			return "", fmt.Errorf("external outbound %s: %w", external.Name, err)
+			return SingBoxConfig{}, fmt.Errorf("external outbound %s: %w", external.Name, err)
 		}
 		config.Outbounds = append(config.Outbounds, item)
 	}
 	sourcePrefixOutbounds, err := buildSourcePrefixOutbounds(server, opts.RoutingRules)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, sourcePrefixOutbounds...)
 	interfaceOutbounds, err := buildRoutingRuleInterfaceOutbounds(server, opts.RoutingRules, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, interfaceOutbounds...)
 	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds, policyCtx)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, pathOutbounds...)
 	inheritedFamilyDNSStrategy, _ := dns["strategy"].(string)
 	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, plannedPathInbounds, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy, dns)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, familySplitOutbounds...)
 	omitUnsupportedDialTCPFastOpenAll(config.Outbounds)
@@ -705,26 +768,26 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 			endpoint := map[string]any{"type": "wireguard", "tag": tag("warp", profile.ID), "_oboard_warp_pending": profile.ID}
 			underlay, err := WARPUnderlayFromProfile(profile)
 			if err != nil {
-				return "", err
+				return SingBoxConfig{}, err
 			}
 			if err := ApplyDialConstraintToEndpoint(endpoint, underlay); err != nil {
-				return "", err
+				return SingBoxConfig{}, err
 			}
 			config.Endpoints = append(config.Endpoints, endpoint)
 			continue
 		}
 		item, err := warpProfileToSingBox(profile, server)
 		if err != nil {
-			return "", fmt.Errorf("warp profile %s: %w", profile.Name, err)
+			return SingBoxConfig{}, fmt.Errorf("warp profile %s: %w", profile.Name, err)
 		}
 		config.Endpoints = append(config.Endpoints, item)
 	}
 	if err := applyRoutingRuleWARPEndpointBindings(server, opts.RoutingRules, opts.ProxyPaths, opts.ProxyPathSteps, opts.WARPProfiles, &config.Endpoints); err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	rules, err := buildRouteRules(server, opts.RoutingRules, outbounds, opts.ExternalOutbounds, policyCtx)
 	if err != nil {
-		return "", err
+		return SingBoxConfig{}, err
 	}
 	if len(pathRules) > 0 {
 		rules = append(pathRules, rules...)
@@ -738,14 +801,7 @@ func GenerateServerConfigWithOptions(server model.Server, inbounds []model.Inbou
 	if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
 		*opts.RuntimeUsersOut = pkg
 	}
-	if err := ValidateGeneratedSingBoxConfig(config); err != nil {
-		return "", err
-	}
-	b, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return config, nil
 }
 
 func addRuntimeLimitsForInbound(config *SingBoxConfig, inbound model.Inbound, users []model.User, opts ConfigOptions) {
