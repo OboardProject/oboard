@@ -1,6 +1,7 @@
 package controllerupdate
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -83,5 +84,71 @@ func TestHealthURLsRejectInvalidOrNonLocalRuntimeState(t *testing.T) {
 				t.Fatalf("unsafe runtime state was accepted: %#v", urls)
 			}
 		})
+	}
+}
+
+func TestWaitHealthReloadsRuntimePathAfterRestart(t *testing.T) {
+	root := t.TempDir()
+	runtimePath := filepath.Join(root, RuntimeStateName)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/qzq/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	listenAddress := strings.TrimPrefix(server.URL, "http://")
+	envPath := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(envPath, []byte("OBOARD_ADDR="+listenAddress+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	polls := 0
+	service := NewService(ServiceConfig{
+		BinaryEnvPath:    envPath,
+		RuntimeStatePath: runtimePath,
+		StatePath:        filepath.Join(root, "status.json"),
+		HealthClient:     server.Client(),
+		HealthTimeout:    time.Second,
+		Wait: func(ctx context.Context, _ time.Duration) error {
+			polls++
+			return WriteRuntimeState(runtimePath, RuntimeState{ListenAddress: listenAddress, BasePaths: []string{"/qzq"}})
+		},
+	})
+	if err := service.waitHealth(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if polls != 1 {
+		t.Fatalf("polls = %d, want one stale-path retry", polls)
+	}
+}
+
+func TestWaitHealthFailurePreservesAllProbeOutcomes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/current/healthz" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	listenAddress := strings.TrimPrefix(server.URL, "http://")
+	envPath := filepath.Join(root, "controller.env")
+	if err := os.WriteFile(envPath, []byte("OBOARD_ADDR="+listenAddress+"\nOBOARD_BASE_PATH=/stale\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runtimePath := filepath.Join(root, RuntimeStateName)
+	if err := WriteRuntimeState(runtimePath, RuntimeState{ListenAddress: listenAddress, BasePaths: []string{"/current"}}); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(ServiceConfig{
+		BinaryEnvPath: envPath, RuntimeStatePath: runtimePath, StatePath: filepath.Join(root, "status.json"),
+		HealthClient: server.Client(), HealthTimeout: time.Second,
+		Wait: func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+	})
+	err := service.waitHealth(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "/current/healthz HTTP 503") || !strings.Contains(err.Error(), "/stale/healthz HTTP 404") {
+		t.Fatalf("health failure lost a probe outcome: %v", err)
 	}
 }

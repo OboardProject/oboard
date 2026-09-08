@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/controllerupdate"
 	"github.com/OboardProject/oboard/internal/security"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -174,7 +175,14 @@ func TestControllerUpdateRunRecoversOnNewBuild(t *testing.T) {
 	if err := db.CreateControllerUpdateRun(ctx, run); err != nil {
 		t.Fatal(err)
 	}
-	s.recoverControllerUpdateRun(ctx)
+	if s.reconcileControllerUpdateRun(ctx, run, controllerupdate.Status{State: "installing", Current: controllerupdate.BuildInfo{Build: version.Build}}) {
+		t.Fatal("running target build was accepted before updater health confirmation")
+	}
+	pending, err := db.LatestControllerUpdateRun(ctx)
+	if err != nil || pending.Phase != store.ControllerUpdatePhaseRestarting {
+		t.Fatalf("unconfirmed run = %#v err=%v", pending, err)
+	}
+	s.reconcileControllerUpdateRun(ctx, run, controllerupdate.Status{State: "installed", Current: controllerupdate.BuildInfo{Build: version.Build}})
 	latest, err := db.LatestControllerUpdateRun(ctx)
 	if err != nil || latest == nil || latest.Phase != store.ControllerUpdatePhaseSucceeded {
 		t.Fatalf("recovered run = %#v err=%v", latest, err)
@@ -412,5 +420,23 @@ func TestRequeueStillReturnsInFlightUpdateBeforeInstallReport(t *testing.T) {
 	}
 	if stored.Status != "pending" {
 		t.Fatalf("in-flight update before the install report status = %q, want pending", stored.Status)
+	}
+}
+
+func TestControllerUpdateRunRecordsRollbackEvenOnTargetBuild(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := newTestServer(db, "test-secret", "")
+	run := &store.ControllerUpdateRun{Source: "manual", CurrentBuild: "old", TargetBuild: version.Build, Phase: store.ControllerUpdatePhaseRestarting}
+	if err := db.CreateControllerUpdateRun(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcileControllerUpdateRun(t.Context(), run, controllerupdate.Status{State: "failed", LastError: "health timeout; rolled back", Current: controllerupdate.BuildInfo{Build: version.Build}})
+	latest, err := db.LatestControllerUpdateRun(t.Context())
+	if err != nil || latest.Phase != store.ControllerUpdatePhaseFailed || latest.Error != "health timeout; rolled back" {
+		t.Fatalf("rollback run = %#v err=%v", latest, err)
 	}
 }

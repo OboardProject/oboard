@@ -81,7 +81,7 @@ func DefaultServiceConfig() ServiceConfig {
 		WorkRoot:           filepath.Join(dataDir, "controller-update"),
 		HTTPClient:         &http.Client{Timeout: 2 * time.Minute},
 		HealthClient:       &http.Client{Timeout: 2 * time.Second},
-		HealthTimeout:      90 * time.Second,
+		HealthTimeout:      3 * time.Minute,
 		HealthPollInterval: time.Second,
 		ReadyWindow:        4 * time.Second,
 		InstallGracePeriod: 4 * time.Second,
@@ -1335,13 +1335,12 @@ func (s *Service) waitHealth(ctx context.Context) error {
 	}
 	healthCtx, cancel := context.WithTimeout(ctx, s.config.HealthTimeout)
 	defer cancel()
-	// The last probe outcome is the only evidence an operator gets in the panel
-	// when a rollback follows: without it, "未恢复可用" cannot distinguish a
-	// process that never started from one that answers with the wrong status.
 	lastProbe := ""
 	probeStarted := time.Now()
 	log.Printf("controller update waiting for health timeout=%s targets=%d", s.config.HealthTimeout, len(urls))
 	for healthCtx.Err() == nil {
+		urls = s.healthURLs("/healthz")
+		probeDetails := make([]string, 0, len(urls))
 		for _, url := range urls {
 			req, err := http.NewRequestWithContext(healthCtx, http.MethodGet, url, nil)
 			if err != nil {
@@ -1354,10 +1353,13 @@ func (s *Service) waitHealth(ctx context.Context) error {
 					log.Printf("controller update health confirmed after %s", time.Since(probeStarted).Round(time.Millisecond))
 					return nil
 				}
-				lastProbe = healthProbeDetail(url, fmt.Sprintf("HTTP %d", resp.StatusCode))
+				probeDetails = append(probeDetails, healthProbeDetail(url, fmt.Sprintf("HTTP %d", resp.StatusCode)))
 				continue
 			}
-			lastProbe = healthProbeDetail(url, err.Error())
+			probeDetails = append(probeDetails, healthProbeDetail(url, err.Error()))
+		}
+		if len(probeDetails) > 0 {
+			lastProbe = strings.Join(probeDetails, "; ")
 		}
 		if err := s.config.Wait(healthCtx, s.config.HealthPollInterval); err != nil {
 			if ctx.Err() != nil {

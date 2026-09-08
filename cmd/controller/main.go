@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -117,6 +118,20 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+	geoRefreshDone := make(chan struct{})
+	go func() {
+		defer close(geoRefreshDone)
+		app.RefreshGeoIPHistory(ctx)
+	}()
+	defer func() {
+		stop()
+		<-geoRefreshDone
+	}()
 	aiWorkerSocket := env("OBOARD_AI_WORKER_SOCKET", "/run/oboard/ai-worker/rpc.sock")
 	if err := app.StartAIWorkerRPC(ctx, aiWorkerSocket); err != nil {
 		log.Printf("configure AI Worker RPC: %v", err)
@@ -165,7 +180,7 @@ func main() {
 		}
 	}()
 	log.Printf("OBoard controller listening on %s%s", *addr, app.BasePath())
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }

@@ -178,6 +178,9 @@ func (s *Server) runScheduledControllerUpdate(ctx context.Context) {
 	}
 	status, err := s.controllerUpdater.Status(ctx)
 	if err == nil {
+		if run, runErr := s.store.GetActiveControllerUpdateRun(ctx); runErr == nil {
+			s.reconcileControllerUpdateRun(ctx, run, status)
+		}
 		s.removeSuccessfulControllerUpdateBackup(ctx, settings, status)
 	}
 	if !autoUpdateEnabled {
@@ -805,6 +808,9 @@ func (s *Server) startControllerUpdateWatch() {
 				}
 			} else {
 				failures = 0
+				if run, runErr := s.store.GetActiveControllerUpdateRun(ctx); runErr == nil {
+					s.reconcileControllerUpdateRun(ctx, run, status)
+				}
 				digest := fmt.Sprintf("%s\x00%s\x00%s\x00%t\x00%t\x00%s", status.State, status.Current.Build, status.Available.Build, status.UpdateAvailable, status.CanCancel, status.LastError)
 				if digest != previous {
 					previous = digest

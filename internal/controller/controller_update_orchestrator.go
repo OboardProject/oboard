@@ -57,7 +57,7 @@ func (s *Server) isControllerUpdateRunStaleOnStartup(run *store.ControllerUpdate
 	}
 	// Any active phase outside installing/restarting cannot survive a restart:
 	// the background goroutine that drives preflight/backup/download is gone.
-	if run.Phase != store.ControllerUpdatePhaseInstalling && run.Phase != store.ControllerUpdatePhaseRestarting {
+	if run.Phase != store.ControllerUpdatePhaseInstalling && run.Phase != store.ControllerUpdatePhaseRestarting && run.Phase != store.ControllerUpdatePhaseVerifying {
 		return true
 	}
 	if controllerUpdateRunIsStale(run, now) {
@@ -78,38 +78,44 @@ func (s *Server) recoverControllerUpdateRun(ctx context.Context) {
 		return
 	}
 	log.Printf("controller update recovery id=%d phase=%s target_build=%s current_build=%s", run.ID, run.Phase, run.TargetBuild, version.Build)
-	if strings.TrimSpace(run.TargetBuild) != "" && strings.TrimSpace(run.TargetBuild) == strings.TrimSpace(version.Build) {
-		run.Phase = store.ControllerUpdatePhaseVerifying
-		if err := s.store.UpdateControllerUpdateRun(ctx, run); err != nil {
-			log.Printf("controller update recovery verify: %v", err)
-		}
-		run.Phase = store.ControllerUpdatePhaseSucceeded
-		run.Error = ""
-		if err := s.store.UpdateControllerUpdateRun(ctx, run); err != nil {
-			log.Printf("controller update recovery succeed: %v", err)
-		}
-		s.retainControllerUpdateBackups()
-		s.publishRealtime("controller_update")
-		log.Printf("controller update succeeded id=%d target_build=%s agents_independent=true", run.ID, run.TargetBuild)
-		return
-	}
 	statusCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	status, statusErr := s.controllerUpdater.Status(statusCtx)
 	cancel()
-	if statusErr == nil && (status.State == "failed" || status.State == "cancelled") {
-		run.Phase = status.State
-		run.Error = strings.TrimSpace(status.LastError)
-		_ = s.store.UpdateControllerUpdateRun(ctx, run)
-		s.publishRealtime("controller_update")
+	if statusErr == nil && s.reconcileControllerUpdateRun(ctx, run, status) {
 		return
 	}
 	if s.isControllerUpdateRunStaleOnStartup(run, time.Now().UTC(), status, statusErr) {
 		s.clearStaleControllerUpdateRunOnStartup(ctx, run)
 		return
 	}
-	if run.Phase == store.ControllerUpdatePhaseInstalling || run.Phase == store.ControllerUpdatePhaseRestarting {
+	if run.Phase == store.ControllerUpdatePhaseInstalling || run.Phase == store.ControllerUpdatePhaseRestarting || run.Phase == store.ControllerUpdatePhaseVerifying {
 		s.startControllerUpdateWatch()
 	}
+}
+
+func (s *Server) reconcileControllerUpdateRun(ctx context.Context, run *store.ControllerUpdateRun, status controllerupdate.Status) bool {
+	if run == nil {
+		return false
+	}
+	switch {
+	case status.State == "failed" || status.State == "cancelled":
+		run.Phase = status.State
+		run.Error = strings.TrimSpace(status.LastError)
+	case (status.State == "installed" || status.State == "current") &&
+		strings.TrimSpace(run.TargetBuild) != "" && run.TargetBuild == version.Build && status.Current.Build == run.TargetBuild:
+		run.Phase = store.ControllerUpdatePhaseSucceeded
+		run.Error = ""
+	default:
+		return false
+	}
+	if err := s.store.UpdateControllerUpdateRun(ctx, run); err != nil {
+		log.Printf("controller update recovery persist: %v", err)
+		return false
+	}
+	s.retainControllerUpdateBackups()
+	s.publishRealtime("controller_update")
+	log.Printf("controller update reconciled id=%d phase=%s target_build=%s agents_independent=true", run.ID, run.Phase, run.TargetBuild)
+	return true
 }
 
 func (s *Server) attachControllerUpdateOperation(ctx context.Context, status *controllerupdate.Status) {

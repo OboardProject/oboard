@@ -337,10 +337,16 @@ func (s *Server) ConfigureGeoIP(dir string) error {
 	}
 	s.geoIP = database
 	s.geoIPStatus = database.Status()
-	if err := s.refreshConnectionAuditGeography(context.Background()); err != nil {
-		return err
+	return nil
+}
+
+func (s *Server) RefreshGeoIPHistory(ctx context.Context) {
+	if err := s.refreshConnectionAuditGeography(ctx); err != nil {
+		log.Printf("refresh connection audit geography: %v", err)
 	}
-	return s.refreshProxyPathEgressGeography(context.Background())
+	if err := s.refreshProxyPathEgressGeography(ctx); err != nil {
+		log.Printf("refresh proxy path geography: %v", err)
+	}
 }
 
 func (s *Server) Close() {
