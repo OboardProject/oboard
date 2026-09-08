@@ -534,6 +534,10 @@ func (s *Service) install(ctx context.Context, approval <-chan struct{}) (Status
 		s.cacheRelease(status.Channel, release)
 	}
 	available := BuildInfo{Version: release.Manifest.Version, Build: release.Manifest.Build, Commit: release.Manifest.Commit, Date: release.Manifest.Date}
+	// The updater is a separate service, so these lines are the only record of
+	// what it did. Without them a rollback leaves no evidence anywhere: the
+	// Controller process is not running while this executes.
+	log.Printf("controller update install requested channel=%s target_version=%s target_build=%s", status.Channel, available.Version, available.Build)
 	s.mu.Lock()
 	status = s.decorateStatus(s.status)
 	status.Available = available
@@ -555,19 +559,26 @@ func (s *Service) install(ctx context.Context, approval <-chan struct{}) (Status
 	}
 	s.mu.Unlock()
 
+	stagingStarted := time.Now()
 	stage, err := s.stageControllerRelease(ctx, release)
 	if err != nil {
+		log.Printf("controller update staging failed target_build=%s: %v", available.Build, err)
 		return s.finishInstallError(err)
 	}
+	log.Printf("controller update staged target_build=%s duration=%s", available.Build, time.Since(stagingStarted).Round(time.Millisecond))
 	defer os.RemoveAll(stage)
 
 	status, err = s.prepareInstallation(ctx, available, approval)
 	if err != nil || status.State != "installing" {
 		return status, err
 	}
+	replaceStarted := time.Now()
+	log.Printf("controller update replacing program target_build=%s", available.Build)
 	if err := s.replaceBinaryProgram(ctx, stage); err != nil {
+		log.Printf("controller update activation failed target_build=%s duration=%s: %v", available.Build, time.Since(replaceStarted).Round(time.Millisecond), err)
 		return s.finishInstallError(err)
 	}
+	log.Printf("controller update activated target_build=%s duration=%s", available.Build, time.Since(replaceStarted).Round(time.Millisecond))
 	if err := os.RemoveAll(stage); err != nil {
 		log.Printf("remove staged Controller update before updater re-exec: %v", err)
 	}
@@ -1167,12 +1178,15 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 		}
 	}
 	if err := s.restartAndWait(ctx); err != nil {
+		log.Printf("controller update rollback started: new program did not become available: %v", err)
 		runRollback()
 		rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if rollbackErr := s.restartAndWait(rollbackCtx); rollbackErr != nil {
+			log.Printf("controller update rollback failed, previous program is not available either: %v", rollbackErr)
 			return fmt.Errorf("安装新版本后主控未恢复可用（%v），恢复原版本后仍未恢复：%w", err, rollbackErr)
 		}
+		log.Printf("controller update rollback completed, previous program is available again")
 		return fmt.Errorf("安装新版本后主控未恢复可用，已恢复原版本：%w", err)
 	}
 	for _, item := range targets {
@@ -1321,6 +1335,12 @@ func (s *Service) waitHealth(ctx context.Context) error {
 	}
 	healthCtx, cancel := context.WithTimeout(ctx, s.config.HealthTimeout)
 	defer cancel()
+	// The last probe outcome is the only evidence an operator gets in the panel
+	// when a rollback follows: without it, "未恢复可用" cannot distinguish a
+	// process that never started from one that answers with the wrong status.
+	lastProbe := ""
+	probeStarted := time.Now()
+	log.Printf("controller update waiting for health timeout=%s targets=%d", s.config.HealthTimeout, len(urls))
 	for healthCtx.Err() == nil {
 		for _, url := range urls {
 			req, err := http.NewRequestWithContext(healthCtx, http.MethodGet, url, nil)
@@ -1331,9 +1351,13 @@ func (s *Service) waitHealth(ctx context.Context) error {
 			if err == nil {
 				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
+					log.Printf("controller update health confirmed after %s", time.Since(probeStarted).Round(time.Millisecond))
 					return nil
 				}
+				lastProbe = healthProbeDetail(url, fmt.Sprintf("HTTP %d", resp.StatusCode))
+				continue
 			}
+			lastProbe = healthProbeDetail(url, err.Error())
 		}
 		if err := s.config.Wait(healthCtx, s.config.HealthPollInterval); err != nil {
 			if ctx.Err() != nil {
@@ -1342,7 +1366,25 @@ func (s *Service) waitHealth(ctx context.Context) error {
 			break
 		}
 	}
+	if lastProbe != "" {
+		log.Printf("controller update health timed out after %s, last probe %s", time.Since(probeStarted).Round(time.Millisecond), lastProbe)
+		return fmt.Errorf("主控在 %s 内未恢复可用，最后一次健康检查 %s", s.config.HealthTimeout, lastProbe)
+	}
+	log.Printf("controller update health timed out after %s with no probe result", time.Since(probeStarted).Round(time.Millisecond))
 	return fmt.Errorf("主控在 %s 内未恢复可用", s.config.HealthTimeout)
+}
+
+// healthProbeDetail keeps the probed loopback address and a bounded reason. The
+// address is local-only and already derived from root-owned runtime state.
+func healthProbeDetail(url, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 200 {
+		reason = reason[:200] + "…"
+	}
+	if reason == "" {
+		return url
+	}
+	return url + " " + reason
 }
 
 func waitForContext(ctx context.Context, delay time.Duration) error {

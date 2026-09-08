@@ -149,6 +149,10 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "settings")),
 		adminRead("telegram_bot.get", "读取统一 Telegram Bot 状态（不返回 Bot Token）", schemaObject(nil), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot")),
 		adminRead("controller_update.status", "读取主控更新通道、当前版本和异步更新状态", schemaObject(nil), rawSchema(controllerUpdate)),
+		adminRead("controller_update.diagnostics", "读取主控更新诊断报告：更新器状态、最近一次更新任务的阶段与耗时，以及主控日志中与更新相关的记录，用于排查更新失败或卡住", schemaObject(nil), schemaObject(map[string]any{
+			"generated_at": stringValue, "outcome": stringValue, "report": stringValue,
+			"log_lines": map[string]any{"type": "integer"}, "log_available": boolValue, "log_hint": stringValue,
+		}, "generated_at", "outcome", "report")),
 		adminRead("agent_updates.status", "读取 Agent 滚动更新进度、并发和熔断状态", schemaObject(nil), rawSchema(agentUpdates)),
 		adminRead("subscription_relays.list", "列出受管订阅中继及其版本和在线状态（不含身份凭据）", schemaObject(nil), schemaObject(map[string]any{"subscription_relays": arrayOf(subscriptionRelay)}, "subscription_relays")),
 		adminRead("backups.list", "列出主控备份与备份设置（不返回恢复密码）", schemaObject(nil), schemaObject(map[string]any{"backups": arrayOf(closedObject(map[string]any{"id": stringValue, "name": stringValue, "origin": stringValue, "local_status": stringValue, "remote_status": stringValue, "size_bytes": map[string]any{"type": "integer"}, "created_at": stringValue})), "settings": closedObject(map[string]any{"enabled": boolValue, "schedule": stringValue, "time": stringValue, "local_retention": map[string]any{"type": "integer"}, "remote_retention": map[string]any{"type": "integer"}, "destination_configured": boolValue, "password_configured": boolValue, "last_success_at": nullableString(), "last_error": stringValue})}, "backups", "settings")),

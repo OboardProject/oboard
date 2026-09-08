@@ -190,6 +190,16 @@ import {
   shouldDeferControllerUpdateTerminalStatus,
 } from './controller-update'
 import { useControllerUpdatePromptAutoDismiss } from './controller-update-prompt'
+import {
+  controllerUpdateDiagnosticsReason,
+  controllerUpdateDiagnosticsTrigger,
+  controllerUpdateElapsedLabel,
+  isControllerUpdateWaitingPhase,
+  useControllerUpdateDiagnostics,
+  useControllerUpdateElapsed,
+  type ControllerUpdateDiagnostics,
+  type ControllerUpdateDiagnosticsState,
+} from './controller-update-diagnostics'
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
 import { connectivityRequestPath, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
@@ -4107,6 +4117,13 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     dialogOpen,
     () => setDismissed(true),
   )
+  const promptStartedAt = snapshot?.operation?.started_at || ''
+  const promptElapsed = useControllerUpdateElapsed(promptStartedAt, dialogOpen && isControllerUpdateWaitingPhase(phase))
+  const promptDiagnosticsReason = dialogOpen ? controllerUpdateDiagnosticsReason(phase, promptElapsed) : ''
+  const promptDiagnostics = useControllerUpdateDiagnostics(
+    controllerUpdateDiagnosticsTrigger(promptDiagnosticsReason, phase, promptStartedAt || snapshot?.available?.build || ''),
+    () => client.request('/controller-update/diagnostics') as Promise<ControllerUpdateDiagnostics>,
+  )
 
   return <>
     <AnimatePresence>
@@ -4138,6 +4155,10 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       skipBackup={skipBackup}
       progressPercent={snapshot.operation?.progress_percent}
       backupBytes={snapshot.operation?.backup?.size_bytes}
+      elapsedLabel={controllerUpdateElapsedLabel(promptElapsed)}
+      diagnostics={promptDiagnostics}
+      diagnosticsReason={promptDiagnosticsReason}
+      onRetryDiagnostics={promptDiagnostics.retry}
       onCancel={() => setDialogOpen(false)}
       onInstall={nextSkipBackup => void install(Boolean(nextSkipBackup))}
       onInterrupt={() => undefined}
@@ -4477,6 +4498,18 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
   const expectedAgentLabel = expectedAgentVersion ? `${expectedAgentVersion}${expectedAgentBuild ? ` · 构建 ${expectedAgentBuild}` : ''}` : '暂无构建信息'
   const updateLayout = shouldReduceMotion ? false : 'position'
   const updateLayoutTransition = { duration: shouldReduceMotion ? 0 : 0.28, ease: 'easeOut' as const }
+  const openUpdateDiagnostics = () => {
+    setInstallFailure(localizeErrorMessage(snapshot.last_error || '主控更新未能完成，请检查更新状态。'))
+    setInstallPhase('failed')
+    setInstallDialogOpen(true)
+  }
+  const installStartedAt = snapshot.operation?.started_at || ''
+  const installElapsed = useControllerUpdateElapsed(installStartedAt, installDialogOpen && isControllerUpdateWaitingPhase(installPhase))
+  const installDiagnosticsReason = installDialogOpen ? controllerUpdateDiagnosticsReason(installPhase, installElapsed) : ''
+  const installDiagnostics = useControllerUpdateDiagnostics(
+    controllerUpdateDiagnosticsTrigger(installDiagnosticsReason, installPhase, installStartedAt || installTargetBuildRef.current),
+    () => client.request('/controller-update/diagnostics') as Promise<ControllerUpdateDiagnostics>,
+  )
   return <section className="settings-card controller-update-card">
     <m.div layout={updateLayout} transition={updateLayoutTransition} className="settings-card-head controller-update-head">
       <m.div layout={updateLayout} transition={updateLayoutTransition} className="controller-update-heading"><h3>更新</h3><p className="muted">更新通道 · {channelLabel}</p></m.div>
@@ -4512,7 +4545,10 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       <span>上次检查<strong>{snapshot.last_checked_at ? formatDate(snapshot.last_checked_at) : '尚未检查'}</strong></span>
       {snapshot.backup_path && <span>最近备份<strong title={snapshot.backup_path}>{snapshot.backup_path}</strong></span>}
     </div>
-    {snapshot.last_error && <div className="controller-update-error" role="alert">{localizeErrorMessage(snapshot.last_error)}</div>}
+    {snapshot.last_error && <div className="controller-update-error" role="alert">
+      <span>{localizeErrorMessage(snapshot.last_error)}</span>
+      <button type="button" className="ghost" onClick={openUpdateDiagnostics}><FileText size={14} />查看更新日志</button>
+    </div>}
     {snapshot.channel === 'pinned' && <div className="controller-update-pinned">
       <span>当前为固定版本安装。选择上方更新通道后，即可在面板内检查并安装更新。</span>
     </div>}
@@ -4605,6 +4641,10 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       skipBackup={installSkipBackup}
       progressPercent={snapshot.operation?.progress_percent}
       backupBytes={snapshot.operation?.backup?.size_bytes}
+      elapsedLabel={controllerUpdateElapsedLabel(installElapsed)}
+      diagnostics={installDiagnostics}
+      diagnosticsReason={installDiagnosticsReason}
+      onRetryDiagnostics={installDiagnostics.retry}
       onCancel={() => setInstallDialogOpen(false)}
       onInstall={skipBackup => void install(Boolean(skipBackup))}
       onInterrupt={() => void cancelInstall()}
@@ -4690,7 +4730,24 @@ function controllerUpdateStageState(phase: ControllerUpdateInstallPhase, id: Con
   return ''
 }
 
-function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, elapsedLabel, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; elapsedLabel?: string; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
+function ControllerUpdateDiagnosticsSection({ reason, diagnostics, onRetry }: { reason: 'failed' | 'timeout'; diagnostics: ControllerUpdateDiagnosticsState; onRetry: () => void }) {
+  return <section className="controller-update-diagnostics">
+    <div className="controller-update-diagnostics-head">
+      <div>
+        <strong>{reason === 'timeout' ? '更新耗时超出预期' : '已自动抓取更新日志'}</strong>
+        <p>{reason === 'timeout' ? '更新仍在后台继续。下面是主控当前的更新记录，可以先复制给技术支持排查。' : '下面是本次更新的状态、阶段耗时和主控日志，复制后即可用于排查。'}</p>
+      </div>
+      {diagnostics.status !== 'loading' && <button type="button" className="ghost" onClick={onRetry}><RefreshCw size={14} />重新抓取</button>}
+    </div>
+    {diagnostics.status === 'loading' && <div className="controller-update-diagnostics-state"><RefreshCw size={16} className="spin" /><span>正在抓取更新日志...</span></div>}
+    {diagnostics.status === 'failed' && <div className="controller-update-diagnostics-state failed"><Info size={16} /><span>暂时无法读取更新日志{diagnostics.error ? `：${localizeErrorMessage(diagnostics.error)}` : ''}。主控可能仍在重启，稍后可重新抓取。</span></div>}
+    {diagnostics.status === 'ready' && (diagnostics.report
+      ? <><CommandCopyBlock value={diagnostics.report} language="log" buttonText="复制更新日志" />{diagnostics.hint && <p className="controller-update-diagnostics-hint">{diagnostics.hint}</p>}</>
+      : <div className="controller-update-diagnostics-state"><Info size={16} /><span>主控没有返回可用的更新日志。</span></div>)}
+  </section>
+}
+
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, elapsedLabel, diagnostics, diagnosticsReason, onRetryDiagnostics, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; elapsedLabel?: string; diagnostics?: ControllerUpdateDiagnosticsState; diagnosticsReason?: '' | 'failed' | 'timeout'; onRetryDiagnostics?: () => void; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
   const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
   const backupShownRef = useRef(0)
   if (phase !== 'backing_up') backupShownRef.current = 0
@@ -4703,6 +4760,9 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const backupSkipped = Boolean(skipBackup) && phase !== 'backing_up'
   const backupStageDone = ['ready', 'installing', 'restarting', 'verifying'].includes(phase)
   const backupStageLabel = backupSkipped ? (backupStageDone ? '已跳过' : '将跳过') : (phase === 'backing_up' ? `${backupShown}%` : '等待准备完成')
+  const diagnosticsSection = diagnosticsReason && diagnostics && diagnostics.status !== 'idle'
+    ? <ControllerUpdateDiagnosticsSection reason={diagnosticsReason} diagnostics={diagnostics} onRetry={onRetryDiagnostics || (() => {})} />
+    : null
   return <MotionDialogPanel onCancel={waiting ? onHide : onCancel} className="controller-update-install-dialog">
     <header className="dialog-head"><div><h2>{title}</h2><p className="muted">{targetVersion ? `目标版本 ${targetVersion}` : '主控更新'}</p></div>{!waiting && <button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>}</header>
     <div className="dialog-body controller-update-install-body">
@@ -4730,6 +4790,7 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       {phase === 'force_finished' && <div className="controller-update-install-result cancelled"><Info size={24} /><div><strong>面板已停止追踪本次任务</strong><p>已经开始的系统安装不会回滚，仍可能自行完成。请稍后检查当前版本。</p></div></div>}
       {phase === 'complete' && <div className="controller-update-install-result success"><Check size={24} /><div><strong>Controller 更新成功</strong><p>Agent 版本同步将在后台滚动进行。</p></div></div>}
       {phase === 'failed' && <div className="controller-update-install-result failed"><Info size={24} /><div><strong>更新没有完成</strong><p>{localizeErrorMessage(failure || '请检查主控更新状态后重试。')}</p></div></div>}
+      {diagnosticsSection}
     </div>
     <footer className="dialog-actions">
       {phase === 'confirm' && <><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" className="ghost" onClick={() => onInstall(false)}>备份并更新</button><button type="button" onClick={() => onInstall(true)}>安装更新</button></>}

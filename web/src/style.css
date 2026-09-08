@@ -8949,7 +8949,12 @@ body:has(.dialog-layer) .main {
   background: var(--danger-soft);
   color: var(--danger);
   overflow-wrap: anywhere;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
+.controller-update-error > span { min-width: 0; flex: 1 1 220px; }
+.controller-update-error > button { flex: 0 0 auto; }
 .controller-update-versions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -9232,6 +9237,62 @@ body:has(.dialog-layer) .main {
 .controller-update-install-advice {
   font-size: 12px;
   line-height: 1.5;
+}
+
+.controller-update-diagnostics {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.controller-update-diagnostics-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.controller-update-diagnostics-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.controller-update-diagnostics-head strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.controller-update-diagnostics-head p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.controller-update-diagnostics-head > button {
+  flex: 0 0 auto;
+}
+
+.controller-update-diagnostics-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.controller-update-diagnostics-state > svg { flex: 0 0 auto; }
+.controller-update-diagnostics-state.failed { color: var(--danger); }
+
+.controller-update-diagnostics-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .controller-update-stages {

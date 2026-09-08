@@ -186,6 +186,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 			status = s.fallbackControllerUpdateStatus()
 		}
 		return s.controllerUpdateAutomationView(ctx, status), nil
+	case "controller_update.diagnostics":
+		var request struct{}
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		return s.buildControllerUpdateDiagnostics(ctx, false), nil
 	case "agent_updates.status":
 		var request struct{}
 		if err := strictAutomationInput(input, &request); err != nil {
