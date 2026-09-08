@@ -401,7 +401,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/install", s.auth(s.controllerUpdateInstall, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/cancel", s.auth(s.controllerUpdateCancel, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/force-finish", s.auth(s.controllerUpdateForceFinish, model.RoleAdmin))
-	mux.HandleFunc("/api/v1/controller-update/diagnostics", s.auth(s.controllerUpdateDiagnostics, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups", s.auth(s.controllerUpdateBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups/", s.auth(s.controllerUpdateBackupSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
