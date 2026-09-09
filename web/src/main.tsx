@@ -193,6 +193,7 @@ import {
 import { useControllerUpdatePromptAutoDismiss } from './controller-update-prompt'
 import {
   controllerUpdateDiagnosticsReason,
+  controllerUpdateActiveStartedAt,
   controllerUpdateDiagnosticsTrigger,
   controllerUpdateElapsedLabel,
   isControllerUpdateWaitingPhase,
@@ -1890,9 +1891,11 @@ class SupersededAuthRequestError extends Error {
 type MutationResponseObserver = (path: string, data: any, method: string) => void
 
 function api(token: string, onUnauthorized?: (failedToken: string) => boolean, onMutationResponse?: MutationResponseObserver) {
-  const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
   const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
-  const csrfHeaders: Record<string, string> = token === 'cookie' && csrf ? { 'x-oboard-csrf': csrf } : {}
+  const csrfHeaders = (): Record<string, string> => {
+    const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
+    return csrf ? { 'x-oboard-csrf': csrf } : {}
+  }
   async function request<T = any>(path: string, init: RequestInit = {}): Promise<T> {
     const method = String(init.method || 'GET').toUpperCase()
     const mutation = method !== 'GET' && method !== 'HEAD'
@@ -1905,7 +1908,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
         headers: {
           'content-type': 'application/json',
           ...authHeaders,
-          ...csrfHeaders,
+          ...csrfHeaders(),
           ...(init.headers || {})
         }
       })
@@ -1937,7 +1940,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
         headers: {
           'content-type': 'application/json',
           ...authHeaders,
-          ...csrfHeaders,
+          ...csrfHeaders(),
           ...(init.headers || {})
         }
       })
@@ -1969,7 +1972,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
     return { blob: await res.blob(), filename }
   }
   async function upload<T = any>(path: string, body: FormData): Promise<T> {
-    const res = await fetch(appPath('/api/v1/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders } })
+    const res = await fetch(appPath('/api/v1/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders() } })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw apiRequestError(data, res)
     return data
@@ -4296,7 +4299,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
     dialogOpen,
     () => setDismissed(true),
   )
-  const promptStartedAt = snapshot?.operation?.started_at || ''
+  const promptStartedAt = controllerUpdateActiveStartedAt(snapshot?.operation)
   const promptElapsed = useControllerUpdateElapsed(promptStartedAt, dialogOpen && isControllerUpdateWaitingPhase(phase))
   const promptDiagnosticsReason = dialogOpen ? controllerUpdateDiagnosticsReason(phase, promptElapsed) : ''
   const promptDiagnostics = useControllerUpdateDiagnostics(
@@ -4683,7 +4686,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
     setInstallPhase('failed')
     setInstallDialogOpen(true)
   }
-  const installStartedAt = snapshot.operation?.started_at || ''
+  const installStartedAt = controllerUpdateActiveStartedAt(snapshot.operation)
   const installElapsed = useControllerUpdateElapsed(installStartedAt, installDialogOpen && isControllerUpdateWaitingPhase(installPhase))
   const installDiagnosticsReason = installDialogOpen ? controllerUpdateDiagnosticsReason(installPhase, installElapsed) : ''
   const installDiagnostics = useControllerUpdateDiagnostics(
@@ -4935,7 +4938,6 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
   const backupShown = phase === 'backing_up' ? monotonicPercent(backupShownRef.current, progressPercent || 0) : 0
   if (phase === 'backing_up') backupShownRef.current = backupShown
   const downloadPercent = download && download.total_bytes > 0 ? Math.max(0, Math.min(100, download.bytes * 100 / download.total_bytes)) : undefined
-  const downloadLabel = download ? `${formatBytes(download.bytes)} / ${formatBytes(download.total_bytes)} · ${formatBytes(download.bytes_per_second)}/s · 第 ${download.attempt} 次尝试` : ''
   const flowPercent = controllerUpdateFlowPercent(phase, backupShown, downloadPercent)
   const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
@@ -4955,8 +4957,10 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
         <p className="muted controller-update-install-advice">请不要重复点击安装或手动重启服务，等待几分钟后再重新打开面板。没有其他可用备份时，建议选择备份并更新。</p>
       </>}
       {waiting && <>
-        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><p>{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</p></div></div>
-        {phase === 'downloading' && downloadLabel && <p className="muted">{downloadLabel}</p>}
+        <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><div className="controller-update-transfer-detail">{phase === 'downloading' ? <>
+          <div className="controller-update-transfer-meta"><span>{download ? `${formatBytes(download.bytes)} / ${download.total_bytes > 0 ? formatBytes(download.total_bytes) : '大小待确认'}` : '正在连接下载源'}</span><span>{download ? `${formatBytes(download.bytes_per_second)}/s` : '—'}</span></div>
+          <div className="controller-update-transfer-meta"><span>{download?.attempt && download.attempt > 1 ? `第 ${download.attempt} 次尝试` : '下载后自动校验文件'}</span><span>{downloadPercent === undefined ? '等待进度' : `${downloadPercent.toFixed(1)}%`}</span></div>
+        </> : <><p>{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</p><span>{phase === 'backing_up' ? '备份完成后自动安装' : elapsedLabel || '正在准备，请稍候'}</span></>}</div></div></div>
         <div className="controller-update-stages" aria-label="更新进度">
           <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'checking', ['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '1'}</span><div><strong>检查</strong><small>{phase === 'checking' ? '正在检查可用版本' : '完成'}</small></div></div>
           <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'downloading', ['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '2'}</span><div><strong>下载</strong><small>{phase === 'downloading' || phase === 'cancelling' ? (downloadPercent === undefined ? '正在下载并检查文件' : `已下载 ${downloadPercent.toFixed(1)}%`) : '等待开始'}</small></div></div>

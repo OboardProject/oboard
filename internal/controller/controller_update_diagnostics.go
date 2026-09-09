@@ -94,7 +94,7 @@ func (s *Server) buildControllerUpdateDiagnostics(ctx context.Context, localDeta
 	} else if logs.UpdateLineCount == 0 && logs.WindowLineCount == 0 {
 		view.LogHint = "主控运行日志为空或已轮转。若主控以 OBOARD_LOG_OUTPUT=stdout 运行，日志只在 journalctl 中。"
 	} else if logs.WindowLineCount == 0 {
-		view.LogHint = "更新时间段内没有留下主控日志，通常说明新版本还没开始写日志就退出了；请查看 journalctl -u oboard-controller。"
+		view.LogHint = "更新时间段内没有可用的主控运行日志；这不能说明更新失败。如需排查启动问题，请查看 journalctl -u oboard-controller。"
 	}
 	view.LogHint = logging.Redact(view.LogHint)
 	view.Report = controllerUpdateDiagnosticsReport(now, status, statusErr, run, logs, view.LogHint, localDetails)
@@ -142,7 +142,18 @@ func (s *Server) controllerUpdateLogTail(from, to time.Time) (controllerUpdateLo
 	if s.logs == nil {
 		return content, errors.New("主控日志存储未启用")
 	}
-	updates, err := s.logs.SnapshotMatching(controllerUpdateDiagnosticsLogLines, controllerUpdateLogMarkers)
+	updates, err := s.logs.SnapshotSelect(controllerUpdateDiagnosticsLogLines, func(line string) bool {
+		if strings.Contains(line, controllerUpdateDiagnosticsRequestPrefix) {
+			return false
+		}
+		lower := strings.ToLower(line)
+		for _, marker := range controllerUpdateLogMarkers {
+			if strings.Contains(lower, marker) {
+				return true
+			}
+		}
+		return false
+	})
 	if err != nil {
 		return content, err
 	}

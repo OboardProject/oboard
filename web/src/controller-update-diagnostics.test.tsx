@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CONTROLLER_UPDATE_SLOW_MS,
+  controllerUpdateActiveStartedAt,
   controllerUpdateDiagnosticsReason,
   controllerUpdateDiagnosticsTrigger,
   controllerUpdateElapsedLabel,
@@ -73,6 +74,15 @@ describe('controller update elapsed time', () => {
     expect(controllerUpdateElapsedMs('', now - 60_000, now)).toBe(60_000)
     expect(controllerUpdateElapsedMs('2026-09-08T11:00:00Z', now - 60_000, now)).toBe(60_000)
     expect(controllerUpdateElapsedMs('2020-01-01T00:00:00Z', now - 60_000, now)).toBe(60_000)
+  })
+
+  it('ignores the completed previous run when starting a new update', () => {
+    const startedAt = controllerUpdateActiveStartedAt({ active: false, started_at: '2026-09-08T10:00:00Z' })
+    const elapsed = controllerUpdateElapsedMs(startedAt, now, now)
+    expect(controllerUpdateDiagnosticsReason('starting', elapsed)).toBe('')
+    expect(controllerUpdateDiagnosticsReason('checking', elapsed)).toBe('')
+    const activeStart = controllerUpdateActiveStartedAt({ active: true, started_at: '2026-09-08T10:00:00Z' })
+    expect(controllerUpdateDiagnosticsReason('downloading', controllerUpdateElapsedMs(activeStart, now, now))).toBe('timeout')
   })
 
   it('formats an elapsed label', () => {

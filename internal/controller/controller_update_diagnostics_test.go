@@ -98,6 +98,9 @@ func TestControllerUpdateLogTailSeparatesUpdateLinesFromTheWindow(t *testing.T) 
 	log.Printf("agent websocket connected server=3")
 	log.Printf("controller update preflight failed: 磁盘空间不足")
 	log.Printf("subscription rendered user=9")
+	for range 350 {
+		log.Printf("http method=GET path=/api/v1/ui/controller-update status=200")
+	}
 	log.Printf("Controller update start failed: 更新器不可用")
 
 	now := time.Now().UTC()

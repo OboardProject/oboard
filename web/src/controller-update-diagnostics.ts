@@ -53,6 +53,10 @@ export function controllerUpdateDiagnosticsTrigger(reason: ControllerUpdateDiagn
   return `${reason}|${phase}|${String(runKey || '')}`
 }
 
+export function controllerUpdateActiveStartedAt(operation?: { active?: boolean; started_at?: string }): string {
+  return operation?.active ? operation.started_at || '' : ''
+}
+
 export function controllerUpdateElapsedMs(startedAt: string | null | undefined, activatedAt: number, now: number): number {
   const localElapsed = Math.max(0, now - activatedAt)
   const parsed = Date.parse(String(startedAt || ''))

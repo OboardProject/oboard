@@ -9291,6 +9291,34 @@ body:has(.dialog-layer) .main {
   overflow-wrap: anywhere;
 }
 
+.controller-update-transfer-detail {
+  height: 40px;
+  display: grid;
+  grid-template-rows: 20px 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.controller-update-transfer-detail p,
+.controller-update-transfer-detail > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 20px;
+}
+
+.controller-update-transfer-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.controller-update-transfer-meta:first-child {
+  color: var(--text-secondary);
+}
+
 .controller-update-install-notice {
   display: grid;
   gap: 4px;
