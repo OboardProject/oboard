@@ -13579,6 +13579,10 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     max-height: 96vh;
   }
   .latency-overview { padding: 10px; }
+  .latency-trend .komari-chart-container {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
   .latency-overview-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;

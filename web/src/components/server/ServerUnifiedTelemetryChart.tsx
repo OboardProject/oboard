@@ -92,12 +92,26 @@ export function ServerUnifiedTelemetryChart({
   const maxLatency = useMemo(() => computeMaxLatency(buckets, enabledSeries), [buckets, enabledSeries])
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const canvasRef = useRef<HTMLDivElement | null>(null)
+  const [canvasWidth, setCanvasWidth] = useState(1000)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const updateWidth = () => {
+      const width = canvas.getBoundingClientRect().width
+      if (width > 0) setCanvasWidth(Math.round(width))
+    }
+    updateWidth()
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(canvas)
+    return () => observer.disconnect()
+  }, [])
   const chartTitleID = React.useId()
   const chartDescriptionID = React.useId()
   const gradientPrefix = React.useId().replace(/:/g, '')
   const hasPercentageSeries = includeResources
   const activeSeries = seriesList.filter(series => enabledSeries[series.id] !== false)
-  const W = 1000
+  const W = canvasWidth
   const H = chartHeight
   const padL = hasPercentageSeries ? 45 : 12
   const padR = 56
@@ -174,11 +188,12 @@ export function ServerUnifiedTelemetryChart({
           <ChartDrawOptions connectGaps={connectGaps} smoothLines={smoothLines} onConnectGaps={setConnectGaps} onSmoothLines={setSmoothLines} />
         </div>
       )}
-      <div className="komari-chart-canvas-wrap">
+      <div ref={canvasRef} className="komari-chart-canvas-wrap">
         <svg
           ref={svgRef}
           className="komari-chart-svg"
           viewBox={`0 0 ${W} ${H}`}
+          style={{ height: H }}
           preserveAspectRatio="none"
           role="img"
           aria-labelledby={`${chartTitleID} ${chartDescriptionID}`}
@@ -294,7 +309,7 @@ export function ServerUnifiedTelemetryChart({
           {buckets.length > 0 && (
             <g>
               <text x={padL} y={H - 6} textAnchor="start" className="komari-chart-axis-text">{buckets[0].timeLabel}</text>
-              <text x={padL + plotW / 2} y={H - 6} textAnchor="middle" className="komari-chart-axis-text">{buckets[Math.floor(buckets.length / 2)].timeLabel}</text>
+              {plotW >= 360 && <text x={padL + plotW / 2} y={H - 6} textAnchor="middle" className="komari-chart-axis-text">{buckets[Math.floor(buckets.length / 2)].timeLabel}</text>}
               <text x={W - padR} y={H - 6} textAnchor="end" className="komari-chart-axis-text">{buckets[buckets.length - 1].timeLabel}</text>
             </g>
           )}
