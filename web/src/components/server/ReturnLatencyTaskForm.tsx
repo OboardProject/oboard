@@ -102,92 +102,94 @@ export function ReturnLatencyTaskForm({ task, regions, targets = [], servers, lo
   return (
     <form className={`probe-task-form${presetOpen ? ' is-preset-open' : ''}`} onSubmit={event => { event.preventDefault(); void submit() }}>
       <fieldset disabled={saving || disabled} className="return-latency-fields">
-        <div className="probe-task-layout">
-          <div className="probe-task-primary">
-            <div className="probe-task-form-grid">
-              <FormField label="探测方式" required full>
-                <Select variant="segmented" className="full-width" aria-label="探测方式" value={method} onChange={event => { setMethod(event.target.value as NetworkProbeMethod) }}>
-                  <option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option>
-                </Select>
-                <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测公网 IPv4 的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
-              </FormField>
-              <FormField label={method === 'http' ? '目标 URL' : '目标地址'} required full={method !== 'tcp'}>
-                <input aria-label="目标地址" required={!legacyRegion} aria-describedby="probe-address-hint" aria-invalid={Boolean(address && addressError)} type="text" maxLength={2048} placeholder={method === 'http' ? 'https://example.com/health' : '例如 example.com 或 1.1.1.1'} value={address} onChange={event => setAddress(event.target.value)} />
-                <small id="probe-address-hint" className={address && addressError ? 'danger-text' : 'muted'}>{addressError || (legacyRegion ? `当前目标：${targetLabel(province, carrier)}。填写地址可改为指定目标。` : '由所选节点直接探测，目标须解析到公网 IPv4。')}</small>
-              </FormField>
-              {method === 'tcp' && <FormField label="端口" required>
-                <input aria-label="目标端口" required aria-invalid={portInvalid} aria-describedby="probe-port-hint" type="number" min={1} max={65535} value={port} onChange={event => setPort(event.target.value === '' ? '' : Number(event.target.value))} />
-                <small id="probe-port-hint" className={portInvalid ? 'danger-text' : 'muted'}>1–65535，例如 HTTPS 服务使用 443。</small>
-              </FormField>}
+        <div className="probe-task-form-scroll">
+          <div className="probe-task-layout">
+            <div className="probe-task-primary">
+              <div className="probe-task-form-grid">
+                <FormField label="探测方式" required full>
+                  <Select variant="segmented" className="full-width" aria-label="探测方式" value={method} onChange={event => { setMethod(event.target.value as NetworkProbeMethod) }}>
+                    <option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option>
+                  </Select>
+                  <p className="muted probe-method-hint">{method === 'tcp' ? '检测指定端口能否建立连接。' : method === 'icmp' ? '通过 ICMP 检测公网 IPv4 的可达性与延迟。' : '发送 GET 请求，跟随最多 3 次跳转，以 2xx 响应为成功。'}</p>
+                </FormField>
+                <FormField label={method === 'http' ? '目标 URL' : '目标地址'} required full={method !== 'tcp'}>
+                  <input aria-label="目标地址" required={!legacyRegion} aria-describedby="probe-address-hint" aria-invalid={Boolean(address && addressError)} type="text" maxLength={2048} placeholder={method === 'http' ? 'https://example.com/health' : '例如 example.com 或 1.1.1.1'} value={address} onChange={event => setAddress(event.target.value)} />
+                  <small id="probe-address-hint" className={address && addressError ? 'danger-text' : 'muted'}>{addressError || (legacyRegion ? `当前目标：${targetLabel(province, carrier)}。填写地址可改为指定目标。` : '由所选节点直接探测，目标须解析到公网 IPv4。')}</small>
+                </FormField>
+                {method === 'tcp' && <FormField label="端口" required>
+                  <input aria-label="目标端口" required aria-invalid={portInvalid} aria-describedby="probe-port-hint" type="number" min={1} max={65535} value={port} onChange={event => setPort(event.target.value === '' ? '' : Number(event.target.value))} />
+                  <small id="probe-port-hint" className={portInvalid ? 'danger-text' : 'muted'}>1–65535，例如 HTTPS 服务使用 443。</small>
+                </FormField>}
+              </div>
             </div>
-          </div>
-          <div className="probe-preset-picker">
-            <button type="button" className="ghost" aria-expanded={presetOpen} aria-controls="probe-presets" onClick={() => setPresetOpen(!presetOpen)}>{presetOpen ? '收起预设目标' : '从预设中选择'}</button>
-            {presetOpen && <section id="probe-presets" aria-label="预设目标" className="probe-preset-panel">
-              <div className="probe-preset-filters">
-                <Select aria-label="探测目标省份" value={province} onChange={event => { setProvince(event.target.value); setCarrier('') }}><option value="">全部省份</option>{provinces.map(item => <option key={item} value={item}>{item}</option>)}</Select>
-                <Select aria-label="探测目标运营商" value={carrier} onChange={event => setCarrier(event.target.value)}><option value="">全部运营商</option>{carriers.map(item => <option key={item} value={item}>{item}</option>)}</Select>
-              </div>
-              <div className="return-latency-search">
-                <Search size={15} aria-hidden="true" />
-                <input type="search" aria-label="搜索预设目标" placeholder="搜索省份、运营商或地址" value={targetQuery} onChange={event => setTargetQuery(event.target.value)} />
-              </div>
-              <div className="probe-preset-results">
-                {loading ? <p className="muted" role="status">正在加载预设…</p> : !visibleTargets.length ? <p className="muted">{error ? '预设暂不可用，仍可手动填写地址。' : legacyRegion ? '当前任务使用所选地区的预设地址。填写地址可改为指定目标。' : '没有匹配的预设目标。'}</p> : visibleTargets.map(target => <button type="button" className="probe-preset-option" key={`${target.province}-${target.carrier}-${target.address}`} onClick={() => selectTarget(target)}><strong>{targetLabel(target.province, target.carrier)}</strong><span>{target.address}</span></button>)}
-              </div>
-            </section>}
-          </div>
-          <div className="probe-task-secondary">
-            <div className="probe-task-form-grid">
-              <FormField label="任务名称" hint="留空自动使用目标地址。同名任务不可重复。">
-                <input aria-label="任务名称" type="text" maxLength={60} placeholder={address || targetLabel(province, carrier) || '例如：网站可用性'} value={name} onChange={event => { setName(event.target.value); setNameTouched(true) }} />
-              </FormField>
-              <FormField label="探测间隔（秒）" required hint="该任务多久执行一次（30–86400 秒）。">
-                <div className="probe-task-interval">
-                  <input aria-label="探测间隔（秒）" required aria-invalid={intervalInvalid} type="number" min={30} max={86400} value={interval} onChange={event => setInterval(event.target.value === '' ? '' : Number(event.target.value))} />
-                  <div className="probe-task-interval-presets">
-                    {INTERVAL_PRESETS.map(preset => <button key={preset} type="button" className={`latency-pill-btn${Number(interval) === preset ? ' active' : ''}`} onClick={() => setInterval(preset)}>{preset >= 3600 ? `${preset / 3600} 小时` : preset >= 60 ? `${preset / 60} 分钟` : `${preset} 秒`}</button>)}
-                  </div>
+            <div className="probe-preset-picker">
+              <button type="button" className="ghost" aria-expanded={presetOpen} aria-controls="probe-presets" onClick={() => setPresetOpen(!presetOpen)}>{presetOpen ? '收起预设目标' : '从预设中选择'}</button>
+              {presetOpen && <section id="probe-presets" aria-label="预设目标" className="probe-preset-panel">
+                <div className="probe-preset-filters">
+                  <Select aria-label="探测目标省份" value={province} onChange={event => { setProvince(event.target.value); setCarrier('') }}><option value="">全部省份</option>{provinces.map(item => <option key={item} value={item}>{item}</option>)}</Select>
+                  <Select aria-label="探测目标运营商" value={carrier} onChange={event => setCarrier(event.target.value)}><option value="">全部运营商</option>{carriers.map(item => <option key={item} value={item}>{item}</option>)}</Select>
                 </div>
-              </FormField>
+                <div className="return-latency-search">
+                  <Search size={15} aria-hidden="true" />
+                  <input type="search" aria-label="搜索预设目标" placeholder="搜索省份、运营商或地址" value={targetQuery} onChange={event => setTargetQuery(event.target.value)} />
+                </div>
+                <div className="probe-preset-results">
+                  {loading ? <p className="muted" role="status">正在加载预设…</p> : !visibleTargets.length ? <p className="muted">{error ? '预设暂不可用，仍可手动填写地址。' : legacyRegion ? '当前任务使用所选地区的预设地址。填写地址可改为指定目标。' : '没有匹配的预设目标。'}</p> : visibleTargets.map(target => <button type="button" className="probe-preset-option" key={`${target.province}-${target.carrier}-${target.address}`} onClick={() => selectTarget(target)}><strong>{targetLabel(target.province, target.carrier)}</strong><span>{target.address}</span></button>)}
+                </div>
+              </section>}
             </div>
-            <label className="return-latency-switch-row">
-              <span><strong>启用该任务</strong><small className="muted">停用后保留配置，但不再下发给服务器。</small></span>
-              <Switch checked={enabled} ariaLabel="启用该任务" onChange={setEnabled} />
-            </label>
+            <div className="probe-task-secondary">
+              <div className="probe-task-form-grid">
+                <FormField label="任务名称" hint="留空自动使用目标地址。同名任务不可重复。">
+                  <input aria-label="任务名称" type="text" maxLength={60} placeholder={address || targetLabel(province, carrier) || '例如：网站可用性'} value={name} onChange={event => { setName(event.target.value); setNameTouched(true) }} />
+                </FormField>
+                <FormField label="探测间隔（秒）" required hint="该任务多久执行一次（30–86400 秒）。">
+                  <div className="probe-task-interval">
+                    <input aria-label="探测间隔（秒）" required aria-invalid={intervalInvalid} type="number" min={30} max={86400} value={interval} onChange={event => setInterval(event.target.value === '' ? '' : Number(event.target.value))} />
+                    <div className="probe-task-interval-presets">
+                      {INTERVAL_PRESETS.map(preset => <button key={preset} type="button" className={`latency-pill-btn${Number(interval) === preset ? ' active' : ''}`} onClick={() => setInterval(preset)}>{preset >= 3600 ? `${preset / 3600} 小时` : preset >= 60 ? `${preset / 60} 分钟` : `${preset} 秒`}</button>)}
+                    </div>
+                  </div>
+                </FormField>
+              </div>
+              <label className="return-latency-switch-row">
+                <span><strong>启用该任务</strong><small className="muted">停用后保留配置，但不再下发给服务器。</small></span>
+                <Switch checked={enabled} ariaLabel="启用该任务" onChange={setEnabled} />
+              </label>
+            </div>
+            <section className="probe-task-servers" aria-label="执行服务器">
+              <header className="return-latency-section-head">
+                <h3>执行服务器</h3>
+                <span className="muted">已选 {serverIDs.length} 台</span>
+              </header>
+              <p className="muted">选择执行节点；未选择时任务不会执行。快捷选择应用于全部节点，不受搜索影响。</p>
+              <div className="probe-task-server-tools">
+                <div className="return-latency-search">
+                  <Search size={15} aria-hidden="true" />
+                  <input type="search" aria-label="搜索执行服务器" placeholder="搜索名称、IP 或编号" value={serverQuery} onChange={event => setServerQuery(event.target.value)} />
+                </div>
+                <div className="probe-task-server-quick">
+                  <button type="button" className="latency-pill-btn" disabled={!servers.length} onClick={() => setServerIDs(servers.map(server => server.id))}>选择全部</button>
+                  <button type="button" className="latency-pill-btn" disabled={!suggested.length} onClick={() => setServerIDs(suggested.map(server => server.id))}>选择在线 {suggested.length} 台</button>
+                  <button type="button" className="latency-pill-btn" disabled={!serverIDs.length} onClick={() => setServerIDs([])}>清空</button>
+                </div>
+              </div>
+              <div className="probe-task-server-list">
+                {!servers.length ? <p className="muted">暂无服务器，请先在服务器管理中添加。</p> : !visibleServers.length ? <p className="muted">没有匹配的服务器。</p> : visibleServers.map(server => (
+                  <label key={server.id} className={`probe-task-server${serverIDs.includes(server.id) ? ' is-selected' : ''}`}>
+                    <input type="checkbox" aria-label={`选择 ${server.name}`} checked={serverIDs.includes(server.id)} onChange={() => toggleServer(server.id)} />
+                    <span className="probe-task-server-main">
+                      <strong>{server.name}</strong>
+                      <small className="muted">{server.public_ipv4 || server.public_ipv6 || `#${server.id}`}</small>
+                    </span>
+                    <span className="probe-task-server-state muted">{online(server) ? (server.latency_probe_enabled ? '推荐' : '未启用探测') : server.agent_id ? '离线' : '未接入'}</span>
+                  </label>
+                ))}
+              </div>
+            </section>
           </div>
-          <section className="probe-task-servers" aria-label="执行服务器">
-            <header className="return-latency-section-head">
-              <h3>执行服务器</h3>
-              <span className="muted">已选 {serverIDs.length} 台</span>
-            </header>
-            <p className="muted">选择执行节点；未选择时任务不会执行。快捷选择应用于全部节点，不受搜索影响。</p>
-            <div className="probe-task-server-tools">
-              <div className="return-latency-search">
-                <Search size={15} aria-hidden="true" />
-                <input type="search" aria-label="搜索执行服务器" placeholder="搜索名称、IP 或编号" value={serverQuery} onChange={event => setServerQuery(event.target.value)} />
-              </div>
-              <div className="probe-task-server-quick">
-                <button type="button" className="latency-pill-btn" disabled={!servers.length} onClick={() => setServerIDs(servers.map(server => server.id))}>选择全部</button>
-                <button type="button" className="latency-pill-btn" disabled={!suggested.length} onClick={() => setServerIDs(suggested.map(server => server.id))}>选择在线 {suggested.length} 台</button>
-                <button type="button" className="latency-pill-btn" disabled={!serverIDs.length} onClick={() => setServerIDs([])}>清空</button>
-              </div>
-            </div>
-            <div className="probe-task-server-list">
-              {!servers.length ? <p className="muted">暂无服务器，请先在服务器管理中添加。</p> : !visibleServers.length ? <p className="muted">没有匹配的服务器。</p> : visibleServers.map(server => (
-                <label key={server.id} className={`probe-task-server${serverIDs.includes(server.id) ? ' is-selected' : ''}`}>
-                  <input type="checkbox" aria-label={`选择 ${server.name}`} checked={serverIDs.includes(server.id)} onChange={() => toggleServer(server.id)} />
-                  <span className="probe-task-server-main">
-                    <strong>{server.name}</strong>
-                    <small className="muted">{server.public_ipv4 || server.public_ipv6 || `#${server.id}`}</small>
-                  </span>
-                  <span className="probe-task-server-state muted">{online(server) ? (server.latency_probe_enabled ? '推荐' : '未启用探测') : server.agent_id ? '离线' : '未接入'}</span>
-                </label>
-              ))}
-            </div>
-          </section>
+          {submitError && <p className="danger-text" role="alert">{submitError}</p>}
         </div>
-        {submitError && <p className="danger-text" role="alert">{submitError}</p>}
         <div className="return-latency-form-actions">
           <button type="button" className="ghost" onClick={onCancel}>取消</button>
           <button type="submit" className="primary" disabled={!canSubmit}>

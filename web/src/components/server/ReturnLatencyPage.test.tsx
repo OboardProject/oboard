@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
@@ -51,6 +53,9 @@ describe('return latency probe tasks', () => {
   it('creates one task per target with its own interval and executing servers', async () => {
     const submit = vi.fn()
     await act(async () => root.render(<ReturnLatencyTaskForm regions={regions} servers={servers} onSubmit={submit} onCancel={() => {}} />))
+    expect(container.querySelector('.probe-task-form-scroll')).toBeTruthy()
+    expect(container.querySelector('.probe-task-form-scroll .return-latency-form-actions')).toBeNull()
+    expect(container.querySelector('.return-latency-fields > .return-latency-form-actions')).toBeTruthy()
     expect(container.querySelector('[aria-label="预设目标"]')).toBeNull()
     await setInput(container.querySelector<HTMLInputElement>('[aria-label="目标地址"]')!, 'example.com')
     await click(container.querySelector<HTMLInputElement>('[aria-label="选择 Hong Kong"]')!)
@@ -156,6 +161,8 @@ describe('return latency probe tasks', () => {
     await click(container.querySelector<HTMLButtonElement>('#probe-nodes-tab')!)
     const card = Array.from(container.querySelectorAll('.return-latency-server')).find(element => element.textContent?.includes('Hong Kong'))!
     await click(buttonIn(card, '探测参数')!)
+    expect(document.body.querySelector('.probe-settings-dialog')).toBeTruthy()
+    expect(document.body.querySelector('.return-latency-editor .latency-params-grid')).toBeTruthy()
     await click(buttonIn(document.body, '保存参数')!)
     const write = request.mock.calls.find(([path, init]) => path === '/servers/1' && (init as RequestInit)?.method === 'PATCH')!
     const body = JSON.parse((write[1] as RequestInit).body as string)
@@ -213,6 +220,13 @@ describe('return latency probe tasks', () => {
     await click(item)
     expect(action).toHaveBeenCalledWith('return-latency', servers[0])
     expect(document.body.querySelector('[role="menu"]')).toBeNull()
+  })
+
+  it('constrains probe settings dialog scroll to task list only', () => {
+    const stylesheet = readFileSync(path.resolve(__dirname, '../../style.css'), 'utf8')
+    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.dialog-chrome-body\s*\{[^}]*overflow:\s*hidden/s)
+    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.probe-task-server-list\s*\{[^}]*overflow-y:\s*auto/s)
+    expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.return-latency-form-actions\s*\{[^}]*margin-top:\s*auto/s)
   })
 })
 
