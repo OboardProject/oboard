@@ -119,7 +119,7 @@ func TestCreateTerminalSessionAfterDuplicateAgentConnection(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": false})
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": false, "step_up_token": remoteTerminalSettingsStepUp(t, httpServer.URL, token, false)})
 	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsReq.Header.Set("Authorization", "Bearer "+token)
@@ -192,7 +192,7 @@ func TestCreateTerminalSessionReportsControlChannelUnavailable(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": false})
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": false, "step_up_token": remoteTerminalSettingsStepUp(t, httpServer.URL, token, false)})
 	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsReq.Header.Set("Authorization", "Bearer "+token)

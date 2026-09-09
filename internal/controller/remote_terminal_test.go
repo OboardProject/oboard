@@ -46,7 +46,7 @@ func TestBrowserTerminalWebsocketUsesTicketCookieAndRelaysOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	falseValue := false
-	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue})
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue, "step_up_token": remoteTerminalSettingsStepUp(t, httpServer.URL, token, falseValue)})
 	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsReq.Header.Set("Authorization", "Bearer "+token)
@@ -448,7 +448,7 @@ func TestCreateTerminalSessionLoginEnvProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	falseValue := false
-	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue})
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue, "step_up_token": remoteTerminalSettingsStepUp(t, httpServer.URL, token, falseValue)})
 	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsReq.Header.Set("Authorization", "Bearer "+token)
@@ -551,7 +551,7 @@ func TestCreateTerminalSessionOmitsModeForOldAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 	falseValue := false
-	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue})
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue, "step_up_token": remoteTerminalSettingsStepUp(t, httpServer.URL, token, falseValue)})
 	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsReq.Header.Set("Authorization", "Bearer "+token)
@@ -619,7 +619,7 @@ func startTerminalSession(t *testing.T) (*Server, *httptest.Server, string, *htt
 		t.Fatal(err)
 	}
 	falseValue := false
-	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue})
+	settingsBody, _ := json.Marshal(map[string]any{"remote_terminal_password_confirmation_enabled": falseValue, "step_up_token": remoteTerminalSettingsStepUp(t, httpServer.URL, token, falseValue)})
 	settingsReq, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/ui/settings", bytes.NewReader(settingsBody))
 	settingsReq.Header.Set("Content-Type", "application/json")
 	settingsReq.Header.Set("Authorization", "Bearer "+token)

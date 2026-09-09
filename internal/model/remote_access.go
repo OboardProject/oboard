@@ -58,6 +58,8 @@ const (
 	RemoteAccessAuditServerPolicyUpdated     = "remote_access.server_policy.updated"
 )
 
+const StepUpPurposeRemoteTerminalSettings = "remote_terminal_settings"
+
 type RemoteAccessReport struct {
 	Capabilities []string               `json:"capabilities,omitempty"`
 	LocalMode    string                 `json:"local_mode,omitempty"`

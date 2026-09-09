@@ -43,6 +43,63 @@ describe('RemoteAccessSettings', () => {
     expect(container.textContent).not.toContain('Structured Exec')
   })
 
+  it.each([true, false])('requires identity verification before changing confirmation from %s', async initial => {
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/auth/step-up/begin') return { challenge_id: 'challenge-1', passkey_available: false }
+      if (path === '/auth/step-up/password') return { step_up_token: 'verified-token' }
+      return remoteAccessMock(path, init)
+    })
+    act(() => root.render(<RemoteAccessSettings data={{ settings: { remote_terminal_password_confirmation_enabled: initial } }} client={{ request }} load={vi.fn(async () => undefined)} notify={vi.fn()} />))
+    const toggle = container.querySelector<HTMLInputElement>('input[aria-label="打开 WebSSH 前确认密码"]')!
+    await act(async () => toggle.click())
+    expect(toggle.checked).toBe(initial)
+    expect(request).toHaveBeenCalledWith('/auth/step-up/begin', {
+      method: 'POST',
+      body: JSON.stringify({ purpose: 'remote_terminal_settings', resource: { type: 'setting', id: `remote_terminal_password_confirmation_enabled:${!initial}` } }),
+    })
+    expect(request.mock.calls.some(([path]) => path === '/settings')).toBe(false)
+    await act(async () => {
+      document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(request).toHaveBeenCalledWith('/settings', {
+      method: 'POST', body: JSON.stringify({ remote_terminal_password_confirmation_enabled: !initial, step_up_token: 'verified-token' }),
+    })
+    expect(toggle.checked).toBe(!initial)
+  })
+
+  it('keeps the setting unchanged after failed verification or cancellation', async () => {
+    const request = vi.fn(async (path: string) => {
+      if (path === '/auth/step-up/begin') return { challenge_id: 'challenge-1', passkey_available: false }
+      throw new Error('密码错误')
+    })
+    act(() => root.render(<RemoteAccessSettings data={{ settings: {} }} client={{ request }} load={vi.fn()} notify={vi.fn()} />))
+    const toggle = container.querySelector<HTMLInputElement>('input[aria-label="打开 WebSSH 前确认密码"]')!
+    await act(async () => toggle.click())
+    await act(async () => document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('密码错误')
+    expect(toggle.checked).toBe(true)
+    await act(async () => Array.from(document.querySelectorAll('button')).find(button => button.textContent === '取消')!.click())
+    expect(toggle.checked).toBe(true)
+    expect(toggle.disabled).toBe(false)
+    expect(request.mock.calls.some(([path]) => path === '/settings')).toBe(false)
+  })
+
+  it('keeps the setting unchanged when the verified save fails', async () => {
+    const request = vi.fn(async (path: string) => {
+      if (path === '/auth/step-up/begin') return { challenge_id: 'challenge-1', passkey_available: false }
+      if (path === '/auth/step-up/password') return { step_up_token: 'verified-token' }
+      throw new Error('保存失败')
+    })
+    const notify = vi.fn()
+    act(() => root.render(<RemoteAccessSettings data={{ settings: {} }} client={{ request }} load={vi.fn()} notify={notify} />))
+    const toggle = container.querySelector<HTMLInputElement>('input[aria-label="打开 WebSSH 前确认密码"]')!
+    await act(async () => toggle.click())
+    await act(async () => document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(toggle.checked).toBe(true)
+    expect(toggle.disabled).toBe(false)
+    expect(notify).toHaveBeenCalledWith('保存失败', 'error')
+  })
+
   it('loads all servers from the servers API when opening the dialog', async () => {
     const request = vi.fn(async (path: string, init?: RequestInit) => remoteAccessMock(path, init, [
       { id: 7, name: '上海节点', status: 'online' },

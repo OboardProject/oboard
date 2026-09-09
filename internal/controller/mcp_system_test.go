@@ -41,7 +41,7 @@ func TestSettingsCapabilities(t *testing.T) {
 	if _, exists := server.publicSettingsValues(ctx, map[string]string{"traffic_enforcement_mode": "reject_new"})["traffic_enforcement_mode"]; exists {
 		t.Fatal("removed quota setting was exposed")
 	}
-	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_enabled": true, "remote_terminal_password_confirmation_enabled": false}})
+	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_enabled": true}})
 	changed, err := server.settingsUpdateCandidate(ctx, updateInput, false)
 	if err != nil || !containsString(changed, settingMCPEnabled) {
 		t.Fatalf("MCP control must report its change: changed=%v err=%v", changed, err)
@@ -54,7 +54,7 @@ func TestSettingsCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPEnabled] != "true" || settings[settingRemoteTerminalPasswordConfirmationEnabled] != "false" {
+	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPEnabled] != "true" {
 		t.Fatalf("settings not applied: %#v", settings)
 	}
 	if settings[settingMCPEnabled] != "true" {

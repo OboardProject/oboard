@@ -170,7 +170,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		adminRead("tool_audits.list", "列出自动化工具调用审计", schemaObject(map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 500}}), schemaObject(map[string]any{"audits": arrayOf(toolAudit), "count": map[string]any{"type": "integer"}}, "audits")),
 		{Name: "certificates.list", Description: "列出全部 TLS 证书及其状态", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(certificate)), RequiredScopes: []string{"certificates:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "notification_channels.list", Description: "列出通知频道（不含频道密钥）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(notificationChannel)), RequiredScopes: []string{"notifications:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
-		adminWrite("settings.update", "修改主控全局设置；subscription_relay_url 仅能设为已接入中继的公开地址或空字符串；subscription_always_use_domain_host 控制订阅 Host 是否始终使用解析域名", schemaObject(map[string]any{"changes": closedObject(map[string]any{
+		adminWrite("settings.update", "修改主控全局设置；WebSSH 密码确认开关仅允许管理员在 Web 面板重新验证身份后修改；subscription_relay_url 仅能设为已接入中继的公开地址或空字符串；subscription_always_use_domain_host 控制订阅 Host 是否始终使用解析域名", schemaObject(map[string]any{"changes": closedObject(map[string]any{
 			"audit_enabled": boolValue, "subscription_audit_enabled": boolValue, "connection_audit_enabled": boolValue,
 			"audit_action":                           map[string]any{"type": "string", "enum": []string{"restrict", "warn"}},
 			"traffic_timezone":                       stringValue,
@@ -189,9 +189,8 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"trusted_proxy_cidrs":                       stringArray(0, 64), "controller_log_max_mb": map[string]any{"type": "integer"},
 			"controller_log_backups": map[string]any{"type": "integer"}, "registration_enabled": boolValue,
 			"remote_terminal_enabled": boolValue, "mcp_enabled": boolValue,
-			"remote_terminal_password_confirmation_enabled": boolValue,
-			"agent_auto_update_enabled":                     boolValue,
-			"subscription_relay_auto_update_enabled":        boolValue, "update_window_enabled": boolValue,
+			"agent_auto_update_enabled":              boolValue,
+			"subscription_relay_auto_update_enabled": boolValue, "update_window_enabled": boolValue,
 			"update_window_start_hour":             map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
 			"update_window_end_hour":               map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
 			"agent_update_max_concurrency":         map[string]any{"type": "integer", "minimum": 0, "maximum": 32},

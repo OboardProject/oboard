@@ -289,11 +289,10 @@ var settingsAutomationFields = map[string]bool{
 	"agent_auto_update_enabled":              true,
 	"subscription_relay_auto_update_enabled": true, "update_window_enabled": true,
 	"update_window_start_hour": true, "update_window_end_hour": true,
-	"agent_update_max_concurrency":          true,
+	"agent_update_max_concurrency":         true,
 	"managed_update_startup_quiet_seconds": true,
-	"registration_enabled":    true,
-	"remote_terminal_enabled": true, "mcp_enabled": true,
-	"remote_terminal_password_confirmation_enabled": true,
+	"registration_enabled":                 true,
+	"remote_terminal_enabled":              true, "mcp_enabled": true,
 }
 
 func (s *Server) registerTelegramBotOperations() {
@@ -703,11 +702,6 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 				return nil, fmt.Errorf("%s: %w", key, err)
 			}
 			updates[key] = strconv.FormatBool(enabled)
-		}
-	}
-	if value, ok := fields[settingRemoteTerminalPasswordConfirmationEnabled]; ok {
-		if err := setBool(settingRemoteTerminalPasswordConfirmationEnabled, value); err != nil {
-			return nil, err
 		}
 	}
 	if !apply {

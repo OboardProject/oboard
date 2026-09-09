@@ -345,7 +345,7 @@ const stepUpServerSetMax = 64
 
 func validStepUpPurpose(purpose string) bool {
 	switch purpose {
-	case model.StepUpPurposeRemoteTerminal, model.StepUpPurposeGrantMCPExec, model.StepUpPurposeGrantMCPRawShell, model.StepUpPurposeGrantMCPOperations, model.StepUpPurposePrivilegedGrant:
+	case model.StepUpPurposeRemoteTerminalSettings, model.StepUpPurposeRemoteTerminal, model.StepUpPurposeGrantMCPExec, model.StepUpPurposeGrantMCPRawShell, model.StepUpPurposeGrantMCPOperations, model.StepUpPurposePrivilegedGrant:
 		return true
 	default:
 		return false

@@ -1028,11 +1028,19 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			RegistrationEnabled                       *bool              `json:"registration_enabled"`
 			RegistrationDefaultGroupID                *int64             `json:"registration_default_group_id"`
 			RemoteTerminalEnabled                     *bool              `json:"remote_terminal_enabled"`
+			StepUpToken                               string             `json:"step_up_token"`
 			RemoteTerminalPasswordConfirmationEnabled *bool              `json:"remote_terminal_password_confirmation_enabled"`
 			MCPEnabled                                *bool              `json:"mcp_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
+		}
+		if req.RemoteTerminalPasswordConfirmationEnabled != nil {
+			resourceID := settingRemoteTerminalPasswordConfirmationEnabled + ":" + strconv.FormatBool(*req.RemoteTerminalPasswordConfirmationEnabled)
+			if err := s.consumeStepUp(r, req.StepUpToken, model.StepUpPurposeRemoteTerminalSettings, "setting", resourceID); err != nil {
+				fail(w, err, http.StatusForbidden)
+				return
+			}
 		}
 		var normalizedTrustedProxyCIDRs []string
 		if req.TrustedProxyCIDRs != nil {

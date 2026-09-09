@@ -4,6 +4,7 @@ import { Server as ServerIcon, Settings2, X, AlertTriangle } from 'lucide-react'
 import { SettingsGroup, SettingsSwitchRow } from '../settings/SettingsLayout'
 import { MotionDialogPanel } from '../ui/motion'
 import { Switch } from '../ui/switch'
+import { StepUpAuth } from './StepUpAuth'
 
 type RequestFn = (path: string, init?: RequestInit) => Promise<any>
 type ServerSummary = { id: number; name?: string; status?: string }
@@ -63,21 +64,24 @@ function normalizeServersResponse(payload: unknown): ServerSummary[] {
 export function RemoteAccessSettings({ data, client, load, notify }: { data: any; client: { request: RequestFn }; load: () => Promise<void>; notify: (message: string, tone?: string) => void }) {
   const [passwordConfirmation, setPasswordConfirmation] = useState(settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled, true))
   const [saving, setSaving] = useState('')
+  const [pendingPasswordConfirmation, setPendingPasswordConfirmation] = useState<boolean | null>(null)
   const [serversOpen, setServersOpen] = useState(false)
 
   useEffect(() => {
     setPasswordConfirmation(settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled, true))
   }, [data.settings?.remote_terminal_password_confirmation_enabled])
 
-  const save = async (key: string, body: Record<string, boolean>, success: string) => {
+  const save = async (checked: boolean, token: string) => {
     if (saving) return
-    setSaving(key)
+    setSaving('password')
+    setPendingPasswordConfirmation(null)
     try {
+      const body = { remote_terminal_password_confirmation_enabled: checked, step_up_token: token }
       await client.request('/settings', { method: 'POST', body: JSON.stringify(body) })
+      setPasswordConfirmation(checked)
       await load()
-      notify(success, 'success')
+      notify(checked ? 'WebSSH 密码确认已开启' : 'WebSSH 密码确认已关闭', 'success')
     } catch (error: any) {
-      setPasswordConfirmation(settingEnabled(data.settings?.remote_terminal_password_confirmation_enabled, true))
       notify(error?.message || '保存失败', 'error')
     } finally {
       setSaving('')
@@ -95,16 +99,23 @@ export function RemoteAccessSettings({ data, client, load, notify }: { data: any
       >
         <SettingsSwitchRow
           label="WebSSH 密码确认"
-          description="打开终端前再次确认管理员身份。"
+          description="打开终端前再次确认管理员身份。更改此设置也需要验证管理员身份。"
           checked={passwordConfirmation}
-          onChange={checked => {
-            setPasswordConfirmation(checked)
-            void save('password', { remote_terminal_password_confirmation_enabled: checked }, checked ? 'WebSSH 密码确认已开启' : 'WebSSH 密码确认已关闭')
-          }}
-          disabled={Boolean(saving)}
+          onChange={checked => setPendingPasswordConfirmation(checked)}
+          disabled={Boolean(saving) || pendingPasswordConfirmation !== null}
           ariaLabel="打开 WebSSH 前确认密码"
         />
       </SettingsGroup>
+      {pendingPasswordConfirmation !== null ? <StepUpAuth
+        request={client.request}
+        purpose="remote_terminal_settings"
+        resourceType="setting"
+        resourceId={`remote_terminal_password_confirmation_enabled:${pendingPasswordConfirmation}`}
+        title={pendingPasswordConfirmation ? '开启 WebSSH 密码确认' : '关闭 WebSSH 密码确认'}
+        warning="更改此设置前，请再次验证管理员身份。"
+        onComplete={token => void save(pendingPasswordConfirmation, token)}
+        onCancel={() => setPendingPasswordConfirmation(null)}
+      /> : null}
       <AnimatePresence>
         {serversOpen ? <RemoteAccessServerDialog
           globalTerminal={settingEnabled(data.settings?.remote_terminal_enabled, true)}
