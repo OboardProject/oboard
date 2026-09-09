@@ -681,20 +681,21 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 		applyServerNetworkPolicy(item, server, inbound.Protocol, true)
 		config.Inbounds = append(config.Inbounds, item)
 	}
-	// Project the paths once and share the allocated synthetic listeners with both
-	// the internal inbound builder and the outbound/rule builder. Two independent
-	// derivations could pick different ports for the same hop.
-	_, plannedPathInbounds, err := buildProxyPathPlansWithInbounds(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
+	// Project the paths once and share the allocated synthetic listeners with
+	// the internal inbound builder, the outbound/rule builder, and the family
+	// split builder. Two independent derivations could pick different ports for
+	// the same hop, and each rebuild re-walked the whole topology.
+	topology, err := buildProxyPathTopology(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
-	internalInbounds, err := buildProxyPathInternalInbounds(server, opts, users, &config, plannedPathInbounds)
+	internalInbounds, err := buildProxyPathInternalInbounds(server, opts, users, &config, topology)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
 	config.Inbounds = append(config.Inbounds, internalInbounds...)
 	if mode == configBuildUsersProjection {
-		pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds, policyCtx)
+		pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, topology, policyCtx)
 		if err != nil {
 			return SingBoxConfig{}, err
 		}
@@ -748,13 +749,13 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, interfaceOutbounds...)
-	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, plannedPathInbounds, policyCtx)
+	pathOutbounds, pathRules, err := buildProxyPathOutboundsAndRules(server, outbounds, opts, users, topology, policyCtx)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
 	config.Outbounds = append(config.Outbounds, pathOutbounds...)
 	inheritedFamilyDNSStrategy, _ := dns["strategy"].(string)
-	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, plannedPathInbounds, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy, dns)
+	familySplitOutbounds, err := buildRoutingRuleFamilySplitOutbounds(server, opts, pathOutbounds, topology, defaultDomainResolver(dns, server), inheritedFamilyDNSStrategy, dns)
 	if err != nil {
 		return SingBoxConfig{}, err
 	}
@@ -1033,16 +1034,13 @@ func stripPrivateConfigFields(raw map[string]any, protocol model.Protocol) {
 	}
 }
 
-func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, users []model.User, config *SingBoxConfig, plannedInbounds map[int64]model.Inbound) ([]map[string]any, error) {
-	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
-	if err != nil {
-		return nil, err
-	}
+func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, users []model.User, config *SingBoxConfig, topology *proxyPathTopology) ([]map[string]any, error) {
+	chainServices := topology.chainServices
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
-	for id, inbound := range plannedInbounds {
+	for id, inbound := range topology.plannedInbounds {
 		inboundByID[id] = inbound
 	}
 	serverByID := map[int64]model.Server{server.ID: server}
@@ -1068,7 +1066,6 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	}
 	paths := append([]model.ProxyPath(nil), opts.ProxyPaths...)
 	sort.SliceStable(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
-	transparentGroups := buildTransparentProxyPathGroups(paths, stepsByPath)
 	out := []map[string]any{}
 	for _, serviceKey := range serviceKeys {
 		service := chainServices[serviceKey]
@@ -1115,7 +1112,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			if mode != model.ProxyPathTransportPortForward {
 				continue
 			}
-			group := transparentGroups[path.ID]
+			group := topology.transparentGroups[path.ID]
 			key := proxyPathInternalInboundTag(path.ID, step.Position)
 			if group != nil {
 				key = proxyPathSharedTransparentInboundTag(group.InboundID, group.PrefixLength)
@@ -1131,7 +1128,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 			if group != nil {
 				plannedID = proxyPathSharedTransparentInboundID(group.InboundID, step.Position)
 			}
-			internal, planned := plannedInbounds[plannedID]
+			internal, planned := topology.plannedInbounds[plannedID]
 			if !planned {
 				if group != nil {
 					internal = proxyPathSharedTransparentInbound(group.InboundID, step, server, inboundByID, opts.PortLedger)
@@ -1194,7 +1191,7 @@ func buildProxyPathInternalInbounds(server model.Server, opts ConfigOptions, use
 	return out, nil
 }
 
-func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model.Outbound, opts ConfigOptions, users []model.User, plannedInbounds map[int64]model.Inbound, policyCtx *routePolicyContext) ([]map[string]any, []map[string]any, error) {
+func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model.Outbound, opts ConfigOptions, users []model.User, topology *proxyPathTopology, policyCtx *routePolicyContext) ([]map[string]any, []map[string]any, error) {
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
@@ -1216,23 +1213,12 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 	}
 	paths := append([]model.ProxyPath(nil), opts.ProxyPaths...)
 	sort.SliceStable(paths, func(i, j int) bool { return paths[i].ID < paths[j].ID })
-	transparentGroups := buildTransparentProxyPathGroups(paths, stepsByPath)
-	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
-	if err != nil {
-		return nil, nil, err
-	}
-	// Project the paths through the same ledger the caller already used. A
-	// second derivation without the ledger would re-roll the seeds and could
-	// pick different ports for the same hop now that allocations carry pool and
-	// network metadata; the caller's planned listeners and this outbound/rule
-	// table must agree on every port.
-	pathPlans, _, err := buildProxyPathPlansWithInbounds(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
-	if err != nil {
-		return nil, nil, err
-	}
+	transparentGroups := topology.transparentGroups
+	chainServices := topology.chainServices
+	pathPlans := topology.plans
 	// Adopt the projection's synthetic listeners so every hop dials the port the
 	// deployment plan actually provisions.
-	for id, inbound := range plannedInbounds {
+	for id, inbound := range topology.plannedInbounds {
 		if _, ok := inboundByID[id]; !ok {
 			inboundByID[id] = inbound
 		}
@@ -2418,12 +2404,12 @@ func applyRoutingRuleProxyPathBindings(server model.Server, rules []model.Routin
 	return nil
 }
 
-func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOptions, pathOutbounds []map[string]any, plannedInbounds map[int64]model.Inbound, defaultResolver any, inheritedDNSStrategy string, dns map[string]any) ([]map[string]any, error) {
-	inboundByID := make(map[int64]model.Inbound, len(opts.Inbounds)+len(plannedInbounds))
+func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOptions, pathOutbounds []map[string]any, topology *proxyPathTopology, defaultResolver any, inheritedDNSStrategy string, dns map[string]any) ([]map[string]any, error) {
+	inboundByID := make(map[int64]model.Inbound, len(opts.Inbounds)+len(topology.plannedInbounds))
 	for _, inbound := range opts.Inbounds {
 		inboundByID[inbound.ID] = inbound
 	}
-	for id, inbound := range plannedInbounds {
+	for id, inbound := range topology.plannedInbounds {
 		inboundByID[id] = inbound
 	}
 	serverByID := make(map[int64]model.Server, len(opts.Servers)+1)
@@ -2439,10 +2425,7 @@ func buildRoutingRuleFamilySplitOutbounds(server model.Server, opts ConfigOption
 	for _, step := range opts.ProxyPathSteps {
 		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
 	}
-	chainServices, err := buildProxyPathChainServices(opts.ProxyPaths, opts.ProxyPathSteps, opts.Servers, opts.Inbounds, opts.PortLedger)
-	if err != nil {
-		return nil, err
-	}
+	chainServices := topology.chainServices
 	workingOutbounds := append([]map[string]any(nil), pathOutbounds...)
 	result := make([]map[string]any, 0)
 	for _, rule := range opts.RoutingRules {

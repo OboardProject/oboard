@@ -618,7 +618,7 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 		sent = append(sent, title+"\n"+body)
 		return nil
 	}
-	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID})
+	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID}, nil)
 	waitNotificationCount(t, srv, &sentMu, &sent, 2)
 	sentMu.Lock()
 	for _, message := range sent {
@@ -627,7 +627,7 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 		}
 	}
 	sentMu.Unlock()
-	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID})
+	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID}, nil)
 	time.Sleep(50 * time.Millisecond)
 	sentMu.Lock()
 	defer sentMu.Unlock()

@@ -1056,7 +1056,30 @@ func BuildProxyPathPlansWithLedger(paths []model.ProxyPath, steps []model.ProxyP
 // table instead of recomputing ports: the allocator picks the first free port
 // from a seed, so a different occupancy set would silently yield a different
 // port and the derived forward would target a listener nobody owns.
+// proxyPathTopology is the shared projection state one config build derives
+// once: chain services, per-path plans, and the synthetic inbound table. All
+// consumers (internal inbound builder, outbound/rule builder, family split)
+// previously re-derived these from the same inputs, quadrupling the topology
+// cost of every runtime-user package build.
+type proxyPathTopology struct {
+	chainServices     map[proxyPathChainServiceKey]*proxyPathChainService
+	plans             []model.ProxyPathPlan
+	plannedInbounds   map[int64]model.Inbound
+	transparentGroups map[int64]*transparentProxyPathGroup
+}
+
 func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) ([]model.ProxyPathPlan, map[int64]model.Inbound, error) {
+	topology, err := buildProxyPathTopology(paths, steps, servers, inbounds, ledger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return topology.plans, topology.plannedInbounds, nil
+}
+
+// buildProxyPathTopology is the single-derivation core of
+// buildProxyPathPlansWithInbounds. It returns the chain services it built so
+// callers that also need them do not rebuild the same map.
+func buildProxyPathTopology(paths []model.ProxyPath, steps []model.ProxyPathStep, servers []model.Server, inbounds []model.Inbound, ledger *ProxyPathPortLedger) (*proxyPathTopology, error) {
 	steps = resolveImplicitProxyPathInboundBindings(paths, steps, inbounds)
 	inboundByID := map[int64]model.Inbound{}
 	for _, inbound := range inbounds {
@@ -1071,12 +1094,12 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 		stepsByPath[step.PathID] = append(stepsByPath[step.PathID], step)
 	}
 	if err := validateProxyPathTransportSet(paths, stepsByPath, inboundByID); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	transparentGroups := buildTransparentProxyPathGroups(paths, stepsByPath)
 	chainServices, err := buildProxyPathChainServices(paths, steps, servers, inbounds, ledger)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, service := range chainServices {
 		inboundByID[service.Inbound.ID] = service.Inbound
@@ -1098,7 +1121,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 		if IsFamilyBranch(path) {
 			if err := ValidateFamilyBranchTransport(pathSteps); err != nil {
 				if path.Enabled {
-					return nil, nil, fmt.Errorf("代理路径 %s: %w", path.Name, err)
+					return nil, fmt.Errorf("代理路径 %s: %w", path.Name, err)
 				}
 				plan.Warnings = append(plan.Warnings, err.Error())
 			}
@@ -1109,7 +1132,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 		}
 		if !ok {
 			if path.Enabled {
-				return nil, nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
+				return nil, fmt.Errorf("代理路径 %s 的入口不存在", path.Name)
 			}
 			plan.Warnings = append(plan.Warnings, "入口不存在")
 			out = append(out, plan)
@@ -1149,10 +1172,10 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 					sourceServer, sourceOK := serverByID[previousServerID]
 					targetServer, targetServerOK := serverByID[targetServerID]
 					if !sourceOK || !targetServerOK {
-						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳无法确定源/目标服务器", path.Name, step.Position)
+						return nil, fmt.Errorf("代理路径 %s 第 %d 跳无法确定源/目标服务器", path.Name, step.Position)
 					}
 					if _, err := ResolveReachableEntryAddress(sourceServer, plannedInbound, targetServer); err != nil {
-						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
+						return nil, fmt.Errorf("代理路径 %s 第 %d 跳: %w", path.Name, step.Position, err)
 					}
 				}
 			}
@@ -1160,7 +1183,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 			case model.ProxyPathTransportPortForward:
 				if !targetOK {
 					if path.Enabled {
-						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳端口转发需要目标服务器", path.Name, step.Position)
+						return nil, fmt.Errorf("代理路径 %s 第 %d 跳端口转发需要目标服务器", path.Name, step.Position)
 					}
 					plan.Warnings = append(plan.Warnings, fmt.Sprintf("第 %d 跳端口转发需要目标服务器", step.Position))
 					continue
@@ -1168,7 +1191,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 				f, err := proxyPathManagedPortForward(path, step, root, previousServerID, targetServerID, sourceListenPort, plannedInbound, serverByID, transparentGroups[path.ID])
 				if err != nil {
 					if path.Enabled {
-						return nil, nil, err
+						return nil, err
 					}
 					plan.Warnings = append(plan.Warnings, err.Error())
 					continue
@@ -1178,7 +1201,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 			case model.ProxyPathTransportTunnel:
 				if !targetOK {
 					if path.Enabled {
-						return nil, nil, fmt.Errorf("代理路径 %s 第 %d 跳隧道需要目标服务器", path.Name, step.Position)
+						return nil, fmt.Errorf("代理路径 %s 第 %d 跳隧道需要目标服务器", path.Name, step.Position)
 					}
 					plan.Warnings = append(plan.Warnings, fmt.Sprintf("第 %d 跳隧道需要目标服务器", step.Position))
 					continue
@@ -1190,7 +1213,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 					t, err = proxyPathManagedTunnel(path, step, previousServerID, targetServerID, plannedInbound, serverByID, inboundByID, ledger)
 					if err != nil {
 						if path.Enabled {
-							return nil, nil, err
+							return nil, err
 						}
 						plan.Warnings = append(plan.Warnings, err.Error())
 						continue
@@ -1210,7 +1233,7 @@ func buildProxyPathPlansWithInbounds(paths []model.ProxyPath, steps []model.Prox
 	}
 	finalizeProxyPathRuntimeNodeReferences(out)
 	ledger.markProjectionComplete()
-	return out, inboundByID, nil
+	return &proxyPathTopology{chainServices: chainServices, plans: out, plannedInbounds: inboundByID, transparentGroups: transparentGroups}, nil
 }
 
 type transparentProxyPathGroup struct {

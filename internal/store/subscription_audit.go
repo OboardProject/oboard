@@ -970,6 +970,45 @@ func (s *Store) SubscriptionAuditCurrentRisk(ctx context.Context, userID int64, 
 	return risk, state, err
 }
 
+// SubscriptionAuditCurrentRiskForUsers evaluates the subscription risk for a
+// bounded user set, skipping suspended users whose stored trigger risk already
+// answers. It batches the per-user device-count query the single-user path
+// issues per call.
+func (s *Store) SubscriptionAuditCurrentRiskForUsers(ctx context.Context, userIDs []int64, at time.Time, policy model.AuditPolicy) (map[int64]*model.SubscriptionAuditRisk, error) {
+	out := map[int64]*model.SubscriptionAuditRisk{}
+	seen := make([]int64, 0, len(userIDs))
+	seenSet := map[int64]bool{}
+	for _, userID := range userIDs {
+		if userID > 0 && !seenSet[userID] {
+			seenSet[userID] = true
+			seen = append(seen, userID)
+		}
+	}
+	if len(seen) == 0 {
+		return out, nil
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	for _, userID := range seen {
+		state, err := s.GetSubscriptionAccessState(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if state.Suspended && state.TriggerRisk != nil {
+			risk := *state.TriggerRisk
+			out[userID] = &risk
+			continue
+		}
+		risk, err := evaluateSubscriptionAuditRisk(ctx, s.db, userID, at.UTC(), policy, state.EvaluationStartedAt)
+		if err != nil {
+			return nil, err
+		}
+		out[userID] = &risk
+	}
+	return out, nil
+}
+
 type subscriptionAuditSummaryBuilder struct {
 	item    model.SubscriptionAuditUserSummary
 	ips     map[string]struct{}

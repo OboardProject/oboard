@@ -65,7 +65,20 @@ func (s *Service) EvaluateUsers(ctx context.Context, userIDs []int64) error {
 }
 
 func (s *Service) EvaluateUser(ctx context.Context, userID int64) (*model.AuditIncident, error) {
-	detail, err := s.store.ConnectionAuditUserDetail(ctx, userID, 1, store.DefaultAuditPolicy())
+	return s.EvaluateUserWithEvidence(ctx, userID, nil)
+}
+
+// EvaluateUserWithEvidence accepts the shared-route map the coalesced risk
+// pipeline already loaded, so the per-user detail query does not repeat the
+// same full-table scan.
+func (s *Service) EvaluateUserWithEvidence(ctx context.Context, userID int64, evidence *store.ConnectionAuditSharedEvidence) (*model.AuditIncident, error) {
+	var detail model.ConnectionAuditUserDetail
+	var err error
+	if evidence != nil {
+		detail, err = s.store.ConnectionAuditUserDetailWithEvidence(ctx, userID, 1, store.DefaultAuditPolicy(), evidence)
+	} else {
+		detail, err = s.store.ConnectionAuditUserDetail(ctx, userID, 1, store.DefaultAuditPolicy())
+	}
 	if err != nil {
 		return nil, err
 	}

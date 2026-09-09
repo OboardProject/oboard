@@ -13,6 +13,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // connectionAuditDiscardedReport tells the Agent that a specific report will
@@ -242,7 +243,7 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 	write(w, http.StatusOK, response)
 }
 
-func (s *Server) applyConnectionAuditDeviceActions(ctx context.Context, userIDs []int64) {
+func (s *Server) applyConnectionAuditDeviceActions(ctx context.Context, userIDs []int64, evidence *store.ConnectionAuditSharedEvidence) {
 	if len(userIDs) == 0 || s.auditSettingsState(ctx).Action != model.AuditActionRestrict {
 		return
 	}
@@ -259,14 +260,22 @@ func (s *Server) applyConnectionAuditDeviceActions(ctx context.Context, userIDs 
 	for _, userID := range userIDs {
 		targets[userID] = true
 	}
+	var subscriptionRisks map[int64]*model.SubscriptionAuditRisk
 	for _, connection := range overview.Users {
 		if !targets[connection.UserID] {
 			continue
 		}
-		subscription, _, err := s.store.SubscriptionAuditCurrentRisk(ctx, connection.UserID, time.Now().UTC(), s.auditPolicy(ctx))
-		if err != nil {
-			log.Printf("load subscription evidence for device action user=%d: %v", connection.UserID, err)
-			continue
+		if subscriptionRisks == nil {
+			var loadErr error
+			subscriptionRisks, loadErr = s.store.SubscriptionAuditCurrentRiskForUsers(ctx, userIDs, time.Now().UTC(), s.auditPolicy(ctx))
+			if loadErr != nil {
+				log.Printf("load subscription evidence for device action: %v", loadErr)
+				subscriptionRisks = map[int64]*model.SubscriptionAuditRisk{}
+			}
+		}
+		subscription := model.SubscriptionAuditRisk{}
+		if risk := subscriptionRisks[connection.UserID]; risk != nil {
+			subscription = *risk
 		}
 		s.applyConnectionAuditDeviceAction(ctx, connection, subscription)
 	}

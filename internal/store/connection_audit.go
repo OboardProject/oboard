@@ -22,6 +22,10 @@ const (
 	connectionAuditPresenceTCP = 120 * time.Second
 	connectionAuditPresenceUDP = 60 * time.Second
 	connectionAuditProbeWindow = 20 * time.Second
+	// connectionAuditProbeBatchSize bounds the IN-list of one batched probe_state
+	// update. SQLite's default host parameter limit is far higher, but bounded
+	// chunks keep one statement's bind array small and predictable.
+	connectionAuditProbeBatchSize = 500
 )
 
 func seenAny(ids []int64) []any {
@@ -478,6 +482,17 @@ func evaluateConnectionAuditUser(item *model.ConnectionAuditUserSummary, selecte
 }
 
 func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy) (model.ConnectionAuditUserDetail, error) {
+	return s.connectionAuditUserDetailWithEvidence(ctx, userID, windowHours, policy, nil)
+}
+
+func (s *Store) ConnectionAuditUserDetailWithEvidence(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy, evidence *ConnectionAuditSharedEvidence) (model.ConnectionAuditUserDetail, error) {
+	return s.connectionAuditUserDetailWithEvidence(ctx, userID, windowHours, policy, evidence)
+}
+
+// connectionAuditUserDetailWithEvidence lets the coalesced risk pipeline pass
+// the shared-route map and risk-window reports it already loaded, instead of
+// re-scanning them per user inside the detail query.
+func (s *Store) connectionAuditUserDetailWithEvidence(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy, evidence *ConnectionAuditSharedEvidence) (model.ConnectionAuditUserDetail, error) {
 	nowTime := time.Now().UTC()
 	summary, err := s.ConnectionAuditUserRisk(ctx, userID, windowHours, policy, nowTime)
 	if err != nil {
@@ -519,9 +534,14 @@ func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, win
 	if err != nil {
 		return detail, err
 	}
-	sharedRoutes, err := s.connectionAuditSharedRouteUsers(ctx, nowTime.Add(-connectionAuditRiskWindow))
-	if err != nil {
-		return detail, err
+	var sharedRoutes map[string]int
+	if evidence != nil {
+		sharedRoutes = evidence.SharedRoutes
+	} else {
+		sharedRoutes, err = s.connectionAuditSharedRouteUsers(ctx, nowTime.Add(-connectionAuditRiskWindow))
+		if err != nil {
+			return detail, err
+		}
 	}
 	detail.RiskEvents = buildConnectionAuditRiskEvents(reports, policy, sharedRoutes)
 	sort.SliceStable(detail.RiskEvents, func(i, j int) bool { return detail.RiskEvents[i].EndedAt.After(detail.RiskEvents[j].EndedAt) })
@@ -807,6 +827,60 @@ func connectionAuditPublicSourceIP(raw string) bool {
 	return true
 }
 
+// ConnectionAuditSharedEvidence is the evidence the per-user risk pipeline
+// loads once per evaluation instead of once per query: the shared-route map
+// for the 15-minute risk window and the per-user reports of that same window.
+type ConnectionAuditSharedEvidence struct {
+	SharedRoutes  map[string]int
+	ReportsByUser map[int64][]model.ConnectionAuditReport
+}
+
+// LoadConnectionAuditSharedEvidence loads the shared-route map and the risk
+// window reports for the given users in one batch. Callers that evaluate the
+// same user several times (device action + notification + incident snapshot)
+// used to repeat these full-table scans per call.
+func (s *Store) LoadConnectionAuditSharedEvidence(ctx context.Context, userIDs []int64, at time.Time) (ConnectionAuditSharedEvidence, error) {
+	ev := ConnectionAuditSharedEvidence{ReportsByUser: map[int64][]model.ConnectionAuditReport{}}
+	sharedRoutes, err := s.connectionAuditSharedRouteUsers(ctx, at.Add(-connectionAuditRiskWindow))
+	if err != nil {
+		return ev, err
+	}
+	ev.SharedRoutes = sharedRoutes
+	for offset := 0; offset < len(userIDs); offset += connectionAuditUserBatchSize {
+		end := offset + connectionAuditUserBatchSize
+		if end > len(userIDs) {
+			end = len(userIDs)
+		}
+		batch := userIDs[offset:end]
+		reports, err := s.batchConnectionAuditReportsForRisk(ctx, batch, at.Add(-connectionAuditRiskWindow).UTC().Format(time.RFC3339Nano), 10000)
+		if err != nil {
+			return ev, err
+		}
+		for userID, items := range reports {
+			ev.ReportsByUser[userID] = items
+		}
+	}
+	return ev, nil
+}
+
+// CurrentRiskEventFromReports is the pure part of ConnectionAuditCurrentRisk:
+// strongest in-window risk event for one user from preloaded evidence.
+func CurrentRiskEventFromReports(reports []model.ConnectionAuditReport, policy model.AuditPolicy, sharedRoutes map[string]int, at time.Time) *model.ConnectionAuditRiskEvent {
+	events := buildConnectionAuditRiskEvents(reports, policy, sharedRoutes)
+	var strongest *model.ConnectionAuditRiskEvent
+	for index := range events {
+		event := &events[index]
+		if event.EndedAt.Before(at.Add(-connectionAuditRiskWindow)) || event.EndedAt.After(at.Add(5*time.Minute)) {
+			continue
+		}
+		if strongest == nil || strongerConnectionAuditRiskEvent(*event, *strongest) {
+			copy := *event
+			strongest = &copy
+		}
+	}
+	return strongest
+}
+
 func (s *Store) ConnectionAuditCurrentRisk(ctx context.Context, userID int64, at time.Time, policy model.AuditPolicy) (*model.ConnectionAuditRiskEvent, error) {
 	if userID <= 0 {
 		return nil, nil
@@ -822,19 +896,36 @@ func (s *Store) ConnectionAuditCurrentRisk(ctx context.Context, userID int64, at
 	if err != nil {
 		return nil, err
 	}
-	events := buildConnectionAuditRiskEvents(reports, policy, sharedRoutes)
-	var strongest *model.ConnectionAuditRiskEvent
-	for index := range events {
-		event := &events[index]
-		if event.EndedAt.Before(at.Add(-connectionAuditRiskWindow)) || event.EndedAt.After(at.Add(5*time.Minute)) {
-			continue
-		}
-		if strongest == nil || strongerConnectionAuditRiskEvent(*event, *strongest) {
-			copy := *event
-			strongest = &copy
+	return CurrentRiskEventFromReports(reports, policy, sharedRoutes, at), nil
+}
+
+// ConnectionAuditCurrentRiskForUsers evaluates the current risk event for a
+// bounded user set from one shared-route scan and one batched report load.
+// It returns the strongest event per user, mirroring the single-user path.
+func (s *Store) ConnectionAuditCurrentRiskForUsers(ctx context.Context, userIDs []int64, at time.Time, policy model.AuditPolicy) (map[int64]*model.ConnectionAuditRiskEvent, error) {
+	out := map[int64]*model.ConnectionAuditRiskEvent{}
+	seen := make([]int64, 0, len(userIDs))
+	seenSet := map[int64]bool{}
+	for _, userID := range userIDs {
+		if userID > 0 && !seenSet[userID] {
+			seenSet[userID] = true
+			seen = append(seen, userID)
 		}
 	}
-	return strongest, nil
+	if len(seen) == 0 {
+		return out, nil
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	ev, err := s.LoadConnectionAuditSharedEvidence(ctx, seen, at)
+	if err != nil {
+		return nil, err
+	}
+	for _, userID := range seen {
+		out[userID] = CurrentRiskEventFromReports(ev.ReportsByUser[userID], policy, ev.SharedRoutes, at)
+	}
+	return out, nil
 }
 
 func connectionAuditRegion(countryCode, country, province string) (string, string) {
@@ -1717,6 +1808,11 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 	if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state='' where user_id=? and ended_at>=? and internal_probe=0`, userID, cutoffRaw); err != nil {
 		return err
 	}
+	// Per-state batched probe_state writes: one statement per distinct state
+	// per refresh instead of one statement per report. The state set is closed
+	// (candidate / confirmed / normal_traffic), so grouping by state reproduces
+	// exactly the same rows the per-report updates produced.
+	reportIDsByState := map[string][]string{}
 	dirtyHours := map[int64][]time.Time{}
 	for key, items := range byIdentity {
 		sort.SliceStable(items, func(i, j int) bool { return items[i].StartedAt.Before(items[j].StartedAt) })
@@ -1730,9 +1826,7 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 			episode, state := classifyConnectionProbeEpisode(userID, group, threshold, at)
 			if state != "" {
 				for _, report := range group {
-					if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state=? where report_id=?`, state, report.ReportID); err != nil {
-						return err
-					}
+					reportIDsByState[state] = append(reportIDsByState[state], report.ReportID)
 					dirtyHours[userID] = append(dirtyHours[userID], report.StartedAt)
 				}
 				if _, err := tx.ExecContext(ctx, `insert into connection_probe_episodes(id,user_id,device_id_hash,state,score,node_count,connection_count,upload_bytes,download_bytes,started_at,ended_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`, episode.ID, episode.UserID, episode.DeviceIDHash, episode.State, episode.Score, episode.NodeCount, episode.ConnectionCount, episode.UploadBytes, episode.DownloadBytes, episode.StartedAt.UTC().Format(time.RFC3339Nano), episode.EndedAt.UTC().Format(time.RFC3339Nano), now()); err != nil {
@@ -1740,6 +1834,29 @@ func (s *Store) refreshConnectionProbeEpisodes(ctx context.Context, userID int64
 				}
 			}
 			start = end
+		}
+	}
+	states := make([]string, 0, len(reportIDsByState))
+	for state := range reportIDsByState {
+		states = append(states, state)
+	}
+	sort.Strings(states)
+	for _, state := range states {
+		ids := reportIDsByState[state]
+		for offset := 0; offset < len(ids); offset += connectionAuditProbeBatchSize {
+			end := offset + connectionAuditProbeBatchSize
+			if end > len(ids) {
+				end = len(ids)
+			}
+			chunk := ids[offset:end]
+			args := make([]any, 0, len(chunk)+1)
+			args = append(args, state)
+			for _, id := range chunk {
+				args = append(args, id)
+			}
+			if _, err := tx.ExecContext(ctx, `update connection_audit_reports set probe_state=? where report_id in (`+inClause(len(chunk))+`)`, args...); err != nil {
+				return err
+			}
 		}
 	}
 	// Clearing probe_state for the window also changes Robust-Z eligibility.

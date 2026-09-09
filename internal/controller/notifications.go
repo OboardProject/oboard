@@ -1562,7 +1562,7 @@ func notificationCertificateIssuer(value string) string {
 	}
 }
 
-func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64) {
+func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64, evidence *store.ConnectionAuditSharedEvidence) {
 	if len(userIDs) == 0 {
 		return
 	}
@@ -1573,16 +1573,28 @@ func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64
 	defer s.connectionAuditNotificationMu.Unlock()
 	settings := s.runtimeSettings(ctx)
 	nowTime := time.Now().UTC()
+	// The caller already loaded the shared-route map and risk-window reports;
+	// fall back to loading them here only for other call sites.
+	riskEvents := map[int64]*model.ConnectionAuditRiskEvent{}
+	if evidence == nil {
+		loaded, err := s.store.ConnectionAuditCurrentRiskForUsers(ctx, userIDs, nowTime, s.auditPolicy(ctx))
+		if err != nil {
+			log.Printf("connection audit notification: %v", err)
+			return
+		}
+		riskEvents = loaded
+	}
 	seen := map[int64]bool{}
 	for _, userID := range userIDs {
 		if userID <= 0 || seen[userID] {
 			continue
 		}
 		seen[userID] = true
-		event, err := s.store.ConnectionAuditCurrentRisk(ctx, userID, nowTime, s.auditPolicy(ctx))
-		if err != nil {
-			log.Printf("connection audit notification: %v", err)
-			continue
+		var event *model.ConnectionAuditRiskEvent
+		if evidence != nil {
+			event = store.CurrentRiskEventFromReports(evidence.ReportsByUser[userID], s.auditPolicy(ctx), evidence.SharedRoutes, nowTime)
+		} else {
+			event = riskEvents[userID]
 		}
 		if event == nil {
 			continue

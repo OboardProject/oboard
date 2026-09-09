@@ -186,9 +186,16 @@ func (s *Server) evaluateConnectionAuditRisks(ctx context.Context, userID int64)
 	if err := s.store.RefreshConnectionProbeEpisodes(ctx, userID, time.Now().UTC()); err != nil {
 		return err
 	}
-	s.applyConnectionAuditDeviceActions(ctx, []int64{userID})
-	s.notifyConnectionAuditRisks(ctx, []int64{userID})
-	_, err := s.auditIntel.EvaluateUser(ctx, userID)
+	// One shared evidence load per evaluation: the device-action gate, the
+	// notification scan, and the incident detail below all consumed the same
+	// shared-route scan and risk-window reports, each as its own full query.
+	evidence, err := s.store.LoadConnectionAuditSharedEvidence(ctx, []int64{userID}, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	s.applyConnectionAuditDeviceActions(ctx, []int64{userID}, &evidence)
+	s.notifyConnectionAuditRisks(ctx, []int64{userID}, &evidence)
+	_, err = s.auditIntel.EvaluateUserWithEvidence(ctx, userID, &evidence)
 	return err
 }
 

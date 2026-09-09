@@ -410,12 +410,8 @@ func (s *Server) currentAuthorizationLease(ctx context.Context, serverID int64) 
 			return lease, nil
 		}
 	}
-	evaluation, err := s.store.EvaluateAuthorizationDesired(ctx, serverID, projection.routingRevision, digest, keys, now)
-	if err != nil {
-		return nil, err
-	}
 	expires := now.Add(authorizationLeaseDuration)
-	sequence, err := s.store.IssueAuthorizationSequence(ctx, serverID, evaluation.State.DesiredRevision, expires)
+	evaluation, sequence, err := s.store.EvaluateAuthorizationDesiredWithSequence(ctx, serverID, projection.routingRevision, digest, keys, now, expires)
 	if err != nil {
 		return nil, err
 	}

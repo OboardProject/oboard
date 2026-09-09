@@ -198,6 +198,94 @@ func (s *Store) IssueAuthorizationSequence(ctx context.Context, serverID, revisi
 	return sequence, nil
 }
 
+// EvaluateAuthorizationDesiredWithSequence combines the desired-revision
+// evaluation with the renewal-sequence allocation in one write transaction.
+// The lease path used to run them back to back, paying two commits (two WAL
+// fsyncs under synchronous=FULL) for every reissued lease across the fleet.
+// Semantics are identical to EvaluateAuthorizationDesired followed by
+// IssueAuthorizationSequence on the resulting revision.
+func (s *Store) EvaluateAuthorizationDesiredWithSequence(ctx context.Context, serverID int64, routingRevision uint64, digest string, keys []string, now time.Time, expiresAt time.Time) (AuthorizationDesiredEvaluation, int64, error) {
+	if serverID <= 0 {
+		return AuthorizationDesiredEvaluation{}, 0, fmt.Errorf("server id must be positive")
+	}
+	sorted := append([]string(nil), keys...)
+	sort.Strings(sorted)
+	keysJSON, err := json.Marshal(sorted)
+	if err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	ts := now.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `insert or ignore into authorization_states(server_id,updated_at) values(?,?)`, serverID, ts); err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	current, err := scanAuthorizationState(tx.QueryRowContext(ctx, authorizationStateSelectSQL+` where server_id=?`, serverID))
+	if err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	out := AuthorizationDesiredEvaluation{State: current}
+	if current.DesiredDigest != digest || current.DesiredRevision <= 0 {
+		nextRevision := current.DesiredRevision + 1
+		previous := make(map[string]struct{}, len(current.DesiredKeys))
+		for _, key := range current.DesiredKeys {
+			previous[key] = struct{}{}
+		}
+		for _, key := range sorted {
+			delete(previous, key)
+		}
+		// A denial is bounded by the latest lease this server could still hold.
+		// Without any issued lease no grant can be live, so the bound is now.
+		bound := now.UTC()
+		if current.LastIssuedExpiresAt != nil && current.LastIssuedExpiresAt.After(bound) {
+			bound = current.LastIssuedExpiresAt.UTC()
+		}
+		denied := make([]string, 0, len(previous))
+		for key := range previous {
+			denied = append(denied, key)
+		}
+		sort.Strings(denied)
+		for _, key := range denied {
+			if _, err := tx.ExecContext(ctx, `insert into authorization_denials(server_id,credential_id,deny_revision,lease_bound_until,confirmed_at,created_at) values(?,?,?,?,null,?) on conflict(server_id,credential_id) do update set deny_revision=excluded.deny_revision,lease_bound_until=case when excluded.lease_bound_until>authorization_denials.lease_bound_until then excluded.lease_bound_until else authorization_denials.lease_bound_until end,confirmed_at=null`, serverID, key, nextRevision, bound.Format(time.RFC3339Nano), ts); err != nil {
+				return AuthorizationDesiredEvaluation{}, 0, err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `update authorization_states set desired_revision=?,desired_digest=?,desired_keys_json=?,evaluated_routing_revision=?,pending_reason=case when pending_reason='' then ? else pending_reason end,updated_at=? where server_id=?`, nextRevision, digest, string(keysJSON), routingRevision, AuthorizationPendingDelivering, ts, serverID); err != nil {
+			return AuthorizationDesiredEvaluation{}, 0, err
+		}
+		out.Changed = true
+		out.DeniedKeys = denied
+		out.State.DesiredRevision = nextRevision
+		out.State.DesiredDigest = digest
+		out.State.DesiredKeys = sorted
+		out.State.EvaluatedRoutingRevision = routingRevision
+		if out.State.PendingReason == "" {
+			out.State.PendingReason = AuthorizationPendingDelivering
+		}
+	} else if current.EvaluatedRoutingRevision != routingRevision {
+		if _, err := tx.ExecContext(ctx, `update authorization_states set evaluated_routing_revision=?,updated_at=? where server_id=?`, routingRevision, ts, serverID); err != nil {
+			return AuthorizationDesiredEvaluation{}, 0, err
+		}
+		out.State.EvaluatedRoutingRevision = routingRevision
+	}
+	// Renewal sequence for the resulting revision, in the same transaction.
+	if _, err := tx.ExecContext(ctx, `update authorization_states set issued_sequence=issued_sequence+1,last_issued_expires_at=case when last_issued_expires_at is null or last_issued_expires_at<? then ? else last_issued_expires_at end,updated_at=? where server_id=?`, expiresAt.UTC().Format(time.RFC3339Nano), expiresAt.UTC().Format(time.RFC3339Nano), ts, serverID); err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	var sequence int64
+	if err := tx.QueryRowContext(ctx, `select issued_sequence from authorization_states where server_id=?`, serverID).Scan(&sequence); err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	out.State.IssuedSequence = sequence
+	if err := tx.Commit(); err != nil {
+		return AuthorizationDesiredEvaluation{}, 0, err
+	}
+	return out, sequence, nil
+}
+
 // RecordAuthorizationDelivery notes that a signed message for revision/sequence
 // left the Controller. It never touches the confirmed columns.
 func (s *Store) RecordAuthorizationDelivery(ctx context.Context, serverID, revision, sequence int64, messageID string) error {
