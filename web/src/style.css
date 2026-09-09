@@ -13578,8 +13578,64 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     width: 100%;
     max-height: 96vh;
   }
-  .latency-overview-grid { grid-template-columns: 1fr 1fr; }
-  .latency-overview-card strong { font-size: 22px; }
+  .latency-overview { padding: 10px; }
+  .latency-overview-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .latency-overview-card {
+    padding: 8px 4px;
+    gap: 5px;
+  }
+  .latency-overview-card span {
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .latency-overview-card strong {
+    font-size: clamp(14px, 4vw, 18px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .latency-trend-head {
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .latency-trend-controls {
+    width: 100%;
+    min-width: 0;
+    gap: 8px;
+  }
+  .latency-granularity {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .latency-granularity > span { flex-shrink: 0; }
+  .latency-granularity .custom-select-trigger {
+    height: 32px;
+    min-height: 32px;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+  .latency-trend-controls .server-monitor-window-toggle {
+    flex: 1 1 160px;
+    width: auto;
+  }
+  .connectivity-dialog .dialog-actions > button {
+    min-height: 34px;
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .connectivity-dialog .connectivity-head-actions > button {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+  }
   .latency-target-item { grid-template-columns: 8px minmax(0, 1fr) auto; }
   .latency-target-spark { display: none; }
 }
