@@ -902,6 +902,7 @@ function ServerRegionFilterDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => { setQuery(''); setOpen(current => !current) }}
+        aria-label={`按地区筛选：${selectedLabel}，${selectedCount} 台`}
         title={isAll ? `全部地区 · 共 ${total} 台` : `${selectedLabel} · ${selectedCount} 台`}
       >
         <span className="server-region-filter-trigger-flag">
@@ -8173,6 +8174,8 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
           <button
             type="button"
             className="server-add-button"
+            aria-label="添加服务器"
+            title="添加服务器"
             onClick={() => { setDraft(defaultServerDraft(creationDefaults)); setCreateOpen(true) }}
           >
             <Plus size={15} />

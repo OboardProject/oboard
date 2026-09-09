@@ -2395,8 +2395,14 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
     gap: 8px;
   }
   .server-list-search {
-    flex: 1 1 calc(100% - 110px);
+    flex: 1 1 0;
     min-width: 0;
+  }
+  .server-region-inline {
+    flex: 0 0 auto;
+  }
+  .server-region-filter-trigger-count {
+    display: none;
   }
   .server-list-filter-drawer {
     display: flex;
@@ -2422,6 +2428,13 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
     width: auto !important;
   }
   .server-list-result-count { align-self: center; }
+}
+
+@media (max-width: 480px) {
+  .server-region-filter-trigger-label,
+  .server-list-result-count {
+    display: none;
+  }
 }
 
 .server-empty { margin: 22px 0 34px; }
@@ -11623,11 +11636,19 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     width: 100%;
   }
   .server-management-panel .server-action-group {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
   }
   .server-management-panel .server-action-group .server-add-button {
-    flex: 1 1 auto;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 50%;
     justify-content: center;
+  }
+  .server-management-panel .server-add-button > span {
+    display: none;
   }
   .server-management-panel .server-toolbar-tools {
     flex: 0 0 auto;
