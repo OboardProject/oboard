@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	"github.com/OboardProject/oboard/internal/logging"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
 )
@@ -95,6 +96,7 @@ func (s *Server) buildControllerUpdateDiagnostics(ctx context.Context, localDeta
 	} else if logs.WindowLineCount == 0 {
 		view.LogHint = "更新时间段内没有留下主控日志，通常说明新版本还没开始写日志就退出了；请查看 journalctl -u oboard-controller。"
 	}
+	view.LogHint = logging.Redact(view.LogHint)
 	view.Report = controllerUpdateDiagnosticsReport(now, status, statusErr, run, logs, view.LogHint, localDetails)
 	return view
 }
@@ -307,7 +309,7 @@ func controllerUpdateDiagnosticsReport(now time.Time, status controllerupdate.St
 	b.WriteString("更新器自身的日志不在这里：journalctl -u oboard-controller-updater -n 200 --no-pager（OpenRC 主机查看 /var/log/oboard-controller-updater.log）\n")
 	b.WriteString("新版本启动失败时看这里: journalctl -u oboard-controller -n 200 --no-pager\n")
 	b.WriteString("完整面板日志: 设置 → 日志 → 下载\n")
-	return b.String()
+	return logging.Redact(b.String())
 }
 
 func controllerUpdateRunReferenceTime(run *store.ControllerUpdateRun) time.Time {

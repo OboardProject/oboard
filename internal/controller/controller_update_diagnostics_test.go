@@ -201,3 +201,19 @@ func TestControllerUpdateLogTailWithoutLogStorage(t *testing.T) {
 		t.Fatal("expected an error when log storage is disabled")
 	}
 }
+
+func TestControllerUpdateDiagnosticsRedactsPersistedErrors(t *testing.T) {
+	secretURL := "https://api.telegram.org/bot123456:synthetic-diagnostic-token/getUpdates"
+	status := controllerupdate.Status{State: "failed", LastError: secretURL}
+	run := &store.ControllerUpdateRun{Phase: "failed", Error: secretURL}
+	logs := controllerUpdateLogTailContent{Update: secretURL, Window: secretURL}
+	for _, local := range []bool{true, false} {
+		report := controllerUpdateDiagnosticsReport(time.Now(), status, nil, run, logs, "", local)
+		if strings.Contains(report, "synthetic-diagnostic-token") {
+			t.Fatalf("diagnostics leaked credential: %s", report)
+		}
+		if !strings.Contains(report, "getUpdates") {
+			t.Fatal("missing request method")
+		}
+	}
+}

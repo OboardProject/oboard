@@ -2,10 +2,12 @@ package logging
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,6 +52,8 @@ type Manager struct {
 }
 
 var sensitiveValue = regexp.MustCompile(`(?i)(authorization|agent_token|api_token|token|password|private_key|secret)(["'=:\s]+)([^\s",}]+)`)
+var logURL = regexp.MustCompile(`https?://[^\s"<>]+`)
+var telegramCredential = regexp.MustCompile(`(?i)(/bot)[0-9]+(?::|%3a)[A-Za-z0-9_-]+`)
 var bearerValue = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+`)
 
 func New(path string, config Config) (*Manager, error) {
@@ -112,10 +116,30 @@ func (m *Manager) Write(p []byte) (int, error) {
 }
 
 func redact(p []byte) []byte {
-	clean := bearerValue.ReplaceAll(p, []byte("Bearer [REDACTED]"))
+	clean := logURL.ReplaceAllFunc(p, func(raw []byte) []byte {
+		parsed, err := url.Parse(string(raw))
+		if err != nil {
+			return []byte("[REDACTED URL]")
+		}
+		if parsed.User != nil {
+			parsed.User = url.User("REDACTED")
+		}
+		if parsed.RawQuery != "" {
+			parsed.RawQuery = "[REDACTED]"
+		}
+		if parsed.Fragment != "" {
+			parsed.Fragment = "[REDACTED]"
+		}
+		return []byte(parsed.String())
+	})
+	clean = telegramCredential.ReplaceAll(clean, []byte("${1}[REDACTED]"))
+	clean = bearerValue.ReplaceAll(clean, []byte("Bearer [REDACTED]"))
 	clean = sensitiveValue.ReplaceAll(clean, []byte("$1$2[REDACTED]"))
 	return clean
 }
+
+// Redact removes credentials from log and diagnostic text, including persisted errors.
+func Redact(value string) string { return string(redact([]byte(value))) }
 
 // RedactingWriter applies the same secret redaction as the managed log file to
 // another sink. Redaction is a property of the log content, not of the file
@@ -261,7 +285,7 @@ func (m *Manager) snapshot(limit int, needles []string, filters ...func(line str
 			if keep != nil && !keep(lines[j]) {
 				continue
 			}
-			selected = append(selected, lines[j])
+			selected = append(selected, Redact(lines[j]))
 		}
 	}
 	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
@@ -325,7 +349,7 @@ func (m *Manager) WriteZIP(dst io.Writer) error {
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(entry, file)
+		copyErr := copyRedactedLines(entry, file)
 		closeErr := file.Close()
 		if copyErr != nil {
 			return copyErr
@@ -335,6 +359,24 @@ func (m *Manager) WriteZIP(dst io.Writer) error {
 		}
 	}
 	return zw.Close()
+}
+
+func copyRedactedLines(dst io.Writer, src io.Reader) error {
+	reader := bufio.NewReader(src)
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			if _, writeErr := io.WriteString(dst, Redact(line)); writeErr != nil {
+				return writeErr
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func (m *Manager) Close() error {

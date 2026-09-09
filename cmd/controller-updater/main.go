@@ -8,9 +8,11 @@ import (
 	"syscall"
 
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	"github.com/OboardProject/oboard/internal/logging"
 )
 
 func main() {
+	log.SetOutput(logging.NewRedactingWriter(os.Stderr))
 	if os.Geteuid() != 0 {
 		log.Fatal("oboard-controller-updater must run as root")
 	}
