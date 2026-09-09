@@ -977,3 +977,26 @@ func TestInstallerLockHelperToleratesUnusableLockPath(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentComponentDownloadFallsBackWithoutPartialFile(t *testing.T) {
+	for _, script := range []string{testAgentInstallScript(t), testAgentSelfUpdateScript(t)} {
+		path := filepath.Join(t.TempDir(), "agent")
+		harness := "set -eu\n" + extractShellFunction(t, script, "download_agent_component") + `
+download_component() {
+  case "$2" in
+    *'?source=controller')
+      [ ! -e "$3" ] || return 1
+      printf verified > "$3"
+      ;;
+    *) printf partial > "$3"; return 1 ;;
+  esac
+}
+` + "download_agent_component Agent https://panel.example/hidden/downloads/oboard-agent-linux-amd64 " + shellQuote(path)
+		if output, err := exec.Command(testPOSIXShell(t), "-c", harness).CombinedOutput(); err != nil {
+			t.Fatalf("fallback failed: %v\n%s", err, output)
+		}
+		if content, err := os.ReadFile(path); err != nil || string(content) != "verified" {
+			t.Fatalf("fallback content = %q, err=%v", content, err)
+		}
+	}
+}

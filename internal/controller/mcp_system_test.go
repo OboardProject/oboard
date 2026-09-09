@@ -41,7 +41,7 @@ func TestSettingsCapabilities(t *testing.T) {
 	if _, exists := server.publicSettingsValues(ctx, map[string]string{"traffic_enforcement_mode": "reject_new"})["traffic_enforcement_mode"]; exists {
 		t.Fatal("removed quota setting was exposed")
 	}
-	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_enabled": true}})
+	updateInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"resource_download_source": "github", "audit_enabled": false, "traffic_timezone": "Asia/Tokyo", "subscription_relay_url": "https://subscriptions.example.com", "subscription_controller_direct_enabled": true, "mcp_enabled": true}})
 	changed, err := server.settingsUpdateCandidate(ctx, updateInput, false)
 	if err != nil || !containsString(changed, settingMCPEnabled) {
 		t.Fatalf("MCP control must report its change: changed=%v err=%v", changed, err)
@@ -54,11 +54,16 @@ func TestSettingsCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPEnabled] != "true" {
+	if settings[resourceDownloadSourceSetting] != "github" || settings["audit_enabled"] != "false" || settings["traffic_timezone"] != "Asia/Tokyo" || settings["subscription_relay_url"] != "https://subscriptions.example.com" || settings[settingSubscriptionControllerDirectEnabled] != "true" || settings[settingMCPEnabled] != "true" {
 		t.Fatalf("settings not applied: %#v", settings)
 	}
 	if settings[settingMCPEnabled] != "true" {
 		t.Fatalf("independent MCP flags were incorrectly enabled together: %#v", settings)
+	}
+	for _, input := range []string{`{"changes":{"resource_download_source":"latest"}}`, `{"changes":{"resource_download_source":true}}`, `{"changes":{"resource_download_source":null}}`} {
+		if _, err := server.settingsUpdateCandidate(ctx, json.RawMessage(input), false); err == nil {
+			t.Fatalf("accepted invalid download source: %s", input)
+		}
 	}
 	invalidInput, _ := json.Marshal(map[string]any{"changes": map[string]any{"subscription_relay_url": "http://subscriptions.example.com"}})
 	if _, err := server.settingsUpdateCandidate(ctx, invalidInput, false); err == nil {

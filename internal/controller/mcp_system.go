@@ -274,7 +274,8 @@ func (s *Server) validateSubscriptionRelayIDOperation(ctx context.Context, princ
 // ---- settings ----
 
 var settingsAutomationFields = map[string]bool{
-	"audit_enabled": true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
+	resourceDownloadSourceSetting: true,
+	"audit_enabled":               true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
 	"audit_action": true, "traffic_timezone": true,
 	"subscription_age_policy": true, "subscription_always_use_domain_host": true, "subscription_custom_path_mode": true,
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
@@ -559,6 +560,16 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		if err := setBool(settingSubscriptionControllerDirectEnabled, value); err != nil {
 			return nil, err
 		}
+	}
+	if value, ok := fields[resourceDownloadSourceSetting]; ok {
+		var source string
+		if err := json.Unmarshal(value, &source); err != nil {
+			return nil, err
+		}
+		if err := validateResourceDownloadSource(source); err != nil {
+			return nil, err
+		}
+		updates[resourceDownloadSourceSetting] = source
 	}
 	for _, key := range []string{agentAutoUpdateSetting, subscriptionRelayAutoUpdateSetting, updateWindowEnabledSetting} {
 		if value, ok := fields[key]; ok {

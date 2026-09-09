@@ -1007,6 +1007,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ControllerLogBackups                      *int               `json:"controller_log_backups"`
 			ControllerAutoUpdate                      *bool              `json:"controller_auto_update_enabled"`
 			ControllerAutoUpdateInterval              *int               `json:"controller_auto_update_interval_hours"`
+			ResourceDownloadSource                    *string            `json:"resource_download_source"`
 			AgentAutoUpdate                           *bool              `json:"agent_auto_update_enabled"`
 			SubscriptionRelayAutoUpdate               *bool              `json:"subscription_relay_auto_update_enabled"`
 			AgentUpdateMaxConcurrency                 *int               `json:"agent_update_max_concurrency"`
@@ -1324,6 +1325,17 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 			changed = append(changed, controllerAutoUpdateIntervalSetting)
 		}
+		if req.ResourceDownloadSource != nil {
+			if err := validateResourceDownloadSource(*req.ResourceDownloadSource); err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), resourceDownloadSourceSetting, *req.ResourceDownloadSource); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, resourceDownloadSourceSetting)
+		}
 		for key, value := range map[string]*bool{
 			agentAutoUpdateSetting:             req.AgentAutoUpdate,
 			subscriptionRelayAutoUpdateSetting: req.SubscriptionRelayAutoUpdate,
@@ -1593,6 +1605,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 
 func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out[resourceDownloadSourceSetting] = "controller"
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[agentUpdateMaxConcurrencySetting] = 0
@@ -4903,8 +4916,8 @@ func (s *Server) enqueueAgentUpdateWithVersion(ctx context.Context, server *mode
 		}
 	}
 	source := strings.ToLower(strings.TrimSpace(req.Source))
-	if source == "" {
-		source = "auto"
+	if source == "" || source == "auto" {
+		source = "panel"
 	}
 	repo := strings.TrimSpace(req.GitHubRepo)
 	if repo == "" {
@@ -16737,9 +16750,9 @@ download_binaries() {
   agent_url="${BASE_URL}/downloads/${agent_name}"
   core_url="${BASE_URL}/downloads/${core_name}"
   realm_url="${BASE_URL}/downloads/${realm_name}"
-  download_component "Agent" "$agent_url" "$tmp/$agent_name"
-  download_component "优化内核" "$core_url" "$tmp/$core_name"
-  download_component "端口转发组件" "$realm_url" "$tmp/$realm_name"
+  download_agent_component "Agent" "$agent_url" "$tmp/$agent_name"
+  download_agent_component "优化内核" "$core_url" "$tmp/$core_name"
+  download_agent_component "端口转发组件" "$realm_url" "$tmp/$realm_name"
   echo "[3/4] 校验并安装组件"
   download_quiet "${BASE_URL}/downloads/release-manifest.json" "$tmp/release-manifest.json"
   download_quiet "${BASE_URL}/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
@@ -17092,7 +17105,16 @@ esac
 	_, _ = w.Write([]byte(script))
 }
 
-const agentDownloadHelpersShell = `format_download_value() {
+const agentDownloadHelpersShell = `download_agent_component() {
+  if download_component "$@"; then
+    return 0
+  fi
+  echo "  下载未完成，尝试直接从主控下载..." >&2
+  rm -f "$3"
+  download_component "$1" "$2?source=controller" "$3"
+}
+
+format_download_value() {
   awk -v bytes="${1:-0}" 'BEGIN {
     split("B KB MB GB TB", units, " ")
     value = bytes + 0
@@ -17638,9 +17660,9 @@ agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
 core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
 realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
 echo "下载 Agent 组件"
-download_component "Agent" "$BASE_URL/downloads/$agent_name" "$tmp/$agent_name"
-download_component "优化内核" "$BASE_URL/downloads/$core_name" "$tmp/$core_name"
-download_component "端口转发组件" "$BASE_URL/downloads/$realm_name" "$tmp/$realm_name"
+download_agent_component "Agent" "$BASE_URL/downloads/$agent_name" "$tmp/$agent_name"
+download_agent_component "优化内核" "$BASE_URL/downloads/$core_name" "$tmp/$core_name"
+download_agent_component "端口转发组件" "$BASE_URL/downloads/$realm_name" "$tmp/$realm_name"
 download_quiet "$BASE_URL/downloads/release-manifest.json" "$tmp/release-manifest.json"
 download_quiet "$BASE_URL/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
 verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name"
@@ -17888,7 +17910,7 @@ print_management_help() {
 
 if [ -f "$CONFIG_PATH" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    TARGET_DEV="${TARGET_DEV:-}" python3 - "$CONFIG_PATH" "$INSTALL_DIR" <<'PY'
+    python3 - "$CONFIG_PATH" "$INSTALL_DIR" <<'PY'
 import json, sys
 path = sys.argv[1]
 install_dir = sys.argv[2]
@@ -17903,11 +17925,10 @@ if not data.get("core_binary"):
 if not data.get("core_service"):
     data["core_service"] = "oboard-sb"
 data.setdefault("update_repo", "OboardProject/oboard-agent")
-target_dev = str(__import__("os").environ.get("TARGET_DEV", "")).lower() in ("true", "1", "yes")
 if "update_source" not in data:
-    data["update_source"] = "panel" if target_dev else "github"
+    data["update_source"] = "panel"
 if "allow_panel_update" not in data:
-    data["allow_panel_update"] = bool(target_dev)
+    data["allow_panel_update"] = True
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
     f.write("\n")
@@ -18096,6 +18117,10 @@ func (s *Server) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := os.Stat(candidateAbs); err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if s.redirectResourceDownload(w, r, name) {
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))

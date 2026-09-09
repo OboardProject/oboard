@@ -55,6 +55,22 @@ describe('AgentSettingsPanel', () => {
     expect(container.textContent).toContain('刷新全部节点配置')
   })
 
+  it('defaults to Controller and saves the GitHub preference for Agent resources', async () => {
+    const client = { request: vi.fn(async () => ({})) }
+    const load = vi.fn(async () => undefined)
+    const notify = vi.fn()
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={load} notify={notify} />))
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="优先从 GitHub 下载资源"]')!
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(container.textContent).toContain('订阅中继始终从主控下载')
+    await act(async () => toggle.click())
+    expect(client.request).toHaveBeenCalledWith('/settings', { method: 'POST', body: JSON.stringify({ resource_download_source: 'github' }) })
+    act(() => root.render(<AgentSettingsPanel data={{ settings: { resource_download_source: 'github' } }} client={client} load={load} notify={notify} />))
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    await act(async () => toggle.click())
+    expect(client.request).toHaveBeenLastCalledWith('/settings', { method: 'POST', body: JSON.stringify({ resource_download_source: 'controller' }) })
+  })
+
   it('auto-saves when MTU setting is changed', async () => {
     const mockClient = { request: vi.fn(async () => ({ status: 'ok' })) }
     const mockLoad = vi.fn(async () => undefined)

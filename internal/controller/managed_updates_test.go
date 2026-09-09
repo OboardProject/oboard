@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -68,6 +69,10 @@ func TestScheduledManagedUpdatesQueueOutdatedTargetsOnce(t *testing.T) {
 	tasks, err := db.ListTasksByServer(context.Background(), server.ID, 10)
 	if err != nil || len(tasks) != 1 || tasks[0].Type != model.AgentTaskTypeUpdateAgent {
 		t.Fatalf("Agent update tasks = %#v, err = %v", tasks, err)
+	}
+	var payload model.UpdateAgentTaskPayload
+	if err := json.Unmarshal([]byte(tasks[0].PayloadJSON), &payload); err != nil || payload.Source != "panel" || payload.ExpectedBuild != version.AgentBuild {
+		t.Fatalf("managed update must use Controller resource selection and pinned Agent build: %#v, %v", payload, err)
 	}
 	updatedRelay, err := db.GetSubscriptionRelay(context.Background(), relay.ID)
 	if err != nil || updatedRelay.UpdateRequestedAt == nil || updatedRelay.UpdateTargetBuild != version.Build {

@@ -189,6 +189,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"trusted_proxy_cidrs":                       stringArray(0, 64), "controller_log_max_mb": map[string]any{"type": "integer"},
 			"controller_log_backups": map[string]any{"type": "integer"}, "registration_enabled": boolValue,
 			"remote_terminal_enabled": boolValue, "mcp_enabled": boolValue,
+			"resource_download_source":               map[string]any{"type": "string", "enum": []string{"controller", "github"}},
 			"agent_auto_update_enabled":              boolValue,
 			"subscription_relay_auto_update_enabled": boolValue, "update_window_enabled": boolValue,
 			"update_window_start_hour":             map[string]any{"type": "integer", "minimum": 0, "maximum": 23},
