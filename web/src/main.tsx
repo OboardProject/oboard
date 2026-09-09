@@ -165,6 +165,7 @@ import { createPageRefreshRegistry, pageRefreshIncludesLiveServers } from './pag
 import { PageRefreshProvider, useRegisterPageRefresh } from './page-refresh-context'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { useCoalescedReadRequest } from './request-coalesce'
+import { useServerMonitorQuery } from './use-server-monitor-query'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { useDocumentVisible, usePausedInterval } from './visibility'
 import { ConfigurationSyncStatus } from './configuration-sync-ui'
@@ -10105,55 +10106,18 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const [activeView, setActiveView] = useState<'load' | 'latency'>(initialView)
   const [loadWindowHours, setLoadWindowHours] = useState(1)
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
-  const [response, setResponse] = useState<ConnectivityResponse | null>(null)
-  const [resourceResponse, setResourceResponse] = useState<ServerResourceMetricsResponse | null>(null)
-  const [resourceLoading, setResourceLoading] = useState(true)
-  const [resourceError, setResourceError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
+  const connectivity = useServerMonitorQuery<ConnectivityResponse>(client, connectivityRequestPath(server.id, windowKey), activeView === 'latency')
+  const resources = useServerMonitorQuery<ServerResourceMetricsResponse>(client, `/servers/${server.id}/resource-metrics?hours=${loadWindowHours}`, activeView === 'load')
+  const { response, loading } = connectivity
+  const { response: resourceResponse, loading: resourceLoading } = resources
+  const loadError = connectivity.error ? localizeErrorMessage((connectivity.error as any)?.message || connectivity.error) : ''
+  const resourceError = resources.error ? localizeErrorMessage((resources.error as any)?.message || resources.error) : ''
   const [probeRunning, setProbeRunning] = useState(false)
   const [probeError, setProbeError] = useState('')
   const mounted = useRef(true)
-  const requestSequence = useRef(0)
-  const resourceRequestSequence = useRef(0)
 
   const windowHoursMap: Record<ConnectivityWindowKey, number> = { '1h': 1, '6h': 6, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
   const currentWindowHours = windowHoursMap[windowKey] || 24
-
-  const loadAllData = async (key: ConnectivityWindowKey) => {
-    const sequence = ++requestSequence.current
-    setLoading(true)
-    setLoadError('')
-    try {
-      const connRes = await client.request(connectivityRequestPath(server.id, key)) as ConnectivityResponse
-
-      if (sequence === requestSequence.current && mounted.current) {
-        setResponse(connRes)
-      }
-    } catch (error: any) {
-      if (sequence === requestSequence.current && mounted.current) {
-        setLoadError(localizeErrorMessage(error?.message || error))
-      }
-    } finally {
-      if (sequence === requestSequence.current && mounted.current) {
-        setLoading(false)
-      }
-    }
-  }
-
-  const loadResourceData = React.useCallback(async (hours: number) => {
-    const sequence = ++resourceRequestSequence.current
-    setResourceLoading(true)
-    setResourceError('')
-    try {
-      const result = await client.request(`/servers/${server.id}/resource-metrics?hours=${hours}`) as ServerResourceMetricsResponse
-      if (sequence === resourceRequestSequence.current && mounted.current) setResourceResponse(result)
-    } catch (error: any) {
-      if (sequence === resourceRequestSequence.current && mounted.current) setResourceError(localizeErrorMessage(error?.message || error))
-    } finally {
-      if (sequence === resourceRequestSequence.current && mounted.current) setResourceLoading(false)
-    }
-  }, [client, server])
 
   const runProbe = async () => {
     setProbeRunning(true)
@@ -10172,7 +10136,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
         await sleep(1500)
       }
       if (!mounted.current) return
-      await loadAllData(windowKey)
+      connectivity.refresh()
       if (!['succeeded', 'failed', 'rollback_failed'].includes(terminalStatus)) setProbeError('测试任务仍在执行，可稍后刷新结果')
       else if (terminalStatus !== 'succeeded') setProbeError('测试已完成，但有目标未响应；已保留本轮结果')
     } catch (error: any) {
@@ -10184,15 +10148,8 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
 
   useEffect(() => {
     mounted.current = true
-    void loadAllData(windowKey)
-    return () => {
-      mounted.current = false
-      requestSequence.current++
-      resourceRequestSequence.current++
-    }
-  }, [windowKey, server.id])
-
-  useEffect(() => { void loadResourceData(loadWindowHours) }, [loadResourceData, loadWindowHours])
+    return () => { mounted.current = false }
+  }, [server.id])
 
   const currentStatus = response?.current.status || (server.latency_probe_enabled ? 'pending' : 'disabled')
   const currentTone = currentStatus === 'available' ? 'great' : currentStatus === 'unavailable' || currentStatus === 'offline' ? 'poor' : 'fair'
@@ -10225,9 +10182,9 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const isMonitorRefreshing = activeView === 'load' ? resourceLoading : loading
   const refreshMonitorData = () => {
     if (activeView === 'load') {
-      void loadResourceData(loadWindowHours)
+      resources.refresh()
     } else {
-      void loadAllData(windowKey)
+      connectivity.refresh()
     }
   }
 
@@ -10258,10 +10215,10 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
       </div>
     </header>
     <div className="dialog-body connectivity-body">
-      {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => void loadResourceData(loadWindowHours)} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
+      {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => resources.refresh()} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
         {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
         {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
-          : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => void loadAllData(windowKey)}>重试</button></div>
+          : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div>
           : response ? <LatencyDashboard
             response={response}
             windowKey={windowKey}
@@ -10275,7 +10232,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
       </div>}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={activeView === 'load' ? () => void loadResourceData(loadWindowHours) : () => void loadAllData(windowKey)} disabled={activeView === 'load' ? resourceLoading : loading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={(activeView === 'load' ? resourceLoading : loading) ? 'spin' : ''} />刷新</button>{activeView === 'latency' ? <button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button> : null}<button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
+    <footer className="dialog-actions"><button type="button" className="ghost" onClick={activeView === 'load' ? () => resources.refresh() : () => connectivity.refresh()} disabled={activeView === 'load' ? resourceLoading : loading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={(activeView === 'load' ? resourceLoading : loading) ? 'spin' : ''} />刷新</button>{activeView === 'latency' ? <button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button> : null}<button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
   </MotionDialogPanel>
 }
 

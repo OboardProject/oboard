@@ -339,15 +339,14 @@ func (s *Store) latestConnectivityEventBefore(ctx context.Context, serverID int6
 	if len(kinds) == 0 {
 		return model.ServerConnectivityEvent{}, errors.New("connectivity event kinds are required")
 	}
-	placeholders := make([]string, len(kinds))
-	args := make([]any, 0, len(kinds)+2)
-	args = append(args, serverID)
+	// Seek one candidate per kind so sparse state changes never scan probe history.
+	candidates := make([]string, len(kinds))
+	args := make([]any, 0, len(kinds)*3)
 	for index, kind := range kinds {
-		placeholders[index] = "?"
-		args = append(args, kind)
+		candidates[index] = `select * from (select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? and effective_at<? order by effective_at desc,id desc limit 1)`
+		args = append(args, serverID, kind, before.UTC().Format(time.RFC3339Nano))
 	}
-	args = append(args, before.UTC().Format(time.RFC3339Nano))
-	query := `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and kind in (` + strings.Join(placeholders, ",") + `) and effective_at<? order by effective_at desc,id desc limit 1`
+	query := `select * from (` + strings.Join(candidates, " union all ") + `) order by effective_at desc,id desc limit 1`
 	row := s.db.QueryRowContext(ctx, query, args...)
 	return scanConnectivityEvent(row)
 }

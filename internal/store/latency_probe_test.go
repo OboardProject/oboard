@@ -374,3 +374,56 @@ func TestLatencyProbePublicResultDeduplicatesAndKeepsNewestCurrentState(t *testi
 		t.Fatalf("current latency state = %#v", stored)
 	}
 }
+
+func TestLatencyProbeTargetStatsCombineUnevenBuckets(t *testing.T) {
+	db, server := newConnectivityTestStore(t)
+	ctx := context.Background()
+	from := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	insertLatencyProbeResult(t, db, server.ID, "a", "custom", 8, "a", "tcp", "", "", true, 10, 1, 1, from)
+	insertLatencyProbeResult(t, db, server.ID, "b", "custom", 8, "a", "tcp", "", "", true, 20, 3, 3, from.Add(time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "c", "custom", 8, "z", "http", "", "", true, 90, 2, 2, from.Add(time.Minute))
+	insertLatencyProbeResult(t, db, server.ID, "d", "custom", 8, "z", "http", "", "", true, 100, 0, 0, from.Add(time.Minute+time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "end", "custom", 8, "z", "tcp", "", "", true, 9999, 1, 1, from.Add(2*time.Minute))
+	insertLatencyProbeResult(t, db, server.ID, "failure", "custom", 9, "failure", "tcp", "", "", false, 0, 0, 0, from)
+	before := db.db.stmts.Load()
+	stats, err := db.ListLatencyProbeTargetStats(ctx, server.ID, from, from.Add(2*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := db.db.stmts.Load() - before; count != 1 {
+		t.Fatalf("statements=%d, want one history scan", count)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("stats=%+v", stats)
+	}
+	failure, target := stats[0], stats[1]
+	if failure.Key != "task_9" || failure.AvgMS != nil || failure.LossPercent == nil || *failure.LossPercent != 100 {
+		t.Fatalf("failure=%+v", failure)
+	}
+	if target.TaskName != "z" || target.Mode != "tcp" || target.AvgMS == nil || *target.AvgMS != 40 || target.ReportCount != 4 || target.SampleCount != 6 || target.SuccessCount != 6 {
+		t.Fatalf("target=%+v", target)
+	}
+	if target.MinMS == nil || *target.MinMS != 10 || target.MaxMS == nil || *target.MaxMS != 100 || target.JitterMS == nil || *target.JitterMS != 90 {
+		t.Fatalf("range=%+v", target)
+	}
+	if target.PeakLatencyMS == nil || *target.PeakLatencyMS != 95 || target.PeakLatencyAt == nil || !target.PeakLatencyAt.Equal(from.Add(time.Minute)) {
+		t.Fatalf("peak=%+v", target)
+	}
+}
+
+func TestRegionalLatencyDataStartAcrossKinds(t *testing.T) {
+	db, server := newConnectivityTestStore(t)
+	ctx := context.Background()
+	from := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	_, start, err := db.ListRegionalLatencyPoints(ctx, server.ID, from, from.Add(time.Hour), time.Minute)
+	if err != nil || start != nil {
+		t.Fatalf("empty start=%v, %v", start, err)
+	}
+	insertLatencyProbeResult(t, db, server.ID, "public", "public", 0, "public", "tcp", "", "", true, 10, 1, 1, from.Add(-time.Hour))
+	insertLatencyProbeResult(t, db, server.ID, "custom", "custom", 9, "custom", "tcp", "", "", false, 0, 1, 0, from)
+	insertLatencyProbeResult(t, db, server.ID, "regional", "regional", 0, "region", "tcp", "P", "C", true, 20, 1, 1, from.Add(time.Minute))
+	_, start, err = db.ListRegionalLatencyPoints(ctx, server.ID, from.Add(time.Minute), from.Add(time.Hour), time.Minute)
+	if err != nil || start == nil || !start.Equal(from) {
+		t.Fatalf("data start=%v, %v", start, err)
+	}
+}
