@@ -20,4 +20,13 @@ describe('Server list identity status row', () => {
     expect(stylesheet).toMatch(/\.server-list-status\s*\{[^}]*flex:\s*0 0 auto/s)
     expect(stylesheet).toMatch(/\.server-list-name\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s)
   })
+
+  it('renders server filter settings in a floating popover instead of an in-flow wrapping drawer', () => {
+    expect(source).toMatch(/function ServerFilterDropdown\(/)
+    expect(source).toMatch(/className="server-filter-popover"/)
+    expect(source).not.toMatch(/className="server-list-filter-drawer"/)
+    expect(stylesheet).toMatch(/\.server-filter-popover\s*\{[^}]*position:\s*fixed/s)
+    expect(stylesheet).toMatch(/\.server-filter-popover\s*\{[^}]*z-index:\s*var\(--z-popover\)/s)
+    expect(stylesheet).not.toMatch(/\.server-list-filter-drawer\s*\{/)
+  })
 })

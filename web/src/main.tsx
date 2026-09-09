@@ -984,6 +984,155 @@ function ServerRegionFilterDropdown({
   )
 }
 
+function ServerFilterDropdown({
+  statusFilter,
+  onStatusFilterChange,
+  sortMode,
+  onSortModeChange,
+}: {
+  statusFilter: ServerStatusFilter
+  onStatusFilterChange: (status: ServerStatusFilter) => void
+  sortMode: ServerSortMode
+  onSortModeChange: (mode: ServerSortMode) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  const hasActiveFilters = statusFilter !== 'all' || sortMode !== 'created'
+
+  const updatePosition = () => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const viewportPadding = 10
+    const gutter = 6
+    const width = Math.min(260, window.innerWidth - viewportPadding * 2)
+    let left = rect.right - width
+    if (left < viewportPadding) left = viewportPadding
+    if (left + width > window.innerWidth - viewportPadding) {
+      left = window.innerWidth - viewportPadding - width
+    }
+    const popoverHeight = 180
+    const below = window.innerHeight - rect.bottom - viewportPadding - gutter
+    const above = rect.top - viewportPadding - gutter
+    const top = below >= popoverHeight || below >= above
+      ? rect.bottom + gutter
+      : Math.max(viewportPadding, rect.top - gutter - popoverHeight)
+    setPosition({ top, left, width })
+  }
+
+  useEffect(() => {
+    if (!open) return
+    updatePosition()
+    const reposition = () => updatePosition()
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (triggerRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      if (target.closest?.('.custom-select-menu')) return
+      setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    const scrollParents: HTMLElement[] = []
+    let parent: HTMLElement | null = triggerRef.current?.parentElement ?? null
+    while (parent) {
+      scrollParents.push(parent)
+      parent = parent.parentElement
+    }
+    window.addEventListener('resize', reposition)
+    window.addEventListener('scroll', reposition, true)
+    document.addEventListener('scroll', reposition, true)
+    scrollParents.forEach(element => element.addEventListener('scroll', reposition))
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      window.removeEventListener('resize', reposition)
+      window.removeEventListener('scroll', reposition, true)
+      document.removeEventListener('scroll', reposition, true)
+      scrollParents.forEach(element => element.removeEventListener('scroll', reposition))
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  const handleReset = () => {
+    onStatusFilterChange('all')
+    onSortModeChange('created')
+  }
+
+  return (
+    <div className="server-filter-dropdown">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`ghost icon-button server-filter-toggle-btn ${open || hasActiveFilters ? 'is-active' : ''}`}
+        onClick={() => setOpen(current => !current)}
+        aria-label={open ? '收起筛选' : '展开筛选'}
+        title={open ? '收起筛选' : '展开筛选'}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <SlidersHorizontal size={15} />
+        {hasActiveFilters && <span className="server-filter-badge" />}
+      </button>
+      {open && position && createPortal(
+        <div
+          ref={panelRef}
+          data-popover="true"
+          className="server-filter-popover"
+          style={{ top: position.top, left: position.left, width: position.width }}
+          role="dialog"
+          aria-label="服务器筛选与排序"
+        >
+          <div className="server-filter-popover-head">
+            <span className="server-filter-popover-title">筛选与排序</span>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="ghost server-filter-popover-reset"
+                onClick={handleReset}
+                aria-label="清除筛选"
+                title="重置为默认筛选和排序"
+              >
+                <Eraser size={13} aria-hidden="true" />
+                <span>重置</span>
+              </button>
+            )}
+          </div>
+          <div className="server-filter-popover-field">
+            <label className="server-filter-popover-field-label">状态</label>
+            <Select value={statusFilter} onChange={event => onStatusFilterChange(event.target.value as ServerStatusFilter)} aria-label="按状态筛选">
+              <option value="all">全部状态</option>
+              <option value="online">在线</option>
+              <option value="offline">离线</option>
+              <option value="unenrolled">未接入</option>
+            </Select>
+          </div>
+          <div className="server-filter-popover-field">
+            <label className="server-filter-popover-field-label">
+              <ArrowUpDown size={13} aria-hidden="true" />
+              <span>排序</span>
+            </label>
+            <Select value={sortMode} onChange={event => onSortModeChange(event.target.value as ServerSortMode)} aria-label="服务器排序方式">
+              <option value="created">创建顺序</option>
+              <option value="country">按国家</option>
+              <option value="custom">自定义排序</option>
+            </Select>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
+
 function ServerRegionField({ draft, update, servers }: { draft: any; update: (patch: any) => void; servers?: Server[] }) {
   const mode: RegionMode = draft.region_mode === 'manual' ? 'manual' : 'auto'
   const detectedCode = normalizeRegionCode(draft.detected_region_code)
@@ -7540,7 +7689,6 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [serverQuery, setServerQuery] = useState('')
   const [serverStatusFilter, setServerStatusFilter] = useState<ServerStatusFilter>('all')
   const [serverRegionFilter, setServerRegionFilter] = useState('all')
-  const [filterExpanded, setFilterExpanded] = useState(false)
   const [listPreferences, setListPreferences] = useState<ServerListPreferences>(loadServerListPreferences)
   const [draggedServerID, setDraggedServerID] = useState<number | null>(null)
   const [dragOverServerID, setDragOverServerID] = useState<number | null>(null)
@@ -8228,40 +8376,13 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
           )}
         </div>
       )}
-      <button
-        type="button"
-        className={`ghost icon-button server-filter-toggle-btn ${filterExpanded || (serverStatusFilter !== 'all' || listPreferences.sortMode !== 'created') ? 'is-active' : ''}`}
-        onClick={() => setFilterExpanded(v => !v)}
-        aria-label={filterExpanded ? '收起筛选' : '展开筛选'}
-        title={filterExpanded ? '收起筛选' : '展开筛选'}
-      >
-        <SlidersHorizontal size={15} />
-        {(serverStatusFilter !== 'all' || listPreferences.sortMode !== 'created') && (
-          <span className="server-filter-badge" />
-        )}
-      </button>
+      <ServerFilterDropdown
+        statusFilter={serverStatusFilter}
+        onStatusFilterChange={setServerStatusFilter}
+        sortMode={listPreferences.sortMode}
+        onSortModeChange={mode => setListPreferences(current => ({ ...current, sortMode: mode }))}
+      />
       <span className="server-list-result-count">{visibleServers.length} / {servers.length}</span>
-      {filterExpanded && (
-        <div className="server-list-filter-drawer" role="group" aria-label="服务器筛选">
-          <div className="server-list-filters">
-            <Select value={serverStatusFilter} onChange={event => setServerStatusFilter(event.target.value as ServerStatusFilter)} aria-label="按状态筛选">
-              <option value="all">全部状态</option>
-              <option value="online">在线</option>
-              <option value="offline">离线</option>
-              <option value="unenrolled">未接入</option>
-            </Select>
-          </div>
-          <div className="server-list-sort">
-            <ArrowUpDown size={15} aria-hidden="true" />
-            <Select value={listPreferences.sortMode} onChange={event => setListPreferences(current => ({ ...current, sortMode: event.target.value as ServerSortMode }))} aria-label="服务器排序方式">
-              <option value="created">创建顺序</option>
-              <option value="country">按国家</option>
-              <option value="custom">自定义排序</option>
-            </Select>
-          </div>
-          {hasServerFilters && <button type="button" className="ghost icon-button server-list-filter-clear" onClick={clearServerFilters} aria-label="清除筛选" title="清除筛选"><Eraser size={15} /></button>}
-        </div>
-      )}
     </div>}
     {!String(data.settings?.controller_url || '').trim() && <div className="controller-url-warning" role="status">
       <AlertTriangle size={18} />
