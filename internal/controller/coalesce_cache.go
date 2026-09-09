@@ -15,23 +15,31 @@ const coalesceBuildTimeout = 2 * time.Minute
 // runs outside the management lock. Different keys do not serialize behind each
 // other; a shared concurrency semaphore still caps total builds.
 type coalesceCache[K comparable, V any] struct {
-	mu          sync.Mutex
-	entries     map[K]coalesceEntry[V]
-	inflight    map[K]*coalesceCall[V]
-	buildSem    chan struct{}
-	maxEntries  int
-	ttl         time.Duration
-	maxStale    time.Duration
-	epoch       uint64
-	hits        atomic.Int64
-	misses      atomic.Int64
-	builds      atomic.Int64
-	buildFailed atomic.Int64
-	waiters     atomic.Int64
+	mu             sync.Mutex
+	budget         *coalesceBudget[V]
+	retain         func(K) bool
+	retainedBytes  int
+	accessSequence uint64
+	entries        map[K]coalesceEntry[V]
+	inflight       map[K]*coalesceCall[V]
+	buildSem       chan struct{}
+	maxEntries     int
+	ttl            time.Duration
+	maxStale       time.Duration
+	epoch          uint64
+	hits           atomic.Int64
+	misses         atomic.Int64
+	builds         atomic.Int64
+	buildFailed    atomic.Int64
+	waiters        atomic.Int64
 }
 
 type coalesceEntry[V any] struct {
 	value            V
+	size             int
+	access           uint64
+	retryAt          time.Time
+	failure          error
 	generation       uint64
 	epoch            uint64
 	dataAsOf         time.Time
@@ -40,12 +48,15 @@ type coalesceEntry[V any] struct {
 }
 
 type coalesceCall[V any] struct {
-	done    chan struct{}
-	epoch   uint64
-	value   V
-	err     error
-	entry   coalesceEntry[V]
-	waiters int
+	generation uint64
+	done       chan struct{}
+	epoch      uint64
+	value      V
+	err        error
+	entry      coalesceEntry[V]
+	waiters    int
+	cancel     context.CancelFunc
+	abandoned  bool
 }
 
 func newCoalesceCache[K comparable, V any](ttl time.Duration, maxEntries, maxBuilds int) *coalesceCache[K, V] {
@@ -199,12 +210,26 @@ func (c *coalesceCache[K, V]) clear() {
 	defer c.mu.Unlock()
 	c.epoch++
 	c.entries = make(map[K]coalesceEntry[V])
+	c.retainedBytes = 0
+	for _, call := range c.inflight {
+		if call.cancel != nil {
+			call.abandoned = true
+			call.cancel()
+		}
+	}
 }
 
 func (c *coalesceCache[K, V]) delete(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if entry, ok := c.entries[key]; ok {
+		c.retainedBytes -= entry.size
+	}
 	delete(c.entries, key)
+	if call := c.inflight[key]; call != nil && call.cancel != nil {
+		call.abandoned = true
+		call.cancel()
+	}
 }
 
 func (c *coalesceCache[K, V]) acquireBuild(ctx context.Context) error {
@@ -232,6 +257,9 @@ func (c *coalesceCache[K, V]) getOrBuild(
 	generation uint64,
 	build func(context.Context) (V, time.Time, error),
 ) (coalesceEntry[V], error) {
+	if c.budget != nil {
+		return c.getBounded(ctx, key, generation, build)
+	}
 	now := time.Now()
 	lookup, call, leader, epoch := c.get(key, now)
 	if lookup.hit {
