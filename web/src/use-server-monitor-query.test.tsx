@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useServerMonitorQuery } from './use-server-monitor-query'
+import { clearLatencyWindowCache } from './latency-window-cache'
 
 let root: Root
 let current: ReturnType<typeof useServerMonitorQuery<{ value: string }>>
@@ -17,6 +18,7 @@ function Monitor({ tab = 'latency', window = '24h', server = { id: 1 } }: { tab?
   return null
 }
 beforeEach(() => {
+  clearLatencyWindowCache()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   root = createRoot(document.createElement('div'))
@@ -81,4 +83,15 @@ it('cancels reads when hidden or closed and reloads on visibility', async () => 
   expect(pending).toHaveLength(2)
   await act(async () => root.render(null))
   expect(pending[1].signal.aborted).toBe(true)
+})
+
+it('restores the matching cached window without another network request', async () => {
+  await act(async () => root.render(<Monitor />))
+  await act(async () => pending[0].resolve({ value: 'day' }))
+  await act(async () => root.render(<Monitor window="7d" />))
+  await act(async () => pending[1].resolve({ value: 'week' }))
+  await act(async () => root.render(<Monitor />))
+  expect(current.response).toEqual({ value: 'day' })
+  expect(current.loading).toBe(false)
+  expect(client.request).toHaveBeenCalledTimes(2)
 })

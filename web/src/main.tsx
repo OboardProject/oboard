@@ -166,6 +166,7 @@ import { PageRefreshProvider, useRegisterPageRefresh } from './page-refresh-cont
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { useCoalescedReadRequest } from './request-coalesce'
 import { useServerMonitorQuery } from './use-server-monitor-query'
+import { clearLatencyWindowCache } from './latency-window-cache'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { useDocumentVisible, usePausedInterval } from './visibility'
 import { ConfigurationSyncStatus } from './configuration-sync-ui'
@@ -2072,6 +2073,7 @@ export function App() {
   }, [])
   const client = useMemo(() => api(token, failedToken => {
     if (failedToken !== activeTokenRef.current) return false
+    clearLatencyWindowCache()
     activeTokenRef.current = ''
     loadSeq.current++
     sessionStorage.removeItem('oboard.token')
@@ -2633,6 +2635,7 @@ export function App() {
         showToast(setToast, `未能撤销服务端会话：${localizeErrorMessage(e?.message || e)}`, 'warning')
       }
       document.body.style.overflow = ""
+      clearLatencyWindowCache()
       activeTokenRef.current = ''
       loadSeq.current++
       sessionStorage.removeItem('oboard.token')
@@ -2653,6 +2656,7 @@ export function App() {
   if (restoringSession) return <PortalLoader loading={false} />
 
   if (!token) return <Login theme={theme} onThemeChange={changeTheme} initialError={restoreError} onToken={(v, user, csrfToken) => {
+    clearLatencyWindowCache()
     activeTokenRef.current = v
     loadSeq.current++
     sessionStorage.setItem('oboard.token', v)
@@ -10312,7 +10316,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
     return () => { mounted.current = false }
   }, [server.id])
 
-  const currentStatus = response?.current.status || (server.latency_probe_enabled ? 'pending' : 'disabled')
+  const currentStatus = server.latency_probe_enabled ? server.connectivity_status || 'pending' : 'disabled'
   const currentTone = currentStatus === 'available' ? 'great' : currentStatus === 'unavailable' || currentStatus === 'offline' ? 'poor' : 'fair'
   const windowLabels: Record<ConnectivityWindowKey, string> = { '1h': '1 小时', '6h': '6 小时', '12h': '12 小时', '24h': '1 天', '7d': '7 天', '30d': '30 天' }
   const retentionDays = Math.max(1, Number(response?.retention_days || resourceResponse?.retention_days) || 7)
@@ -10377,6 +10381,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
     </header>
     <div className="dialog-body connectivity-body">
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => resources.refresh()} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
+        {loadError && response ? <div className="connectivity-coverage-note danger-text" role="alert">更新失败，当前显示上次读取的图表：{loadError}</div> : null}
         {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
         {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
           : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div>

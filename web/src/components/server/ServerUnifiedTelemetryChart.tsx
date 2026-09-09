@@ -153,50 +153,50 @@ export function ServerUnifiedTelemetryChart({
   }
 
   const chartPaths = useMemo(() => (
-activeSeries.map((series, seriesIndex) => {
-            const segments = splitSeriesSegments(buckets, series.id, connectGaps)
-            if (segments.length === 0) return null
+    activeSeries.map((series, seriesIndex) => {
+      const segments = splitSeriesSegments(buckets, series.id, connectGaps)
+      if (segments.length === 0) return null
+      return (
+        <g key={series.id}>
+          {segments.map((segment, segmentIndex) => {
+            const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
+            const linePath = buildLinePath(points, smoothLines)
+            const areaPath = buildAreaPath(points, padB, smoothLines)
+            const singlePoint = points.length === 1 ? points[0] : null
             return (
-              <g key={series.id}>
-                {segments.map((segment, segmentIndex) => {
-                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
-                  const linePath = buildLinePath(points, smoothLines)
-                  const areaPath = buildAreaPath(points, padB, smoothLines)
-                  const singlePoint = points.length === 1 ? points[0] : null
-                  return (
-                    <React.Fragment key={segmentIndex}>
-                      {singlePoint ? (
-                        <rect
-                          x={getBucketStartX(segment[0].index)}
-                          y={singlePoint.y}
-                          width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
-                          height={Math.max(0, padB - singlePoint.y)}
-                          fill={`url(#${gradientPrefix}-${seriesIndex})`}
-                          className="komari-chart-area"
-                        />
-                      ) : areaPath ? (
-                        <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" />
-                      ) : null}
-                      {singlePoint ? (
-                        <circle cx={singlePoint.x} cy={singlePoint.y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                      ) : (
-                        <path
-                          d={linePath}
-                          fill="none"
-                          stroke={series.color}
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="komari-chart-polyline"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                      )}
-                    </React.Fragment>
-                  )
-                })}
-              </g>
+              <React.Fragment key={segmentIndex}>
+                {singlePoint ? (
+                  <rect
+                    x={getBucketStartX(segment[0].index)}
+                    y={singlePoint.y}
+                    width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
+                    height={Math.max(0, padB - singlePoint.y)}
+                    fill={`url(#${gradientPrefix}-${seriesIndex})`}
+                    className="komari-chart-area"
+                  />
+                ) : areaPath ? (
+                  <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" />
+                ) : null}
+                {singlePoint ? (
+                  <circle cx={singlePoint.x} cy={singlePoint.y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                ) : (
+                  <path
+                    d={linePath}
+                    fill="none"
+                    stroke={series.color}
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="komari-chart-polyline"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
+              </React.Fragment>
             )
-          })
+          })}
+        </g>
+      )
+    })
   ), [activeSeries, buckets, connectGaps, smoothLines, maxLatency, W, H, padL, gradientPrefix])
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
