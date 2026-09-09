@@ -484,10 +484,29 @@ func buildConnectivityBuckets(window connectivityWindow, segments []connectivity
 			latencies[index].count++
 		}
 	}
+	segmentIndex := 0
 	for index := 0; index < count; index++ {
 		start := window.From.Add(time.Duration(index) * window.BucketDuration)
 		end := start.Add(window.BucketDuration)
-		available, unavailable, unknown := connectivityDurations(segments, start, end)
+		var available, unavailable, unknown time.Duration
+		for segmentIndex < len(segments) {
+			segment := segments[segmentIndex]
+			if !segment.start.Before(end) {
+				break
+			}
+			overlapStart, overlapEnd := segment.start, segment.end
+			if overlapStart.Before(start) {
+				overlapStart = start
+			}
+			if overlapEnd.After(end) {
+				overlapEnd = end
+			}
+			addConnectivityDuration(segment.availability, overlapEnd.Sub(overlapStart), &available, &unavailable, &unknown)
+			if segment.end.After(end) {
+				break
+			}
+			segmentIndex++
+		}
 		bucket := connectivityBucket{StartAt: start, EndAt: end, SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds()}
 		if latencies[index].count > 0 {
 			average := float64(latencies[index].sum) / float64(latencies[index].count)
@@ -604,12 +623,7 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		return
 	}
 	interval := connectivityLatencyPointInterval(window.To.Sub(retainedFrom))
-	regionalPoints, regionalDataStart, err := s.store.ListRegionalLatencyPoints(r.Context(), serverID, retainedFrom, window.To, interval)
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	targetStats, err := s.store.ListLatencyProbeTargetStats(r.Context(), serverID, retainedFrom, window.To, interval)
+	latencyBuckets, err := s.store.QueryLatencyBuckets(r.Context(), serverID, retainedFrom, window.To, interval)
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -619,8 +633,8 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 	responseWindow.Duration = responseWindow.To.Sub(retainedFrom)
 	response := BuildConnectivityResponse(serverID, responseWindow, history)
 	response.RetentionDays = retentionDays
-	response.RegionalLatencyPoints = regionalPoints
-	response.RegionalDataStartAt = regionalDataStart
-	response.ProbeTargetStats = targetStats
+	response.RegionalLatencyPoints = latencyBuckets.Points
+	response.RegionalDataStartAt = latencyBuckets.DataStart
+	response.ProbeTargetStats = latencyBuckets.Stats
 	write(w, http.StatusOK, response)
 }

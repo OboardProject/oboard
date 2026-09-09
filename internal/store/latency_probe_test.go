@@ -427,3 +427,32 @@ func TestRegionalLatencyDataStartAcrossKinds(t *testing.T) {
 		t.Fatalf("data start=%v, %v", start, err)
 	}
 }
+
+func TestLatencyBucketsShareReadAndPreserveValidity(t *testing.T) {
+	db, server := newConnectivityTestStore(t)
+	ctx := context.Background()
+	from := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	insertLatencyProbeResult(t, db, server.ID, "a", "custom", 8, "renamed", "tcp", "", "", true, 10, 1, 1, from)
+	insertLatencyProbeResult(t, db, server.ID, "b", "custom", 8, "original", "tcp", "", "", true, 90, 3, 3, from.Add(time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "old", "custom", 8, "renamed", "tcp", "", "", true, 100, 0, 0, from.Add(2*time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "failure", "custom", 8, "renamed", "tcp", "", "", false, 0, 3, 0, from.Add(3*time.Second))
+	insertLatencyProbeResult(t, db, server.ID, "public", "public", 0, "public", "tcp", "", "", true, 200, 1, 1, from)
+	before := db.db.stmts.Load()
+	result, err := db.QueryLatencyBuckets(ctx, server.ID, from, from.Add(time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := db.db.stmts.Load() - before; count != 2 {
+		t.Fatalf("statements=%d want aggregate + indexed data start", count)
+	}
+	if len(result.Points) != 1 || len(result.Stats) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+	point, stat := result.Points[0], result.Stats[1]
+	if point.Count != 2 || point.LatencyMS != 50 || point.MinLatencyMS != 10 || point.MaxLatencyMS != 90 {
+		t.Fatalf("point=%+v", point)
+	}
+	if stat.ReportCount != 4 || stat.SampleCount != 7 || stat.SuccessCount != 4 || stat.AvailableCount != 3 || *stat.AvgMS != 50 || *stat.MaxMS != 100 {
+		t.Fatalf("stat=%+v", stat)
+	}
+}

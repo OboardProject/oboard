@@ -202,59 +202,8 @@ func (s *Store) ListLatencyProbeResults(ctx context.Context, serverID int64, lim
 const maxRegionalLatencyPointBuckets = 360
 
 func (s *Store) ListRegionalLatencyPoints(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) ([]model.ServerRegionalLatencyPoint, *time.Time, error) {
-	from = from.UTC()
-	to = to.UTC()
-	if serverID <= 0 || from.IsZero() || to.IsZero() || !to.After(from) || bucket < time.Second {
-		return nil, nil, errors.New("invalid regional latency point query")
-	}
-	bucketSeconds := int64(bucket / time.Second)
-	bucketCount := int64((to.Sub(from) + bucket - 1) / bucket)
-	if bucketSeconds <= 0 || bucketCount > maxRegionalLatencyPointBuckets {
-		return nil, nil, errors.New("regional latency point query exceeds 360 buckets")
-	}
-
-	var dataStartText sql.NullString
-	if err := s.db.QueryRowContext(ctx, `select min(checked_at) from (select min(checked_at) as checked_at from server_latency_probe_results where server_id=? and kind='regional' union all select min(checked_at) from server_latency_probe_results where server_id=? and kind='custom')`, serverID, serverID).Scan(&dataStartText); err != nil && err != sql.ErrNoRows {
-		return nil, nil, err
-	}
-	var dataStart *time.Time
-	if dataStartText.Valid && dataStartText.String != "" {
-		parsed := parseTime(dataStartText.String)
-		dataStart = &parsed
-	}
-
-	fromText := from.Format(time.RFC3339Nano)
-	rows, err := s.db.QueryContext(ctx, `
-		with filtered as (
-			select task_id,case when trim(task_name)<>'' then task_name else province||' · '||carrier end as task_name,province,carrier,cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,latency_ms
-			from server_latency_probe_results
-			where server_id=? and kind in ('regional','custom') and available=1 and success_count>0 and latency_ms>0 and checked_at>=? and checked_at<?
-		)
-		select task_id,task_name,province,carrier,bucket_index,avg(latency_ms),min(latency_ms),max(latency_ms),count(*)
-		from filtered
-		where bucket_index>=0 and bucket_index<?
-		group by task_id,task_name,bucket_index
-		order by bucket_index,task_name,task_id`, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano), bucketCount)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-	points := make([]model.ServerRegionalLatencyPoint, 0)
-	for rows.Next() {
-		var point model.ServerRegionalLatencyPoint
-		var bucketIndex int64
-		if err := rows.Scan(&point.TaskID, &point.TaskName, &point.Province, &point.Carrier, &bucketIndex, &point.LatencyMS, &point.MinLatencyMS, &point.MaxLatencyMS, &point.Count); err != nil {
-			return nil, nil, err
-		}
-		point.Kind = "regional"
-		point.Available = true
-		point.CheckedAt = from.Add(time.Duration(bucketIndex) * bucket)
-		points = append(points, point)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, err
-	}
-	return points, dataStart, nil
+	result, err := s.QueryLatencyBuckets(ctx, serverID, from, to, bucket)
+	return result.Points, result.DataStart, err
 }
 
 func LatencyProbeTargetKey(kind string, taskID int64, province, carrier string) string {
@@ -267,18 +216,44 @@ func LatencyProbeTargetKey(kind string, taskID int64, province, carrier string) 
 	return strings.TrimSpace(province) + " · " + strings.TrimSpace(carrier)
 }
 
+type LatencyBucketResult struct {
+	Points    []model.ServerRegionalLatencyPoint
+	Stats     []model.LatencyProbeTargetStat
+	DataStart *time.Time
+}
+
 func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) ([]model.LatencyProbeTargetStat, error) {
+	result, err := s.queryLatencyBuckets(ctx, serverID, from, to, bucket, false)
+	return result.Stats, err
+}
+
+func (s *Store) QueryLatencyBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) (LatencyBucketResult, error) {
+	return s.queryLatencyBuckets(ctx, serverID, from, to, bucket, true)
+}
+
+func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration, includeDataStart bool) (LatencyBucketResult, error) {
+	result := LatencyBucketResult{Points: make([]model.ServerRegionalLatencyPoint, 0)}
 	from = from.UTC()
 	to = to.UTC()
 	if serverID <= 0 || from.IsZero() || to.IsZero() || !to.After(from) || bucket < time.Second {
-		return nil, errors.New("invalid latency probe target stat query")
+		return result, errors.New("invalid latency probe target stat query")
 	}
 	bucketSeconds := int64(bucket / time.Second)
 	bucketCount := int64((to.Sub(from) + bucket - 1) / bucket)
 	if bucketSeconds <= 0 || bucketCount > maxRegionalLatencyPointBuckets {
-		return nil, errors.New("latency probe target stat query exceeds 360 buckets")
+		return result, errors.New("latency probe target stat query exceeds 360 buckets")
 	}
 
+	if includeDataStart {
+		var dataStartText sql.NullString
+		if err := s.db.QueryRowContext(ctx, `select min(checked_at) from (select min(checked_at) as checked_at from server_latency_probe_results where server_id=? and kind='regional' union all select min(checked_at) from server_latency_probe_results where server_id=? and kind='custom')`, serverID, serverID).Scan(&dataStartText); err != nil {
+			return result, err
+		}
+		if dataStartText.Valid && dataStartText.String != "" {
+			at := parseTime(dataStartText.String)
+			result.DataStart = &at
+		}
+	}
 	fromText := from.Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `
 		select
@@ -293,13 +268,15 @@ func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64,
 			max(case when available=1 and latency_ms>0 then latency_ms end),
 			sum(sample_count), sum(success_count), count(*),
 			sum(case when available=1 then 1 else 0 end),
-			avg(case when available=1 and latency_ms>0 then latency_ms end), min(checked_at)
+			avg(case when available=1 and latency_ms>0 then latency_ms end), min(checked_at),
+            min(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end),
+            max(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end)
 		from server_latency_probe_results
 		where server_id=? and checked_at>=? and checked_at<? and kind in ('public','regional','custom')
 		group by target_key, bucket_index
 		order by target_key, bucket_index`, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano))
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	defer rows.Close()
 
@@ -311,12 +288,12 @@ func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64,
 	for rows.Next() {
 		var stat model.LatencyProbeTargetStat
 		var bucketIndex, latencySum, latencyCount int64
-		var minMS, maxMS sql.NullInt64
+		var minMS, maxMS, pointMin, pointMax sql.NullInt64
 		var peakMS sql.NullFloat64
 		var checkedAt string
 		if err := rows.Scan(&stat.Key, &bucketIndex, &stat.Kind, &stat.TaskID, &stat.TaskName, &stat.Mode, &stat.Province, &stat.Carrier,
-			&latencySum, &latencyCount, &minMS, &maxMS, &stat.SampleCount, &stat.SuccessCount, &stat.ReportCount, &stat.AvailableCount, &peakMS, &checkedAt); err != nil {
-			return nil, err
+			&latencySum, &latencyCount, &minMS, &maxMS, &stat.SampleCount, &stat.SuccessCount, &stat.ReportCount, &stat.AvailableCount, &peakMS, &checkedAt, &pointMin, &pointMax); err != nil {
+			return result, err
 		}
 		if strings.TrimSpace(stat.Key) == "" || stat.Key == " · " {
 			continue
@@ -350,6 +327,13 @@ func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64,
 		if bucketIndex < 0 || bucketIndex >= bucketCount {
 			continue
 		}
+		if stat.Kind != "public" && latencyCount > 0 {
+			result.Points = append(result.Points, model.ServerRegionalLatencyPoint{
+				TaskID: stat.TaskID, TaskName: stat.TaskName, Province: stat.Province, Carrier: stat.Carrier,
+				Kind: "regional", Available: true, CheckedAt: from.Add(time.Duration(bucketIndex) * bucket),
+				LatencyMS: float64(latencySum) / float64(latencyCount), MinLatencyMS: pointMin.Int64, MaxLatencyMS: pointMax.Int64, Count: latencyCount,
+			})
+		}
 		at := parseTime(checkedAt)
 		if peakMS.Valid && (item.PeakLatencyMS == nil || peakMS.Float64 > *item.PeakLatencyMS) {
 			value := peakMS.Float64
@@ -363,7 +347,7 @@ func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64,
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return result, err
 	}
 	stats := make([]model.LatencyProbeTargetStat, 0, len(byKey))
 	for _, total := range byKey {
@@ -388,7 +372,18 @@ func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64,
 		}
 		return stats[i].Key < stats[j].Key
 	})
-	return stats, nil
+	sort.Slice(result.Points, func(i, j int) bool {
+		left, right := result.Points[i], result.Points[j]
+		if !left.CheckedAt.Equal(right.CheckedAt) {
+			return left.CheckedAt.Before(right.CheckedAt)
+		}
+		if left.TaskName != right.TaskName {
+			return left.TaskName < right.TaskName
+		}
+		return left.TaskID < right.TaskID
+	})
+	result.Stats = stats
+	return result, nil
 }
 
 func attachLatencyProbeTargetRates(stat *model.LatencyProbeTargetStat) {
