@@ -164,6 +164,26 @@ describe('return latency probe tasks', () => {
     expect(refresh).toHaveBeenCalled()
   })
 
+  it('reassigns which probe tasks a server executes from its own settings dialog', async () => {
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
+    await click(container.querySelector<HTMLButtonElement>('#probe-nodes-tab')!)
+    const card = Array.from(container.querySelectorAll('.return-latency-server')).find(element => element.textContent?.includes('Hong Kong'))!
+    await click(buttonIn(card, '探测参数')!)
+    const dialog = document.body.querySelector('.probe-settings-dialog')!
+    const assigned = dialog.querySelector<HTMLInputElement>('[aria-label="执行任务 广州电信"]')!
+    const unassigned = dialog.querySelector<HTMLInputElement>('[aria-label="执行任务 北京移动巡检"]')!
+    expect(assigned.checked).toBe(true)
+    expect(unassigned.checked).toBe(false)
+    await click(assigned)
+    await click(unassigned)
+    await click(buttonIn(document.body, '保存参数')!)
+    const dropped = request.mock.calls.find(([path, init]) => path === '/latency-probe-tasks/7' && (init as RequestInit)?.method === 'PATCH')!
+    expect(JSON.parse((dropped[1] as RequestInit).body as string)).toEqual({ server_ids: [] })
+    const added = request.mock.calls.find(([path, init]) => path === '/latency-probe-tasks/8' && (init as RequestInit)?.method === 'PATCH')!
+    expect(JSON.parse((added[1] as RequestInit).body as string)).toEqual({ server_ids: [1] })
+  })
+
   it('queues an immediate probe only for an online server with probing enabled', async () => {
     const request = vi.fn(async (path: string) => {
       if (path === '/latency-probe-resource') return { regions }

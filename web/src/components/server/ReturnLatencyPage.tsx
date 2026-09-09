@@ -3,7 +3,7 @@ import { Activity, History, Pencil, Plus, RefreshCw, Search, Settings2, Trash2 }
 import { Dialog } from '../ui/dialog'
 import { Select } from '../ui/select'
 import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
-import { ReturnLatencySettings } from './ReturnLatencySettings'
+import { ReturnLatencySettings, type LatencyProbeTaskAssignmentChange } from './ReturnLatencySettings'
 import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
 import { useRegisterPageRefresh } from '../../page-refresh-context'
 
@@ -112,8 +112,19 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     }
   })
 
-  const saveServerSettings = async (server: Server, patch: Partial<Server>) => {
+  const saveServerSettings = async (server: Server, patch: Partial<Server>, taskChanges?: LatencyProbeTaskAssignmentChange) => {
     await client.request(`/servers/${server.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+    if (taskChanges) {
+      const applyMembership = async (taskID: number, addServer: boolean) => {
+        const task = tasks.find(item => item.id === taskID)
+        if (!task) return
+        const serverIDs = addServer ? [...task.server_ids, server.id] : task.server_ids.filter(id => id !== server.id)
+        await client.request(`/latency-probe-tasks/${taskID}`, { method: 'PATCH', body: JSON.stringify({ server_ids: serverIDs }) })
+      }
+      for (const taskID of taskChanges.addTaskIDs) await applyMembership(taskID, true)
+      for (const taskID of taskChanges.removeTaskIDs) await applyMembership(taskID, false)
+      reloadTasks()
+    }
     setSettingsServer(null)
     setNotice({ kind: 'success', text: `已保存 ${server.name} 的探测参数。` })
     await onRefresh()
@@ -269,8 +280,8 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
         onCancel={() => setEditing({ open: false, task: null })}
       />
     </Dialog>
-    <Dialog isOpen={Boolean(settingsServer)} onClose={() => setSettingsServer(null)} title={settingsServer ? `${settingsServer.name} · 探测参数` : '探测参数'} size="lg">
-      {settingsServer && <ReturnLatencySettings key={settingsServer.id} server={settingsServer} disabled={!canManage} onSave={patch => saveServerSettings(settingsServer, patch)} onCancel={() => setSettingsServer(null)} />}
+    <Dialog isOpen={Boolean(settingsServer)} onClose={() => setSettingsServer(null)} title={settingsServer ? `${settingsServer.name} · 探测参数` : '探测参数'} size="lg" className="probe-settings-dialog">
+      {settingsServer && <ReturnLatencySettings key={settingsServer.id} server={settingsServer} tasks={tasks} disabled={!canManage} onSave={(patch, taskChanges) => saveServerSettings(settingsServer, patch, taskChanges)} onCancel={() => setSettingsServer(null)} />}
     </Dialog>
     {historyServer && renderHistory(historyServer, () => setHistoryID(null))}
   </section>

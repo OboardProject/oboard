@@ -1,21 +1,32 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { FormField } from '../ui/form-field'
 import { Select } from '../ui/select'
 import { Switch } from '../ui/switch'
-import type { Server, LatencyProbeMode, ConnectivityProbeTarget } from '../proxy-path/types'
+import type { Server, LatencyProbeMode, ConnectivityProbeTarget, LatencyProbeTask } from '../proxy-path/types'
 
 const clamp = (value: number | '', min: number, max: number, fallback: number) => {
   if (value === '' || Number.isNaN(Number(value))) return fallback
   return Math.min(max, Math.max(min, Math.trunc(Number(value))))
 }
 
+const formatTaskInterval = (seconds: number) => {
+  if (!seconds) return '未设置'
+  if (seconds % 3600 === 0) return `${seconds / 3600} 小时`
+  if (seconds % 60 === 0) return `${seconds / 60} 分钟`
+  return `${seconds} 秒`
+}
+
+export type LatencyProbeTaskAssignmentChange = { addTaskIDs: number[]; removeTaskIDs: number[] }
+
 // ReturnLatencySettings edits the probe parameters of a single server. Probe
-// targets are owned by latency probe tasks, not by the server record.
-export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
+// targets are owned by latency probe tasks, not by the server record; this
+// dialog can flip the server's own membership in each task in the same save.
+export function ReturnLatencySettings({ server, tasks = [], disabled, onSave, onCancel }: {
   server: Server
+  tasks?: LatencyProbeTask[]
   disabled?: boolean
-  onSave: (patch: Partial<Server>) => void | Promise<void>
+  onSave: (patch: Partial<Server>, taskChanges?: LatencyProbeTaskAssignmentChange) => void | Promise<void>
   onCancel?: () => void
 }) {
   const [values, setValues] = useState({
@@ -26,9 +37,12 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
     latency_probe_sample_count: (server.latency_probe_sample_count || 3) as number | '',
     latency_probe_max_targets: (server.latency_probe_max_targets || 64) as number | '',
   })
+  const initialTaskIDs = useMemo(() => tasks.filter(task => task.server_ids.includes(server.id)).map(task => task.id), [tasks, server.id])
+  const [selectedTaskIDs, setSelectedTaskIDs] = useState<number[]>(initialTaskIDs)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const updateParam = (patch: Partial<typeof values>) => setValues(old => ({ ...old, ...patch }))
+  const toggleTaskSelected = (taskID: number) => setSelectedTaskIDs(current => current.includes(taskID) ? current.filter(id => id !== taskID) : [...current, taskID])
 
   const invalidParams = !([
     [values.latency_probe_interval_seconds, 30, 86400],
@@ -41,6 +55,8 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
     setSaving(true)
     setSaveError('')
     try {
+      const addTaskIDs = selectedTaskIDs.filter(id => !initialTaskIDs.includes(id))
+      const removeTaskIDs = initialTaskIDs.filter(id => !selectedTaskIDs.includes(id))
       await onSave({
         latency_probe_enabled: values.latency_probe_enabled,
         latency_probe_mode: values.latency_probe_mode,
@@ -48,7 +64,7 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
         latency_probe_interval_seconds: Number(values.latency_probe_interval_seconds),
         latency_probe_sample_count: Number(values.latency_probe_sample_count),
         latency_probe_max_targets: Number(values.latency_probe_max_targets),
-      })
+      }, (addTaskIDs.length || removeTaskIDs.length) ? { addTaskIDs, removeTaskIDs } : undefined)
     } catch (error: any) {
       setSaveError(error?.message || '保存失败，请重试')
     } finally {
@@ -91,6 +107,25 @@ export function ReturnLatencySettings({ server, disabled, onSave, onCancel }: {
             <input aria-label="单次最多目标数" type="number" min={1} max={256} placeholder="64" value={values.latency_probe_max_targets} onChange={event => updateParam({ latency_probe_max_targets: event.target.value === '' ? '' : Number(event.target.value) })} onBlur={event => updateParam({ latency_probe_max_targets: clamp(event.target.value === '' ? '' : Number(event.target.value), 1, 256, 64) })} />
           </FormField>
         </div>
+        {tasks.length > 0 && <section className="probe-task-servers" aria-label="执行的探测任务">
+          <header className="return-latency-section-head">
+            <h3>执行的探测任务</h3>
+            <span className="muted">已选 {selectedTaskIDs.length} / {tasks.length}</span>
+          </header>
+          <p className="muted">勾选该服务器要执行的探测任务；未勾选的任务不会分配给它。</p>
+          <div className="probe-task-server-list">
+            {tasks.map(task => (
+              <label key={task.id} className={`probe-task-server${selectedTaskIDs.includes(task.id) ? ' is-selected' : ''}`}>
+                <input type="checkbox" aria-label={`执行任务 ${task.name}`} checked={selectedTaskIDs.includes(task.id)} onChange={() => toggleTaskSelected(task.id)} />
+                <span className="probe-task-server-main">
+                  <strong>{task.name}</strong>
+                  <small className="muted">{task.method === 'http' ? 'HTTP' : task.method === 'icmp' ? 'Ping' : 'TCP'} · 每 {formatTaskInterval(task.interval_seconds)}</small>
+                </span>
+                <span className="probe-task-server-state muted">{task.enabled ? '已启用' : '已停用'}</span>
+              </label>
+            ))}
+          </div>
+        </section>}
         {saveError && <p className="danger-text" role="alert">{saveError}</p>}
         <div className="return-latency-form-actions">
           {onCancel && <button type="button" className="ghost" onClick={onCancel}>取消</button>}

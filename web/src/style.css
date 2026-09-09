@@ -25072,6 +25072,29 @@ button.dns-policy-row-main:focus {
     margin-left: 0 !important;
   }
 
+  .animate-plan-detail-in .section-toolbar > .plan-detail-actions {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .plan-detail-actions > button,
+  .plan-detail-failure button {
+    min-width: 0;
+    min-height: 34px;
+    padding: 6px 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    justify-content: center;
+  }
+
+  .plan-detail-failure > div { min-width: 0; }
+  .plan-detail-failure p { overflow-wrap: anywhere; }
+  .plan-detail-failure > div:last-child {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
   .plan-order-template-status {
     grid-template-columns: 1fr;
   }
@@ -28121,8 +28144,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .return-latency-switch-row small { font-size: 12px; }
 .return-latency-form-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding-top: 4px; }
 .return-latency-form-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 18px; }
-.return-latency-page .latency-params-grid, .probe-task-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.return-latency-page .latency-params-grid .form-field, .probe-task-form-grid .form-field { min-width: 0; }
+.latency-params-grid, .probe-task-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.latency-params-grid .form-field, .probe-task-form-grid .form-field { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 5px; align-items: stretch; }
+.latency-params-grid .form-field-meta, .probe-task-form-grid .form-field-meta { gap: 2px; padding-top: 0; min-height: 24px; overflow: visible; }
+.latency-params-grid .form-field-control, .probe-task-form-grid .form-field-control { gap: 6px; }
 
 .dialog.probe-task-dialog {
   width: min(56rem, calc(100vw - 40px));
@@ -28172,7 +28197,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   .probe-task-cards, .return-latency-server-list { grid-template-columns: minmax(0, 1fr); }
   .probe-task-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .probe-task-card-actions button, .return-latency-row-actions button { flex: 1 1 auto; min-height: 40px; justify-content: center; }
-  .return-latency-page .latency-params-grid { grid-template-columns: minmax(0, 1fr); }
+  .latency-params-grid, .probe-task-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 720px) {
