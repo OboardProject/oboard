@@ -214,6 +214,11 @@ func TestLatencyProbeResultsCarryTaskIdentity(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	for _, task := range []model.LatencyProbeTask{{ID: 7, Name: "华南主线"}, {ID: 8, Name: "华南备线"}} {
+		if _, err := db.db.ExecContext(ctx, `insert into latency_probe_tasks(id,name,province,carrier,created_at,updated_at) values(?,?,'广东','中国电信','','')`, task.ID, task.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	from := time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC)
 	report := model.LatencyProbeResultReport{ReportID: "task-report", ResourceVersion: "v1", CheckedAt: from.Add(30 * time.Second), Items: []model.LatencyProbeResult{
 		{ProbeID: "t7-0", Kind: "regional", TaskID: 7, TaskName: "华南主线", Mode: "tcp", Province: "广东", Carrier: "中国电信", Host: "192.0.2.1", IP: "192.0.2.1", Port: 80, Available: true, LatencyMS: 10, MinLatencyMS: 10, P95LatencyMS: 10, SampleCount: 3, SuccessCount: 3},
@@ -292,5 +297,70 @@ func TestGetLatencyProbeTaskMissing(t *testing.T) {
 	defer db.Close()
 	if _, err := db.GetLatencyProbeTask(context.Background(), 4242); err != sql.ErrNoRows {
 		t.Fatalf("missing task error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestDeleteLatencyProbeTaskRemovesResultsAndIgnoresLateReports(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "delete-results.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	servers := []*model.Server{{Name: "first"}, {Name: "second"}}
+	for _, server := range servers {
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task := model.LatencyProbeTask{Name: "中国广电", Province: "广东", Carrier: "中国广电", Enabled: true, ServerIDs: []int64{servers[0].ID, servers[1].ID}}
+	other := task
+	other.Name = "广电另一任务"
+	for _, target := range []*model.LatencyProbeTask{&task, &other} {
+		if err := db.SaveLatencyProbeTask(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	report := model.LatencyProbeResultReport{ReportID: "before", ResourceVersion: "v1", CheckedAt: now, Items: []model.LatencyProbeResult{
+		{ProbeID: "removed", Kind: "regional", TaskID: task.ID, TaskName: task.Name, Province: task.Province, Carrier: task.Carrier, Available: true, LatencyMS: 12, SampleCount: 3, SuccessCount: 3},
+		{ProbeID: "retained", Kind: "regional", TaskID: other.ID, TaskName: other.Name, Province: task.Province, Carrier: task.Carrier, Available: true, LatencyMS: 12, SampleCount: 3, SuccessCount: 3},
+		{ProbeID: "public", Kind: "public", SampleCount: 3, SuccessCount: 3},
+	}}
+	for _, server := range servers {
+		if err := db.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.DeleteLatencyProbeTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, server := range servers {
+		items, err := db.ListLatencyProbeResults(ctx, server.ID, 10)
+		if err != nil || len(items) != 2 {
+			t.Fatalf("remaining results = %#v, %v", items, err)
+		}
+		points, _, err := db.ListRegionalLatencyPoints(ctx, server.ID, now.Add(-time.Minute), now.Add(time.Minute), time.Minute)
+		if err != nil || len(points) != 1 || points[0].TaskID != other.ID {
+			t.Fatalf("remaining history = %#v, %v", points, err)
+		}
+		stats, err := db.ListLatencyProbeTargetStats(ctx, server.ID, now.Add(-time.Minute), now.Add(time.Minute), time.Minute)
+		if err != nil || len(stats) != 2 {
+			t.Fatalf("remaining stats = %#v, %v", stats, err)
+		}
+	}
+	report.ReportID = "late"
+	report.CheckedAt = now.Add(time.Second)
+	if err := db.SaveLatencyProbeResults(ctx, servers[0].ID, report); err != nil {
+		t.Fatal(err)
+	}
+	items, err := db.ListLatencyProbeResults(ctx, servers[0].ID, 10)
+	if err != nil || len(items) != 4 {
+		t.Fatalf("late results = %#v, %v", items, err)
+	}
+	for _, item := range items {
+		if item.TaskID == task.ID {
+			t.Fatal("late report resurrected deleted task")
+		}
 	}
 }

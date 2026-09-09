@@ -140,9 +140,15 @@ func TestNetworkProbeAutomationLifecycleAndBoundary(t *testing.T) {
 	if _, err := app.latencyProbeTaskBoundary(ctx, restricted, got.ID); err == nil {
 		t.Fatal("task update bypassed server boundary")
 	}
+	if err := db.SaveLatencyProbeResults(ctx, server.ID, model.LatencyProbeResultReport{ReportID: "delete-result", ResourceVersion: "v1", CheckedAt: time.Now().UTC(), Items: []model.LatencyProbeResult{{ProbeID: "custom", Kind: "custom", TaskID: task.ID}}}); err != nil {
+		t.Fatal(err)
+	}
 	applyAutomationChangeset(t, app, principal, "network-delete", automation.OperationRequest{Capability: "latency_probe_tasks.delete", Input: json.RawMessage(fmt.Sprintf(`{"id":%d}`, task.ID))})
 	if _, err := db.GetLatencyProbeTask(ctx, task.ID); err == nil {
 		t.Fatal("deleted task survives")
+	}
+	if results, err := db.ListLatencyProbeResults(ctx, server.ID, 10); err != nil || len(results) != 0 {
+		t.Fatalf("deleted task results survive: %#v %v", results, err)
 	}
 }
 
@@ -181,6 +187,21 @@ func TestNetworkProbeRESTTaskLifecycle(t *testing.T) {
 	got, err = db.GetLatencyProbeTask(ctx, body.Task.ID)
 	if err != nil || got.Address != "1.1.1.1" {
 		t.Fatal("invalid update changed saved task")
+	}
+	server := &model.Server{Name: "rest-probe-node"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveLatencyProbeResults(ctx, server.ID, model.LatencyProbeResultReport{ReportID: "rest-delete", ResourceVersion: "v1", Items: []model.LatencyProbeResult{{ProbeID: "custom", Kind: "custom", TaskID: body.Task.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	deleted := httptest.NewRecorder()
+	app.latencyProbeTask(deleted, httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/latency-probe-tasks/%d", body.Task.ID), nil))
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", deleted.Code, deleted.Body.String())
+	}
+	if results, err := db.ListLatencyProbeResults(ctx, server.ID, 10); err != nil || len(results) != 0 {
+		t.Fatalf("deleted task results survive: %#v %v", results, err)
 	}
 }
 

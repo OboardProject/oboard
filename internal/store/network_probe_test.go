@@ -133,8 +133,12 @@ func TestNetworkProbeCustomResultsAppearInHistory(t *testing.T) {
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	task := model.LatencyProbeTask{Name: "网站", Method: model.LatencyProbeModeHTTP, Address: "https://example.com", Enabled: true}
+	if err := db.SaveLatencyProbeTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC()
-	report := model.LatencyProbeResultReport{ReportID: "http-result", ResourceVersion: "public", CheckedAt: now, Items: []model.LatencyProbeResult{{ProbeID: "t1-0", TaskID: 1, TaskName: "网站", Kind: "custom", Mode: "http", Host: "example.com", Port: 443, SampleCount: 1, SuccessCount: 1, Available: true, LatencyMS: 12}}}
+	report := model.LatencyProbeResultReport{ReportID: "http-result", ResourceVersion: "public", CheckedAt: now, Items: []model.LatencyProbeResult{{ProbeID: "t1-0", TaskID: task.ID, TaskName: "网站", Kind: "custom", Mode: "http", Host: "example.com", Port: 443, SampleCount: 1, SuccessCount: 1, Available: true, LatencyMS: 12}}}
 	if err := db.SaveLatencyProbeResults(ctx, server.ID, report); err != nil {
 		t.Fatal(err)
 	}

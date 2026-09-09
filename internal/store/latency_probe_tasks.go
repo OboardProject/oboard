@@ -288,9 +288,14 @@ func (s *Store) SaveLatencyProbeTask(ctx context.Context, task *model.LatencyPro
 	return tx.Commit()
 }
 
-// DeleteLatencyProbeTask removes one probe task and its server assignment.
+// DeleteLatencyProbeTask removes one probe task, its server assignment and results.
 func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, `delete from latency_probe_tasks where id=?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `delete from latency_probe_tasks where id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -301,7 +306,10 @@ func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `delete from server_latency_probe_results where task_id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // migrateLatencyProbeTasks converts the former per-server regional selection into standalone probe tasks.

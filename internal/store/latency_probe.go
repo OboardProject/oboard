@@ -435,6 +435,15 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 		if strings.TrimSpace(item.ProbeID) == "" {
 			continue
 		}
+		if item.TaskID > 0 {
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `select exists(select 1 from latency_probe_tasks where id=?)`, item.TaskID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				continue
+			}
+		}
 		if len(item.Error) > 240 {
 			item.Error = item.Error[:240]
 		}
