@@ -176,10 +176,8 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
     <div className="panel-body">
       <div className="return-latency-toolbar">
         <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
-        <div className="return-latency-toolbar-secondary">
-          <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
-          <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
-        </div>
+        <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
+        <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
       </div>
       {notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
       {resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
@@ -197,10 +195,6 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
           <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索探测任务" placeholder="搜索名称或目标地址" value={taskQuery} onChange={event => setTaskQuery(event.target.value)} /></div>
           <Select aria-label="探测方式筛选" value={methodFilter} onChange={event => setMethodFilter(event.target.value)}><option value="all">全部方式</option><option value="tcp">TCP</option><option value="icmp">Ping</option><option value="http">HTTP</option></Select>
         </div>
-        <header className="return-latency-section-head">
-          <h2>探测任务</h2>
-          <span className="muted">{tasks.length} 个任务 · 每个任务一个目标</span>
-        </header>
         {tasksState.error && <p className="danger-text" role="alert">{tasksState.error}</p>}
         {tasksState.loading && !tasks.length ? <p className="muted" role="status">正在加载探测任务…</p> : !tasks.length ? <div className="latency-empty-state">
           <p>还没有探测任务</p>
@@ -228,10 +222,6 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
       </section>}
 
       {view === 'nodes' && <section id="probe-nodes-panel" role="tabpanel" aria-labelledby="probe-nodes-tab" className="return-latency-servers">
-        <header className="return-latency-section-head">
-          <h2>节点状态</h2>
-          <span className="muted">{servers.length} 台</span>
-        </header>
         <div className="return-latency-filters">
           <div className="return-latency-search">
             <Search size={15} aria-hidden="true" />

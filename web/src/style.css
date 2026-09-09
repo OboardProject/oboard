@@ -28098,7 +28098,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .return-latency-page button:focus-visible, .return-latency-page input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .return-latency-page input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--primary); }
 
-.return-latency-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.return-latency-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .return-latency-toolbar-secondary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .return-latency-toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; padding: 0 14px; }
 
@@ -28320,10 +28320,8 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 @media (max-width: 860px) {
   .return-latency-page .panel-body { gap: 20px; }
-  .return-latency-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
-  .return-latency-toolbar > button { width: 100%; min-height: 44px; }
-  .return-latency-toolbar-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .return-latency-toolbar-secondary button { width: 100%; min-height: 42px; }
+  .return-latency-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .return-latency-toolbar button { width: 100%; min-height: 42px; }
   .return-latency-filters { flex-direction: column; align-items: stretch; gap: 8px; }
   .return-latency-filters > .custom-select { width: 100%; min-width: 0; }
   .return-latency-search { min-height: 44px; }
