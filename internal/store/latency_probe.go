@@ -216,6 +216,27 @@ func LatencyProbeTargetKey(kind string, taskID int64, province, carrier string) 
 	return strings.TrimSpace(province) + " · " + strings.TrimSpace(carrier)
 }
 
+const latencyBucketsSQL = `
+		select
+			case when kind='public' then 'public' when task_id>0 then 'task_'||task_id else trim(province)||' · '||trim(carrier) end as target_key,
+			cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,
+			max(kind), max(task_id),
+			max(case when kind='public' then '公网探测' when trim(task_name)<>'' then task_name else trim(province)||' · '||trim(carrier) end),
+			max(mode), max(province), max(carrier),
+			sum(case when available=1 and success_count>0 and latency_ms>0 then latency_ms else 0 end),
+			count(case when available=1 and success_count>0 and latency_ms>0 then 1 end),
+			min(case when available=1 and latency_ms>0 then latency_ms end),
+			max(case when available=1 and latency_ms>0 then latency_ms end),
+			sum(sample_count), sum(success_count), count(*),
+			sum(case when available=1 then 1 else 0 end),
+			avg(case when available=1 and latency_ms>0 then latency_ms end), min(checked_at),
+            min(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end),
+            max(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end)
+		from server_latency_probe_results
+		where server_id=? and checked_at>=? and checked_at<? and kind in ('public','regional','custom')
+		group by target_key, bucket_index
+		order by target_key, bucket_index`
+
 type LatencyBucketResult struct {
 	Points    []model.ServerRegionalLatencyPoint
 	Stats     []model.LatencyProbeTargetStat
@@ -255,26 +276,7 @@ func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, t
 		}
 	}
 	fromText := from.Format(time.RFC3339Nano)
-	rows, err := s.db.QueryContext(ctx, `
-		select
-			case when kind='public' then 'public' when task_id>0 then 'task_'||task_id else trim(province)||' · '||trim(carrier) end as target_key,
-			cast((unixepoch(checked_at)-unixepoch(?))/? as integer) as bucket_index,
-			max(kind), max(task_id),
-			max(case when kind='public' then '公网探测' when trim(task_name)<>'' then task_name else trim(province)||' · '||trim(carrier) end),
-			max(mode), max(province), max(carrier),
-			sum(case when available=1 and success_count>0 and latency_ms>0 then latency_ms else 0 end),
-			count(case when available=1 and success_count>0 and latency_ms>0 then 1 end),
-			min(case when available=1 and latency_ms>0 then latency_ms end),
-			max(case when available=1 and latency_ms>0 then latency_ms end),
-			sum(sample_count), sum(success_count), count(*),
-			sum(case when available=1 then 1 else 0 end),
-			avg(case when available=1 and latency_ms>0 then latency_ms end), min(checked_at),
-            min(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end),
-            max(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end)
-		from server_latency_probe_results
-		where server_id=? and checked_at>=? and checked_at<? and kind in ('public','regional','custom')
-		group by target_key, bucket_index
-		order by target_key, bucket_index`, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano))
+	rows, err := s.db.QueryContext(ctx, latencyBucketsSQL, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano))
 	if err != nil {
 		return result, err
 	}
