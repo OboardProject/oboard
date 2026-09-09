@@ -269,3 +269,29 @@ func TestTimeCheckConfigErrorSurvivesTaskResultAndMCP(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedDeploymentPreservesTimeCheckResult(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	ctx := context.Background()
+	server := &model.Server{Name: "ssh-failed-time-ok", AgentID: "agent-time-ok", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	task := model.AgentTask{ServerID: server.ID, Type: model.AgentTaskTypeApplyDeployment}
+	for _, raw := range []string{
+		`{"message":"部署失败","steps":[{"key":"time_check","status":"succeeded","result":{"status":"ok","raw_offset_ms":6,"effective_offset_ms":6,"source":"ntp:test","correction_mode":"off"}},{"key":"ssh_inbounds","status":"failed","error":"cannot connect to SSH listener"}]}`,
+		`{"message":"部署失败","steps":[{"key":"config","status":"failed","error":"invalid config"}]}`,
+	} {
+		if err := srv.applyTimeCheckTaskResult(ctx, task, "failed", raw); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := db.GetServer(ctx, server.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.TimeCheckStatus != "ok" || stored.TimeCheckError != "" || stored.TimeOffsetMS != 6 || stored.TimeEffectiveOffsetMS != 6 || stored.TimeCheckSource != "ntp:test" {
+			t.Fatalf("deployment failure overwrote time result: status=%s error=%q offsets=%d/%d source=%q", stored.TimeCheckStatus, stored.TimeCheckError, stored.TimeOffsetMS, stored.TimeEffectiveOffsetMS, stored.TimeCheckSource)
+		}
+	}
+}

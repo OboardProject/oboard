@@ -73,7 +73,7 @@ func (s *Server) applyTimeCheckTaskResult(ctx context.Context, task model.AgentT
 		return err
 	}
 	configError := found && taskStatus == "failed" && result.Status == model.TimeCheckStatusConfigError
-	if !found || (taskStatus != "succeeded" && !configError) {
+	if !found || (task.Type == model.AgentTaskTypeCheckTime && taskStatus != "succeeded" && !configError) {
 		result = model.TimeCheckResult{
 			Status:         "unavailable",
 			CorrectionMode: server.TimeCorrectionMode,
