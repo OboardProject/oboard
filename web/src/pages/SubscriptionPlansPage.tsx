@@ -267,6 +267,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [detailLoading, setDetailLoading] = React.useState(false)
   const [detailOpen, setDetailOpen] = React.useState(false)
   const [detailError, setDetailError] = React.useState('')
+  const [retryingChangeID, setRetryingChangeID] = React.useState<number | null>(null)
   const [orderingOpen, setOrderingOpen] = React.useState(false)
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -839,12 +840,20 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   }
 
   const retryChange = async (id: number) => {
+    if (retryingChangeID !== null) return
+    setRetryingChangeID(id)
+    setMessage('')
     try {
       await client.request(`/access-changes/${id}/retry`, { method: 'POST', body: '{}' })
-      await loadChanges()
       notify?.(`变更 #${id} 已重试`, 'success')
     } catch (e: any) {
-      setMessage('重试失败：' + (e?.message || String(e)))
+      const error = e?.message || String(e)
+      setMessage(error.includes('only failed access changes can be retried')
+        ? '变更状态已更新，当前不能重试。已刷新详情，请查看最新同步状态。'
+        : '重试失败：' + error)
+    } finally {
+      await Promise.all([loadChanges(), loadDetail(selectedID), refreshPlans()])
+      setRetryingChangeID(null)
     }
   }
 
@@ -1062,7 +1071,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                     <span>最新版本: <span style={{ fontFamily: 'var(--font-mono)' }}>{formatPlanVersion(latestVersionCreatedAt)}</span></span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
+                <div className="plan-detail-actions" style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
                   {embedded && <Button size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
                   <Button variant="outline" size="sm" busy={userLoadBusy} onClick={() => void openUserAssignment()}><Users size={14} /> 分配用户</Button>
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
@@ -1075,13 +1084,13 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
               <div className="animate-page-in" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {failedPendingChange ? (
-                  <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--color-danger)', borderRadius: 6 }}>
+                  <div className="plan-detail-failure" role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--color-danger)', borderRadius: 6 }}>
                     <div>
                       <strong style={{ color: 'var(--color-danger)' }}>上一次节点变更应用失败</strong>
                       <p style={{ margin: '2px 0 0', fontSize: 12 }}>{failedPendingChange.error || `变更 #${failedPendingChange.id} 未能完成`}。你可以重试原变更，也可以直接修改并保存；新保存会自动取代这次失败，不会被它阻塞。</p>
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      <Button variant="outline" size="sm" onClick={() => void retryChange(failedPendingChange.id)}>重试原变更</Button>
+                      <Button variant="outline" size="sm" busy={retryingChangeID === failedPendingChange.id} disabled={retryingChangeID !== null} onClick={() => void retryChange(failedPendingChange.id)}>重试原变更</Button>
                       <Button variant="outline" size="sm" onClick={() => void cancelChange(failedPendingChange.id)}>放弃失败变更</Button>
                     </div>
                   </div>
@@ -1593,7 +1602,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                         ))}
                       </div>
                     )}
-                    {(c.status === 'failed') && <Button variant="outline" size="sm" style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
+                    {(c.status === 'failed') && <Button variant="outline" size="sm" busy={retryingChangeID === c.id} disabled={retryingChangeID !== null} style={{ marginTop: 8 }} onClick={() => void retryChange(c.id)}>重试</Button>}
                     {(c.status === 'failed' && !c.activated_at && c.candidate_revision_id && (c.change_type === 'plan_publish' || c.change_type === 'plan_restore')) && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>放弃</Button>}
                     {(c.status === 'preparing' || c.status === 'activating') && <Button variant="ghost" size="sm" style={{ marginTop: 8 }} onClick={() => void cancelChange(c.id)}>取消</Button>}
                   </div>

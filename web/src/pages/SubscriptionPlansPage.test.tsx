@@ -254,6 +254,34 @@ describe('SubscriptionPlansPage', () => {
     expect(request.mock.calls.filter(([path]) => path === '/subscription-plans/1')).toHaveLength(detailReads)
   })
 
+  it('refreshes a stale failed change after a retry conflict', async () => {
+    const pendingPlan = { ...plan, latest_revision_id: 2, pending_revision_id: 2 }
+    let status = 'failed'
+    const request = vi.fn(async (path: string) => {
+      if (path === '/subscription-plans') return { subscription_plans: [pendingPlan] }
+      if (path === '/subscription-plans/1') return { subscription_plan: pendingPlan, latest_nodes: [], revisions: [], member_count: 0 }
+      if (path === '/access-changes?limit=50') return { access_changes: [{ id: 17, source_plan_id: 1, candidate_revision_id: 2, status, change_type: 'plan_publish', targets: [] }] }
+      if (path === '/subscription-plans/1/ordering') return { nodes: [], policy: { mode: 'exit_region' } }
+      if (path === '/subscription-plans/1/membership-rules') return { rules: [], exclusions: [] }
+      if (path.startsWith('/assignable-nodes?')) return { nodes: [], total: 0, page: 1, page_size: 200 }
+      if (path === '/access-changes/17/retry') {
+        status = 'preparing'
+        throw new Error('only failed access changes can be retried')
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    await act(async () => root.render(<SubscriptionPlansPage embedded selectedPlanID={1} data={{ subscription_plans: [pendingPlan] }} client={{ request }} load={vi.fn()} />))
+    await flushEffects()
+    const retry = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('重试原变更'))
+    expect(retry).toBeTruthy()
+    await act(async () => retry?.click())
+    await flushEffects()
+    expect(container.textContent).toContain('变更状态已更新')
+    expect(container.textContent).not.toContain('重试原变更')
+    expect(container.textContent).not.toContain('only failed access changes')
+    expect(container.textContent).toContain('正在同步到服务器')
+  })
+
   it('shows a failed node change without blocking further edits', async () => {
     const blockedPlan = { ...plan, lock_version: 2, latest_revision_id: 2, pending_revision_id: 2, node_count: 1 }
     const request = vi.fn(async (path: string) => {
