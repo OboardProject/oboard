@@ -9285,6 +9285,7 @@ body:has(.dialog-layer) .main {
 .controller-update-install-lead p,
 .controller-update-install-state p,
 .controller-update-install-result p {
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
@@ -9302,7 +9303,9 @@ body:has(.dialog-layer) .main {
 }
 
 .controller-update-transfer-detail p,
-.controller-update-transfer-detail > span {
+.controller-update-transfer-detail > span,
+.controller-update-transfer-summary {
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -9527,7 +9530,6 @@ body:has(.dialog-layer) .main {
     padding: 8px 12px 10px;
     overflow: hidden !important;
   }
-  .dialog.controller-update-install-dialog .controller-update-install-state p,
   .dialog.controller-update-install-dialog .controller-update-install-notice.compact,
   .dialog.controller-update-install-dialog .controller-update-install-advice {
     display: none;

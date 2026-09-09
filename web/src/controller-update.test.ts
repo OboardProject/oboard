@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -146,3 +147,23 @@ it('uses real download progress and allows a restarted transfer to reset', () =>
   expect(controllerUpdateFlowPercent('downloading', 0, -1)).toBe(10)
   expect(controllerUpdateFlowPercent('downloading', 0, 200)).toBe(30)
 })
+
+describe('controller update transfer detail layout', () => {
+  const mainSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+  const styleSource = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
+
+  it('renders transfer summary without paragraph margins inside fixed grid tracks', () => {
+    expect(mainSource).toContain('className="controller-update-transfer-summary"')
+    expect(mainSource).not.toContain('<div className="controller-update-transfer-detail"><p>')
+  })
+
+  it('resets margin and specifies 20px line height to prevent text clipping', () => {
+    expect(styleSource).toMatch(/\.controller-update-transfer-summary[\s\S]*?margin:\s*0;/)
+    expect(styleSource).toMatch(/\.controller-update-transfer-detail[\s\S]*?grid-template-rows:\s*20px 20px;/)
+  })
+
+  it('does not hide update transfer state on mobile viewports', () => {
+    expect(styleSource).not.toContain('.dialog.controller-update-install-dialog .controller-update-install-state p')
+  })
+})
+
