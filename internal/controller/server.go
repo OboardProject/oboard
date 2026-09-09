@@ -4474,6 +4474,7 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
+	var planIDs []int64
 	for _, inbound := range inbounds {
 		if inbound.ServerID != id {
 			continue
@@ -4482,9 +4483,14 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
-		if len(refs.Pending) > 0 {
-			return http.StatusConflict, store.ErrPlanVersionApplying
-		}
+		planIDs = append(planIDs, planIDsFromReferences(refs)...)
+	}
+	applying, err := s.store.PlansApplyingLiveChange(ctx, planIDs)
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if len(applying) > 0 {
+		return http.StatusConflict, fmt.Errorf("%w: %s", store.ErrPlanVersionApplying, strings.Join(applying, ", "))
 	}
 	for _, inbound := range inbounds {
 		if inbound.ServerID == id {

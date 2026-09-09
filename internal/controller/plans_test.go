@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -341,6 +342,45 @@ func TestPlanNodeSavesCoalesceBeforePreparingConfiguration(t *testing.T) {
 		t.Fatalf("reversal overtook in-flight authorization: %#v", reversed)
 	}
 
+}
+
+// A plan publish that keeps failing on a broken server must not make that
+// server undeletable: the delete supersedes the stuck version instead of
+// reporting "plan version is still applying" forever.
+func TestDeleteServerSupersedesFailedPlanVersion(t *testing.T) {
+	h, srv, token := setupPlansAPITestServer(t)
+	server := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "broken", "entry_ip_mode": "custom", "entry_address": "203.0.113.9", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(server["id"].(float64))
+	first := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	second := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": serverID, "name": "vless2", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 8443, "config_json": `{}`, "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{
+		"name": "premium", "enabled": true,
+		"nodes": []map[string]any{{"node_type": "inbound", "node_id": first["id"]}},
+	}, http.StatusCreated)
+	planID := int64(created["subscription_plan"].(map[string]any)["id"].(float64))
+
+	saved := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(planID)+"/nodes/apply", token, map[string]any{
+		"op": "add", "nodes": []map[string]any{{"node_type": "inbound", "node_id": second["id"]}},
+	}, http.StatusOK)
+	changeID := reconcileSavedPlanChange(t, srv, saved)
+	if err := srv.store.UpdateAccessChangeStatus(t.Context(), changeID, []model.AccessChangeStatus{model.AccessChangePreparing, model.AccessChangeActivating, model.AccessChangeFinalizing}, model.AccessChangeFailed, "server unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	stuck, err := srv.store.GetSubscriptionPlan(t.Context(), planID)
+	if err != nil || stuck.PendingRevisionID == 0 {
+		t.Fatalf("plan is not pinned by the failed version: %#v, %v", stuck, err)
+	}
+
+	request(t, h, http.MethodDelete, "/api/v1/ui/servers/"+itoa(serverID), token, nil, http.StatusOK)
+
+	after, err := srv.store.GetSubscriptionPlan(t.Context(), planID)
+	if err != nil || after.PendingRevisionID != 0 {
+		t.Fatalf("plan still pinned after the server was deleted: %#v, %v", after, err)
+	}
+	nodes, err := srv.store.ListActivePlanNodes(t.Context(), planID)
+	if err != nil || len(nodes) != 0 {
+		t.Fatalf("deleted inbounds survive in the plan: %#v, %v", nodes, err)
+	}
 }
 
 func reconcileSavedPlanChange(t *testing.T, srv *Server, saved map[string]any) int64 {

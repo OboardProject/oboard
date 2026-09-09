@@ -585,6 +585,13 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 		if err != nil {
 			return 0, err
 		}
+		if phase == "prepare" {
+			lease, err := s.currentAuthorizationLease(ctx, server.ID)
+			if err != nil {
+				return 0, err
+			}
+			prepareSSHAuthorization(&sshPlan, lease, time.Now())
+		}
 		sshUnchanged, err := s.sshConfigUnchanged(ctx, server.ID, sshPlan)
 		if err != nil {
 			return 0, err
@@ -616,6 +623,23 @@ func (s *Server) queueAccessChangePhase(ctx context.Context, change *model.Acces
 		}
 	}
 	return len(prepared), nil
+}
+
+// Candidate credentials are installed during prepare, but cannot authenticate
+// until activation grants access and finalize installs their active state.
+func prepareSSHAuthorization(plan *model.SSHInboundPlan, lease *model.AuthorizationLease, now time.Time) {
+	for i := range plan.Inbounds {
+		for j := range plan.Inbounds[i].Users {
+			user := &plan.Inbounds[i].Users[j]
+			if !user.Enabled || user.CredentialStatus != "active" {
+				continue
+			}
+			deadline, err := time.Parse(time.RFC3339Nano, lease.Grants[user.AuthorizationKey])
+			if err != nil || !deadline.After(now) {
+				user.CredentialStatus = "reject_new"
+			}
+		}
+	}
 }
 
 // accessChangePhaseDone reports whether every target of one phase finished
@@ -1460,36 +1484,32 @@ func nodeKeyUsersDiffer(a, b *core.EffectiveAccessSnapshot, key string) bool {
 // in-flight subscription change. Live references are removed as part of the
 // deletion transaction (or by the caller immediately before deleting a
 // non-path resource), so a published plan no longer blocks topology cleanup.
+// Only a change that is really being applied blocks: a pending pointer left by
+// a publish that failed before activation is superseded by the removal, so a
+// broken node can never make itself undeletable.
 func (s *Server) guardAssignableNodeDelete(ctx context.Context, nodeType model.AssignableNodeType, nodeID int64) (store.PlanNodeReferences, error) {
 	refs, err := s.store.PlanNodeReferences(ctx, nodeType, nodeID)
 	if err != nil {
 		return refs, err
 	}
-	if len(refs.Pending) > 0 {
-		names := make([]string, 0, len(refs.Pending))
-		seen := map[string]bool{}
-		for _, ref := range refs.Pending {
-			if seen[ref.Name] {
-				continue
-			}
-			names = append(names, ref.Name)
-			seen[ref.Name] = true
-		}
+	names, err := s.store.PlansApplyingLiveChange(ctx, planIDsFromReferences(refs))
+	if err != nil {
+		return refs, err
+	}
+	if len(names) > 0 {
 		return refs, fmt.Errorf("subscription plan(s) are still applying a change: %s; retry after it finishes", strings.Join(names, ", "))
 	}
-	seenPlans := map[int64]bool{}
-	for _, ref := range append(append([]store.PlanNodeReference{}, refs.Active...), refs.Draft...) {
-		if seenPlans[ref.PlanID] {
-			continue
-		}
-		seenPlans[ref.PlanID] = true
-		plan, err := s.store.GetSubscriptionPlan(ctx, ref.PlanID)
-		if err != nil {
-			return refs, err
-		}
-		if plan.PendingRevisionID != 0 {
-			return refs, fmt.Errorf("subscription plan(s) are still applying a change: %s; retry after it finishes", plan.Name)
+	return refs, nil
+}
+
+// planIDsFromReferences collects every plan a node is still referenced by,
+// across the active, draft and pending pointers.
+func planIDsFromReferences(refs store.PlanNodeReferences) []int64 {
+	ids := make([]int64, 0, len(refs.Active)+len(refs.Draft)+len(refs.Pending))
+	for _, group := range [][]store.PlanNodeReference{refs.Active, refs.Draft, refs.Pending} {
+		for _, ref := range group {
+			ids = append(ids, ref.PlanID)
 		}
 	}
-	return refs, nil
+	return ids
 }

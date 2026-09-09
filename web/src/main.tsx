@@ -1393,6 +1393,19 @@ function ErrorMessageCopy({ message, className }: { message: string; className?:
   </div>
 }
 
+// 删除节点或服务器时，只有真正在应用中的订阅套餐变更会拦截操作。把套餐名一起显示出来，
+// 管理员才知道要等哪一个变更，或者去订阅套餐里取消它。
+function localizePlanChangeApplying(raw: string) {
+  const markers = ['subscription plan(s) are still applying a change:', 'plan version is still applying; retry after it settles']
+  for (const marker of markers) {
+    if (!raw.startsWith(marker)) continue
+    const names = raw.slice(marker.length).replace(/^[:：\s]+/, '').replace(/[;；]\s*retry after it finishes\.?$/i, '').trim()
+    if (!names) return '相关订阅套餐正在应用变更，等它完成或在订阅套餐中取消后再删除'
+    return `订阅套餐「${names}」正在应用变更，等它完成或在订阅套餐中取消后再删除`
+  }
+  return ''
+}
+
 function localizeErrorMessage(message: unknown) {
   const raw = String(message || '').trim()
   if (!raw) return '操作失败，请稍后重试'
@@ -1411,8 +1424,8 @@ function localizeErrorMessage(message: unknown) {
   if (raw.startsWith('config_json.tls.reality.handshake.server:')) return '缺少 Reality 握手目标。'
   if (raw.startsWith('config_json.tls.reality.handshake.server_port:') || raw.startsWith('reality.handshake_port:')) return 'Reality 握手端口必须在 1 到 65535 之间。'
   if (raw.startsWith('config_json.tls.reality.short_id:') || raw.startsWith('reality.short_id:')) return 'Reality Short ID 必须是 2 到 16 位偶数长度的十六进制字符串。'
-  if (raw.startsWith('subscription plan(s) are still applying a change:')) return '相关订阅套餐正在应用变更，完成后再删除'
-  if (raw.startsWith('plan version is still applying; retry after it settles:')) return '相关订阅套餐正在应用变更，完成后再删除'
+  const planApplying = localizePlanChangeApplying(raw)
+  if (planApplying) return planApplying
   if (/timed out or was not allowed/i.test(raw) || /sctn-privacy-considerations/i.test(raw)) return '未完成通行密钥验证'
   return errorMessages[raw] || errorMessages[raw.toLowerCase()] || raw
 }

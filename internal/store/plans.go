@@ -2740,7 +2740,7 @@ func removeAssignableNodeFromPlansTx(ctx context.Context, tx *sql.Tx, nodeType m
 	if len(ids) == 0 {
 		return PlanNodeReferences{}, nil
 	}
-	refsByPlan := map[int64]PlanNodeReference{}
+	planSet := map[int64]struct{}{}
 	refs := PlanNodeReferences{}
 	for id := range ids {
 		one, err := planNodeReferencesForQuery(ctx, tx, nodeType, id)
@@ -2750,50 +2750,63 @@ func removeAssignableNodeFromPlansTx(ctx context.Context, tx *sql.Tx, nodeType m
 		refs.Active = append(refs.Active, one.Active...)
 		refs.Draft = append(refs.Draft, one.Draft...)
 		refs.Pending = append(refs.Pending, one.Pending...)
-	}
-	for _, ref := range refs.Active {
-		refsByPlan[ref.PlanID] = ref
-	}
-	for _, ref := range refs.Draft {
-		if _, exists := refsByPlan[ref.PlanID]; !exists {
-			refsByPlan[ref.PlanID] = ref
-		}
-	}
-	for _, ref := range refs.Pending {
-		if _, exists := refsByPlan[ref.PlanID]; !exists {
-			refsByPlan[ref.PlanID] = ref
-		}
-	}
-	if len(refs.Pending) > 0 {
-		names := make([]string, 0, len(refs.Pending))
-		seen := map[string]bool{}
-		for _, ref := range refs.Pending {
-			if !seen[ref.Name] {
-				names = append(names, ref.Name)
-				seen[ref.Name] = true
+		for _, group := range [][]PlanNodeReference{one.Active, one.Draft, one.Pending} {
+			for _, ref := range group {
+				planSet[ref.PlanID] = struct{}{}
 			}
 		}
-		return refs, fmt.Errorf("%w: subscription plan(s) still have a pending version: %s", ErrPlanVersionApplying, strings.Join(names, ", "))
 	}
-
-	planIDs := make([]int64, 0, len(refsByPlan))
-	for planID := range refsByPlan {
-		planIDs = append(planIDs, planID)
-	}
-	sort.Slice(planIDs, func(i, j int) bool { return planIDs[i] < planIDs[j] })
 	idsList := make([]int64, 0, len(ids))
 	for id := range ids {
 		idsList = append(idsList, id)
 	}
+	sort.Slice(idsList, func(i, j int) bool { return idsList[i] < idsList[j] })
+	// A saved-but-unpublished version is not reported by any live pointer, yet
+	// the reconciler will publish it later. Prune it here too so a deleted node
+	// can never come back as the plan's next active version.
+	latestPlanIDs, err := queryInt64sTx(ctx, tx, `select distinct p.id from subscription_plan_revision_nodes pn join subscription_plans p on p.latest_revision_id=pn.revision_id where pn.node_type=? and pn.node_id in (`+int64Placeholders(len(idsList))+`)`, append([]any{string(nodeType)}, int64Args(idsList)...)...)
+	if err != nil {
+		return refs, err
+	}
+	for _, planID := range latestPlanIDs {
+		planSet[planID] = struct{}{}
+	}
+
+	planIDs := make([]int64, 0, len(planSet))
+	for planID := range planSet {
+		planIDs = append(planIDs, planID)
+	}
+	sort.Slice(planIDs, func(i, j int) bool { return planIDs[i] < planIDs[j] })
+
+	type planPointers struct {
+		name                         string
+		currentID, latestID, draftID int64
+	}
+	pointers := make(map[int64]planPointers, len(planIDs))
+	blocked := make([]string, 0, len(planIDs))
+	releaseTS := now()
 	for _, planID := range planIDs {
-		var currentID, pendingID, draftID int64
-		var planName string
-		if err := tx.QueryRowContext(ctx, `select p.name,coalesce(p.current_revision_id,0),coalesce(p.pending_revision_id,0),coalesce(p.draft_revision_id,0) from subscription_plans p where p.id=?`, planID).Scan(&planName, &currentID, &pendingID, &draftID); err != nil {
+		var p planPointers
+		var pendingID int64
+		if err := tx.QueryRowContext(ctx, `select p.name,coalesce(p.current_revision_id,0),coalesce(p.latest_revision_id,0),coalesce(p.pending_revision_id,0),coalesce(p.draft_revision_id,0) from subscription_plans p where p.id=?`, planID).Scan(&p.name, &p.currentID, &p.latestID, &pendingID, &p.draftID); err != nil {
 			return refs, err
 		}
-		if pendingID != 0 {
-			return refs, fmt.Errorf("%w: subscription plan %q is still applying", ErrPlanVersionApplying, planName)
+		released, err := releaseStalePlanPendingTx(ctx, tx, planID, pendingID, releaseTS)
+		if err != nil {
+			return refs, err
 		}
+		if !released {
+			blocked = append(blocked, p.name)
+			continue
+		}
+		pointers[planID] = p
+	}
+	if len(blocked) > 0 {
+		return refs, planVersionApplyingError(blocked)
+	}
+
+	for _, planID := range planIDs {
+		currentID, latestID, draftID := pointers[planID].currentID, pointers[planID].latestID, pointers[planID].draftID
 		currentChanged := false
 		if currentID != 0 {
 			revision, nodes, err := loadPlanRevisionSnapshotTx(ctx, tx, planID, currentID)
@@ -2844,32 +2857,136 @@ func removeAssignableNodeFromPlansTx(ctx context.Context, tx *sql.Tx, nodeType m
 				if err := insertPlanRevisionNodesTx(ctx, tx, newID, candidate, ts); err != nil {
 					return refs, err
 				}
-				if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,latest_revision_id=?,active_revision_id=?,lock_version=lock_version+1,revision=revision+1,updated_at=? where id=?`, newID, newID, newID, ts, planID); err != nil {
+				// A version the operator saved but that never activated stays the
+				// desired state: it is pruned in place below instead of being
+				// discarded by this cleanup version.
+				newLatest := newID
+				if latestID != 0 && latestID != currentID {
+					newLatest = latestID
+				}
+				if _, err := tx.ExecContext(ctx, `update subscription_plans set current_revision_id=?,latest_revision_id=?,active_revision_id=?,lock_version=lock_version+1,revision=revision+1,updated_at=? where id=?`, newID, newLatest, newID, ts, planID); err != nil {
 					return refs, err
 				}
 				currentChanged = true
 			}
 		}
-		if draftID != 0 {
-			result, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_nodes where revision_id=? and node_type=? and node_id in (`+int64Placeholders(len(idsList))+`)`, append([]any{draftID, nodeType}, int64Args(idsList)...)...)
+		pruned := false
+		for _, revisionID := range []int64{draftID, latestID} {
+			if revisionID == 0 || revisionID == currentID {
+				continue
+			}
+			removed, err := prunePlanRevisionNodesTx(ctx, tx, revisionID, nodeType, idsList)
 			if err != nil {
 				return refs, err
 			}
-			if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_node_exclusions where revision_id=? and node_type=? and node_id in (`+int64Placeholders(len(idsList))+`)`, append([]any{draftID, nodeType}, int64Args(idsList)...)...); err != nil {
-				return refs, err
+			if removed > 0 {
+				pruned = true
 			}
-			removed, err := result.RowsAffected()
-			if err != nil {
+		}
+		if pruned && !currentChanged {
+			if _, err := tx.ExecContext(ctx, `update subscription_plans set lock_version=lock_version+1,revision=revision+1,updated_at=? where id=?`, now(), planID); err != nil {
 				return refs, err
-			}
-			if removed > 0 && !currentChanged {
-				if _, err := tx.ExecContext(ctx, `update subscription_plans set lock_version=lock_version+1,revision=revision+1,updated_at=? where id=?`, now(), planID); err != nil {
-					return refs, err
-				}
 			}
 		}
 	}
 	return refs, nil
+}
+
+// prunePlanRevisionNodesTx drops a deleted node from one revision in place. It
+// is used for revisions no subscription has ever served (drafts and saved but
+// never activated versions), so history stays immutable while the plan's next
+// version can no longer resurrect the node.
+func prunePlanRevisionNodesTx(ctx context.Context, tx *sql.Tx, revisionID int64, nodeType model.AssignableNodeType, nodeIDs []int64) (int64, error) {
+	if revisionID == 0 || len(nodeIDs) == 0 {
+		return 0, nil
+	}
+	args := append([]any{revisionID, string(nodeType)}, int64Args(nodeIDs)...)
+	result, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_nodes where revision_id=? and node_type=? and node_id in (`+int64Placeholders(len(nodeIDs))+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from subscription_plan_revision_node_exclusions where revision_id=? and node_type=? and node_id in (`+int64Placeholders(len(nodeIDs))+`)`, args...); err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// releaseStalePlanPendingTx frees a pending pointer that no live access change
+// owns. A plan publish or restore that failed before activation is cancelled
+// exactly the way the next plan save supersedes it, so a deployment that keeps
+// failing on a broken server cannot pin the plan as "applying" forever and lock
+// the operator out of deleting that server. It reports false only while a
+// change is genuinely being applied, which the caller must not race.
+func releaseStalePlanPendingTx(ctx context.Context, tx *sql.Tx, planID, pendingID int64, ts string) (bool, error) {
+	if pendingID == 0 {
+		return true, nil
+	}
+	var applying bool
+	if err := tx.QueryRowContext(ctx, `select exists(select 1 from access_changes where source_plan_id=? and status in ('preparing','activating','finalizing'))`, planID).Scan(&applying); err != nil {
+		return false, err
+	}
+	if applying {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `update access_changes set status='cancelled',updated_at=? where source_plan_id=? and candidate_revision_id=? and status='failed' and activated_at is null and change_type in ('plan_publish','plan_restore')`, ts, planID, pendingID); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `update subscription_plans set pending_revision_id=null where id=? and coalesce(pending_revision_id,0)=?`, planID, pendingID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// planVersionApplyingError names the plans a caller must wait for so the panel
+// can tell the operator which subscription change to finish or cancel.
+func planVersionApplyingError(names []string) error {
+	unique := make([]string, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		unique = append(unique, name)
+	}
+	if len(unique) == 0 {
+		return ErrPlanVersionApplying
+	}
+	return fmt.Errorf("%w: %s", ErrPlanVersionApplying, strings.Join(unique, ", "))
+}
+
+// PlansApplyingLiveChange returns the names of the given plans whose access
+// change is being applied right now. A pending pointer left behind by a failed,
+// never-activated change is not reported: node removal supersedes it instead of
+// blocking on it.
+func (s *Store) PlansApplyingLiveChange(ctx context.Context, planIDs []int64) ([]string, error) {
+	unique := make([]int64, 0, len(planIDs))
+	seen := map[int64]bool{}
+	for _, planID := range planIDs {
+		if planID <= 0 || seen[planID] {
+			continue
+		}
+		seen[planID] = true
+		unique = append(unique, planID)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+	rows, err := s.db.QueryContext(ctx, `select distinct p.name from subscription_plans p join access_changes c on c.source_plan_id=p.id where p.id in (`+int64Placeholders(len(unique))+`) and c.status in ('preparing','activating','finalizing') order by p.name`, int64Args(unique)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 func valueOrZero(v *int64) int64 {

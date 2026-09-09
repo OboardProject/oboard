@@ -422,7 +422,7 @@ func TestRemoveAssignableNodeFromPlansCreatesImmutableCleanupVersion(t *testing.
 	}
 }
 
-func TestRemoveAssignableNodeFromPlansRejectsPendingPlanWithoutMutation(t *testing.T) {
+func TestRemoveAssignableNodeFromPlansRejectsApplyingPlanWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	s := openPlansTestStore(t)
 	plan := &model.SubscriptionPlan{Name: "pending-cleanup", Enabled: true}
@@ -437,19 +437,102 @@ func TestRemoveAssignableNodeFromPlansRejectsPendingPlanWithoutMutation(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	change := &model.AccessChange{
+		ChangeType: model.AccessChangePlanPublish, SourcePlanID: plan.ID, CandidateRevisionID: created.Revision.ID,
+		ExpectedActiveRevisionID: plan.CurrentRevisionID, Status: model.AccessChangePreparing,
+		PayloadJSON: `{}`, PrepareProjectionJSON: `{}`, FinalizeProjectionJSON: `{}`,
+	}
+	if _, err := s.CreateAccessChange(ctx, change, nil); err != nil {
+		t.Fatal(err)
+	}
 	before, err := s.GetSubscriptionPlan(ctx, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeProxyPath, 51); !errors.Is(err, ErrPlanVersionApplying) {
-		t.Fatalf("pending cleanup err = %v, want ErrPlanVersionApplying", err)
+	err = func() error {
+		_, err := s.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeProxyPath, 51)
+		return err
+	}()
+	if !errors.Is(err, ErrPlanVersionApplying) {
+		t.Fatalf("applying cleanup err = %v, want ErrPlanVersionApplying", err)
+	}
+	if !strings.Contains(err.Error(), plan.Name) {
+		t.Fatalf("applying cleanup err = %q, want the plan name so the panel can name the change", err)
 	}
 	after, err := s.GetSubscriptionPlan(ctx, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if after.CurrentRevisionID != before.CurrentRevisionID || after.PendingRevisionID != created.Revision.ID {
-		t.Fatalf("pending plan mutated after rejected cleanup: before=%#v after=%#v", before, after)
+		t.Fatalf("applying plan mutated after rejected cleanup: before=%#v after=%#v", before, after)
+	}
+	if open, err := s.GetAccessChange(ctx, change.ID); err != nil || open.Status != model.AccessChangePreparing {
+		t.Fatalf("live access change = %#v, err=%v", open, err)
+	}
+}
+
+// A publish that keeps failing on the very server the operator wants to delete
+// must not pin the plan as "applying" forever; the cleanup supersedes it.
+func TestRemoveAssignableNodeFromPlansSupersedesFailedPendingVersion(t *testing.T) {
+	ctx := context.Background()
+	s := openPlansTestStore(t)
+	plan := &model.SubscriptionPlan{Name: "failed-pending-cleanup", Enabled: true}
+	if err := s.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 61}}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.CreatePlanVersion(ctx, plan.ID, PlanVersionMutation{
+		ExpectedLockVersion: plan.LockVersion,
+		Nodes:               &PlanNodesMutation{Op: "add", Nodes: []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeProxyPath, NodeID: 62}}},
+		ChangeKind:          model.PlanChangeKindNodes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := &model.AccessChange{
+		ChangeType: model.AccessChangePlanPublish, SourcePlanID: plan.ID, CandidateRevisionID: created.Revision.ID,
+		ExpectedActiveRevisionID: plan.CurrentRevisionID, Status: model.AccessChangePreparing,
+		PayloadJSON: `{}`, PrepareProjectionJSON: `{}`, FinalizeProjectionJSON: `{}`,
+	}
+	if _, err := s.CreateAccessChange(ctx, change, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccessChangeStatus(ctx, change.ID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, "server unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RemoveAssignableNodeFromPlans(ctx, model.AssignableNodeProxyPath, 61); err != nil {
+		t.Fatalf("cleanup blocked by a failed version: %v", err)
+	}
+	after, err := s.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PendingRevisionID != 0 {
+		t.Fatalf("failed pending version was not superseded: %#v", after)
+	}
+	if after.LatestRevisionID != created.Revision.ID {
+		t.Fatalf("unpublished desired state was discarded: %#v", after)
+	}
+	if superseded, err := s.GetAccessChange(ctx, change.ID); err != nil || superseded.Status != model.AccessChangeCancelled {
+		t.Fatalf("superseded access change = %#v, err=%v", superseded, err)
+	}
+	active, err := s.ListActivePlanNodes(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active cleanup nodes = %#v", active)
+	}
+	latest, err := s.ListPlanRevisionNodes(ctx, created.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range latest {
+		if node.NodeID == 61 {
+			t.Fatalf("deleted node survives in the unpublished version: %#v", latest)
+		}
+	}
+	if len(latest) != 1 || latest[0].NodeID != 62 {
+		t.Fatalf("unpublished version nodes = %#v", latest)
 	}
 }
 
