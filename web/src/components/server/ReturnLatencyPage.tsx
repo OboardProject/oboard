@@ -5,6 +5,7 @@ import { Select } from '../ui/select'
 import type { LatencyProbeAddress, LatencyProbeRegion, LatencyProbeTask, Server } from '../proxy-path/types'
 import { ReturnLatencySettings, type LatencyProbeTaskAssignmentChange } from './ReturnLatencySettings'
 import { ReturnLatencyTaskForm, targetLabel } from './ReturnLatencyTaskForm'
+import { RegionFlag, serverRegionCode } from '../ui/RegionFlag'
 import { useRegisterPageRefresh } from '../../page-refresh-context'
 
 type Client = { request: (path: string, init?: RequestInit) => Promise<any> }
@@ -249,10 +250,15 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
             <p>没有匹配的服务器</p>
             <button type="button" className="ghost" onClick={() => { setQuery(''); setFilter('all') }}>清除筛选</button>
           </div> : <div className="network-probe-table-scroll" tabIndex={0} role="region" aria-label="节点状态列表"><table className="network-probe-table">
-            <thead><tr><th scope="col">节点 / 地址</th><th scope="col">连接状态</th><th scope="col">公网探测</th><th scope="col">任务</th><th scope="col">自动探测</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
+            <thead><tr><th scope="col">节点</th><th scope="col">连接状态</th><th scope="col">公网探测</th><th scope="col">任务</th><th scope="col">自动探测</th><th scope="col" className="network-probe-actions-heading">操作</th></tr></thead>
             <tbody>{visibleServers.map(server => <tr className="return-latency-server" key={server.id}>
-              <td><strong>{server.name}</strong><small className="muted">{server.public_ipv4 || server.public_ipv6 || `#${server.id}`}</small></td>
-              <td><span className={`probe-task-badge${online(server) ? ' is-on' : ''}`}>{online(server) ? '在线' : server.agent_id ? '离线' : '未接入'}</span></td>
+              <td>
+                <div className="return-latency-server-cell" title={server.public_ipv4 || server.public_ipv6 || undefined}>
+                  <RegionFlag code={serverRegionCode(server)} size={18} />
+                  <strong>{server.name}</strong>
+                </div>
+              </td>
+              <td><span className={`probe-server-status ${online(server) ? 'online' : server.agent_id ? 'offline' : 'unregistered'}`}>{online(server) ? '在线' : server.agent_id ? '离线' : '未接入'}</span></td>
               <td>{!online(server) ? '—' : !server.latency_probe_enabled ? '未启用' : server.connectivity_status === 'available' ? `${server.connectivity_latency_ms ?? 0} ms` : server.connectivity_status === 'unavailable' ? '不可达' : '等待结果'}</td>
               <td>{taskCountByServer.get(server.id) || 0} 个</td>
               <td>{server.latency_probe_enabled ? '已启用' : '已关闭'}</td>
