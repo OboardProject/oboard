@@ -762,10 +762,15 @@ func TestReplaceBinaryProgramSkipsUninstalledScriptWorker(t *testing.T) {
 		HealthClient:       server.Client(),
 		HealthTimeout:      time.Second,
 		HealthPollInterval: 10 * time.Millisecond,
-		RunCommand:         func(context.Context, string, ...string) error { return nil },
+		RunCommand: func(ctx context.Context, _ string, _ ...string) error {
+			return waitForContext(ctx, 10*time.Millisecond)
+		},
 	})
 	if err := service.replaceBinaryProgram(context.Background(), stage); err != nil {
 		t.Fatal(err)
+	}
+	if service.status.RestartDurationMS < 10 {
+		t.Fatalf("restart timing was not measured: %+v", service.status)
 	}
 	if _, err := os.Stat(filepath.Join(install, "oboard-script-worker")); !os.IsNotExist(err) {
 		t.Fatalf("self-update installed optional script worker: %v", err)

@@ -22,25 +22,25 @@ import (
 )
 
 const (
-	controllerAutoUpdateSetting          = "controller_auto_update_enabled"
-	controllerAutoUpdateIntervalSetting  = "controller_auto_update_interval_hours"
-	agentAutoUpdateSetting               = "agent_auto_update_enabled"
-	subscriptionRelayAutoUpdateSetting   = "subscription_relay_auto_update_enabled"
-	updateWindowEnabledSetting           = "update_window_enabled"
-	updateWindowStartHourSetting         = "update_window_start_hour"
-	updateWindowEndHourSetting           = "update_window_end_hour"
-	controllerBackupSetting              = "controller_update_backup_path"
-	controllerBackupTargetBuildSetting   = "controller_update_backup_target_build"
-	controllerUpdateErrorSetting         = "controller_update_controller_error"
-	controllerUpdateMaintenanceSetting   = "controller_update_maintenance"
-	controllerUpdateForceFinishPhrase    = "强制结束更新任务"
-	controllerUpdateForceFinishedReason  = "管理员强制结束更新任务"
-	controllerUpdateSchedulerPeriod      = time.Minute
-	controllerUpdatePanelIdlePeriod      = 5 * time.Minute
-	controllerUpdateInstallTimeout       = 20 * time.Minute
-	controllerUpdateDefaultIntervalHours = 24
-	updateWindowDefaultStartHour         = 3
-	updateWindowDefaultEndHour           = 7
+	controllerAutoUpdateSetting            = "controller_auto_update_enabled"
+	controllerAutoUpdateIntervalSetting    = "controller_auto_update_interval_hours"
+	agentAutoUpdateSetting                 = "agent_auto_update_enabled"
+	subscriptionRelayAutoUpdateSetting     = "subscription_relay_auto_update_enabled"
+	updateWindowEnabledSetting             = "update_window_enabled"
+	updateWindowStartHourSetting           = "update_window_start_hour"
+	updateWindowEndHourSetting             = "update_window_end_hour"
+	controllerBackupSetting                = "controller_update_backup_path"
+	controllerBackupTargetBuildSetting     = "controller_update_backup_target_build"
+	controllerUpdateErrorSetting           = "controller_update_controller_error"
+	controllerUpdateMaintenanceSetting     = "controller_update_maintenance"
+	controllerUpdateForceFinishPhrase      = "强制结束更新任务"
+	controllerUpdateForceFinishedReason    = "管理员强制结束更新任务"
+	controllerUpdateSchedulerPeriod        = time.Minute
+	controllerUpdatePanelIdlePeriod        = 5 * time.Minute
+	controllerUpdateInstallTimeout         = controllerupdate.OperationTimeout + 5*time.Minute
+	controllerUpdateDefaultIntervalHours   = 24
+	updateWindowDefaultStartHour           = 3
+	updateWindowDefaultEndHour             = 7
 	controllerUpdateBackupRetentionSetting = "controller_update_backup_retention"
 )
 
@@ -665,13 +665,20 @@ func (s *Server) applyPreparedControllerUpdate(ctx context.Context, status contr
 	run.Phase = store.ControllerUpdatePhaseInstalling
 	_ = s.store.UpdateControllerUpdateRun(ctx, run)
 	s.publishRealtime("controller_update")
-	installStarted := time.Now()
+
 	targetBuild := strings.TrimSpace(run.TargetBuild)
 	if targetBuild == "" {
 		targetBuild = status.Available.Build
 	}
+	if err := ctx.Err(); err != nil {
+		if prepared {
+			s.cancelPreparedControllerUpdate()
+		}
+		s.failControllerUpdateRun(context.Background(), run, err.Error())
+		return
+	}
 	status, err := s.installControllerUpdate(ctx, targetBuild)
-	run.InstallDurationMS = time.Since(installStarted).Milliseconds()
+	run.InstallDurationMS = status.InstallDurationMS
 	if err != nil {
 		if (status.State == "cancelled" || status.State == "cancelling") && strings.TrimSpace(status.LastError) == "" {
 			s.cancelControllerUpdateRun(ctx, run)
@@ -684,7 +691,9 @@ func (s *Server) applyPreparedControllerUpdate(ctx context.Context, status contr
 		s.failControllerUpdateRun(ctx, run, publicErr.Error())
 		return
 	}
-	run.Phase = store.ControllerUpdatePhaseRestarting
+	if status.State == "downloading" || status.State == "ready" {
+		run.Phase = store.ControllerUpdatePhaseDownloading
+	}
 	_ = s.store.UpdateControllerUpdateRun(ctx, run)
 	s.startControllerUpdateWatch()
 	_ = s.store.SetSetting(ctx, controllerUpdateErrorSetting, "")
@@ -790,7 +799,7 @@ func (s *Server) startControllerUpdateWatch() {
 			s.controllerUpdateWatching = false
 			s.controllerUpdateWatchMu.Unlock()
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), controllerUpdateInstallTimeout)
 		defer cancel()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -1136,7 +1145,7 @@ func (s *Server) controllerUpdateBackups(w http.ResponseWriter, r *http.Request)
 	files, _, _ := s.listControllerUpdateBackups()
 	retain := s.controllerUpdateRetention()
 	write(w, http.StatusOK, map[string]any{
-		"backups": files,
+		"backups":   files,
 		"retention": retain,
 	})
 }

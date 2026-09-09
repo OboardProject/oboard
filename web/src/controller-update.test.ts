@@ -138,3 +138,11 @@ describe('controller update pending toast', () => {
     expect(isControllerUpdateFailedStatus('unavailable')).toBe(true)
   })
 })
+
+it('uses real download progress and allows a restarted transfer to reset', () => {
+  expect(controllerUpdateFlowPercent('downloading', 0, 0)).toBe(10)
+  expect(controllerUpdateFlowPercent('downloading', 0, 50)).toBe(20)
+  expect(controllerUpdateFlowPercent('downloading', 0, 100)).toBe(30)
+  expect(controllerUpdateFlowPercent('downloading', 0, -1)).toBe(10)
+  expect(controllerUpdateFlowPercent('downloading', 0, 200)).toBe(30)
+})

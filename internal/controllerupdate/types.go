@@ -3,6 +3,7 @@ package controllerupdate
 import "time"
 
 const (
+	OperationTimeout  = 40 * time.Minute
 	DefaultSocketPath = "/run/oboard/controller-updater.sock"
 	ManifestName      = "controller-release-manifest.json"
 	ManifestSchema    = 1
@@ -38,19 +39,22 @@ type BuildInfo struct {
 }
 
 type Status struct {
-	Channel                 string           `json:"channel"`
-	Current                 BuildInfo        `json:"current"`
-	Available               BuildInfo        `json:"available"`
-	UpdateAvailable         bool             `json:"update_available"`
-	AutoUpdateEnabled       bool             `json:"auto_update_enabled"`
-	AutoUpdateIntervalHours int              `json:"auto_update_interval_hours"`
-	CanCancel               bool             `json:"can_cancel"`
-	State                   string           `json:"status"`
-	LastCheckedAt           string           `json:"last_checked_at,omitempty"`
-	LastError               string           `json:"last_error,omitempty"`
-	BackupPath              string           `json:"backup_path,omitempty"`
-	ManualCommand           string           `json:"manual_command,omitempty"`
-	Operation               *UpdateOperation `json:"operation,omitempty"`
+	Channel                 string            `json:"channel"`
+	Current                 BuildInfo         `json:"current"`
+	Available               BuildInfo         `json:"available"`
+	UpdateAvailable         bool              `json:"update_available"`
+	AutoUpdateEnabled       bool              `json:"auto_update_enabled"`
+	AutoUpdateIntervalHours int               `json:"auto_update_interval_hours"`
+	CanCancel               bool              `json:"can_cancel"`
+	State                   string            `json:"status"`
+	LastCheckedAt           string            `json:"last_checked_at,omitempty"`
+	LastError               string            `json:"last_error,omitempty"`
+	BackupPath              string            `json:"backup_path,omitempty"`
+	ManualCommand           string            `json:"manual_command,omitempty"`
+	Download                *DownloadProgress `json:"download,omitempty"`
+	RestartDurationMS       int64             `json:"restart_duration_ms,omitempty"`
+	InstallDurationMS       int64             `json:"install_duration_ms,omitempty"`
+	Operation               *UpdateOperation  `json:"operation,omitempty"`
 }
 
 // UpdateOperation is Controller orchestration state. The privileged updater
@@ -73,4 +77,16 @@ type UpdateBackupProgress struct {
 func (s Status) CheckedAt() time.Time {
 	value, _ := time.Parse(time.RFC3339Nano, s.LastCheckedAt)
 	return value
+}
+
+// DownloadProgress contains no URLs or filesystem paths and is safe for all status surfaces.
+type DownloadProgress struct {
+	TargetBuild    string `json:"target_build"`
+	Bytes          int64  `json:"bytes"`
+	TotalBytes     int64  `json:"total_bytes"`
+	BytesPerSecond int64  `json:"bytes_per_second"`
+	Attempt        int    `json:"attempt"`
+	DurationMS     int64  `json:"duration_ms"`
+	LastProgressAt string `json:"last_progress_at,omitempty"`
+	Complete       bool   `json:"complete"`
 }

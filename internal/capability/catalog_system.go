@@ -104,7 +104,14 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"update_available": boolValue, "auto_update_enabled": boolValue,
 		"auto_update_interval_hours": map[string]any{"type": "integer"}, "can_cancel": boolValue,
 		"status": stringValue, "last_checked_at": stringValue, "last_error": stringValue,
-		"backup_configured": boolValue,
+		"backup_configured":   boolValue,
+		"install_duration_ms": map[string]any{"type": "integer"},
+		"restart_duration_ms": map[string]any{"type": "integer"},
+		"download": closedObject(map[string]any{
+			"target_build": stringValue, "bytes": map[string]any{"type": "integer"}, "total_bytes": map[string]any{"type": "integer"},
+			"bytes_per_second": map[string]any{"type": "integer"}, "attempt": map[string]any{"type": "integer"}, "duration_ms": map[string]any{"type": "integer"},
+			"last_progress_at": stringValue, "complete": boolValue,
+		}),
 		"operation": closedObject(map[string]any{
 			"active": boolValue, "phase": stringValue, "started_at": stringValue, "target_build": stringValue,
 			"progress_percent": map[string]any{"type": "number"},
@@ -148,7 +155,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 	descriptors := []Descriptor{
 		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "settings")),
 		adminRead("telegram_bot.get", "读取统一 Telegram Bot 状态（不返回 Bot Token）", schemaObject(nil), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot")),
-		adminRead("controller_update.status", "读取主控更新通道、当前版本和异步更新状态", schemaObject(nil), rawSchema(controllerUpdate)),
+		adminRead("controller_update.status", "读取主控更新通道、当前版本、异步更新状态及下载字节、速度、尝试次数和真实耗时", schemaObject(nil), rawSchema(controllerUpdate)),
 		adminRead("controller_update.diagnostics", "读取主控更新诊断报告：更新器状态、最近一次更新任务的阶段与耗时，以及主控日志中与更新相关的记录，用于排查更新失败或卡住", schemaObject(nil), schemaObject(map[string]any{
 			"generated_at": stringValue, "outcome": stringValue, "report": stringValue,
 			"log_lines": map[string]any{"type": "integer"}, "log_available": boolValue, "log_hint": stringValue,

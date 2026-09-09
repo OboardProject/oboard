@@ -321,6 +321,16 @@ type ControllerUpdateStatus = {
   last_error?: string
   backup_path?: string
   manual_command?: string
+  download?: {
+    target_build: string
+    bytes: number
+    total_bytes: number
+    bytes_per_second: number
+    attempt: number
+    duration_ms: number
+    last_progress_at?: string
+    complete: boolean
+  }
   operation?: {
     active: boolean
     phase: string
@@ -4170,6 +4180,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       skipBackup={skipBackup}
       progressPercent={snapshot.operation?.progress_percent}
       backupBytes={snapshot.operation?.backup?.size_bytes}
+      download={snapshot.download}
       elapsedLabel={controllerUpdateElapsedLabel(promptElapsed)}
       diagnostics={promptDiagnostics}
       diagnosticsReason={promptDiagnosticsReason}
@@ -4656,6 +4667,7 @@ function ControllerUpdatePanel({ data, client, load, notify, dialogs, realtimeSt
       skipBackup={installSkipBackup}
       progressPercent={snapshot.operation?.progress_percent}
       backupBytes={snapshot.operation?.backup?.size_bytes}
+      download={snapshot.download}
       elapsedLabel={controllerUpdateElapsedLabel(installElapsed)}
       diagnostics={installDiagnostics}
       diagnosticsReason={installDiagnosticsReason}
@@ -4762,13 +4774,15 @@ function ControllerUpdateDiagnosticsSection({ reason, diagnostics, onRetry }: { 
   </section>
 }
 
-function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, elapsedLabel, diagnostics, diagnosticsReason, onRetryDiagnostics, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; elapsedLabel?: string; diagnostics?: ControllerUpdateDiagnosticsState; diagnosticsReason?: '' | 'failed' | 'timeout'; onRetryDiagnostics?: () => void; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
+function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterrupted, failure, canCancel, cancelling, forceFinishing, skipBackup, progressPercent, backupBytes, download, elapsedLabel, diagnostics, diagnosticsReason, onRetryDiagnostics, onCancel, onInstall, onInterrupt, onForceFinish, onHide, onReload }: { phase: ControllerUpdateInstallPhase; targetVersion: string; connectionInterrupted: boolean; failure: string; canCancel: boolean; cancelling: boolean; forceFinishing?: boolean; skipBackup?: boolean; progressPercent?: number; backupBytes?: number; download?: ControllerUpdateStatus['download']; elapsedLabel?: string; diagnostics?: ControllerUpdateDiagnosticsState; diagnosticsReason?: '' | 'failed' | 'timeout'; onRetryDiagnostics?: () => void; onCancel: () => void; onInstall: (skipBackup?: boolean) => void; onInterrupt: () => void; onForceFinish?: () => void; onHide: () => void; onReload: () => void }) {
   const waiting = ['starting', 'checking', 'downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying', 'cancelling'].includes(phase)
   const backupShownRef = useRef(0)
   if (phase !== 'backing_up') backupShownRef.current = 0
   const backupShown = phase === 'backing_up' ? monotonicPercent(backupShownRef.current, progressPercent || 0) : 0
   if (phase === 'backing_up') backupShownRef.current = backupShown
-  const flowPercent = controllerUpdateFlowPercent(phase, backupShown)
+  const downloadPercent = download && download.total_bytes > 0 ? Math.max(0, Math.min(100, download.bytes * 100 / download.total_bytes)) : undefined
+  const downloadLabel = download ? `${formatBytes(download.bytes)} / ${formatBytes(download.total_bytes)} · ${formatBytes(download.bytes_per_second)}/s · 第 ${download.attempt} 次尝试` : ''
+  const flowPercent = controllerUpdateFlowPercent(phase, backupShown, downloadPercent)
   const title = phase === 'confirm' ? '更新期间面板会暂时离线' : phase === 'complete' ? '主控更新已完成' : phase === 'failed' ? '主控更新未完成' : phase === 'cancelled' ? '更新已中断' : phase === 'stopped' ? '本次更新已停止' : phase === 'force_finished' ? '更新任务已强制结束' : '正在更新主控'
   const backupLabel = phase === 'backing_up' ? `备份 ${backupShown}%` : ''
   const sizeLabel = backupBytes ? `${(backupBytes / (1024 * 1024)).toFixed(1)} MB` : ''
@@ -4788,9 +4802,10 @@ function ControllerUpdateInstallDialog({ phase, targetVersion, connectionInterru
       </>}
       {waiting && <>
         <div className="controller-update-install-state" aria-live="polite"><RefreshCw size={24} className="spin" /><div><strong>{phase === 'checking' ? '正在检查更新' : phase === 'downloading' ? '正在下载更新' : phase === 'preflight' ? '正在准备更新' : phase === 'backing_up' ? (backupLabel || '正在备份数据库') : phase === 'installing' ? '正在安装新版本' : phase === 'restarting' || connectionInterrupted ? '正在等待重启' : phase === 'verifying' ? '正在验证新版本' : phase === 'cancelling' ? '正在停止更新' : '正在准备更新'}</strong><p>{phase === 'backing_up' ? [sizeLabel, elapsedLabel].filter(Boolean).join(' · ') || '备份进行中，不预估剩余时间。' : '主控更新成功不依赖 Agent 重新连接。'}</p></div></div>
+        {phase === 'downloading' && downloadLabel && <p className="muted">{downloadLabel}</p>}
         <div className="controller-update-stages" aria-label="更新进度">
           <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'checking', ['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['downloading', 'preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '1'}</span><div><strong>检查</strong><small>{phase === 'checking' ? '正在检查可用版本' : '完成'}</small></div></div>
-          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'downloading', ['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '2'}</span><div><strong>下载</strong><small>{phase === 'downloading' || phase === 'cancelling' ? '正在下载并检查文件' : '等待开始'}</small></div></div>
+          <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'downloading', ['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['preflight', 'backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '2'}</span><div><strong>下载</strong><small>{phase === 'downloading' || phase === 'cancelling' ? (downloadPercent === undefined ? '正在下载并检查文件' : `已下载 ${downloadPercent.toFixed(1)}%`) : '等待开始'}</small></div></div>
           <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'preflight', ['backing_up', 'ready', 'installing', 'restarting', 'verifying'])}`}><span>{['backing_up', 'ready', 'installing', 'restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '3'}</span><div><strong>准备</strong><small>{phase === 'preflight' ? (backupSkipped ? '正在准备安装' : '正在检查磁盘和备份条件') : '等待下载完成'}</small></div></div>
           <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'backing_up', ['ready', 'installing', 'restarting', 'verifying'])}`}><span>{backupStageDone ? <Check size={14} /> : '4'}</span><div><strong>备份</strong><small>{backupStageLabel}</small></div></div>
           <div className={`controller-update-stage ${controllerUpdateStageState(phase, 'installing', ['restarting', 'verifying'])}`}><span>{['restarting', 'verifying'].includes(phase) ? <Check size={14} /> : '5'}</span><div><strong>安装</strong><small>{phase === 'installing' ? '正在替换主控程序' : (backupSkipped ? '等待准备完成' : '等待备份完成')}</small></div></div>

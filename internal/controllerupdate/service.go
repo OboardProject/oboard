@@ -27,26 +27,30 @@ import (
 )
 
 type ServiceConfig struct {
-	SocketPath         string
-	BinaryEnvPath      string
-	StatePath          string
-	RuntimeStatePath   string
-	ControllerBinary   string
-	UpdaterBinary      string
-	AIWorkerBinary     string
-	ScriptWorkerBinary string
-	WebRoot            string
-	DownloadsRoot      string
-	WorkRoot           string
-	HTTPClient         *http.Client
-	HealthClient       *http.Client
-	HealthTimeout      time.Duration
-	HealthPollInterval time.Duration
-	ReadyWindow        time.Duration
-	InstallGracePeriod time.Duration
-	Wait               func(context.Context, time.Duration) error
-	RunCommand         func(context.Context, string, ...string) error
-	ReexecUpdater      func(string, []string, []string) error
+	SocketPath          string
+	BinaryEnvPath       string
+	StatePath           string
+	RuntimeStatePath    string
+	ControllerBinary    string
+	UpdaterBinary       string
+	AIWorkerBinary      string
+	ScriptWorkerBinary  string
+	WebRoot             string
+	DownloadsRoot       string
+	WorkRoot            string
+	HTTPClient          *http.Client
+	DownloadTimeout     time.Duration
+	DownloadIdleTimeout time.Duration
+	DownloadAttempts    int
+	DownloadRetryDelay  time.Duration
+	HealthClient        *http.Client
+	HealthTimeout       time.Duration
+	HealthPollInterval  time.Duration
+	ReadyWindow         time.Duration
+	InstallGracePeriod  time.Duration
+	Wait                func(context.Context, time.Duration) error
+	RunCommand          func(context.Context, string, ...string) error
+	ReexecUpdater       func(string, []string, []string) error
 }
 
 type Service struct {
@@ -68,24 +72,28 @@ func DefaultServiceConfig() ServiceConfig {
 	installDir := defaultInstallDir()
 	dataDir := filepath.Join(installDir, "data")
 	return ServiceConfig{
-		SocketPath:         DefaultSocketPath,
-		BinaryEnvPath:      filepath.Join(installDir, "config/controller.env"),
-		StatePath:          filepath.Join(dataDir, "controller-update/status.json"),
-		RuntimeStatePath:   filepath.Join(dataDir, RuntimeStateName),
-		ControllerBinary:   filepath.Join(installDir, "oboard-controller"),
-		UpdaterBinary:      filepath.Join(installDir, "oboard-controller-updater"),
-		AIWorkerBinary:     filepath.Join(installDir, "oboard-ai-worker"),
-		ScriptWorkerBinary: filepath.Join(installDir, "oboard-script-worker"),
-		WebRoot:            filepath.Join(installDir, "web/dist"),
-		DownloadsRoot:      filepath.Join(installDir, "downloads"),
-		WorkRoot:           filepath.Join(dataDir, "controller-update"),
-		HTTPClient:         &http.Client{Timeout: 2 * time.Minute},
-		HealthClient:       &http.Client{Timeout: 2 * time.Second},
-		HealthTimeout:      3 * time.Minute,
-		HealthPollInterval: time.Second,
-		ReadyWindow:        4 * time.Second,
-		InstallGracePeriod: 4 * time.Second,
-		Wait:               waitForContext,
+		SocketPath:          DefaultSocketPath,
+		BinaryEnvPath:       filepath.Join(installDir, "config/controller.env"),
+		StatePath:           filepath.Join(dataDir, "controller-update/status.json"),
+		RuntimeStatePath:    filepath.Join(dataDir, RuntimeStateName),
+		ControllerBinary:    filepath.Join(installDir, "oboard-controller"),
+		UpdaterBinary:       filepath.Join(installDir, "oboard-controller-updater"),
+		AIWorkerBinary:      filepath.Join(installDir, "oboard-ai-worker"),
+		ScriptWorkerBinary:  filepath.Join(installDir, "oboard-script-worker"),
+		WebRoot:             filepath.Join(installDir, "web/dist"),
+		DownloadsRoot:       filepath.Join(installDir, "downloads"),
+		WorkRoot:            filepath.Join(dataDir, "controller-update"),
+		HTTPClient:          &http.Client{Timeout: releaseMetadataTimeout},
+		DownloadTimeout:     20 * time.Minute,
+		DownloadIdleTimeout: time.Minute,
+		DownloadAttempts:    4,
+		DownloadRetryDelay:  time.Second,
+		HealthClient:        &http.Client{Timeout: 2 * time.Second},
+		HealthTimeout:       3 * time.Minute,
+		HealthPollInterval:  time.Second,
+		ReadyWindow:         4 * time.Second,
+		InstallGracePeriod:  4 * time.Second,
+		Wait:                waitForContext,
 		RunCommand: func(ctx context.Context, name string, args ...string) error {
 			switch name {
 			case "systemctl", "rc-service":
@@ -171,6 +179,18 @@ func NewService(config ServiceConfig) *Service {
 	}
 	if config.HTTPClient == nil {
 		config.HTTPClient = defaults.HTTPClient
+	}
+	if config.DownloadTimeout <= 0 {
+		config.DownloadTimeout = defaults.DownloadTimeout
+	}
+	if config.DownloadIdleTimeout <= 0 {
+		config.DownloadIdleTimeout = defaults.DownloadIdleTimeout
+	}
+	if config.DownloadAttempts <= 0 {
+		config.DownloadAttempts = defaults.DownloadAttempts
+	}
+	if config.DownloadRetryDelay <= 0 {
+		config.DownloadRetryDelay = defaults.DownloadRetryDelay
 	}
 	if config.HealthClient == nil {
 		config.HealthClient = defaults.HealthClient
@@ -313,7 +333,10 @@ func (s *Service) handlePrepare(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusConflict, status)
 		return
 	}
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithTimeout(context.Background(), OperationTimeout)
+	status.Download = nil
+	status.InstallDurationMS = 0
+	status.RestartDurationMS = 0
 	status.State, status.LastError, status.CanCancel = "downloading", "", true
 	if err := s.saveStatus(status); err != nil {
 		cancel()
@@ -329,6 +352,7 @@ func (s *Service) handlePrepare(w http.ResponseWriter, r *http.Request) {
 	runID := s.installRun
 	s.mu.Unlock()
 	go func() {
+		defer cancel()
 		_, _ = s.install(runCtx, approval)
 		s.mu.Lock()
 		if s.installRun == runID {
@@ -572,9 +596,13 @@ func (s *Service) install(ctx context.Context, approval <-chan struct{}) (Status
 	if err != nil || status.State != "installing" {
 		return status, err
 	}
+	if err := ctx.Err(); err != nil {
+		return s.finishInstallError(err)
+	}
 	replaceStarted := time.Now()
 	log.Printf("controller update replacing program target_build=%s", available.Build)
-	if err := s.replaceBinaryProgram(ctx, stage); err != nil {
+	err = s.replaceBinaryProgram(ctx, stage)
+	if err != nil {
 		log.Printf("controller update activation failed target_build=%s duration=%s: %v", available.Build, time.Since(replaceStarted).Round(time.Millisecond), err)
 		return s.finishInstallError(err)
 	}
@@ -954,43 +982,11 @@ func (s *Service) stageControllerRelease(ctx context.Context, release remoteRele
 	if err := os.MkdirAll(s.config.WorkRoot, 0o700); err != nil {
 		return "", err
 	}
-	archivePath := filepath.Join(s.config.WorkRoot, "controller.tar.gz")
-	workRoot, err := os.OpenRoot(s.config.WorkRoot)
+	archivePath, err := s.downloadControllerArchive(ctx, release, artifact)
 	if err != nil {
 		return "", err
 	}
-	defer workRoot.Close()
-	file, err := workRoot.OpenFile("controller.tar.gz.tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, release.Assets[artifact.Name], nil)
-	if err != nil {
-		_ = file.Close()
-		return "", err
-	}
-	resp, err := s.config.HTTPClient.Do(req)
-	if err != nil {
-		_ = file.Close()
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		_ = file.Close()
-		return "", fmt.Errorf("download controller package: HTTP %d", resp.StatusCode)
-	}
-	err = verifyDownload(resp.Body, file, artifact)
-	_ = resp.Body.Close()
-	closeErr := file.Close()
-	if err != nil {
-		return "", err
-	}
-	if closeErr != nil {
-		return "", closeErr
-	}
-	if err := workRoot.Rename("controller.tar.gz.tmp", "controller.tar.gz"); err != nil {
-		return "", err
-	}
+	defer os.Remove(archivePath)
 	stage, err := os.MkdirTemp(s.config.WorkRoot, "stage-")
 	if err != nil {
 		return "", err
@@ -1111,6 +1107,20 @@ func extractControllerArchive(archivePath, stage string) error {
 }
 
 func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error {
+	started := time.Now()
+	var restarting time.Time
+	record := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		status := s.status
+		status.InstallDurationMS = time.Since(started).Milliseconds()
+		if !restarting.IsZero() {
+			status.InstallDurationMS = restarting.Sub(started).Milliseconds()
+			status.RestartDurationMS = time.Since(restarting).Milliseconds()
+		}
+		_ = s.saveStatus(status)
+	}
+	defer record()
 	type target struct {
 		source, destination string
 		optional            bool
@@ -1130,6 +1140,10 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 		}
 	}
 	for _, item := range targets {
+		if err := ctx.Err(); err != nil {
+			runRollback()
+			return err
+		}
 		if _, err := os.Stat(item.source); os.IsNotExist(err) {
 			if item.optional {
 				continue
@@ -1177,6 +1191,12 @@ func (s *Service) replaceBinaryProgram(ctx context.Context, stage string) error 
 			return err
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		runRollback()
+		return err
+	}
+	restarting = time.Now()
+	record()
 	if err := s.restartAndWait(ctx); err != nil {
 		log.Printf("controller update rollback started: new program did not become available: %v", err)
 		runRollback()

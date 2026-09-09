@@ -1023,3 +1023,41 @@ func TestControllerStartupConsumesUpdateMaintenanceForOpenConnections(t *testing
 		t.Fatalf("mismatched maintenance marker source=%q history=%#v", lastSource, history.Events)
 	}
 }
+
+func TestControllerUpdateDownloadProgressAndTimingsAcrossSurfaces(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	app := newTestServer(db, "test-secret", "")
+	run := &store.ControllerUpdateRun{Source: "manual", TargetBuild: "next", Phase: store.ControllerUpdatePhaseDownloading}
+	if err := db.CreateControllerUpdateRun(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	status := controllerupdate.Status{State: "downloading", CanCancel: true, Download: &controllerupdate.DownloadProgress{TargetBuild: "next", Bytes: 4, TotalBytes: 8, Attempt: 2, DurationMS: 125000}}
+	app.attachControllerUpdateOperation(t.Context(), &status)
+	if status.Operation == nil || status.Operation.Phase != "downloading" || status.Operation.ProgressPercent != 50 {
+		t.Fatalf("Web progress: %+v", status.Operation)
+	}
+	view := app.controllerUpdateAutomationView(t.Context(), status)
+	if view["download"] != status.Download {
+		t.Fatalf("MCP omitted progress: %+v", view)
+	}
+	status.State = "failed"
+	status.LastError = "download idle timeout"
+	if !app.reconcileControllerUpdateRun(t.Context(), run, status) {
+		t.Fatal("failure not reconciled")
+	}
+	saved, err := db.LatestControllerUpdateRun(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.DownloadDurationMS != 125000 || saved.InstallDurationMS != 0 {
+		t.Fatalf("false install timing: %+v", saved)
+	}
+	report := controllerUpdateDiagnosticsReport(time.Now(), status, nil, saved, controllerUpdateLogTailContent{}, "", true)
+	if !strings.Contains(report, "4 / 8 字节") || !strings.Contains(report, "第 2 次尝试") {
+		t.Fatalf("diagnostics omitted progress: %s", report)
+	}
+}

@@ -97,7 +97,16 @@ func (s *Server) reconcileControllerUpdateRun(ctx context.Context, run *store.Co
 	if run == nil {
 		return false
 	}
+	if status.Download != nil && status.Download.TargetBuild == run.TargetBuild {
+		run.DownloadDurationMS = status.Download.DurationMS
+	}
+	run.InstallDurationMS = status.InstallDurationMS
+	run.RestartDurationMS = status.RestartDurationMS
 	switch {
+	case status.State == "installing" && run.Phase == store.ControllerUpdatePhaseDownloading:
+		run.Phase = store.ControllerUpdatePhaseInstalling
+		_ = s.store.UpdateControllerUpdateRun(ctx, run)
+		return false
 	case status.State == "failed" || status.State == "cancelled":
 		run.Phase = status.State
 		run.Error = strings.TrimSpace(status.LastError)
@@ -143,6 +152,11 @@ func (s *Server) attachControllerUpdateOperation(ctx context.Context, status *co
 	}
 	progress, _ := s.controllerUpdateProgress.Load().(store.BackupProgress)
 	status.Operation = controllerUpdateOperationFromRun(run, &progress, true)
+	if status.State == "downloading" && status.Download != nil && status.Download.TargetBuild == run.TargetBuild && run.Phase != store.ControllerUpdatePhaseBackingUp && run.Phase != store.ControllerUpdatePhasePreflight {
+		status.Operation.Phase = store.ControllerUpdatePhaseDownloading
+		status.Operation.ProgressPercent = 100 * float64(status.Download.Bytes) / float64(max(1, status.Download.TotalBytes))
+		status.Operation.Backup = nil
+	}
 	switch run.Phase {
 	case store.ControllerUpdatePhasePreflight, store.ControllerUpdatePhaseBackingUp, store.ControllerUpdatePhaseRestarting, store.ControllerUpdatePhaseVerifying:
 		status.State = run.Phase

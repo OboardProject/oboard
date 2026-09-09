@@ -351,6 +351,11 @@ func (s *Server) controllerUpdateAutomationView(ctx context.Context, status cont
 		"status": status.State, "last_checked_at": status.LastCheckedAt, "last_error": status.LastError,
 		"backup_configured": backupConfigured,
 	}
+	view["install_duration_ms"] = status.InstallDurationMS
+	view["restart_duration_ms"] = status.RestartDurationMS
+	if status.Download != nil {
+		view["download"] = status.Download
+	}
 	if status.Operation != nil {
 		view["operation"] = status.Operation
 	}

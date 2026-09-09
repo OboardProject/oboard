@@ -40,8 +40,9 @@ const FLOW_BASE: Record<string, number> = {
   cancelling: 40,
 }
 
-export function controllerUpdateFlowPercent(phase: string, backupPercent?: number): number {
+export function controllerUpdateFlowPercent(phase: string, backupPercent?: number, downloadPercent?: number): number {
   if (phase === 'complete' || phase === 'installed') return 100
+  if (phase === 'downloading' && downloadPercent !== undefined) return 10 + Math.max(0, Math.min(100, downloadPercent)) * 0.2
   if (phase === 'backing_up') {
     const backup = Math.max(0, Math.min(100, backupPercent || 0))
     return Math.max(34, Math.min(72, 34 + backup * 0.38))

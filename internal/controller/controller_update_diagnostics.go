@@ -247,6 +247,12 @@ func controllerUpdateDiagnosticsReport(now time.Time, status controllerupdate.St
 		b.WriteString("手动命令: " + trimmed + "\n")
 	}
 
+	if d := status.Download; d != nil {
+		b.WriteString(fmt.Sprintf("下载进度: %d / %d 字节 · %d 字节/秒 · 第 %d 次尝试 · 耗时 %s · 校验完成 %t\n", d.Bytes, d.TotalBytes, d.BytesPerSecond, d.Attempt, controllerUpdateDiagnosticsDuration(d.DurationMS), d.Complete))
+		if d.LastProgressAt != "" {
+			b.WriteString("最近下载进展: " + d.LastProgressAt + "\n")
+		}
+	}
 	b.WriteString("\n[更新任务]\n")
 	if run == nil {
 		b.WriteString("没有更新任务记录。\n")
