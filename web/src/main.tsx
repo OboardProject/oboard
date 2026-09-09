@@ -10144,11 +10144,11 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         <ServerMetricCell icon={<ArrowDownUp size={15} aria-hidden="true" />} label="月度" value={trafficLimitBytes > 0 ? `${formatBytes(trafficTotalBytes)} / ${formatBytes(trafficLimitBytes)}` : formatBytes(trafficTotalBytes)} percent={na ? 0 : trafficPercent} sub={trafficLimitBytes > 0 ? `${trafficPercent.toFixed(trafficPercent >= 10 ? 0 : 1)}%` : '不限'} fill="traffic" tone={trafficQuotaTone} />
       </div>
       <div className="server-card-rates">
-        <div className="server-card-rate down">
+        <div className="server-card-rate down" title={na ? undefined : `下载速率 ${formatByteRate(server.network_download_bps || 0)} · 累计下载 ${formatBytes(server.traffic_download_bytes || 0)}`}>
           <span><ArrowDown size={13} aria-hidden="true" />{na ? '0 Bps' : formatByteRate(server.network_download_bps || 0)}</span>
           <small>{formatBytes(server.traffic_download_bytes || 0)}</small>
         </div>
-        <div className="server-card-rate up">
+        <div className="server-card-rate up" title={na ? undefined : `上传速率 ${formatByteRate(server.network_upload_bps || 0)} · 累计上传 ${formatBytes(server.traffic_upload_bytes || 0)}`}>
           <span><ArrowUp size={13} aria-hidden="true" />{na ? '0 Bps' : formatByteRate(server.network_upload_bps || 0)}</span>
           <small>{formatBytes(server.traffic_upload_bytes || 0)}</small>
         </div>
@@ -10178,11 +10178,11 @@ function ServerCard({ server, samples, role, expectedBuild, onAction, uninstalli
         </div>
       </div>
       <div className="server-card-life">
-        <div className={`server-card-life-item expiry ${expiry.tone}`}>
+        <div className={`server-card-life-item expiry ${expiry.tone}`} title={`到期 ${serverExpiryDateLabel(server.expires_at)}`}>
           <span><CalendarDays size={12} aria-hidden="true" />到期</span>
           <strong className={`tone-${expiry.tone}`}>{expiry.label}</strong>
         </div>
-        <div className="server-card-life-item uptime">
+        <div className="server-card-life-item uptime" title={server.created_at ? `入库时间 ${formatDate(server.created_at)}` : undefined}>
           <span><RefreshCw size={12} aria-hidden="true" />在线</span>
           <strong>{enrolled || '—'}</strong>
         </div>

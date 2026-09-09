@@ -2466,6 +2466,7 @@ body:has(.dialog-root) .proxy-path-topbar-slot {
   }
   .server-region-filter-trigger-count {
     display: none;
+  }
   .server-list-result-count { align-self: center; }
 }
 
@@ -2932,13 +2933,15 @@ button.server-address-line.copied:hover {
 .server-card-rates {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 8px 12px;
   padding-top: 2px;
 }
 
 .server-card-rate {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -2949,6 +2952,8 @@ button.server-address-line.copied:hover {
   font-size: 12.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .server-card-rate.down > span { color: #16a34a; }
@@ -2957,6 +2962,9 @@ button.server-address-line.copied:hover {
   color: var(--muted);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .server-card-quality-pair {
@@ -2985,6 +2993,8 @@ button.server-address-line.copied:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .server-card-quality-head strong {
@@ -3012,18 +3022,24 @@ button.server-address-line.copied:hover {
 .server-card-life {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 8px 12px;
 }
 
 .server-card-life-item {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-secondary);
 }
 
 .server-card-life-item strong {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .server-card-life-item.expiry strong {
