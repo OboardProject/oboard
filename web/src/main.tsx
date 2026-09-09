@@ -229,6 +229,11 @@ import { dashboardServerTrafficBytes } from './dashboard-traffic'
 import {
   deploymentStatusFromSummary,
   groupTasksForTimeline,
+  splitTaskAttempts,
+  taskCategories,
+  taskCategory,
+  latestDeploymentTasks,
+  type TaskCategory,
   maxTaskTime,
   serverTaskStatusSummary,
   taskStatusSummary,
@@ -21324,6 +21329,7 @@ function NotificationChannelDialog({
 
 function Tasks({ data, client, loading: pageLoading }: any) {
   const [rows, setRows] = useState<any[]>(data.agent_tasks || [])
+  const [category, setCategory] = useState<TaskCategory>('deployment')
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
@@ -21395,11 +21401,11 @@ function Tasks({ data, client, loading: pageLoading }: any) {
   const busy = manualRefreshing || pageLoading
   const refreshing = manualRefreshing || backgroundRefreshing
   const refreshedTime = lastRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-  return <Panel title="部署 / Agent 任务">
+  return <Panel title="任务与部署">
     <div className="section-toolbar">
       <div>
         <h3>任务中心</h3>
-        <p className="muted">一次下发、批量更新等操作会合并为一条记录。先看整体状态，再点开服务器，最后查看该服务器的具体子任务。</p>
+        <p className="muted">先看各服务器最新版本的执行结果，再按任务类型查看详情。历史重试默认折叠。</p>
       </div>
       <div className="section-actions">
         <div className={`live-refresh-status ${refreshFailed ? 'is-error' : 'is-active'}`} title={hasActiveTasks ? '进行中的任务通过 HTTP 每 3 秒更新' : '任务状态通过 HTTP 每 15 秒更新'}>
@@ -21409,16 +21415,53 @@ function Tasks({ data, client, loading: pageLoading }: any) {
         </div>
       </div>
     </div>
-    {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows} data={data} client={client} />}
+    <DeploymentTaskOverview rows={rows} data={data} />
+    <div className="task-category-filter" role="group" aria-label="任务分类">
+      {taskCategories.map(item => <button key={item.id} type="button" className={category === item.id ? '' : 'ghost'} aria-pressed={category === item.id} onClick={() => setCategory(item.id)}>{item.label}<span>{rows.filter(task => taskCategory(task) === item.id).length}</span></button>)}
+    </div>
+    {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows.filter(task => taskCategory(task) === category)} data={data} client={client} />}
+
   </Panel>
 }
 
+function DeploymentTaskOverview({ rows, data }: { rows: any[]; data: any }) {
+  const tasks = latestDeploymentTasks(rows)
+  const serverIDs = Array.from(new Set(tasks.map(task => Number(task.server_id || 0)))).filter(Boolean)
+  if (!serverIDs.length) return null
+  return <section className="task-deployment-overview" aria-label="最新部署状态">
+    <div><h3>最新部署状态</h3><p className="muted">按当前已加载记录中，各服务器最新配置版本汇总；执行成功不代表实时在线。</p></div>
+    <div className="task-deployment-servers">{serverIDs.map(id => {
+      const current = tasks.filter(task => Number(task.server_id) === id)
+      const status = deploymentStatusFromSummary(taskStatusSummary(current))
+      return <div className="task-deployment-server" key={id}><strong>{taskServerLabel(data, id)}</strong><span className="muted">版本 {current[0]?.config_version || '未标记'}</span>{cell(status, 'status')}</div>
+    })}</div>
+  </section>
+}
+
 function TaskTimeline({ rows, data, client }: { rows: any[]; data: any; client?: any }) {
+  const [statusFilter, setStatusFilter] = useState('all')
   const groups = groupTasksForTimeline(rows, labelValue)
   if (!groups.length) return <p className="muted">暂无任务</p>
-  return <MotionList className="task-card-list">{groups.map(group => (
-    <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} client={client} />
-  ))}</MotionList>
+  const filtered = groups.filter(group => {
+    if (statusFilter === 'all') return true
+    const summary = serverTaskStatusSummary(group.tasks)
+    return statusFilter === 'active' ? summary.pending + summary.running > 0 : summary.failed > 0
+  })
+  const visible = filtered.filter((group, index) => index < 5 || group.tasks.some(task => ['pending', 'running'].includes(task.status)))
+  const history = filtered.filter(group => !visible.includes(group))
+  return <>
+    <div className="task-category-filter" role="group" aria-label="任务状态筛选">
+      {[['all', '全部状态'], ['active', '进行中'], ['failed', '含失败结果']].map(([value, label]) => <button key={value} type="button" className="ghost" aria-pressed={statusFilter === value} onClick={() => setStatusFilter(value)}>{label}</button>)}
+    </div>
+    {!filtered.length && <p className="muted">暂无符合条件的任务</p>}
+    <MotionList className="task-card-list">{visible.map(group => (
+      <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} client={client} />
+    ))}</MotionList>
+    {history.length > 0 && <details className="task-attempt-history task-group-history">
+      <summary>更早的任务 · {history.length} 组</summary>
+      <div className="task-card-list">{history.map(group => <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} client={client} />)}</div>
+    </details>}
+  </>
 }
 
 function taskServerLabel(data: any, serverID: number) {
@@ -21443,7 +21486,7 @@ function TaskGroupCard({ group, data, client }: { group: TaskGroup; data: any; c
   const metaBits = [
     group.subtitle,
     serverIDs.length ? `${serverIDs.length} 台服务器` : '',
-    `${summary.total} 项任务`,
+    `${splitTaskAttempts(group.tasks).current.length} 项当前任务`,
   ].filter(Boolean)
 
   // Single-server single-task groups can open details directly without an extra empty layer.
@@ -21456,10 +21499,10 @@ function TaskGroupCard({ group, data, client }: { group: TaskGroup; data: any; c
         <span>{metaBits.join(' · ')}</span>
       </div>
       <div className="task-summary">
-        <span className="task-stat"><em>{summary.succeeded}</em> 成功</span>
-        <span className="task-stat"><em>{summary.pending}</em> 等待</span>
-        <span className="task-stat"><em>{summary.running}</em> 执行中</span>
-        <span className={`task-stat ${summary.failed ? 'is-fail' : ''}`}><em>{summary.failed}</em> 失败</span>
+        {summary.succeeded > 0 && <span className="task-stat"><em>{summary.succeeded}</em> 成功</span>}
+        {summary.pending > 0 && <span className="task-stat"><em>{summary.pending}</em> 等待</span>}
+        {summary.running > 0 && <span className="task-stat"><em>{summary.running}</em> 执行中</span>}
+        {summary.failed > 0 && <span className="task-stat is-fail"><em>{summary.failed}</em> 失败</span>}
         {summary.skipped ? <span className="task-stat"><em>{summary.skipped}</em> 跳过</span> : null}
       </div>
       <div className="task-group-head-right">
@@ -21487,7 +21530,7 @@ function TaskGroupCard({ group, data, client }: { group: TaskGroup; data: any; c
                 <button type="button" className="task-server-toggle" onClick={() => setOpenServerID(open ? null : serverID)} aria-expanded={open}>
                   <div className="task-group-title-block">
                     <strong>{taskServerLabel(data, serverID)}</strong>
-                    <span>{tasks.length > 1 ? `${tasks.length} 个子任务 · ` : ''}成功 {serverSummary.succeeded} · 失败 {serverSummary.failed} · 进行中 {serverSummary.pending + serverSummary.running}</span>
+                    <span>{tasks.length > 1 ? `当前 ${serverSummary.total} 项 · 历史 ${splitTaskAttempts(tasks).history.length} 次 · ` : ''}成功 {serverSummary.succeeded} · 失败 {serverSummary.failed} · 进行中 {serverSummary.pending + serverSummary.running}</span>
                   </div>
                   <div className="task-group-head-right">
                     {cell(serverStatus, 'status')}
@@ -21513,9 +21556,14 @@ function TaskGroupCard({ group, data, client }: { group: TaskGroup; data: any; c
 }
 
 function TaskDetailList({ tasks, data, client }: { tasks: any[]; data: any; client?: any }) {
-  const sorted = [...tasks].sort((a, b) => Number(a.id || 0) - Number(b.id || 0))
+  const { current, history } = splitTaskAttempts(tasks)
+  const failures = history.filter(task => ['failed', 'timeout'].includes(task.status)).length
   return <div className="task-detail-list">
-    {sorted.map(task => <TaskDetailCard key={task.id} task={task} data={data} client={client} />)}
+    {current.map(task => <TaskDetailCard key={task.id} task={task} data={data} client={client} />)}
+    {history.length > 0 && <details className="task-attempt-history">
+      <summary>历史执行 · {history.length} 次{failures ? ` · 曾失败 ${failures} 次` : ''}</summary>
+      <div className="task-detail-list">{history.map(task => <TaskDetailCard key={task.id} task={task} data={data} client={client} />)}</div>
+    </details>}
   </div>
 }
 
@@ -21558,7 +21606,7 @@ function TaskDetailCard({ task, data, client }: { task: any; data?: any; client?
   return <article className="task-detail-card">
     <button type="button" className="task-detail-toggle" onClick={() => { void loadDetail() }} aria-expanded={open}>
       <div>
-        <strong>{labelValue(task.type || 'task')}</strong>
+        <strong>{task.type === 'remote_exec' ? '远程命令' : task.type === 'remote_operation' ? '远程操作' : labelValue(task.type || 'task')}</strong>
         <span className={error ? 'error-text' : ''}>{summary}</span>
       </div>
       <div className="task-group-head-right">
@@ -21592,7 +21640,7 @@ function TaskDetailCard({ task, data, client }: { task: any; data?: any; client?
             ))}
           </div>
         ) : null}
-        <pre>{JSON.stringify({ payload: redactTaskJSON(payload), result: redactTaskJSON(result) }, null, 2)}</pre>
+        <details className="task-attempt-history"><summary>查看原始数据</summary><pre>{JSON.stringify({ payload: redactTaskJSON(payload), result: redactTaskJSON(result) }, null, 2)}</pre></details>
       </div>
     )}
   </article>
@@ -21642,7 +21690,7 @@ function taskSummaryFromPayload(type: string, payload: any) {
   if (type === 'collect_logs') return payload?.services ? `服务 ${payload.services}` : '拉取日志'
   if (type === 'manage_logs') return `${payload?.action === 'clear' ? '清空' : '轮转'} ${payload?.services || 'all'} 日志`
   if (payload && typeof payload === 'object') return '等待 Agent 执行'
-  return '暂无详情'
+  return '展开查看详情'
 }
 
 function Panel({ title, children, className = '', actions = null }: any) {

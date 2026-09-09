@@ -17074,6 +17074,34 @@ button.user-table-compact-button:hover {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.task-category-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 16px;
+}
+.task-category-filter button { gap: 8px; }
+.task-category-filter .ghost[aria-pressed="true"] { background: var(--surface-2); color: var(--text-strong); box-shadow: inset 0 0 0 1px var(--border); }
+.task-category-filter button span { font-variant-numeric: tabular-nums; }
+.task-deployment-overview { display: grid; gap: 12px; margin-block: 16px; }
+.task-deployment-overview h3, .task-deployment-overview p { margin: 0; }
+.task-deployment-servers { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 8px; }
+.task-deployment-server {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.task-deployment-server strong { overflow-wrap: anywhere; }
+.task-deployment-server > .muted { grid-column: 1; font-size: 12px; overflow-wrap: anywhere; }
+.task-deployment-server > :last-child { grid-column: 2; grid-row: 1 / 3; }
+.task-attempt-history > summary { cursor: pointer; padding: 10px 12px; color: var(--text-secondary); font-size: 12px; }
+.task-attempt-history > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.task-group-history { margin-top: 12px; }
+.task-detail-toggle > div:first-child { display: grid; gap: 3px; min-width: 0; text-align: left; overflow-wrap: anywhere; }
 .task-detail-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
