@@ -15,6 +15,11 @@ import {
   type ServerResourcePoint,
 } from '../../server-unified-chart'
 
+const EMPTY_RESOURCES: ServerResourcePoint[] = []
+const EMPTY_LATENCY: ServerLatencyPoint[] = []
+const EMPTY_PROBES: LatencyProbeResultSample[] = []
+const EMPTY_FAILURES: ConnectivityResponse['failed_probe_points'] = []
+
 function formatBytes(value: number) {
   if (!Number.isFinite(value) || value <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -28,10 +33,10 @@ function formatBytes(value: number) {
 }
 
 export function ServerUnifiedTelemetryChart({
-  resourcePoints = [],
-  latencyPoints = [],
-  regionalProbes = [],
-  failedProbePoints = [],
+  resourcePoints = EMPTY_RESOURCES,
+  latencyPoints = EMPTY_LATENCY,
+  regionalProbes = EMPTY_PROBES,
+  failedProbePoints = EMPTY_FAILURES,
   includeResources = true,
   windowHours = 24,
   windowEndAt,
@@ -40,6 +45,7 @@ export function ServerUnifiedTelemetryChart({
   hideLegend = false,
   bucketCount = 60,
   chartHeight = 160,
+  aligned,
 }: {
   resourcePoints?: ServerResourcePoint[]
   latencyPoints?: ServerLatencyPoint[]
@@ -53,11 +59,15 @@ export function ServerUnifiedTelemetryChart({
   hideLegend?: boolean
   bucketCount?: number
   chartHeight?: number
+  aligned?: ReturnType<typeof alignUnifiedMetrics>
 }) {
+  const fallbackEnd = useMemo(() => Date.now(), [resourcePoints, latencyPoints, regionalProbes, failedProbePoints, windowHours, windowEndAt])
+  const responseEnd = windowEndAt ? new Date(windowEndAt).getTime() : fallbackEnd
+  const windowEndMS = Number.isFinite(responseEnd) ? responseEnd : fallbackEnd
   const { seriesList, buckets } = useMemo(() => {
-    const responseEnd = windowEndAt ? new Date(windowEndAt).getTime() : Number.NaN
-    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, bucketCount, now: Number.isFinite(responseEnd) ? responseEnd : Date.now() })
-  }, [resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndAt, bucketCount])
+    if (aligned) return aligned
+    return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, bucketCount, now: windowEndMS })
+  }, [aligned, resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndMS, bucketCount])
 
   const [internalEnabled, setInternalEnabled] = useState<Record<string, boolean>>({})
   const [connectGaps, setConnectGaps] = useState(DEFAULT_CONNECT_GAPS)
@@ -110,7 +120,7 @@ export function ServerUnifiedTelemetryChart({
   const chartDescriptionID = React.useId()
   const gradientPrefix = React.useId().replace(/:/g, '')
   const hasPercentageSeries = includeResources
-  const activeSeries = seriesList.filter(series => enabledSeries[series.id] !== false)
+  const activeSeries = useMemo(() => seriesList.filter(series => enabledSeries[series.id] !== false), [seriesList, enabledSeries])
   const W = canvasWidth
   const H = chartHeight
   const padL = hasPercentageSeries ? 45 : 12
@@ -122,7 +132,6 @@ export function ServerUnifiedTelemetryChart({
   const getX = (idx: number) => padL + (idx / Math.max(1, buckets.length - 1)) * plotW
   const getBucketStartX = (idx: number) => idx <= 0 ? padL : (getX(idx - 1) + getX(idx)) / 2
   const getBucketEndX = (idx: number) => idx >= buckets.length - 1 ? W - padR : (getX(idx) + getX(idx + 1)) / 2
-  const windowEndMS = windowEndAt ? new Date(windowEndAt).getTime() : Date.now()
   const failedProbeBuckets = useMemo(() => alignFailedProbePoints({
     points: failedProbePoints,
     windowHours,
@@ -142,6 +151,53 @@ export function ServerUnifiedTelemetryChart({
     const clamped = Math.max(0, Math.min(maxLatency, val))
     return padB - (clamped / maxLatency) * plotH
   }
+
+  const chartPaths = useMemo(() => (
+activeSeries.map((series, seriesIndex) => {
+            const segments = splitSeriesSegments(buckets, series.id, connectGaps)
+            if (segments.length === 0) return null
+            return (
+              <g key={series.id}>
+                {segments.map((segment, segmentIndex) => {
+                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
+                  const linePath = buildLinePath(points, smoothLines)
+                  const areaPath = buildAreaPath(points, padB, smoothLines)
+                  const singlePoint = points.length === 1 ? points[0] : null
+                  return (
+                    <React.Fragment key={segmentIndex}>
+                      {singlePoint ? (
+                        <rect
+                          x={getBucketStartX(segment[0].index)}
+                          y={singlePoint.y}
+                          width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
+                          height={Math.max(0, padB - singlePoint.y)}
+                          fill={`url(#${gradientPrefix}-${seriesIndex})`}
+                          className="komari-chart-area"
+                        />
+                      ) : areaPath ? (
+                        <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" />
+                      ) : null}
+                      {singlePoint ? (
+                        <circle cx={singlePoint.x} cy={singlePoint.y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                      ) : (
+                        <path
+                          d={linePath}
+                          fill="none"
+                          stroke={series.color}
+                          strokeWidth="2.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="komari-chart-polyline"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      )}
+                    </React.Fragment>
+                  )
+                })}
+              </g>
+            )
+          })
+  ), [activeSeries, buckets, connectGaps, smoothLines, maxLatency, W, H, padL, gradientPrefix])
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!svgRef.current || !buckets.length) return
@@ -241,50 +297,7 @@ export function ServerUnifiedTelemetryChart({
               )
             })}
           </g>
-          {activeSeries.map((series, seriesIndex) => {
-            const segments = splitSeriesSegments(buckets, series.id, connectGaps)
-            if (segments.length === 0) return null
-            return (
-              <g key={series.id}>
-                {segments.map((segment, segmentIndex) => {
-                  const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
-                  const linePath = buildLinePath(points, smoothLines)
-                  const areaPath = buildAreaPath(points, padB, smoothLines)
-                  const singlePoint = points.length === 1 ? points[0] : null
-                  return (
-                    <React.Fragment key={segmentIndex}>
-                      {singlePoint ? (
-                        <rect
-                          x={getBucketStartX(segment[0].index)}
-                          y={singlePoint.y}
-                          width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
-                          height={Math.max(0, padB - singlePoint.y)}
-                          fill={`url(#${gradientPrefix}-${seriesIndex})`}
-                          className="komari-chart-area"
-                        />
-                      ) : areaPath ? (
-                        <path d={areaPath} fill={`url(#${gradientPrefix}-${seriesIndex})`} className="komari-chart-area" />
-                      ) : null}
-                      {singlePoint ? (
-                        <circle cx={singlePoint.x} cy={singlePoint.y} r="3" fill={series.color} stroke="#ffffff" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                      ) : (
-                        <path
-                          d={linePath}
-                          fill="none"
-                          stroke={series.color}
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="komari-chart-polyline"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                      )}
-                    </React.Fragment>
-                  )
-                })}
-              </g>
-            )
-          })}
+          {chartPaths}
           {hoveredIdx !== null && (
             <g>
               <line x1={getX(hoveredIdx)} y1={padT} x2={getX(hoveredIdx)} y2={padB} className="komari-crosshair" strokeDasharray="2 2" />

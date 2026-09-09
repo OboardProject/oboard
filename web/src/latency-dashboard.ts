@@ -179,3 +179,19 @@ export function sparklineValues(buckets: UnifiedBucketPoint[], seriesID: string,
   })
   return values.slice(Math.max(0, values.length - limit))
 }
+
+export function sparklinePath(values: Array<number | null>, width: number, height: number): string {
+  let maximum = 1
+  for (const value of values) if (value != null && Number.isFinite(value)) maximum = Math.max(maximum, value)
+  const step = values.length > 1 ? width / (values.length - 1) : width
+  let connected = false
+  const commands: string[] = []
+  values.forEach((value, index) => {
+    if (value == null || !Number.isFinite(value)) { connected = false; return }
+    const x = index * step
+    const y = height - (value / maximum) * (height - 2)
+    commands.push(`${connected ? 'L' : 'M'} ${x},${y}`)
+    connected = true
+  })
+  return commands.join(' ')
+}

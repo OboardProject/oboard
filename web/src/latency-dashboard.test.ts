@@ -98,3 +98,10 @@ describe('latency dashboard overview', () => {
     expect(anomalies[0].detail).toContain('P95')
   })
 })
+
+
+it('keeps missing sparkline samples disconnected without fabricating zero latency', async () => {
+  const { sparklinePath } = await import('./latency-dashboard')
+  expect(sparklinePath([10, null, 20, 10], 72, 22)).toBe('M 0,12 M 48,2 L 72,12')
+  expect(sparklinePath([null, Number.NaN], 72, 22)).toBe('')
+})

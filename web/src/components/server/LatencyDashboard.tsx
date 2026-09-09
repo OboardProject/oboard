@@ -15,10 +15,13 @@ import {
   seriesIDForTarget,
   shouldIncludePublicInOverview,
   sparklineValues,
+  sparklinePath,
   writeIncludePublicStats,
 } from '../../latency-dashboard'
 import { alignUnifiedMetrics, REGIONAL_SERIES_COLORS, type ServerLatencyPoint } from '../../server-unified-chart'
 import { ServerUnifiedTelemetryChart } from './ServerUnifiedTelemetryChart'
+
+const EMPTY_STATS: LatencyProbeTargetStat[] = []
 
 const GRANULARITY_OPTIONS = [
   { value: '30', label: '较粗' },
@@ -44,17 +47,10 @@ function formatAnomalyTime(value: string | null | undefined) {
 function TargetSparkline({ values, color }: { values: Array<number | null>; color: string }) {
   const width = 72
   const height = 22
-  const finite = values.filter((value): value is number => value != null)
-  const max = Math.max(1, ...finite)
-  const step = values.length > 1 ? width / (values.length - 1) : width
-  const points = values.map((value, index) => {
-    const x = index * step
-    const y = value == null ? height : height - (value / max) * (height - 2)
-    return `${x},${y}`
-  }).join(' ')
+  const path = useMemo(() => sparklinePath(values, width, height), [values])
   return (
     <svg className="latency-target-spark" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={path} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -78,7 +74,7 @@ export function LatencyDashboard({
   onWindowKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => void
   publicMode?: string
 }) {
-  const stats = response.probe_target_stats || []
+  const stats = response.probe_target_stats || EMPTY_STATS
   const hasTasks = hasTaskProbeTargets(stats)
   const [includePublicPref, setIncludePublicPref] = useState(readIncludePublicStats)
   const [worstOnly, setWorstOnly] = useState(false)
@@ -99,11 +95,12 @@ export function LatencyDashboard({
 
   useEffect(() => {
     setEnabledSeries(prev => {
+      let changed = false
       const next = { ...prev }
       aligned.seriesList.forEach(series => {
-        if (next[series.id] === undefined) next[series.id] = true
+        if (next[series.id] === undefined) { next[series.id] = true; changed = true }
       })
-      return next
+      return changed ? next : prev
     })
   }, [aligned.seriesList])
 
@@ -127,6 +124,11 @@ export function LatencyDashboard({
     aligned.seriesList.forEach(series => { colors[series.id] = series.color })
     return colors
   }, [aligned.seriesList])
+
+  const targetSparklines = useMemo(() => new Map(visibleStats.map(stat => {
+    const id = seriesIDForTarget(stat)
+    return [id, sparklineValues(aligned.buckets, id)]
+  })), [visibleStats, aligned.buckets])
 
   const toggleTarget = (stat: LatencyProbeTargetStat) => {
     const id = seriesIDForTarget(stat)
@@ -212,7 +214,7 @@ export function LatencyDashboard({
                       <span>丢包 {formatPercent(stat.loss_percent)}</span>
                       <span>抖动 {formatMS(stat.jitter_ms)}</span>
                     </span>
-                    <TargetSparkline values={sparklineValues(aligned.buckets, seriesID)} color={color} />
+                    <TargetSparkline values={targetSparklines.get(seriesID)!} color={color} />
                   </button>
                 </li>
               )
@@ -251,6 +253,7 @@ export function LatencyDashboard({
             </div>
           </header>
           <ServerUnifiedTelemetryChart
+            aligned={aligned}
             latencyPoints={response.latency_points || []}
             regionalProbes={response.regional_latency_points || []}
             failedProbePoints={response.failed_probe_points || []}
@@ -271,7 +274,7 @@ export function LatencyDashboard({
           <h3>异常摘要</h3>
           <div className="latency-percentile-row">
             <span>P50 <strong>{formatMS(percentiles.p50)}</strong></span>
-            <span>P95 <strong>{formatMS(percentiles.p95)}</strong></span>
+            <span title="按显示时间桶的均值计算，不是逐包分位数">P95（桶均值） <strong>{formatMS(percentiles.p95)}</strong></span>
             <span>P99 <strong>{formatMS(percentiles.p99)}</strong></span>
             <span>样本 <strong>{overview.sampleCount}</strong></span>
           </div>
