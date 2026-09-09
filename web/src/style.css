@@ -11650,6 +11650,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .server-management-panel .server-add-button > span {
     display: none;
   }
+  .server-card-name-row > .server-address-block {
+    flex-basis: 100%;
+  }
   .server-management-panel .server-toolbar-tools {
     flex: 0 0 auto;
     order: -1;
