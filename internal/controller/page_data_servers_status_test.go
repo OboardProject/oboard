@@ -150,6 +150,11 @@ func TestWithTrafficStatusDoesNotInsertPeriods(t *testing.T) {
 	}
 	pageUser := firstNamedUser(t, page["users"], "member")
 	listUser := firstNamedUser(t, list["users"], "member")
+	for _, item := range []map[string]any{pageUser, listUser} {
+		if item["traffic_period_key"] != key || item["traffic_quota_state"] != "active" || item["traffic_used_bytes"] != float64(0) || item["traffic_period_end"] != end.Format(time.RFC3339Nano) {
+			t.Fatalf("empty current period status missing: key=%v state=%v used=%v end=%v", item["traffic_period_key"], item["traffic_quota_state"], item["traffic_used_bytes"], item["traffic_period_end"])
+		}
+	}
 	if pageUser["protected"] == true || listUser["protected"] == true {
 		t.Fatalf("member marked protected: page=%#v list=%#v", pageUser, listUser)
 	}

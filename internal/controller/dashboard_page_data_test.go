@@ -103,7 +103,7 @@ func TestServersPageDataReusesLoadedSnapshots(t *testing.T) {
 	h, token := loginTestAdmin(t, db)
 
 	before := db.SQLStatementCount()
-	request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
+	page := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=servers", token, nil, http.StatusOK)
 	used := db.SQLStatementCount() - before
 	// Authentication, servers + telemetry, settings/defaults, DNS data,
 	// deployment status and configuration sync all fit in this budget. Loading
@@ -111,6 +111,17 @@ func TestServersPageDataReusesLoadedSnapshots(t *testing.T) {
 	// statements and fails this regression guard.
 	if used > 17 {
 		t.Fatalf("servers page-data SQL statements = %d, want <= 17", used)
+	}
+	settings := page["settings"].(map[string]any)
+	if settings["storage_diagnostics"] != nil || settings["database_maintenance_hint"] != nil {
+		t.Fatal("server page loaded settings-only storage diagnostics")
+	}
+	if settings["traffic_timezone"] != "Asia/Shanghai" || settings[settingRemoteTerminalEnabled] != true {
+		t.Fatal("server page lost normalized settings")
+	}
+	full := request(t, h, http.MethodGet, "/api/v1/ui/settings", token, nil, http.StatusOK)
+	if full["settings"].(map[string]any)["storage_diagnostics"] == nil {
+		t.Fatal("settings endpoint lost storage diagnostics")
 	}
 }
 

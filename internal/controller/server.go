@@ -1590,6 +1590,17 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicSettings(ctx context.Context, items map[string]string) map[string]any {
+	out := s.publicSettingsValues(ctx, items)
+	if diagnostics, err := s.cachedStorageDiagnostics(ctx); err == nil {
+		out["storage_diagnostics"] = diagnostics
+		if hint := strings.TrimSpace(diagnostics.MaintenanceHint); hint != "" {
+			out["database_maintenance_hint"] = hint
+		}
+	}
+	return out
+}
+
+func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
 	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
@@ -1667,18 +1678,6 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 	out[settingMCPEnabled] = settingBool(items, settingMCPEnabled, false)
 	if migration, err := s.basePathMigrationProgress(ctx); err == nil {
 		out["base_path_migration"] = migration
-	}
-	if pageCount, pageSize, freelist, err := s.store.DatabasePageStats(ctx); err == nil {
-		dbBytes := pageCount * pageSize
-		if pageCount > 0 && dbBytes > 512<<20 && float64(freelist)/float64(pageCount) > 0.25 {
-			out["database_maintenance_hint"] = "建议进行数据库维护"
-		}
-	}
-	if diagnostics, err := s.cachedStorageDiagnostics(ctx); err == nil {
-		out["storage_diagnostics"] = diagnostics
-		if hint := strings.TrimSpace(diagnostics.MaintenanceHint); hint != "" {
-			out["database_maintenance_hint"] = hint
-		}
 	}
 	return out
 }
@@ -1940,7 +1939,11 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		out["settings"] = s.publicSettings(ctx, items)
+		if page == "servers" {
+			out["settings"] = s.publicSettingsValues(ctx, items)
+		} else {
+			out["settings"] = s.publicSettings(ctx, items)
+		}
 		out["reverse_proxy_status"] = s.reverseProxyStatus(r)
 		return nil
 	}
@@ -11528,8 +11531,8 @@ func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []mo
 			ids = append(ids, user.ID)
 		}
 	}
-	periodsByUser, _ := s.store.ListTrafficPeriodsByUsers(ctx, ids)
-	transitionsByUser, _ := s.store.ListTrafficPeriodTransitionsByUsers(ctx, ids)
+	periodsByUser, periodsErr := s.store.ListTrafficPeriodsByUsers(ctx, ids)
+	transitionsByUser, transitionsErr := s.store.ListTrafficPeriodTransitionsByUsers(ctx, ids)
 	at := time.Now()
 	for i := range users {
 		users[i].Protected = bootstrapID > 0 && users[i].ID == bootstrapID
@@ -11537,14 +11540,17 @@ func (s *Server) withTrafficStatus(ctx context.Context, users []model.User) []mo
 		if !okLimit {
 			limit = defaultUserLimitPolicy(users[i])
 		}
-		periodKey, _, _ := trafficWindow(at, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
+		periodKey, start, end := trafficWindow(at, limit.TrafficResetMode, limit.TrafficResetDay, limit.TrafficResetAnchor, loc)
 		resolved, ok := resolveTrafficPeriodKeyLocal(transitionsByUser[users[i].ID], periodKey)
 		if !ok {
 			continue
 		}
 		period, ok := periodsByUser[users[i].ID][resolved]
 		if !ok {
-			continue
+			if periodsErr != nil || transitionsErr != nil || resolved != periodKey {
+				continue
+			}
+			period = model.TrafficPeriod{UserID: users[i].ID, PeriodKey: periodKey, StartedAt: start, EndsAt: end, State: "active"}
 		}
 		users[i].TrafficUsedBytes = period.Upload + period.Download
 		users[i].TrafficPeriodKey = period.PeriodKey

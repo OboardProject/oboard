@@ -60,6 +60,14 @@ func TestServerResourceHistoryCanBeDisabledWithoutStoppingNetworkSamples(t *test
 		t.Fatal(err)
 	}
 	samples, err := db.ListServerMetricSamples(ctx, server.ID, 10)
+	if err != nil || len(samples) != 1 {
+		t.Fatalf("disabling resource history bypassed sampling interval: len=%d err=%v", len(samples), err)
+	}
+	report.Timestamp = at.Add(defaultMetricSampleMinInterval)
+	if _, _, err := db.UpsertHealthTransition(ctx, report, resourceHistoryWindow(report.Timestamp)); err != nil {
+		t.Fatal(err)
+	}
+	samples, err = db.ListServerMetricSamples(ctx, server.ID, 10)
 	if err != nil || len(samples) != 2 {
 		t.Fatalf("network samples stopped after disabling resource history: len=%d err=%v", len(samples), err)
 	}
