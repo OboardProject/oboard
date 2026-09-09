@@ -84,7 +84,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
   const [serverDefaultTimeCorrectionMode, setServerDefaultTimeCorrectionMode] = useState<TimeCorrectionMode>((data.settings?.server_default_time_correction_mode || 'auto') as TimeCorrectionMode)
   const [timeCheckNTPServers, setTimeCheckNTPServers] = useState<string[]>(() => parseNTPServers(data.settings?.time_check_ntp_servers))
   const [trafficTimezone, setTrafficTimezone] = useState<string>(data.settings?.traffic_timezone || 'Asia/Shanghai')
-  const [trafficMode, setTrafficMode] = useState<string>(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
   const [monitoringRetentionDays, setMonitoringRetentionDays] = useState<number>(Number(data.settings?.server_monitoring_retention_days) || 7)
 
   const [savingKey, setSavingKey] = useState<string>('')
@@ -98,9 +97,8 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
 
   useEffect(() => {
     setTrafficTimezone(data.settings?.traffic_timezone || 'Asia/Shanghai')
-    setTrafficMode(data.settings?.traffic_enforcement_mode || 'disconnect_and_reject')
     setMonitoringRetentionDays(Number(data.settings?.server_monitoring_retention_days) || 7)
-  }, [data.settings?.traffic_timezone, data.settings?.traffic_enforcement_mode, data.settings?.server_monitoring_retention_days])
+  }, [data.settings?.traffic_timezone, data.settings?.server_monitoring_retention_days])
 
   const originalNTPServers = useMemo(() => parseNTPServers(data.settings?.time_check_ntp_servers), [data.settings?.time_check_ntp_servers])
   const isNTPDirty = useMemo(() => {
@@ -142,12 +140,6 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
     const val = e.target.value
     setTrafficTimezone(val)
     void autoSaveSetting({ traffic_timezone: val }, '统计时区已保存')
-  }
-
-  const handleTrafficModeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value
-    setTrafficMode(val)
-    void autoSaveSetting({ traffic_enforcement_mode: val }, '达量后处理已保存')
   }
 
   const handleMonitoringRetentionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -224,16 +216,11 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
           <div className="agent-ntp-actions"><button type="button" onClick={() => void saveNTPServers()} disabled={!isNTPDirty || Boolean(savingKey)}>{savingKey === 'ntp-servers' ? '保存中...' : '保存 NTP 时间源'}</button></div>
         </SettingsDisclosure>
       </SettingsGroup>
-      <SettingsGroup title="流量控制" description="用于计算用户当前周期流量，并在达量后暂停节点使用。">
+      <SettingsGroup title="流量控制" description="达量后自动断开现有连接并拒绝新连接；面板暂时不可达时，节点仍按已下发额度执行。">
         <SettingsRow label="统计时区" description="用于计算流量重置时间。">
           <Select value={trafficTimezone} onChange={handleTimezoneChange} disabled={Boolean(savingKey)} aria-label="统计时区" className="agent-select-field">
             {!trafficTimezones.includes(trafficTimezone) && <option value={trafficTimezone}>{getTrafficTimezoneLabel(trafficTimezone)}</option>}
             {trafficTimezones.map(timezone => <option key={timezone} value={timezone}>{getTrafficTimezoneLabel(timezone)}</option>)}
-          </Select>
-        </SettingsRow>
-        <SettingsRow label="达量后处理" description="Agent 会保留本地可用额度；面板暂时不可达时，节点仍会按已下发额度暂停超量用户。">
-          <Select variant="segmented" value={trafficMode} onChange={handleTrafficModeChange} disabled={Boolean(savingKey)}>
-            <option value="disconnect_and_reject">断开并拒绝</option><option value="reject_new">仅拒绝新连接</option>
           </Select>
         </SettingsRow>
       </SettingsGroup>

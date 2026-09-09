@@ -275,7 +275,7 @@ func (s *Server) validateSubscriptionRelayIDOperation(ctx context.Context, princ
 
 var settingsAutomationFields = map[string]bool{
 	"audit_enabled": true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
-	"audit_action": true, "traffic_timezone": true, "traffic_enforcement_mode": true,
+	"audit_action": true, "traffic_timezone": true,
 	"subscription_age_policy": true, "subscription_always_use_domain_host": true, "subscription_custom_path_mode": true,
 	"subscription_relay_url": true, "subscription_controller_direct_enabled": true,
 	"server_default_mtu_mode": true, "server_default_bbr_enabled": true,
@@ -509,16 +509,6 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 		}
 		updates["traffic_timezone"] = strings.TrimSpace(zone)
 	}
-	if value, ok := fields["traffic_enforcement_mode"]; ok {
-		var mode string
-		if err := json.Unmarshal(value, &mode); err != nil {
-			return nil, err
-		}
-		if mode != "reject_new" && mode != "disconnect_and_reject" {
-			return nil, errors.New("traffic_enforcement_mode must be reject_new or disconnect_and_reject")
-		}
-		updates["traffic_enforcement_mode"] = mode
-	}
 	if value, ok := fields["subscription_age_policy"]; ok {
 		var policy string
 		if err := json.Unmarshal(value, &policy); err != nil {
@@ -726,11 +716,7 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	if err := s.store.SetSettings(ctx, updates); err != nil {
 		return nil, err
 	}
-	if _, ok := updates["traffic_enforcement_mode"]; ok {
-		if err := s.queueApplyTrafficPolicyForAllAccounting(ctx, "traffic_policy_changed"); err != nil {
-			logConfigurationError("queue traffic policy after settings", err)
-		}
-	} else if _, ok := updates["traffic_timezone"]; ok {
+	if _, ok := updates["traffic_timezone"]; ok {
 		if err := s.queueApplyTrafficPolicyForAllAccounting(ctx, "traffic_policy_changed"); err != nil {
 			logConfigurationError("queue traffic policy after settings", err)
 		}

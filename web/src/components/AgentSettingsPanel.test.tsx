@@ -16,7 +16,6 @@ describe('AgentSettingsPanel', () => {
       server_default_time_correction_mode: 'auto',
       time_check_ntp_servers: ['time.cloudflare.com', 'time.google.com', 'ntp.aliyun.com'],
       traffic_timezone: 'Asia/Shanghai',
-      traffic_enforcement_mode: 'disconnect_and_reject',
     },
   }
 
@@ -50,7 +49,8 @@ describe('AgentSettingsPanel', () => {
     expect(container.textContent).toContain('时间校准')
     expect(container.textContent).toContain('NTP 时间源')
     expect(container.textContent).toContain('统计时区')
-    expect(container.textContent).toContain('达量后处理')
+    expect(container.textContent).not.toContain('达量后处理')
+    expect(container.textContent).toContain('达量后自动断开现有连接并拒绝新连接')
     expect(container.textContent).toContain('运行配置')
     expect(container.textContent).toContain('刷新全部节点配置')
   })

@@ -70,7 +70,6 @@ type OBoardUserRuntimeLimit struct {
 	ResetDay          int    `json:"reset_day,omitempty"`
 	Timezone          string `json:"timezone,omitempty"`
 	QuotaState        string `json:"quota_state,omitempty"`
-	EnforcementMode   string `json:"enforcement_mode,omitempty"`
 }
 
 type Adapter interface {
@@ -910,7 +909,6 @@ func runtimeLimitsForUsers(users []model.User, opts ConfigOptions) map[string]OB
 			limit.ResetDay = runtimePolicy.ResetDay
 			limit.Timezone = runtimePolicy.Timezone
 			limit.QuotaState = runtimePolicy.QuotaState
-			limit.EnforcementMode = runtimePolicy.EnforcementMode
 			if runtimePolicy.TrafficLimitBytes > 0 {
 				limit.TrafficLimitBytes = runtimePolicy.TrafficLimitBytes
 			}

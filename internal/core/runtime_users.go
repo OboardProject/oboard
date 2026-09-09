@@ -290,7 +290,7 @@ func collectRuntimeUserPackage(config *SingBoxConfig, managed map[string]struct{
 					Billable: limit.Billable, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes,
 					UsedBaselineBytes: limit.UsedBaselineBytes, LeaseBytes: limit.LeaseBytes, ResetLeaseBytes: limit.ResetLeaseBytes,
 					LeaseEnforced: limit.LeaseEnforced, PeriodKey: limit.PeriodKey, PeriodStart: limit.PeriodStart, PeriodEnd: limit.PeriodEnd,
-					ResetMode: limit.ResetMode, ResetDay: limit.ResetDay, Timezone: limit.Timezone, QuotaState: limit.QuotaState, EnforcementMode: limit.EnforcementMode,
+					ResetMode: limit.ResetMode, ResetDay: limit.ResetDay, Timezone: limit.Timezone, QuotaState: limit.QuotaState,
 				}
 			}
 			entries = append(entries, entry)

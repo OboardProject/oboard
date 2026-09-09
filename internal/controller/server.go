@@ -1003,7 +1003,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ConnectionAuditEnabled                    *bool              `json:"connection_audit_enabled"`
 			AuditAction                               *string            `json:"audit_action"`
 			TrafficTimezone                           *string            `json:"traffic_timezone"`
-			TrafficEnforcementMode                    *string            `json:"traffic_enforcement_mode"`
 			ControllerLogMaxMB                        *int               `json:"controller_log_max_mb"`
 			ControllerLogBackups                      *int               `json:"controller_log_backups"`
 			ControllerAutoUpdate                      *bool              `json:"controller_auto_update_enabled"`
@@ -1259,22 +1258,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, "traffic_timezone")
-		}
-		if req.TrafficEnforcementMode != nil {
-			mode := strings.TrimSpace(*req.TrafficEnforcementMode)
-			switch mode {
-			case "", "disconnect_and_reject":
-				mode = "disconnect_and_reject"
-			case "reject_new":
-			default:
-				fail(w, errors.New("traffic_enforcement_mode is invalid"), 400)
-				return
-			}
-			if err := s.store.SetSetting(r.Context(), "traffic_enforcement_mode", mode); err != nil {
-				fail(w, err, 500)
-				return
-			}
-			changed = append(changed, "traffic_enforcement_mode")
 		}
 		if req.ControllerLogMaxMB != nil {
 			if *req.ControllerLogMaxMB < 1 || *req.ControllerLogMaxMB > 1024 {
@@ -1560,7 +1543,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			s.invalidateConnectionAuditCache()
 			auditReq(s, r, "update", "settings", strings.Join(changed, ","))
 			for _, key := range changed {
-				if key == "traffic_enforcement_mode" || key == "traffic_timezone" {
+				if key == "traffic_timezone" {
 					if err := s.queueApplyTrafficPolicyForAllAccounting(r.Context(), "traffic_policy_changed"); err != nil {
 						logConfigurationError("queue traffic policy after settings", err)
 					}
@@ -1601,7 +1584,7 @@ func (s *Server) publicSettings(ctx context.Context, items map[string]string) ma
 }
 
 func (s *Server) publicSettingsValues(ctx context.Context, items map[string]string) map[string]any {
-	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "traffic_enforcement_mode": "disconnect_and_reject", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
+	out := map[string]any{"certificate_auto_match_enabled": true, "certificate_default_preference": "subdomain", settingCertificateAutoIssueACMECA: "letsencrypt", settingCertificateAutoIssueGoogleEABCredential: 0, "subscription_age_policy": "optional", settingSubscriptionAlwaysUseDomainHost: false, settingSubscriptionCustomPathMode: string(model.SubscriptionCustomPathDisabled), settingSubscriptionControllerDirectEnabled: false, settingAuditPolicy: store.DefaultAuditPolicy(), settingAuditEnabled: true, settingSubscriptionAuditEnabled: true, settingConnectionAuditEnabled: true, settingAuditAction: string(model.AuditActionRestrict), "traffic_timezone": "Asia/Shanghai", "controller_log_max_mb": "32", "controller_log_backups": "5", controllerAutoUpdateSetting: false, controllerAutoUpdateIntervalSetting: controllerUpdateDefaultIntervalHours, settingServerDefaultMTUMode: string(model.MTUModeDetect), settingServerDefaultBBREnabled: true, settingServerDefaultTimeCorrection: string(model.TimeCorrectionAuto), settingServerMonitoringRetentionDays: store.DefaultServerMonitoringRetentionDays, settingTimeCheckNTPServers: append([]string(nil), defaultTimeCheckNTPServers...), settingTrustedProxyCIDRs: []string{}, settingNotificationServerOfflineAfter: defaultNotificationOfflineAfterSeconds, settingNotificationServerOnlineAfter: defaultNotificationOnlineAfterSeconds, settingNotificationServerMergeOffline: true, settingServerExpiryNotifyLeadDays: append([]int(nil), defaultServerExpiryNotifyLeadDays...), settingServerExpiryNotifyTime: defaultServerExpiryNotifyTime, settingRegistrationEnabled: false, settingRegistrationDefaultGroupID: int64(0), settingRemoteTerminalEnabled: true, settingRemoteTerminalPasswordConfirmationEnabled: true, settingMCPEnabled: false, "trusted_proxy_environment_cidrs": append([]string(nil), s.trustedProxyEnvironmentCIDRs...)}
 	out[agentAutoUpdateSetting] = false
 	out[subscriptionRelayAutoUpdateSetting] = false
 	out[agentUpdateMaxConcurrencySetting] = 0
@@ -1610,7 +1593,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting {
 			continue
 		}
 		out[key] = value
@@ -6720,7 +6703,6 @@ func uniquePositiveIDs(ids []int64) []int64 {
 func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, users []model.User, accountingUsers map[int64]bool, userPolicies map[int64]core.UserLimitPolicy) (map[int64]model.TrafficRuntimePolicy, error) {
 	settings := s.runtimeSettings(ctx)
 	loc := trafficLocation(settings)
-	enforcement := trafficEnforcementMode(settings)
 	tz := strings.TrimSpace(settings["traffic_timezone"])
 	if tz == "" {
 		tz = "Asia/Shanghai"
@@ -6813,7 +6795,7 @@ func (s *Server) trafficRuntimePolicies(ctx context.Context, serverID int64, use
 				return nil, err
 			}
 		}
-		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: window.periodKey, PeriodStart: window.start.UTC().Format(time.RFC3339Nano), PeriodEnd: window.end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State, EnforcementMode: enforcement}
+		policy := model.TrafficRuntimePolicy{UserID: user.ID, Billable: true, SpeedLimitMbps: limit.SpeedLimitMbps, TrafficLimitBytes: limit.TrafficLimitBytes, UsedBaselineBytes: used, LeaseBytes: lease.RemainingBytes, ResetLeaseBytes: lease.ResetBytes, LeaseEnforced: limit.TrafficLimitBytes > 0, PeriodKey: window.periodKey, PeriodStart: window.start.UTC().Format(time.RFC3339Nano), PeriodEnd: window.end.UTC().Format(time.RFC3339Nano), ResetMode: limit.TrafficResetMode, ResetDay: limit.TrafficResetDay, Timezone: tz, QuotaState: period.State}
 		if !limit.TrafficResetAnchor.IsZero() {
 			policy.ResetAnchor = limit.TrafficResetAnchor.UTC().Format(time.RFC3339Nano)
 		}
@@ -6924,15 +6906,6 @@ func trafficLocation(settings map[string]string) *time.Location {
 		return time.FixedZone("Asia/Shanghai", 8*3600)
 	}
 	return loc
-}
-
-func trafficEnforcementMode(settings map[string]string) string {
-	switch strings.TrimSpace(settings["traffic_enforcement_mode"]) {
-	case "reject_new":
-		return "reject_new"
-	default:
-		return "disconnect_and_reject"
-	}
 }
 
 func trafficWindow(now time.Time, mode string, day int, anchor time.Time, loc *time.Location) (string, time.Time, time.Time) {
