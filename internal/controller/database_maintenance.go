@@ -22,10 +22,21 @@ func (s *Server) StartDatabaseMaintenance(ctx context.Context) {
 	lastFull := time.Now()
 	ticker := time.NewTicker(databaseMaintenanceTick)
 	defer ticker.Stop()
+	rollup := newLatencyRollupSchedule()
+	var rollupTick <-chan time.Time
+	var rollupTimer *time.Timer
+	if rollup != nil {
+		rollupTimer = time.NewTimer(2 * time.Second)
+		rollupTick = rollupTimer.C
+		defer rollupTimer.Stop()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-rollupTick:
+			rollupTimer.Reset(s.runLatencyRollup(ctx, rollup))
 		case <-ticker.C:
 			if catchUp || time.Since(lastFull) >= databaseMaintenanceInterval {
 				catchUp = s.runDatabaseMaintenance(ctx, catchUp)
