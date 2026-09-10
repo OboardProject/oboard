@@ -269,14 +269,11 @@ func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64, fo
 // authorization_control_v1: the lease travels inside an apply_traffic_policy
 // task and therefore waits for the single task slot.
 func (s *Server) queueAuthorizationRefreshTask(ctx context.Context, server model.Server, lease *model.AuthorizationLease, reason string) error {
-	pending, err := s.store.ListPendingTasksByType(ctx, model.AgentTaskTypeApplyTrafficPolicy)
+	pending, err := s.store.ListPendingTasksByServerAndType(ctx, server.ID, model.AgentTaskTypeApplyTrafficPolicy)
 	if err != nil {
 		return err
 	}
 	for _, task := range pending {
-		if task.ServerID != server.ID {
-			continue
-		}
 		var previous model.ApplyTrafficPolicyTaskPayload
 		if json.Unmarshal([]byte(task.PayloadJSON), &previous) == nil && previous.Authorization != nil && previous.PolicyRevision == 0 && len(previous.Policies) == 0 {
 			if previous.Authorization.Revision >= lease.Revision {

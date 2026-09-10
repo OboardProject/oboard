@@ -201,3 +201,109 @@ func TestSteadyStateHeartbeatCost(t *testing.T) {
 		t.Fatalf("steady-state heartbeats rebuilt %d probe plans", out.HotPath.ProbePlanRebuilt)
 	}
 }
+
+// authorizationRoundReport is the machine-readable artifact for one full fleet
+// authorization round.
+type authorizationRoundReport struct {
+	Spec               perfload.Spec `json:"spec"`
+	Servers            int           `json:"servers"`
+	Entries            int           `json:"projection_entries"`
+	EntriesVisited     int           `json:"entries_visited_per_round"`
+	EntriesIfUnindexed int           `json:"entries_visited_per_round_unindexed"`
+	IssueSQL           int64         `json:"issue_sql_statements"`
+	IssueWriteTx       int64         `json:"issue_sql_write_transactions"`
+	IssueWallMS        float64       `json:"issue_wall_ms"`
+	IssueAllocBytes    uint64        `json:"issue_alloc_bytes"`
+	RenewSQL           int64         `json:"renew_sql_statements"`
+	RenewWriteTx       int64         `json:"renew_sql_write_transactions"`
+	RenewWallMS        float64       `json:"renew_wall_ms"`
+	RenewAllocBytes    uint64        `json:"renew_alloc_bytes"`
+	GeneratedAt        time.Time     `json:"generated_at"`
+	Notes              []string      `json:"notes"`
+}
+
+// TestAuthorizationRoundCost measures one full fleet authorization round: the
+// first pass issues, the second renews inside the reuse window. It also asserts
+// the structural property P2 exists for - a round visits each credential once
+// in total rather than once per server.
+func TestAuthorizationRoundCost(t *testing.T) {
+	ctx := context.Background()
+	spec := perfload.SpecFor(steadyStateScale())
+	fixture := newAuthorizationScaleFixture(t, spec.Servers)
+
+	projection, err := fixture.srv.authorizationProjection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visited := 0
+	for _, server := range fixture.servers {
+		visited += len(projection.byServer[server.ID])
+	}
+	unindexed := len(projection.entries) * len(fixture.servers)
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	issueSQL := fixture.db.SQLStatementCount()
+	issueTx := fixture.db.SQLWriteTransactionCount()
+	start := time.Now()
+	for _, server := range fixture.servers {
+		if _, err := fixture.srv.currentAuthorizationLease(ctx, server.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	issueWall := time.Since(start)
+	runtime.ReadMemStats(&after)
+	report := authorizationRoundReport{
+		Spec: spec, Servers: len(fixture.servers), Entries: len(projection.entries),
+		EntriesVisited: visited, EntriesIfUnindexed: unindexed,
+		IssueSQL:        fixture.db.SQLStatementCount() - issueSQL,
+		IssueWriteTx:    fixture.db.SQLWriteTransactionCount() - issueTx,
+		IssueWallMS:     float64(issueWall.Microseconds()) / 1000,
+		IssueAllocBytes: after.TotalAlloc - before.TotalAlloc,
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	renewSQL := fixture.db.SQLStatementCount()
+	renewTx := fixture.db.SQLWriteTransactionCount()
+	start = time.Now()
+	for _, server := range fixture.servers {
+		if _, err := fixture.srv.currentAuthorizationLease(ctx, server.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	renewWall := time.Since(start)
+	runtime.ReadMemStats(&after)
+	report.RenewSQL = fixture.db.SQLStatementCount() - renewSQL
+	report.RenewWriteTx = fixture.db.SQLWriteTransactionCount() - renewTx
+	report.RenewWallMS = float64(renewWall.Microseconds()) / 1000
+	report.RenewAllocBytes = after.TotalAlloc - before.TotalAlloc
+	report.GeneratedAt = time.Now().UTC()
+	report.Notes = []string{
+		"Fixed-global-credentials axis: one inbound and one user per server.",
+		"Issue pass is a cold ledger; renew pass is inside the reuse window.",
+		"entries_visited_per_round_unindexed is what the same round cost before the per-server index.",
+		"Wall time is not a CPU measurement; take a pprof CPU profile for that.",
+	}
+
+	outDir := filepath.Join("..", "..", "..", "dist", "test")
+	_ = os.MkdirAll(outDir, 0o755)
+	raw, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "authorization-round-"+spec.Name+".json"), raw, 0o644); err != nil {
+		t.Logf("could not write report: %v", err)
+	}
+	t.Logf("authorization round %s: servers=%d entries=%d visited=%d (unindexed %d) issue[sql=%d tx=%d wall=%.1fms] renew[sql=%d tx=%d wall=%.1fms]",
+		spec.Name, report.Servers, report.Entries, report.EntriesVisited, report.EntriesIfUnindexed,
+		report.IssueSQL, report.IssueWriteTx, report.IssueWallMS, report.RenewSQL, report.RenewWriteTx, report.RenewWallMS)
+
+	if visited != len(projection.entries) {
+		t.Fatalf("a full round visited %d entries for %d credentials; each credential must be visited once", visited, len(projection.entries))
+	}
+	if report.RenewWriteTx != 0 {
+		t.Fatalf("renewals inside the reuse window opened %d write transactions", report.RenewWriteTx)
+	}
+}

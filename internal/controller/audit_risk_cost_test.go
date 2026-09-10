@@ -89,17 +89,14 @@ func TestAuthorizationLeaseReissueOpensOneWriteTransaction(t *testing.T) {
 		t.Fatalf("first lease = %+v", lease)
 	}
 	// Age the issued lease past the reuse window so the next call reissues.
-	projection, err := srv.authorizationProjection(ctx)
-	if err != nil {
-		t.Fatal(err)
+	state := srv.serverAuthorizationLeaseState(server.ID)
+	state.mu.Lock()
+	if state.lease == nil {
+		state.mu.Unlock()
+		t.Fatal("issued lease missing from the lease cache")
 	}
-	projection.leaseMu.Lock()
-	stored := projection.leases[server.ID]
-	projection.leaseMu.Unlock()
-	if stored == nil {
-		t.Fatal("issued lease missing from projection")
-	}
-	stored.IssuedAt = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	state.issuedAt = time.Now().UTC().Add(-time.Minute)
+	state.mu.Unlock()
 
 	before := db.SQLWriteTransactionCount()
 	reissued, err := srv.currentAuthorizationLease(ctx, server.ID)

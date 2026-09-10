@@ -31,6 +31,14 @@ type hotPathCounters struct {
 	probePlanStaleServed     atomic.Int64
 	probePlanFailed          atomic.Int64
 	probePlanVersionAssigned atomic.Int64
+
+	// Authorization projection and lease issuance.
+	authorizationProjectionHit       atomic.Int64
+	authorizationProjectionBuilt     atomic.Int64
+	authorizationProjectionShared    atomic.Int64
+	authorizationProjectionDiscarded atomic.Int64
+	authorizationLeaseReused         atomic.Int64
+	authorizationLeaseIssued         atomic.Int64
 }
 
 // hotPathSnapshot is the machine-readable form used by diagnostics and tests.
@@ -50,6 +58,13 @@ type hotPathSnapshot struct {
 	ProbePlanStaleServed     int64 `json:"probe_plan_stale_served"`
 	ProbePlanFailed          int64 `json:"probe_plan_failed"`
 	ProbePlanVersionAssigned int64 `json:"probe_plan_version_assigned"`
+
+	AuthorizationProjectionHit       int64 `json:"authorization_projection_hit"`
+	AuthorizationProjectionBuilt     int64 `json:"authorization_projection_built"`
+	AuthorizationProjectionShared    int64 `json:"authorization_projection_shared"`
+	AuthorizationProjectionDiscarded int64 `json:"authorization_projection_discarded"`
+	AuthorizationLeaseReused         int64 `json:"authorization_lease_reused"`
+	AuthorizationLeaseIssued         int64 `json:"authorization_lease_issued"`
 
 	SQLStatements       int64 `json:"sql_statements"`
 	SQLWriteTransactons int64 `json:"sql_write_transactions"`
@@ -72,6 +87,13 @@ func (c *hotPathCounters) snapshot(db *store.Store) hotPathSnapshot {
 		ProbePlanStaleServed:     c.probePlanStaleServed.Load(),
 		ProbePlanFailed:          c.probePlanFailed.Load(),
 		ProbePlanVersionAssigned: c.probePlanVersionAssigned.Load(),
+
+		AuthorizationProjectionHit:       c.authorizationProjectionHit.Load(),
+		AuthorizationProjectionBuilt:     c.authorizationProjectionBuilt.Load(),
+		AuthorizationProjectionShared:    c.authorizationProjectionShared.Load(),
+		AuthorizationProjectionDiscarded: c.authorizationProjectionDiscarded.Load(),
+		AuthorizationLeaseReused:         c.authorizationLeaseReused.Load(),
+		AuthorizationLeaseIssued:         c.authorizationLeaseIssued.Load(),
 	}
 	if db != nil {
 		snapshot.SQLStatements = db.SQLStatementCount()

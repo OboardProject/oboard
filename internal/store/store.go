@@ -6196,6 +6196,22 @@ func (s *Store) ListPendingTasksByType(ctx context.Context, taskType string) ([]
 	return scanTasks(rows)
 }
 
+// ListPendingTasksByServerAndType returns one server's pending tasks of one
+// type. Per-server callers must use this rather than reading every pending task
+// of that type and filtering in Go: that turns one node's decision into a scan
+// of the whole fleet's queue, once per node.
+func (s *Store) ListPendingTasksByServerAndType(ctx context.Context, serverID int64, taskType string) ([]model.AgentTask, error) {
+	if serverID <= 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `select id,server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at from agent_tasks where server_id=? and type=? and status='pending' order by id`, serverID, taskType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTasks(rows)
+}
+
 // ServerEverDeployedOrHasState reports whether the server either has a past
 // successful deployment/core-config baseline or currently participates in any
 // deployment-relevant desired state. Automatic pushes after recovery or

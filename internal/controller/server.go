@@ -83,6 +83,7 @@ type Server struct {
 	proxyCredentialMu          sync.Mutex
 	proxyCredentialRevision    atomic.Uint64
 	authorizationProjections   authorizationProjectionCache
+	authorizationLeases        authorizationLeaseCache
 	authorizationSyncWake      chan struct{}
 	authorizationSyncMu        sync.Mutex
 	authorizationSyncInFlight  map[int64]bool
@@ -4521,6 +4522,7 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 	s.forgetLatencyProbePlan(id)
 	s.forgetRemoteAccessStatus(id)
 	s.forgetPresenceAuditState(id)
+	s.forgetAuthorizationLease(id)
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil
 }
@@ -14606,6 +14608,9 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	// topology are skipped by the relevance gate inside the helper.
 	s.evictAgentSessions(server.ID)
 	s.noteAgentAuthSuccess(clientIP(r))
+	// The Agent identity behind this server was just issued or replaced; a lease
+	// issued to its predecessor must not be reused for it.
+	s.invalidateAuthorizationLease(server.ID)
 	s.queueDeploymentAfterReconnect(r.Context(), server.ID)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
@@ -14702,7 +14707,10 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	s.registerAgentConn(server.ID, server.AgentID, conn)
 	connectedAgentID := server.AgentID
 	// A reconnecting Agent may have missed a revoke; the worker re-evaluates
-	// this server and pushes the current snapshot on the new socket.
+	// this server and pushes the current snapshot on the new socket. The cached
+	// lease is dropped first so that snapshot is freshly issued rather than the
+	// one the previous connection already held.
+	s.invalidateAuthorizationLease(server.ID)
 	s.wakeAuthorizationSync()
 	s.wakeRuntimeUsersSync()
 	defer func() {
