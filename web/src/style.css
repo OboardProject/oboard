@@ -23255,6 +23255,10 @@ button.ui-btn-ghost:hover {
   border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border));
   border-radius: var(--radius-md);
   background: var(--surface-solid);
+  transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.dns-attention-card:hover {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border-strong));
 }
 .dns-attention-main {
   min-width: 0;
@@ -23267,6 +23271,20 @@ button.ui-btn-ghost:hover {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+button.dns-attention-main {
+  min-height: 0 !important;
+  background: transparent !important;
+  border-radius: var(--radius-sm) !important;
+  transform: none !important;
+  font-weight: normal !important;
+}
+button.dns-attention-main:hover,
+button.dns-attention-main:active,
+button.dns-attention-main:focus {
+  background: transparent !important;
+  transform: none !important;
+  box-shadow: none !important;
 }
 .dns-attention-main:hover .dns-attention-card-head strong { text-decoration: underline; }
 .dns-attention-card-head {
@@ -23305,6 +23323,7 @@ button.ui-btn-ghost:hover {
   overflow-wrap: anywhere;
 }
 .dns-attention-card:has(.status-pill.danger) { border-color: color-mix(in srgb, var(--danger) 26%, var(--border)); }
+.dns-attention-card:has(.status-pill.danger):hover { border-color: color-mix(in srgb, var(--danger) 45%, var(--border-strong)); }
 .dns-attention-card:has(.status-pill.danger) .dns-attention-reason { color: var(--danger); }
 .dns-attention-actions {
   display: flex;
