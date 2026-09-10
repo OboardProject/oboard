@@ -124,3 +124,44 @@ export type LatencyChartResponse = Pick<ConnectivityResponse, 'server_id' | 'ret
 export function latencyChartRequestPath(serverID: number | string, window: ConnectivityWindowKey = '24h', maxPoints = 360) {
   return `${connectivityRequestPath(serverID, window)}&view=chart&max_points=${maxPoints}`
 }
+
+export type ConnectivityDetailsMetadata = {
+  generated_at: string
+  observed_through: string | null
+  source: 'raw_state_events'
+  retention_clipped: boolean
+  statistics_basis: string
+}
+
+export type ConnectivitySLAResponse = Pick<ConnectivityResponse, 'server_id' | 'retention_days' | 'window' | 'summary' | 'buckets' | 'outages'> & {
+  metadata: ConnectivityDetailsMetadata
+}
+
+export type ConnectivityEvent = {
+  id: number
+  server_id: number
+  kind: string
+  available: boolean | null
+  latency_ms: number
+  error: string
+  source: string
+  effective_at: string
+  event_key: string
+  created_at: string
+}
+
+export type ConnectivityEventsResponse = Pick<ConnectivityResponse, 'server_id' | 'retention_days' | 'window'> & {
+  events: ConnectivityEvent[]
+  next_cursor: string
+  has_more: boolean
+  metadata: ConnectivityDetailsMetadata
+}
+
+export function connectivityDetailsRequestPath(serverID: number, window: ConnectivityWindowKey, view: 'sla' | 'events', cursor = '') {
+  const query = new URLSearchParams({ window, view })
+  if (view === 'events') {
+    query.set('limit', '100')
+    if (cursor) query.set('cursor', cursor)
+  }
+  return `/servers/${serverID}/connectivity?${query}`
+}

@@ -98,6 +98,7 @@ import { localizeManagedPublicPortExhaustion, localizeRelayUpdateFailure } from 
 import { canManageAdministratorAccounts, effectiveUserRole, hasManagementAccess } from './permissions'
 import './style.css'
 import { LatencyDashboard } from './components/server/LatencyDashboard'
+import { ConnectivityDetails } from './components/server/ConnectivityDetails'
 import { Badge } from './components/ui/badge'
 import { AuthorizationStatusBadge } from './components/authorization/AuthorizationStatusBadge'
 import { Switch } from './components/ui/switch'
@@ -10395,6 +10396,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
             onWindowKeyDown={handleLatencyWindowKeyDown}
             publicMode={server.latency_probe_mode}
           /> : null}
+        <ConnectivityDetails key={`${server.id}:${windowKey}`} serverID={server.id} windowKey={windowKey} client={client} />
       </div>}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
