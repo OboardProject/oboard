@@ -12,18 +12,20 @@ import (
 )
 
 type latencyRollupSchedule struct {
-	rows               int
-	delay              time.Duration
-	wait               time.Duration
-	cpu                float64
-	sampledAt, lastLog time.Time
+	latencyEnabled, slaEnabled, slaTurn bool
+	rows                                int
+	delay                               time.Duration
+	wait                                time.Duration
+	cpu                                 float64
+	sampledAt, lastLog                  time.Time
 }
 
 func newLatencyRollupSchedule() *latencyRollupSchedule {
-	if os.Getenv("OBOARD_LATENCY_ROLLUP_WRITE") != "1" {
+	latency, sla := os.Getenv("OBOARD_LATENCY_ROLLUP_WRITE") == "1", os.Getenv("OBOARD_SLA_PROJECTION_WRITE") == "1"
+	if !latency && !sla {
 		return nil
 	}
-	return &latencyRollupSchedule{rows: store.LatencyRollupBatchLimit, delay: 2 * time.Second}
+	return &latencyRollupSchedule{latencyEnabled: latency, slaEnabled: sla, rows: store.LatencyRollupBatchLimit, delay: 2 * time.Second}
 }
 
 func (state *latencyRollupSchedule) next(processed int, duration time.Duration, err error) time.Duration {
@@ -70,6 +72,20 @@ func (s *Server) runLatencyRollup(ctx context.Context, state *latencyRollupSched
 	if busy {
 		state.delay = max(state.delay, 30*time.Second)
 		return state.delay
+	}
+	useSLA := state.slaEnabled && (!state.latencyEnabled || state.slaTurn)
+	state.slaTurn = !state.slaTurn
+	if useSLA {
+		result, err := s.store.RunSLAProjectionBatch(batchCtx, at, state.rows, buildSLAProjection)
+		if errors.Is(err, store.ErrSLAProjectionDensity) && state.rows < store.LatencyRollupBatchLimit {
+			state.rows = min(store.LatencyRollupBatchLimit, state.rows*2)
+		}
+
+		if ctx.Err() == nil && (err != nil || result.Events > 0 || result.Buckets > 0) && at.Sub(state.lastLog) >= time.Minute {
+			log.Printf("SLA projection: events=%d buckets=%d server=%d phase=%s duration=%s error=%v", result.Events, result.Buckets, result.ServerID, result.Phase, time.Since(at), err)
+			state.lastLog = at
+		}
+		return state.next(result.Events+result.Buckets, time.Since(at), err)
 	}
 	result, err := s.store.RunLatencyRollupBatch(batchCtx, at, state.rows)
 	if ctx.Err() == nil && (err != nil || result.Processed > 0) && at.Sub(state.lastLog) >= time.Minute {

@@ -8,6 +8,7 @@ import (
 
 func TestLatencyRollupScheduleIsOptInAndBounded(t *testing.T) {
 	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "")
+	t.Setenv("OBOARD_SLA_PROJECTION_WRITE", "")
 	if newLatencyRollupSchedule() != nil {
 		t.Fatal("summary worker enabled by default")
 	}
@@ -31,5 +32,17 @@ func TestLatencyRollupScheduleIsOptInAndBounded(t *testing.T) {
 	}
 	if schedule.delay != 30*time.Second {
 		t.Fatal("idle loop does not back off")
+	}
+}
+
+func TestSLAProjectionUsesExistingMaintenanceBudget(t *testing.T) {
+	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "")
+	t.Setenv("OBOARD_SLA_PROJECTION_WRITE", "1")
+	state := newLatencyRollupSchedule()
+	if state == nil || !state.slaEnabled || state.latencyEnabled || state.rows != 500 {
+		t.Fatal("SLA-only schedule not enabled")
+	}
+	if state.next(12, 100*time.Millisecond, nil) < 5*time.Second {
+		t.Fatal("SLA bypassed shared wall-time budget")
 	}
 }

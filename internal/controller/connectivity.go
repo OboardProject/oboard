@@ -278,6 +278,10 @@ func buildConnectivitySegments(from, to time.Time, baseline, events []model.Serv
 	for _, event := range baseline {
 		applyConnectivityEvent(&state, event)
 	}
+	return buildConnectivitySegmentsFromState(from, to, state, events)
+}
+
+func buildConnectivitySegmentsFromState(from, to time.Time, state connectivityState, events []model.ServerConnectivityEvent) ([]connectivitySegment, connectivityState) {
 	cursor := from
 	segments := make([]connectivitySegment, 0, len(events)+1)
 	for _, event := range events {
@@ -331,6 +335,10 @@ func buildConnectivityOutages(from, to time.Time, baseline, events []model.Serve
 	for _, event := range baseline {
 		applyConnectivityEvent(&state, event)
 	}
+	return buildConnectivityOutagesFromState(from, to, state, events)
+}
+
+func buildConnectivityOutagesFromState(from, to time.Time, state connectivityState, events []model.ServerConnectivityEvent) []connectivityOutage {
 	var outages []connectivityOutage
 	var active *connectivityOutage
 	if state.availability == connectivityUnavailable {
