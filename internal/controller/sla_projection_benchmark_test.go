@@ -24,7 +24,7 @@ func BenchmarkSLAProjectionBatch(b *testing.B) {
 			if err := db.CreateServer(ctx, node); err != nil {
 				b.Fatal(err)
 			}
-			base := time.Now().UTC().Truncate(5 * time.Minute).Add(-4 * time.Hour)
+			base := time.Now().UTC().Truncate(5 * time.Minute).Add(5 * time.Minute)
 			if err := db.RecordControllerConnectionEvent(ctx, node.ID, true, base.Add(-time.Minute)); err != nil {
 				b.Fatal(err)
 			}

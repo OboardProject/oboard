@@ -158,7 +158,7 @@ func (s *Store) scanSLAProjectionEvents(ctx context.Context, at time.Time, limit
 		state.enrolled = server
 	}
 	for server, times := range marks {
-		if _, err := tx.ExecContext(ctx, `insert into sla_projection_servers(server_id,coverage_from,frontier,updated_at) select id,?,?,? from servers where id=? on conflict(server_id) do nothing`, state.start, state.start, now(), server); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into sla_projection_servers(server_id,coverage_from,frontier,updated_at) select id,max(?,cast(unixepoch(created_at)/300 as integer)*300),max(?,cast(unixepoch(created_at)/300 as integer)*300),? from servers where id=? on conflict(server_id) do nothing`, state.start, state.start, now(), server); err != nil {
 			return 0, err
 		}
 		var coverage, frontier int64

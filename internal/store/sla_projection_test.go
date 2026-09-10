@@ -203,3 +203,23 @@ func TestConnectivityRetentionPreservesNewLateEventsDuringPrune(t *testing.T) {
 		t.Fatal("new late baseline deleted by an older retention snapshot")
 	}
 }
+
+func TestSLAProjectionDoesNotBackfillBeforeServerCreation(t *testing.T) {
+	db, node := newConnectivityTestStore(t)
+	ctx := context.Background()
+	started := time.Now().UTC().Truncate(5 * time.Minute).Add(-24 * time.Hour)
+	if _, err := db.RunSLAProjectionBatch(ctx, started, 500, fakeSLAProjection); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.scanSLAProjectionEvents(ctx, time.Now(), 500); err != nil {
+		t.Fatal(err)
+	}
+	status, err := db.InspectSLAProjection(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := node.CreatedAt.UTC().Truncate(5 * time.Minute).Unix()
+	if status.CoverageFrom != want || status.Frontier != want {
+		t.Fatalf("enrolled before creation: %+v want %d", status, want)
+	}
+}
