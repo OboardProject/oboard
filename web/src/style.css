@@ -4770,6 +4770,10 @@ button.server-address-line.copied:hover {
 .graph-path-select { width: 100%; }
 .proxy-path-entry-picker .custom-select-trigger,
 .proxy-path-focus-picker .custom-select-trigger { min-height: 36px; }
+.graph-entry-select .custom-select-value,
+.proxy-path-entry-picker .custom-select-value {
+  overflow: visible;
+}
 .path-focus-option-label {
   min-width: 0;
   width: 100%;
@@ -22110,6 +22114,11 @@ button.ui-btn-ghost:hover {
   vertical-align: middle;
 }
 .custom-select-value.placeholder { color: var(--muted); }
+.custom-select-value:has(.entry-server-option-label),
+.custom-select-value:has(.entry-server-status),
+.custom-select-value:has(.server-status-dot) {
+  overflow: visible;
+}
 
 .custom-select-chevron {
   flex-shrink: 0;
@@ -22180,6 +22189,10 @@ button.ui-btn-ghost:hover {
   font-size: 13px;
   font-weight: 500;
   text-align: left;
+}
+.custom-select-option > span:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .custom-select-option:hover {
   background: var(--surface-2);

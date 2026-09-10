@@ -68,4 +68,23 @@ describe('CustomSelect', () => {
     act(() => options[2].click())
     expect(selectedValue).toBe('CNAME')
   })
+
+  it('renders complex selected label with status indicator without clipping container', () => {
+    act(() => root.render(<CustomSelect
+      value="1"
+      onChange={() => {}}
+      options={[{ value: '1', label: 'Starhub' }]}
+      className="graph-entry-select"
+      selectedLabel={<div className="entry-server-option-label">
+        <span className="entry-server-status online" aria-label="在线" />
+        <span className="entry-server-name">Starhub</span>
+      </div>}
+      ariaLabel="选择当前入口服务器"
+    />))
+
+    const valueSpan = container.querySelector<HTMLSpanElement>('.custom-select-value')!
+    expect(valueSpan).not.toBeNull()
+    const statusDot = valueSpan.querySelector('.entry-server-status')
+    expect(statusDot).not.toBeNull()
+  })
 })
