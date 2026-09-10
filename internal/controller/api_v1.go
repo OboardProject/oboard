@@ -391,8 +391,23 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 			v2Error(w, r, 405, "method_not_allowed", "仅支持 GET")
 			return
 		}
+		if view := r.URL.Query().Get("view"); view == "sla" || view == "events" {
+			input, err := connectivityDetailsRequest(r, id)
+			if err != nil {
+				v2Error(w, r, 400, "invalid_history_input", err.Error())
+				return
+			}
+			response, err := s.readConnectivityDetails(r.Context(), principal, view, input)
+			if err != nil {
+				v2Error(w, r, historyErrorStatus(err), "history_read_failed", err.Error())
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			v2Write(w, r, http.StatusOK, response, nil)
+			return
+		}
 		if r.URL.Query().Get("view") != "chart" {
-			v2Error(w, r, 400, "invalid_view", "机器历史读取须指定 view=chart")
+			v2Error(w, r, 400, "invalid_view", "机器历史读取须指定 view=chart、sla 或 events")
 			return
 		}
 		if !principal.AllowsInt64("server_ids", id) {

@@ -247,13 +247,13 @@ func historyErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, errHistoryBusy), strings.HasPrefix(err.Error(), "history_changed:"):
 		return http.StatusServiceUnavailable
-	case errors.Is(err, errHistoryTooLarge), errors.Is(err, store.ErrLatencyPointBudget):
+	case errors.Is(err, errHistoryTooLarge), errors.Is(err, store.ErrLatencyPointBudget), errors.Is(err, store.ErrConnectivityEventBudget):
 		return http.StatusRequestEntityTooLarge
 	case errors.Is(err, sql.ErrNoRows):
 		return http.StatusNotFound
 	case strings.HasPrefix(err.Error(), "resource_denied:"):
 		return http.StatusForbidden
-	case strings.Contains(err.Error(), "window must be"), strings.Contains(err.Error(), "max_points"):
+	case strings.HasPrefix(err.Error(), "invalid_history_input:"), strings.Contains(err.Error(), "window must be"), strings.Contains(err.Error(), "max_points"):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError

@@ -148,7 +148,7 @@ func TestLatencyChartHTTPContract(t *testing.T) {
 		t.Fatalf("metadata=%v", metadata)
 	}
 	request(t, handler, http.MethodGet, path+"0", token, nil, 400)
-	request(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/ui/servers/%d/connectivity?view=events", node.ID), token, nil, 400)
+	request(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/ui/servers/%d/connectivity?view=invalid", node.ID), token, nil, 400)
 	request(t, handler, http.MethodGet, "/api/v1/ui/servers/999999/connectivity?view=chart", token, nil, 404)
 	machine := fmt.Sprintf("/api/v1/servers/%d/connectivity?view=chart&window=1h", node.ID)
 	result = request(t, handler, http.MethodGet, machine, token, nil, 200)

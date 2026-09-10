@@ -292,6 +292,14 @@ func (s *Store) overlayPublicLatencyOnMetricSamples(ctx context.Context, samples
 }
 
 func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
+	return s.listConnectivityHistory(ctx, serverID, from, to, 0)
+}
+
+func (s *Store) ListConnectivitySLAHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
+	return s.listConnectivityHistory(ctx, serverID, from, to, 50000)
+}
+
+func (s *Store) listConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time, limit int) (model.ServerConnectivityHistory, error) {
 	var history model.ServerConnectivityHistory
 	for _, kinds := range [][]model.ConnectivityEventKind{
 		{model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled, model.ConnectivityEventProbeTargetChanged},
@@ -316,13 +324,44 @@ func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, fro
 		}
 		return history.Baseline[i].EffectiveAt.Before(history.Baseline[j].EffectiveAt)
 	})
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and effective_at>=? and effective_at<? order by effective_at asc,case when kind in ('probe_enabled','probe_disabled','probe_target_changed') then 0 when kind in ('probe_result','server_offline') then 1 when kind in ('controller_connected','controller_disconnected') then 2 else 3 end asc,id asc`, serverID, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano))
+	query := `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and effective_at>=? and effective_at<? order by effective_at asc,id asc`
+	args := []any{serverID, connectivityTimeBound(from), connectivityTimeBound(to)}
+	if limit > 0 {
+		query += " limit ?"
+		args = append(args, limit+1)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return history, err
 	}
 	history.Events, err = scanConnectivityEvents(rows)
 	if err != nil {
 		return history, err
+	}
+	if limit > 0 && len(history.Events) > limit {
+		return model.ServerConnectivityHistory{}, ErrConnectivityEventBudget
+	}
+	// Indexed timestamps already order seconds. Sort only ties within each second
+	// to preserve fractional timestamps and the state machine's event priority.
+	for start := 0; start < len(history.Events); {
+		end := start + 1
+		for end < len(history.Events) && history.Events[end].EffectiveAt.Unix() == history.Events[start].EffectiveAt.Unix() {
+			end++
+		}
+		group := history.Events[start:end]
+		if len(group) > 1 {
+			sort.Slice(group, func(i, j int) bool {
+				a, b := group[i], group[j]
+				if !a.EffectiveAt.Equal(b.EffectiveAt) {
+					return a.EffectiveAt.Before(b.EffectiveAt)
+				}
+				if connectivityEventPriority(a.Kind) != connectivityEventPriority(b.Kind) {
+					return connectivityEventPriority(a.Kind) < connectivityEventPriority(b.Kind)
+				}
+				return a.ID < b.ID
+			})
+		}
+		start = end
 	}
 	var dataStart sql.NullString
 	if err := s.db.QueryRowContext(ctx, `select effective_at from server_connectivity_events where server_id=? order by effective_at asc,id asc limit 1`, serverID).Scan(&dataStart); err != nil && err != sql.ErrNoRows {
@@ -344,7 +383,7 @@ func (s *Store) latestConnectivityEventBefore(ctx context.Context, serverID int6
 	args := make([]any, 0, len(kinds)*3)
 	for index, kind := range kinds {
 		candidates[index] = `select * from (select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? and effective_at<? order by effective_at desc,id desc limit 1)`
-		args = append(args, serverID, kind, before.UTC().Format(time.RFC3339Nano))
+		args = append(args, serverID, kind, connectivityTimeBound(before))
 	}
 	query := `select * from (` + strings.Join(candidates, " union all ") + `) order by effective_at desc,id desc limit 1`
 	row := s.db.QueryRowContext(ctx, query, args...)

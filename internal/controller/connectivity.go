@@ -475,7 +475,7 @@ func buildConnectivityLatencyPoints(from time.Time, duration time.Duration, prob
 }
 
 func buildConnectivityBuckets(window connectivityWindow, segments []connectivitySegment, probes []model.ServerConnectivityEvent) []connectivityBucket {
-	count := int(window.Duration / window.BucketDuration)
+	count := int((window.Duration + window.BucketDuration - 1) / window.BucketDuration)
 	buckets := make([]connectivityBucket, count)
 	type latencyTotal struct {
 		sum   int64
@@ -493,6 +493,9 @@ func buildConnectivityBuckets(window connectivityWindow, segments []connectivity
 	for index := 0; index < count; index++ {
 		start := window.From.Add(time.Duration(index) * window.BucketDuration)
 		end := start.Add(window.BucketDuration)
+		if end.After(window.To) {
+			end = window.To
+		}
 		var available, unavailable, unknown time.Duration
 		for segmentIndex < len(segments) {
 			segment := segments[segmentIndex]
@@ -522,8 +525,7 @@ func buildConnectivityBuckets(window connectivityWindow, segments []connectivity
 	return buckets
 }
 
-func BuildConnectivityResponse(serverID int64, window connectivityWindow, history model.ServerConnectivityHistory) connectivityResponse {
-	segments, currentState := buildConnectivitySegments(window.From, window.To, history.Baseline, history.Events)
+func connectivityStateSummary(window connectivityWindow, segments []connectivitySegment, history model.ServerConnectivityHistory) (connectivitySummary, []connectivityOutage) {
 	available, unavailable, unknown := connectivityDurations(segments, window.From, window.To)
 	observed := available + unavailable
 	coverage := 0.0
@@ -538,6 +540,12 @@ func BuildConnectivityResponse(serverID int64, window connectivityWindow, histor
 	for _, outage := range outages {
 		longest = math.Max(longest, outage.DurationSeconds)
 	}
+	return connectivitySummary{SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds(), ObservedSeconds: observed.Seconds(), CoveragePercent: coverage, OutageCount: len(outages), LongestOutageSecond: longest}, outages
+}
+
+func BuildConnectivityResponse(serverID int64, window connectivityWindow, history model.ServerConnectivityHistory) connectivityResponse {
+	segments, currentState := buildConnectivitySegments(window.From, window.To, history.Baseline, history.Events)
+	summary, outages := connectivityStateSummary(window, segments, history)
 	probes := connectivityProbeCounts{}
 	for _, event := range history.Events {
 		if event.Kind != model.ConnectivityEventProbeResult {
@@ -577,7 +585,7 @@ func BuildConnectivityResponse(serverID int64, window connectivityWindow, histor
 	response := connectivityResponse{
 		ServerID:              serverID,
 		Window:                window,
-		Summary:               connectivitySummary{SLAPercent: connectivityPercent(available, unavailable), AvailableSeconds: available.Seconds(), UnavailableSeconds: unavailable.Seconds(), UnknownSeconds: unknown.Seconds(), ObservedSeconds: observed.Seconds(), CoveragePercent: coverage, OutageCount: len(outages), LongestOutageSecond: longest},
+		Summary:               summary,
 		Probes:                probes,
 		Latency:               connectivityLatencyStats(successfulProbes),
 		Current:               current,
@@ -604,8 +612,28 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		return
 	}
 	view := r.URL.Query().Get("view")
-	if view != "" && view != "chart" {
-		fail(w, errors.New("view must be chart or omitted"), http.StatusBadRequest)
+	if view != "" && view != "chart" && view != "sla" && view != "events" {
+		fail(w, errors.New("view must be chart, sla, events or omitted"), http.StatusBadRequest)
+		return
+	}
+	if view == "sla" || view == "events" {
+		input, err := connectivityDetailsRequest(r, serverID)
+		if err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		user := currentUser(r)
+		if user == nil {
+			fail(w, errors.New("unauthorized"), http.StatusUnauthorized)
+			return
+		}
+		response, err := s.readConnectivityDetails(r.Context(), application.HumanPrincipal(*user, currentRole(r), netip.Addr{}), view, input)
+		if err != nil {
+			fail(w, err, historyErrorStatus(err))
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		write(w, http.StatusOK, response)
 		return
 	}
 	if view == "chart" {

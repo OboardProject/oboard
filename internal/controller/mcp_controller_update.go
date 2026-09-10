@@ -24,6 +24,13 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 	switch capabilityName {
 	case "traffic.get_user_ledger", "traffic.get_server_sync_state", "traffic.list_reconciliation_issues":
 		return s.queryTrafficLedgerCapability(ctx, principal, capabilityName, input)
+	case "servers.connectivity.sla", "servers.connectivity.events":
+		var request connectivityViewInput
+		if err := strictAutomationInput(input, &request); err != nil {
+			return nil, err
+		}
+		view := strings.TrimPrefix(capabilityName, "servers.connectivity.")
+		return s.readConnectivityDetails(ctx, principal, view, request)
 	case "servers.connectivity.read":
 		var inputValue latencyChartInput
 		if err := strictAutomationInput(input, &inputValue); err != nil {
