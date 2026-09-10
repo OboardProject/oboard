@@ -629,7 +629,7 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		}
 		response, err := s.readConnectivityDetails(r.Context(), application.HumanPrincipal(*user, currentRole(r), netip.Addr{}), view, input)
 		if err != nil {
-			fail(w, err, historyErrorStatus(err))
+			writeHistoryReadError(w, r, err, false)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
@@ -650,7 +650,7 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		principal := application.HumanPrincipal(*user, currentRole(r), netip.Addr{})
 		response, err := s.readLatencyChart(r.Context(), principal, input)
 		if err != nil {
-			fail(w, err, historyErrorStatus(err))
+			writeHistoryReadError(w, r, err, false)
 			return
 		}
 		encoded, err := json.Marshal(response)
@@ -685,7 +685,7 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		return encoded, time.Now(), err
 	})
 	if err != nil {
-		fail(w, err, historyErrorStatus(err))
+		writeHistoryReadError(w, r, err, false)
 		return
 	}
 	write(w, http.StatusOK, entry.value)

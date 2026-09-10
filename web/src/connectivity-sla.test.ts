@@ -50,3 +50,10 @@ describe('connectivity dialog data source', () => {
 it('requests chart-only data without changing the legacy path', () => {
  expect(latencyChartRequestPath(7, '7d', 120)).toBe('/servers/7/connectivity?window=7d&view=chart&max_points=120')
 })
+
+it('keeps the default dialog on chart-only reads rather than the expensive full response', () => {
+ const source = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+ const dialog = source.slice(source.indexOf('function ServerConnectivityDialog('), source.indexOf('function ServerDetailDialog('))
+ expect(dialog).toContain('latencyChartRequestPath(server.id, windowKey)')
+ expect(dialog).not.toContain('connectivityRequestPath(server.id')
+})

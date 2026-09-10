@@ -399,7 +399,7 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 			}
 			response, err := s.readConnectivityDetails(r.Context(), principal, view, input)
 			if err != nil {
-				v2Error(w, r, historyErrorStatus(err), "history_read_failed", err.Error())
+				writeHistoryReadError(w, r, err, true)
 				return
 			}
 			w.Header().Set("Cache-Control", "no-store")
@@ -421,7 +421,7 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 		}
 		response, err := s.readLatencyChart(r.Context(), principal, input)
 		if err != nil {
-			v2Error(w, r, historyErrorStatus(err), "history_read_failed", err.Error())
+			writeHistoryReadError(w, r, err, true)
 			return
 		}
 		v2Write(w, r, http.StatusOK, response, nil)

@@ -10382,9 +10382,10 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
     </header>
     <div className="dialog-body connectivity-body">
       {activeView === 'load' ? <ServerLoadPanel server={server} response={resourceResponse} loading={resourceLoading} error={resourceError} windowHours={loadWindowHours} onWindowChange={setLoadWindowHours} onRetry={() => resources.refresh()} /> : <div className="server-monitor-panel" role="tabpanel" id="server-monitor-latency-panel" aria-labelledby="server-monitor-latency-tab">
+        {connectivity.retrying && response ? <div className="connectivity-coverage-note" role="status">主控繁忙，保留当前图表，稍后自动重试一次。</div> : null}
         {loadError && response ? <div className="connectivity-coverage-note danger-text" role="alert">更新失败，当前显示上次读取的图表：{loadError}</div> : null}
         {probeError ? <div className="connectivity-coverage-note danger-text" role="alert"><AlertTriangle size={13} aria-hidden="true" /><span>{probeError}</span></div> : null}
-        {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>正在加载监控与延迟统计</strong></div>
+        {loading && !response ? <div className="connectivity-empty" aria-live="polite"><Loader2 size={18} className="spin" /><strong>{connectivity.retrying ? '主控繁忙，正在等待自动重试一次…' : '正在加载监控与延迟统计'}</strong></div>
           : loadError && !response ? <div className="connectivity-empty" role="alert"><AlertTriangle size={18} /><strong>无法加载监控与延迟统计</strong><span>{loadError}</span><button type="button" className="ghost" onClick={() => connectivity.refresh()}>重试</button></div>
           : response ? <LatencyDashboard
             response={response}

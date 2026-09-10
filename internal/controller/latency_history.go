@@ -259,3 +259,33 @@ func historyErrorStatus(err error) int {
 		return http.StatusInternalServerError
 	}
 }
+
+// History deadlines are service budgets, not evidence that a user cancelled.
+func writeHistoryReadError(w http.ResponseWriter, r *http.Request, err error, machine bool) {
+	code, message := "", ""
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		code, message = "history_timeout", "历史查询超时，主控可能正忙；请稍后重试或缩短时间范围"
+	case errors.Is(err, context.Canceled):
+		code, message = "history_canceled", "历史读取已中断，请稍后重试"
+	case errors.Is(err, errHistoryBusy):
+		code, message = "history_busy", "历史查询繁忙，请稍后重试"
+	case strings.HasPrefix(err.Error(), "history_changed:"):
+		code, message = "history_changed", "历史数据正在更新，请稍后重试"
+	}
+	if code != "" {
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set("Cache-Control", "no-store")
+		if machine {
+			v2Error(w, r, http.StatusServiceUnavailable, code, message)
+		} else {
+			write(w, http.StatusServiceUnavailable, map[string]any{"code": code, "error": message})
+		}
+		return
+	}
+	if machine {
+		v2Error(w, r, historyErrorStatus(err), "history_read_failed", err.Error())
+	} else {
+		fail(w, err, historyErrorStatus(err))
+	}
+}
