@@ -28296,7 +28296,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .return-latency-page h3 { font-size: 14px; }
 .return-latency-page p { margin: 0; text-wrap: pretty; line-height: 1.6; }
 .return-latency-page .muted { font-size: 12px; }
-.return-latency-page .panel-body { display: flex; flex-direction: column; gap: 24px; }
+.return-latency-page .panel-body { display: flex; flex-direction: column; gap: 20px; }
 .return-latency-page button { white-space: nowrap; }
 .return-latency-page button:focus-visible, .return-latency-page input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .return-latency-page input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--primary); }
@@ -28523,6 +28523,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 @media (max-width: 860px) {
   .return-latency-page .panel-body { gap: 20px; }
+  .network-probe-header { flex-direction: column; align-items: stretch; gap: 12px; border-bottom: 0; }
+  .network-probe-header .network-probe-tabs { border-bottom: 1px solid var(--border); margin-bottom: 0; }
+  .network-probe-header .return-latency-toolbar { padding-bottom: 0; }
   .return-latency-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
   .return-latency-toolbar button { width: 100%; min-height: 42px; }
   .return-latency-filters { flex-direction: column; align-items: stretch; gap: 8px; }
@@ -28619,7 +28622,17 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   }
 }
 
+.network-probe-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
 .network-probe-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); }
+.network-probe-header .network-probe-tabs { border-bottom: 0; margin-bottom: -1px; }
+.network-probe-header .return-latency-toolbar { padding-bottom: 6px; }
 .network-probe-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 2px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
 .network-probe-tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
 .network-probe-tabs button span { font-size: 11px; font-variant-numeric: tabular-nums; }

@@ -228,5 +228,18 @@ describe('return latency probe tasks', () => {
     expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.probe-task-server-list\s*\{[^}]*overflow-y:\s*auto/s)
     expect(stylesheet).toMatch(/\.dialog\.probe-settings-dialog\s+\.return-latency-form-actions\s*\{[^}]*margin-top:\s*auto/s)
   })
+
+  it('integrates network probe tabs and toolbar in a unified header bar', async () => {
+    const request = vi.fn(async (path: string) => path === '/latency-probe-resource' ? { regions } : { latency_probe_tasks: tasks })
+    await act(async () => root.render(<ReturnLatencyPage servers={servers} client={{ request }} canManage onRefresh={() => {}} renderHistory={() => null} />))
+    const header = container.querySelector('.network-probe-header')!
+    expect(header).toBeTruthy()
+    expect(header.querySelector('.network-probe-tabs')).toBeTruthy()
+    expect(header.querySelector('.return-latency-toolbar')).toBeTruthy()
+
+    const stylesheet = readFileSync(path.resolve(__dirname, '../../style.css'), 'utf8')
+    expect(stylesheet).toMatch(/\.network-probe-header\s*\{[^}]*display:\s*flex[^}]*justify-content:\s*space-between/s)
+    expect(stylesheet).toMatch(/\.network-probe-header\s+\.network-probe-tabs\s*\{[^}]*border-bottom:\s*0/s)
+  })
 })
 

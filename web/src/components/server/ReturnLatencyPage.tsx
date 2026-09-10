@@ -174,22 +174,23 @@ export function ReturnLatencyPage({ servers, client, loading, canManage, onRefre
   const visibleTasks = tasks.filter(task => (methodFilter === 'all' || task.method === methodFilter) && `${task.name} ${task.address} ${task.province} ${task.carrier}`.toLowerCase().includes(taskQuery.trim().toLowerCase()))
   return <section className="panel return-latency-page" aria-label="网络探测">
     <div className="panel-body">
-      <div className="return-latency-toolbar">
-        <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
-        <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
-        <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
+      <div className="network-probe-header">
+        <div className="network-probe-tabs" role="tablist" aria-label="网络探测视图">
+          {(['targets', 'nodes'] as const).map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const next = event.key === 'Home' ? 'targets' : event.key === 'End' ? 'nodes' : index === 0 ? 'nodes' : 'targets'
+            setView(next); document.getElementById(`probe-${next}-tab`)?.focus()
+          }}>{tab === 'targets' ? '目标' : '节点'}<span>{tab === 'targets' ? tasks.length : servers.length}</span></button>)}
+        </div>
+        <div className="return-latency-toolbar">
+          <button type="button" className="primary" disabled={!canManage} onClick={() => setEditing({ open: true, task: null })}><Plus size={15} aria-hidden="true" />创建探测任务</button>
+          <button type="button" className="ghost" disabled={busy || !canManage || !tasks.length} onClick={runAll}><Activity size={15} aria-hidden="true" />立即探测</button>
+          <button type="button" className="ghost" disabled={busy || loading} onClick={() => { void onRefresh(); reloadTasks() }}><RefreshCw size={15} aria-hidden="true" />刷新</button>
+        </div>
       </div>
       {notice && <p className={notice.kind === 'error' ? 'danger-text' : 'muted'} role="status">{notice.text}</p>}
       {resource.error && <p className="muted" role="status">预设目标暂不可用，仍可手动创建任务。 <button type="button" className="ghost" disabled={resource.loading} onClick={() => setResourceRevision(current => current + 1)}>重新加载</button></p>}
-
-      <div className="network-probe-tabs" role="tablist" aria-label="网络探测视图">
-        {(['targets', 'nodes'] as const).map((tab, index) => <button key={tab} id={`probe-${tab}-tab`} type="button" role="tab" aria-selected={view === tab} aria-controls={`probe-${tab}-panel`} tabIndex={view === tab ? 0 : -1} onClick={() => setView(tab)} onKeyDown={event => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-          event.preventDefault()
-          const next = event.key === 'Home' ? 'targets' : event.key === 'End' ? 'nodes' : index === 0 ? 'nodes' : 'targets'
-          setView(next); document.getElementById(`probe-${next}-tab`)?.focus()
-        }}>{tab === 'targets' ? '目标' : '节点'}<span>{tab === 'targets' ? tasks.length : servers.length}</span></button>)}
-      </div>
       {view === 'targets' && <section id="probe-targets-panel" role="tabpanel" aria-labelledby="probe-targets-tab" className="return-latency-tasks">
         <div className="return-latency-filters">
           <div className="return-latency-search"><Search size={15} aria-hidden="true" /><input type="search" aria-label="搜索探测任务" placeholder="搜索名称或目标地址" value={taskQuery} onChange={event => setTaskQuery(event.target.value)} /></div>
