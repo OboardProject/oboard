@@ -164,6 +164,7 @@ func TestMCPMetricsCapabilitiesReturnExistingData(t *testing.T) {
 		arguments  map[string]any
 		check      string
 	}{
+		{"servers.connectivity.read", map[string]any{"server_id": server.ID, "window": "24h", "max_points": 60}, "metadata"},
 		{"servers.metrics.read", map[string]any{"server_id": server.ID}, "server_id"},
 		{"servers.latency_probes.read", map[string]any{"server_id": server.ID, "limit": 10}, "server_id"},
 	} {

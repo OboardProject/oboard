@@ -42,5 +42,9 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateLatencyHistory(serverID)
+	return nil
 }

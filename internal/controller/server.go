@@ -226,7 +226,11 @@ type Server struct {
 	runtimeUserPackages runtimeUserPackageCache
 	// auditOverviews caches the audit console summaries, which three polling
 	// endpoints request for the same reporting window.
-	auditOverviews auditOverviewCache
+	auditOverviews         auditOverviewCache
+	latencyHistoryOnce     sync.Once
+	latencyHistoryCache    *coalesceCache[string, json.RawMessage]
+	latencyHistorySequence atomic.Uint64
+	latencyHistoryNow      func() time.Time
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
 	settingsCache atomic.Pointer[settingsSnapshot]

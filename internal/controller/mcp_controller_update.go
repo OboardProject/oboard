@@ -24,6 +24,12 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 	switch capabilityName {
 	case "traffic.get_user_ledger", "traffic.get_server_sync_state", "traffic.list_reconciliation_issues":
 		return s.queryTrafficLedgerCapability(ctx, principal, capabilityName, input)
+	case "servers.connectivity.read":
+		var inputValue latencyChartInput
+		if err := strictAutomationInput(input, &inputValue); err != nil {
+			return nil, err
+		}
+		return s.readLatencyChart(ctx, principal, inputValue)
 	case "servers.metrics.read":
 		var request struct {
 			ServerID    int64 `json:"server_id"`

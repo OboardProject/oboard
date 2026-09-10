@@ -386,6 +386,32 @@ func (s *Server) apiV1Server(w http.ResponseWriter, r *http.Request) {
 		v2Error(w, r, http.StatusForbidden, "scope_denied", "缺少 servers:read 权限")
 		return
 	}
+	if len(parts) == 2 && parts[1] == "connectivity" {
+		if r.Method != http.MethodGet {
+			v2Error(w, r, 405, "method_not_allowed", "仅支持 GET")
+			return
+		}
+		if r.URL.Query().Get("view") != "chart" {
+			v2Error(w, r, 400, "invalid_view", "机器历史读取须指定 view=chart")
+			return
+		}
+		if !principal.AllowsInt64("server_ids", id) {
+			v2Error(w, r, 403, "resource_denied", "无权访问该服务器")
+			return
+		}
+		input, err := latencyChartRequest(r, id)
+		if err != nil {
+			v2HandleError(w, r, err)
+			return
+		}
+		response, err := s.readLatencyChart(r.Context(), principal, input)
+		if err != nil {
+			v2Error(w, r, historyErrorStatus(err), "history_read_failed", err.Error())
+			return
+		}
+		v2Write(w, r, http.StatusOK, response, nil)
+		return
+	}
 	// Machine remote-access read: GET /api/v1/servers/:id/remote-access
 	if len(parts) == 2 && parts[1] == "remote-access" {
 		if r.Method != http.MethodGet {

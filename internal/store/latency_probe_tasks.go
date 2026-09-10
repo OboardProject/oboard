@@ -295,6 +295,10 @@ func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	serverIDs, err := queryInt64sTx(ctx, tx, `select distinct server_id from server_latency_probe_results where task_id=?`, id)
+	if err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `delete from latency_probe_tasks where id=?`, id)
 	if err != nil {
 		return err
@@ -309,7 +313,11 @@ func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
 	if _, err := tx.ExecContext(ctx, `delete from server_latency_probe_results where task_id=?`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateLatencyHistory(serverIDs...)
+	return nil
 }
 
 // migrateLatencyProbeTasks converts the former per-server regional selection into standalone probe tasks.

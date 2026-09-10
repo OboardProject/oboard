@@ -113,8 +113,10 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			count:  &result.ServerMetricSamplesDeleted,
 		},
 		{
-			name:   "latency probe result retention",
-			query:  `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at < ? order by checked_at limit ?)`,
+			name: "latency probe result retention",
+			custom: func(ctx context.Context, cutoff time.Time) (int64, bool, error) {
+				return s.deleteMaintenanceBatchesReporting(ctx, `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at < ? order by checked_at limit ?)`, cutoff, true)
+			},
 			cutoff: at.Add(-monitoringRetention),
 			count:  &result.LatencyProbeResultsDeleted,
 		},
@@ -307,19 +309,55 @@ func ServerMonitoringRetentionDays(settings map[string]string) int {
 }
 
 func (s *Store) deleteMaintenanceBatches(ctx context.Context, query string, cutoff time.Time) (int64, bool, error) {
+	return s.deleteMaintenanceBatchesReporting(ctx, query, cutoff, false)
+}
+func (s *Store) deleteMaintenanceBatchesReporting(ctx context.Context, query string, cutoff time.Time, reportServers bool) (int64, bool, error) {
 	var deleted int64
 	cutoffText := cutoff.UTC().Format(time.RFC3339Nano)
 	for batch := 0; batch < maintenanceMaxBatches; batch++ {
 		if err := ctx.Err(); err != nil {
 			return deleted, true, err
 		}
-		res, err := s.db.ExecContext(ctx, query, cutoffText, maintenanceBatchSize)
-		if err != nil {
-			return deleted, deleted > 0, err
-		}
-		rows, err := res.RowsAffected()
-		if err != nil {
-			return deleted, deleted > 0, err
+		var rows int64
+		if reportServers {
+			resultRows, err := s.db.QueryContext(ctx, query+" returning server_id", cutoffText, maintenanceBatchSize)
+			if err != nil {
+				return deleted, deleted > 0, err
+			}
+			ids := make(map[int64]struct{})
+			for resultRows.Next() {
+				var id int64
+				if err := resultRows.Scan(&id); err != nil {
+					resultRows.Close()
+					return deleted, true, err
+				}
+				ids[id] = struct{}{}
+				rows++
+			}
+			readErr := resultRows.Err()
+			closeErr := resultRows.Close()
+			affected := make([]int64, 0, len(ids))
+			for id := range ids {
+				affected = append(affected, id)
+			}
+			if len(affected) > 0 {
+				s.invalidateLatencyHistory(affected...)
+			}
+			if readErr != nil {
+				return deleted, true, readErr
+			}
+			if closeErr != nil {
+				return deleted, true, closeErr
+			}
+		} else {
+			res, err := s.db.ExecContext(ctx, query, cutoffText, maintenanceBatchSize)
+			if err != nil {
+				return deleted, deleted > 0, err
+			}
+			rows, err = res.RowsAffected()
+			if err != nil {
+				return deleted, deleted > 0, err
+			}
 		}
 		deleted += rows
 		if rows < int64(maintenanceBatchSize) {
@@ -376,7 +414,7 @@ func (s *Store) pruneExpiredConnectivityEvents(ctx context.Context, cutoff time.
 		order by effective_at
 		limit ?
 	)`
-	return s.deleteMaintenanceBatches(ctx, query, cutoff)
+	return s.deleteMaintenanceBatchesReporting(ctx, query, cutoff, true)
 }
 
 func formatInt64SQLList(ids []int64) string {

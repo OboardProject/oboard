@@ -231,28 +231,41 @@ const latencyBucketsSQL = `
 			sum(case when available=1 then 1 else 0 end),
 			avg(case when available=1 and latency_ms>0 then latency_ms end), min(checked_at),
             min(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end),
-            max(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end)
+            max(case when available=1 and success_count>0 and latency_ms>0 then latency_ms end),
+ count(case when available=1 and latency_ms>0 then 1 end), max(checked_at)
 		from server_latency_probe_results
 		where server_id=? and checked_at>=? and checked_at<? and kind in ('public','regional','custom')
 		group by target_key, bucket_index
 		order by target_key, bucket_index`
 
 type LatencyBucketResult struct {
-	Points    []model.ServerRegionalLatencyPoint
-	Stats     []model.LatencyProbeTargetStat
-	DataStart *time.Time
+	Points          []model.ServerRegionalLatencyPoint
+	Stats           []model.LatencyProbeTargetStat
+	DataStart       *time.Time
+	PublicPoints    []model.ServerRegionalLatencyPoint
+	Failures        []LatencyFailurePoint
+	ObservedThrough time.Time
 }
 
 func (s *Store) ListLatencyProbeTargetStats(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) ([]model.LatencyProbeTargetStat, error) {
-	result, err := s.queryLatencyBuckets(ctx, serverID, from, to, bucket, false)
+	result, err := s.queryLatencyBuckets(ctx, serverID, from, to, bucket, false, 0)
 	return result.Stats, err
 }
 
 func (s *Store) QueryLatencyBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) (LatencyBucketResult, error) {
-	return s.queryLatencyBuckets(ctx, serverID, from, to, bucket, true)
+	return s.queryLatencyBuckets(ctx, serverID, from, to, bucket, true, 0)
 }
 
-func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration, includeDataStart bool) (LatencyBucketResult, error) {
+var ErrLatencyPointBudget = errors.New("history_too_large: reduce max_points or window")
+
+func (s *Store) QueryLatencyChartBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) (LatencyBucketResult, error) {
+	if from.Nanosecond() != 0 || to.Nanosecond() != 0 {
+		return LatencyBucketResult{}, errors.New("chart bounds must use whole seconds")
+	}
+	return s.queryLatencyBuckets(ctx, serverID, from, to, bucket, true, 12000)
+}
+
+func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration, includeDataStart bool, pointBudget int) (LatencyBucketResult, error) {
 	result := LatencyBucketResult{Points: make([]model.ServerRegionalLatencyPoint, 0)}
 	from = from.UTC()
 	to = to.UTC()
@@ -276,7 +289,16 @@ func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, t
 		}
 	}
 	fromText := from.Format(time.RFC3339Nano)
-	rows, err := s.db.QueryContext(ctx, latencyBucketsSQL, fromText, bucketSeconds, serverID, fromText, to.Format(time.RFC3339Nano))
+	toText := to.Format(time.RFC3339Nano)
+	if pointBudget > 0 {
+		fromText = from.Format("2006-01-02T15:04:05.000000000Z")
+		toText = to.Format("2006-01-02T15:04:05.000000000Z")
+	}
+	query := latencyBucketsSQL
+	if pointBudget > 0 {
+		query += " limit " + strconv.Itoa(pointBudget+1)
+	}
+	rows, err := s.db.QueryContext(ctx, query, fromText, bucketSeconds, serverID, fromText, toText)
 	if err != nil {
 		return result, err
 	}
@@ -287,15 +309,33 @@ func (s *Store) queryLatencyBuckets(ctx context.Context, serverID int64, from, t
 		latencySum, latencyCount int64
 	}
 	byKey := make(map[string]*targetTotal)
+	rowCount := 0
 	for rows.Next() {
+		rowCount++
+		if pointBudget > 0 && rowCount > pointBudget {
+			return result, ErrLatencyPointBudget
+		}
 		var stat model.LatencyProbeTargetStat
 		var bucketIndex, latencySum, latencyCount int64
 		var minMS, maxMS, pointMin, pointMax sql.NullInt64
 		var peakMS sql.NullFloat64
-		var checkedAt string
+		var checkedAt, observedAt string
+		var publicCount int64
 		if err := rows.Scan(&stat.Key, &bucketIndex, &stat.Kind, &stat.TaskID, &stat.TaskName, &stat.Mode, &stat.Province, &stat.Carrier,
-			&latencySum, &latencyCount, &minMS, &maxMS, &stat.SampleCount, &stat.SuccessCount, &stat.ReportCount, &stat.AvailableCount, &peakMS, &checkedAt, &pointMin, &pointMax); err != nil {
+			&latencySum, &latencyCount, &minMS, &maxMS, &stat.SampleCount, &stat.SuccessCount, &stat.ReportCount, &stat.AvailableCount, &peakMS, &checkedAt, &pointMin, &pointMax, &publicCount, &observedAt); err != nil {
 			return result, err
+		}
+		if observed := parseTime(observedAt); observed.After(result.ObservedThrough) {
+			result.ObservedThrough = observed
+		}
+		if stat.Kind == "public" {
+			at := from.Add(time.Duration(bucketIndex) * bucket)
+			if publicCount > 0 {
+				result.PublicPoints = append(result.PublicPoints, model.ServerRegionalLatencyPoint{Kind: "public", Available: true, CheckedAt: at, LatencyMS: peakMS.Float64, MinLatencyMS: minMS.Int64, MaxLatencyMS: maxMS.Int64, Count: publicCount})
+			}
+			if failed := stat.ReportCount - stat.AvailableCount; failed > 0 {
+				result.Failures = append(result.Failures, LatencyFailurePoint{At: at, Count: failed})
+			}
 		}
 		if strings.TrimSpace(stat.Key) == "" || stat.Key == " · " {
 			continue
@@ -428,6 +468,7 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 		return err
 	}
 	defer tx.Rollback()
+	insertedAny := false
 	for _, item := range report.Items {
 		if strings.TrimSpace(item.ProbeID) == "" {
 			continue
@@ -449,6 +490,9 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 			return err
 		}
 		inserted, _ := result.RowsAffected()
+		if inserted > 0 {
+			insertedAny = true
+		}
 		if inserted == 1 && item.Kind == "public" {
 			available := item.Available
 			if _, err := insertConnectivityEvent(ctx, tx, model.ServerConnectivityEvent{
@@ -491,10 +535,19 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 			}
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if insertedAny {
+		s.invalidateLateLatency(serverID, checkedAt)
+	}
+	return nil
 }
 
 func (s *Store) DeleteLatencyProbeResults(ctx context.Context, serverID int64) error {
 	_, err := s.db.ExecContext(ctx, `delete from server_latency_probe_results where server_id=?`, serverID)
+	if err == nil {
+		s.invalidateLatencyHistory(serverID)
+	}
 	return err
 }

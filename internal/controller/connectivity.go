@@ -1,12 +1,17 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
+	"net/netip"
 	"sort"
 	"time"
 
+	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -598,6 +603,41 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		method(w)
 		return
 	}
+	view := r.URL.Query().Get("view")
+	if view != "" && view != "chart" {
+		fail(w, errors.New("view must be chart or omitted"), http.StatusBadRequest)
+		return
+	}
+	if view == "chart" {
+		input, err := latencyChartRequest(r, serverID)
+		if err != nil {
+			fail(w, err, http.StatusBadRequest)
+			return
+		}
+		user := currentUser(r)
+		if user == nil {
+			fail(w, errors.New("unauthorized"), http.StatusUnauthorized)
+			return
+		}
+		principal := application.HumanPrincipal(*user, currentRole(r), netip.Addr{})
+		response, err := s.readLatencyChart(r.Context(), principal, input)
+		if err != nil {
+			fail(w, err, historyErrorStatus(err))
+			return
+		}
+		encoded, err := json.Marshal(response)
+		if err != nil {
+			fail(w, err, 500)
+			return
+		}
+		if len(encoded) > latencyResponseMaxBytes {
+			fail(w, errHistoryTooLarge, 413)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		write(w, http.StatusOK, json.RawMessage(encoded))
+		return
+	}
 	window, err := parseConnectivityWindow(r.URL.Query().Get("window"), time.Now().UTC())
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
@@ -607,26 +647,40 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 		fail(w, err, http.StatusNotFound)
 		return
 	}
-	settings, err := s.store.ListSettings(r.Context())
+	key := fmt.Sprintf("full:%d", s.latencyHistorySequence.Add(1))
+	entry, err := s.historyReads().getOrBuild(r.Context(), key, 0, func(ctx context.Context) (json.RawMessage, time.Time, error) {
+		response, err := s.buildFullConnectivity(ctx, serverID, window)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		encoded, err := json.Marshal(response)
+		return encoded, time.Now(), err
+	})
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
+		fail(w, err, historyErrorStatus(err))
 		return
+	}
+	write(w, http.StatusOK, entry.value)
+}
+
+func (s *Server) buildFullConnectivity(ctx context.Context, serverID int64, window connectivityWindow) (connectivityResponse, error) {
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return connectivityResponse{}, err
 	}
 	retentionDays := store.ServerMonitoringRetentionDays(settings)
 	retainedFrom := window.To.Add(-time.Duration(retentionDays) * 24 * time.Hour)
 	if retainedFrom.Before(window.From) {
 		retainedFrom = window.From
 	}
-	history, err := s.store.ListConnectivityHistory(r.Context(), serverID, retainedFrom, window.To)
+	history, err := s.store.ListConnectivityHistory(ctx, serverID, retainedFrom, window.To)
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
+		return connectivityResponse{}, err
 	}
 	interval := connectivityLatencyPointInterval(window.To.Sub(retainedFrom))
-	latencyBuckets, err := s.store.QueryLatencyBuckets(r.Context(), serverID, retainedFrom, window.To, interval)
+	latencyBuckets, err := s.store.QueryLatencyBuckets(ctx, serverID, retainedFrom, window.To, interval)
 	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
+		return connectivityResponse{}, err
 	}
 	responseWindow := window
 	responseWindow.From = retainedFrom
@@ -636,5 +690,5 @@ func (s *Server) serverConnectivity(w http.ResponseWriter, r *http.Request, serv
 	response.RegionalLatencyPoints = latencyBuckets.Points
 	response.RegionalDataStartAt = latencyBuckets.DataStart
 	response.ProbeTargetStats = latencyBuckets.Stats
-	write(w, http.StatusOK, response)
+	return response, nil
 }

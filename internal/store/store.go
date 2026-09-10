@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,8 +26,11 @@ import (
 )
 
 type Store struct {
-	db   *countingDB
-	path string
+	db                    *countingDB
+	path                  string
+	latencyHistoryMu      sync.Mutex
+	latencyHistoryVersion uint64
+	latencyHistory        map[int64]latencyHistoryRevision
 	// settingsRevision is a process-local monotonic counter bumped on every
 	// settings write. The Controller caches ListSettings behind it so hot
 	// paths (health reports, audit gates) avoid a per-message settings query.
