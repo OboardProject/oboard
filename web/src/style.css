@@ -8111,6 +8111,15 @@ body:has(.dialog-layer) .main {
   min-width: 0;
 }
 
+.dns-management-card > .dns-zone-bar {
+  padding-top: 18px;
+  padding-bottom: 4px;
+}
+
+.dns-management-card .dns-record-filter-toolbar {
+  margin-top: 4px;
+}
+
 .dns-zone-bar {
   display: flex;
   flex-wrap: wrap;
@@ -8120,12 +8129,22 @@ body:has(.dialog-layer) .main {
   padding: 4px 0;
 }
 
+.dns-zone-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .dns-zone-selector {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1 1 300px;
+  flex: 0 1 360px;
   max-width: 480px;
+  min-width: 220px;
 }
 
 .dns-zone-selector label {
@@ -8145,6 +8164,13 @@ body:has(.dialog-layer) .main {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.dns-zone-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .dns-provider-logo-box {
@@ -10697,6 +10723,9 @@ button.server-related-jump-pill {
 .spin { animation: refresh-spin 0.85s linear infinite; transform-origin: center center; }
 
 @media (max-width: 640px) {
+  .dns-zone-main { width: 100%; }
+  .dns-zone-selector { flex: 1 1 100%; max-width: none; }
+  .dns-zone-actions { width: 100%; justify-content: flex-end; }
   .dns-record-filter-toolbar > .searchable-multi-select { min-width: calc(50% - 4px); max-width: none; }
   .dns-record-filter-toolbar .searchable-multi-select-menu { width: 100%; }
   .dns-record-search { flex-basis: 100%; }

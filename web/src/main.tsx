@@ -5838,26 +5838,25 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
       <button type="button" className={activeTab === 'settings' ? 'active' : ''} onClick={() => setActiveTab('settings')} role="tab" aria-selected={activeTab === 'settings'}><Settings2 size={15} />域名管理</button>
     </div>
     {activeTab === 'records' ? <section className="settings-card dns-management-card">
-      <div className="settings-card-head">
-        <div><h3>域名当前记录</h3></div>
-        <div className="settings-card-actions">
+      <div className="dns-zone-bar">
+        <div className="dns-zone-main">
+          <div className="dns-zone-selector">
+            <label htmlFor="dns-zone-select">域名</label>
+            <Select id="dns-zone-select" value={selectedZoneID} onChange={e => setSelectedZoneID(Number(e.target.value))}>
+              <option value={0}>选择域名</option>
+              {zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}
+            </Select>
+          </div>
+          {selectedOption && <div className="dns-zone-badges">
+            <span className="status-pill dns-provider-pill"><DNSProviderIcon provider={selectedOption.credential.provider} size={14} />{dnsProviderLabels[selectedOption.credential.provider]}</span>
+            {selectedOption.credential.name && selectedOption.credential.name !== selectedOption.zone.zone_name && <span className="status-pill">{selectedOption.credential.name}</span>}
+            {selectedOption.zone.server_id && <button type="button" className="status-pill ok server-related-jump-pill" onClick={() => openServerPanel(Number(selectedOption.zone.server_id), 'network', 'dns')}>关联服务器: {serverName(selectedOption.zone.server_id)}</button>}
+          </div>}
+        </div>
+        <div className="dns-zone-actions settings-card-actions">
           <button type="button" onClick={openCreateRecord} disabled={!zoneOptions.length}><Plus size={14} />添加记录</button>
           <button type="button" className="ghost icon-button" onClick={() => void loadRecords()} disabled={!selectedZoneID || working === 'records-load'} aria-label="刷新记录" title="刷新记录"><RefreshCw size={15} className={working === 'records-load' ? 'spin' : ''} /></button>
         </div>
-      </div>
-      <div className="dns-zone-bar">
-        <div className="dns-zone-selector">
-          <label htmlFor="dns-zone-select">域名</label>
-          <Select id="dns-zone-select" value={selectedZoneID} onChange={e => setSelectedZoneID(Number(e.target.value))}>
-            <option value={0}>选择域名</option>
-            {zoneOptions.map(({ credential, zone }) => <option key={zone.id} value={zone.id}>{formatOptionLabel(credential, zone)}</option>)}
-          </Select>
-        </div>
-        {selectedOption && <div className="dns-zone-badges">
-          <span className="status-pill dns-provider-pill"><DNSProviderIcon provider={selectedOption.credential.provider} size={14} />{dnsProviderLabels[selectedOption.credential.provider]}</span>
-          {selectedOption.credential.name && selectedOption.credential.name !== selectedOption.zone.zone_name && <span className="status-pill">{selectedOption.credential.name}</span>}
-          {selectedOption.zone.server_id && <button type="button" className="status-pill ok server-related-jump-pill" onClick={() => openServerPanel(Number(selectedOption.zone.server_id), 'network', 'dns')}>关联服务器: {serverName(selectedOption.zone.server_id)}</button>}
-        </div>}
       </div>
       {records.length > 0 && <div className="dns-record-filter-toolbar">
         <label className="dns-record-search"><Search size={15} /><input value={recordQuery} onChange={event => setRecordQuery(event.target.value)} placeholder="搜索域名、记录值或服务器" aria-label="搜索解析记录" /></label>
