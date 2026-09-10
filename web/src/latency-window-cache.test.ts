@@ -59,3 +59,11 @@ it('bounds a stalled read and reports a retryable timeout', async () => {
   await expect(cache.read('stalled',new AbortController().signal,async () => 'recovered')).resolves.toBe('recovered')
  } finally { vi.useRealTimers() }
 })
+
+it('does not renew freshness of Controller-cached or stale chart results', () => {
+ const cache = new LatencyWindowCache()
+ cache.put('chart', { metadata: { generated_at: new Date(1000).toISOString(), stale: false } }, 25_000)
+ expect(cache.get('chart', 31_000)?.fresh).toBe(false)
+ cache.put('stale', { metadata: { generated_at: new Date(1000).toISOString(), stale: true } }, 25_000)
+ expect(cache.get('stale', 25_000)).toBeNull()
+})

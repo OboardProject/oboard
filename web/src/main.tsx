@@ -205,7 +205,7 @@ import {
 } from './controller-update-diagnostics'
 import { subscriptionBaseURL, subscriptionRelayCommand, subscriptionRelayDomain, subscriptionRelayPublicURL, subscriptionRelayStatus, type SubscriptionRelay, type SubscriptionRelayAction } from './subscription-relay'
 import { filterDNSBenchmarkGroups, groupDNSBenchmarkResults } from './dns-benchmark-history'
-import { connectivityRequestPath, type ConnectivityResponse, type ConnectivityWindowKey } from './connectivity-sla'
+import { latencyChartRequestPath, type LatencyChartResponse, type ConnectivityWindowKey } from './connectivity-sla'
 import { dnsSelectionLabel, dnsTagListLabel } from './dns-display'
 import {
   compareDNSPolicyStatus,
@@ -10271,7 +10271,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const [activeView, setActiveView] = useState<'load' | 'latency'>(initialView)
   const [loadWindowHours, setLoadWindowHours] = useState(1)
   const [windowKey, setWindowKey] = useState<ConnectivityWindowKey>('24h')
-  const connectivity = useServerMonitorQuery<ConnectivityResponse>(client, connectivityRequestPath(server.id, windowKey), activeView === 'latency')
+  const connectivity = useServerMonitorQuery<LatencyChartResponse>(client, latencyChartRequestPath(server.id, windowKey), activeView === 'latency')
   const resources = useServerMonitorQuery<ServerResourceMetricsResponse>(client, `/servers/${server.id}/resource-metrics?hours=${loadWindowHours}`, activeView === 'load')
   const { response, loading } = connectivity
   const { response: resourceResponse, loading: resourceLoading } = resources

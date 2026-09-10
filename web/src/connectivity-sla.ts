@@ -104,3 +104,23 @@ export function formatConnectivityDuration(seconds: number) {
   const minutes = totalMinutes % 60
   return minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`
 }
+
+export type LatencyChartResponse = Pick<ConnectivityResponse, 'server_id' | 'retention_days' | 'window' | 'latency_points' | 'failed_probe_points' | 'regional_latency_points' | 'probe_target_stats' | 'regional_data_start_at'> & {
+  metadata: {
+    requested_from: string
+    requested_to: string
+    effective_from: string
+    effective_to: string
+    resolution_seconds: number
+    generated_at: string
+    observed_through: string | null
+    aggregation_state: 'ready' | 'catching_up' | 'unavailable'
+    coverage: { source: 'raw'; retention_clipped: boolean; has_samples: boolean; legacy_curve_reports: boolean }
+    statistics_basis: string
+    stale: boolean
+  }
+}
+
+export function latencyChartRequestPath(serverID: number | string, window: ConnectivityWindowKey = '24h', maxPoints = 360) {
+  return `${connectivityRequestPath(serverID, window)}&view=chart&max_points=${maxPoints}`
+}

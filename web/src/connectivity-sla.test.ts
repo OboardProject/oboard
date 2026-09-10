@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { connectivityBucketTone, connectivityRequestPath, connectivitySlaDisplay, formatConnectivityDuration } from './connectivity-sla'
+import { connectivityBucketTone, connectivityRequestPath, latencyChartRequestPath, connectivitySlaDisplay, formatConnectivityDuration } from './connectivity-sla'
 
 describe('connectivity API contract', () => {
   it('uses the canonical connectivity endpoint for every fixed window', () => {
@@ -45,4 +45,8 @@ describe('connectivity dialog data source', () => {
     expect(dashboard).toContain('response.regional_latency_points')
     expect(dashboard).toContain('response.probe_target_stats')
   })
+})
+
+it('requests chart-only data without changing the legacy path', () => {
+ expect(latencyChartRequestPath(7, '7d', 120)).toBe('/servers/7/connectivity?window=7d&view=chart&max_points=120')
 })

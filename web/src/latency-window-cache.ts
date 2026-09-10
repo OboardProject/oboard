@@ -25,6 +25,18 @@ export class LatencyWindowCache {
   }
 
   put(key: string, response: unknown, now = Date.now()) {
+    let fetchedAt = now
+    if (response && typeof response === 'object' && 'metadata' in response) {
+      const meta = response.metadata
+      if (meta && typeof meta === 'object') {
+        if ('stale' in meta && meta.stale === true) return
+        if ('generated_at' in meta && typeof meta.generated_at === 'string') {
+          const generated = Date.parse(meta.generated_at)
+          if (Number.isFinite(generated)) fetchedAt = Math.min(now, generated)
+        }
+      }
+    }
+    if (now - fetchedAt >= RETAIN_MS) return
     const json = JSON.stringify(response)
     if (json === undefined) return
     // Retain serialized UTF-16 strings, not unbounded parsed object graphs.
@@ -34,7 +46,7 @@ export class LatencyWindowCache {
     while (this.entries.size && (this.bytes + bytes > this.capacity || this.entries.size >= MAX_ENTRIES)) {
       this.remove(this.entries.keys().next().value!)
     }
-    this.entries.set(key, { json, bytes, fetchedAt: now })
+    this.entries.set(key, { json, bytes, fetchedAt })
     this.bytes += bytes
   }
 

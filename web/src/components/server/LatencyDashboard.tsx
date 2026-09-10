@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Switch } from '../ui/switch'
 import { Select } from '../ui/select'
-import type { ConnectivityResponse, ConnectivityWindowKey, LatencyProbeTargetStat } from '../../connectivity-sla'
+import type { ConnectivityResponse, LatencyChartResponse, ConnectivityWindowKey, LatencyProbeTargetStat } from '../../connectivity-sla'
 import {
   computeOverviewStats,
   computePercentiles,
@@ -65,7 +65,7 @@ export function LatencyDashboard({
   onWindowKeyDown,
   publicMode,
 }: {
-  response: ConnectivityResponse
+  response: ConnectivityResponse | LatencyChartResponse
   windowKey: ConnectivityWindowKey
   windowHours: number
   windowLabels: Record<ConnectivityWindowKey, string>
@@ -83,15 +83,16 @@ export function LatencyDashboard({
   const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
   const includePublic = shouldIncludePublicInOverview(stats, includePublicPref)
   const bucketCount = Number(granularity) || 60
+  const effectiveWindowHours = Math.max(1, (Date.parse(response.window.to) - Date.parse(response.window.from)) / 3_600_000) || windowHours
 
   const aligned = useMemo(() => alignUnifiedMetrics({
     latencyPoints: (response.latency_points || []) as ServerLatencyPoint[],
     regionalProbes: response.regional_latency_points || [],
     includeResources: false,
-    windowHours,
+    windowHours: effectiveWindowHours,
     bucketCount,
     now: response.window?.to ? new Date(response.window.to).getTime() : Date.now(),
-  }), [response.latency_points, response.regional_latency_points, response.window?.to, windowHours, bucketCount])
+  }), [response.latency_points, response.regional_latency_points, response.window?.to, effectiveWindowHours, bucketCount])
 
   useEffect(() => {
     setEnabledSeries(prev => {
@@ -150,6 +151,12 @@ export function LatencyDashboard({
 
   return (
     <div className="latency-dashboard">
+      {'metadata' in response && <div className="connectivity-coverage-note" role="status">
+        <span>{response.metadata.stale ? '暂时显示旧结果 · ' : ''}数据截至 {response.metadata.observed_through ? new Date(response.metadata.observed_through).toLocaleString() : '尚无报告'} · 每点 {response.metadata.resolution_seconds} 秒</span>
+        {response.metadata.coverage.retention_clipped && <span>已按监控保留期限裁剪范围。</span>}
+        {response.metadata.coverage.legacy_curve_reports && <span>历史连通性记录仅补充公网曲线；目标统计以探测报告为准。</span>}
+      </div>}
+
       <section className="latency-overview" aria-label={`概览 ${windowLabels[windowKey]}`}>
         <header className="latency-overview-head">
           <div>
@@ -258,7 +265,7 @@ export function LatencyDashboard({
             regionalProbes={response.regional_latency_points || []}
             failedProbePoints={response.failed_probe_points || []}
             includeResources={false}
-            windowHours={windowHours}
+            windowHours={effectiveWindowHours}
             windowEndAt={response.window.to}
             seriesEnabled={enabledSeries}
             onSeriesEnabledChange={setEnabledSeries}
