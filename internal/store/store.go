@@ -26,11 +26,13 @@ import (
 )
 
 type Store struct {
-	db                    *countingDB
-	path                  string
-	latencyHistoryMu      sync.Mutex
-	latencyHistoryVersion uint64
-	latencyHistory        map[int64]latencyHistoryRevision
+	db                     *countingDB
+	path                   string
+	latencyHistoryMu       sync.Mutex
+	latencyRollupBusy      atomic.Bool
+	latencyIngestSlowUntil atomic.Int64
+	latencyHistoryVersion  uint64
+	latencyHistory         map[int64]latencyHistoryRevision
 	// settingsRevision is a process-local monotonic counter bumped on every
 	// settings write. The Controller caches ListSettings behind it so hot
 	// paths (health reports, audit gates) avoid a per-message settings query.
@@ -1314,6 +1316,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureConnectionAuditHourlySchema(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureLatencyRollupSchema(ctx); err != nil {
 		return err
 	}
 	return s.SeedConnectivityHistory(ctx, time.Now().UTC())

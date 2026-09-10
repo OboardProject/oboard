@@ -78,7 +78,7 @@ func TestLatencyHistoryRetentionInvalidatesOnlyAffectedServers(t *testing.T) {
 	before := db.LatencyHistoryRevision(server.ID, cutoff)
 	unchanged := db.LatencyHistoryRevision(other.ID, cutoff)
 	db.db.db.SetMaxOpenConns(1)
-	count, _, err := db.deleteMaintenanceBatchesReporting(ctx, `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at<? limit ?)`, cutoff, true)
+	count, _, err := db.deleteLatencyRetentionBatches(ctx, `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at<? limit ?)`, cutoff)
 	if err != nil || count != 1 {
 		t.Fatalf("deleted=%d %v", count, err)
 	}

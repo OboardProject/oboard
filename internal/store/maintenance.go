@@ -49,6 +49,7 @@ type MaintenanceResult struct {
 	RateBucketsDeleted            int64
 	ServerMetricSamplesDeleted    int64
 	LatencyProbeResultsDeleted    int64
+	LatencySummaryBucketsDeleted  int64
 	ConnectivityProbesDeleted     int64
 	AgentTasksDeleted             int64
 	FreePagesReclaimed            int64
@@ -115,11 +116,12 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		{
 			name: "latency probe result retention",
 			custom: func(ctx context.Context, cutoff time.Time) (int64, bool, error) {
-				return s.deleteMaintenanceBatchesReporting(ctx, `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at < ? order by checked_at limit ?)`, cutoff, true)
+				return s.deleteLatencyRetentionBatches(ctx, `delete from server_latency_probe_results where rowid in (select rowid from server_latency_probe_results where checked_at < ? order by checked_at limit ?)`, cutoff)
 			},
 			cutoff: at.Add(-monitoringRetention),
 			count:  &result.LatencyProbeResultsDeleted,
 		},
+		{name: "latency summary retention", custom: s.latencyRollupRetention, cutoff: at.Add(-monitoringRetention), count: &result.LatencySummaryBucketsDeleted},
 		{
 			name:   "connectivity event retention",
 			custom: s.pruneExpiredConnectivityEvents,
@@ -312,6 +314,12 @@ func (s *Store) deleteMaintenanceBatches(ctx context.Context, query string, cuto
 	return s.deleteMaintenanceBatchesReporting(ctx, query, cutoff, false)
 }
 func (s *Store) deleteMaintenanceBatchesReporting(ctx context.Context, query string, cutoff time.Time, reportServers bool) (int64, bool, error) {
+	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, reportServers, false)
+}
+func (s *Store) deleteLatencyRetentionBatches(ctx context.Context, query string, cutoff time.Time) (int64, bool, error) {
+	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, true, true)
+}
+func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, query string, cutoff time.Time, reportServers, projection bool) (int64, bool, error) {
 	var deleted int64
 	cutoffText := cutoff.UTC().Format(time.RFC3339Nano)
 	for batch := 0; batch < maintenanceMaxBatches; batch++ {
@@ -319,7 +327,16 @@ func (s *Store) deleteMaintenanceBatchesReporting(ctx context.Context, query str
 			return deleted, true, err
 		}
 		var rows int64
-		if reportServers {
+		if projection {
+			count, ids, err := s.deleteLatencyRetentionBatch(ctx, query, cutoffText, maintenanceBatchSize)
+			if err != nil {
+				return deleted, deleted > 0, err
+			}
+			rows = count
+			if len(ids) > 0 {
+				s.invalidateLatencyHistory(ids...)
+			}
+		} else if reportServers {
 			resultRows, err := s.db.QueryContext(ctx, query+" returning server_id", cutoffText, maintenanceBatchSize)
 			if err != nil {
 				return deleted, deleted > 0, err

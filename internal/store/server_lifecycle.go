@@ -13,6 +13,9 @@ func (s *Store) DeleteServer(ctx context.Context, serverID int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := bumpLatencyRollupGeneration(ctx, tx); err != nil {
+		return err
+	}
 	inboundIDs, err := queryInt64sTx(ctx, tx, `select id from inbounds where server_id=?`, serverID)
 	if err != nil {
 		return err

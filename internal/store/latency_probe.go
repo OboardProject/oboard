@@ -456,6 +456,12 @@ func latencyProbeLossPercent(sampleCount, successCount, reportCount, availableCo
 }
 
 func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, report model.LatencyProbeResultReport) error {
+	started := time.Now()
+	defer func() {
+		if time.Since(started) > 200*time.Millisecond {
+			s.latencyIngestSlowUntil.Store(time.Now().Add(30 * time.Second).UnixNano())
+		}
+	}()
 	if serverID <= 0 || strings.TrimSpace(report.ReportID) == "" || strings.TrimSpace(report.ResourceVersion) == "" {
 		return errors.New("latency probe result is missing server, report, or resource version")
 	}
@@ -515,7 +521,7 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 				currentAvailable := boolInt(item.Available)
 				updateCurrent := true
 				var connectionKind, connectionAt string
-				connectionErr := tx.QueryRowContext(ctx, `select kind,effective_at from server_connectivity_events where server_id=? and kind in (?,?) order by effective_at desc,id desc limit 1`, serverID, model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected).Scan(&connectionKind, &connectionAt)
+				connectionErr := tx.QueryRowContext(ctx, `select kind,effective_at from (select * from (select id,kind,effective_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? order by effective_at desc,id desc limit 1) union all select * from (select id,kind,effective_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? order by effective_at desc,id desc limit 1)) order by effective_at desc,id desc limit 1`, serverID, model.ConnectivityEventControllerConnected, serverID, model.ConnectivityEventControllerDisconnected).Scan(&connectionKind, &connectionAt)
 				if connectionErr != nil && connectionErr != sql.ErrNoRows {
 					return connectionErr
 				}
@@ -545,9 +551,22 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 }
 
 func (s *Store) DeleteLatencyProbeResults(ctx context.Context, serverID int64) error {
-	_, err := s.db.ExecContext(ctx, `delete from server_latency_probe_results where server_id=?`, serverID)
-	if err == nil {
-		s.invalidateLatencyHistory(serverID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback()
+	if err := bumpLatencyRollupGeneration(ctx, tx); err != nil {
+		return err
+	}
+	for _, query := range []string{`delete from server_latency_probe_results where server_id=?`, `delete from latency_rollup_buckets where server_id=?`} {
+		if _, err := tx.ExecContext(ctx, query, serverID); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateLatencyHistory(serverID)
+	return nil
 }

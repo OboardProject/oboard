@@ -295,8 +295,14 @@ func (s *Store) DeleteLatencyProbeTask(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	serverIDs, err := queryInt64sTx(ctx, tx, `select distinct server_id from server_latency_probe_results where task_id=?`, id)
+	serverIDs, err := queryInt64sTx(ctx, tx, `select server_id from server_latency_probe_results where task_id=? union select server_id from latency_rollup_buckets where task_id=?`, id, id)
 	if err != nil {
+		return err
+	}
+	if err := bumpLatencyRollupGeneration(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `delete from latency_rollup_buckets where task_id=?`, id); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `delete from latency_probe_tasks where id=?`, id)
