@@ -66,6 +66,13 @@ func (s *Server) wakeRuntimeUsersSync() {
 	}
 }
 
+// wakeRuntimeUsersSyncFor is the directed form of the wake above: it names the
+// servers that may owe a user set and why. See wakeAuthorizationSyncFor.
+func (s *Server) wakeRuntimeUsersSyncFor(reason string, serverIDs ...int64) {
+	s.runtimeUsersHints.note(reason, serverIDs)
+	s.wakeRuntimeUsersSync()
+}
+
 func (s *Server) StartRuntimeUsersSyncWorker(ctx context.Context) {
 	recoveryMin, recoveryMax := s.taskRecoveryScanMin, s.taskRecoveryScanMax
 	if recoveryMin <= 0 {
@@ -103,28 +110,38 @@ func (s *Server) StartRuntimeUsersSyncWorker(ctx context.Context) {
 	}
 }
 
+// reconcileRuntimeUsersSync mirrors reconcileAuthorizationSync: one
+// implementation shared by the directed wake, the undirected wake and the
+// periodic recovery scan, with a settled check that runs before any package is
+// built.
 func (s *Server) reconcileRuntimeUsersSync(ctx context.Context, full bool) {
-	var serverIDs []int64
-	var err error
-	if full {
-		serverIDs, err = s.store.EnrolledServerIDs(ctx)
+	hints := s.runtimeUsersHints.drain()
+	routingRevision, err := s.store.RoutingCacheRevision(ctx)
+	if err != nil {
+		log.Printf("runtime users sync: routing revision: %v", err)
+		return
+	}
+	var candidates []store.AccessSyncCandidate
+	if full || len(hints) > 0 {
+		candidates, err = s.store.ListRuntimeUsersSyncCandidates(ctx)
 	} else {
-		var revision uint64
-		revision, err = s.store.RoutingCacheRevision(ctx)
-		if err == nil {
-			serverIDs, err = s.store.StaleRuntimeUserServerIDs(ctx, revision)
+		var stale []int64
+		stale, err = s.store.StaleRuntimeUserServerIDs(ctx, routingRevision)
+		for _, serverID := range stale {
+			candidates = append(candidates, store.AccessSyncCandidate{ServerID: serverID})
 		}
 	}
 	if err != nil {
 		log.Printf("runtime users sync: list servers: %v", err)
 		return
 	}
-	for _, serverID := range serverIDs {
-		if ctx.Err() != nil {
-			return
-		}
-		s.syncServerRuntimeUsers(ctx, serverID, full)
-	}
+	generation := s.runtimeUserPackageGeneration()
+	plan := planAccessSyncRound(candidates, routingRevision, hints, func(serverID int64) bool {
+		return s.runtimeUsersTimeBoundarySettled(serverID, generation)
+	})
+	s.hotPath.runtimeUsersSyncSkipped.Add(int64(plan.skipped))
+	s.hotPath.runtimeUsersSyncEvaluated.Add(int64(len(plan.work)))
+	runAccessSyncPlan(ctx, plan, s.syncServerRuntimeUsers)
 }
 
 func (s *Server) buildRuntimeUserPackage(ctx context.Context, server model.Server, revision int64) (core.RuntimeUserPackage, error) {
@@ -223,14 +240,8 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 		delete(s.runtimeUsersSyncInFlight, serverID)
 		s.runtimeUsersSyncMu.Unlock()
 	}()
-	server, err := s.store.GetServer(ctx, serverID)
-	if err != nil {
-		return
-	}
-	if server.AgentID == "" {
-		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingUnenrolled, "", false)
-		return
-	}
+	// The ledger decides first: a stable node must not pay for a server load or
+	// a package build to conclude it is already confirmed.
 	state, err := s.store.RuntimeUserState(ctx, serverID)
 	if err != nil {
 		return
@@ -240,9 +251,24 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 		return
 	}
 	// Wake path revision gate: confirmed servers already evaluated for the
-	// current routing revision skip full package generation. Periodic full
-	// scans still rebuild so a missed deadline cannot stick.
+	// current routing revision skip full package generation. A forced pass -
+	// a reconnect, a revoke, or a business boundary the ledger cannot express -
+	// still rebuilds, so a missed deadline cannot stick.
 	if !forceRebuild && state.EvaluatedRoutingRevision == routingRevision && state.Confirmed() {
+		return
+	}
+	// An offline Agent already recorded at this revision gains nothing from
+	// another package build and another signed envelope.
+	if state.PendingReason == store.RuntimeUsersPendingAgentOffline && state.EvaluatedRoutingRevision == routingRevision && !s.agentControlOnline(serverID) {
+		s.hotPath.runtimeUsersSyncOfflineSkipped.Add(1)
+		return
+	}
+	server, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return
+	}
+	if server.AgentID == "" {
+		_ = s.store.MarkRuntimeUsersPending(ctx, serverID, store.RuntimeUsersPendingUnenrolled, "", false)
 		return
 	}
 	probeRevision := state.DesiredRevision
@@ -265,6 +291,11 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 	if err != nil {
 		return
 	}
+	// Record which package generation this evaluation belongs to. Any business
+	// deadline firing bumps that generation, so the next recovery scan cannot
+	// mistake "the routing revision did not change" for "no time boundary
+	// passed".
+	s.markRuntimeUsersEvaluated(serverID, s.runtimeUserPackageGeneration())
 	state = evaluation.State
 	if pkg.UsersRevision != state.DesiredRevision {
 		pkg.UsersRevision = state.DesiredRevision

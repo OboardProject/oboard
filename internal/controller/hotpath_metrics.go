@@ -39,6 +39,14 @@ type hotPathCounters struct {
 	authorizationProjectionDiscarded atomic.Int64
 	authorizationLeaseReused         atomic.Int64
 	authorizationLeaseIssued         atomic.Int64
+
+	// Directed reconciliation.
+	authorizationSyncSkipped        atomic.Int64
+	authorizationSyncEvaluated      atomic.Int64
+	authorizationSyncOfflineSkipped atomic.Int64
+	runtimeUsersSyncSkipped         atomic.Int64
+	runtimeUsersSyncEvaluated       atomic.Int64
+	runtimeUsersSyncOfflineSkipped  atomic.Int64
 }
 
 // hotPathSnapshot is the machine-readable form used by diagnostics and tests.
@@ -65,6 +73,13 @@ type hotPathSnapshot struct {
 	AuthorizationProjectionDiscarded int64 `json:"authorization_projection_discarded"`
 	AuthorizationLeaseReused         int64 `json:"authorization_lease_reused"`
 	AuthorizationLeaseIssued         int64 `json:"authorization_lease_issued"`
+
+	AuthorizationSyncSkipped        int64 `json:"authorization_sync_skipped"`
+	AuthorizationSyncEvaluated      int64 `json:"authorization_sync_evaluated"`
+	AuthorizationSyncOfflineSkipped int64 `json:"authorization_sync_offline_skipped"`
+	RuntimeUsersSyncSkipped         int64 `json:"runtime_users_sync_skipped"`
+	RuntimeUsersSyncEvaluated       int64 `json:"runtime_users_sync_evaluated"`
+	RuntimeUsersSyncOfflineSkipped  int64 `json:"runtime_users_sync_offline_skipped"`
 
 	SQLStatements       int64 `json:"sql_statements"`
 	SQLWriteTransactons int64 `json:"sql_write_transactions"`
@@ -94,6 +109,13 @@ func (c *hotPathCounters) snapshot(db *store.Store) hotPathSnapshot {
 		AuthorizationProjectionDiscarded: c.authorizationProjectionDiscarded.Load(),
 		AuthorizationLeaseReused:         c.authorizationLeaseReused.Load(),
 		AuthorizationLeaseIssued:         c.authorizationLeaseIssued.Load(),
+
+		AuthorizationSyncSkipped:        c.authorizationSyncSkipped.Load(),
+		AuthorizationSyncEvaluated:      c.authorizationSyncEvaluated.Load(),
+		AuthorizationSyncOfflineSkipped: c.authorizationSyncOfflineSkipped.Load(),
+		RuntimeUsersSyncSkipped:         c.runtimeUsersSyncSkipped.Load(),
+		RuntimeUsersSyncEvaluated:       c.runtimeUsersSyncEvaluated.Load(),
+		RuntimeUsersSyncOfflineSkipped:  c.runtimeUsersSyncOfflineSkipped.Load(),
 	}
 	if db != nil {
 		snapshot.SQLStatements = db.SQLStatementCount()

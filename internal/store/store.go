@@ -28,6 +28,7 @@ import (
 type Store struct {
 	db                     *countingDB
 	path                   string
+	metricSamples          metricSampleAdmission
 	latencyPlanVersionMu   sync.Mutex
 	latencyHistoryMu       sync.Mutex
 	latencyRollupBusy      atomic.Bool

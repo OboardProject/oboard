@@ -72,38 +72,58 @@ func remoteAccessReportIdentity(report model.RemoteAccessReport) string {
 	return b.String()
 }
 
-// persistRemoteAccessStatus stores the Agent-reported capability only when its
-// content differs from the last state committed for the same Agent identity.
+// pendingRemoteAccessStatus decides whether the reported capability still needs
+// to be written. It returns the normalized report to write (nil when the stored
+// content already matches) together with the identity the caller commits once
+// the write has succeeded.
+//
 // It never caches the admin privilege decision itself: Web and MCP keep
 // resolving privileges from the stored status through their own authority.
-func (s *Server) persistRemoteAccessStatus(ctx context.Context, serverID int64, agentID string, report model.RemoteAccessReport) error {
+func (s *Server) pendingRemoteAccessStatus(serverID int64, agentID string, report model.RemoteAccessReport) (*model.RemoteAccessReport, string) {
 	if serverID <= 0 {
-		return nil
+		return nil, ""
 	}
 	agentID = strings.TrimSpace(agentID)
 	normalized := normalizeRemoteAccessReport(report)
 	identity := remoteAccessReportIdentity(normalized)
-
 	s.remoteAccessStatusCache.mu.Lock()
 	entry, ok := s.remoteAccessStatusCache.entries[serverID]
 	s.remoteAccessStatusCache.mu.Unlock()
 	if ok && entry.agentID == agentID && entry.identity == identity {
 		s.hotPath.remoteAccessSkipped.Add(1)
-		return nil
+		return nil, identity
 	}
+	return &normalized, identity
+}
 
-	if err := s.store.UpsertServerRemoteAccessStatus(ctx, serverID, normalized); err != nil {
-		s.hotPath.remoteAccessFailed.Add(1)
-		// Leave the cache untouched: the next report must retry this write.
-		return err
+// commitRemoteAccessStatus records that the write committed. It is only ever
+// called after a successful commit, so a failed transaction leaves the previous
+// memory in place and the next report retries.
+func (s *Server) commitRemoteAccessStatus(serverID int64, agentID, identity string) {
+	if serverID <= 0 || identity == "" {
+		return
 	}
 	s.hotPath.remoteAccessWritten.Add(1)
 	s.remoteAccessStatusCache.mu.Lock()
 	if s.remoteAccessStatusCache.entries == nil {
 		s.remoteAccessStatusCache.entries = map[int64]remoteAccessStatusEntry{}
 	}
-	s.remoteAccessStatusCache.entries[serverID] = remoteAccessStatusEntry{agentID: agentID, identity: identity}
+	s.remoteAccessStatusCache.entries[serverID] = remoteAccessStatusEntry{agentID: strings.TrimSpace(agentID), identity: identity}
 	s.remoteAccessStatusCache.mu.Unlock()
+}
+
+// persistRemoteAccessStatus is the standalone form for callers outside the
+// health report transaction.
+func (s *Server) persistRemoteAccessStatus(ctx context.Context, serverID int64, agentID string, report model.RemoteAccessReport) error {
+	pending, identity := s.pendingRemoteAccessStatus(serverID, agentID, report)
+	if pending == nil {
+		return nil
+	}
+	if err := s.store.UpsertServerRemoteAccessStatus(ctx, serverID, *pending); err != nil {
+		s.hotPath.remoteAccessFailed.Add(1)
+		return err
+	}
+	s.commitRemoteAccessStatus(serverID, agentID, identity)
 	return nil
 }
 

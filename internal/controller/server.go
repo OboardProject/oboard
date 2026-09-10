@@ -85,6 +85,9 @@ type Server struct {
 	authorizationProjections   authorizationProjectionCache
 	authorizationLeases        authorizationLeaseCache
 	authorizationSyncWake      chan struct{}
+	authorizationHints         accessSyncHintSet
+	runtimeUsersHints          accessSyncHintSet
+	runtimeUsersSettled        runtimeUsersSettledCache
 	authorizationSyncMu        sync.Mutex
 	authorizationSyncInFlight  map[int64]bool
 	runtimeUsersSyncWake       chan struct{}
@@ -4523,6 +4526,8 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 	s.forgetRemoteAccessStatus(id)
 	s.forgetPresenceAuditState(id)
 	s.forgetAuthorizationLease(id)
+	s.forgetRuntimeUsersSettled(id)
+	s.store.ForgetMetricSampleAdmission(id)
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil
 }
@@ -14611,6 +14616,8 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	// The Agent identity behind this server was just issued or replaced; a lease
 	// issued to its predecessor must not be reused for it.
 	s.invalidateAuthorizationLease(server.ID)
+	s.wakeAuthorizationSyncFor(accessSyncReasonReconnect, server.ID)
+	s.wakeRuntimeUsersSyncFor(accessSyncReasonReconnect, server.ID)
 	s.queueDeploymentAfterReconnect(r.Context(), server.ID)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
@@ -14711,7 +14718,8 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	// lease is dropped first so that snapshot is freshly issued rather than the
 	// one the previous connection already held.
 	s.invalidateAuthorizationLease(server.ID)
-	s.wakeAuthorizationSync()
+	s.wakeAuthorizationSyncFor(accessSyncReasonReconnect, server.ID)
+	s.wakeRuntimeUsersSyncFor(accessSyncReasonReconnect, server.ID)
 	s.wakeRuntimeUsersSync()
 	defer func() {
 		s.unregisterAgentConn(server.ID, conn)
@@ -15025,13 +15033,20 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 			settings := s.runtimeSettings(ctx)
 			_, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
 			window := model.ServerTrafficWindow{Key: start.Format("2006-01-02"), Start: start, End: end}
-			result, err := s.store.ApplyHealthReport(ctx, server.ID, h, window)
+			// A changed capability is written inside the health transaction
+			// rather than as a second commit right after it; an unchanged one
+			// costs no statement at all.
+			pendingAccess, accessIdentity := s.pendingRemoteAccessStatus(server.ID, server.AgentID, h.RemoteAccess)
+			result, err := s.store.ApplyHealthReportWithOptions(ctx, server.ID, h, window, store.ApplyHealthReportOptions{RemoteAccess: pendingAccess})
+			if err != nil && pendingAccess != nil {
+				s.hotPath.remoteAccessFailed.Add(1)
+			}
 			if err == nil {
 				// Refresh the connection's in-memory server copy so heartbeat
 				// and plan generation observe the report without a reload.
 				applyHealthReportToServer(server, result)
-				if err := s.persistRemoteAccessStatus(ctx, server.ID, server.AgentID, h.RemoteAccess); err != nil {
-					log.Printf("persist remote access status server=%d: %v", server.ID, err)
+				if pendingAccess != nil {
+					s.commitRemoteAccessStatus(server.ID, server.AgentID, accessIdentity)
 				}
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)

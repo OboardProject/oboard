@@ -81,7 +81,23 @@ type HealthApplyResult struct {
 // (monitoring mode, traffic reset, time correction, offline policy), and uses
 // an atomic conditional INSERT for the metric sample instead of a separate
 // SELECT MAX(sampled_at).
+// ApplyHealthReportOptions carries the extra work a health report may fold into
+// its own transaction.
+type ApplyHealthReportOptions struct {
+	// RemoteAccess is written in the health transaction when the caller has
+	// already established that its content differs from what is stored. A nil
+	// value means "unchanged", and nothing is written: an identical capability
+	// must not cost a statement, and a changed one must not cost a second
+	// commit.
+	RemoteAccess *model.RemoteAccessReport
+}
+
 func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report model.HealthReport, window model.ServerTrafficWindow) (HealthApplyResult, error) {
+	return s.ApplyHealthReportWithOptions(ctx, serverID, report, window, ApplyHealthReportOptions{})
+}
+
+// ApplyHealthReportWithOptions is ApplyHealthReport plus the folded-in writes.
+func (s *Store) ApplyHealthReportWithOptions(ctx context.Context, serverID int64, report model.HealthReport, window model.ServerTrafficWindow, opts ApplyHealthReportOptions) (HealthApplyResult, error) {
 	if serverID <= 0 {
 		return HealthApplyResult{}, errors.New("health report requires a server id")
 	}
@@ -181,12 +197,25 @@ func (s *Store) ApplyHealthReport(ctx context.Context, serverID int64, report mo
 	} else {
 		curr.LastSeenAt = prev.LastSeenAt
 	}
-	sampleInserted, err := s.updateServerTelemetryReportTx(ctx, tx, serverID, report, window, ts, nowText, &curr)
+	sampleInserted, sampleDue, err := s.updateServerTelemetryReportTx(ctx, tx, serverID, report, window, ts, nowText, &curr)
 	if err != nil {
 		return HealthApplyResult{}, err
 	}
+	if opts.RemoteAccess != nil {
+		if err := upsertServerRemoteAccessStatusTx(ctx, tx, serverID, *opts.RemoteAccess); err != nil {
+			return HealthApplyResult{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return HealthApplyResult{}, err
+	}
+	// The sampling admission cache only advances after the commit that actually
+	// inserted the row, so a rolled-back transaction never suppresses a due
+	// sample.
+	if sampleInserted {
+		s.noteMetricSampleInserted(serverID, ts)
+	} else if !sampleDue {
+		s.noteMetricSampleSuppressed(serverID)
 	}
 	result := HealthApplyResult{OldStatus: prev.Status, NewStatus: newStatus, StatusChanged: !coalesced && prev.Status != newStatus, Prev: prev, Curr: curr, SampleInserted: sampleInserted, Coalesced: coalesced}
 	return result, nil
@@ -267,7 +296,7 @@ func absUint64Diff(a, b uint64) uint64 {
 // accumulation with a 10-minute window, BPS tolerance, connectivity
 // preservation, and the rate-limited metric sample. It returns whether a
 // metric sample was inserted.
-func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingTx, serverID int64, report model.HealthReport, window model.ServerTrafficWindow, ts time.Time, nowText string, curr *ServerRuntimeState) (bool, error) {
+func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingTx, serverID int64, report model.HealthReport, window model.ServerTrafficWindow, ts time.Time, nowText string, curr *ServerRuntimeState) (bool, bool, error) {
 	var periodKey string
 	var periodUp, periodDown, previousUp, previousDown uint64
 	var lastRawAt sql.NullString
@@ -276,7 +305,7 @@ func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingT
 	var connectivityChecked sql.NullString
 	var connectivityError string
 	if err := tx.QueryRowContext(ctx, `select period_key,traffic_upload_bytes,traffic_download_bytes,raw_upload_bytes,raw_download_bytes,last_reported_at,resource_history_enabled,connectivity_available,connectivity_latency_ms,connectivity_checked_at,connectivity_error from server_telemetry where server_id=?`, serverID).Scan(&periodKey, &periodUp, &periodDown, &previousUp, &previousDown, &lastRawAt, &resourceHistoryEnabled, &connectivityAvailable, &connectivityLatency, &connectivityChecked, &connectivityError); err != nil {
-		return false, err
+		return false, false, err
 	}
 	periodChanged := periodKey != window.Key
 	hasBaseline := lastRawAt.Valid && !periodChanged
@@ -318,7 +347,7 @@ func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingT
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `update server_telemetry set period_key=?,period_start=?,period_end=?,traffic_upload_bytes=?,traffic_download_bytes=?,raw_upload_bytes=?,raw_download_bytes=?,network_upload_bps=?,network_download_bps=?,last_reported_at=?,updated_at=? where server_id=?`, window.Key, window.Start.UTC().Format(time.RFC3339Nano), window.End.UTC().Format(time.RFC3339Nano), periodUp, periodDown, report.NetworkTotalUploadBytes, report.NetworkTotalDownloadBytes, uploadBPS, downloadBPS, nowText, nowText, serverID); err != nil {
-		return false, err
+		return false, false, err
 	}
 	curr.NetworkUploadBPS = uploadBPS
 	curr.NetworkDownloadBPS = downloadBPS
@@ -350,15 +379,24 @@ func (s *Store) updateServerTelemetryReportTx(ctx context.Context, tx *countingT
 	if interval <= 0 {
 		interval = defaultMetricSampleMinInterval
 	}
+	// Admission check before the statement: a report that plainly cannot be due
+	// yet does not need to ask the database. The cache only ever suppresses a
+	// sample it knows is early, is only advanced after a committed insert, and
+	// is empty after a restart, so the conditional INSERT below remains the
+	// authority for idempotency. It is health-report only: an Agent metric
+	// report goes through its own path and is never throttled here.
+	if !s.metricSampleDue(serverID, ts, interval) {
+		return false, false, nil
+	}
 	// Atomic conditional INSERT: the sample is rate-limited by the newest
 	// existing sample instead of a separate SELECT MAX(sampled_at) + INSERT.
 	res, err := tx.ExecContext(ctx, `insert into server_metric_samples(server_id,cpu_usage_percent,memory_used_bytes,memory_total_bytes,disk_used_bytes,disk_total_bytes,tcp_connection_count,udp_connection_count,process_count,resource_recorded,network_upload_bps,network_download_bps,traffic_upload_bytes,traffic_download_bytes,connectivity_available,connectivity_latency_ms,sampled_at) select ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? where not exists(select 1 from server_metric_samples where server_id=? and sampled_at>?)`, serverID, cpuUsage, memoryUsed, memoryTotal, diskUsed, diskTotal, tcpConnections, udpConnections, processes, resourceHistoryEnabled, uploadBPS, downloadBPS, periodUp, periodDown, connectivityAvailable, connectivityLatency, nowText, serverID, ts.Add(-interval).Format(time.RFC3339Nano))
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	inserted, err := res.RowsAffected()
+	affected, err := res.RowsAffected()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return inserted == 1, nil
+	return affected == 1, true, nil
 }

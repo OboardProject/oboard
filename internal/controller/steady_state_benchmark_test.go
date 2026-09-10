@@ -307,3 +307,69 @@ func TestAuthorizationRoundCost(t *testing.T) {
 		t.Fatalf("renewals inside the reuse window opened %d write transactions", report.RenewWriteTx)
 	}
 }
+
+// TestAccessSyncRecoveryScanCost measures the periodic recovery scan over a
+// fleet that is already confirmed. It is the P3 artifact: the scan used to
+// recompute every enrolled server unconditionally.
+func TestAccessSyncRecoveryScanCost(t *testing.T) {
+	ctx := context.Background()
+	spec := perfload.SpecFor(steadyStateScale())
+	fixture := newAuthorizationScaleFixture(t, spec.Servers)
+
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+	for _, server := range fixture.servers {
+		lease, err := fixture.srv.currentAuthorizationLease(ctx, server.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.RecordAuthorizationConfirmation(ctx, server.ID, lease.Revision, lease.Sequence, lease.Digest, "boot-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+
+	statements := fixture.db.SQLStatementCount()
+	transactions := fixture.db.SQLWriteTransactionCount()
+	evaluated := fixture.srv.hotPath.authorizationSyncEvaluated.Load()
+	skipped := fixture.srv.hotPath.authorizationSyncSkipped.Load()
+	start := time.Now()
+	const scans = 5
+	for range scans {
+		fixture.srv.reconcileAuthorizationSync(ctx, true)
+	}
+	elapsed := time.Since(start)
+
+	report := map[string]any{
+		"spec":              spec,
+		"servers":           len(fixture.servers),
+		"scans":             scans,
+		"sql_statements":    fixture.db.SQLStatementCount() - statements,
+		"sql_write_tx":      fixture.db.SQLWriteTransactionCount() - transactions,
+		"servers_evaluated": fixture.srv.hotPath.authorizationSyncEvaluated.Load() - evaluated,
+		"servers_skipped":   fixture.srv.hotPath.authorizationSyncSkipped.Load() - skipped,
+		"wall_ms":           float64(elapsed.Microseconds()) / 1000,
+		"generated_at":      time.Now().UTC(),
+		"notes": []string{
+			"Every server is confirmed for the current routing revision and no boundary passed.",
+			"servers_evaluated is what the scan actually recomputed; it used to be servers x scans.",
+			"Wall time is not a CPU measurement; take a pprof CPU profile for that.",
+		},
+	}
+	outDir := filepath.Join("..", "..", "..", "dist", "test")
+	_ = os.MkdirAll(outDir, 0o755)
+	if raw, err := json.MarshalIndent(report, "", "  "); err == nil {
+		if err := os.WriteFile(filepath.Join(outDir, "access-sync-recovery-"+spec.Name+".json"), raw, 0o644); err != nil {
+			t.Logf("could not write report: %v", err)
+		}
+	}
+	t.Logf("recovery scan %s: servers=%d scans=%d evaluated=%d skipped=%d sql=%d tx=%d wall=%.1fms (unoptimized would evaluate %d)",
+		spec.Name, len(fixture.servers), scans, report["servers_evaluated"], report["servers_skipped"],
+		report["sql_statements"], report["sql_write_tx"], report["wall_ms"], scans*len(fixture.servers))
+
+	if report["servers_evaluated"].(int64) != 0 {
+		t.Fatalf("a settled fleet still evaluated %v servers across %d scans", report["servers_evaluated"], scans)
+	}
+	if report["sql_write_tx"].(int64) != 0 {
+		t.Fatalf("a settled recovery scan opened %v write transactions", report["sql_write_tx"])
+	}
+}

@@ -58,14 +58,13 @@ func (s *Store) ApplyConnectionPresenceEvents(ctx context.Context, agentID strin
 			return nil, err
 		}
 	}
-	cutoff := time.Now().UTC().Add(-connectionPresenceRetention).Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `delete from connection_presence_events where event_at<?`, cutoff); err != nil {
-		return nil, err
-	}
-	stale := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `delete from connection_presence_states where last_event_at<?`, stale); err != nil {
-		return nil, err
-	}
+	// Retention cleanup deliberately does not run here. An Agent report must pay
+	// only for its own batch; sweeping the whole fleet's expired presence inside
+	// every report transaction made one node's upload cadence the schedule for
+	// everybody's deletes. PruneConnectionPresence runs it from the maintenance
+	// loop instead, and no reader depends on it: presence is always read through
+	// its business validity window, so an expired row that is still on disk is
+	// already invisible.
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -108,6 +107,81 @@ func (s *Store) ListConnectionPresenceForUser(ctx context.Context, userID int64,
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// connectionPresenceStateRetention is how long a presence state row survives
+// without a new event. It matches the window readers already filter by, so the
+// delete only reclaims space.
+const connectionPresenceStateRetention = 5 * time.Minute
+
+// ConnectionPresencePruneResult reports one bounded cleanup pass.
+type ConnectionPresencePruneResult struct {
+	EventsDeleted int64
+	StatesDeleted int64
+	// More is true when the budget was exhausted before the backlog was, so the
+	// caller can come back promptly instead of waiting a full maintenance cycle.
+	More bool
+}
+
+// PruneConnectionPresence deletes expired presence rows in bounded batches.
+//
+// It never deletes a whole retention window in one statement: a backlog is
+// worked off batch by batch so the write lock is held briefly and an Agent
+// report is not blocked behind a fleet-wide delete. Passing a non-positive
+// batch uses the default.
+func (s *Store) PruneConnectionPresence(ctx context.Context, now time.Time, batch int, maxBatches int) (ConnectionPresencePruneResult, error) {
+	if batch <= 0 {
+		batch = 500
+	}
+	if maxBatches <= 0 {
+		maxBatches = 8
+	}
+	out := ConnectionPresencePruneResult{}
+	eventCutoff := now.UTC().Add(-connectionPresenceRetention).Format(time.RFC3339Nano)
+	stateCutoff := now.UTC().Add(-connectionPresenceStateRetention).Format(time.RFC3339Nano)
+	for round := 0; round < maxBatches; round++ {
+		if err := ctx.Err(); err != nil {
+			out.More = true
+			return out, nil
+		}
+		res, err := s.db.ExecContext(ctx, `delete from connection_presence_events where rowid in (select rowid from connection_presence_events where event_at<? limit ?)`, eventCutoff, batch)
+		if err != nil {
+			return out, err
+		}
+		deleted, err := res.RowsAffected()
+		if err != nil {
+			return out, err
+		}
+		out.EventsDeleted += deleted
+		if deleted < int64(batch) {
+			break
+		}
+		if round == maxBatches-1 {
+			out.More = true
+		}
+	}
+	for round := 0; round < maxBatches; round++ {
+		if err := ctx.Err(); err != nil {
+			out.More = true
+			return out, nil
+		}
+		res, err := s.db.ExecContext(ctx, `delete from connection_presence_states where rowid in (select rowid from connection_presence_states where last_event_at<? limit ?)`, stateCutoff, batch)
+		if err != nil {
+			return out, err
+		}
+		deleted, err := res.RowsAffected()
+		if err != nil {
+			return out, err
+		}
+		out.StatesDeleted += deleted
+		if deleted < int64(batch) {
+			break
+		}
+		if round == maxBatches-1 {
+			out.More = true
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) ClearConnectionPresenceForServer(ctx context.Context, serverID int64) error {

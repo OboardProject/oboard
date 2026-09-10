@@ -11,6 +11,21 @@ const (
 	databaseMaintenanceTick           = 30 * time.Second
 	databaseMaintenanceTimeout        = 2 * time.Minute
 	databaseMaintenanceCatchUpTimeout = 5 * time.Minute
+
+	// Connection presence expires on a much shorter horizon than the hourly
+	// retention sweep, so it gets its own cadence inside the same loop rather
+	// than a second maintenance goroutine or a per-server job.
+	presencePruneInterval = 2 * time.Minute
+	// A pass is bounded by batch size, batch count and wall time so it shares
+	// the maintenance budget with retention deletes and checkpoints instead of
+	// holding the write lock through a whole backlog. These are protective
+	// limits, not a promised duration on any particular host.
+	presencePruneBatch      = 500
+	presencePruneMaxBatches = 8
+	presencePruneTimeout    = 5 * time.Second
+	// After a bounded pass that hit its limit, come back promptly to keep
+	// working the backlog off instead of waiting a full interval.
+	presencePruneCatchUpDelay = 5 * time.Second
 )
 
 func (s *Server) StartDatabaseMaintenance(ctx context.Context) {
@@ -30,6 +45,8 @@ func (s *Server) StartDatabaseMaintenance(ctx context.Context) {
 		rollupTick = rollupTimer.C
 		defer rollupTimer.Stop()
 	}
+	presenceTimer := time.NewTimer(presencePruneInterval)
+	defer presenceTimer.Stop()
 
 	for {
 		select {
@@ -37,6 +54,8 @@ func (s *Server) StartDatabaseMaintenance(ctx context.Context) {
 			return
 		case <-rollupTick:
 			rollupTimer.Reset(s.runLatencyRollup(ctx, rollup))
+		case <-presenceTimer.C:
+			presenceTimer.Reset(s.runConnectionPresencePrune(ctx))
 		case <-ticker.C:
 			if catchUp || time.Since(lastFull) >= databaseMaintenanceInterval {
 				catchUp = s.runDatabaseMaintenance(ctx, catchUp)
@@ -83,4 +102,33 @@ func (s *Server) runWALCheckpoint(ctx context.Context) {
 		return
 	}
 	log.Printf("database WAL checkpoint: wal_busy=%d wal_log=%d wal_checkpointed=%d", result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames)
+}
+
+// runConnectionPresencePrune deletes expired connection presence in bounded
+// batches and reports how long to wait before the next pass.
+//
+// This work used to run inside every Agent presence report transaction, which
+// made one node's upload cadence the delete schedule for the whole fleet and
+// put a growing global DELETE on the critical path of an ordinary report. No
+// reader depends on it: presence is always read through its business validity
+// window and through the server's effective audit state, so an expired row that
+// is still on disk is already excluded.
+func (s *Server) runConnectionPresencePrune(ctx context.Context) time.Duration {
+	pruneCtx, cancel := context.WithTimeout(ctx, presencePruneTimeout)
+	defer cancel()
+	result, err := s.store.PruneConnectionPresence(pruneCtx, time.Now().UTC(), presencePruneBatch, presencePruneMaxBatches)
+	if err != nil {
+		if ctx.Err() != nil {
+			return presencePruneInterval
+		}
+		log.Printf("connection presence prune failed: %v", err)
+		return presencePruneInterval
+	}
+	if result.EventsDeleted > 0 || result.StatesDeleted > 0 {
+		log.Printf("connection presence pruned: events=%d states=%d more=%v", result.EventsDeleted, result.StatesDeleted, result.More)
+	}
+	if result.More {
+		return presencePruneCatchUpDelay
+	}
+	return presencePruneInterval
 }

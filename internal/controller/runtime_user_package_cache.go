@@ -22,9 +22,9 @@ type runtimeUserPackageValue struct {
 }
 
 type runtimeUserPackageCache struct {
-	once   sync.Once
-	cache  *coalesceCache[int64, runtimeUserPackageValue]
-	genMu  sync.Mutex
+	once            sync.Once
+	cache           *coalesceCache[int64, runtimeUserPackageValue]
+	genMu           sync.Mutex
 	routingRevision uint64
 	policyRevision  uint64
 	generation      uint64
@@ -169,6 +169,15 @@ func (s *Server) invalidateRuntimeUserPackagesFor(serverIDs []int64) {
 
 func (s *Server) bumpRuntimeUserPackageGeneration() {
 	s.runtimeUserPackages.bumpGeneration()
+}
+
+// runtimeUserPackageGeneration is the current invalidation generation. A
+// reconciliation round records it with each evaluation so a later round can
+// tell whether a business deadline fired in between.
+func (s *Server) runtimeUserPackageGeneration() uint64 {
+	s.runtimeUserPackages.genMu.Lock()
+	defer s.runtimeUserPackages.genMu.Unlock()
+	return s.runtimeUserPackages.generation
 }
 
 // runtimeUserPackageBuildCount exposes coalesced build attempts for tests.

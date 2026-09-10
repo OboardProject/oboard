@@ -568,3 +568,107 @@ func TestAuthorizationDenialSurvivesReissue(t *testing.T) {
 		t.Fatalf("unconfirmed denial was dropped on reissue: %v -> %v", revoked.Denied, reissued.Denied)
 	}
 }
+
+// TestAuthorizationRecoveryScanSkipsSettledFleet proves the periodic recovery
+// scan no longer recomputes every enrolled server: once the fleet is confirmed
+// for the current routing revision, a scan reads one ledger summary and does no
+// per-server work at all.
+func TestAuthorizationRecoveryScanSkipsSettledFleet(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthorizationScaleFixture(t, 8)
+	// First scan issues and delivers; the Agents are offline so the ledger stays
+	// pending, which is the state a settled check must NOT treat as settled.
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+	for _, server := range fixture.servers {
+		lease, err := fixture.srv.currentAuthorizationLease(ctx, server.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.RecordAuthorizationConfirmation(ctx, server.ID, lease.Revision, lease.Sequence, lease.Digest, "boot-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One scan after confirmation settles the ledger's evaluated revision.
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+
+	evaluated := fixture.srv.hotPath.authorizationSyncEvaluated.Load()
+	skipped := fixture.srv.hotPath.authorizationSyncSkipped.Load()
+	statements := fixture.db.SQLStatementCount()
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+	if got := fixture.srv.hotPath.authorizationSyncEvaluated.Load() - evaluated; got != 0 {
+		t.Fatalf("a settled fleet still evaluated %d servers", got)
+	}
+	if got := fixture.srv.hotPath.authorizationSyncSkipped.Load() - skipped; got != int64(len(fixture.servers)) {
+		t.Fatalf("skipped %d of %d servers", got, len(fixture.servers))
+	}
+	// One candidate summary query, one routing revision read, and the denial
+	// prune - not one round trip per server.
+	if used := fixture.db.SQLStatementCount() - statements; used > 6 {
+		t.Fatalf("a settled recovery scan issued %d SQL statements for %d servers", used, len(fixture.servers))
+	}
+}
+
+// TestAuthorizationReconnectHintForcesEvaluation proves a reconnecting Agent is
+// re-evaluated even though its ledger row still says confirmed, because a
+// reconnect can mean lost local state, a new boot ID, or changed capabilities.
+func TestAuthorizationReconnectHintForcesEvaluation(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthorizationScaleFixture(t, 4)
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+	for _, server := range fixture.servers {
+		lease, err := fixture.srv.currentAuthorizationLease(ctx, server.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fixture.db.RecordAuthorizationConfirmation(ctx, server.ID, lease.Revision, lease.Sequence, lease.Digest, "boot-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+
+	evaluated := fixture.srv.hotPath.authorizationSyncEvaluated.Load()
+	fixture.srv.wakeAuthorizationSyncFor(accessSyncReasonReconnect, fixture.servers[1].ID)
+	fixture.srv.reconcileAuthorizationSync(ctx, false)
+	if got := fixture.srv.hotPath.authorizationSyncEvaluated.Load() - evaluated; got != 1 {
+		t.Fatalf("reconnect evaluated %d servers, want exactly the reconnecting one", got)
+	}
+}
+
+// TestAuthorizationOfflineServerStopsRebuildingUndeliverableLeases proves an
+// Agent that stays offline is not charged a fresh lease and envelope on every
+// recovery scan.
+func TestAuthorizationOfflineServerStopsRebuildingUndeliverableLeases(t *testing.T) {
+	ctx := context.Background()
+	fixture := newAuthorizationScaleFixture(t, 3)
+	// The fast lane is the path that records "agent offline"; older Agents fall
+	// back to the task queue and are covered by their own branch.
+	for _, server := range fixture.servers {
+		server.KernelCapabilities = []string{model.AgentCapabilityAuthorizationControl, model.AgentCapabilityAuthorizationLease}
+		if err := fixture.db.UpdateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Nothing is connected in this fixture, so every server is offline.
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+	fixture.srv.reconcileAuthorizationSync(ctx, true)
+
+	issued := fixture.srv.hotPath.authorizationLeaseIssued.Load()
+	offlineSkipped := fixture.srv.hotPath.authorizationSyncOfflineSkipped.Load()
+	for range 5 {
+		fixture.srv.reconcileAuthorizationSync(ctx, true)
+	}
+	if got := fixture.srv.hotPath.authorizationLeaseIssued.Load() - issued; got != 0 {
+		t.Fatalf("an offline fleet issued %d further leases across five scans", got)
+	}
+	if got := fixture.srv.hotPath.authorizationSyncOfflineSkipped.Load() - offlineSkipped; got != int64(5*len(fixture.servers)) {
+		t.Fatalf("offline short circuit fired %d times, want %d", got, 5*len(fixture.servers))
+	}
+	// The pending state stays recoverable rather than being dropped.
+	state, err := fixture.db.AuthorizationState(ctx, fixture.servers[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingReason != store.AuthorizationPendingAgentOffline || state.DesiredRevision <= 0 {
+		t.Fatalf("offline server lost its recoverable pending state: %+v", state)
+	}
+}

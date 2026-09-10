@@ -61,20 +61,36 @@ func (s *Store) UpsertServerRemoteAccessStatus(ctx context.Context, serverID int
 	if serverID <= 0 {
 		return nil
 	}
+	_, err := s.db.ExecContext(ctx, remoteAccessStatusUpsertSQL, remoteAccessStatusUpsertArgs(serverID, report)...)
+	return err
+}
+
+// upsertServerRemoteAccessStatusTx writes the capability inside a transaction
+// the caller already opened, so a capability change folded into a health report
+// costs no separate commit.
+func upsertServerRemoteAccessStatusTx(ctx context.Context, tx *countingTx, serverID int64, report model.RemoteAccessReport) error {
+	if serverID <= 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, remoteAccessStatusUpsertSQL, remoteAccessStatusUpsertArgs(serverID, report)...)
+	return err
+}
+
+func remoteAccessStatusUpsertArgs(serverID int64, report model.RemoteAccessReport) []any {
 	capabilities, _ := json.Marshal(report.Capabilities)
 	allow, _ := json.Marshal(report.LocalAllow)
 	mode := strings.TrimSpace(report.LocalMode)
 	if mode == "" {
 		mode = model.RemoteAccessModeStandard
 	}
-	ts := now()
-	// The DO UPDATE is conditional so an Agent that keeps reporting the same
-	// capability does not rewrite an identical row. updated_at therefore means
-	// "when this capability content last changed", which is the only way it is
-	// read; server liveness comes from servers.last_seen_at, never from here.
-	_, err := s.db.ExecContext(ctx, `insert into server_remote_access_status(server_id,capabilities_json,local_mode,local_allow_json,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set capabilities_json=excluded.capabilities_json,local_mode=excluded.local_mode,local_allow_json=excluded.local_allow_json,updated_at=excluded.updated_at where server_remote_access_status.capabilities_json<>excluded.capabilities_json or server_remote_access_status.local_mode<>excluded.local_mode or server_remote_access_status.local_allow_json<>excluded.local_allow_json`, serverID, string(capabilities), mode, string(allow), ts)
-	return err
+	return []any{serverID, string(capabilities), mode, string(allow), now()}
 }
+
+// The DO UPDATE is conditional so an Agent that keeps reporting the same
+// capability does not rewrite an identical row. updated_at therefore means
+// "when this capability content last changed", which is the only way it is
+// read; server liveness comes from servers.last_seen_at, never from here.
+const remoteAccessStatusUpsertSQL = `insert into server_remote_access_status(server_id,capabilities_json,local_mode,local_allow_json,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set capabilities_json=excluded.capabilities_json,local_mode=excluded.local_mode,local_allow_json=excluded.local_allow_json,updated_at=excluded.updated_at where server_remote_access_status.capabilities_json<>excluded.capabilities_json or server_remote_access_status.local_mode<>excluded.local_mode or server_remote_access_status.local_allow_json<>excluded.local_allow_json`
 
 func (s *Store) GetMCPPrivilegedGrantByOAuthGrant(ctx context.Context, oauthGrantID string) (*model.MCPPrivilegedGrant, error) {
 	return s.scanMCPPrivilegedGrant(ctx, `select id,oauth_grant_id,oauth_client_id,authorized_user_id,capabilities_json,resource_boundary_json,expires_at,revoked_at,created_by_user_id,created_at,updated_at,last_step_up_at,revision from mcp_privileged_grants where oauth_grant_id=?`, oauthGrantID)

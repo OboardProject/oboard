@@ -65,8 +65,9 @@ func newAuthorizationMessageID() string {
 }
 
 // wakeAuthorizationSync is a coalesced hint that some server's desired
-// authorization may have changed. The worker keeps a database-backed recovery
-// scan, so a lost hint only delays delivery.
+// authorization may have changed, without naming which. The worker falls back
+// to the ledger's own stale query for the scope. It keeps a database-backed
+// recovery scan, so a lost hint only delays delivery.
 func (s *Server) wakeAuthorizationSync() {
 	if s.authorizationSyncWake == nil {
 		return
@@ -75,6 +76,16 @@ func (s *Server) wakeAuthorizationSync() {
 	case s.authorizationSyncWake <- struct{}{}:
 	default:
 	}
+}
+
+// wakeAuthorizationSyncFor is the directed form: it names the servers that may
+// owe work and why. Hints for the same server merge, so a burst of changes
+// costs one reconciliation rather than one per change, and a reason that
+// invalidates the ledger's "confirmed" answer - a reconnect, a revoke - is
+// preserved through the merge.
+func (s *Server) wakeAuthorizationSyncFor(reason string, serverIDs ...int64) {
+	s.authorizationHints.note(reason, serverIDs)
+	s.wakeAuthorizationSync()
 }
 
 // StartAuthorizationSyncWorker delivers signed authorization snapshots to
@@ -146,28 +157,53 @@ func (s *Server) authorizationBoundaryTimer(ctx context.Context) <-chan time.Tim
 }
 
 // reconcileAuthorizationSync evaluates and delivers authorization for servers.
+//
+// The three entry points share this one implementation rather than each
+// carrying their own copy of the algorithm: a directed wake names its servers,
+// an undirected wake asks the ledger which rows are stale, and the periodic
+// recovery scan reads the whole enrolled fleet's ledger summary in one query.
+// In every case a server that is confirmed for the current routing revision and
+// has crossed no business boundary is dropped before any lease work.
 func (s *Server) reconcileAuthorizationSync(ctx context.Context, full bool) {
-	var serverIDs []int64
-	var err error
-	if full {
-		serverIDs, err = s.store.EnrolledServerIDs(ctx)
-	} else {
-		var revision uint64
-		revision, err = s.store.RoutingCacheRevision(ctx)
-		if err == nil {
-			serverIDs, err = s.store.StaleAuthorizationServerIDs(ctx, revision)
+	hints := s.authorizationHints.drain()
+	routingRevision, err := s.store.RoutingCacheRevision(ctx)
+	if err != nil {
+		log.Printf("authorization sync: routing revision: %v", err)
+		return
+	}
+	var candidates []store.AccessSyncCandidate
+	switch {
+	case full:
+		candidates, err = s.store.ListAuthorizationSyncCandidates(ctx)
+	case len(hints) > 0:
+		// The directed scope is authoritative for this round; the ledger summary
+		// is still loaded so the settled check can drop hints that need nothing.
+		candidates, err = s.store.ListAuthorizationSyncCandidates(ctx)
+	default:
+		var stale []int64
+		stale, err = s.store.StaleAuthorizationServerIDs(ctx, routingRevision)
+		for _, serverID := range stale {
+			candidates = append(candidates, store.AccessSyncCandidate{ServerID: serverID})
 		}
 	}
 	if err != nil {
 		log.Printf("authorization sync: list servers: %v", err)
 		return
 	}
-	for _, serverID := range serverIDs {
-		if ctx.Err() != nil {
-			return
-		}
-		s.syncServerAuthorization(ctx, serverID, full)
+	// One projection for the round answers every server's boundary question.
+	// A projection that cannot be built simply makes nothing settled, which is
+	// the behaviour the recovery scan had before.
+	projection, projectionErr := s.authorizationProjection(ctx)
+	if projectionErr != nil {
+		projection = nil
 	}
+	now := time.Now().UTC()
+	plan := planAccessSyncRound(candidates, routingRevision, hints, func(serverID int64) bool {
+		return s.authorizationTimeBoundarySettled(projection, serverID, now)
+	})
+	s.hotPath.authorizationSyncSkipped.Add(int64(plan.skipped))
+	s.hotPath.authorizationSyncEvaluated.Add(int64(len(plan.work)))
+	runAccessSyncPlan(ctx, plan, s.syncServerAuthorization)
 	if _, err := s.store.PruneAuthorizationDenials(ctx, time.Now().UTC()); err != nil {
 		log.Printf("authorization sync: prune denials: %v", err)
 	}
@@ -189,14 +225,9 @@ func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64, fo
 		delete(s.authorizationSyncInFlight, serverID)
 		s.authorizationSyncMu.Unlock()
 	}()
-	server, err := s.store.GetServer(ctx, serverID)
-	if err != nil {
-		return
-	}
-	if server.AgentID == "" {
-		_ = s.store.MarkAuthorizationPending(ctx, serverID, store.AuthorizationPendingUnenrolled, "", false)
-		return
-	}
+	// The ledger decides whether this server needs anything at all. Loading the
+	// full server object first would pay for every stable node just to conclude
+	// that it is already confirmed.
 	state, err := s.store.AuthorizationState(ctx, serverID)
 	if err != nil {
 		return
@@ -206,6 +237,21 @@ func (s *Server) syncServerAuthorization(ctx context.Context, serverID int64, fo
 		return
 	}
 	if !forceRebuild && state.EvaluatedRoutingRevision == routingRevision && state.Confirmed() {
+		return
+	}
+	// An Agent that is already recorded as offline for this exact revision has
+	// nothing new to receive. Issuing another lease and signing another envelope
+	// for it would only produce a message with nowhere to go.
+	if state.PendingReason == store.AuthorizationPendingAgentOffline && state.EvaluatedRoutingRevision == routingRevision && !s.agentControlOnline(serverID) {
+		s.hotPath.authorizationSyncOfflineSkipped.Add(1)
+		return
+	}
+	server, err := s.store.GetServer(ctx, serverID)
+	if err != nil {
+		return
+	}
+	if server.AgentID == "" {
+		_ = s.store.MarkAuthorizationPending(ctx, serverID, store.AuthorizationPendingUnenrolled, "", false)
 		return
 	}
 	lease, err := s.currentAuthorizationLease(ctx, serverID)
