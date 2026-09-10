@@ -28,6 +28,7 @@ import (
 type Store struct {
 	db                     *countingDB
 	path                   string
+	latencyPlanVersionMu   sync.Mutex
 	latencyHistoryMu       sync.Mutex
 	latencyRollupBusy      atomic.Bool
 	latencyIngestSlowUntil atomic.Int64
@@ -452,7 +453,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create table if not exists configuration_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`create table if not exists traffic_policy_revision (id integer primary key check(id=1), revision integer not null default 0)`,
 		`insert or ignore into traffic_policy_revision(id,revision) values(1,0)`,
-		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', monitoring_target_task_id integer not null default 0, interval_seconds integer not null default 120, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', updated_at text not null)`,
+		`create table if not exists server_latency_probe_settings (server_id integer primary key references servers(id) on delete cascade, enabled integer not null default 1, mode text not null default 'tcp', public_target text not null default 'auto', monitoring_target_task_id integer not null default 0, interval_seconds integer not null default 120, sample_count integer not null default 3, regions_json text not null default '[]', provinces_json text not null default '[]', carriers_json text not null default '[]', max_targets integer not null default 64, resource_version text not null default '', plan_version integer not null default 0, plan_digest text not null default '', updated_at text not null)`,
 		`create table if not exists server_latency_probe_results (id integer primary key autoincrement, server_id integer not null references servers(id) on delete cascade, report_id text not null default '', resource_version text not null, probe_id text not null, kind text not null default 'regional', mode text not null default 'icmp', province text not null, carrier text not null, host text not null default '', ip text not null, port integer not null default 0, available integer not null default 0, latency_ms integer not null default 0, min_latency_ms integer not null default 0, p95_latency_ms integer not null default 0, jitter_ms integer not null default 0, sample_count integer not null default 0, success_count integer not null default 0, error text not null default '', checked_at text not null, created_at text not null, unique(server_id,resource_version,probe_id,checked_at))`,
 		`create index if not exists idx_server_latency_probe_results_server_checked on server_latency_probe_results(server_id,checked_at desc)`,
 		`create table if not exists latency_probe_tasks (id integer primary key autoincrement, name text not null, province text not null, carrier text not null, method text not null default 'tcp', address text not null default '', port integer not null default 80, interval_seconds integer not null default 60, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -814,6 +815,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		{"server_latency_probe_settings", "mode", `alter table server_latency_probe_settings add column mode text not null default 'tcp'`},
 		{"server_latency_probe_settings", "public_target", `alter table server_latency_probe_settings add column public_target text not null default 'auto'`},
 		{"server_latency_probe_settings", "regions_json", `alter table server_latency_probe_settings add column regions_json text not null default '[]'`},
+		{"server_latency_probe_settings", "plan_version", `alter table server_latency_probe_settings add column plan_version integer not null default 0`},
+		{"server_latency_probe_settings", "plan_digest", `alter table server_latency_probe_settings add column plan_digest text not null default ''`},
 		{"server_latency_probe_results", "report_id", `alter table server_latency_probe_results add column report_id text not null default ''`},
 		{"server_latency_probe_results", "kind", `alter table server_latency_probe_results add column kind text not null default 'regional'`},
 		{"server_latency_probe_results", "mode", `alter table server_latency_probe_results add column mode text not null default 'icmp'`},

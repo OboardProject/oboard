@@ -68,7 +68,11 @@ func (s *Store) UpsertServerRemoteAccessStatus(ctx context.Context, serverID int
 		mode = model.RemoteAccessModeStandard
 	}
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `insert into server_remote_access_status(server_id,capabilities_json,local_mode,local_allow_json,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set capabilities_json=excluded.capabilities_json,local_mode=excluded.local_mode,local_allow_json=excluded.local_allow_json,updated_at=excluded.updated_at`, serverID, string(capabilities), mode, string(allow), ts)
+	// The DO UPDATE is conditional so an Agent that keeps reporting the same
+	// capability does not rewrite an identical row. updated_at therefore means
+	// "when this capability content last changed", which is the only way it is
+	// read; server liveness comes from servers.last_seen_at, never from here.
+	_, err := s.db.ExecContext(ctx, `insert into server_remote_access_status(server_id,capabilities_json,local_mode,local_allow_json,updated_at) values(?,?,?,?,?) on conflict(server_id) do update set capabilities_json=excluded.capabilities_json,local_mode=excluded.local_mode,local_allow_json=excluded.local_allow_json,updated_at=excluded.updated_at where server_remote_access_status.capabilities_json<>excluded.capabilities_json or server_remote_access_status.local_mode<>excluded.local_mode or server_remote_access_status.local_allow_json<>excluded.local_allow_json`, serverID, string(capabilities), mode, string(allow), ts)
 	return err
 }
 

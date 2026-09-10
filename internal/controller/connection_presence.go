@@ -85,8 +85,19 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 		event.AgentID = server.AgentID
 		accepted = append(accepted, event)
 	}
-	if _, err := s.store.ApplyConnectionPresenceEvents(ctx, server.AgentID, server.ID, delta.DroppedCount, accepted); err != nil {
+	// The write re-checks the effective audit state under the same per-server
+	// lock the disabled-state cleanup uses, so a report that passed the gate
+	// above cannot land after an administrator turned audit off.
+	written := false
+	if err := s.withPresenceIngestGuard(ctx, server, func() error {
+		written = true
+		_, err := s.store.ApplyConnectionPresenceEvents(ctx, server.AgentID, server.ID, delta.DroppedCount, accepted)
+		return err
+	}); err != nil {
 		return nil, err
+	}
+	if !written {
+		return nil, nil
 	}
 	deviceActivity := make(map[string]time.Time, len(accepted))
 	for _, event := range accepted {

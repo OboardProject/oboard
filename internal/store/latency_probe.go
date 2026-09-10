@@ -89,6 +89,52 @@ func (s *Store) attachServerLatencySettings(ctx context.Context, servers []model
 	return nil
 }
 
+// LatencyProbePlanVersion resolves the version an Agent sees for one rendered
+// probe plan. The version is persisted next to the digest of the plan it was
+// issued for, which gives the two properties the Agent contract depends on:
+// one version never describes two different plans, and the version never moves
+// backwards. Deriving it from input timestamps alone cannot do that - deleting
+// or unassigning the most recently updated task shrinks the set the maximum is
+// taken over, and a detected region change alters the plan without touching any
+// of those timestamps.
+//
+// digest identifies the plan content; floor is the timestamp-derived lower
+// bound, so an installation upgrading into this column still issues a version
+// above whatever its Agents already hold. A plan whose digest is unchanged is
+// answered from the stored value without writing anything.
+func (s *Store) LatencyProbePlanVersion(ctx context.Context, serverID int64, digest string, floor int64) (int64, error) {
+	if serverID <= 0 {
+		return 0, errors.New("latency probe plan version requires a server")
+	}
+	if strings.TrimSpace(digest) == "" {
+		return 0, errors.New("latency probe plan version requires a plan digest")
+	}
+	// Version assignment is rare (only a real content change reaches the write),
+	// so one serialization point keeps concurrent rebuilds of the same plan from
+	// handing out two versions for identical content.
+	s.latencyPlanVersionMu.Lock()
+	defer s.latencyPlanVersionMu.Unlock()
+	var stored int64
+	var storedDigest string
+	err := s.db.QueryRowContext(ctx, `select plan_version,plan_digest from server_latency_probe_settings where server_id=?`, serverID).Scan(&stored, &storedDigest)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if stored > 0 && storedDigest == digest {
+		return stored, nil
+	}
+	next := stored
+	if floor > next {
+		next = floor
+	}
+	next++
+	ts := now()
+	if _, err := s.db.ExecContext(ctx, `insert into server_latency_probe_settings(server_id,plan_version,plan_digest,updated_at) values(?,?,?,?) on conflict(server_id) do update set plan_version=excluded.plan_version,plan_digest=excluded.plan_digest`, serverID, next, digest, ts); err != nil {
+		return 0, err
+	}
+	return next, nil
+}
+
 func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *model.Server) error {
 	if server == nil || server.ID <= 0 {
 		return errors.New("latency probe requires a server")

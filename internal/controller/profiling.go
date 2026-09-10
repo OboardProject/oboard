@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"expvar"
 	"fmt"
 	"log"
@@ -39,6 +40,13 @@ func (s *Server) StartProfiling(ctx context.Context, listenAddr string) error {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	mux.Handle("/debug/vars", expvar.Handler())
+	// Steady-state hot-path counters. They are scalars only, so this endpoint
+	// exposes no server, user, or credential identity; it shares the
+	// loopback-only listener above and is never reachable from the base-path mux.
+	mux.HandleFunc("/debug/hotpath", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(s.hotPathMetrics())
+	})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()

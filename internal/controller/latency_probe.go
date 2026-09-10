@@ -57,6 +57,13 @@ func loadLatencyProbeResource(ctx context.Context, force bool) (latencyProbeReso
 		latencyProbeCache.Unlock()
 		return cached, nil
 	}
+	// No usable resource and the last attempt just failed: answer from the
+	// cooldown instead of letting every heartbeat of every node start its own
+	// fetch. A manual probe still forces a real retry.
+	if !hasCached && !force && latencyProbeCache.lastError != nil && sinceAttempt < latencyProbeRefreshCooldown {
+		latencyProbeCache.Unlock()
+		return latencyProbeResource{}, errors.New("暂时无法更新延迟测试资源，请稍后重试")
+	}
 	if latencyProbeCache.refreshing {
 		refreshed := latencyProbeCache.refreshed
 		latencyProbeCache.Unlock()
@@ -496,20 +503,24 @@ func (s *Server) latencyProbePlanForServer(ctx context.Context, server model.Ser
 	if resource.Version == "" {
 		resource.Version = "public"
 	}
-	version := server.UpdatedAt.UnixNano()
-	if resourceVersion := resource.UpdatedAt.UnixNano(); resourceVersion > version {
-		version = resourceVersion
+	// The timestamp maximum is only the lower bound. It cannot be the version
+	// itself: deleting or unassigning the most recently updated task shrinks the
+	// set it is taken over, and a newly detected region changes the rendered
+	// targets without moving any of these timestamps. The authoritative version
+	// is persisted against the plan digest.
+	floor := server.UpdatedAt.UnixNano()
+	if resourceVersion := resource.UpdatedAt.UnixNano(); resourceVersion > floor {
+		floor = resourceVersion
 	}
 	for _, task := range tasks {
-		if taskVersion := task.UpdatedAt.UnixNano(); taskVersion > version {
-			version = taskVersion
+		if taskVersion := task.UpdatedAt.UnixNano(); taskVersion > floor {
+			floor = taskVersion
 		}
 	}
-	if version < 1 {
-		version = 1
+	if floor < 1 {
+		floor = 1
 	}
-	return model.LatencyProbeTargetsPlan{
-		Version:         version,
+	plan := model.LatencyProbeTargetsPlan{
 		ResourceVersion: resource.Version,
 		Mode:            server.LatencyProbeMode,
 		Enabled:         server.LatencyProbeEnabled,
@@ -518,7 +529,14 @@ func (s *Server) latencyProbePlanForServer(ctx context.Context, server model.Ser
 		IntervalMS:      150,
 		TimeoutMS:       3000,
 		Targets:         latencyProbeTargets(resource, server, tasks),
-	}, nil
+	}
+	version, err := s.store.LatencyProbePlanVersion(ctx, server.ID, latencyProbePlanDigest(plan), floor)
+	if err != nil {
+		return model.LatencyProbeTargetsPlan{}, err
+	}
+	s.hotPath.probePlanVersionAssigned.Add(1)
+	plan.Version = version
+	return plan, nil
 }
 
 func validateAutonomousLatencyProbeReport(report *model.LatencyProbeResultReport) error {
@@ -701,6 +719,7 @@ func (s *Server) latencyProbeTasks(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		s.invalidateLatencyProbePlans(task.ServerIDs...)
 		s.publishRealtime("server_metrics", "latency_probes")
 		write(w, 201, map[string]any{"latency_probe_task": task})
 	default:
@@ -732,6 +751,9 @@ func (s *Server) latencyProbeTask(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
+		// The union of the previous and the new assignment: the server that lost
+		// the task needs a fresh plan just as much as the one that gained it.
+		s.invalidateLatencyProbePlans(append(append([]int64{}, current.ServerIDs...), next.ServerIDs...)...)
 		s.publishRealtime("server_metrics", "latency_probes")
 		write(w, 200, map[string]any{"latency_probe_task": next})
 	case http.MethodDelete:
@@ -739,6 +761,7 @@ func (s *Server) latencyProbeTask(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 500)
 			return
 		}
+		s.invalidateLatencyProbePlans(current.ServerIDs...)
 		s.publishRealtime("server_metrics", "latency_probes")
 		write(w, 200, map[string]any{"deleted": true})
 	default:

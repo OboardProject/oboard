@@ -76,7 +76,10 @@ func (s *Store) ListConnectionPresenceForUser(ctx context.Context, userID int64,
 	if since.IsZero() {
 		since = time.Now().UTC().Add(-2 * time.Minute)
 	}
-	rows, err := s.db.QueryContext(ctx, `select server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,source_ip,route_id,network,active_connections,meaningful,payload_last_at,last_event_at,last_sequence,updated_at from connection_presence_states where user_id=? and last_event_at>=? order by device_id_hash,source_ip,network`, userID, since.UTC().Format(time.RFC3339Nano))
+	// A server whose connection audit is switched off leaves presence rows behind
+	// until the cleanup runs. Filtering here makes the exclusion immediate: an
+	// online-device count or risk evaluation never waits for the physical delete.
+	rows, err := s.db.QueryContext(ctx, `select p.server_id,p.user_id,p.inbound_id,p.path_id,p.device_id_hash,p.credential_epoch,p.source_ip,p.route_id,p.network,p.active_connections,p.meaningful,p.payload_last_at,p.last_event_at,p.last_sequence,p.updated_at from connection_presence_states p join servers s on s.id=p.server_id and s.connection_audit_enabled=1 where p.user_id=? and p.last_event_at>=? order by p.device_id_hash,p.source_ip,p.network`, userID, since.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}

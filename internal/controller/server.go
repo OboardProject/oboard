@@ -129,6 +129,10 @@ type Server struct {
 	probeMu                       sync.Mutex
 	activeProbes                  map[int64]bool
 	latencyProbeMu                sync.Mutex
+	latencyProbePlans             latencyProbePlanCache
+	remoteAccessStatusCache       remoteAccessStatusCache
+	presenceAudit                 presenceAuditCache
+	hotPath                       hotPathCounters
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
 	agentLiveMu                   sync.Mutex
@@ -4513,6 +4517,10 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 		}
 		return http.StatusInternalServerError, err
 	}
+	// Every per-server cache entry and lock object goes away with the server.
+	s.forgetLatencyProbePlan(id)
+	s.forgetRemoteAccessStatus(id)
+	s.forgetPresenceAuditState(id)
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil
 }
@@ -14705,14 +14713,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	}()
 	mode, _ := serverMonitoringPolicy(server)
 	auditEnabled := s.effectiveConnectionAuditEnabled(r.Context(), server)
-	if !auditEnabled {
-		_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
-	}
+	s.syncConnectionAuditPresence(r.Context(), server, auditEnabled)
 	hello := map[string]any{"type": "hello", "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
 	for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 		hello[key] = value
 	}
-	if plan, err := s.latencyProbePlanForServer(r.Context(), *server); err == nil {
+	if plan, err := s.cachedLatencyProbePlanForServer(r.Context(), *server); err == nil {
 		hello["latency_probe_plan"] = plan
 	}
 	// Without a write deadline a peer that stopped reading parks this loop in
@@ -14918,14 +14924,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			}
 			mode, heartbeatInterval = serverMonitoringPolicy(server)
 			auditEnabled = s.effectiveConnectionAuditEnabled(r.Context(), server)
-			if !auditEnabled {
-				_ = s.store.ClearConnectionPresenceForServer(r.Context(), server.ID)
-			}
+			s.syncConnectionAuditPresence(r.Context(), server, auditEnabled)
 			heartbeat := map[string]any{"type": "heartbeat", "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
 			for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 				heartbeat[key] = value
 			}
-			if plan, planErr := s.latencyProbePlanForServer(r.Context(), *server); planErr == nil {
+			if plan, planErr := s.cachedLatencyProbePlanForServer(r.Context(), *server); planErr == nil {
 				heartbeat["latency_probe_plan"] = plan
 			}
 			if err := writeAgentJSON(heartbeat); err != nil {
@@ -15018,7 +15022,9 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				// Refresh the connection's in-memory server copy so heartbeat
 				// and plan generation observe the report without a reload.
 				applyHealthReportToServer(server, result)
-				_ = s.store.UpsertServerRemoteAccessStatus(ctx, server.ID, h.RemoteAccess)
+				if err := s.persistRemoteAccessStatus(ctx, server.ID, server.AgentID, h.RemoteAccess); err != nil {
+					log.Printf("persist remote access status server=%d: %v", server.ID, err)
+				}
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
