@@ -907,7 +907,11 @@ func buildProxyPathChainServices(paths []model.ProxyPath, steps []model.ProxyPat
 			},
 		})
 		if port == 0 {
-			return nil, fmt.Errorf("server %s has no available port in the managed public range %d-%d for shared %s chain service", server.Name, start, end, key.Protocol)
+			capacity, used := proxyPathPortRangeUsage(server.ID, start, end, occupied)
+			return nil, fmt.Errorf(
+				"服务器 %s 的自动分配公网端口段 %d-%d 已耗尽（共 %d 个端口，已占用 %d 个），无法为代理链共享 %s 监听分配端口；请在服务器设置中扩大该端口段，或释放段内不再使用的入站端口",
+				server.Name, start, end, capacity, used, proxyPathChainServiceDisplayLabel(key),
+			)
 		}
 		service.Tag = proxyPathChainServiceTag(key)
 		configJSON, err := proxyPathChainServiceConfigJSON(server, key, service.ChainConfig)
@@ -981,6 +985,38 @@ func proxyPathChainServiceLabel(key proxyPathChainServiceKey) string {
 	default:
 		return key.Profile
 	}
+}
+
+// proxyPathChainServiceDisplayLabel names the shared chain listener for
+// operator-facing errors. It keeps the protocol visible for Shadowsocks, whose
+// profile is only the cipher method.
+func proxyPathChainServiceDisplayLabel(key proxyPathChainServiceKey) string {
+	if key.Protocol == model.ProtocolSS {
+		return fmt.Sprintf("Shadowsocks %s", key.Profile)
+	}
+	return proxyPathChainServiceLabel(key)
+}
+
+// proxyPathPortRangeUsage reports how large a managed port range is and how many
+// of its ports the server already holds, so an exhaustion error can tell the
+// operator whether the range is too small or simply crowded.
+func proxyPathPortRangeUsage(serverID int64, start, end int, inbounds map[int64]model.Inbound) (capacity int, used int) {
+	capacity = end - start + 1
+	if capacity < 0 {
+		capacity = 0
+	}
+	seen := make(map[int]struct{}, len(inbounds))
+	for _, inbound := range inbounds {
+		if inbound.ServerID != serverID || inbound.Port < start || inbound.Port > end {
+			continue
+		}
+		if _, ok := seen[inbound.Port]; ok {
+			continue
+		}
+		seen[inbound.Port] = struct{}{}
+		used++
+	}
+	return capacity, used
 }
 
 func proxyPathChainServicePassword(server model.Server, method string) string {

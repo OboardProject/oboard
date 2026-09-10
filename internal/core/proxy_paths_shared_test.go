@@ -1092,6 +1092,13 @@ func TestChainServicePublicRangeExhaustionFailsWithoutOverflow(t *testing.T) {
 	if err == nil {
 		t.Fatal("chain service projection must fail when the managed public range is exhausted")
 	}
+	// The operator needs the range, its capacity, its current usage, and the
+	// action that resolves it, not a bare "no available port".
+	for _, want := range []string{"31000-31000", "共 1 个端口", "已占用 1 个", "扩大该端口段"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("exhaustion error %q is missing %q", err.Error(), want)
+		}
+	}
 	if pending := ledger.Pending(); len(pending) != 0 {
 		t.Fatalf("failed projection must not leave pending allocations: %#v", pending)
 	}
