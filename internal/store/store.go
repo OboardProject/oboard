@@ -1321,6 +1321,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureLatencyRollupSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureSLAProjectionSchema(ctx); err != nil {
+		return err
+	}
 	return s.SeedConnectivityHistory(ctx, time.Now().UTC())
 }
 

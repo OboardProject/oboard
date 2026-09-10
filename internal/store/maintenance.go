@@ -43,6 +43,7 @@ const (
 const historicalTaskRetention = 30 * 24 * time.Hour
 
 type MaintenanceResult struct {
+	SLAProjectionBucketsDeleted   int64
 	ConnectionAuditsDeleted       int64
 	SubscriptionAuditsDeleted     int64
 	ProbeEpisodesDeleted          int64
@@ -128,6 +129,7 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			cutoff: at.Add(-monitoringRetention),
 			count:  &result.ConnectivityProbesDeleted,
 		},
+		{name: "SLA projection retention", custom: s.purgeSLAProjection, cutoff: at.Add(-monitoringRetention), count: &result.SLAProjectionBucketsDeleted},
 		{
 			name:   "agent task retention",
 			query:  `delete from agent_tasks where id in (select id from agent_tasks where status in ('succeeded','failed','rollback_failed') and completed_at < ? order by completed_at limit ?)`,
@@ -314,12 +316,12 @@ func (s *Store) deleteMaintenanceBatches(ctx context.Context, query string, cuto
 	return s.deleteMaintenanceBatchesReporting(ctx, query, cutoff, false)
 }
 func (s *Store) deleteMaintenanceBatchesReporting(ctx context.Context, query string, cutoff time.Time, reportServers bool) (int64, bool, error) {
-	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, reportServers, false)
+	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, reportServers, "")
 }
 func (s *Store) deleteLatencyRetentionBatches(ctx context.Context, query string, cutoff time.Time) (int64, bool, error) {
-	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, true, true)
+	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, true, "latency")
 }
-func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, query string, cutoff time.Time, reportServers, projection bool) (int64, bool, error) {
+func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, query string, cutoff time.Time, reportServers bool, projection string) (int64, bool, error) {
 	var deleted int64
 	cutoffText := cutoff.UTC().Format(time.RFC3339Nano)
 	for batch := 0; batch < maintenanceMaxBatches; batch++ {
@@ -327,8 +329,12 @@ func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, quer
 			return deleted, true, err
 		}
 		var rows int64
-		if projection {
-			count, ids, err := s.deleteLatencyRetentionBatch(ctx, query, cutoffText, maintenanceBatchSize)
+		if projection != "" {
+			remove := s.deleteLatencyRetentionBatch
+			if projection == "sla" {
+				remove = s.deleteSLAEventRetentionBatch
+			}
+			count, ids, err := remove(ctx, query, cutoffText, maintenanceBatchSize)
 			if err != nil {
 				return deleted, deleted > 0, err
 			}
@@ -396,13 +402,17 @@ func (s *Store) deleteMaintenanceBatchesWithProjection(ctx context.Context, quer
 // maintenance budget on a large table.
 func (s *Store) pruneExpiredConnectivityEvents(ctx context.Context, cutoff time.Time) (int64, bool, error) {
 	cutoffText := cutoff.UTC().Format(time.RFC3339Nano)
+	var snapshot int64
+	if err := s.db.QueryRowContext(ctx, `select coalesce(max(id),0) from server_connectivity_events`).Scan(&snapshot); err != nil {
+		return 0, false, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		select id from (
 			select id, row_number() over (partition by server_id, kind order by effective_at desc, id desc) as rn
 			from server_connectivity_events
-			where effective_at < ?
+			where effective_at < ? and id<=?
 		) ranked
-		where rn = 1`, cutoffText)
+		where rn = 1`, cutoffText, snapshot)
 	if err != nil {
 		return 0, false, err
 	}
@@ -427,11 +437,11 @@ func (s *Store) pruneExpiredConnectivityEvents(ctx context.Context, cutoff time.
 	}
 	query := `delete from server_connectivity_events where rowid in (
 		select rowid from server_connectivity_events
-		where effective_at < ? ` + notKeep + `
+		where effective_at < ? and id<=` + strconv.FormatInt(snapshot, 10) + ` ` + notKeep + `
 		order by effective_at
 		limit ?
 	)`
-	return s.deleteMaintenanceBatchesReporting(ctx, query, cutoff, true)
+	return s.deleteMaintenanceBatchesWithProjection(ctx, query, cutoff, true, "sla")
 }
 
 func formatInt64SQLList(ids []int64) string {

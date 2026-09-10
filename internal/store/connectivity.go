@@ -291,6 +291,14 @@ func (s *Store) overlayPublicLatencyOnMetricSamples(ctx context.Context, samples
 	return nil
 }
 
+// Each event kind carries state that a later, different kind may depend on.
+// Retention keeps these same seven bounded candidates.
+var connectivityBaselineKinds = []model.ConnectivityEventKind{
+	model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled, model.ConnectivityEventProbeTargetChanged,
+	model.ConnectivityEventProbeResult, model.ConnectivityEventServerOffline,
+	model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected,
+}
+
 func (s *Store) ListConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time) (model.ServerConnectivityHistory, error) {
 	return s.listConnectivityHistory(ctx, serverID, from, to, 0)
 }
@@ -301,12 +309,8 @@ func (s *Store) ListConnectivitySLAHistory(ctx context.Context, serverID int64, 
 
 func (s *Store) listConnectivityHistory(ctx context.Context, serverID int64, from, to time.Time, limit int) (model.ServerConnectivityHistory, error) {
 	var history model.ServerConnectivityHistory
-	for _, kinds := range [][]model.ConnectivityEventKind{
-		{model.ConnectivityEventProbeEnabled, model.ConnectivityEventProbeDisabled, model.ConnectivityEventProbeTargetChanged},
-		{model.ConnectivityEventProbeResult, model.ConnectivityEventServerOffline},
-		{model.ConnectivityEventControllerConnected, model.ConnectivityEventControllerDisconnected},
-	} {
-		event, err := s.latestConnectivityEventBefore(ctx, serverID, from, kinds)
+	for _, kind := range connectivityBaselineKinds {
+		event, err := s.latestConnectivityEventBefore(ctx, serverID, from, []model.ConnectivityEventKind{kind})
 		if err != nil && err != sql.ErrNoRows {
 			return history, err
 		}
@@ -375,6 +379,10 @@ func (s *Store) listConnectivityHistory(ctx context.Context, serverID int64, fro
 }
 
 func (s *Store) latestConnectivityEventBefore(ctx context.Context, serverID int64, before time.Time, kinds []model.ConnectivityEventKind) (model.ServerConnectivityEvent, error) {
+	return s.latestConnectivityEventBeforeCursor(ctx, serverID, before, kinds, -1)
+}
+func (s *Store) latestConnectivityEventBeforeCursor(ctx context.Context, serverID int64, before time.Time, kinds []model.ConnectivityEventKind, cursor int64) (model.ServerConnectivityEvent, error) {
+
 	if len(kinds) == 0 {
 		return model.ServerConnectivityEvent{}, errors.New("connectivity event kinds are required")
 	}
@@ -382,8 +390,13 @@ func (s *Store) latestConnectivityEventBefore(ctx context.Context, serverID int6
 	candidates := make([]string, len(kinds))
 	args := make([]any, 0, len(kinds)*3)
 	for index, kind := range kinds {
-		candidates[index] = `select * from (select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? and effective_at<? order by effective_at desc,id desc limit 1)`
+		bound := ""
 		args = append(args, serverID, kind, connectivityTimeBound(before))
+		if cursor >= 0 {
+			bound = " and id<=?"
+			args = append(args, cursor)
+		}
+		candidates[index] = `select * from (select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? and effective_at<?` + bound + ` order by effective_at desc,id desc limit 1)`
 	}
 	query := `select * from (` + strings.Join(candidates, " union all ") + `) order by effective_at desc,id desc limit 1`
 	row := s.db.QueryRowContext(ctx, query, args...)
