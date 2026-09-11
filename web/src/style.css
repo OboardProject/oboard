@@ -25467,6 +25467,19 @@ button.dns-policy-row-main:focus {
   font-size: 14px;
 }
 
+/* A switch used as a field control keeps the control row height so it lines up
+   with the input or select sitting beside it in the same form grid. */
+.form-field-control > .switch-setting-row.switch-inline-control {
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: var(--control-height);
+}
+
+.switch-inline-state {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* Tooltip Z-Index & Overflow Layering Fixes */
 .form-field-help {
   overflow: visible !important;

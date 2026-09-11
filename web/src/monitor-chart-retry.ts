@@ -27,5 +27,5 @@ export async function readMonitorChart<T>(signal: AbortSignal, read: () => Promi
 }
 
 function isUnavailable(error: unknown) {
-  return !!error && typeof error === 'object' && 'status' in error && error.status === 503
+  return !!error && typeof error === 'object' && 'status' in error && error.status === 503 && (!('code' in error) || error.code !== 'history_catching_up')
 }

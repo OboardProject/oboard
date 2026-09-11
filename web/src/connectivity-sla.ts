@@ -56,6 +56,7 @@ export type ConnectivityResponse = {
 }
 
 export type LatencyProbeTargetStat = {
+  measurement_revision_count?: number
   key: string
   kind: 'public' | 'regional' | 'custom' | string
   task_id?: number
@@ -115,7 +116,7 @@ export type LatencyChartResponse = Pick<ConnectivityResponse, 'server_id' | 'ret
     generated_at: string
     observed_through: string | null
     aggregation_state: 'ready' | 'catching_up' | 'unavailable'
-    coverage: { source: 'raw'; retention_clipped: boolean; has_samples: boolean; legacy_curve_reports: boolean }
+    coverage: { source: 'raw' | 'raw_bounded' | 'summary' | 'mixed'; legacy_measurement_revision?: boolean; measurement_revision_count?: number; retention_clipped: boolean; has_samples: boolean; legacy_curve_reports: boolean }
     statistics_basis: string
     stale: boolean
   }
@@ -128,7 +129,7 @@ export function latencyChartRequestPath(serverID: number | string, window: Conne
 export type ConnectivityDetailsMetadata = {
   generated_at: string
   observed_through: string | null
-  source: 'raw_state_events'
+  source: 'raw_state_events' | 'raw_bounded' | 'summary' | 'mixed'
   retention_clipped: boolean
   statistics_basis: string
 }
