@@ -14,6 +14,10 @@ import (
 
 const defaultLatencyProbeIntervalSeconds = 120
 
+// timeNow is a seam so plan-version allocation can be exercised against a fixed
+// clock instead of racing the wall clock inside a test.
+var timeNow = time.Now
+
 func normalizeLatencyProbeSettings(server *model.Server) {
 	if server.LatencyProbeMode != model.LatencyProbeModeICMP {
 		server.LatencyProbeMode = model.LatencyProbeModeTCP
@@ -126,6 +130,19 @@ func (s *Store) LatencyProbePlanVersion(ctx context.Context, serverID int64, dig
 	next := stored
 	if floor > next {
 		next = floor
+	}
+	// The floor is built from record timestamps, so it stops being a floor the
+	// moment the stored binding is lost: `plan_version` arrived as an added
+	// column defaulting to 0, which left every existing server with no binding
+	// while its timestamps stayed exactly where they were. Allocating from that
+	// state reproduces the identical number for content that has since changed,
+	// and an Agent still holding the old plan at that version then rejects every
+	// delivery forever - the version matches, the bytes do not, and nothing
+	// moves either side off it. Wall time is always past any record timestamp,
+	// so including it here makes a reissued version impossible without leaving
+	// the UnixNano space Agents already hold versions in.
+	if wall := timeNow().UnixNano(); wall > next {
+		next = wall
 	}
 	next++
 	ts := now()

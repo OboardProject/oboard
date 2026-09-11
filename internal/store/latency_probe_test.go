@@ -456,3 +456,69 @@ func TestLatencyBucketsShareReadAndPreserveValidity(t *testing.T) {
 		t.Fatalf("stat=%+v", stat)
 	}
 }
+
+// plan_version arrived as an added column defaulting to 0, so every server that
+// already existed lost its version/digest binding while its record timestamps
+// stayed put. Allocating from that state must not hand out a number that was
+// already issued for different content: an Agent still holding the old plan at
+// that version rejects every delivery forever, because the version matches and
+// the bytes do not, and neither side can move off it.
+func TestLatencyProbePlanVersionNeverReissuesAfterBindingReset(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "reissue", LatencyProbeEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+
+	// The floor the Controller derives from record timestamps. It does not move
+	// on its own, which is exactly what makes a reissue reproducible.
+	const floor = int64(1789092354782231490)
+	restore := timeNow
+	defer func() { timeNow = restore }()
+	// Wall time sits behind the frozen floor here, so the floor still decides
+	// the first allocation and the test covers the original arithmetic.
+	timeNow = func() time.Time { return time.Unix(0, floor-time.Hour.Nanoseconds()) }
+
+	first, err := db.LatencyProbePlanVersion(ctx, server.ID, "digest-before", floor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first <= floor {
+		t.Fatalf("allocated version %d must exceed the floor %d", first, floor)
+	}
+
+	// Reproduce the migration: the binding is reset to the column defaults while
+	// the timestamps the floor is built from stay exactly where they were.
+	if _, err := db.db.ExecContext(ctx, `update server_latency_probe_settings set plan_version=0,plan_digest='' where server_id=?`, server.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Content has changed in the meantime, and wall time has moved on even
+	// though no record timestamp did.
+	timeNow = func() time.Time { return time.Unix(0, floor+time.Hour.Nanoseconds()) }
+	second, err := db.LatencyProbePlanVersion(ctx, server.ID, "digest-after", floor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first {
+		t.Fatalf("version %d was reissued for different content; an Agent holding the old plan at that version rejects every delivery forever", second)
+	}
+	if second <= first {
+		t.Fatalf("version must advance: got %d after %d", second, first)
+	}
+
+	// An unchanged digest must still be idempotent - that is the whole point of
+	// the binding, and a clock that always advances must not break it.
+	again, err := db.LatencyProbePlanVersion(ctx, server.ID, "digest-after", floor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != second {
+		t.Fatalf("identical content must keep its version: got %d, want %d", again, second)
+	}
+}
