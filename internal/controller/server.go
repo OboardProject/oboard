@@ -16986,13 +16986,20 @@ write_openrc_units() {
 description="OBoard optimized sing-box kernel"
 command="$INSTALL_DIR/oboard-sb"
 command_args="-config $STATE_DIR/sing-box.json -api unix:/run/oboard-sb.sock"
-command_background=true
+supervisor=supervise-daemon
 pidfile="/run/\${RC_SVCNAME}.pid"
 output_log="/var/log/\${RC_SVCNAME}.log"
 error_log="/var/log/\${RC_SVCNAME}.log"
+# Restart parity with the systemd unit's Restart=always/RestartSec=5. Without a
+# supervisor OpenRC only starts the process once: a kernel killed by the OOM
+# killer or any other signal stays down until an operator notices, which on an
+# Agent leaves the node permanently offline. An unlimited respawn budget keeps
+# retrying, and the delay spaces attempts so a crash loop cannot spin the host.
+respawn_delay=5
+respawn_max=0
 # No reload action: oboard-sb installs SIGINT/SIGTERM handlers only, so a HUP
-# would kill the kernel here, and OpenRC has no automatic restart to recover it.
-# Agent applies every change with a controlled restart instead.
+# would kill the kernel here. Agent applies every change with a controlled
+# restart instead.
 
 depend() {
   need net
@@ -17009,10 +17016,16 @@ OPENRC
 description="OBoard Agent"
 command="$INSTALL_DIR/oboard-agent"
 command_args="-config $CONFIG_PATH"
-command_background=true
+supervisor=supervise-daemon
 pidfile="/run/\${RC_SVCNAME}.pid"
 output_log="/var/log/\${RC_SVCNAME}.log"
 error_log="/var/log/\${RC_SVCNAME}.log"
+# Restart parity with the systemd unit's Restart=always/RestartSec=5. An Agent
+# that dies without a supervisor never reconnects, so the node stays offline
+# until an operator logs in; the Controller cannot recover it remotely because
+# recovery itself travels over the Agent link.
+respawn_delay=5
+respawn_max=0
 
 depend() {
   need net

@@ -1025,3 +1025,34 @@ download_component() {
 		}
 	}
 }
+
+// An OpenRC node must recover from a crash the same way a systemd node does.
+// Without a supervisor OpenRC starts a service once and leaves it down, so an
+// Agent killed by the OOM killer never reconnects and the Controller loses the
+// only channel it could have recovered the node through.
+func TestAgentInstallScriptOpenRCUnitsRestartOnCrash(t *testing.T) {
+	script := testAgentInstallScript(t)
+	start := strings.Index(script, "write_openrc_units() {")
+	if start < 0 {
+		t.Fatal("OpenRC unit rendering is missing")
+	}
+	end := strings.Index(script[start:], "\nwrite_units()")
+	if end <= 0 {
+		t.Fatal("OpenRC unit rendering is unbounded")
+	}
+	block := script[start : start+end]
+	for _, want := range []string{
+		"supervisor=supervise-daemon",
+		"respawn_delay=5",
+		"respawn_max=0",
+	} {
+		if strings.Count(block, want) != 2 {
+			t.Fatalf("both OpenRC units must set %q, found %d", want, strings.Count(block, want))
+		}
+	}
+	// supervise-daemon backgrounds the service itself; leaving command_background
+	// set makes OpenRC double-fork and lose track of the supervised process.
+	if strings.Contains(block, "command_background=true") {
+		t.Fatal("command_background conflicts with supervise-daemon")
+	}
+}
