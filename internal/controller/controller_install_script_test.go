@@ -169,7 +169,13 @@ func TestControllerDownloadProgressOutput(t *testing.T) {
 	}
 	curlLog := filepath.Join(root, "curl.log")
 	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
-printf '%s\n' "$*" > "$CURL_LOG"
+printf '%s\n' "$*" >> "$CURL_LOG"
+case "$*" in
+  *'--range 0-0'*)
+    printf '200 https://mirror.example/package'
+    exit 0
+    ;;
+esac
 destination=
 while [ "$#" -gt 0 ]; do
   if [ "$1" = -o ]; then
@@ -184,6 +190,7 @@ printf '1048576 524288'
 	harness := strings.Join([]string{
 		"set -eu",
 		extractShellFunction(t, script, "format_download_value"),
+		extractShellFunction(t, script, "resolve_download_url"),
 		extractShellFunction(t, script, "download_component"),
 		"download_component 主控安装包 https://github.com/OboardProject/oboard/releases/download/dev/package " + shellQuote(filepath.Join(root, "package")),
 	}, "\n")
@@ -205,6 +212,14 @@ printf '1048576 524288'
 			t.Errorf("curl invocation missing %q: %s", want, log)
 		}
 	}
+	// The redirect chain is resolved first so the metered transfer draws a
+	// single progress bar instead of one bar per hop.
+	if !strings.Contains(string(log), "https://mirror.example/package") {
+		t.Errorf("metered download did not use the resolved URL: %s", log)
+	}
+	if count := strings.Count(string(log), "--continue-at -"); count != 1 {
+		t.Errorf("metered transfer count = %d, want 1: %s", count, log)
+	}
 }
 
 func TestControllerDownloadResumesInterruptedTransferAndStopsAfterThreeAttempts(t *testing.T) {
@@ -218,6 +233,12 @@ func TestControllerDownloadResumesInterruptedTransferAndStopsAfterThreeAttempts(
 	curlLog := filepath.Join(root, "curl.log")
 	writeExecutable(t, filepath.Join(bin, "sleep"), "#!/bin/sh\nexit 0\n")
 	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+case "$*" in
+  *'--range 0-0'*)
+    printf '200 https://github.com/OboardProject/oboard/releases/download/dev/package'
+    exit 0
+    ;;
+esac
 count=0
 [ ! -f "$CURL_ATTEMPTS" ] || count=$(cat "$CURL_ATTEMPTS")
 count=$((count + 1))
@@ -239,6 +260,7 @@ printf '5 1024'
 	harness := strings.Join([]string{
 		"set -eu",
 		extractShellFunction(t, script, "format_download_value"),
+		extractShellFunction(t, script, "resolve_download_url"),
 		extractShellFunction(t, script, "download_component"),
 		"download_component 主控安装包 https://github.com/OboardProject/oboard/releases/download/dev/package " + shellQuote(destination),
 	}, "\n")
@@ -279,6 +301,9 @@ printf '5 1024'
 	}
 
 	writeExecutable(t, filepath.Join(bin, "curl"), `#!/bin/sh
+case "$*" in
+  *'--range 0-0'*) exit 18 ;;
+esac
 count=0
 [ ! -f "$CURL_ATTEMPTS" ] || count=$(cat "$CURL_ATTEMPTS")
 count=$((count + 1))

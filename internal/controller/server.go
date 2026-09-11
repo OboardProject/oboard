@@ -17161,6 +17161,19 @@ format_download_value() {
   }'
 }
 
+resolve_download_url() {
+  # curl draws one progress bar per transfer, so a download that is redirected
+  # to a release mirror renders several bars. Resolve the final location with a
+  # one-byte range request first and download that URL directly.
+  resolved=$(curl --proto '=http,https' --proto-redir '=https' --tlsv1.2 \
+    --silent --location --connect-timeout 15 --max-time 60 --range 0-0 \
+    --write-out '%{http_code} %{url_effective}' "$1" -o /dev/null 2>/dev/null) || resolved=""
+  case "$resolved" in
+    '200 http://'*|'200 https://'*|'206 http://'*|'206 https://'*) printf '%s\n' "${resolved#* }" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 download_component() {
   label=$1
   url=$2
@@ -17171,6 +17184,7 @@ download_component() {
   else
     meter=--silent
   fi
+  url=$(resolve_download_url "$url")
 
   attempt=1
   while :; do
