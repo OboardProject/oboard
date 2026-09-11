@@ -8755,26 +8755,41 @@ function CommandCopyBlock({ value, buttonText = '复制命令', language = 'bash
   </div>
 }
 
+function billingAnchorResetDay(anchor: any): number {
+  const day = Number(String(anchor || '').split('-')[2])
+  return Number.isFinite(day) && day >= 1 && day <= 31 ? day : 0
+}
+
+function applyBillingAnchorReset(old: any, patch: Record<string, any>): any {
+  const next: any = { ...old, ...patch }
+  if ('traffic_reset_mode' in patch || 'traffic_reset_day' in patch) return next
+  if (!('service_start_at' in patch) && !('expires_at' in patch)) return next
+  const day = billingAnchorResetDay(next.service_start_at || next.expires_at)
+  if (!day) return next
+  const mode = old.traffic_reset_mode || 'monthly'
+  const currentDay = Number(old.traffic_reset_day || 1)
+  const previousDay = billingAnchorResetDay(old.service_start_at || old.expires_at)
+  const looksAuto = (mode === 'monthly' && currentDay === 1) || (mode === 'month_day' && previousDay > 0 && currentDay === previousDay)
+  if (!looksAuto) return next
+  next.traffic_reset_mode = 'month_day'
+  next.traffic_reset_day = day
+  return next
+}
+
+function BillingAnchorResetNote({ draft }: { draft: any }) {
+  const anchor = draft.service_start_at || draft.expires_at
+  if (!anchor) return null
+  const anchorLabel = draft.service_start_at ? `${draft.service_start_at} (起租日)` : draft.expires_at
+  const anchorDay = billingAnchorResetDay(anchor)
+  const mode = draft.traffic_reset_mode || 'monthly'
+  const currentDay = Number(draft.traffic_reset_day || 1)
+  const auto = anchorDay > 0 && mode === 'month_day' && currentDay === anchorDay
+  if (auto) return <div className="access-note"><strong>流量重置已自动推导</strong><span>当前计费锚点为 {anchorLabel}，将按每月 {anchorDay} 日重置；可在下方“流量重置”中手动覆盖。</span></div>
+  return <div className="access-note"><strong>流量重置已手动设置</strong><span>当前计费锚点为 {anchorLabel}，但流量重置按下方设置的{mode === 'monthly' ? '自然月' : `每月 ${currentDay} 日`}执行。</span></div>
+}
+
 function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, connectionAuditGated }: { draft: any; setDraft: React.Dispatch<React.SetStateAction<any>>; onCancel: () => void; onSubmit: () => Promise<void>; servers?: Server[]; connectionAuditGated?: boolean }) {
-  const update = (patch: Record<string, any>) => setDraft((old: any) => {
-    const next: any = { ...old, ...patch }
-    const hasTraffic = 'traffic_reset_mode' in patch || 'traffic_reset_day' in patch
-    if (!hasTraffic) {
-      const isDefault = (old.traffic_reset_mode || 'monthly') === 'monthly' && Number(old.traffic_reset_day || 1) === 1
-      const hasBilling = 'service_start_at' in patch || 'expires_at' in patch
-      if (isDefault && hasBilling) {
-        const anchor = (patch.service_start_at !== undefined ? patch.service_start_at : old.service_start_at) || (patch.expires_at !== undefined ? patch.expires_at : old.expires_at)
-        if (anchor) {
-          const day = Number(String(anchor).split('-')[2]) || 1
-          if (day >= 1 && day <= 31) {
-            next.traffic_reset_mode = 'month_day'
-            next.traffic_reset_day = day
-          }
-        }
-      }
-    }
-    return next
-  })
+  const update = (patch: Record<string, any>) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
   const [tab, setTab] = useState<ServerSettingsTab>('basic')
   const [mtuDialogOpen, setMtuDialogOpen] = useState(false)
   const [portRangeValid, setPortRangeValid] = useState(true)
@@ -8820,7 +8835,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
           <FormField label="到期日" hint="留空表示不追踪服务器到期。已填计费开始日时到期日仅用于续期计算，不再影响重置日。" placement="bottom">
             <input type="date" value={draft.expires_at || ''} onChange={e => update({ expires_at: e.target.value })} aria-label="服务器到期日" />
           </FormField>
-          {draft.service_start_at || draft.expires_at ? <div className="access-note"><strong>流量重置已自动推导</strong><span>当前计费锚点为 {draft.service_start_at ? `${draft.service_start_at} (起租日)` : draft.expires_at}，将按每月 {(() => { const a = draft.service_start_at || draft.expires_at; const d = a ? Number(String(a).split('-')[2]) : 1; return isNaN(d) ? 1 : d })()} 日重置；可在下方“流量重置”中手动覆盖。</span></div> : null}
+          <BillingAnchorResetNote draft={draft} />
           <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
             <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
           </FormField>
@@ -8967,24 +8982,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
   const [portRangeValid, setPortRangeValid] = useState(true)
   const [internalPortRangeValid, setInternalPortRangeValid] = useState(true)
   const [saving, setSaving] = useState(false)
-  const update = (patch: any) => setDraft((old: any) => {
-    const next: any = { ...old, ...patch }
-    const hasTraffic = 'traffic_reset_mode' in patch || 'traffic_reset_day' in patch
-    if (!hasTraffic) {
-      const hasBilling = 'service_start_at' in patch || 'expires_at' in patch
-      if (hasBilling) {
-        const anchor = (patch.service_start_at !== undefined ? patch.service_start_at : old.service_start_at) || (patch.expires_at !== undefined ? patch.expires_at : old.expires_at)
-        if (anchor) {
-          const day = Number(String(anchor).split('-')[2]) || 1
-          if (day >= 1 && day <= 31) {
-            next.traffic_reset_mode = 'month_day'
-            next.traffic_reset_day = day
-          }
-        }
-      }
-    }
-    return next
-  })
+  const update = (patch: any) => setDraft((old: any) => applyBillingAnchorReset(old, patch))
   const entryAddressInvalid = Boolean(String(draft.entry_address || '').trim()) && draft.entry_ip_mode !== 'custom'
   const submit = async () => {
     if (saving || !portRangeValid || !internalPortRangeValid || entryAddressInvalid) return
@@ -9028,7 +9026,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
               ))}
             </div>
           </FormField>
-          {draft.service_start_at || draft.expires_at ? <div className="access-note"><strong>流量重置已自动推导</strong><span>当前计费锚点为 {draft.service_start_at ? `${draft.service_start_at} (起租日)` : draft.expires_at}，将按每月 {(() => { const a = draft.service_start_at || draft.expires_at; const d = a ? Number(String(a).split('-')[2]) : 1; return isNaN(d) ? 1 : d })()} 日重置；可在下方“流量重置”中手动覆盖。</span></div> : null}
+          <BillingAnchorResetNote draft={draft} />
           <FormField label="自动续期" hint="到期后保留 3 天宽限期，第 3 天自动按周期顺延。">
             <Switch checked={Boolean(draft.auto_renew_enabled)} onChange={checked => update({ auto_renew_enabled: checked })} ariaLabel="自动续期" />
           </FormField>
