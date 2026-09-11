@@ -6074,6 +6074,13 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 }
 
 func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
+	for _, suffix := range []string{"/listener-mode/preview", "/listener-mode/apply"} {
+		if strings.HasSuffix(r.URL.Path, suffix) {
+			s.snellModeHTTP(w, r, idFromPath(strings.TrimSuffix(r.URL.Path, suffix), "/api/v1/inbounds/"), strings.HasSuffix(suffix, "apply"))
+			return
+		}
+	}
+
 	if strings.HasSuffix(strings.TrimRight(r.URL.Path, "/"), "/padding") {
 		path := strings.TrimSuffix(strings.TrimRight(r.URL.Path, "/"), "/padding")
 		s.anyTLSPaddingOperation(w, r, idFromPath(path, "/api/v1/inbounds/"))
@@ -6249,6 +6256,10 @@ func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
 		}
 		if v.ConfigJSON, err = applyInboundConfigDefaults(v.Protocol, v.ConfigJSON); err != nil {
 			fail(w, err, 400)
+			return
+		}
+		if err := validateSnellModeMutation(*current, v); err != nil {
+			write(w, http.StatusConflict, map[string]any{"error": snellErrorCode(err), "message": err.Error()})
 			return
 		}
 		if err := validateInbound(v); err != nil {
@@ -14332,7 +14343,8 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	servers, in := data.Servers, data.Inbounds
+	servers, in := append([]model.Server(nil), data.Servers...), data.Inbounds
+	s.annotateSnellSubscriptionDelivery(r.Context(), servers, in)
 	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
 	if err != nil {
 		fail(w, err, 500)

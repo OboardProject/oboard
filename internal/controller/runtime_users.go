@@ -656,6 +656,34 @@ func applyServerDeliveryAnnotation(server *model.Server, auth store.Authorizatio
 	applyDeliveryFlagsToServer(server, flags)
 }
 
+// Subscription reads must not expose credentials saved after the last evaluated install.
+func (s *Server) annotateSnellSubscriptionDelivery(ctx context.Context, servers []model.Server, inbounds []model.Inbound) {
+	shared := make(map[int64]bool)
+	for _, inbound := range inbounds {
+		if core.SnellSharedPort(inbound) {
+			shared[inbound.ServerID] = true
+		}
+	}
+	if len(shared) == 0 {
+		return
+	}
+	states := s.loadServerDeliveryLaneStates(ctx)
+	revision, err := s.store.RoutingCacheRevision(ctx)
+	for i := range servers {
+		server := &servers[i]
+		if !shared[server.ID] {
+			continue
+		}
+		server.UsersConfirmed, server.AuthorizationConfirmed = false, false
+		if err != nil || !states.ok {
+			continue
+		}
+		users, auth := states.users[server.ID], states.auth[server.ID]
+		server.UsersConfirmed = users.Confirmed() && users.EvaluatedRoutingRevision == revision && users.DesiredDigest != "" && users.DesiredDigest == users.ConfirmedDigest
+		server.AuthorizationConfirmed = auth.Confirmed() && auth.EvaluatedRoutingRevision == revision && auth.DesiredDigest != "" && auth.DesiredDigest == auth.ConfirmedDigest
+	}
+}
+
 func parseAppliedUsersHeaders(r *http.Request) *model.UsersAppliedSnapshot {
 	revision, err := strconv.ParseInt(strings.TrimSpace(r.Header.Get(headerUsersAppliedRevision)), 10, 64)
 	if err != nil || revision <= 0 {

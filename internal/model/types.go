@@ -884,12 +884,12 @@ const (
 // orchestration survives restarts and later plan edits without changing what
 // the change deploys.
 type AccessChange struct {
-	ID                       int64                `json:"id"`
-	ChangeType               AccessChangeType     `json:"change_type"`
-	SourcePlanID             int64                `json:"source_plan_id,omitempty"`
-	CandidateRevisionID      int64                `json:"candidate_revision_id,omitempty"`
-	ExpectedActiveRevisionID int64                `json:"expected_active_revision_id,omitempty"`
-	Status                   AccessChangeStatus   `json:"status"`
+	ID                       int64              `json:"id"`
+	ChangeType               AccessChangeType   `json:"change_type"`
+	SourcePlanID             int64              `json:"source_plan_id,omitempty"`
+	CandidateRevisionID      int64              `json:"candidate_revision_id,omitempty"`
+	ExpectedActiveRevisionID int64              `json:"expected_active_revision_id,omitempty"`
+	Status                   AccessChangeStatus `json:"status"`
 	// Kind classifies the authorization effect: grant (only adds access),
 	// migration (adds and removes), or revoke (only removes). It decides
 	// whether the revoke fast lane must run before configuration cleanup.
@@ -904,14 +904,14 @@ type AccessChange struct {
 	// before the change (user, inbound, path, and server IDs only; never
 	// credential material). It lets a revoke be computed after the business
 	// rows are already gone.
-	OldScopeJSON string `json:"-"`
-	Error                    string               `json:"error,omitempty"`
-	CreatedBy                *int64               `json:"created_by,omitempty"`
-	CreatedAt                time.Time            `json:"created_at"`
-	ActivatedAt              *time.Time           `json:"activated_at,omitempty"`
-	FinalizedAt              *time.Time           `json:"finalized_at,omitempty"`
-	FailedAt                 *time.Time           `json:"failed_at,omitempty"`
-	Targets                  []AccessChangeTarget `json:"targets,omitempty"`
+	OldScopeJSON string               `json:"-"`
+	Error        string               `json:"error,omitempty"`
+	CreatedBy    *int64               `json:"created_by,omitempty"`
+	CreatedAt    time.Time            `json:"created_at"`
+	ActivatedAt  *time.Time           `json:"activated_at,omitempty"`
+	FinalizedAt  *time.Time           `json:"finalized_at,omitempty"`
+	FailedAt     *time.Time           `json:"failed_at,omitempty"`
+	Targets      []AccessChangeTarget `json:"targets,omitempty"`
 }
 
 // AccessChangeTarget tracks the per-server Agent tasks of one change phase.
@@ -1086,41 +1086,45 @@ type Server struct {
 	RuntimeUsersEnabled         bool               `json:"runtime_users_enabled"`
 
 	MonitoringTargetTaskID int64                    `json:"monitoring_target_task_id"`
-	MonitoringDisplay     *ServerMonitoringDisplay `json:"monitoring_display,omitempty"`
+	MonitoringDisplay      *ServerMonitoringDisplay `json:"monitoring_display,omitempty"`
 }
 
 type Inbound struct {
-	ID                int64                `json:"id"`
-	ServerID          int64                `json:"server_id"`
-	Name              string               `json:"name"`
-	Protocol          Protocol             `json:"protocol"`
-	ListenIP          string               `json:"listen_ip"`
-	Port              int                  `json:"port"`
-	AdvertisePort     int                  `json:"advertise_port"`
-	EntryIPMode       EntryIPMode          `json:"entry_ip_mode"`
-	ExternalIP        string               `json:"external_ip"`
-	DNSSyncEnabled    bool                 `json:"dns_sync_enabled"`
-	DNSCredentialID   *int64               `json:"dns_credential_id,omitempty"`
-	DNSDomain         string               `json:"dns_domain"`
-	DNSProxyEnabled   bool                 `json:"dns_proxy_enabled"`
-	DNSRecordTypes    string               `json:"dns_record_types"`
-	DDNSEnabled       bool                 `json:"ddns_enabled"`
-	DDNSInterval      int                  `json:"ddns_interval_seconds"`
-	DNSSyncStatus     string               `json:"dns_sync_status"`
-	DNSSyncError      string               `json:"dns_sync_error"`
-	DNSLastSyncedAt   *time.Time           `json:"dns_last_synced_at,omitempty"`
-	TLS               bool                 `json:"tls"`
-	CertificateMode   string               `json:"certificate_mode,omitempty"`
-	CertificateID     *int64               `json:"certificate_id,omitempty"`
-	CertificateDomain string               `json:"certificate_domain,omitempty"`
-	ConfigJSON        string               `json:"config_json"`
-	Kind              string               `json:"kind,omitempty"`
-	Reality           *InboundRealityInput `json:"reality,omitempty"`
-	RotateRealityKey  bool                 `json:"rotate_reality_key,omitempty"`
-	AnyTLSPadding     *AnyTLSPaddingInput  `json:"anytls_padding,omitempty"`
-	Enabled           bool                 `json:"enabled"`
-	CreatedAt         time.Time            `json:"created_at"`
-	UpdatedAt         time.Time            `json:"updated_at"`
+	SnellActiveMode    string               `json:"snell_active_mode,omitempty"`
+	SnellActivePort    int                  `json:"snell_active_port,omitempty"`
+	SnellActiveVersion int                  `json:"snell_active_version,omitempty"`
+	SnellConfigVersion int64                `json:"snell_config_version,omitempty"`
+	ID                 int64                `json:"id"`
+	ServerID           int64                `json:"server_id"`
+	Name               string               `json:"name"`
+	Protocol           Protocol             `json:"protocol"`
+	ListenIP           string               `json:"listen_ip"`
+	Port               int                  `json:"port"`
+	AdvertisePort      int                  `json:"advertise_port"`
+	EntryIPMode        EntryIPMode          `json:"entry_ip_mode"`
+	ExternalIP         string               `json:"external_ip"`
+	DNSSyncEnabled     bool                 `json:"dns_sync_enabled"`
+	DNSCredentialID    *int64               `json:"dns_credential_id,omitempty"`
+	DNSDomain          string               `json:"dns_domain"`
+	DNSProxyEnabled    bool                 `json:"dns_proxy_enabled"`
+	DNSRecordTypes     string               `json:"dns_record_types"`
+	DDNSEnabled        bool                 `json:"ddns_enabled"`
+	DDNSInterval       int                  `json:"ddns_interval_seconds"`
+	DNSSyncStatus      string               `json:"dns_sync_status"`
+	DNSSyncError       string               `json:"dns_sync_error"`
+	DNSLastSyncedAt    *time.Time           `json:"dns_last_synced_at,omitempty"`
+	TLS                bool                 `json:"tls"`
+	CertificateMode    string               `json:"certificate_mode,omitempty"`
+	CertificateID      *int64               `json:"certificate_id,omitempty"`
+	CertificateDomain  string               `json:"certificate_domain,omitempty"`
+	ConfigJSON         string               `json:"config_json"`
+	Kind               string               `json:"kind,omitempty"`
+	Reality            *InboundRealityInput `json:"reality,omitempty"`
+	RotateRealityKey   bool                 `json:"rotate_reality_key,omitempty"`
+	AnyTLSPadding      *AnyTLSPaddingInput  `json:"anytls_padding,omitempty"`
+	Enabled            bool                 `json:"enabled"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
 // AnyTLSPaddingInput is a create-only choice. Controller resolves it into the

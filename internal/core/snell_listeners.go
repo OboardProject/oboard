@@ -15,19 +15,7 @@ import (
 // the stored desired state is incomplete rather than merely unusual.
 var errNoSnellInboundSecret = errors.New("snell psk required (config_json.psk)")
 
-// Snell is a single-user protocol on the wire. Both sing-snell v5 and v6 derive
-// the AEAD key from the server PSK alone, and the per-user `userkey` sing-box
-// accepts in multi-user mode is only an identity tag read after decryption — it
-// grants no cryptographic isolation between users. Surge, Mihomo, Egern,
-// Shadowrocket and Surfboard have no userkey field at all, so a multi-user
-// listener rejects every one of them: they connect with the PSK, send an empty
-// client id, and sing-snell answers ErrBadUserKey.
-//
-// OBoard therefore fans one panel Snell inbound out into one single-user
-// sing-box listener per authorized identity, each with its own port from the
-// server auto range and its own PSK derived from the inbound secret. That is
-// compatible with every client and upgrades isolation from "none" to real
-// per-user keys: revoking a user revokes a key nobody else holds.
+// Per-identity mode projects one standard PSK listener per authorized identity.
 type snellUserListener struct {
 	InboundID int64
 	ServerID  int64
@@ -82,7 +70,7 @@ func snellUserPSK(inboundSecret string, inbound model.Inbound, user model.User, 
 func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, users []model.User, opts ConfigOptions) (map[int64][]snellUserListener, []model.Inbound, error) {
 	snellInbounds := make([]model.Inbound, 0)
 	for _, inbound := range inbounds {
-		if inbound.Protocol == model.ProtocolSnell && inbound.Enabled {
+		if inbound.Protocol == model.ProtocolSnell && inbound.Enabled && !SnellSharedPort(inbound) {
 			snellInbounds = append(snellInbounds, inbound)
 		}
 	}
@@ -128,6 +116,21 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 		}
 		listenIP := EffectiveListenIP(host, inbound.ListenIP)
 		start, end := proxyPathServerPortRange(host)
+		// A per-identity Snell inbound never binds its own Port: that value is
+		// only the stable logical identity of the inbound and is not rendered
+		// into sing-box. Letting it block allocation would cost one usable
+		// public port for nothing, and on a host whose auto range is as narrow
+		// as the identity port itself it makes the inbound undeployable even
+		// with zero authorized users, because the sole candidate collides with
+		// the identity row. Its own generated listeners may therefore take it;
+		// every other inbound on the server stays reserved.
+		allocatable := make(map[int64]model.Inbound, len(inboundByID))
+		for id, item := range inboundByID {
+			if id == inbound.ID {
+				continue
+			}
+			allocatable[id] = item
+		}
 		for _, user := range listenerUsers {
 			pathID := runtimePathIDFromUsername(user.Username)
 			listener := snellUserListener{
@@ -148,7 +151,7 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 				Network:        model.ForwardProtocolTCP,
 				PolicyRevision: serverPortPolicyRevision(host),
 				Allocate: func() int {
-					return proxyPathAvailablePort(host, seed, 0, start, end, listenIP, inboundByID)
+					return proxyPathAvailablePort(host, seed, 0, start, end, listenIP, allocatable)
 				},
 			})
 			if listener.Port <= 0 {
@@ -166,6 +169,7 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 				Enabled:  true,
 			}
 			inboundByID[reservation.ID] = reservation
+			allocatable[reservation.ID] = reservation
 			reservations = append(reservations, reservation)
 			plan[inbound.ID] = append(plan[inbound.ID], listener)
 		}
@@ -265,6 +269,18 @@ func snellCredentialPortScopeKey(inboundID int64, user model.User, pathID int64)
 // active allocations that the new projection no longer uses; read-only probes
 // use all currently active persisted allocations.
 func SnellRuntimeProbePorts(ledger *ProxyPathPortLedger, inbound model.Inbound, projectedOnly bool) []int {
+	if inbound.Protocol == model.ProtocolSnell && !projectedOnly && inbound.SnellActiveMode == SnellListenerShared {
+		if inbound.SnellActivePort > 0 {
+			return []int{inbound.SnellActivePort}
+		}
+		return nil
+	}
+	if SnellSharedPort(inbound) && projectedOnly {
+		return []int{inbound.Port}
+	}
+	if SnellSharedPort(inbound) && inbound.SnellActiveMode == "" {
+		return nil
+	}
 	if ledger == nil || inbound.Protocol != model.ProtocolSnell {
 		return nil
 	}
@@ -304,7 +320,7 @@ func SnellRuntimeProbePorts(ledger *ProxyPathPortLedger, inbound model.Inbound, 
 // branch user for a proxy path branch, and in both cases the credential-scoped
 // user from UserCredentialForRoute — otherwise the derived PSK will not match.
 func SnellSubscriptionNode(ledger *ProxyPathPortLedger, user model.User, inbound model.Inbound, server model.Server, pathID int64) (map[string]any, bool, error) {
-	if inbound.AdvertisePort > 0 && activeSnellClientListenerCount(ledger, inbound) > 1 {
+	if !SnellSharedPort(inbound) && inbound.AdvertisePort > 0 && activeSnellClientListenerCount(ledger, inbound) > 1 {
 		return nil, false, markInvalidDesiredState(fmt.Errorf(
 			"snell 入站 %s 的对外端口 %d 对应多个客户端运行端口，请先收敛为单个用户或分支并重新部署",
 			inbound.Name, inbound.AdvertisePort))
@@ -349,7 +365,18 @@ func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.I
 	if user.ID > 0 && user.AuthorizationKey == "" {
 		return nil, false, nil
 	}
-	runtimePort, ok := ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellCredentialPortScopeKey(inbound.ID, user, pathID), inbound.ServerID)
+	runtimePort, ok := inbound.Port, true
+	if SnellSharedPort(inbound) {
+		version, _ := snellPanelVersion(parseExtra(inbound.ConfigJSON))
+		if inbound.SnellActiveMode != SnellListenerShared || inbound.SnellActivePort != inbound.Port || inbound.SnellActiveVersion != version || !ServerSupportsSnellShared(server, inbound) || !server.UsersConfirmed || !server.AuthorizationConfirmed {
+			return nil, false, nil
+		}
+	} else {
+		if inbound.SnellActiveMode == SnellListenerShared {
+			return nil, false, nil
+		}
+		runtimePort, ok = ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellCredentialPortScopeKey(inbound.ID, user, pathID), inbound.ServerID)
+	}
 	if !ok {
 		return nil, false, nil
 	}

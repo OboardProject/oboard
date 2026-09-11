@@ -64,6 +64,8 @@ func ProtocolSupportsRuntimeUsers(protocol model.Protocol, inbound model.Inbound
 	switch protocol {
 	case model.ProtocolVLESS, model.ProtocolHY2:
 		return true
+	case model.ProtocolSnell:
+		return SnellSharedPort(inbound)
 	case model.ProtocolSS:
 		return inboundAuthorizedUserCount(inbound) > 1
 	default:
@@ -128,6 +130,8 @@ func ServerSupportsRuntimeUserProtocol(server model.Server, protocol model.Proto
 		return stringSliceContains(server.KernelCapabilities, model.AgentCapabilityRuntimeUsersHysteria2)
 	case model.ProtocolSS:
 		return stringSliceContains(server.KernelCapabilities, model.AgentCapabilityRuntimeUsersShadowsocks)
+	case model.ProtocolSnell:
+		return stringSliceContains(server.KernelCapabilities, "runtime_users_snell_psk_v1") && stringSliceContains(server.KernelCapabilities, "runtime_users_snell_psk_control_v1")
 	default:
 		return false
 	}
@@ -218,6 +222,10 @@ func inboundIsRuntimeManaged(server model.Server, item map[string]any, limits ma
 			return false
 		}
 		if _, ok := item["users"]; !ok {
+			return false
+		}
+	case "snell":
+		if item["auth_mode"] != "multi_psk" || !ServerSupportsRuntimeUserProtocol(server, model.ProtocolSnell) {
 			return false
 		}
 	default:
@@ -453,7 +461,8 @@ func credentialFromUserObject(user map[string]any) model.UsersCredential {
 	password, _ := user["password"].(string)
 	userKey, _ := user["userkey"].(string)
 	flow, _ := user["flow"].(string)
-	return model.UsersCredential{UUID: uuid, Password: password, UserKey: userKey, Flow: flow}
+	psk, _ := user["psk"].(string)
+	return model.UsersCredential{UUID: uuid, Password: password, UserKey: userKey, PSK: psk, Flow: flow}
 }
 
 func (p *RuntimeUserPackage) Request() model.UsersInstallRequest {

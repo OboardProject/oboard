@@ -900,6 +900,9 @@ func (s *Server) recordConfigurationTaskResult(ctx context.Context, task model.A
 		return
 	}
 	succeeded := status == "succeeded"
+	if succeeded {
+		s.recordSnellRuntime(ctx, task, resultJSON)
+	}
 	message := ""
 	if !succeeded {
 		message = configurationTaskResultMessage(resultJSON)

@@ -49,8 +49,8 @@ var mihomoVersionPattern = regexp.MustCompile(`(?i)(?:mihomo|clash[-_ ]?meta|cla
 // from the target client.
 //
 // snell_multi_user_userkey is required only by a node that actually carries a
-// userkey. OBoard's own Snell nodes never do — every user gets a dedicated
-// single-user listener with its own PSK — so they render to every client that
+// userkey. OBoard's own Snell nodes use standard independent PSKs in both
+// listener modes, so they render to every client that
 // supports the protocol version. An imported third-party node running sing-box
 // multi-user mode still needs the feature, and the renderer must not strip or
 // demote its userkey.
@@ -78,7 +78,7 @@ func RequiredFeaturesForProxy(proxy subscriptionProxy) []ProtocolFeature {
 // RequiredFeaturesForInbound returns the features a Snell inbound requires.
 // It is used by MCP form validation without constructing a full proxy.
 // snell_multi_user_userkey is never among them: an OBoard Snell inbound is
-// projected into single-user listeners, so its nodes carry no userkey.
+// authenticated by independent PSKs in both listener modes.
 func RequiredFeaturesForInbound(inbound model.Inbound) []ProtocolFeature {
 	if inbound.Protocol != model.ProtocolSnell {
 		return nil

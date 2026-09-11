@@ -686,6 +686,39 @@ func (v *configValidator) validateSnellVersionFields(path string, item map[strin
 }
 
 func (v *configValidator) validateSnellInbound(path string, inbound map[string]any) {
+	if inbound["auth_mode"] == "multi_psk" {
+		if stringFromAny(inbound["psk"]) != "" {
+			v.addf("%s multi_psk forbids global psk", path)
+		}
+		if inbound["mode"] == "unsafe-raw" {
+			v.addf("%s snell_unsafe_mode_not_allowed", path)
+		}
+		users := mapList(inbound["users"])
+		if len(users) > SnellCredentialLimit {
+			v.addf("%s snell_credential_limit_exceeded", path)
+		}
+		seen := map[string]bool{}
+		names := map[string]bool{}
+		version := intFromAny(inbound["version"])
+		if version == 5 {
+			version = 4
+		}
+		for _, u := range users {
+			psk := stringFromAny(u["psk"])
+			name := stringFromAny(u["name"])
+			if err := validateSnellPSKLength(psk, version); err != nil {
+				v.addf("%s invalid snell psk", path)
+			}
+			if seen[psk] || name == "" || names[name] || u["userkey"] != nil {
+				v.addf("%s snell_duplicate_psk or invalid identity", path)
+			}
+			seen[psk] = true
+			names[name] = true
+		}
+		v.validateSnellVersionFields(path, inbound, true)
+		return
+	}
+
 	psk := stringFromAny(inbound["psk"])
 	if strings.TrimSpace(psk) == "" {
 		v.addf("%s missing psk", path)

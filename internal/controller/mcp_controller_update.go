@@ -22,6 +22,14 @@ type controllerUpdateAutomationInput struct {
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
 	switch capabilityName {
+	case "inbounds.listener_mode.preview":
+		var req snellModeRequest
+		if err := strictAutomationInput(input, &req); err != nil {
+			return nil, err
+		}
+		preview, _, err := s.previewSnellMode(ctx, principal, req)
+		return preview, err
+
 	case "traffic.get_user_ledger", "traffic.get_server_sync_state", "traffic.list_reconciliation_issues":
 		return s.queryTrafficLedgerCapability(ctx, principal, capabilityName, input)
 	case "servers.connectivity.sla", "servers.connectivity.events":

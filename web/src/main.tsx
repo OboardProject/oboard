@@ -14958,6 +14958,7 @@ function formatInboundDisplayEndpoint(data: any, inbound: any): string {
   const listenPort = inboundListenPort(inbound)
   const records = String(inbound?.dns_record_types || '').toLowerCase()
   if (inbound?.protocol === 'snell') {
+    if ((parseConfig(inbound.config_json) || {}).listener_mode === 'shared_port') return inbound.snell_active_mode === 'shared_port' && inbound.snell_active_port === inbound.port ? formatHostPort(addr, displayPort) : '共享端口等待运行确认'
     const clean = String(addr || '').trim()
     const host = !clean ? '地址待检测' : (clean.includes(':') && !clean.startsWith('[') ? `[${clean}]` : clean)
     const base = Number(inbound?.advertise_port || 0) > 0 ? formatHostPort(addr, displayPort) : `${host}（端口按用户分配）`
@@ -15179,6 +15180,25 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const presetProtocol = selectedPreset.protocol
   const presetOptions = inboundPresetsForProtocol(presetProtocol, presetID)
   const cfg = parseConfig(draft.config_json) || {}
+  const snellMode = cfg.listener_mode || 'per_identity_port'
+  const [snellTargetMode, setSnellTargetMode] = useState(snellMode)
+  const [snellPreview, setSnellPreview] = useState<any>(null)
+  const [snellBusy, setSnellBusy] = useState(false)
+  const [snellError, setSnellError] = useState('')
+  const snellCapabilities = (server as any)?.kernel_capabilities || []
+  const snellReady = ['authorization_lease_v1', 'runtime_users_control_v1', 'runtime_users_v1', 'runtime_users_snell_psk_control_v1', 'runtime_users_snell_psk_v1', Number(cfg.version || 4) === 6 ? 'snell_multi_psk_v6_v1' : 'snell_multi_psk_v4_v1'].every(cap => snellCapabilities.includes(cap))
+  const snellIndependent = protocol === 'snell' && snellMode === 'per_identity_port'
+  const runSnellMode = async (apply: boolean) => {
+    setSnellBusy(true); setSnellError('')
+    try {
+      const result: any = await client.request(`/inbounds/${draft.id}/listener-mode/${apply ? 'apply' : 'preview'}`, { method: 'POST', body: JSON.stringify({ listener_mode: snellTargetMode, ...(apply ? { preview_digest: snellPreview.preview_digest } : {}) }) })
+      if (apply) {
+        setDraft((old: any) => old ? { ...old, config_json: JSON.stringify({ ...(parseConfig(old.config_json) || {}), listener_mode: snellTargetMode }) } : old)
+        setSnellPreview(null)
+      } else setSnellPreview(result)
+    } catch (err: any) { setSnellError(localizeErrorMessage(err?.message || err)); setSnellPreview(null) }
+    finally { setSnellBusy(false) }
+  }
   const tlsForReality = objectConfig(cfg.tls)
   const dnsCredentials: DNSCredential[] = data.dns_credentials || []
   const enabledDNSCredentials = dnsCredentials.filter(item => item.enabled)
@@ -15238,6 +15258,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(old.name))
       const previous = parseConfig(old.config_json) || {}
       let nextConfig = buildInboundPresetConfig(preset.id, data.node_presets)
+      if (old.protocol === 'snell' && preset.protocol === 'snell') { const next = parseConfig(nextConfig) || {}; next.listener_mode = previous.listener_mode || 'per_identity_port'; nextConfig = JSON.stringify(next, null, 2) }
       if (old.protocol === 'hy2' && preset.protocol === 'hy2') {
         const next = parseConfig(nextConfig) || {}
         if (previous.up_mbps != null) next.up_mbps = previous.up_mbps
@@ -15366,7 +15387,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 {draft.ddns_enabled && <FormField label="检查间隔" hint="定时检查公网地址并同步解析的间隔。"><Select value={Number(draft.ddns_interval_seconds || 300)} onChange={e => update({ ddns_interval_seconds: Number(e.target.value) })}><option value={300}>5 分钟</option><option value={900}>15 分钟</option><option value={3600}>1 小时</option><option value={21600}>6 小时</option></Select></FormField>}
               </> : null
   const entryAddressDisplay = (() => {
-    const snellPerUserPort = protocol === 'snell' && !natEnabled
+    const snellPerUserPort = snellIndependent && !natEnabled
     const cleanAddress = String(entryAddress || '').trim()
     const formattedHost = cleanAddress.includes(':') && !cleanAddress.startsWith('[') ? `[${cleanAddress}]` : cleanAddress
     const formatted = snellPerUserPort
@@ -15471,9 +15492,33 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
             </EntryFormDisclosure>
           </EntryFormSection>
 
-          <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description={protocol === 'snell' ? 'Snell 从服务器公网端口池为每个授权用户分配独立运行端口。' : 'Agent 在本机打开的地址和端口。'}>
+          {protocol === 'snell' && <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听方式" description="授权身份按用户和分支区分，每个身份使用独立密钥。">
+            <FormField label="监听方式" hint="共享端口最多容纳 64 个授权身份；更多身份可选择独立端口或拆分入口。">
+              <Select value={mode === 'edit' ? snellTargetMode : snellMode} aria-describedby="snell-mode-status" onChange={event => {
+                setSnellTargetMode(event.target.value); setSnellPreview(null); setSnellError('')
+                if (mode === 'create') updateConfig({ listener_mode: event.target.value })
+              }}>
+                <option value="shared_port">共享端口</option>
+                <option value="per_identity_port">独立端口</option>
+              </Select>
+            </FormField>
+            <p id="snell-mode-status" className="field-hint">Snell v{Number(cfg.version || 4)} · {snellReady ? '支持共享端口' : '共享端口等待 Agent / 内核升级'} · 当前{draft.snell_active_mode === 'shared_port' ? `共享监听 ${draft.snell_active_port}` : draft.snell_active_mode === 'per_identity_port' ? '独立端口已确认' : '运行端点尚未确认'} · {(server as any)?.users_confirmed ? '凭据已确认' : '等待凭据同步'} · {(server as any)?.authorization_confirmed ? '授权已确认' : '等待授权确认'}</p>
+            {cfg.mode === 'unsafe-raw' && <p role="alert" className="field-hint warning-text">unsafe-raw 没有 PSK 加密认证，禁止用于共享端口；独立端口也不能为它提供独立密钥认证保障。</p>}
+            {mode === 'edit' && snellTargetMode !== snellMode && <div className="access-note compact">
+              <p>切换采用已保存的入口参数，需要重启该服务器内核并重新拉取订阅。请先保存其他参数修改。</p>
+              <button type="button" className="ghost" disabled={snellBusy} onClick={() => void runSnellMode(false)}>预览切换</button>
+            </div>}
+            {snellPreview && <div className="access-note compact" aria-live="polite">
+              <p>授权身份 {snellPreview.credential_count} / {snellPreview.credential_limit} · 原端口 {snellPreview.current_ports?.join(', ') || '未确认'} → 目标端口 {snellPreview.target_ports?.join(', ') || '无授权身份'}{snellPreview.advertise_port ? ` · 对外端口 ${snellPreview.advertise_port}，请同步检查 NAT 映射` : ''}。</p>
+              <p>旧端口会保留到新配置运行确认。{snellPreview.capability_ready ? '能力检查通过。' : '当前缺少共享端口能力，升级后重新预览。'}</p>
+              <button type="button" disabled={snellBusy || !snellPreview.capability_ready} onClick={() => void runSnellMode(true)}>确认切换并等待部署</button>
+            </div>}
+            {snellError && <p role="alert" className="field-hint warning-text">{snellError}</p>}
+          </EntryFormSection>}
+
+          <EntryFormSection icon={<Cable size={16} aria-hidden="true" />} title="监听" description={snellIndependent ? 'Snell 从服务器公网端口池为每个授权用户分配独立运行端口。' : 'Agent 在本机打开的地址和端口。'}>
             <div className="entry-form-grid">
-              <FormField label={protocol === 'snell' ? '端口标识' : '监听端口'} required hint={protocol === 'snell' ? '仅用于标识和端口冲突校验，不是客户端连接端口；实际端口会在部署时按用户分配，并写入订阅。请确保服务器公网端口范围已放行。' : `${draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}${protocol === 'mieru' ? '这是 Mieru 的主端口；「额外端口范围」在上方协议参数里单独填写。' : ''}`}>
+              <FormField label={snellIndependent ? '端口标识' : '监听端口'} required hint={snellIndependent ? '仅用于标识和端口冲突校验，不是客户端连接端口；实际端口会在部署时按用户分配，并写入订阅。请确保服务器公网端口范围已放行。' : `${draft.__port_manual ? '已手动指定。也可改回从服务器端口池自动选择。' : '从服务器端口池自动选择空闲端口。'}${protocol === 'mieru' ? '这是 Mieru 的主端口；「额外端口范围」在上方协议参数里单独填写。' : ''}`}>
                 <div className="inline-field-action"><input value={draft.port} onChange={e => changePort(Number(e.target.value))} inputMode="numeric" /><button type="button" className="ghost" onClick={chooseAutoPort}>自动选择</button></div>
               </FormField>
               <FormField label="状态" hint="禁用后保留配置，但不再对外提供这个入口。">
@@ -15493,7 +15538,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
               <div className="switch-setting-row">
                 <span className="switch-setting-label">
                   NAT 端口映射
-                  <FieldHelp label="NAT 端口映射" hint={protocol === 'snell' ? 'Snell 仅在当前授权生成一个客户端运行实例时可用；公网入口需转发到部署后分配的逐用户运行端口。' : '监听端口与对外端口分离。例如本机监听 443，网关对外 8443。关闭则两者一致。'} />
+                  <FieldHelp label="NAT 端口映射" hint={snellIndependent ? 'Snell 仅在当前授权生成一个客户端运行实例时可用；公网入口需转发到部署后分配的逐用户运行端口。' : '监听端口与对外端口分离。例如本机监听 443，网关对外 8443。关闭则两者一致。'} />
                 </span>
                 <Switch checked={natEnabled} onChange={checked => {
                   if (checked) {
@@ -15508,7 +15553,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
                 }} ariaLabel="NAT 端口映射" />
               </div>
               {natEnabled && (
-                <FormField label="对外端口" required hint={protocol === 'snell' ? '客户端订阅使用此端口；公网入口必须转发到部署后分配的唯一 Snell 逐用户运行端口。' : 'NAT 网关对外的公网端口，客户端通过此端口连接。'}>
+                <FormField label="对外端口" required hint={snellIndependent ? '客户端订阅使用此端口；公网入口必须转发到部署后分配的唯一 Snell 逐用户运行端口。' : 'NAT 网关对外的公网端口，客户端通过此端口连接。'}>
                   <input value={draft.advertise_port || ''} onChange={e => update({ advertise_port: Number(e.target.value) || 0 })} inputMode="numeric" placeholder={String(draft.port || 443)} />
                   {protocol !== 'snell' && Number(draft.advertise_port) > 0 && Number(draft.advertise_port) === Number(draft.port) && <small className="field-hint warning-text">对外端口需与监听端口不同；关闭映射则保持一致。</small>}
                 </FormField>

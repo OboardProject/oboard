@@ -363,6 +363,8 @@ func defaultDescriptors() []Descriptor {
 	incidentPlanInput := schemaObject(map[string]any{"incident_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "user_id": positiveID, "rule_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "anomaly_score": map[string]any{"type": "number", "minimum": 0, "maximum": 100}, "evidence_refs": stringArray(0, 128)}, "incident_id", "user_id")
 	latencyProbeTask := closedObject(map[string]any{"method": map[string]any{"type": "string", "enum": []string{"tcp", "icmp", "http"}}, "address": stringValue, "port": map[string]any{"type": "integer"}, "id": positiveID, "name": stringValue, "province": stringValue, "carrier": stringValue, "interval_seconds": map[string]any{"type": "integer"}, "enabled": boolValue, "server_ids": map[string]any{"type": "array", "items": positiveID}, "created_at": stringValue, "updated_at": stringValue}, "id", "name", "method", "address", "port", "province", "carrier", "interval_seconds", "enabled", "server_ids")
 	descriptors := []Descriptor{
+		{Name: "inbounds.listener_mode.preview", Description: "预览 Snell 监听方式切换、凭据容量、能力、端口与订阅影响；不分配凭据或提交端口", InputSchema: schemaObject(map[string]any{"inbound_id": positiveID, "listener_mode": map[string]any{"type": "string", "enum": []string{"shared_port", "per_identity_port"}}}, "inbound_id", "listener_mode"), OutputSchema: snellListenerPreviewSchema(), RequiredScopes: []string{"topology:read"}, ResourceTypes: []string{"inbound"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: inboundUpdateRefs},
+
 		{Name: "inventory.read", Description: "读取受授权范围内的库存摘要", InputSchema: emptyInput, OutputSchema: schemaObject(map[string]any{"servers": arrayOf(server), "users": arrayOf(user), "server_count": map[string]any{"type": "integer"}, "online_count": map[string]any{"type": "integer"}, "user_count": map[string]any{"type": "integer"}}, "servers", "users", "server_count", "online_count", "user_count"), RequiredScopes: []string{"inventory:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "servers.list", Description: "列出受授权服务器。port_range_* 是公网托管池，internal_port_range_* 是回环内部池，与 servers.get 字段相同", InputSchema: emptyInput, OutputSchema: rawSchema(arrayOf(server)), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "servers.get", Description: "读取服务器状态与能力。port_range_* 是公网托管池，internal_port_range_* 是回环内部池，与 servers.list 字段相同", InputSchema: schemaObject(map[string]any{"id": positiveID}, "id"), OutputSchema: rawSchema(server), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"}, ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromID},
@@ -405,6 +407,7 @@ func defaultDescriptors() []Descriptor {
 		{"inbounds.create", "topology:write", 3, true, DataSensitive, []string{"inbound.config_json"}},
 		{"inbounds.update", "topology:write", 3, true, DataSensitive, []string{"changes.config_json"}},
 		{"inbounds.padding.update", "topology:write", 3, true, DataInternal, nil},
+		{"inbounds.listener_mode.apply", "topology:write", 3, true, DataInternal, nil},
 		{"topology.write", "topology:write", 3, true, DataInternal, nil},
 		{"proxy_paths.create_direct", "topology:write", 3, true, DataInternal, nil},
 		{"proxy_paths.update", "topology:write", 3, true, DataInternal, nil},
@@ -621,7 +624,7 @@ func writeResolver(name string) func(context.Context, any) ([]mcpauth.ResourceRe
 		return topologyWriteRefs
 	case "inbounds.create":
 		return inboundCreateRefs
-	case "inbounds.update", "inbounds.padding.update":
+	case "inbounds.update", "inbounds.padding.update", "inbounds.listener_mode.apply":
 		return inboundUpdateRefs
 	case "proxy_paths.update":
 		return proxyPathUpdateRefs
@@ -772,7 +775,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"protocol":              map[string]any{"type": "string", "enum": []string{"vless", "hy2", "anytls", "shadowsocks", "mieru", "snell", "socks", "ssh"}},
 			"listen_ip":             map[string]any{"type": "string", "maxLength": 255},
 			"port":                  map[string]any{"type": "integer", "minimum": 1, "maximum": 65535},
-			"advertise_port":        map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同。Snell 仅在当前授权解析为单个客户端运行实例时支持一个对外端口"},
+			"advertise_port":        map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "对外端口，0 表示与监听端口一致；启用 NAT 映射时需与监听端口不同。Snell 共享端口可对应一个 NAT 对外端口；独立端口模式仅在当前授权解析为单个客户端运行实例时支持一个对外端口"},
 			"entry_ip_mode":         map[string]any{"type": "string", "enum": []string{"auto", "ipv4", "ipv6", "custom"}},
 			"external_ip":           map[string]any{"type": "string", "maxLength": 255},
 			"dns_sync_enabled":      map[string]any{"type": "boolean", "description": "默认 false，是否让主控写入并维护入口解析记录。TLS 入口不需要它：证书域名作为 SNI 即可完成握手，订阅 Host 可以直接是服务器 IP。true 时必须有 dns_domain 与 dns_credential_id。租户仅一条凭据或 bootstrap default_dns_credential_id 可由服务端自动填充；否则 validation_failed 返回 missing_dns_credential 与 available_credentials"},
@@ -816,13 +819,13 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		//     per-user PSKs derive from, not a key any client uses directly.
 		//     NAT advertise_port is client-facing and is valid only while the
 		//     inbound resolves to one subscribable Snell runtime listener.
-		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws require a certificate-covering SNI (certificate_domain, or inherited from dns_domain) and default to certificate_mode=auto with dns_sync_enabled=false: SNI need not resolve to this host and subscription Host may be the server public IP; pass dns_domain or set dns_sync_enabled=true only to have Controller maintain DNS records; dns_credential_id is required only when dns_sync_enabled=true (a single tenant DNS credential or bootstrap default_dns_credential_id is filled automatically; otherwise create/update fail before ready with code missing_dns_credential and available_credentials [{id,name,provider}]); omit certificate_domain to follow dns_domain; changing dns_domain deletes the previous DNS records, writes the new ones, follows SNI unless a custom SNI was already set, immediately binds a ready covering certificate when one exists, and otherwise issues it on the next deploy; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options"
+		inboundGuidance := "select an explicit kind; kind=vless-reality accepts only the non-secret reality.handshake_server, reality.handshake_port, and optional reality.short_id fields, while the Controller generates and retains the Reality keypair; set rotate_reality_key=true only when an update must rotate it; config_json.tls.reality.dest and caller-supplied Reality private/public keys are rejected with their exact JSON path before save; TLS kinds anytls-*, hy2-tls, hy2-salamander, and vless-ws require a certificate-covering SNI (certificate_domain, or inherited from dns_domain) and default to certificate_mode=auto with dns_sync_enabled=false: SNI need not resolve to this host and subscription Host may be the server public IP; pass dns_domain or set dns_sync_enabled=true only to have Controller maintain DNS records; dns_credential_id is required only when dns_sync_enabled=true (a single tenant DNS credential or bootstrap default_dns_credential_id is filled automatically; otherwise create/update fail before ready with code missing_dns_credential and available_credentials [{id,name,provider}]); omit certificate_domain to follow dns_domain; changing dns_domain deletes the previous DNS records, writes the new ones, follows SNI unless a custom SNI was already set, immediately binds a ready covering certificate when one exists, and otherwise issues it on the next deploy; Controller matches or issues the managed certificate during deployment, so create must not wait for a ready certificate, must not switch to external as a placeholder, and must not send the operator to the panel to pre-issue the certificate; kind=hy2-salamander generates a per-inbound Salamander obfs password; HY2 bandwidth is per-inbound (default up 1000 / down 500) and is not stored in node presets; config_json remains available only for protocol-specific advanced options; Snell config_json.listener_mode is shared_port or per_identity_port, defaults to per_identity_port when omitted; shared_port uses independent standard PSKs with at most 64 credentials and requires reported v4/v6 PSK and runtime users capabilities, rejects unsafe-raw, and keeps native reuse without QUIC Proxy. Existing mode changes require inbounds.listener_mode.preview then inbounds.listener_mode.apply with preview_digest. Parameters profiles never own listener_mode or user PSKs; saved configuration is not proof of runtime confirmation"
 		inboundOutput := closedObject(map[string]any{
 			"id": positiveID, "revision": stringValue, "server_id": positiveID, "name": stringValue,
 			"protocol": stringValue, "listen_ip": stringValue, "port": map[string]any{"type": "integer"}, "advertise_port": map[string]any{"type": "integer"},
 			"entry_ip_mode": stringValue, "external_ip": stringValue, "dns_sync_enabled": boolValue,
 			"dns_credential_id": map[string]any{"type": []string{"integer", "null"}}, "dns_domain": stringValue, "dns_record_types": stringValue,
-			"tls": boolValue, "certificate_mode": stringValue, "certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue,
+			"tls": boolValue, "certificate_mode": stringValue, "certificate_domain": stringValue, "kind": stringValue, "enabled": boolValue, "advanced_configured": boolValue, "listener_mode": stringValue, "credential_limit": map[string]any{"type": "integer"}, "active_mode": stringValue, "active_port": map[string]any{"type": "integer"},
 		})
 		if name == "inbounds.create" {
 			inboundFields := closedObject(inboundProperties, "server_id", "name", "kind", "port")
@@ -849,6 +852,8 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		inboundFields := closedObject(inboundProperties)
 		input := schemaObject(map[string]any{"inbound_id": positiveID, "changes": inboundFields}, "inbound_id", "changes")
 		return withSchemaDescription(input, inboundGuidance), simpleOutput(map[string]any{"inbound": inboundOutput, "requires_deployment": boolValue}), "server_ids"
+	case "inbounds.listener_mode.apply":
+		return schemaObject(map[string]any{"inbound_id": positiveID, "listener_mode": map[string]any{"type": "string", "enum": []string{"shared_port", "per_identity_port"}}, "preview_digest": stringValue}, "inbound_id", "listener_mode", "preview_digest"), simpleOutput(map[string]any{"inbound": map[string]any{"type": "object"}, "preview": snellListenerPreviewSchema(), "requires_deployment": boolValue}), "server_ids"
 	case "inbounds.padding.update":
 		return schemaObject(map[string]any{
 			"inbound_id":     positiveID,
@@ -998,4 +1003,12 @@ func suggestedChangesetSchema() map[string]any {
 			"input":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}},
 		}, "capability", "input"),
 	}, "base_revisions", "operation")
+}
+
+func snellListenerPreviewSchema() json.RawMessage {
+	text := map[string]any{"type": "string"}
+	number := map[string]any{"type": "integer"}
+	boolean := map[string]any{"type": "boolean"}
+	ports := map[string]any{"type": []string{"array", "null"}, "items": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}}
+	return schemaObject(map[string]any{"inbound_id": number, "server_id": number, "current_mode": text, "target_mode": text, "active_mode": text, "current_ports": ports, "target_ports": ports, "advertise_port": number, "credential_count": number, "credential_limit": number, "capability_ready": boolean, "users_confirmed": boolean, "authorization_confirmed": boolean, "requires_restart": boolean, "subscription_refresh_required": boolean, "preview_digest": text}, "inbound_id", "server_id", "current_mode", "target_mode", "active_mode", "current_ports", "target_ports", "credential_count", "credential_limit", "capability_ready", "users_confirmed", "authorization_confirmed", "requires_restart", "subscription_refresh_required", "preview_digest")
 }

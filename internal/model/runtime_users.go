@@ -37,6 +37,7 @@ type UsersCredential struct {
 	UUID     string `json:"uuid,omitempty"`
 	Password string `json:"password,omitempty"`
 	UserKey  string `json:"userkey,omitempty"`
+	PSK      string `json:"psk,omitempty"`
 	Flow     string `json:"flow,omitempty"`
 }
 

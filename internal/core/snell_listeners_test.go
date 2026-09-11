@@ -48,9 +48,7 @@ func snellListenersFromConfig(t *testing.T, config string) map[string]map[string
 	return out
 }
 
-// A Snell inbound must never render one shared multi-user listener: sing-box
-// would then authenticate by userkey, which no client other than sing-box can
-// present, and every Surge/Mihomo/Egern user would be rejected.
+// Existing inbounds retain separate listeners when listener_mode is omitted.
 func TestSnellGeneratesPerUserSingleUserListeners(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()
@@ -319,8 +317,75 @@ func TestSnellPortRangeExhaustionFails(t *testing.T) {
 	}
 }
 
-// The generated listeners must not collide with each other, with the declared
-// inbound port, or with any other listener on the server.
+// A host that can only expose one public port must still be able to run a
+// per-identity Snell inbound. The inbound's own Port is a logical identity that
+// nothing ever binds, so it must not consume the single candidate in the auto
+// range — otherwise the inbound is undeployable even before any user is
+// authorized, when only the placeholder identity needs a listener.
+func TestSnellSinglePortRangeAllowsInboundIdentityPort(t *testing.T) {
+	server := snellTestServer()
+	server.PortRangeStart, server.PortRangeEnd = 10355, 10355
+	inbound := snellTestInbound()
+	inbound.Port = 10355
+
+	for _, testCase := range []struct {
+		name  string
+		users []model.User
+	}{
+		{name: "no authorized users", users: nil},
+		{name: "one authorized user", users: snellTestUsers(1)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			config, err := generateFixtureConfig(server, []model.Inbound{inbound}, nil, testDNSState(1), testCase.users, ConfigOptions{
+				Servers: []model.Server{server}, Inbounds: []model.Inbound{inbound}, PortLedger: NewProxyPathPortLedger(nil),
+			})
+			if err != nil {
+				t.Fatalf("single-port auto range must still deploy: %v", err)
+			}
+			listeners := snellListenersFromConfig(t, config)
+			if len(listeners) != 1 {
+				t.Fatalf("want exactly one listener, got %d: %v", len(listeners), listeners)
+			}
+			for tag, item := range listeners {
+				if got := item["listen_port"]; got != float64(inbound.Port) {
+					t.Fatalf("listener %q got port %v, want the only port in range (%d)", tag, got, inbound.Port)
+				}
+			}
+		})
+	}
+}
+
+// A per-identity Snell inbound must not be rejected by the port ownership guard
+// because of a port its own generated listener holds. That happens whenever the
+// listener lands on the inbound's declared port, which a single-port auto range
+// forces.
+func TestSnellInboundEditAllowsItsOwnListenerPort(t *testing.T) {
+	inbound := snellTestInbound()
+	inbound.Port = 10355
+	allocations := []model.ProxyPathPortAllocation{{
+		Kind:     model.ProxyPathPortKindSnellUser,
+		ScopeKey: snellUserPortScopeKey(inbound.ID, 1, 0),
+		ServerID: inbound.ServerID,
+		Pool:     model.PortPoolPublic,
+		ListenIP: "0.0.0.0",
+		Network:  string(model.ForwardProtocolTCP),
+		Port:     inbound.Port,
+		State:    model.PortAllocationStateActive,
+	}}
+	if err := ValidateInboundManagedPortAvailability(inbound, allocations); err != nil {
+		t.Fatalf("an inbound must not be blocked by its own listener allocation: %v", err)
+	}
+
+	foreign := allocations
+	foreign[0].ScopeKey = snellUserPortScopeKey(inbound.ID+1, 1, 0)
+	if err := ValidateInboundManagedPortAvailability(inbound, foreign); err == nil {
+		t.Fatal("another inbound's listener allocation must still reserve the port")
+	}
+}
+
+// The generated listeners must not collide with each other or with any other
+// listener on the server. The inbound's own declared port is exempt: nothing
+// binds it, so its own listeners may reuse it.
 func TestSnellPerUserListenersHaveNoListenConflicts(t *testing.T) {
 	server := snellTestServer()
 	inbound := snellTestInbound()

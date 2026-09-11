@@ -618,7 +618,7 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 	config.DNS = dns
 	config.Route["default_domain_resolver"] = defaultDomainResolver(dns, server)
 	policyCtx := newRoutePolicyContext(server, dns, opts.RoutingRuleSets, inbounds, opts.Inbounds)
-	// Snell fans out into one single-user listener per identity, so its ports
+	// Per-identity Snell fans out into one listener per identity, so its ports
 	// must be claimed before anything else derives a generated listener:
 	// proxy path hops allocate from the same server range and only see
 	// conflicts through the inbound set they are handed.
@@ -655,7 +655,7 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 		// Snell does not have one listener with a user table: each identity
 		// owns a dedicated single-user listener rendered from the plan above,
 		// and each carries its own runtime limit keyed by its own tag.
-		if inbound.Protocol == model.ProtocolSnell {
+		if inbound.Protocol == model.ProtocolSnell && !SnellSharedPort(inbound) {
 			for _, listener := range snellPlan[inbound.ID] {
 				item, err := snellListenerInbound(inbound, listener)
 				if err != nil {
@@ -667,6 +667,9 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 				config.Inbounds = append(config.Inbounds, item)
 			}
 			continue
+		}
+		if SnellSharedPort(inbound) && !ServerSupportsSnellShared(server, inbound) {
+			return SingBoxConfig{}, ErrSnellUnsupported
 		}
 		addRuntimeLimitsForInbound(&config, inbound, accountedUsers, opts)
 		if !InboundSupportsMultipleUsers(inbound) && len(inboundUsers) > 1 {
@@ -1284,7 +1287,7 @@ func buildProxyPathOutboundsAndRules(server model.Server, outboundsInput []model
 			}
 			activeServerID = root.ServerID
 			activeInboundTags = rootInboundRoutingTags(root, path, users, opts)
-			activeAuthUsers = routingAuthUsersForProtocol(root.Protocol, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers)))
+			activeAuthUsers = routingAuthUsersForProtocol(root, proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers)))
 		}
 		for _, step := range steps {
 			if step.TransportMode == "" {
@@ -1471,7 +1474,7 @@ func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep
 		// inbound; a branch without authorized identities has no traffic to
 		// route and must not claim the whole listener.
 		branchUsers := proxyPathBranchUsernames(path, root, usersForProxyPath(path, root, users, opts.InboundUsers, opts.ProxyPathUsers))
-		if len(branchUsers) == 0 && protocolHasRoutingAuthUser(root.Protocol) {
+		if len(branchUsers) == 0 && protocolHasRoutingAuthUser(root) {
 			return nil, nil
 		}
 		return []string{proxyPathSharedTransparentInboundTag(transparentGroup.InboundID, transparentGroup.PrefixLength)}, branchUsers
@@ -1479,7 +1482,7 @@ func proxyPathStepInboundIdentity(path model.ProxyPath, step model.ProxyPathStep
 	if step.InboundID != nil && *step.InboundID != 0 {
 		inbound := inboundByID[*step.InboundID]
 		user := proxyPathLinkUser(path, inbound)
-		return stepInboundRoutingTags(inbound, user), routingAuthUsersForProtocol(inbound.Protocol, []string{protocolAuthUsername(inbound.Protocol, user)})
+		return stepInboundRoutingTags(inbound, user), routingAuthUsersForProtocol(inbound, []string{protocolAuthUsername(inbound.Protocol, user)})
 	}
 	if service, ok := proxyPathChainServiceForStep(services, step, targetServerID); ok {
 		user := proxyPathInternalUser(path, step)
@@ -1512,10 +1515,10 @@ func rootInboundRoutingTags(root model.Inbound, path model.ProxyPath, users []mo
 	// A branch on a shared multi-user listener is identified by its authorized
 	// auth_user set. With no authorized identity there is nothing to match, and
 	// an inbound-only rule would capture every other branch on that listener.
-	if len(branchUsers) == 0 && protocolHasRoutingAuthUser(root.Protocol) {
+	if len(branchUsers) == 0 && protocolHasRoutingAuthUser(root) {
 		return nil
 	}
-	if root.Protocol != model.ProtocolSnell {
+	if root.Protocol != model.ProtocolSnell || SnellSharedPort(root) {
 		return []string{tag("in", root.ID)}
 	}
 	out := make([]string, 0, len(branchUsers))
@@ -3508,11 +3511,11 @@ func AuthCapabilities(inbound model.Inbound) InboundAuthCapabilities {
 	case model.ProtocolMieru:
 		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSnell:
-		// Snell has no cross-client multi-user mode, so one panel inbound is
-		// projected into one single-user listener per identity. Each listener
-		// authenticates with its own PSK and carries no user table, which also
-		// means route rules match it by inbound tag instead of auth_user.
-		return InboundAuthCapabilities{MultiUser: false, PerIdentityListener: true, RoutingAuthUser: false, HasServerCredential: false, HasUserCredential: true}
+		if SnellSharedPort(inbound) {
+			return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasUserCredential: true}
+		}
+		return InboundAuthCapabilities{PerIdentityListener: true, HasUserCredential: true}
+
 	case model.ProtocolSocks:
 		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSSH:
@@ -3543,12 +3546,12 @@ func InboundSupportsMultipleIdentities(inbound model.Inbound) bool {
 // protocolHasRoutingAuthUser reports whether sing-box route rules can match
 // connections on this inbound by auth_user. Snell now participates as a normal
 // multi-user protocol with per-user userkey authentication.
-func protocolHasRoutingAuthUser(protocol model.Protocol) bool {
-	return AuthCapabilities(model.Inbound{Protocol: protocol}).RoutingAuthUser
+func protocolHasRoutingAuthUser(inbound model.Inbound) bool {
+	return AuthCapabilities(inbound).RoutingAuthUser
 }
 
-func routingAuthUsersForProtocol(protocol model.Protocol, users []string) []string {
-	if !protocolHasRoutingAuthUser(protocol) {
+func routingAuthUsersForProtocol(inbound model.Inbound, users []string) []string {
+	if !protocolHasRoutingAuthUser(inbound) {
 		return nil
 	}
 	return users
@@ -4223,15 +4226,9 @@ func (a socksAdapter) SubscriptionNode(user model.User, inbound model.Inbound, s
 //   - Version 5 is never emitted to clients: sing-box upstream does not
 //     implement a v5 outbound, so v5 nodes would not be usable.
 //
-// Snell is a single-user protocol at the client boundary. sing-box does accept
-// a `users[]` table, but the AEAD key still derives from the server PSK alone
-// and the per-user `userkey` is only an identity tag; worse, no client except
-// sing-box has a userkey field, so a multi-user listener rejects Surge, Mihomo,
-// Egern, Shadowrocket and Surfboard outright. One panel Snell inbound is
-// therefore projected into one single-user listener per identity, each on its
-// own port with its own PSK derived from `config_json.psk`. See
-// snell_listeners.go for the projection; the adapter below only renders the
-// non-user-specific shape and the client-facing node.
+// Snell authenticates public identities using their persisted, independent PSKs.
+// shared_port renders one explicit multi_psk listener; per_identity_port keeps
+// the existing port ledger projection. Neither mode sends a private client ID.
 //
 // UDP relay rides on the established TCP stream, not on a native UDP
 // listener, so Snell inbounds remain TCP-only listeners and stay valid
@@ -4365,7 +4362,7 @@ func snellPSK(extra map[string]any, users []model.User) (string, error) {
 
 // snellUserKey is the userkey an OBoard outbound presents when dialing a
 // third-party Snell server that runs in multi-user mode. OBoard's own Snell
-// inbounds never run that way — see snell_listeners.go — so nothing on the
+// inbounds use independent PSKs — see snell_listeners.go — so nothing on the
 // inbound side calls this.
 func snellUserKey(user model.User) string {
 	return strings.TrimSpace(user.ProxyPassword)
@@ -4446,6 +4443,9 @@ func (snellAdapter) ValidateInbound(v model.Inbound) error {
 	if err := ValidatePort(v.Port); err != nil {
 		return err
 	}
+	if err := ValidateSnellListenerMode(v); err != nil {
+		return err
+	}
 	return validateSnellOptions(parseExtra(v.ConfigJSON), transportSideInbound)
 }
 func (snellAdapter) ValidateOutbound(v model.Outbound) error {
@@ -4467,6 +4467,9 @@ func (snellAdapter) ValidateOutbound(v model.Outbound) error {
 func (a snellAdapter) Inbound(v model.Inbound, users []model.User) (map[string]any, error) {
 	if err := a.ValidateInbound(v); err != nil {
 		return nil, err
+	}
+	if SnellSharedPort(v) {
+		return snellSharedInbound(v, users)
 	}
 	return nil, fmt.Errorf("入口 %s 是 Snell：每个用户使用独立端口和独立 PSK，无法在此处生成共享监听；Snell 暂不支持代理链的透明处理节点，请改用 VLESS/HY2 等协议承载该链路", v.Name)
 }

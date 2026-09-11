@@ -587,6 +587,9 @@ func StaleProxyPathPortAllocationIDs(stored []model.ProxyPathPortAllocation, led
 	}
 	out := []int64{}
 	for _, item := range stored {
+		if item.Kind == model.ProxyPathPortKindSnellUser {
+			continue
+		}
 		if ledger.removed[item.ID] {
 			out = append(out, item.ID)
 			continue

@@ -163,6 +163,8 @@ func inboundNeedsCoreConfigFallback(server model.Server, inbound model.Inbound) 
 			return true
 		}
 		return !core.ProtocolSupportsRuntimeUsers(inbound.Protocol, inbound)
+	case model.ProtocolSnell:
+		return !core.SnellSharedPort(inbound) || !core.ServerSupportsSnellShared(server, inbound)
 	default:
 		return true
 	}

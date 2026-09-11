@@ -811,7 +811,10 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	if orderPolicy != nil {
 		opts.NodeOrderPolicy = *orderPolicy
 	}
-	oboardCandidates, err := core.BuildSubscriptionCandidates(user, data.Servers, data.Inbounds, opts)
+	servers := append([]model.Server(nil), data.Servers...)
+	s.annotateSnellSubscriptionDelivery(ctx, servers, data.Inbounds)
+	opts.EffectiveNodes = s.filterSubscriptionNodesByDelivery(ctx, user, data, snapshot, opts.EffectiveNodes)
+	oboardCandidates, err := core.BuildSubscriptionCandidates(user, servers, data.Inbounds, opts)
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}

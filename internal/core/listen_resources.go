@@ -176,6 +176,14 @@ func ValidateInboundManagedPortAvailability(inbound model.Inbound, allocations [
 		return err
 	}
 	protocol := portForwardListenTransport(transparentForwardProtocol(inbound))
+	// Ports this inbound's own generated listeners hold are not somebody
+	// else's reservation. A per-identity Snell inbound may legitimately keep
+	// its logical Port equal to one of its fanned-out listener ports, which is
+	// the only workable layout on a host with a single public port.
+	selfOwnedPrefix := ""
+	if inbound.ID > 0 {
+		selfOwnedPrefix = fmt.Sprintf("inbound:%d:user:", inbound.ID)
+	}
 	for _, port := range ports {
 		candidate := listenResource{
 			serverID: inbound.ServerID,
@@ -185,6 +193,9 @@ func ValidateInboundManagedPortAvailability(inbound model.Inbound, allocations [
 			owner:    fmt.Sprintf("inbound %q", inbound.Name),
 		}
 		for _, allocation := range allocations {
+			if allocation.Kind == model.ProxyPathPortKindSnellUser && selfOwnedPrefix != "" && strings.HasPrefix(allocation.ScopeKey, selfOwnedPrefix) {
+				continue
+			}
 			network := model.ForwardProtocol(allocation.Network)
 			if network != model.ForwardProtocolTCP && network != model.ForwardProtocolUDP {
 				network = model.ForwardProtocolTCPUDP

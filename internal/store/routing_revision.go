@@ -58,6 +58,7 @@ var configurationRevisionTables = []string{
 // because high-frequency accounting and activity timestamp writes must not
 // invalidate the cache.
 var routingRevisionTables = []string{
+	"snell_listener_runtime",
 	"access_changes",
 	"servers",
 	"inbounds",
@@ -163,6 +164,8 @@ func configurationRevisionConditions(table, updateCondition string) (string, str
 		updateCondition = "1"
 	}
 	switch table {
+	case "proxy_path_port_allocations":
+		return "1", updateCondition, "old.kind<>'snell_user_inbound'"
 	case "proxy_paths":
 		return "new.enabled=1", "old.enabled=1 or new.enabled=1", "old.enabled=1"
 	case "proxy_path_steps":
