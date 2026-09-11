@@ -13691,7 +13691,7 @@ function ProxyGraphToolbox({ collapsed, dragging, selected, servers, importedNod
                 title={`${regionLabel(code)}，${count} 个节点`}
               >
                 <RegionFlag code={code} size={15} />
-                <span>{regionLabel(code)}</span>
+                <span>{normalizeRegionCode(code) || '待检测'}</span>
                 <small>{count}</small>
               </button>
             ))}
