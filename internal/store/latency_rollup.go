@@ -15,7 +15,7 @@ var ErrLatencyRollupChanged = errors.New("latency projection changed; retry batc
 
 const (
 	LatencyRollupBatchLimit = 500
-	latencyRollupWriteLimit = 128
+	latencyRollupWriteLimit = 1000
 )
 
 type LatencyRollupState struct {
@@ -38,6 +38,7 @@ type latencyRollupKey struct {
 }
 
 type latencyRollupDelta struct {
+	basis                                                                      string
 	mode, taskName, province, carrier                                          string
 	key                                                                        latencyRollupKey
 	kind, probeID                                                              string
@@ -48,6 +49,7 @@ type latencyRollupDelta struct {
 }
 
 type latencyRollupBatch struct {
+	historical         bool
 	state              LatencyRollupState
 	deltas             map[latencyRollupKey]*latencyRollupDelta
 	through            int64
@@ -81,7 +83,13 @@ func (s *Store) initializeLatencyRollup(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func (s *Store) RunLatencyRollupBatch(ctx context.Context, at time.Time, limit int) (result LatencyRollupResult, err error) {
+func (s *Store) RunLatencyRollupBatch(ctx context.Context, at time.Time, limit int) (LatencyRollupResult, error) {
+	return s.runLatencyRollupLane(ctx, at, limit, false)
+}
+func (s *Store) RunLatencyBackfillBatch(ctx context.Context, at time.Time, limit int) (LatencyRollupResult, error) {
+	return s.runLatencyRollupLane(ctx, at, limit, true)
+}
+func (s *Store) runLatencyRollupLane(ctx context.Context, at time.Time, limit int, historical bool) (result LatencyRollupResult, err error) {
 	started := time.Now()
 	defer func() { result.Duration = time.Since(started) }()
 	if !s.latencyRollupBusy.CompareAndSwap(false, true) {
@@ -110,12 +118,15 @@ func (s *Store) RunLatencyRollupBatch(ctx context.Context, at time.Time, limit i
 	if floor := time.Unix(state.RetentionFloor, 0); floor.After(cutoff) {
 		cutoff = floor
 	}
-	batch, err := s.readLatencyRollupBatch(ctx, state, cutoff, limit)
+	if historical && state.BackfillCursor <= 0 {
+		return result, nil
+	}
+	batch, err := s.readLatencyRollupBatchLane(ctx, state, cutoff, limit, historical)
 	if err != nil {
 		return result, err
 	}
 	batch.retentionDays = ServerMonitoringRetentionDays(settings)
-	if batch.processed > 0 {
+	if batch.processed > 0 || (historical && batch.through != state.BackfillCursor) {
 		txStarted := time.Now()
 		err = s.commitLatencyRollupBatch(ctx, batch)
 		result.TransactionDuration = time.Since(txStarted)
@@ -133,12 +144,23 @@ func (s *Store) RunLatencyRollupBatch(ctx context.Context, at time.Time, limit i
 }
 
 func (s *Store) readLatencyRollupBatch(ctx context.Context, state LatencyRollupState, cutoff time.Time, limit int) (latencyRollupBatch, error) {
+	return s.readLatencyRollupBatchLane(ctx, state, cutoff, limit, false)
+}
+func (s *Store) readLatencyRollupBatchLane(ctx context.Context, state LatencyRollupState, cutoff time.Time, limit int, historical bool) (latencyRollupBatch, error) {
 	floor := cutoff.Unix()
 	if cutoff.Nanosecond() > 0 {
 		floor++
 	}
 	batch := latencyRollupBatch{state: state, through: state.LiveCursor, cutoff: floor, deltas: make(map[latencyRollupKey]*latencyRollupDelta)}
-	rows, err := s.db.QueryContext(ctx, `select id,server_id,kind,task_id,probe_id,mode,host,port,task_name,province,carrier,available,latency_ms,sample_count,success_count,checked_at from server_latency_probe_results where id>? order by id limit ?`, state.LiveCursor, limit)
+	batch.historical = historical
+	query := `select id,server_id,kind,task_id,probe_id,mode,host,port,task_name,province,carrier,available,latency_ms,sample_count,success_count,checked_at,measurement_revision from server_latency_probe_results where id>? order by id limit ?`
+	args := []any{state.LiveCursor, limit}
+	if historical {
+		batch.through = state.BackfillCursor
+		query = `select id,server_id,kind,task_id,probe_id,mode,host,port,task_name,province,carrier,available,latency_ms,sample_count,success_count,checked_at,measurement_revision from server_latency_probe_results where id<=? and id<=? order by id desc limit ?`
+		args = []any{state.BackfillCursor, state.HistoricalBoundary, limit}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return batch, err
 	}
@@ -148,8 +170,8 @@ func (s *Store) readLatencyRollupBatch(ctx context.Context, state LatencyRollupS
 			return batch, err
 		}
 		var id, serverID, taskID, port, available, latency, attempts, successes int64
-		var kind, probeID, mode, host, checked, taskName, province, carrier string
-		if err := rows.Scan(&id, &serverID, &kind, &taskID, &probeID, &mode, &host, &port, &taskName, &province, &carrier, &available, &latency, &attempts, &successes, &checked); err != nil {
+		var kind, probeID, mode, host, checked, taskName, province, carrier, measurement string
+		if err := rows.Scan(&id, &serverID, &kind, &taskID, &probeID, &mode, &host, &port, &taskName, &province, &carrier, &available, &latency, &attempts, &successes, &checked, &measurement); err != nil {
 			return batch, err
 		}
 		at, err := time.Parse(time.RFC3339Nano, checked)
@@ -159,10 +181,14 @@ func (s *Store) readLatencyRollupBatch(ctx context.Context, state LatencyRollupS
 		expired := at.Before(cutoff)
 		if !expired && (kind == "public" || kind == "regional" || kind == "custom") {
 			series, _ := json.Marshal([]any{kind, taskID, probeID})
-			// Reports do not carry the historical plan's IP-family policy. This revision
-			// describes only reported endpoint fields; summary reads remain disabled.
+			// Legacy reports retain an explicitly incomplete revision basis.
 			semantics, _ := json.Marshal([]any{"reported_endpoint_v1", mode, strings.TrimSpace(host), port})
 			revision := fmt.Sprintf("%x", sha256.Sum256(semantics))
+			basis := "reported_endpoint_v1"
+			if measurement != "" {
+				revision = measurement
+				basis = "measurement_v1"
+			}
 			keys := [2]latencyRollupKey{}
 			additional := 0
 			for i, resolution := range []int64{300, 3600} {
@@ -180,7 +206,7 @@ func (s *Store) readLatencyRollupBatch(ctx context.Context, state LatencyRollupS
 				}
 				delta := batch.deltas[key]
 				if delta == nil {
-					delta = &latencyRollupDelta{key: key, kind: kind, taskID: taskID, probeID: probeID, first: at.UnixNano(), last: at.UnixNano()}
+					delta = &latencyRollupDelta{basis: basis, key: key, kind: kind, taskID: taskID, probeID: probeID, first: at.UnixNano(), last: at.UnixNano()}
 					batch.deltas[key] = delta
 				}
 				delta.mode = max(delta.mode, mode)
@@ -206,10 +232,16 @@ func (s *Store) readLatencyRollupBatch(ctx context.Context, state LatencyRollupS
 			}
 		}
 		batch.through = id
+		if historical {
+			batch.through = id - 1
+		}
 		batch.processed++
 		if expired {
 			batch.expired++
 		}
+	}
+	if historical && batch.processed == 0 {
+		batch.through = 0
 	}
 	return batch, rows.Err()
 }
@@ -228,7 +260,7 @@ func addLatencyExtrema(minimum, maximum, minAt, maxAt *sql.NullInt64, value, at 
 var latencyRollupUpsert = buildLatencyRollupUpsert()
 
 func buildLatencyRollupUpsert() string {
-	columns := []string{"server_id", "series_key", "measurement_revision", "resolution_seconds", "bucket_start", "kind", "task_id", "probe_id", "mode", "task_name", "province", "carrier", "latency_sum", "latency_value_count", "latency_min", "latency_max", "latency_min_at", "latency_max_at", "curve_sum", "curve_value_count", "curve_min", "curve_max", "curve_min_at", "curve_max_at", "attempt_count", "success_count", "report_count", "available_report_count", "first_sample_at", "last_sample_at", "summary_schema_version", "updated_at"}
+	columns := []string{"server_id", "series_key", "measurement_revision", "resolution_seconds", "bucket_start", "kind", "task_id", "probe_id", "revision_basis", "mode", "task_name", "province", "carrier", "latency_sum", "latency_value_count", "latency_min", "latency_max", "latency_min_at", "latency_max_at", "curve_sum", "curve_value_count", "curve_min", "curve_max", "curve_min_at", "curve_max_at", "attempt_count", "success_count", "report_count", "available_report_count", "first_sample_at", "last_sample_at", "summary_schema_version", "updated_at"}
 	updates := []string{"mode=max(mode,excluded.mode)", "task_name=max(task_name,excluded.task_name)", "province=max(province,excluded.province)", "carrier=max(carrier,excluded.carrier)", "updated_at=excluded.updated_at", "first_sample_at=min(first_sample_at,excluded.first_sample_at)", "last_sample_at=max(last_sample_at,excluded.last_sample_at)"}
 	for _, column := range []string{"latency_sum", "latency_value_count", "curve_sum", "curve_value_count", "attempt_count", "success_count", "report_count", "available_report_count"} {
 		updates = append(updates, column+"="+column+"+excluded."+column)
@@ -263,7 +295,13 @@ func (s *Store) commitLatencyRollupBatch(ctx context.Context, batch latencyRollu
 			return ErrLatencyRollupChanged
 		}
 	}
-	result, err := tx.ExecContext(ctx, `update latency_rollup_state set live_cursor=?,expired_unprocessed=expired_unprocessed+?,retention_floor=max(retention_floor,?),updated_at=? where id=1 and live_cursor=? and generation=? and schema_version=?`, batch.through, batch.expired, batch.cutoff, now(), batch.state.LiveCursor, batch.state.Generation, latencyRollupSchemaVersion)
+	cursorColumn := "live_cursor"
+	previous := batch.state.LiveCursor
+	if batch.historical {
+		cursorColumn = "backfill_cursor"
+		previous = batch.state.BackfillCursor
+	}
+	result, err := tx.ExecContext(ctx, `update latency_rollup_state set `+cursorColumn+`=?,expired_unprocessed=expired_unprocessed+?,retention_floor=max(retention_floor,?),updated_at=? where id=1 and `+cursorColumn+`=? and generation=? and schema_version=?`, batch.through, batch.expired, batch.cutoff, now(), previous, batch.state.Generation, latencyRollupSchemaVersion)
 	if err != nil {
 		return err
 	}
@@ -274,11 +312,16 @@ func (s *Store) commitLatencyRollupBatch(ctx context.Context, batch latencyRollu
 	if changed != 1 {
 		return ErrLatencyRollupChanged
 	}
+	stmt, err := tx.PrepareContext(ctx, latencyRollupUpsert)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
 	for _, d := range batch.deltas {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, latencyRollupUpsert, d.key.serverID, d.key.series, d.key.revision, d.key.resolution, d.key.start, d.kind, d.taskID, d.probeID, d.mode, d.taskName, d.province, d.carrier, d.sum, d.count, d.minimum, d.maximum, d.minAt, d.maxAt, d.curveSum, d.curveCount, d.curveMin, d.curveMax, d.curveMinAt, d.curveMaxAt, d.attempts, d.successes, d.reports, d.available, d.first, d.last, latencyRollupSchemaVersion, now())
+		result, err := stmt.ExecContext(ctx, d.key.serverID, d.key.series, d.key.revision, d.key.resolution, d.key.start, d.kind, d.taskID, d.probeID, d.basis, d.mode, d.taskName, d.province, d.carrier, d.sum, d.count, d.minimum, d.maximum, d.minAt, d.maxAt, d.curveSum, d.curveCount, d.curveMin, d.curveMax, d.curveMinAt, d.curveMaxAt, d.attempts, d.successes, d.reports, d.available, d.first, d.last, latencyRollupSchemaVersion, now())
 		if err != nil {
 			return err
 		}

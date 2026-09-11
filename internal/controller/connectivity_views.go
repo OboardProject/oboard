@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -118,11 +119,23 @@ func (s *Server) readConnectivityDetails(ctx context.Context, p application.Prin
 		return nil, errors.New("invalid_history_input: cursor window has expired; restart pagination")
 	}
 	window.Duration = window.To.Sub(window.From)
-	fingerprint, _ := json.Marshal([]any{p, view, input, window.From, window.To, days})
+	fingerprint, _ := json.Marshal([]any{p, view, input, window.From, window.To, days, os.Getenv("OBOARD_SLA_PROJECTION_READ")})
 	key := fmt.Sprintf("full:%s:%x", view, sha256.Sum256(fingerprint))
 	entry, err := s.historyReads().getOrBuild(ctx, key, 0, func(buildCtx context.Context) (json.RawMessage, time.Time, error) {
 		metadata := connectivityViewMetadata{Source: "raw_state_events", RetentionClipped: window.Duration < requestedDuration}
 		var response any
+		if view == "sla" && os.Getenv("OBOARD_SLA_PROJECTION_READ") == "1" {
+			built, err := s.readSummarizedSLA(buildCtx, input.ServerID, days, window)
+			if err != nil {
+				return nil, time.Time{}, err
+			}
+			built.Metadata.RetentionClipped = window.Duration < requestedDuration
+			encoded, err := json.Marshal(built)
+			if len(encoded) > latencyResponseMaxBytes-4096 {
+				return nil, time.Time{}, errHistoryTooLarge
+			}
+			return encoded, built.Metadata.GeneratedAt, err
+		}
 		if view == "sla" {
 			history, err := s.store.ListConnectivitySLAHistory(buildCtx, input.ServerID, window.From, window.To)
 			if err != nil {

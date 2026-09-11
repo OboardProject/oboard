@@ -116,7 +116,7 @@ export type LatencyChartResponse = Pick<ConnectivityResponse, 'server_id' | 'ret
     generated_at: string
     observed_through: string | null
     aggregation_state: 'ready' | 'catching_up' | 'unavailable'
-    coverage: { source: 'raw' | 'raw_bounded' | 'summary' | 'mixed'; legacy_measurement_revision?: boolean; measurement_revision_count?: number; retention_clipped: boolean; has_samples: boolean; legacy_curve_reports: boolean }
+    coverage: { source: 'raw' | 'raw_bounded' | 'summary' | 'mixed'; target_ids?: number[]; legacy_measurement_revision?: boolean; measurement_revision_count?: number; retention_clipped: boolean; has_samples: boolean; legacy_curve_reports: boolean }
     statistics_basis: string
     stale: boolean
   }

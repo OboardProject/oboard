@@ -5,6 +5,9 @@ import "context"
 const latencyRollupSchemaVersion = 1
 
 func (s *Store) ensureLatencyRollupSchema(ctx context.Context) error {
+	if err := s.ensureColumn(ctx, "server_latency_probe_results", "measurement_revision", `alter table server_latency_probe_results add column measurement_revision text not null default ''`); err != nil {
+		return err
+	}
 	statements := []string{
 		`create table if not exists latency_rollup_state (
    id integer primary key check(id=1), schema_version integer not null,

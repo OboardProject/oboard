@@ -64,6 +64,9 @@ func insertConnectivityEvent(ctx context.Context, exec connectivityExecer, event
 		return false, err
 	}
 	rows, err := result.RowsAffected()
+	if err == nil && rows == 1 && event.Kind == model.ConnectivityEventProbeResult && event.Source != "latency_probe" {
+		_, err = exec.ExecContext(ctx, `insert into latency_legacy_archive(id,server_id,kind,source,available,latency_ms,effective_at) select id,server_id,kind,source,available,latency_ms,effective_at from server_connectivity_events where server_id=? and event_key=? on conflict(id) do nothing`, event.ServerID, event.EventKey)
+	}
 	return rows == 1, err
 }
 
@@ -382,6 +385,9 @@ func (s *Store) latestConnectivityEventBefore(ctx context.Context, serverID int6
 	return s.latestConnectivityEventBeforeCursor(ctx, serverID, before, kinds, -1)
 }
 func (s *Store) latestConnectivityEventBeforeCursor(ctx context.Context, serverID int64, before time.Time, kinds []model.ConnectivityEventKind, cursor int64) (model.ServerConnectivityEvent, error) {
+	return s.latestConnectivityEventBeforeOn(ctx, s.db, serverID, before, kinds, cursor)
+}
+func (s *Store) latestConnectivityEventBeforeOn(ctx context.Context, db latencyHistoryQueryer, serverID int64, before time.Time, kinds []model.ConnectivityEventKind, cursor int64) (model.ServerConnectivityEvent, error) {
 
 	if len(kinds) == 0 {
 		return model.ServerConnectivityEvent{}, errors.New("connectivity event kinds are required")
@@ -399,7 +405,7 @@ func (s *Store) latestConnectivityEventBeforeCursor(ctx context.Context, serverI
 		candidates[index] = `select * from (select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events indexed by idx_server_connectivity_events_server_kind_time where server_id=? and kind=? and effective_at<?` + bound + ` order by effective_at desc,id desc limit 1)`
 	}
 	query := `select * from (` + strings.Join(candidates, " union all ") + `) order by effective_at desc,id desc limit 1`
-	row := s.db.QueryRowContext(ctx, query, args...)
+	row := db.QueryRowContext(ctx, query, args...)
 	return scanConnectivityEvent(row)
 }
 

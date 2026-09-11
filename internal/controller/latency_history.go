@@ -23,9 +23,10 @@ import (
 const latencyResponseMaxBytes = 2 << 20
 
 type latencyChartInput struct {
-	ServerID  int64  `json:"server_id"`
-	Window    string `json:"window,omitempty"`
-	MaxPoints int    `json:"max_points,omitempty"`
+	TargetIDs []int64 `json:"target_ids,omitempty"`
+	ServerID  int64   `json:"server_id"`
+	Window    string  `json:"window,omitempty"`
+	MaxPoints int     `json:"max_points,omitempty"`
 }
 
 type latencyChartMetadata struct {
@@ -42,10 +43,13 @@ type latencyChartMetadata struct {
 	Stale             bool                 `json:"stale"`
 }
 type latencyChartCoverage struct {
-	Source             string `json:"source"`
-	RetentionClipped   bool   `json:"retention_clipped"`
-	HasSamples         bool   `json:"has_samples"`
-	LegacyCurveReports bool   `json:"legacy_curve_reports"`
+	TargetIDs                 []int64 `json:"target_ids,omitempty"`
+	LegacyMeasurementRevision bool    `json:"legacy_measurement_revision"`
+	MeasurementRevisionCount  int     `json:"measurement_revision_count"`
+	Source                    string  `json:"source"`
+	RetentionClipped          bool    `json:"retention_clipped"`
+	HasSamples                bool    `json:"has_samples"`
+	LegacyCurveReports        bool    `json:"legacy_curve_reports"`
 }
 type latencyChartResponse struct {
 	ServerID              int64                              `json:"server_id"`
@@ -80,6 +84,16 @@ func (s *Server) readLatencyChart(ctx context.Context, p application.Principal, 
 	var response latencyChartResponse
 	if input.ServerID <= 0 || !p.AllowsInt64("server_ids", input.ServerID) {
 		return response, errors.New("resource_denied: server access denied")
+	}
+	if len(input.TargetIDs) > 64 {
+		return response, errors.New("invalid_history_input: at most 64 target IDs")
+	}
+	input.TargetIDs = append([]int64(nil), input.TargetIDs...)
+	sort.Slice(input.TargetIDs, func(i, j int) bool { return input.TargetIDs[i] < input.TargetIDs[j] })
+	for i, id := range input.TargetIDs {
+		if id <= 0 || (i > 0 && id == input.TargetIDs[i-1]) {
+			return response, errors.New("invalid_history_input: invalid target IDs")
+		}
 	}
 	now := time.Now().UTC()
 	if s.latencyHistoryNow != nil {
@@ -119,7 +133,21 @@ func (s *Server) readLatencyChart(ctx context.Context, p application.Principal, 
 	}
 	pointBudget := min(12000, (latencyResponseMaxBytes-128*1024)/(384+6*maxLabelBytes))
 	points := min(input.MaxPoints, max(1, pointBudget/(len(tasks)+2)))
+	summaryRead := os.Getenv("OBOARD_LATENCY_ROLLUP_READ") == "1"
 	interval := time.Duration(math.Ceil(effective.Duration.Seconds()/float64(points))) * time.Second
+	if summaryRead || len(input.TargetIDs) > 0 {
+		base := time.Minute
+		if effective.Duration > time.Hour {
+			base = 5 * time.Minute
+		}
+		if effective.Duration > 24*time.Hour {
+			base = time.Hour
+		}
+		interval = time.Duration(math.Ceil(float64(interval)/float64(base))) * base
+		for int64(math.Ceil(float64(effective.To.UnixNano())/float64(interval)))-effective.From.UnixNano()/int64(interval) > int64(points) {
+			interval += base
+		}
+	}
 	if interval < time.Minute {
 		interval = time.Minute
 	}
@@ -133,14 +161,21 @@ func (s *Server) readLatencyChart(ctx context.Context, p application.Principal, 
 	sort.Strings(semantics)
 	revision := s.store.LatencyHistoryRevision(input.ServerID, effective.To)
 	scopeJSON, _ := json.Marshal(p)
-	keyJSON, _ := json.Marshal([]any{input.ServerID, days, effective.From, effective.To, effective.BucketSeconds, revision, server.LatencyProbeMode, server.LatencyProbePublicTarget, server.LatencyProbeEnabled, server.LatencyProbeSampleCount, server.LatencyProbeIntervalSeconds, server.LatencyProbeMaxTargets, server.IPStack, semantics, sha256.Sum256(scopeJSON), "report-v1"})
+	keyJSON, _ := json.Marshal([]any{input.ServerID, days, effective.From, effective.To, effective.BucketSeconds, revision, server.LatencyProbeMode, server.LatencyProbePublicTarget, server.LatencyProbeEnabled, server.LatencyProbeSampleCount, server.LatencyProbeIntervalSeconds, server.LatencyProbeMaxTargets, server.IPStack, semantics, sha256.Sum256(scopeJSON), "report-v1", summaryRead, input.TargetIDs})
 	key := fmt.Sprintf("chart:%x", sha256.Sum256(keyJSON))
 	entry, err := s.historyReads().getOrBuild(ctx, key, revision, func(buildCtx context.Context) (json.RawMessage, time.Time, error) {
-		result, err := s.store.QueryLatencyChartBuckets(buildCtx, input.ServerID, effective.From, effective.To, interval)
-		if err != nil {
-			return nil, time.Time{}, err
+		var result, legacy store.LatencyBucketResult
+		coverage := store.LatencyReadCoverage{Source: "raw"}
+		var err error
+		if summaryRead || len(input.TargetIDs) > 0 {
+			result, coverage, err = s.store.QueryLatencySummaryChart(buildCtx, input.ServerID, effective.From, effective.To, interval, store.LatencySummaryReadOptions{TargetIDs: input.TargetIDs, ForceRaw: !summaryRead})
+			legacy = coverage.Legacy
+		} else {
+			result, err = s.store.QueryLatencyChartBuckets(buildCtx, input.ServerID, effective.From, effective.To, interval)
+			if err == nil {
+				legacy, err = s.store.QueryLegacyLatencyBuckets(buildCtx, input.ServerID, effective.From, effective.To, interval)
+			}
 		}
-		legacy, err := s.store.QueryLegacyLatencyBuckets(buildCtx, input.ServerID, effective.From, effective.To, interval)
 		if err != nil {
 			return nil, time.Time{}, err
 		}
@@ -177,7 +212,10 @@ func (s *Server) readLatencyChart(ctx context.Context, p application.Principal, 
 			observed = legacy.ObservedThrough
 		}
 		generated := time.Now().UTC()
-		built.Metadata = latencyChartMetadata{EffectiveFrom: effective.From, EffectiveTo: effective.To, ResolutionSeconds: effective.BucketSeconds, GeneratedAt: generated, AggregationState: "ready", Coverage: latencyChartCoverage{Source: "raw", RetentionClipped: effective.Duration < requested.Duration, HasSamples: !observed.IsZero(), LegacyCurveReports: len(legacy.PublicPoints)+len(legacy.Failures) > 0}, StatisticsBasis: "report means weighted by report count; loss uses attempts/successes, falling back to report availability; target statistics use latency reports; legacy connectivity events supplement public curves only; P95 is a percentile of displayed bucket means"}
+		built.Metadata = latencyChartMetadata{EffectiveFrom: effective.From, EffectiveTo: effective.To, ResolutionSeconds: effective.BucketSeconds, GeneratedAt: generated, AggregationState: "ready", Coverage: latencyChartCoverage{TargetIDs: input.TargetIDs, Source: coverage.Source, LegacyMeasurementRevision: coverage.LegacyRevision, MeasurementRevisionCount: coverage.RevisionCount, RetentionClipped: effective.Duration < requested.Duration, HasSamples: !observed.IsZero(), LegacyCurveReports: len(legacy.PublicPoints)+len(legacy.Failures) > 0}, StatisticsBasis: "report means weighted by report count; loss uses attempts/successes, falling back to report availability; target statistics use latency reports; legacy connectivity events supplement public curves only; P95 is a percentile of displayed bucket means"}
+		if coverage.CatchingUp {
+			built.Metadata.AggregationState = "catching_up"
+		}
 		if !observed.IsZero() {
 			built.Metadata.ObservedThrough = &observed
 		}
@@ -226,8 +264,20 @@ func (s *Server) readLatencyChart(ctx context.Context, p application.Principal, 
 func latencyChartRequest(r *http.Request, serverID int64) (latencyChartInput, error) {
 	input := latencyChartInput{ServerID: serverID, Window: r.URL.Query().Get("window")}
 	for key := range r.URL.Query() {
-		if key != "view" && key != "window" && key != "max_points" {
+		if key != "view" && key != "window" && key != "max_points" && key != "target_ids" {
 			return input, fmt.Errorf("unsupported chart parameter: %s", key)
+		}
+	}
+	if raw, ok := r.URL.Query()["target_ids"]; ok {
+		if len(raw) != 1 {
+			return input, errors.New("invalid target filter")
+		}
+		for _, value := range strings.Split(raw[0], ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			if err != nil || id <= 0 {
+				return input, errors.New("invalid target filter")
+			}
+			input.TargetIDs = append(input.TargetIDs, id)
 		}
 	}
 	if raw := r.URL.Query().Get("max_points"); raw != "" {
@@ -245,7 +295,7 @@ func latencyChartRequest(r *http.Request, serverID int64) (latencyChartInput, er
 
 func historyErrorStatus(err error) int {
 	switch {
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, errHistoryBusy), strings.HasPrefix(err.Error(), "history_changed:"):
+	case errors.Is(err, store.ErrHistoryCoverage), errors.Is(err, context.DeadlineExceeded), errors.Is(err, errHistoryBusy), strings.HasPrefix(err.Error(), "history_changed:"):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, errHistoryTooLarge), errors.Is(err, store.ErrLatencyPointBudget), errors.Is(err, store.ErrConnectivityEventBudget):
 		return http.StatusRequestEntityTooLarge
@@ -264,6 +314,8 @@ func historyErrorStatus(err error) int {
 func writeHistoryReadError(w http.ResponseWriter, r *http.Request, err error, machine bool) {
 	code, message := "", ""
 	switch {
+	case errors.Is(err, store.ErrHistoryCoverage):
+		code, message = "history_catching_up", "历史汇总尚未覆盖此范围，请缩短时间范围或稍后刷新"
 	case errors.Is(err, context.DeadlineExceeded):
 		code, message = "history_timeout", "历史查询超时，主控可能正忙；请稍后重试或缩短时间范围"
 	case errors.Is(err, context.Canceled):
@@ -275,6 +327,9 @@ func writeHistoryReadError(w http.ResponseWriter, r *http.Request, err error, ma
 	}
 	if code != "" {
 		w.Header().Set("Retry-After", "5")
+		if code == "history_catching_up" {
+			w.Header().Set("Retry-After", "30")
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		if machine {
 			v2Error(w, r, http.StatusServiceUnavailable, code, message)

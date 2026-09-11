@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 // ConnectivitySLAStats is a duration monoid over adjacent state-machine spans.
 // Zero-length recoveries still split incidents, so WholeDown is not inferred
 // solely from the sum of offline durations.
@@ -37,4 +39,12 @@ func MergeConnectivitySLAStats(a, b ConnectivitySLAStats) ConnectivitySLAStats {
 		}
 	}
 	return result
+}
+
+type ConnectivityOutage struct {
+	StartedAt           time.Time  `json:"started_at"`
+	EndedAt             *time.Time `json:"ended_at"`
+	DurationSeconds     float64    `json:"duration_seconds"`
+	Cause               string     `json:"cause"`
+	StartedBeforeWindow bool       `json:"started_before_window"`
 }

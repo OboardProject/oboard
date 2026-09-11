@@ -534,10 +534,13 @@ func (s *Store) SaveLatencyProbeResults(ctx context.Context, serverID int64, rep
 				continue
 			}
 		}
+		if len(item.MeasurementRevision) > 64 {
+			return errors.New("invalid measurement revision")
+		}
 		if len(item.Error) > 240 {
 			item.Error = item.Error[:240]
 		}
-		result, err := tx.ExecContext(ctx, `insert or ignore into server_latency_probe_results(server_id,report_id,resource_version,probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.ReportID, report.ResourceVersion, item.ProbeID, item.Kind, item.TaskID, item.TaskName, item.Mode, item.Province, item.Carrier, item.Host, item.IP, item.Port, boolInt(item.Available), item.LatencyMS, item.MinLatencyMS, item.P95LatencyMS, item.JitterMS, item.SampleCount, item.SuccessCount, item.Error, checkedAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano))
+		result, err := tx.ExecContext(ctx, `insert or ignore into server_latency_probe_results(server_id,report_id,resource_version,probe_id,kind,task_id,task_name,mode,province,carrier,host,ip,port,available,latency_ms,min_latency_ms,p95_latency_ms,jitter_ms,sample_count,success_count,error,checked_at,created_at,measurement_revision) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, serverID, report.ReportID, report.ResourceVersion, item.ProbeID, item.Kind, item.TaskID, item.TaskName, item.Mode, item.Province, item.Carrier, item.Host, item.IP, item.Port, boolInt(item.Available), item.LatencyMS, item.MinLatencyMS, item.P95LatencyMS, item.JitterMS, item.SampleCount, item.SuccessCount, item.Error, checkedAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), item.MeasurementRevision)
 		if err != nil {
 			return err
 		}

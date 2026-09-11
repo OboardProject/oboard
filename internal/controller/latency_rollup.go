@@ -12,6 +12,10 @@ import (
 )
 
 type latencyRollupSchedule struct {
+	archiveComplete                     bool
+	liveLag                             int64
+	turn                                uint64
+	backfillTurn                        bool
 	latencyEnabled, slaEnabled, slaTurn bool
 	rows                                int
 	delay                               time.Duration
@@ -73,9 +77,15 @@ func (s *Server) runLatencyRollup(ctx context.Context, state *latencyRollupSched
 		state.delay = max(state.delay, 30*time.Second)
 		return state.delay
 	}
-	useSLA := state.slaEnabled && (!state.latencyEnabled || state.slaTurn)
-	state.slaTurn = !state.slaTurn
+	useSLA := state.slaEnabled && (!state.latencyEnabled || state.turn%4 == 3)
+	state.turn++
 	if useSLA {
+		if os.Getenv("OBOARD_HISTORY_BACKFILL_PAUSED") != "1" && state.turn%16 == 0 {
+			count, err := s.store.QueueSLAHistoricalBackfill(batchCtx, at, 16)
+			if err != nil || count > 0 {
+				return state.next(count, time.Since(at), err)
+			}
+		}
 		result, err := s.store.RunSLAProjectionBatch(batchCtx, at, state.rows, buildSLAProjection)
 		if errors.Is(err, store.ErrSLAProjectionDensity) && state.rows < store.LatencyRollupBatchLimit {
 			state.rows = min(store.LatencyRollupBatchLimit, state.rows*2)
@@ -87,7 +97,36 @@ func (s *Server) runLatencyRollup(ctx context.Context, state *latencyRollupSched
 		}
 		return state.next(result.Events+result.Buckets, time.Since(at), err)
 	}
-	result, err := s.store.RunLatencyRollupBatch(batchCtx, at, state.rows)
+	var result store.LatencyRollupResult
+	backfillAllowed := os.Getenv("OBOARD_HISTORY_BACKFILL_PAUSED") != "1"
+	runBackfill := func(limit int) (store.LatencyRollupResult, error) {
+		if state.backfillTurn && !state.archiveComplete {
+			count, e := s.store.RunLatencyLegacyBackfill(batchCtx, limit)
+			if e == nil && count == 0 {
+				state.archiveComplete = true
+			}
+			state.backfillTurn = false
+			if e != nil || count > 0 {
+				return store.LatencyRollupResult{Processed: count}, e
+			}
+		}
+		state.backfillTurn = true
+		return s.store.RunLatencyBackfillBatch(batchCtx, at, limit)
+	}
+	if backfillAllowed && state.turn%12 == 2 && state.liveLag < 5000 {
+		result, err = runBackfill(state.rows)
+	} else {
+		result, err = s.store.RunLatencyRollupBatch(batchCtx, at, state.rows)
+		state.liveLag = result.PendingIDSpan
+		if err == nil && backfillAllowed && result.Processed < state.rows {
+			extra, e := runBackfill(state.rows - result.Processed)
+			result.Processed += extra.Processed
+			result.Buckets += extra.Buckets
+			result.Expired += extra.Expired
+			result.TransactionDuration += extra.TransactionDuration
+			err = e
+		}
+	}
 	if ctx.Err() == nil && (err != nil || result.Processed > 0) && at.Sub(state.lastLog) >= time.Minute {
 		log.Printf("latency rollup: processed=%d buckets=%d expired=%d pending_id_span=%d cursor=%d duration=%s transaction=%s error=%v", result.Processed, result.Buckets, result.Expired, result.PendingIDSpan, result.Cursor, result.Duration, result.TransactionDuration, err)
 		state.lastLog = at

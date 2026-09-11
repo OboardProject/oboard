@@ -155,7 +155,7 @@ export function LatencyDashboard({
         <span>{response.metadata.stale ? '暂时显示旧结果 · ' : ''}数据截至 {response.metadata.observed_through ? new Date(response.metadata.observed_through).toLocaleString() : '尚无报告'} · 每点 {response.metadata.resolution_seconds} 秒</span>
         {response.metadata.coverage.retention_clipped && <span>已按监控保留期限裁剪范围。</span>}
         {response.metadata.coverage.legacy_curve_reports && <span>历史连通性记录仅补充公网曲线；目标统计以探测报告为准。</span>}
-      {response.metadata.aggregation_state === 'catching_up' && <span>历史汇总追赶中，本次使用有上限的明细读取。</span>}
+      {response.metadata.aggregation_state === 'catching_up' && <span>此范围尚未使用完整摘要，本次使用有上限的明细读取。</span>}
         {response.probe_target_stats.some(stat => (stat.measurement_revision_count || 0) > 1) && <span>窗口内存在目标测量变化，统计包含多个修订。</span>}
         {response.metadata.coverage.legacy_measurement_revision && <span>部分历史报告未记录完整测量修订，历史 IP 家族策略未知。</span>}
       </div>}

@@ -223,7 +223,18 @@ func validLatencyProbeHostname(host string) bool {
 	return true
 }
 
-func latencyProbeTargets(resource latencyProbeResource, server model.Server, tasks []model.LatencyProbeTask) []model.LatencyProbeTarget {
+func latencyProbeTargets(resource latencyProbeResource, server model.Server, tasks []model.LatencyProbeTask) (result []model.LatencyProbeTarget) {
+	defer func() {
+		for i := range result {
+			t := &result[i]
+			mode := t.Mode
+			if mode == "" {
+				mode = server.LatencyProbeMode
+			}
+			data, _ := json.Marshal([]any{"measurement_v1", t.Kind, t.TaskID, t.ProbeID, mode, t.URL, t.Host, t.IP, t.Port, server.IPStack, server.PublicIPv4 != "", server.PublicIPv6 != ""})
+			t.MeasurementRevision = fmt.Sprintf("%x", sha256.Sum256(data))
+		}
+	}()
 	publicTarget := effectiveLatencyProbePublicTarget(server)
 	publicHost := "cp.cloudflare.com"
 	if publicTarget == model.ConnectivityProbeTarget12306 {

@@ -20,11 +20,13 @@ var ErrSLAProjectionChanged = errors.New("SLA projection changed; retry batch")
 var ErrSLAProjectionDensity = errors.New("SLA event density exceeds one bounded bucket")
 
 type SLAProjectionBucket struct {
+	Outages    []model.ConnectivityOutage
 	Start      int64
 	Stats      model.ConnectivitySLAStats
 	Checkpoint json.RawMessage
 }
 type SLAProjectionWork struct {
+	ReadStepSeconds                                                          int64
 	CoverageChanged                                                          bool
 	CoverageCheckpoint                                                       json.RawMessage
 	CoverageBaseline                                                         []model.ServerConnectivityEvent
@@ -62,6 +64,15 @@ func (s *Store) ensureSLAProjectionSchema(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, query); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn(ctx, "sla_projection_buckets", "outages_json", `alter table sla_projection_buckets add column outages_json text not null default '[]'`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "sla_projection_buckets", "details_complete", `alter table sla_projection_buckets add column details_complete integer not null default 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "sla_projection_servers", "details_version", `alter table sla_projection_servers add column details_version integer not null default 0`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -158,7 +169,7 @@ func (s *Store) scanSLAProjectionEvents(ctx context.Context, at time.Time, limit
 		state.enrolled = server
 	}
 	for server, times := range marks {
-		if _, err := tx.ExecContext(ctx, `insert into sla_projection_servers(server_id,coverage_from,frontier,updated_at) select id,max(?,cast(unixepoch(created_at)/300 as integer)*300),max(?,cast(unixepoch(created_at)/300 as integer)*300),? from servers where id=? on conflict(server_id) do nothing`, state.start, state.start, now(), server); err != nil {
+		if _, err := tx.ExecContext(ctx, `insert into sla_projection_servers(server_id,coverage_from,frontier,updated_at,details_version) select id,max(?,cast(unixepoch(created_at)/300 as integer)*300),max(?,cast(unixepoch(created_at)/300 as integer)*300),?,1 from servers where id=? on conflict(server_id) do nothing`, state.start, state.start, now(), server); err != nil {
 			return 0, err
 		}
 		var coverage, frontier int64
@@ -214,26 +225,36 @@ func (s *Store) RunSLAProjectionBatch(ctx context.Context, at time.Time, limit i
 	if count >= limit {
 		return result, nil
 	}
-	work, err := s.prepareSLAProjectionWork(ctx, at, limit-count)
-	if err == sql.ErrNoRows {
-		return result, nil
-	}
-	if err != nil {
+	if _, err := s.db.ExecContext(ctx, `update sla_projection_servers set seed_json='',dirty_from=coverage_from,repair_next=coverage_from,dirty_until=frontier,phase='correcting',details_version=1,revision=revision+1 where server_id in (select server_id from sla_projection_servers where details_version=0 limit 1)`); err != nil {
 		return result, err
 	}
-	result.ServerID = work.ServerID
-	result.Events += len(work.Events)
-	output, err := build(work)
-	if err != nil {
-		s.deferSLAProjection(ctx, work.ServerID, work.Revision, at)
-		return result, err
+	for jobs := 0; jobs < 16 && result.Events < limit; jobs++ {
+		work, err := s.prepareSLAProjectionWork(ctx, at, limit-result.Events)
+		if err == sql.ErrNoRows {
+			return result, nil
+		}
+		if err != nil {
+			return result, err
+		}
+		result.ServerID = work.ServerID
+		result.Events += len(work.Events)
+		output, err := build(work)
+		if err != nil {
+			s.deferSLAProjection(ctx, work.ServerID, work.Revision, at)
+			return result, err
+		}
+		phase, err := s.commitSLAProjection(ctx, work, output, at.UTC().Truncate(5*time.Minute).Unix())
+		result.Phase = phase
+		if err != nil {
+			return result, err
+		}
+		result.Buckets += len(output.Buckets)
+		// Yield after a repair chunk so other lanes retain predictable turns.
+		if work.Repair {
+			return result, nil
+		}
 	}
-	phase, err := s.commitSLAProjection(ctx, work, output, at.UTC().Truncate(5*time.Minute).Unix())
-	result.Phase = phase
-	if err == nil {
-		result.Buckets = len(output.Buckets)
-	}
-	return result, err
+	return result, nil
 }
 
 func (s *Store) deferSLAProjection(ctx context.Context, id, revision int64, at time.Time) {
@@ -429,7 +450,8 @@ func (s *Store) commitSLAProjection(ctx context.Context, work SLAProjectionWork,
 	}
 	for _, bucket := range output.Buckets {
 		data, _ := json.Marshal(bucket.Stats)
-		if _, err := tx.ExecContext(ctx, `insert into sla_projection_buckets(server_id,bucket_start,stats_json,end_checkpoint,event_cursor,algorithm_version) values(?,?,?,?,?,?) on conflict(server_id,bucket_start) do update set stats_json=excluded.stats_json,end_checkpoint=excluded.end_checkpoint,event_cursor=excluded.event_cursor,algorithm_version=excluded.algorithm_version`, work.ServerID, bucket.Start, string(data), string(bucket.Checkpoint), work.Cursor, SLAProjectionVersion); err != nil {
+		details, _ := json.Marshal(bucket.Outages)
+		if _, err := tx.ExecContext(ctx, `insert into sla_projection_buckets(server_id,bucket_start,stats_json,end_checkpoint,event_cursor,algorithm_version,outages_json,details_complete) values(?,?,?,?,?,?,?,1) on conflict(server_id,bucket_start) do update set stats_json=excluded.stats_json,end_checkpoint=excluded.end_checkpoint,event_cursor=excluded.event_cursor,algorithm_version=excluded.algorithm_version,outages_json=excluded.outages_json,details_complete=1`, work.ServerID, bucket.Start, string(data), string(bucket.Checkpoint), work.Cursor, SLAProjectionVersion, string(details)); err != nil {
 			return "", err
 		}
 	}
@@ -480,4 +502,46 @@ func (s *Store) InspectSLABuckets(ctx context.Context, serverID, from, to int64)
 		result = append(result, bucket)
 	}
 	return result, rows.Err()
+}
+
+// Historical enrollment changes only the repair queue; work remains in the
+// ordinary bounded projector and is resumable through its existing checkpoints.
+func (s *Store) QueueSLAHistoricalBackfill(ctx context.Context, at time.Time, limit int) (int, error) {
+	settings, err := s.ListSettings(ctx)
+	if err != nil {
+		return 0, err
+	}
+	floor := slaRetentionFloor(at.Add(-time.Duration(ServerMonitoringRetentionDays(settings)) * 24 * time.Hour))
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `select q.server_id,max(?,cast(unixepoch(s.created_at)/300 as integer)*300) from sla_projection_servers q join servers s on s.id=q.server_id where q.coverage_from>max(?,cast(unixepoch(s.created_at)/300 as integer)*300) order by q.server_id limit ?`, floor, floor, min(32, max(1, limit)))
+	if err != nil {
+		return 0, err
+	}
+	type item struct{ id, start int64 }
+	items := []item{}
+	for rows.Next() {
+		var x item
+		if err := rows.Scan(&x.id, &x.start); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		items = append(items, x)
+	}
+	readErr, closeErr := rows.Err(), rows.Close()
+	if readErr != nil {
+		return 0, readErr
+	}
+	if closeErr != nil {
+		return 0, closeErr
+	}
+	for _, x := range items {
+		if _, err := tx.ExecContext(ctx, `update sla_projection_servers set coverage_from=?,seed_json='',dirty_from=?,repair_next=?,dirty_until=max(coalesce(dirty_until,0),frontier),phase='correcting',retry_after=0,revision=revision+1 where server_id=?`, x.start, x.start, x.start, x.id); err != nil {
+			return 0, err
+		}
+	}
+	return len(items), tx.Commit()
 }

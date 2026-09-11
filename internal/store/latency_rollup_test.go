@@ -213,7 +213,7 @@ func TestLatencyRollupWriteBudgetAndMeasurementIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Processed != 64 || first.Buckets != 128 || first.PendingIDSpan != 436 {
+	if first.Processed != 500 || first.Buckets != 1000 || first.PendingIDSpan != 0 {
 		t.Fatalf("budget=%+v", first)
 	}
 	for {

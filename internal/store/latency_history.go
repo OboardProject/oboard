@@ -75,13 +75,30 @@ func (s *Store) invalidateLateLatency(serverID int64, at time.Time) {
 // Legacy sources predate the latency report lane. Generated latency_probe events
 // are never read here, including after their authoritative reports are cleared.
 func (s *Store) QueryLegacyLatencyBuckets(ctx context.Context, serverID int64, from, to time.Time, bucket time.Duration) (LatencyBucketResult, error) {
+	return s.queryLegacyLatencyBuckets(ctx, s.db, serverID, from, to, bucket, false)
+}
+
+type latencyHistoryQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func (s *Store) queryLegacyLatencyBuckets(ctx context.Context, db latencyHistoryQueryer, serverID int64, from, to time.Time, bucket time.Duration, utcGrid bool) (LatencyBucketResult, error) {
 	result := LatencyBucketResult{}
 	if serverID <= 0 || from.Nanosecond() != 0 || to.Nanosecond() != 0 || !to.After(from) || bucket < time.Second || (to.Sub(from)+bucket-1)/bucket > 360 {
 		return result, errors.New("invalid legacy latency window")
 	}
-	rows, err := s.db.QueryContext(ctx, `select cast((unixepoch(effective_at)-unixepoch(?))/? as integer),
+	table, err := s.legacyLatencySource(ctx, db, serverID, from, to)
+	if err != nil {
+		return result, err
+	}
+	origin := from
+	if utcGrid {
+		origin = from.UTC().Truncate(bucket)
+	}
+	rows, err := db.QueryContext(ctx, `select cast((unixepoch(effective_at)-unixepoch(?))/? as integer),
  avg(case when available=1 and latency_ms>0 then latency_ms end),min(case when available=1 and latency_ms>0 then latency_ms end),max(case when available=1 and latency_ms>0 then latency_ms end),count(case when available=1 and latency_ms>0 then 1 end),count(case when available=0 then 1 end),max(effective_at)
- from server_connectivity_events where server_id=? and kind='probe_result' and source<>'latency_probe' and effective_at>=? and effective_at<? group by 1 order by 1`, from.UTC().Format("2006-01-02T15:04:05.000000000Z"), int64(bucket/time.Second), serverID, from.UTC().Format("2006-01-02T15:04:05.000000000Z"), to.UTC().Format("2006-01-02T15:04:05.000000000Z"))
+ from `+table+` where server_id=? and kind='probe_result' and source<>'latency_probe' and effective_at>=? and effective_at<? group by 1 order by 1`, origin.UTC().Format("2006-01-02T15:04:05.000000000Z"), int64(bucket/time.Second), serverID, from.UTC().Format("2006-01-02T15:04:05.000000000Z"), to.UTC().Format("2006-01-02T15:04:05.000000000Z"))
 	if err != nil {
 		return result, err
 	}
@@ -94,7 +111,10 @@ func (s *Store) QueryLegacyLatencyBuckets(ctx context.Context, serverID int64, f
 		if err := rows.Scan(&index, &average, &minimum, &maximum, &count, &failed, &observed); err != nil {
 			return result, err
 		}
-		at := from.Add(time.Duration(index) * bucket)
+		at := origin.Add(time.Duration(index) * bucket)
+		if at.Before(from) {
+			at = from
+		}
 		if count > 0 {
 			result.PublicPoints = append(result.PublicPoints, model.ServerRegionalLatencyPoint{Kind: "public", Available: true, CheckedAt: at, LatencyMS: average.Float64, MinLatencyMS: minimum.Int64, MaxLatencyMS: maximum.Int64, Count: count})
 		}

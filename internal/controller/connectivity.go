@@ -80,13 +80,7 @@ type connectivityFailedProbePoint struct {
 	Count int       `json:"count"`
 }
 
-type connectivityOutage struct {
-	StartedAt           time.Time  `json:"started_at"`
-	EndedAt             *time.Time `json:"ended_at"`
-	DurationSeconds     float64    `json:"duration_seconds"`
-	Cause               string     `json:"cause"`
-	StartedBeforeWindow bool       `json:"started_before_window"`
-}
+type connectivityOutage = model.ConnectivityOutage
 
 type connectivityResponse struct {
 	ServerID              int64                              `json:"server_id"`

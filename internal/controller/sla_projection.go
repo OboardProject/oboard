@@ -78,9 +78,13 @@ func buildSLAProjection(work store.SLAProjectionWork) (store.SLAProjectionOutput
 		output.CoverageSeed = encodeSLACheckpoint(coverage)
 	}
 
+	step := work.ReadStepSeconds
+	if step <= 0 {
+		step = 300
+	}
 	index := 0
-	for start := work.From; start < work.To; start += 300 {
-		from, to := time.Unix(start, 0).UTC(), time.Unix(start+300, 0).UTC()
+	for start := work.From; start < work.To; {
+		from, to := time.Unix(start, 0).UTC(), time.Unix(min(work.To, (start/step+1)*step), 0).UTC()
 		end := index
 		for end < len(work.Events) && work.Events[end].EffectiveAt.Before(to) {
 			end++
@@ -107,8 +111,12 @@ func buildSLAProjection(work store.SLAProjectionWork) (store.SLAProjectionOutput
 			}
 		}
 		stats.WholeDown = stats.StartsDown && stats.EndsDown && stats.OutageCount == 1 && stats.OfflineNS == stats.DurationNS
-		output.Buckets = append(output.Buckets, store.SLAProjectionBucket{Start: start, Stats: stats, Checkpoint: encodeSLACheckpoint(next)})
+		if len(outages) > 10 {
+			outages = outages[len(outages)-10:]
+		}
+		output.Buckets = append(output.Buckets, store.SLAProjectionBucket{Start: start, Stats: stats, Outages: outages, Checkpoint: encodeSLACheckpoint(next)})
 		state = next
+		start = to.Unix()
 	}
 	return output, nil
 }

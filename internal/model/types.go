@@ -2191,17 +2191,18 @@ type ExternalEgressProbePlan struct {
 }
 
 type LatencyProbeTarget struct {
-	Mode     LatencyProbeMode `json:"mode,omitempty"`
-	URL      string           `json:"url,omitempty"`
-	ProbeID  string           `json:"probe_id"`
-	Kind     string           `json:"kind"`
-	TaskID   int64            `json:"task_id,omitempty"`
-	TaskName string           `json:"task_name,omitempty"`
-	Province string           `json:"province,omitempty"`
-	Carrier  string           `json:"carrier,omitempty"`
-	Host     string           `json:"host"`
-	IP       string           `json:"ip,omitempty"`
-	Port     int              `json:"port"`
+	MeasurementRevision string           `json:"measurement_revision,omitempty"`
+	Mode                LatencyProbeMode `json:"mode,omitempty"`
+	URL                 string           `json:"url,omitempty"`
+	ProbeID             string           `json:"probe_id"`
+	Kind                string           `json:"kind"`
+	TaskID              int64            `json:"task_id,omitempty"`
+	TaskName            string           `json:"task_name,omitempty"`
+	Province            string           `json:"province,omitempty"`
+	Carrier             string           `json:"carrier,omitempty"`
+	Host                string           `json:"host"`
+	IP                  string           `json:"ip,omitempty"`
+	Port                int              `json:"port"`
 	// IntervalSeconds is the autonomous cadence for this single target. Zero means the plan cadence.
 	IntervalSeconds int `json:"interval_seconds,omitempty"`
 }
@@ -2241,25 +2242,26 @@ type LatencyProbeTargetsPlan struct {
 }
 
 type LatencyProbeResult struct {
-	ProbeID      string    `json:"probe_id"`
-	Kind         string    `json:"kind"`
-	TaskID       int64     `json:"task_id,omitempty"`
-	TaskName     string    `json:"task_name,omitempty"`
-	Mode         string    `json:"mode"`
-	Province     string    `json:"province"`
-	Carrier      string    `json:"carrier"`
-	Host         string    `json:"host"`
-	IP           string    `json:"ip"`
-	Port         int       `json:"port"`
-	Available    bool      `json:"available"`
-	LatencyMS    int64     `json:"latency_ms"`
-	MinLatencyMS int64     `json:"min_latency_ms"`
-	P95LatencyMS int64     `json:"p95_latency_ms"`
-	JitterMS     int64     `json:"jitter_ms"`
-	SampleCount  int       `json:"sample_count"`
-	SuccessCount int       `json:"success_count"`
-	Error        string    `json:"error,omitempty"`
-	CheckedAt    time.Time `json:"checked_at"`
+	MeasurementRevision string    `json:"measurement_revision,omitempty"`
+	ProbeID             string    `json:"probe_id"`
+	Kind                string    `json:"kind"`
+	TaskID              int64     `json:"task_id,omitempty"`
+	TaskName            string    `json:"task_name,omitempty"`
+	Mode                string    `json:"mode"`
+	Province            string    `json:"province"`
+	Carrier             string    `json:"carrier"`
+	Host                string    `json:"host"`
+	IP                  string    `json:"ip"`
+	Port                int       `json:"port"`
+	Available           bool      `json:"available"`
+	LatencyMS           int64     `json:"latency_ms"`
+	MinLatencyMS        int64     `json:"min_latency_ms"`
+	P95LatencyMS        int64     `json:"p95_latency_ms"`
+	JitterMS            int64     `json:"jitter_ms"`
+	SampleCount         int       `json:"sample_count"`
+	SuccessCount        int       `json:"success_count"`
+	Error               string    `json:"error,omitempty"`
+	CheckedAt           time.Time `json:"checked_at"`
 }
 
 type ServerRegionalLatencyPoint struct {
@@ -2277,27 +2279,28 @@ type ServerRegionalLatencyPoint struct {
 }
 
 type LatencyProbeTargetStat struct {
-	Key             string     `json:"key"`
-	Kind            string     `json:"kind"`
-	TaskID          int64      `json:"task_id,omitempty"`
-	TaskName        string     `json:"task_name,omitempty"`
-	Mode            string     `json:"mode,omitempty"`
-	Province        string     `json:"province,omitempty"`
-	Carrier         string     `json:"carrier,omitempty"`
-	AvgMS           *float64   `json:"avg_ms"`
-	MinMS           *int64     `json:"min_ms"`
-	MaxMS           *int64     `json:"max_ms"`
-	JitterMS        *float64   `json:"jitter_ms"`
-	SampleCount     int64      `json:"sample_count"`
-	SuccessCount    int64      `json:"success_count"`
-	ReportCount     int64      `json:"report_count"`
-	AvailableCount  int64      `json:"available_count"`
-	LossPercent     *float64   `json:"loss_percent"`
-	SuccessPercent  *float64   `json:"success_percent"`
-	PeakLatencyMS   *float64   `json:"peak_latency_ms,omitempty"`
-	PeakLatencyAt   *time.Time `json:"peak_latency_at,omitempty"`
-	PeakLossPercent *float64   `json:"peak_loss_percent,omitempty"`
-	PeakLossAt      *time.Time `json:"peak_loss_at,omitempty"`
+	MeasurementRevisionCount int        `json:"measurement_revision_count,omitempty"`
+	Key                      string     `json:"key"`
+	Kind                     string     `json:"kind"`
+	TaskID                   int64      `json:"task_id,omitempty"`
+	TaskName                 string     `json:"task_name,omitempty"`
+	Mode                     string     `json:"mode,omitempty"`
+	Province                 string     `json:"province,omitempty"`
+	Carrier                  string     `json:"carrier,omitempty"`
+	AvgMS                    *float64   `json:"avg_ms"`
+	MinMS                    *int64     `json:"min_ms"`
+	MaxMS                    *int64     `json:"max_ms"`
+	JitterMS                 *float64   `json:"jitter_ms"`
+	SampleCount              int64      `json:"sample_count"`
+	SuccessCount             int64      `json:"success_count"`
+	ReportCount              int64      `json:"report_count"`
+	AvailableCount           int64      `json:"available_count"`
+	LossPercent              *float64   `json:"loss_percent"`
+	SuccessPercent           *float64   `json:"success_percent"`
+	PeakLatencyMS            *float64   `json:"peak_latency_ms,omitempty"`
+	PeakLatencyAt            *time.Time `json:"peak_latency_at,omitempty"`
+	PeakLossPercent          *float64   `json:"peak_loss_percent,omitempty"`
+	PeakLossAt               *time.Time `json:"peak_loss_at,omitempty"`
 }
 
 type LatencyProbeResultReport struct {
