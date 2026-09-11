@@ -904,7 +904,7 @@ func (st *planAccessState) validatePlanCapacity(target *planAccessState, paths [
 	}
 	issues := []string{}
 	for _, inbound := range inbounds {
-		if counts[inbound.ID] > 1 && !InboundSupportsMultipleUsers(inbound) {
+		if counts[inbound.ID] > 1 && !InboundSupportsMultipleIdentities(inbound) {
 			issues = append(issues, fmt.Sprintf("入口 %s 仅支持单用户，当前预计 %d 个有效用户", inbound.Name, counts[inbound.ID]))
 		}
 	}

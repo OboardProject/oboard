@@ -401,3 +401,46 @@ func TestProxyPathReuseAutomationChangesetAndResourceAuthorization(t *testing.T)
 		}
 	})
 }
+
+// A Snell inbound serves every identity on its own single-user listener, so a
+// second enabled branch is projected as another listener rather than an
+// ambiguous user on a shared one. Only protocols that really cannot separate
+// identities — legacy Shadowsocks methods without a user table — stay limited
+// to one branch.
+func TestProxyPathReuseAllowsSecondBranchOnPerIdentityListenerProtocol(t *testing.T) {
+	fixture := newProxyPathReuseFixture(t)
+	ctx := context.Background()
+	serverA, serverD := fixture.servers["A"], fixture.servers["D"]
+	newRootWithBranch := func(name string, protocol model.Protocol, port int, config string) model.Inbound {
+		inbound := model.Inbound{ServerID: serverA.ID, Name: name, Protocol: protocol, ListenIP: "0.0.0.0", Port: port, ConfigJSON: config, Enabled: true}
+		if err := fixture.db.CreateInbound(ctx, &inbound); err != nil {
+			t.Fatal(err)
+		}
+		path := model.ProxyPath{Kind: model.ProxyPathKindChain, NameMode: model.ProxyPathNameAuto, InboundID: inbound.ID, ExitRegionMode: "auto", Secret: name + "-secret", Enabled: true}
+		if err := fixture.db.CreateProxyPath(ctx, &path); err != nil {
+			t.Fatal(err)
+		}
+		exitID := serverD.ID
+		step := model.ProxyPathStep{PathID: path.ID, Position: 1, NodeType: model.ProxyPathStepServerInbound, TransportMode: model.ProxyPathTransportSingBox, ServerID: &exitID, ConfigJSON: `{"chain_protocol":"shadowsocks","chain_method":"2022-blake3-aes-128-gcm"}`}
+		if err := fixture.db.CreateProxyPathStep(ctx, &step); err != nil {
+			t.Fatal(err)
+		}
+		return inbound
+	}
+	snell := newRootWithBranch("snell-root", model.ProtocolSnell, 10000, `{"version":4,"psk":"0123456789abcdef0123456789abcdef"}`)
+	legacySS := newRootWithBranch("legacy-ss-root", model.ProtocolSS, 10001, `{"method":"aes-128-gcm"}`)
+
+	request := proxyPathReuseRequest{Sources: []proxyPathReuseSource{{InboundID: snell.ID}}, TargetServerID: fixture.servers["B"].ID, TargetKind: "existing", TargetInboundID: fixture.target.ID}
+	plan, err := fixture.server.planProxyPathReuse(ctx, request, false)
+	if err != nil {
+		t.Fatalf("second snell branch rejected: %v", err)
+	}
+	if len(plan.Writes) != 1 || plan.Writes[0].Path.InboundID != snell.ID || plan.Writes[0].ExistingPathID != 0 {
+		t.Fatalf("snell branch plan = %#v", plan.Writes)
+	}
+
+	request.Sources = []proxyPathReuseSource{{InboundID: legacySS.ID}}
+	if _, err := fixture.server.planProxyPathReuse(ctx, request, false); err == nil || !strings.Contains(err.Error(), "不支持多个代理分支") {
+		t.Fatalf("second legacy shadowsocks branch error = %v", err)
+	}
+}

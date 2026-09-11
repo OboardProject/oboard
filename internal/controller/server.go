@@ -11101,7 +11101,7 @@ func (s *Server) validateInboundPathReuse(ctx context.Context, inboundID, curren
 			count++
 		}
 	}
-	if count > 1 && !core.InboundSupportsMultipleUsers(*inbound) {
+	if count > 1 && !core.InboundSupportsMultipleIdentities(*inbound) {
 		return errors.New("该入口协议不支持分支复用，请只保留一条代理路径")
 	}
 	return nil

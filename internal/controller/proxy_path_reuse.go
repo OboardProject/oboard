@@ -428,7 +428,7 @@ func (s *Server) planProxyPathReuse(ctx context.Context, request proxyPathReuseR
 				count++
 			}
 		}
-		if count > 1 && !core.InboundSupportsMultipleUsers(inbound) {
+		if count > 1 && !core.InboundSupportsMultipleIdentities(inbound) {
 			return nil, errors.New("来源入口协议不支持多个代理分支")
 		}
 	}

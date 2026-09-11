@@ -3482,7 +3482,13 @@ func firstActiveUser(users []model.User) *model.User {
 // scattered InboundSupportsMultipleUsers / protocolHasRoutingAuthUser helpers so
 // a newly added protocol capability cannot be missed in one path.
 type InboundAuthCapabilities struct {
-	MultiUser           bool
+	MultiUser bool
+	// PerIdentityListener marks a protocol that carries several authorized
+	// identities by fanning one panel inbound out into one single-user listener
+	// per identity instead of sharing one multi-user listener. Snell works that
+	// way: every (user, branch) pair gets its own port and PSK, so capacity and
+	// branch checks must not read MultiUser alone.
+	PerIdentityListener bool
 	RoutingAuthUser     bool
 	HasServerCredential bool
 	HasUserCredential   bool
@@ -3506,7 +3512,7 @@ func AuthCapabilities(inbound model.Inbound) InboundAuthCapabilities {
 		// projected into one single-user listener per identity. Each listener
 		// authenticates with its own PSK and carries no user table, which also
 		// means route rules match it by inbound tag instead of auth_user.
-		return InboundAuthCapabilities{MultiUser: false, RoutingAuthUser: false, HasServerCredential: false, HasUserCredential: true}
+		return InboundAuthCapabilities{MultiUser: false, PerIdentityListener: true, RoutingAuthUser: false, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSocks:
 		return InboundAuthCapabilities{MultiUser: true, RoutingAuthUser: true, HasServerCredential: false, HasUserCredential: true}
 	case model.ProtocolSSH:
@@ -3522,6 +3528,16 @@ func AuthCapabilities(inbound model.Inbound) InboundAuthCapabilities {
 
 func InboundSupportsMultipleUsers(inbound model.Inbound) bool {
 	return AuthCapabilities(inbound).MultiUser
+}
+
+// InboundSupportsMultipleIdentities reports whether one panel inbound can serve
+// more than one authorized identity — either on a shared multi-user listener or
+// through a per-identity listener fan-out. User capacity and proxy path branch
+// checks must read this, because MultiUser only answers the narrower question of
+// whether a single listener can carry several users.
+func InboundSupportsMultipleIdentities(inbound model.Inbound) bool {
+	capabilities := AuthCapabilities(inbound)
+	return capabilities.MultiUser || capabilities.PerIdentityListener
 }
 
 // protocolHasRoutingAuthUser reports whether sing-box route rules can match
