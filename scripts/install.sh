@@ -647,6 +647,18 @@ clear_bootstrap_admin_password() {
   BOOTSTRAP_ADMIN_PASSWORD_PERSISTED=0
 }
 
+initialize_controller_env() {
+  local template=$1 key
+  [ ! -f "$CONTROLLER_ENV" ] || return 0
+  cp "$template" "$CONTROLLER_ENV"
+  chmod 0600 "$CONTROLLER_ENV"
+  if [ "$ACTION" != install ] || [ "${CONTROLLER_DATA_EXISTED:-0}" = 1 ]; then
+    for key in OBOARD_LATENCY_ROLLUP_WRITE OBOARD_LATENCY_ROLLUP_READ OBOARD_SLA_PROJECTION_WRITE OBOARD_SLA_PROJECTION_READ; do
+      set_controller_env_value "$key" 0
+    done
+  fi
+}
+
 prepare_controller_env() {
   local env_file=$CONTROLLER_ENV
   if [ ! -f "$env_file" ]; then
@@ -1343,10 +1355,7 @@ install_component() {
         if [ -d "$work/downloads" ]; then
           replace_tree_atomic "$work/downloads" "$CONTROLLER_DOWNLOADS_DIR" oboard:oboard
         fi
-        if [ ! -f "$CONTROLLER_ENV" ]; then
-          cp "$work/deploy/controller.env.example" "$CONTROLLER_ENV"
-          chmod 0600 "$CONTROLLER_ENV"
-        fi
+        initialize_controller_env "$work/deploy/controller.env.example"
         prepare_controller_env
         configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"
@@ -1392,10 +1401,7 @@ install_component() {
         if [ -d "$work/downloads" ]; then
           replace_tree_atomic "$work/downloads" "$CONTROLLER_DOWNLOADS_DIR" oboard:oboard
         fi
-        if [ ! -f "$CONTROLLER_ENV" ]; then
-          cp "$work/deploy/controller.env.example" "$CONTROLLER_ENV"
-          chmod 0600 "$CONTROLLER_ENV"
-        fi
+        initialize_controller_env "$work/deploy/controller.env.example"
         prepare_controller_env
         configure_controller_paths
         set_controller_env_value OBOARD_UPDATE_CHANNEL "$INSTALL_CHANNEL"

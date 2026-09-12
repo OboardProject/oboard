@@ -1282,3 +1282,58 @@ func assertPathMode(t *testing.T, path string, expected os.FileMode) {
 		t.Fatalf("%s mode = %04o, want %04o", path, actual, expected)
 	}
 }
+
+func TestControllerInstallHistorySummaryDefaults(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	scriptBytes, err := os.ReadFile(filepath.Join(root, "scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(scriptBytes)
+	for _, tc := range []struct {
+		name, action, existing string
+		data                   bool
+		want                   string
+	}{
+		{"fresh", "install", "", false, "1"},
+		{"upgrade-missing-config", "update", "", false, "0"},
+		{"reinstall-with-data", "install", "", true, "0"},
+		{"old-config", "update", "OBOARD_ADDR=:2787\n", true, ""},
+		{"explicit-disabled", "install", "OBOARD_LATENCY_ROLLUP_READ=0\n", false, ""},
+		{"enabled-config", "update", "OBOARD_LATENCY_ROLLUP_READ=1\n", true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			env := filepath.Join(dir, "controller.env")
+			if tc.existing != "" {
+				if err := os.WriteFile(env, []byte(tc.existing), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			data := "0"
+			if tc.data {
+				data = "1"
+			}
+			harness := strings.Join([]string{"set -eu", "CONTROLLER_CONFIG_DIR=" + shellQuote(dir), "CONTROLLER_ENV=" + shellQuote(env), "ACTION=" + tc.action, "CONTROLLER_DATA_EXISTED=" + data, extractShellFunction(t, script, "set_controller_env_value"), extractShellFunction(t, script, "initialize_controller_env"), "initialize_controller_env " + shellQuote(filepath.Join(root, "deploy", "controller.env.example"))}, "\n")
+			if out, err := exec.Command(testPOSIXShell(t), "-c", harness).CombinedOutput(); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			got, err := os.ReadFile(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.existing != "" {
+				if string(got) != tc.existing {
+					t.Fatal("existing configuration changed")
+				}
+				return
+			}
+			for _, key := range []string{"OBOARD_LATENCY_ROLLUP_WRITE", "OBOARD_LATENCY_ROLLUP_READ", "OBOARD_SLA_PROJECTION_WRITE", "OBOARD_SLA_PROJECTION_READ"} {
+				if !strings.Contains(string(got), key+"="+tc.want+"\n") && !strings.Contains(string(got), key+"=\""+tc.want+"\"\n") {
+					t.Errorf("wrong default for %s", key)
+				}
+			}
+		})
+	}
+}
