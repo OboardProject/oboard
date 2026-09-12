@@ -35,6 +35,51 @@ func TestProxyCredentialSelectionRequiresExactPersistedScope(t *testing.T) {
 	}
 }
 
+// TestIncoherentDeviceIdentityIsNeverProjected starts from the stale state a
+// credential rotation can leave behind: an account row whose credential epoch
+// moved without a device hash (or the reverse), plus a proxy credential still
+// stored against that same pair. Issuance already refuses such an identity, so
+// selection must refuse it too - otherwise the secrets reach an SSH deployment
+// payload and the Agent rejects the entire plan for that server, taking every
+// other user on the node down with it.
+func TestIncoherentDeviceIdentityIsNeverProjected(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		deviceIDHash string
+		epoch        int64
+		coherent     bool
+	}{
+		{"legacy account", "", 0, true},
+		{"device bound", "0123456789abcdef", 2, true},
+		{"epoch without device", "", 4, false},
+		{"device without epoch", "0123456789abcdef", 0, false},
+		{"device with negative epoch", "0123456789abcdef", -1, false},
+		{"blank device with epoch", "   ", 4, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ConsistentDeviceCredentialIdentity(test.deviceIDHash, test.epoch); got != test.coherent {
+				t.Fatalf("coherent = %v want %v", got, test.coherent)
+			}
+			user := model.User{ID: 1, Username: "account", Status: "active", DeviceIDHash: test.deviceIDHash, CredentialEpoch: test.epoch}
+			user.ProxyCredentials = []model.ProxyCredential{{
+				ID: "opaque-key", UserID: 1, InboundID: 2, PathID: 3, Protocol: model.ProtocolSSH, Status: "active",
+				DeviceIDHash: test.deviceIDHash, CredentialEpoch: test.epoch,
+				Username: "opaque-login", Password: "random-material", UUID: "random-uuid",
+			}}
+			selected := UserCredentialForRoute(user, 2, 3, model.ProtocolSSH)
+			if test.coherent {
+				if selected.AuthorizationKey != "opaque-key" || selected.ProxyPassword == "" {
+					t.Fatalf("coherent identity lost its credential: %#v", selected)
+				}
+				return
+			}
+			if selected.AuthorizationKey != "" || selected.ProxyUsername != "" || selected.ProxyPassword != "" || selected.ProxyUUID != "" {
+				t.Fatalf("incoherent identity projected credential material: %#v", selected)
+			}
+		})
+	}
+}
+
 func TestAuthorizationIdentityChangesOperationalDigest(t *testing.T) {
 	base := `{"_oboard":{"rate_limits":{"users":{"opaque":{"user_id":1,"authorization_key":"key","credential_status":"active"}}},"authorization":{"revision":1}},"inbounds":[]}`
 	renew := `{"_oboard":{"rate_limits":{"users":{"opaque":{"user_id":1,"authorization_key":"key","credential_status":"active","lease_bytes":123}}},"authorization":{"revision":2}},"inbounds":[]}`

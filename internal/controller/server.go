@@ -88,6 +88,7 @@ type Server struct {
 	authorizationHints         accessSyncHintSet
 	runtimeUsersHints          accessSyncHintSet
 	runtimeUsersSettled        runtimeUsersSettledCache
+	deployedSSHPlans           deployedSSHPlanCache
 	authorizationSyncMu        sync.Mutex
 	authorizationSyncInFlight  map[int64]bool
 	runtimeUsersSyncWake       chan struct{}
@@ -13537,11 +13538,11 @@ func (s *Server) matchingDeployedSSHPlan(ctx context.Context, serverID int64, cu
 	if err != nil {
 		return nil, model.SSHInboundPlan{}, false, err
 	}
-	latest, latestErr := s.store.LatestSSHDeploymentTask(ctx, serverID)
+	latestVersion, latestStatus, latestErr := s.store.LatestSSHDeploymentTaskTermination(ctx, serverID)
 	if latestErr != nil && !errors.Is(latestErr, sql.ErrNoRows) {
 		return nil, model.SSHInboundPlan{}, false, latestErr
 	}
-	if latest != nil && (latest.ConfigVersion > hostKey.ConfigVersion || latest.ConfigVersion == hostKey.ConfigVersion && latest.Status != "succeeded") {
+	if latestErr == nil && (latestVersion > hostKey.ConfigVersion || latestVersion == hostKey.ConfigVersion && latestStatus != "succeeded") {
 		return nil, model.SSHInboundPlan{}, false, nil
 	}
 	taskPlan, version, err := s.lastAppliedSSHPlan(ctx, serverID)

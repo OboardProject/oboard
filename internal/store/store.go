@@ -6689,6 +6689,30 @@ func (s *Store) LastSuccessfulTaskByServerType(ctx context.Context, serverID int
 	return &items[0], nil
 }
 
+// LastSuccessfulTaskRefByServerType locates the newest succeeded task of one
+// type by id and config version alone. It exists so a caller that memoizes a
+// task projection can revalidate its entry without reading the payload again.
+func (s *Store) LastSuccessfulTaskRefByServerType(ctx context.Context, serverID int64, taskType string) (int64, int64, error) {
+	var id, configVersion int64
+	err := s.db.QueryRowContext(ctx, `select id,config_version from agent_tasks where server_id=? and type=? and status = 'succeeded' order by id desc limit 1`, serverID, taskType).Scan(&id, &configVersion)
+	if err != nil {
+		return 0, 0, err
+	}
+	return id, configVersion, nil
+}
+
+// TaskDocuments reads the payload and result of one task. Both documents are
+// immutable once a task is terminal, so a projection derived from them stays
+// valid for the lifetime of that task id.
+func (s *Store) TaskDocuments(ctx context.Context, id int64) (string, string, error) {
+	var payloadJSON, resultJSON string
+	err := s.db.QueryRowContext(ctx, `select payload_json,result_json from agent_tasks where id=?`, id).Scan(&payloadJSON, &resultJSON)
+	if err != nil {
+		return "", "", err
+	}
+	return payloadJSON, resultJSON, nil
+}
+
 // LastSuccessfulConfigTaskByServer returns the actual config baseline seen by
 // an Agent. A focused apply_core_config can be newer than the last full
 // deployment and must participate in deployment diffing.

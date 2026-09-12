@@ -39,6 +39,19 @@ func UserForDevice(user model.User, device model.UserDevice) model.User {
 	return out
 }
 
+// ConsistentDeviceCredentialIdentity reports whether a device identity is
+// internally coherent: a device-bound identity carries both a hash and a
+// positive epoch, and a legacy account-level identity carries neither. The
+// Agent rejects an SSH inbound user that violates this, failing the whole
+// deployment for that server, so a violating identity must never reach a
+// deployment payload in the first place.
+func ConsistentDeviceCredentialIdentity(deviceIDHash string, credentialEpoch int64) bool {
+	if strings.TrimSpace(deviceIDHash) == "" {
+		return credentialEpoch == 0
+	}
+	return credentialEpoch > 0
+}
+
 // UserCredentialForRoute selects persisted secret material. An account without
 // an exact active scope never falls back to account or derived credentials.
 func UserCredentialForRoute(user model.User, inboundID, pathID int64, protocol model.Protocol) model.User {
@@ -47,6 +60,14 @@ func UserCredentialForRoute(user model.User, inboundID, pathID int64, protocol m
 	} // Controller-owned managed hop/placeholder.
 	user.ProxyUsername, user.ProxyPassword, user.ProxyUUID, user.AuthorizationKey = "", "", "", ""
 	if user.Status != "active" || user.CredentialStatus == "revoked" || user.CredentialStatus == "disabled" {
+		return user
+	}
+	// Issuance already refuses an incoherent identity, so a stored credential
+	// that still matches one is stale material from before that rule. Treat the
+	// identity as credential-less here too: the account drops out of this route
+	// exactly like one that owns no credential, instead of projecting secrets
+	// the Agent contract rejects.
+	if !ConsistentDeviceCredentialIdentity(user.DeviceIDHash, user.CredentialEpoch) {
 		return user
 	}
 	for _, c := range user.ProxyCredentials {
@@ -94,7 +115,7 @@ func ProxyCredentialScopes(users []model.User, devices []model.UserDevice, inbou
 		if user.ID <= 0 || user.Status != "active" || user.CredentialStatus == "revoked" || user.CredentialStatus == "disabled" {
 			return
 		}
-		if (user.DeviceIDHash == "" && user.CredentialEpoch != 0) || (user.DeviceIDHash != "" && user.CredentialEpoch <= 0) {
+		if !ConsistentDeviceCredentialIdentity(user.DeviceIDHash, user.CredentialEpoch) {
 			return
 		}
 		c := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, Protocol: inbound.Protocol}
