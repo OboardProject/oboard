@@ -196,8 +196,12 @@ func TestSQLiteAuditIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	// idx_connection_audit_user_started is deliberately absent: see
+	// TestConnectionAuditStartedIndexIsAbsent. A report always satisfies
+	// started_at <= ended_at, so its one caller reads the ended_at superset and
+	// filters, which spares every audit insert a B-tree on the heaviest-written
+	// table in the database.
 	for _, name := range []string{
-		"idx_connection_audit_user_started",
 		"idx_subscription_audit_user_risk_time",
 		"idx_subscription_audit_route_risk_time",
 		"idx_connection_probe_episodes_time",

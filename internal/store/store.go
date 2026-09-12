@@ -651,7 +651,12 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_traffic_server on traffic_stats(server_id, created_at)`,
 		`create index if not exists idx_traffic_reports_user_period on traffic_reports(user_id, period_key)`,
 		`create index if not exists idx_connection_audit_user_time on connection_audit_reports(user_id, ended_at desc)`,
-		`create index if not exists idx_connection_audit_user_started on connection_audit_reports(user_id, started_at desc)`,
+		// Every audit insert updates each index on this table, and the table is
+		// the heaviest writer in the database. A report always satisfies
+		// started_at <= ended_at, so the one caller that wanted a started_at
+		// window reads the ended_at superset and filters in memory instead of
+		// keeping a second B-tree over the same rows.
+		`drop index if exists idx_connection_audit_user_started`,
 		`create index if not exists idx_connection_audit_server_time on connection_audit_reports(server_id, ended_at desc)`,
 		`create index if not exists idx_connection_audit_source_time on connection_audit_reports(source_ip, ended_at desc)`,
 		`create index if not exists idx_connection_audit_time on connection_audit_reports(ended_at desc)`,

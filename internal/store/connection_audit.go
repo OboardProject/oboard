@@ -696,14 +696,11 @@ func (s *Store) connectionAuditDimensions(ctx context.Context, query string, arg
 	return out, rows.Err()
 }
 
+// listRecentConnectionAudits returns this user's reports whose ended_at is at or
+// after since, newest first. ended_at is the only time column this table is
+// indexed on; a started_at window is derived from this one by the caller that
+// needs it.
 func (s *Store) listRecentConnectionAudits(ctx context.Context, userID int64, since string, limit int) ([]model.ConnectionAuditReport, error) {
-	return s.listConnectionAuditsByTime(ctx, userID, "ended_at", since, limit)
-}
-
-func (s *Store) listConnectionAuditsByTime(ctx context.Context, userID int64, timeColumn, since string, limit int) ([]model.ConnectionAuditReport, error) {
-	if timeColumn != "ended_at" && timeColumn != "started_at" {
-		return nil, fmt.Errorf("unsupported connection audit time column %q", timeColumn)
-	}
 	rows, err := s.db.QueryContext(ctx, `select
 		report_id,server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,client_instance_id_hash,
 		source_ip,route_id,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,
@@ -711,7 +708,7 @@ func (s *Store) listConnectionAuditsByTime(ctx context.Context, userID int64, ti
 		upload_bytes,download_bytes,payload_first_at,payload_last_at,duration_le_1s_count,duration_le_5s_count,duration_le_20s_count,duration_gt_20s_count,
 		probe_state,internal_probe,presence_sequence,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,
 		collection_started_at,collection_ended_at,started_at,ended_at,created_at
-		from connection_audit_reports where user_id=? and `+timeColumn+`>=? order by `+timeColumn+` desc limit ?`, userID, since, limit) // #nosec G202 -- timeColumn is restricted to ended_at or started_at above.
+		from connection_audit_reports where user_id=? and ended_at>=? order by ended_at desc limit ?`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,11 +1216,33 @@ func (s *Store) listConnectionAuditReportsForRisk(ctx context.Context, userID in
 	return s.listRecentConnectionAudits(ctx, userID, since.UTC().Format(time.RFC3339Nano), limit)
 }
 
+// listConnectionAuditReportsStartedSince returns this user's reports that began
+// at or after since.
+//
+// A report always satisfies started_at <= ended_at, so every row this wants is
+// inside the ended_at window of the same cutoff. Reading that superset through
+// the ended_at index and dropping the rest here keeps the answer identical
+// without a second index over the same rows: this table is the database's
+// heaviest writer, and each index it carries is another B-tree every insert has
+// to update. The superset only adds reports that ended inside the window but
+// began before it, which the caller's short window keeps small.
 func (s *Store) listConnectionAuditReportsStartedSince(ctx context.Context, userID int64, since time.Time, limit int) ([]model.ConnectionAuditReport, error) {
 	if limit < 1 {
 		limit = 10000
 	}
-	return s.listConnectionAuditsByTime(ctx, userID, "started_at", since.UTC().Format(time.RFC3339Nano), limit)
+	cutoff := since.UTC()
+	reports, err := s.listRecentConnectionAudits(ctx, userID, cutoff.Format(time.RFC3339Nano), limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.ConnectionAuditReport, 0, len(reports))
+	for _, report := range reports {
+		if report.StartedAt.UTC().Before(cutoff) {
+			continue
+		}
+		out = append(out, report)
+	}
+	return out, nil
 }
 
 func (s *Store) connectionAuditSharedRouteUsers(ctx context.Context, since time.Time) (map[string]int, error) {

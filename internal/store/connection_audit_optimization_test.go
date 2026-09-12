@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -264,5 +266,89 @@ func TestConnectionAuditUserDetailUsesSingleUserRiskPath(t *testing.T) {
 	}
 	if len(detail.Sources) == 0 || len(detail.Destinations) == 0 || len(detail.Outbounds) == 0 || len(detail.Servers) == 0 || len(detail.Recent) == 0 || len(detail.RiskEvents) == 0 || len(detail.ProbeEpisodes) == 0 || len(detail.Presence) == 0 {
 		t.Fatalf("detail lost data: sources=%d destinations=%d outbounds=%d servers=%d recent=%d risk_events=%d probe_episodes=%d presence=%d", len(detail.Sources), len(detail.Destinations), len(detail.Outbounds), len(detail.Servers), len(detail.Recent), len(detail.RiskEvents), len(detail.ProbeEpisodes), len(detail.Presence))
+	}
+}
+
+// connection_audit_reports is the database's heaviest writer, and every index it
+// carries is another B-tree each insert has to update. The started_at index was
+// dropped because a report always satisfies started_at <= ended_at, so the one
+// caller that wants a started_at window can read the ended_at superset of the
+// same cutoff and discard the rest. That only stays correct if the discard
+// really happens: the superset contains reports that ended inside the window but
+// began before it, and those are exactly what a started_at window excludes.
+func TestConnectionAuditStartedSinceExcludesEarlierStarts(t *testing.T) {
+	ctx := context.Background()
+	s, server, user := newMaintenanceTestStore(t)
+	at := time.Now().UTC().Truncate(time.Second)
+	cutoff := at.Add(-10 * time.Minute)
+
+	inside := model.ConnectionAuditReport{
+		ReportID: "started-inside", ServerID: server.ID, UserID: user.ID,
+		SourceIP: "203.0.113.1", Network: "tcp", ConnectionCount: 1,
+		CollectionStartedAt: cutoff, CollectionEndedAt: at,
+		StartedAt:           cutoff.Add(time.Minute), EndedAt: at.Add(-time.Minute),
+	}
+	// Ends inside the window but began before it: present in the ended_at
+	// superset, absent from a started_at window.
+	straddling := model.ConnectionAuditReport{
+		ReportID: "started-before", ServerID: server.ID, UserID: user.ID,
+		SourceIP: "203.0.113.2", Network: "tcp", ConnectionCount: 1,
+		CollectionStartedAt: cutoff.Add(-time.Hour), CollectionEndedAt: at,
+		StartedAt:           cutoff.Add(-time.Hour), EndedAt: at.Add(-time.Minute),
+	}
+	// Entirely before the window: absent from both.
+	older := model.ConnectionAuditReport{
+		ReportID: "ended-before", ServerID: server.ID, UserID: user.ID,
+		SourceIP: "203.0.113.3", Network: "tcp", ConnectionCount: 1,
+		CollectionStartedAt: cutoff.Add(-2 * time.Hour), CollectionEndedAt: cutoff.Add(-time.Hour),
+		StartedAt:           cutoff.Add(-2 * time.Hour), EndedAt: cutoff.Add(-time.Hour),
+	}
+	if _, err := s.AddConnectionAuditReports(ctx, []model.ConnectionAuditReport{inside, straddling, older}); err != nil {
+		t.Fatal(err)
+	}
+
+	started, err := s.listConnectionAuditReportsStartedSince(ctx, user.ID, cutoff, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, report := range started {
+		got[report.ReportID] = true
+	}
+	if !got["started-inside"] {
+		t.Error("a report that began inside the window must be returned")
+	}
+	if got["started-before"] {
+		t.Error("a report that began before the window must not be returned; the ended_at superset was not filtered")
+	}
+	if got["ended-before"] {
+		t.Error("a report entirely before the window must not be returned")
+	}
+	if len(started) != 1 {
+		t.Fatalf("returned %d reports, want exactly 1: %v", len(started), got)
+	}
+
+	// The superset itself must still contain the straddling report, otherwise
+	// this test would pass against a query that simply lost rows.
+	ended, err := s.listRecentConnectionAudits(ctx, user.ID, cutoff.Format(time.RFC3339Nano), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ended) != 2 {
+		t.Fatalf("ended_at window returned %d reports, want 2 (the filtered one must be present in the superset)", len(ended))
+	}
+}
+
+// The dropped index must not come back through the schema, or every insert pays
+// for it again.
+func TestConnectionAuditStartedIndexIsAbsent(t *testing.T) {
+	s, _, _ := newMaintenanceTestStore(t)
+	var name string
+	err := s.db.QueryRow(`select name from sqlite_master where type='index' and name='idx_connection_audit_user_started'`).Scan(&name)
+	if err == nil {
+		t.Fatalf("index %s is present again; each index on this table is another B-tree per audit insert", name)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
 	}
 }
