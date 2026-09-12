@@ -46,3 +46,31 @@ func TestSLAProjectionUsesExistingMaintenanceBudget(t *testing.T) {
 		t.Fatal("SLA bypassed shared wall-time budget")
 	}
 }
+
+func TestLatencyRollupRecoversBudgetAfterTransientTimeout(t *testing.T) {
+	state := &latencyRollupSchedule{rows: 500, delay: 2 * time.Second}
+	for i := 0; i < 10; i++ {
+		state.next(0, time.Second, context.DeadlineExceeded)
+	}
+	if state.rows != 1 {
+		t.Fatal(state.rows)
+	}
+	for i := 0; i < 7; i++ {
+		state.next(1, time.Millisecond, nil)
+	}
+	if state.rows != 1 {
+		t.Fatal("recovered too early")
+	}
+	for i := 0; i < 200; i++ {
+		if state.next(1, time.Millisecond, nil) < 2*time.Second {
+			t.Fatal("lost delay budget")
+		}
+	}
+	if state.rows != 500 {
+		t.Fatalf("stuck at %d rows", state.rows)
+	}
+	state.next(0, time.Second, context.DeadlineExceeded)
+	if state.rows != 250 || state.successfulBatches != 0 {
+		t.Fatal("new timeout did not back off")
+	}
+}

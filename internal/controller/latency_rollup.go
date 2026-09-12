@@ -12,6 +12,7 @@ import (
 )
 
 type latencyRollupSchedule struct {
+	successfulBatches                   int
 	archiveComplete                     bool
 	liveLag                             int64
 	turn                                uint64
@@ -34,13 +35,20 @@ func newLatencyRollupSchedule() *latencyRollupSchedule {
 
 func (state *latencyRollupSchedule) next(processed int, duration time.Duration, err error) time.Duration {
 	if err != nil {
+		state.successfulBatches = 0
 		if errors.Is(err, context.DeadlineExceeded) {
 			state.rows = max(1, state.rows/2)
 		}
 		state.delay = min(5*time.Minute, max(5*time.Second, state.delay*2))
 	} else if processed == 0 {
+		state.successfulBatches = 0
 		state.delay = min(30*time.Second, max(2*time.Second, state.delay*2))
 	} else {
+		state.successfulBatches++
+		if state.successfulBatches >= 8 {
+			state.rows = min(store.LatencyRollupBatchLimit, state.rows+32)
+			state.successfulBatches = 0
+		}
 		// Wall time is a conservative upper bound for this one sequential worker's
 		// CPU time. Leave at least fifty times its work duration between batches.
 		state.delay = max(2*time.Second, duration*50)
@@ -87,9 +95,6 @@ func (s *Server) runLatencyRollup(ctx context.Context, state *latencyRollupSched
 			}
 		}
 		result, err := s.store.RunSLAProjectionBatch(batchCtx, at, state.rows, buildSLAProjection)
-		if errors.Is(err, store.ErrSLAProjectionDensity) && state.rows < store.LatencyRollupBatchLimit {
-			state.rows = min(store.LatencyRollupBatchLimit, state.rows*2)
-		}
 
 		if ctx.Err() == nil && (err != nil || result.Events > 0 || result.Buckets > 0) && at.Sub(state.lastLog) >= time.Minute {
 			log.Printf("SLA projection: events=%d buckets=%d server=%d phase=%s duration=%s error=%v", result.Events, result.Buckets, result.ServerID, result.Phase, time.Since(at), err)

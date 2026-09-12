@@ -17,7 +17,6 @@ const SLAProjectionVersion = 1
 const slaBucketSeconds int64 = 300
 
 var ErrSLAProjectionChanged = errors.New("SLA projection changed; retry batch")
-var ErrSLAProjectionDensity = errors.New("SLA event density exceeds one bounded bucket")
 
 type SLAProjectionBucket struct {
 	Outages    []model.ConnectivityOutage
@@ -26,6 +25,9 @@ type SLAProjectionBucket struct {
 	Checkpoint json.RawMessage
 }
 type SLAProjectionWork struct {
+	Partial                                                                  json.RawMessage
+	PartialMode, PartialMore                                                 bool
+	PartialCeiling                                                           int64
 	ReadStepSeconds                                                          int64
 	CoverageChanged                                                          bool
 	CoverageCheckpoint                                                       json.RawMessage
@@ -38,6 +40,7 @@ type SLAProjectionWork struct {
 	Baseline, Events                                                         []model.ServerConnectivityEvent
 }
 type SLAProjectionOutput struct {
+	Partial      json.RawMessage
 	CoverageSeed json.RawMessage
 	Seed         json.RawMessage
 	Buckets      []SLAProjectionBucket
@@ -59,6 +62,7 @@ func (s *Store) ensureSLAProjectionSchema(ctx context.Context) error {
 		`create table if not exists sla_projection_servers(server_id integer primary key references servers(id) on delete cascade,coverage_from integer not null,frontier integer not null,seed_json text not null default '',dirty_from integer,dirty_until integer,repair_next integer,revision integer not null default 1,phase text not null default 'catching_up',retry_after integer not null default 0,updated_at text not null)`,
 		`create index if not exists idx_sla_projection_work on sla_projection_servers(retry_after,frontier,server_id)`,
 		`create table if not exists sla_projection_buckets(server_id integer not null references servers(id) on delete cascade,bucket_start integer not null,stats_json text not null,end_checkpoint text not null,event_cursor integer not null,algorithm_version integer not null,primary key(server_id,bucket_start))`,
+		`create table if not exists sla_projection_partial(server_id integer primary key references servers(id) on delete cascade,bucket_start integer not null,generation integer not null,algorithm_version integer not null,ceiling integer not null,last_time text not null,last_priority integer not null,last_id integer not null,body text not null)`,
 		`create index if not exists idx_sla_projection_time on sla_projection_buckets(bucket_start)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, query); err != nil {
@@ -183,6 +187,9 @@ func (s *Store) scanSLAProjectionEvents(ctx context.Context, at time.Time, limit
 			return 0, err
 		}
 		for _, value := range times {
+			if _, err := tx.ExecContext(ctx, `delete from sla_projection_partial where server_id=? and bucket_start>=?`, server, value); err != nil {
+				return 0, err
+			}
 			if value < coverage {
 				seed = ""
 			}
@@ -250,7 +257,7 @@ func (s *Store) RunSLAProjectionBatch(ctx context.Context, at time.Time, limit i
 		}
 		result.Buckets += len(output.Buckets)
 		// Yield after a repair chunk so other lanes retain predictable turns.
-		if work.Repair {
+		if work.Repair || work.PartialMode {
 			return result, nil
 		}
 	}
@@ -332,6 +339,12 @@ func (s *Store) prepareSLAProjectionWork(ctx context.Context, at time.Time, limi
 			return work, err
 		}
 	}
+	if resumed, err := s.prepareSLAPartial(ctx, &work, limit, false); err != nil {
+		return work, err
+	} else if resumed {
+		err := s.loadSLAOldEnd(ctx, &work)
+		return work, err
+	}
 	rows, err := s.db.QueryContext(ctx, `select id,server_id,kind,available,latency_ms,error,source,effective_at,event_key,created_at from server_connectivity_events where server_id=? and effective_at>=? and effective_at<? and id<=? order by effective_at,id limit ?`, work.ServerID, connectivityTimeBound(time.Unix(work.From, 0)), connectivityTimeBound(time.Unix(work.To, 0)), state.cursor, limit+1)
 	if err != nil {
 		return work, err
@@ -343,8 +356,11 @@ func (s *Store) prepareSLAProjectionWork(ctx context.Context, at time.Time, limi
 	if len(work.Events) > limit {
 		work.To = work.Events[limit].EffectiveAt.UTC().Truncate(5 * time.Minute).Unix()
 		if work.To <= work.From {
-			s.deferSLAProjection(ctx, work.ServerID, work.Revision, at)
-			return work, ErrSLAProjectionDensity
+			if _, err := s.prepareSLAPartial(ctx, &work, limit, true); err != nil {
+				return work, err
+			}
+			err := s.loadSLAOldEnd(ctx, &work)
+			return work, err
 		}
 		kept := work.Events[:0]
 		for _, event := range work.Events {
@@ -391,6 +407,9 @@ func (s *Store) slaProjectionBaseline(ctx context.Context, serverID int64, at ti
 }
 
 func (s *Store) commitSLAProjection(ctx context.Context, work SLAProjectionWork, output SLAProjectionOutput, closed int64) (string, error) {
+	if len(output.Partial) > 0 {
+		return s.commitSLAPartial(ctx, work, output)
+	}
 	if work.From%300 != 0 || work.To%300 != 0 || len(output.Buckets) == 0 || len(output.Buckets) > 12 || int64(len(output.Buckets))*300 != work.To-work.From || len(output.Seed) > 4096 || !json.Valid(output.Seed) {
 		return "", errors.New("invalid SLA projection output")
 	}
@@ -454,6 +473,9 @@ func (s *Store) commitSLAProjection(ctx context.Context, work SLAProjectionWork,
 		if _, err := tx.ExecContext(ctx, `insert into sla_projection_buckets(server_id,bucket_start,stats_json,end_checkpoint,event_cursor,algorithm_version,outages_json,details_complete) values(?,?,?,?,?,?,?,1) on conflict(server_id,bucket_start) do update set stats_json=excluded.stats_json,end_checkpoint=excluded.end_checkpoint,event_cursor=excluded.event_cursor,algorithm_version=excluded.algorithm_version,outages_json=excluded.outages_json,details_complete=1`, work.ServerID, bucket.Start, string(data), string(bucket.Checkpoint), work.Cursor, SLAProjectionVersion, string(details)); err != nil {
 			return "", err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `delete from sla_projection_partial where server_id=?`, work.ServerID); err != nil {
+		return "", err
 	}
 	return phase, tx.Commit()
 }

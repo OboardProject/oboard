@@ -345,17 +345,8 @@ func buildConnectivityOutagesFromState(from, to time.Time, state connectivitySta
 		}
 		before := state.availability
 		applyConnectivityEvent(&state, event)
-		after := state.availability
-		if before != connectivityUnavailable && after == connectivityUnavailable {
-			active = &connectivityOutage{StartedAt: at, Cause: state.cause}
-		} else if before == connectivityUnavailable && after == connectivityUnavailable && active != nil {
-			active.Cause = mergeOutageCause(active.Cause, state.cause)
-		} else if before == connectivityUnavailable && after != connectivityUnavailable && active != nil {
-			endedAt := at
-			active.EndedAt = &endedAt
-			active.DurationSeconds = endedAt.Sub(active.StartedAt).Seconds()
-			outages = append(outages, *active)
-			active = nil
+		if closed := advanceConnectivityOutage(&active, before, state, at); closed != nil {
+			outages = append(outages, *closed)
 		}
 	}
 	if active != nil {
@@ -363,6 +354,22 @@ func buildConnectivityOutagesFromState(from, to time.Time, state connectivitySta
 		outages = append(outages, *active)
 	}
 	return outages
+}
+
+func advanceConnectivityOutage(active **connectivityOutage, before connectivityAvailability, state connectivityState, at time.Time) *connectivityOutage {
+	after := state.availability
+	if before != connectivityUnavailable && after == connectivityUnavailable {
+		*active = &connectivityOutage{StartedAt: at, Cause: state.cause}
+	} else if before == connectivityUnavailable && after == connectivityUnavailable && *active != nil {
+		(*active).Cause = mergeOutageCause((*active).Cause, state.cause)
+	} else if before == connectivityUnavailable && after != connectivityUnavailable && *active != nil {
+		closed := *active
+		closed.EndedAt = &at
+		closed.DurationSeconds = at.Sub(closed.StartedAt).Seconds()
+		*active = nil
+		return closed
+	}
+	return nil
 }
 
 func successfulConnectivityProbes(events []model.ServerConnectivityEvent) []model.ServerConnectivityEvent {

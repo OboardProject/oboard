@@ -78,6 +78,9 @@ func buildSLAProjection(work store.SLAProjectionWork) (store.SLAProjectionOutput
 		output.CoverageSeed = encodeSLACheckpoint(coverage)
 	}
 
+	if work.PartialMode {
+		return buildSLAPartial(work, state, output)
+	}
 	step := work.ReadStepSeconds
 	if step <= 0 {
 		step = 300

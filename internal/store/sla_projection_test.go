@@ -151,7 +151,7 @@ func TestSLAProjectionUpgradeAndRetentionGuards(t *testing.T) {
 	}
 }
 
-func TestSLAProjectionDenseBucketStopsWithoutTruncating(t *testing.T) {
+func TestSLAProjectionDenseBucketPreparesBoundedContinuation(t *testing.T) {
 	db, node := newConnectivityTestStore(t)
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(5 * time.Minute)
@@ -166,11 +166,12 @@ func TestSLAProjectionDenseBucketStopsWithoutTruncating(t *testing.T) {
 	if _, err := db.scanSLAProjectionEvents(ctx, base.Add(time.Hour), 500); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.prepareSLAProjectionWork(ctx, base.Add(time.Hour), 2); !errors.Is(err, ErrSLAProjectionDensity) {
-		t.Fatalf("dense bucket truncated: %v", err)
+	work, err := db.prepareSLAProjectionWork(ctx, base.Add(time.Hour), 2)
+	if err != nil || !work.PartialMode || !work.PartialMore || len(work.Events) != 2 || work.To != work.From+300 {
+		t.Fatalf("dense work=%+v %v", work, err)
 	}
 	status, err := db.InspectSLAProjection(ctx, node.ID)
-	if err != nil || status.Phase != "unavailable" || status.Frontier != base.Unix() {
+	if err != nil || status.Phase != "catching_up" || status.Frontier != base.Unix() {
 		t.Fatalf("density=%+v %v", status, err)
 	}
 }
@@ -221,5 +222,78 @@ func TestSLAProjectionDoesNotBackfillBeforeServerCreation(t *testing.T) {
 	want := node.CreatedAt.UTC().Truncate(5 * time.Minute).Unix()
 	if status.CoverageFrom != want || status.Frontier != want {
 		t.Fatalf("enrolled before creation: %+v want %d", status, want)
+	}
+}
+
+func TestSLAPartialUpgradeAndInvalidation(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "previous.sqlite")
+	db, node := newConnectivityTestStoreAtPath(t, path)
+	base := time.Now().UTC().Truncate(5 * time.Minute).Add(5 * time.Minute)
+	if _, err := db.db.Exec(`drop table sla_projection_partial`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.db.QueryRow(`select count(*) from sla_projection_partial`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("upgrade replayed data %d %v", count, err)
+	}
+	if _, err := db.RunSLAProjectionBatch(ctx, base, 500, fakeSLAProjection); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		if err := db.RecordControllerConnectionEvent(ctx, node.ID, i%2 == 0, base.Add(time.Duration(i+1)*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.scanSLAProjectionEvents(ctx, base.Add(5*time.Minute), 500); err != nil {
+		t.Fatal(err)
+	}
+	work, err := db.prepareSLAProjectionWork(ctx, base.Add(5*time.Minute), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := SLAProjectionOutput{Seed: json.RawMessage(`{"version":1}`), Partial: json.RawMessage(`{"test":true}`)}
+	if _, err := db.commitSLAProjection(ctx, work, output, base.Add(5*time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.commitSLAProjection(ctx, work, output, base.Add(5*time.Minute).Unix()); !errors.Is(err, ErrSLAProjectionChanged) {
+		t.Fatalf("stale partial committed %v", err)
+	}
+	resumed, err := db.prepareSLAProjectionWork(ctx, base.Add(5*time.Minute), 2)
+	if err != nil || len(resumed.Partial) == 0 || resumed.Events[0].ID <= work.Events[1].ID {
+		t.Fatalf("resume %+v %v", resumed, err)
+	}
+	if _, err := db.purgeSLAProjectionBatch(ctx, base.Add(-time.Hour).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.commitSLAProjection(ctx, resumed, output, base.Add(5*time.Minute).Unix()); !errors.Is(err, ErrSLAProjectionChanged) {
+		t.Fatalf("old generation committed %v", err)
+	}
+	restarted, err := db.prepareSLAProjectionWork(ctx, base.Add(5*time.Minute), 2)
+	if err != nil || len(restarted.Partial) != 0 || restarted.Events[0].ID != work.Events[0].ID {
+		t.Fatalf("generation did not restart %+v %v", restarted, err)
+	}
+	if _, err := db.commitSLAProjection(ctx, restarted, output, base.Add(5*time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RecordControllerConnectionEvent(ctx, node.ID, true, base.Add(time.Nanosecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.scanSLAProjectionEvents(ctx, base.Add(5*time.Minute), 500); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRow(`select count(*) from sla_projection_partial`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("late frontier event kept stale partial %d %v", count, err)
+	}
+	if _, err := db.commitSLAProjection(ctx, restarted, output, base.Add(5*time.Minute).Unix()); !errors.Is(err, ErrSLAProjectionChanged) {
+		t.Fatalf("late event did not invalidate stale work %v", err)
 	}
 }
