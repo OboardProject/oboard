@@ -2,6 +2,8 @@
 // Nothing here touches server state: node coordinates and the toolbox position
 // are per-browser preferences, so clearing them never changes a stored path.
 
+import { removeStoredValue, writeStoredJSON } from '../../browser-storage'
+
 export type GraphPosition = { x: number; y: number }
 export type GraphDirectExitInstance = { instance_id: string; root_server_id: number }
 export type GraphLayoutEdge = { source: string; target: string }
@@ -89,7 +91,7 @@ const LEGACY_DIRECT_EXITS_KEY = 'oboard.proxyGraph.directExitInstances.v1'
 
 export function loadGraphPositions(): Record<string, GraphPosition> {
   try {
-    LEGACY_POSITIONS_KEYS.forEach(key => localStorage.removeItem(key))
+    LEGACY_POSITIONS_KEYS.forEach(key => removeStoredValue(key))
     return JSON.parse(localStorage.getItem(POSITIONS_KEY) || '{}')
   } catch {
     return {}
@@ -97,7 +99,7 @@ export function loadGraphPositions(): Record<string, GraphPosition> {
 }
 
 export function saveGraphPositions(positions: Record<string, GraphPosition>) {
-  localStorage.setItem(POSITIONS_KEY, JSON.stringify(positions))
+  writeStoredJSON(POSITIONS_KEY, positions)
 }
 
 /** Node IDs the operator dragged. Auto layout leaves these where they are. */
@@ -111,7 +113,7 @@ export function loadPinnedGraphNodes(): string[] {
 }
 
 export function savePinnedGraphNodes(nodeIDs: Iterable<string>) {
-  localStorage.setItem(PINNED_KEY, JSON.stringify(Array.from(new Set(nodeIDs)).sort()))
+  writeStoredJSON(PINNED_KEY, Array.from(new Set(nodeIDs)).sort())
 }
 
 export function loadGraphLayoutSignatures(): Record<string, string> {
@@ -125,7 +127,7 @@ export function loadGraphLayoutSignatures(): Record<string, string> {
 
 export function saveGraphLayoutSignature(rootServerID: number, signature: string) {
   const current = loadGraphLayoutSignatures()
-  localStorage.setItem(SIGNATURE_KEY, JSON.stringify({ ...current, [String(rootServerID)]: signature }))
+  writeStoredJSON(SIGNATURE_KEY, { ...current, [String(rootServerID)]: signature })
 }
 
 // Bump whenever the layout maths changes shape — card widths, slot pitch, layer
@@ -158,12 +160,12 @@ export function loadGraphToolboxPosition(): GraphPosition {
 }
 
 export function saveGraphToolboxPosition(position: GraphPosition) {
-  localStorage.setItem(TOOLBOX_KEY, JSON.stringify(position))
+  writeStoredJSON(TOOLBOX_KEY, position)
 }
 
 export function loadGraphDirectExitInstances(): GraphDirectExitInstance[] {
   try {
-    localStorage.removeItem(LEGACY_DIRECT_EXITS_KEY)
+    removeStoredValue(LEGACY_DIRECT_EXITS_KEY)
     const value = JSON.parse(localStorage.getItem(DIRECT_EXITS_KEY) || '[]')
     if (!Array.isArray(value)) return []
     return value.filter(item => typeof item?.instance_id === 'string' && Number.isFinite(item?.root_server_id))
@@ -173,7 +175,7 @@ export function loadGraphDirectExitInstances(): GraphDirectExitInstance[] {
 }
 
 export function saveGraphDirectExitInstances(instances: GraphDirectExitInstance[]) {
-  localStorage.setItem(DIRECT_EXITS_KEY, JSON.stringify(instances))
+  writeStoredJSON(DIRECT_EXITS_KEY, instances)
 }
 
 export function snapGraphPosition(position: GraphPosition): GraphPosition {

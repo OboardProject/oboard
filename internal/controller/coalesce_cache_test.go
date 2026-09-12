@@ -132,6 +132,10 @@ func TestCoalesceCacheCancelledWaiterDoesNotCancelSharedBuild(t *testing.T) {
 	var started sync.WaitGroup
 	started.Add(1)
 	var wg sync.WaitGroup
+	// A waiter must join the leader's build, never start one of its own. Record
+	// any stray build and assert after the goroutines finish: t.Fatal from a
+	// non-test goroutine only stops that goroutine and never fails the test.
+	var strayBuilds atomic.Int64
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
@@ -153,7 +157,7 @@ func TestCoalesceCacheCancelledWaiterDoesNotCancelSharedBuild(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		_, err := cache.getOrBuild(ctx, "k", 1, func(context.Context) (int, time.Time, error) {
-			t.Fatal("cancelled waiter must join the shared build")
+			strayBuilds.Add(1)
 			return 0, time.Time{}, nil
 		})
 		if !errors.Is(err, context.Canceled) {
@@ -165,7 +169,7 @@ func TestCoalesceCacheCancelledWaiterDoesNotCancelSharedBuild(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		entry, err := cache.getOrBuild(context.Background(), "k", 1, func(context.Context) (int, time.Time, error) {
-			t.Fatal("second waiter must join the shared build")
+			strayBuilds.Add(1)
 			return 0, time.Time{}, nil
 		})
 		if err != nil {
@@ -179,6 +183,9 @@ func TestCoalesceCacheCancelledWaiterDoesNotCancelSharedBuild(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	close(release)
 	wg.Wait()
+	if stray := strayBuilds.Load(); stray != 0 {
+		t.Fatalf("waiters ran %d builds instead of joining the shared build", stray)
+	}
 }
 
 func TestCoalesceCacheTTLStartsAfterBuildCompletes(t *testing.T) {

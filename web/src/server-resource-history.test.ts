@@ -12,7 +12,9 @@ describe('server resource history', () => {
   })
 
   it('loads bounded history windows on demand', () => {
-    expect(source).toContain('`/servers/${server.id}/resource-metrics?hours=${hours}`')
+    // Pin the endpoint and its bounded window parameter, not the name of the
+    // variable holding the window, which is incidental.
+    expect(source).toMatch(/`\/servers\/\$\{server\.id\}\/resource-metrics\?hours=\$\{\w+\}`/)
     expect(source).toContain("{ hours: 1, label: '实时' }")
     expect(source).toContain("{ hours: 720, label: '30 天' }")
   })

@@ -15,6 +15,7 @@ import {
   watchSystemTheme,
 } from './theme'
 import { ThemeSelector } from './components/ui/ThemeSelector'
+import { readStoredValue, writeStoredValue } from './browser-storage'
 import ReactFlow, { Background, BackgroundVariant, BaseEdge, Connection, ConnectionLineType, Controls, Edge, EdgeChange, EdgeLabelRenderer, Handle, Node, NodeChange, Position, applyEdgeChanges, applyNodeChanges, getNodesBounds, getViewportForBounds } from 'reactflow'
 import type { EdgeProps, ReactFlowInstance } from 'reactflow'
 import 'reactflow/dist/style.css'
@@ -2148,14 +2149,14 @@ export function App() {
   }, [])
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('oboard.sidebar.collapsed') === 'true')
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => readStoredValue('oboard.sidebar.collapsed') === 'true')
   const [isMobile, setIsMobile] = useState(false)
   const [proxyPathTopbarTarget, setProxyPathTopbarTarget] = useState<HTMLDivElement | null>(null)
 
   const toggleDesktopSidebar = () => {
     setIsSidebarCollapsed(collapsed => {
       const next = !collapsed
-      localStorage.setItem('oboard.sidebar.collapsed', String(next))
+      writeStoredValue('oboard.sidebar.collapsed', String(next))
       return next
     })
   }

@@ -44,8 +44,12 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
   })
 
   it('keeps the mobile scroll areas free of top padding for the same reason', () => {
-    expect(stylesheet).toMatch(/\.main\s*\{[^}]*--main-pad-top:\s*16px[^}]*padding:\s*0 var\(--main-pad-x\) 16px/s)
-    expect(stylesheet).toMatch(/\.main\s*\{\s*--main-pad-x:\s*16px;\s*--main-pad-top:\s*18px;\s*padding:\s*0 var\(--main-pad-x\) 36px;\s*\}/)
+    // The contract is that mobile .main carries no top padding - the top inset
+    // travels through --main-pad-top so the sticky topbar owns it. The bottom
+    // value is free to change (it now folds in the safe-area inset), so match
+    // the shorthand's leading 0 rather than a specific bottom length.
+    expect(stylesheet).toMatch(/\.main\s*\{[^}]*--main-pad-top:\s*16px[^}]*padding:\s*0 var\(--main-pad-x\)[^;}]*;/s)
+    expect(stylesheet).toMatch(/\.main\s*\{\s*--main-pad-x:\s*16px;\s*--main-pad-top:\s*18px;\s*padding:\s*0 var\(--main-pad-x\)[^;}]*;\s*\}/)
     expect(stylesheet).not.toMatch(/\.main\s*\{\s*padding:\s*(16px|18px 16px 36px);\s*\}/)
   })
 
