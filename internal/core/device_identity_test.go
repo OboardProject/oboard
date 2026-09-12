@@ -6,20 +6,26 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-func TestExpandDeviceUsersIgnoresDeviceRows(t *testing.T) {
+// TestDataPlaneIdentitiesKeepsOnlyActiveAccounts pins the identity model after
+// device-specific subscriptions were withdrawn: a device row is never an extra
+// proxy identity, and eligibility is decided by account status alone. The old
+// signature took a device slice whose only remaining effect was that a nil
+// value skipped the status filter entirely, so a caller that simply left the
+// field unset projected disabled accounts into the data plane.
+func TestDataPlaneIdentitiesKeepsOnlyActiveAccounts(t *testing.T) {
 	users := []model.User{
 		{ID: 1, Username: "active", Status: "active"},
 		{ID: 2, Username: "disabled", Status: "disabled"},
+		{ID: 3, Username: "pending", Status: "pending"},
 	}
-	devices := []model.UserDevice{{
-		ID: "dev_phone", UserID: 1, Status: "active", DeviceIDHash: "hash", CredentialEpoch: 2, ProxyAccessState: "active",
-	}}
-	got := ExpandDeviceUsers(users, devices)
-	if len(got) != 1 || got[0].ID != 1 || got[0].DeviceIDHash != "" || got[0].Username != "active" {
-		t.Fatalf("expanded users = %#v", got)
+	got := DataPlaneIdentities(users)
+	if len(got) != 1 || got[0].ID != 1 || got[0].Username != "active" {
+		t.Fatalf("identities = %#v", got)
 	}
-	passthrough := ExpandDeviceUsers(users, nil)
-	if len(passthrough) != 2 {
-		t.Fatalf("nil devices should keep the input list: %#v", passthrough)
+	if got[0].DeviceIDHash != "" || got[0].CredentialEpoch != 0 {
+		t.Fatalf("account identity carried device material: %#v", got[0])
+	}
+	if len(DataPlaneIdentities(nil)) != 0 {
+		t.Fatal("nil input produced identities")
 	}
 }

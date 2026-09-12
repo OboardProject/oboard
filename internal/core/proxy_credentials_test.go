@@ -25,9 +25,10 @@ func TestProxyCredentialSelectionRequiresExactPersistedScope(t *testing.T) {
 			t.Fatal("credential crossed authorization scopes")
 		}
 	}
-	device := UserForDevice(user, model.UserDevice{DeviceIDHash: "device", CredentialEpoch: 1})
+	device := user
+	device.DeviceIDHash, device.CredentialEpoch = "device", 1
 	if UserCredentialForRoute(device, 2, 3, model.ProtocolSocks).AuthorizationKey != "" {
-		t.Fatal("device inherited account credential")
+		t.Fatal("device-scoped identity inherited account credential")
 	}
 	user.ProxyCredentials[0].Status = "revoked"
 	if UserCredentialForRoute(user, 2, 3, model.ProtocolSocks).AuthorizationKey != "" {

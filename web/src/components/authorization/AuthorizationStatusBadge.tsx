@@ -9,6 +9,7 @@ export type AuthorizationDeliveryStatus =
   | 'failed'
   | 'upgrade_required'
   | 'external_credential'
+  | 'users_unprojected'
 
 const labels: Record<AuthorizationDeliveryStatus, string> = {
   authorized: '已授权',
@@ -18,6 +19,7 @@ const labels: Record<AuthorizationDeliveryStatus, string> = {
   failed: '失败',
   upgrade_required: '需升级',
   external_credential: '外部凭据',
+  users_unprojected: '部分用户未下发',
 }
 
 const variants: Record<AuthorizationDeliveryStatus, React.ComponentProps<typeof Badge>['variant']> = {
@@ -28,6 +30,7 @@ const variants: Record<AuthorizationDeliveryStatus, React.ComponentProps<typeof 
   failed: 'destructive',
   upgrade_required: 'warning',
   external_credential: 'outline',
+  users_unprojected: 'destructive',
 }
 
 export function AuthorizationStatusBadge({
@@ -73,6 +76,9 @@ export function deriveServerDeliveryStatus(server: {
 }): AuthorizationDeliveryStatus {
   const reason = server.authorization_pending_reason || server.users_pending_reason || ''
   if (reason === 'agent_upgrade_required') return 'upgrade_required'
+  // Not a transient step: the listener has converged, but authorized accounts
+  // were left out of it and only an operator can resolve that.
+  if (reason === 'ssh_users_unprojected') return 'users_unprojected'
   if (reason === 'agent_offline' || String(server.status || '').toLowerCase() === 'offline') {
     if (server.authorization_confirmed === false || server.users_confirmed === false) return 'waiting_offline'
   }

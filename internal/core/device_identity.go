@@ -1,40 +1,23 @@
 package core
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-// ExpandDeviceUsers projects accounts into eligible data-plane identities.
-// Device-specific subscriptions are not issued: leftover device rows never
-// become additional proxy identities.
-func ExpandDeviceUsers(users []model.User, devices []model.UserDevice) []model.User {
-	if devices == nil {
-		return append([]model.User(nil), users...)
-	}
+// DataPlaneIdentities selects the accounts that may carry proxy credentials.
+// Device rows are not additional identities: device-specific subscriptions are
+// not issued, so an account is the whole identity and only an active one is
+// eligible.
+func DataPlaneIdentities(users []model.User) []model.User {
 	out := make([]model.User, 0, len(users))
 	for _, user := range users {
 		if user.Status != "active" {
 			continue
 		}
 		out = append(out, user)
-	}
-	return out
-}
-
-func UserForDevice(user model.User, device model.UserDevice) model.User {
-	out := user
-	out.Username = deviceAuthUsername(user.ID, device.DeviceIDHash)
-	out.DeviceIDHash = device.DeviceIDHash
-	out.CredentialEpoch = device.CredentialEpoch
-	out.CredentialSeed, out.SSHRandomID = "", ""
-	out.ProxyUsername, out.ProxyPassword, out.ProxyUUID, out.AuthorizationKey = "", "", "", ""
-	out.CredentialStatus = device.ProxyAccessState
-	if out.CredentialStatus == "" {
-		out.CredentialStatus = "active"
 	}
 	return out
 }
@@ -93,7 +76,7 @@ func credentialUsersForInbound(users []model.User, inbound model.Inbound) []mode
 // ProxyCredentialScopes enumerates authorization only: no secrets, configuration
 // generation or port allocation. Bindings must describe the complete authorized
 // snapshot; absent bindings do not grant everyone access.
-func ProxyCredentialScopes(users []model.User, devices []model.UserDevice, inbounds []model.Inbound, opts ConfigOptions) []model.ProxyCredential {
+func ProxyCredentialScopes(users []model.User, inbounds []model.Inbound, opts ConfigOptions) []model.ProxyCredential {
 	if opts.AccessSnapshot != nil {
 		opts.InboundUsers = opts.AccessSnapshot.InboundUserBindings()
 		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
@@ -104,7 +87,7 @@ func ProxyCredentialScopes(users []model.User, devices []model.UserDevice, inbou
 	if opts.ProxyPathUsers == nil {
 		opts.ProxyPathUsers = []model.ProxyPathUser{}
 	}
-	users = ExpandDeviceUsers(users, devices)
+	users = DataPlaneIdentities(users)
 	steps := make(map[int64]bool)
 	for _, step := range opts.ProxyPathSteps {
 		steps[step.PathID] = true
@@ -168,8 +151,4 @@ func ProxyCredentialScopes(users []model.User, devices []model.UserDevice, inbou
 		return a.Protocol < b.Protocol
 	})
 	return out
-}
-
-func deviceAuthUsername(userID int64, deviceIDHash string) string {
-	return fmt.Sprintf("u%d__oboard_device_%s", userID, strings.ToLower(strings.TrimSpace(deviceIDHash)))
 }

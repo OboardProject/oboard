@@ -500,7 +500,7 @@ func (s *Server) generateServerCoreConfigForProjection(ctx context.Context, serv
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		AccessSnapshot: snap, UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		AccessSnapshot: snap, UserPolicies: userPolicies, TrafficPolicies: trafficPolicies,
 		PortLedger: ledger,
 	})
 	if err != nil {

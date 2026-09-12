@@ -197,7 +197,7 @@ func (s *Server) projectRuntimeUserPackage(ctx context.Context, server model.Ser
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds,
 		ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps, Servers: data.Servers, Inbounds: data.Inbounds,
 		WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies,
 		PortLedger: ledger,
 	})
 	if err != nil {

@@ -47,7 +47,7 @@ func proxyScopeKey(c model.ProxyCredential) credentialScopeKey {
 
 func credentialOptions(data store.FullRoutingConfig, snap *core.EffectiveAccessSnapshot) core.ConfigOptions {
 	return core.ConfigOptions{Servers: data.Servers, Inbounds: data.Inbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
-		InboundUsers: snap.InboundUserBindings(), ProxyPathUsers: snap.ProxyPathUserBindings(), AccessSnapshot: snap, UserDevices: data.UserDevices}
+		InboundUsers: snap.InboundUserBindings(), ProxyPathUsers: snap.ProxyPathUserBindings(), AccessSnapshot: snap}
 }
 
 func (s *Server) InitializeProxyCredentials(ctx context.Context) error {
@@ -70,7 +70,7 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	desired := core.ProxyCredentialScopes(data.Users, data.UserDevices, data.Inbounds, credentialOptions(data, snap))
+	desired := core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, snap))
 	changes, err := s.store.ListAccessChangesByStatus(ctx, model.AccessChangePreparing, model.AccessChangeActivating, model.AccessChangeFinalizing)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 			return err
 		}
 		prepared := core.ProjectionSnapshot(projection, data.Users)
-		desired = append(desired, core.ProxyCredentialScopes(data.Users, data.UserDevices, data.Inbounds, credentialOptions(data, prepared))...)
+		desired = append(desired, core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, prepared))...)
 	}
 	if err := s.store.ReconcileProxyCredentials(ctx, s.sessionSecret, desired); err != nil {
 		return err
@@ -240,7 +240,7 @@ func buildAuthorizationProjection(revision uint64, at time.Time, data store.Full
 	// the number of users, which is what shows up as the fleet grows.
 	scopesNow := map[credentialScopeKey]bool{}
 	scopesByUser := map[int64][]credentialScopeKey{}
-	for _, scope := range core.ProxyCredentialScopes(data.Users, data.UserDevices, data.Inbounds, credentialOptions(data, snap)) {
+	for _, scope := range core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, snap)) {
 		key := proxyScopeKey(scope)
 		if scopesNow[key] {
 			continue
@@ -300,7 +300,7 @@ func buildAuthorizationProjection(revision uint64, at time.Time, data store.Full
 			}
 			future := snapshotAt(single, t)
 			presence[i] = map[credentialScopeKey]bool{}
-			for _, scope := range core.ProxyCredentialScopes(single.Users, single.UserDevices, single.Inbounds, credentialOptions(single, future)) {
+			for _, scope := range core.ProxyCredentialScopes(single.Users, single.Inbounds, credentialOptions(single, future)) {
 				presence[i][proxyScopeKey(scope)] = true
 			}
 		}

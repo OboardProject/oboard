@@ -1085,6 +1085,10 @@ type Server struct {
 	AuthorizationFastLane       bool               `json:"authorization_fast_lane"`
 	RuntimeUsersEnabled         bool               `json:"runtime_users_enabled"`
 
+	// UsersPendingDetail is a bounded, credential-free breakdown of why accounts
+	// are missing from a delivered plan, such as "credential_unavailable=2".
+	UsersPendingDetail string `json:"users_pending_detail,omitempty"`
+
 	MonitoringTargetTaskID int64                    `json:"monitoring_target_task_id"`
 	MonitoringDisplay      *ServerMonitoringDisplay `json:"monitoring_display,omitempty"`
 }

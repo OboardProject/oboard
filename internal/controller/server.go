@@ -13286,9 +13286,19 @@ func filterInboundsByServerID(items []model.Inbound, allowed map[int64]bool) []m
 // buildSSHInboundPlan turns the regular inbound permissions into a dedicated
 // user-facing SSH listener plan using the persisted route credential.
 func buildSSHInboundPlan(version int64, server model.Server, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser, policies map[int64]model.TrafficRuntimePolicy) (model.SSHInboundPlan, error) {
+	result, err := buildSSHInboundPlanWithDiagnostics(version, server, data, inboundUsers, pathUsers, policies)
+	return result.Plan, err
+}
+
+// buildSSHInboundPlanWithDiagnostics also reports the authorized accounts that
+// could not be projected, so a caller rendering operator status can say that an
+// account is missing from the plan instead of reporting the server as fully
+// converged.
+func buildSSHInboundPlanWithDiagnostics(version int64, server model.Server, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser, policies map[int64]model.TrafficRuntimePolicy) (sshInboundPlanResult, error) {
 	plan := model.SSHInboundPlan{Version: version, Inbounds: []model.SSHInbound{}}
+	rejections := []sshInboundPlanRejection{}
 	users := make(map[int64][]model.User, len(data.Users))
-	for _, user := range core.ExpandDeviceUsers(data.Users, data.UserDevices) {
+	for _, user := range core.DataPlaneIdentities(data.Users) {
 		users[user.ID] = append(users[user.ID], user)
 	}
 	pathBound := map[int64][]int64{}
@@ -13316,7 +13326,7 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		}
 		address := core.ResolveDNSPreferredEntryAddress(inbound, server)
 		if strings.TrimSpace(address) == "" {
-			return model.SSHInboundPlan{}, fmt.Errorf("SSH 入口 %s 缺少可用的连接地址", inbound.Name)
+			return sshInboundPlanResult{}, fmt.Errorf("SSH 入口 %s 缺少可用的连接地址", inbound.Name)
 		}
 		entry := model.SSHInbound{InboundID: inbound.ID, ServerID: server.ID, Name: inbound.Name, ListenIP: core.EffectiveListenIP(server, inbound.ListenIP), Address: address, Port: inbound.Port, Enabled: true, Users: []model.SSHInboundUser{}, Policies: map[string]model.TrafficRuntimePolicy{}}
 		seenPolicy := map[int64]bool{}
@@ -13326,6 +13336,11 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 			}
 			credential := core.UserCredentialForRoute(user, inbound.ID, pathID, model.ProtocolSSH)
 			if credential.AuthorizationKey == "" {
+				// The account is authorized here but owns no usable credential
+				// for this exact scope, so it cannot be deployed. Record it:
+				// otherwise the account silently vanishes from the listener
+				// while the server still reports a converged SSH plan.
+				rejections = append(rejections, sshInboundPlanRejection{InboundID: inbound.ID, UserID: user.ID, Reason: "credential_unavailable"})
 				return nil
 			}
 			routeAuthUser = credential.ProxyUsername
@@ -13346,16 +13361,16 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 		for _, path := range pathsByInbound[inbound.ID] {
 			_, _, err := core.ProxyPathEntryRoute(path, stepsByPath[path.ID], inbound, data.WARPProfiles)
 			if err != nil {
-				return model.SSHInboundPlan{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
+				return sshInboundPlanResult{}, fmt.Errorf("SSH 路径 %s: %w", path.Name, err)
 			}
 			for _, userID := range pathBound[path.ID] {
 				for _, user := range users[userID] {
 					routeInboundTag, routeAuthUser, err := core.ProxyPathEntryRoutingIdentity(path, inbound, user)
 					if err != nil {
-						return model.SSHInboundPlan{}, fmt.Errorf("SSH path %s: %w", path.Name, err)
+						return sshInboundPlanResult{}, fmt.Errorf("SSH path %s: %w", path.Name, err)
 					}
 					if err := appendSSHUser(user, path.ID, routeInboundTag, routeAuthUser); err != nil {
-						return model.SSHInboundPlan{}, err
+						return sshInboundPlanResult{}, err
 					}
 				}
 			}
@@ -13370,14 +13385,20 @@ func buildSSHInboundPlan(version int64, server model.Server, data store.FullRout
 				for _, user := range users[binding.UserID] {
 					routeInboundTag, routeAuthUser, pathID := core.SSHDirectBranchIdentity(inbound.ID, user.Username)
 					if err := appendSSHUser(user, pathID, routeInboundTag, routeAuthUser); err != nil {
-						return model.SSHInboundPlan{}, err
+						return sshInboundPlanResult{}, err
 					}
 				}
 			}
 		}
+		// Refuse to ship a user the Agent would reject: one violation
+		// fails the whole plan for this server and takes every other
+		// account on it down.
+		keptUsers, contractRejections := sanitizeSSHInboundUsers(entry)
+		entry.Users = keptUsers
+		rejections = append(rejections, contractRejections...)
 		plan.Inbounds = append(plan.Inbounds, entry)
 	}
-	return plan, nil
+	return sshInboundPlanResult{Plan: plan, Rejections: rejections}, nil
 }
 
 func sshInboundPlanDigest(plan model.SSHInboundPlan) string {
@@ -13494,10 +13515,23 @@ func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identi
 }
 
 func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
+	// Only this account's readiness is being answered, so only this account's
+	// credentials need decrypting. Loading the whole fleet's credentials made
+	// one subscription pull pay for every other account's material.
+	data.Users = []model.User{user}
 	var err error
 	data, err = s.loadProxyCredentialData(ctx, data)
 	if err != nil {
 		return nil, err
+	}
+	sshServers := map[int64]bool{}
+	for _, inbound := range data.Inbounds {
+		if inbound.Enabled && inbound.Protocol == model.ProtocolSSH {
+			sshServers[inbound.ServerID] = true
+		}
+	}
+	if len(sshServers) == 0 {
+		return map[int64]string{}, nil
 	}
 	deployments, err := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
 	if err != nil {
@@ -13506,6 +13540,9 @@ func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.U
 	identity := sshPasswordDeploymentIdentityForUser(user)
 	hostKeys := map[int64]string{}
 	for _, server := range data.Servers {
+		if !sshServers[server.ID] {
+			continue
+		}
 		plan, err := buildSSHInboundPlan(0, server, data, inboundUsers, pathUsers, nil)
 		if err != nil {
 			return nil, err
@@ -14044,7 +14081,7 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
-		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies, UserDevices: data.UserDevices,
+		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies,
 		PortLedger:      ledger,
 		RuntimeUsersOut: &runtimeUsers,
 	})

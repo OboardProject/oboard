@@ -101,10 +101,6 @@ type ConfigOptions struct {
 	// from the plan model. When absent the user's own limits apply.
 	UserPolicies    map[int64]UserLimitPolicy
 	TrafficPolicies map[int64]model.TrafficRuntimePolicy
-	// UserDevices is the active device projection from the Controller routing
-	// snapshot. A nil slice preserves the pure-Core user-level behaviour used by
-	// isolated configuration tests and import tooling.
-	UserDevices []model.UserDevice
 	// PortLedger supplies persisted generated-listener ports. When nil every
 	// generated port is derived fresh, which keeps pure-Core callers and fixtures
 	// working without a database.
@@ -574,7 +570,7 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 		opts.ProxyPathUsers = opts.AccessSnapshot.ProxyPathUserBindings()
 	}
 	opts.ProxyPathSteps = resolveImplicitProxyPathInboundBindings(opts.ProxyPaths, opts.ProxyPathSteps, opts.Inbounds)
-	users = ExpandDeviceUsers(users, opts.UserDevices)
+	users = DataPlaneIdentities(users)
 	pathInboundByID := map[int64]model.Inbound{}
 	for _, inbound := range opts.Inbounds {
 		pathInboundByID[inbound.ID] = inbound

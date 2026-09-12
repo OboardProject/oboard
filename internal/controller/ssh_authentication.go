@@ -143,8 +143,11 @@ func (s *Server) annotateSSHUserDeliveryStatuses(ctx context.Context, servers []
 			continue
 		}
 		ready := false
+		unprojected := ""
 		if loadErr == nil {
-			plan, planErr := buildSSHInboundPlan(0, *server, data, snapshot.snapshot.InboundUserBindings(), snapshot.snapshot.ProxyPathUserBindings(), nil)
+			built, planErr := buildSSHInboundPlanWithDiagnostics(0, *server, data, snapshot.snapshot.InboundUserBindings(), snapshot.snapshot.ProxyPathUserBindings(), nil)
+			plan := built.Plan
+			unprojected = describeSSHInboundRejections(built.Rejections)
 			if planErr == nil {
 				_, deployed, matched, lookupErr := s.matchingDeployedSSHPlan(ctx, server.ID, plan)
 				if lookupErr == nil && matched && sshInboundPlanDigest(plan) == sshInboundPlanDigest(deployed) {
@@ -159,7 +162,18 @@ func (s *Server) annotateSSHUserDeliveryStatuses(ctx context.Context, servers []
 				}
 			}
 		}
-		if !ready {
+		switch {
+		case unprojected != "":
+			// The deployed listener can converge while an authorized account is
+			// missing from it, because listener identity does not depend on the
+			// user set. Reporting that as confirmed would show a green server
+			// whose users cannot connect, and unlike an unverified deployment
+			// this does not resolve by retrying: it needs an operator.
+			server.UsersConfirmed = false
+			server.UsersPendingReason = "ssh_users_unprojected"
+			server.UsersPendingDetail = unprojected
+			server.UsersFallback = ""
+		case !ready:
 			server.UsersConfirmed = false
 			server.UsersPendingReason = "ssh_authentication_unverified"
 			server.UsersFallback = "apply_core_config"
