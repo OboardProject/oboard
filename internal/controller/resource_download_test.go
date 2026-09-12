@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/version"
 )
 
@@ -102,4 +104,84 @@ func TestResourceDownloadSourceAndFallback(t *testing.T) {
 	probeStatus = http.StatusOK
 	check("/downloads/github/oboard-agent-linux-amd64", http.StatusTemporaryRedirect)
 	check("/downloads/oboard-agent-linux-amd64", http.StatusOK)
+}
+
+type resourceDownloadGeoResolver struct {
+	fakeConnectionAuditGeoResolver
+	seen string
+	fail bool
+}
+
+func (g *resourceDownloadGeoResolver) Lookup(ip string) (model.IPGeography, error) {
+	g.seen = ip
+	if g.fail {
+		return model.IPGeography{}, errors.New("unavailable")
+	}
+	return g.geo, nil
+}
+
+func TestResourceDownloadMainlandPreference(t *testing.T) {
+	db := openControllerAutomationTestStore(t)
+	s := &Server{store: db}
+	oldVersion, oldBuild, oldClient := version.AgentVersion, version.AgentBuild, resourceDownloadClient
+	t.Cleanup(func() {
+		version.AgentVersion, version.AgentBuild, resourceDownloadClient = oldVersion, oldBuild, oldClient
+	})
+	version.AgentVersion, version.AgentBuild = "1.2.3", "20260909010101"
+	probes := 0
+	resourceDownloadClient = &http.Client{Transport: resourceDownloadTransport(func(r *http.Request) (*http.Response, error) {
+		probes++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	t.Setenv("OBOARD_TRUSTED_PROXY_CIDRS", "")
+	for _, tc := range []struct {
+		name, source, enabled, country, peer, forwarded, seen string
+		githubPath, missingGeo, failedGeo, redirect           bool
+	}{
+		{name: "disabled", source: "github", country: "CN", peer: "1.2.3.4:123", redirect: true},
+		{name: "mainland", source: "github", enabled: "true", country: "CN", peer: "1.2.3.4:123", seen: "1.2.3.4"},
+		{name: "explicit github", source: "controller", enabled: "true", country: "CN", peer: "1.2.3.4:123", seen: "1.2.3.4", githubPath: true},
+		{name: "hong kong", source: "github", enabled: "true", country: "HK", peer: "1.2.3.4:123", seen: "1.2.3.4", redirect: true},
+		{name: "macau", source: "github", enabled: "true", country: "MO", peer: "1.2.3.4:123", seen: "1.2.3.4", redirect: true},
+		{name: "taiwan", source: "github", enabled: "true", country: "TW", peer: "1.2.3.4:123", seen: "1.2.3.4", redirect: true},
+		{name: "unknown", source: "github", enabled: "true", peer: "1.2.3.4:123", seen: "1.2.3.4", redirect: true},
+		{name: "missing database", source: "github", enabled: "true", peer: "1.2.3.4:123", missingGeo: true, redirect: true},
+		{name: "failed lookup", source: "github", enabled: "true", country: "CN", peer: "1.2.3.4:123", seen: "1.2.3.4", failedGeo: true, redirect: true},
+		{name: "trusted proxy", source: "github", enabled: "true", country: "CN", peer: "127.0.0.1:123", forwarded: "1.2.3.4", seen: "1.2.3.4"},
+		{name: "untrusted header", source: "github", enabled: "true", country: "US", peer: "8.8.8.8:123", forwarded: "1.2.3.4", seen: "8.8.8.8", redirect: true},
+		{name: "ipv6", source: "github", enabled: "true", country: "CN", peer: "[2400:3200::1]:123", seen: "2400:3200::1"},
+		{name: "private ip", source: "github", enabled: "true", country: "CN", peer: "10.0.0.1:123", redirect: true},
+		{name: "controller default", source: "controller", enabled: "true", country: "US", peer: "1.2.3.4:123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range map[string]string{resourceDownloadSourceSetting: tc.source, resourceDownloadCNControllerSetting: tc.enabled} {
+				if err := db.SetSetting(context.Background(), key, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			geo := &resourceDownloadGeoResolver{fakeConnectionAuditGeoResolver: fakeConnectionAuditGeoResolver{geo: model.IPGeography{CountryCode: tc.country}}, fail: tc.failedGeo}
+			s.geoIP = geo
+			if tc.missingGeo {
+				s.geoIP = nil
+			}
+			path := "/downloads/"
+			if tc.githubPath {
+				path += "github/"
+			}
+			name := "oboard-agent-linux-amd64"
+			r := httptest.NewRequest(http.MethodGet, path+name, nil)
+			r.RemoteAddr = tc.peer
+			r.Header.Set("X-Forwarded-For", tc.forwarded)
+			before := probes
+			if got := s.redirectResourceDownload(httptest.NewRecorder(), r, name); got != tc.redirect {
+				t.Fatalf("redirect = %v, want %v", got, tc.redirect)
+			}
+			if geo.seen != tc.seen {
+				t.Fatalf("looked up %q, want %q", geo.seen, tc.seen)
+			}
+			if !tc.redirect && probes != before {
+				t.Fatal("Controller download contacted GitHub")
+			}
+		})
+	}
 }

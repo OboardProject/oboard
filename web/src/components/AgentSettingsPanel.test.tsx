@@ -71,6 +71,21 @@ describe('AgentSettingsPanel', () => {
     expect(client.request).toHaveBeenLastCalledWith('/settings', { method: 'POST', body: JSON.stringify({ resource_download_source: 'controller' }) })
   })
 
+  it('saves and restores the mainland Controller preference independently', async () => {
+    const client = { request: vi.fn(async () => ({})) }
+    const load = vi.fn(async () => undefined)
+    const notify = vi.fn()
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={load} notify={notify} />))
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="中国大陆服务器优先从主控下载"]')!
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    await act(async () => toggle.click())
+    expect(client.request).toHaveBeenLastCalledWith('/settings', { method: 'POST', body: JSON.stringify({ resource_download_cn_controller: true }) })
+    act(() => root.render(<AgentSettingsPanel data={{ settings: { resource_download_source: 'github', resource_download_cn_controller: true } }} client={client} load={load} notify={notify} />))
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    await act(async () => toggle.click())
+    expect(client.request).toHaveBeenLastCalledWith('/settings', { method: 'POST', body: JSON.stringify({ resource_download_cn_controller: false }) })
+  })
+
   it('auto-saves when MTU setting is changed', async () => {
     const mockClient = { request: vi.fn(async () => ({ status: 'ok' })) }
     const mockLoad = vi.fn(async () => undefined)

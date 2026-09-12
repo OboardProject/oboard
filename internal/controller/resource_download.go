@@ -11,6 +11,7 @@ import (
 )
 
 const resourceDownloadSourceSetting = "resource_download_source"
+const resourceDownloadCNControllerSetting = "resource_download_cn_controller"
 
 var resourceReleaseVersion = regexp.MustCompile(`^(?:v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?|dev-[0-9a-f]{12})$`)
 var resourceReleaseBuild = regexp.MustCompile(`^[0-9]{14}$`)
@@ -54,8 +55,16 @@ func (s *Server) redirectResourceDownload(w http.ResponseWriter, r *http.Request
 	if r.URL.Query().Get("source") == "controller" {
 		return false
 	}
-	if s.runtimeSettings(r.Context())[resourceDownloadSourceSetting] != "github" && !strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"+name), "/downloads/github") {
+	settings := s.runtimeSettings(r.Context())
+	if settings[resourceDownloadSourceSetting] != "github" && !strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"+name), "/downloads/github") {
 		return false
+	}
+	if settingBool(settings, resourceDownloadCNControllerSetting, false) && s.geoIP != nil {
+		if ip := clientIP(r); connectionAuditPublicIP(ip) {
+			if geo, err := s.geoIP.Lookup(ip); err == nil && strings.EqualFold(strings.TrimSpace(geo.CountryCode), "CN") {
+				return false
+			}
+		}
 	}
 	target := resourceGitHubURL(name)
 	if target == "" {

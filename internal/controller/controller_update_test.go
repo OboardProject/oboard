@@ -97,15 +97,15 @@ func TestControllerUpdateAPIAndBackupCleanup(t *testing.T) {
 	}
 	settingsResponse := request(t, handler, http.MethodGet, "/api/v1/ui/settings", adminToken, nil, http.StatusOK)
 	defaults := settingsResponse["settings"].(map[string]any)
-	if defaults[resourceDownloadSourceSetting] != "controller" || defaults[agentAutoUpdateSetting] != false || defaults[subscriptionRelayAutoUpdateSetting] != false || defaults[updateWindowEnabledSetting] != false || defaults[updateWindowStartHourSetting] != float64(3) || defaults[updateWindowEndHourSetting] != float64(7) {
+	if defaults[resourceDownloadCNControllerSetting] != false || defaults[resourceDownloadSourceSetting] != "controller" || defaults[agentAutoUpdateSetting] != false || defaults[subscriptionRelayAutoUpdateSetting] != false || defaults[updateWindowEnabledSetting] != false || defaults[updateWindowStartHourSetting] != float64(3) || defaults[updateWindowEndHourSetting] != float64(7) {
 		t.Fatalf("unexpected managed update defaults: %#v", defaults)
 	}
 	settingsResponse = request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{
-		resourceDownloadSourceSetting: "github", agentAutoUpdateSetting: true, subscriptionRelayAutoUpdateSetting: true,
+		resourceDownloadCNControllerSetting: true, resourceDownloadSourceSetting: "github", agentAutoUpdateSetting: true, subscriptionRelayAutoUpdateSetting: true,
 		updateWindowEnabledSetting: true, updateWindowStartHourSetting: 22, updateWindowEndHourSetting: 4,
 	}, http.StatusOK)
 	saved := settingsResponse["settings"].(map[string]any)
-	if saved[resourceDownloadSourceSetting] != "github" || saved[agentAutoUpdateSetting] != true || saved[subscriptionRelayAutoUpdateSetting] != true || saved[updateWindowEnabledSetting] != true || saved[updateWindowStartHourSetting] != float64(22) || saved[updateWindowEndHourSetting] != float64(4) {
+	if saved[resourceDownloadCNControllerSetting] != true || saved[resourceDownloadSourceSetting] != "github" || saved[agentAutoUpdateSetting] != true || saved[subscriptionRelayAutoUpdateSetting] != true || saved[updateWindowEnabledSetting] != true || saved[updateWindowStartHourSetting] != float64(22) || saved[updateWindowEndHourSetting] != float64(4) {
 		t.Fatalf("unexpected managed update settings: %#v", saved)
 	}
 	request(t, handler, http.MethodPost, "/api/v1/ui/settings", adminToken, map[string]any{updateWindowStartHourSetting: 24}, http.StatusBadRequest)

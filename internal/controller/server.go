@@ -1019,6 +1019,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ControllerLogBackups                      *int               `json:"controller_log_backups"`
 			ControllerAutoUpdate                      *bool              `json:"controller_auto_update_enabled"`
 			ControllerAutoUpdateInterval              *int               `json:"controller_auto_update_interval_hours"`
+			ResourceDownloadCNController              *bool              `json:"resource_download_cn_controller"`
 			ResourceDownloadSource                    *string            `json:"resource_download_source"`
 			AgentAutoUpdate                           *bool              `json:"agent_auto_update_enabled"`
 			SubscriptionRelayAutoUpdate               *bool              `json:"subscription_relay_auto_update_enabled"`
@@ -1349,9 +1350,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			changed = append(changed, resourceDownloadSourceSetting)
 		}
 		for key, value := range map[string]*bool{
-			agentAutoUpdateSetting:             req.AgentAutoUpdate,
-			subscriptionRelayAutoUpdateSetting: req.SubscriptionRelayAutoUpdate,
-			updateWindowEnabledSetting:         req.UpdateWindowEnabled,
+			resourceDownloadCNControllerSetting: req.ResourceDownloadCNController,
+			agentAutoUpdateSetting:              req.AgentAutoUpdate,
+			subscriptionRelayAutoUpdateSetting:  req.SubscriptionRelayAutoUpdate,
+			updateWindowEnabledSetting:          req.UpdateWindowEnabled,
 		} {
 			if value == nil {
 				continue
@@ -1633,6 +1635,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	}
 	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
+	out[resourceDownloadCNControllerSetting] = settingBool(items, resourceDownloadCNControllerSetting, false)
 	out[agentAutoUpdateSetting] = settingBool(items, agentAutoUpdateSetting, false)
 	out[subscriptionRelayAutoUpdateSetting] = settingBool(items, subscriptionRelayAutoUpdateSetting, false)
 	out[agentUpdateMaxConcurrencySetting] = settingInt(items, agentUpdateMaxConcurrencySetting, 0, 0, 32)
