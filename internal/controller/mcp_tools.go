@@ -548,6 +548,9 @@ func (s *Server) addMCPSubmitChangesetTool(server *mcp.Server, principal applica
 		principal, _ := s.mcpPrincipalFromRequest(ctx, request)
 		result, err := s.submitMCPChangeset(ctx, principal, input)
 		if err != nil {
+			if errors.Is(err, automation.ErrIdempotencyConflict) {
+				return mcpPlainFailureResult(mcpauth.CodeIdempotencyConflict, err.Error()), nil, nil
+			}
 			return mcpPlainFailureResult("", err.Error()), nil, nil
 		}
 		return &mcp.CallToolResult{}, result, nil
@@ -570,7 +573,7 @@ func (s *Server) submitMCPChangeset(ctx context.Context, principal application.P
 		}
 	}
 	result, err := s.submitPreparedOperations(ctx, principal, plan.Operations, plan.ExpectedRevisions, input.Reason, input.IdempotencyKey, input.ApprovalPreference)
-if err == nil {
+	if err == nil {
 		s.recordToolCall(ctx, principal, "changesets.submit", input, result.Status, capability.DataInternal)
 	}
 	return result, err

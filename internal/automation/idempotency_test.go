@@ -3,6 +3,9 @@ package automation
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/application"
@@ -46,6 +49,8 @@ func TestChangesetReplayBindsOriginalRequest(t *testing.T) {
 			mutate(&changed)
 			if result, err := s.Create(ctx, p, changed); err == nil || result != nil {
 				t.Fatalf("different request returned old result: %v err=%v", result, err)
+			} else if name != "empty_operations" && !errors.Is(err, ErrIdempotencyConflict) {
+				t.Fatalf("wrong conflict error: %v", err)
 			}
 		})
 	}
@@ -62,6 +67,77 @@ func TestChangesetReplayBindsOriginalRequest(t *testing.T) {
 	replay, err = s.Create(ctx, p, original)
 	if err != nil || replay.Status != model.ChangesetSucceeded {
 		t.Fatalf("committed replay=%v err=%v", replay, err)
+	}
+}
+
+func TestChangesetConcurrentReplayAndResourceRecheck(t *testing.T) {
+	ctx := context.Background()
+	db := openAutomationTestStore(t)
+	s := NewService(db, capability.NewCatalog())
+	registerAutomationTestCapability(s)
+	p := application.Principal{ID: "concurrent", Scopes: []string{"servers:onboard"}}
+	r := CreateRequest{IdempotencyKey: "race", Operations: []OperationRequest{{Capability: "servers.onboard", Input: json.RawMessage(`{}`)}}}
+	var wg sync.WaitGroup
+	ids := make(chan string, 8)
+	for range 8 {
+		wg.Go(func() {
+			item, err := s.Create(ctx, p, r)
+			if err != nil {
+				t.Errorf("concurrent create: %v", err)
+				return
+			}
+			ids <- item.ID
+		})
+	}
+	wg.Wait()
+	close(ids)
+	var first string
+	for id := range ids {
+		if first != "" && id != first {
+			t.Fatalf("duplicate changesets: %s and %s", first, id)
+		}
+		first = id
+	}
+	s.RegisterValidator("servers.onboard", func(context.Context, application.Principal, json.RawMessage) (any, error) {
+		return nil, errors.New("creation forbidden")
+	})
+	restricted := p
+	restricted.ResourceFilter = json.RawMessage(`{"servers":{"mode":"none","allow_create":false}}`)
+	if result, err := s.Create(ctx, restricted, r); err == nil || result != nil {
+		t.Fatal("resource restriction bypassed by replay")
+	}
+	s.SetReplayAuthorizer(func(context.Context, application.Principal, model.AutomationOperation) error {
+		return errors.New("grant revoked")
+	})
+	if result, err := s.Create(ctx, p, r); err == nil || result != nil {
+		t.Fatal("current grant check bypassed by replay")
+	}
+}
+
+func TestChangesetConcurrentDifferentRequestsHaveOneWinner(t *testing.T) {
+	s := NewService(openAutomationTestStore(t), capability.NewCatalog())
+	registerAutomationTestCapability(s)
+	p := application.Principal{ID: "different-race", Scopes: []string{"servers:onboard"}}
+	var wg sync.WaitGroup
+	winners := make(chan string, 8)
+	for i := range 8 {
+		wg.Go(func() {
+			r := CreateRequest{IdempotencyKey: "race", Operations: []OperationRequest{{Capability: "servers.onboard", Input: json.RawMessage(fmt.Sprintf(`{"name":"server-%d"}`, i))}}}
+			item, err := s.Create(context.Background(), p, r)
+			if errors.Is(err, ErrIdempotencyConflict) {
+				return
+			}
+			if err != nil {
+				t.Errorf("create: %v", err)
+				return
+			}
+			winners <- item.ID
+		})
+	}
+	wg.Wait()
+	close(winners)
+	if len(winners) != 1 {
+		t.Fatalf("accepted %d different requests for one key", len(winners))
 	}
 }
 

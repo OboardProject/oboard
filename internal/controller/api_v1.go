@@ -1613,6 +1613,8 @@ func v2Error(w http.ResponseWriter, r *http.Request, status int, code, message s
 
 func v2HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, automation.ErrIdempotencyConflict):
+		v2Error(w, r, http.StatusConflict, "idempotency_conflict", err.Error())
 	case errors.Is(err, sql.ErrNoRows):
 		v2Error(w, r, http.StatusNotFound, "not_found", "资源不存在")
 	case strings.Contains(strings.ToLower(err.Error()), "forbidden"), strings.Contains(strings.ToLower(err.Error()), "not authorized"):

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 type MutationHandler func(context.Context, application.Principal, json.RawMessage) (any, error)
 type RevisionResolver func(context.Context, application.Principal, json.RawMessage) (map[string]string, error)
 type ApplyObserver func(context.Context, *model.AutomationChangeset, uint64, uint64)
+type ReplayAuthorizer func(context.Context, application.Principal, model.AutomationOperation) error
 
 type MutationResult struct {
 	Public  any
@@ -38,6 +40,7 @@ type Service struct {
 	validators        map[string]MutationHandler
 	revisionResolvers map[string]RevisionResolver
 	applyObserver     ApplyObserver
+	replayAuthorizer  ReplayAuthorizer
 	now               func() time.Time
 }
 
@@ -102,6 +105,12 @@ func (s *Service) SetApplyObserver(observer ApplyObserver) {
 	s.mu.Unlock()
 }
 
+func (s *Service) SetReplayAuthorizer(authorizer ReplayAuthorizer) {
+	s.mu.Lock()
+	s.replayAuthorizer = authorizer
+	s.mu.Unlock()
+}
+
 func (s *Service) RegisterRevisionResolver(name string, resolver RevisionResolver) {
 	if _, ok := s.catalog.Get(name); !ok {
 		panic("register revision resolver for unknown capability: " + name)
@@ -115,11 +124,6 @@ func (s *Service) Create(ctx context.Context, principal application.Principal, r
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
 	if request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 {
 		return nil, errors.New("idempotency_key is required and must not exceed 128 characters")
-	}
-	if existing, err := s.store.FindAutomationChangesetByIdempotency(ctx, principal.ID, request.IdempotencyKey); err == nil {
-		return existing, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
 	}
 	if len(request.Operations) == 0 || len(request.Operations) > 64 {
 		return nil, errors.New("changeset must contain between 1 and 64 operations")
@@ -156,14 +160,27 @@ func (s *Service) Create(ctx context.Context, principal application.Principal, r
 		if err != nil {
 			return nil, fmt.Errorf("operation %d input: %w", position, err)
 		}
-		item.Operations = append(item.Operations, model.AutomationOperation{ID: opID, ChangesetID: id, Position: position, Capability: descriptor.Name, Input: input, SecretRefs: requested.SecretRefs, ResourceRefs: normalizedObject(requested.ResourceRefs), RiskClass: descriptor.RiskClass, Status: "pending", Result: json.RawMessage(`{}`)})
+		refs := requested.ResourceRefs
+		if strings.TrimSpace(string(refs)) == "null" {
+			refs = nil
+		}
+		refs, err = canonicalObject(refs)
+		if err != nil {
+			return nil, fmt.Errorf("operation %d resource_refs: %w", position, err)
+		}
+		item.Operations = append(item.Operations, model.AutomationOperation{ID: opID, ChangesetID: id, Position: position, Capability: descriptor.Name, Input: input, SecretRefs: requested.SecretRefs, ResourceRefs: refs, RiskClass: descriptor.RiskClass, Status: "pending", Result: json.RawMessage(`{}`)})
 		if descriptor.RiskClass > item.RiskClass {
 			item.RiskClass = descriptor.RiskClass
 		}
 	}
+	if existing, err := s.store.FindAutomationChangesetByIdempotency(ctx, principal.ID, request.IdempotencyKey); err == nil {
+		return s.replayChangeset(ctx, principal, existing, item)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
 	if err := s.store.CreateAutomationChangeset(ctx, item); err != nil {
 		if existing, findErr := s.store.FindAutomationChangesetByIdempotency(ctx, principal.ID, request.IdempotencyKey); findErr == nil {
-			return existing, nil
+			return s.replayChangeset(ctx, principal, existing, item)
 		}
 		return nil, err
 	}
@@ -1042,8 +1059,13 @@ func canonicalObject(raw json.RawMessage) (json.RawMessage, error) {
 		raw = json.RawMessage(`{}`)
 	}
 	var value map[string]any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil || value == nil {
 		return nil, errors.New("input must be a JSON object")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return nil, errors.New("input must contain one JSON object")
 	}
 	encoded, err := json.Marshal(value)
 	return json.RawMessage(encoded), err

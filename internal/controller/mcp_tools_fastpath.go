@@ -15,6 +15,7 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/capability"
+	"github.com/OboardProject/oboard/internal/mcpauth"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
@@ -328,6 +329,9 @@ func fastPathError(code, message string, recoverable bool, nextAction string) *T
 }
 
 func fastPathCodedError(err error, recoverable bool, nextAction string) *ToolEnvelope {
+	if errors.Is(err, automation.ErrIdempotencyConflict) {
+		return fastPathError(mcpauth.CodeIdempotencyConflict, err.Error(), false, "review_plan")
+	}
 	var missing missingDNSCredentialError
 	if errors.As(err, &missing) {
 		return fastPathErrorData(missingDNSCredentialCode, missing.Error(), recoverable, nextAction, map[string]any{"available_credentials": missing.Available})

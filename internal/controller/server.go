@@ -330,6 +330,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.scripts = scripting.NewService(store, catalog.RBAC())
 	s.scriptGateway = scripting.NewGateway(store, s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
+	s.automation.SetReplayAuthorizer(s.authorizeAutomationReplay)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.recoverControllerUpdateRun(context.Background())
 	s.initializeTrustedProxies()
