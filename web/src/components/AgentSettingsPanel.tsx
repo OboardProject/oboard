@@ -196,7 +196,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
     <section className="settings-card agent-settings-card">
       <SettingsGroup title="资源下载" description="适用于 Agent、内核和端口转发组件的安装与更新。订阅中继始终从主控下载。">
         <SettingsSwitchRow label="优先从 GitHub 下载" description="默认从主控下载。开启后优先从 GitHub 获取主控指定的正式版或开发构建，资源不可用时回退主控。" checked={data.settings?.resource_download_source === 'github'} onChange={checked => void autoSaveSetting({ resource_download_source: checked ? 'github' : 'controller' }, '资源下载来源已保存')} disabled={Boolean(savingKey)} ariaLabel="优先从 GitHub 下载资源" />
-        <SettingsSwitchRow label="中国大陆服务器优先从主控下载" description="开启后，按下载请求 IP 识别为中国大陆的服务器直接从主控下载，不受 GitHub 优先设置影响。其他地区或地区未知时沿用原设置。" checked={data.settings?.resource_download_cn_controller === true || data.settings?.resource_download_cn_controller === 'true'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆服务器优先从主控下载" />
+        <SettingsSwitchRow label="中国大陆服务器优先从主控下载" description="开启后，按下载请求 IP 识别为中国大陆的服务器直接从主控下载，不受 GitHub 优先设置影响。其他地区或地区未知时沿用原设置。" checked={data.settings?.resource_download_cn_controller !== false && data.settings?.resource_download_cn_controller !== 'false'} onChange={checked => void autoSaveSetting({ resource_download_cn_controller: checked }, '中国大陆下载偏好已保存')} disabled={Boolean(savingKey)} ariaLabel="中国大陆服务器优先从主控下载" />
       </SettingsGroup>
       <SettingsGroup title="新服务器默认值" description="创建服务器时自动带入，可在创建窗口中单独修改。">
         <SettingsRow label="MTU" description="根据节点网络环境检测 MTU，并决定是否自动应用检测结果。">

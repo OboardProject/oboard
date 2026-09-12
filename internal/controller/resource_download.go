@@ -59,7 +59,7 @@ func (s *Server) redirectResourceDownload(w http.ResponseWriter, r *http.Request
 	if settings[resourceDownloadSourceSetting] != "github" && !strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"+name), "/downloads/github") {
 		return false
 	}
-	if settingBool(settings, resourceDownloadCNControllerSetting, false) && s.geoIP != nil {
+	if settingBool(settings, resourceDownloadCNControllerSetting, true) && s.geoIP != nil {
 		if ip := clientIP(r); connectionAuditPublicIP(ip) {
 			if geo, err := s.geoIP.Lookup(ip); err == nil && strings.EqualFold(strings.TrimSpace(geo.CountryCode), "CN") {
 				return false

@@ -138,7 +138,8 @@ func TestResourceDownloadMainlandPreference(t *testing.T) {
 		name, source, enabled, country, peer, forwarded, seen string
 		githubPath, missingGeo, failedGeo, redirect           bool
 	}{
-		{name: "disabled", source: "github", country: "CN", peer: "1.2.3.4:123", redirect: true},
+		{name: "disabled", source: "github", enabled: "false", country: "CN", peer: "1.2.3.4:123", redirect: true},
+		{name: "default mainland", source: "github", country: "CN", peer: "1.2.3.4:123", seen: "1.2.3.4"},
 		{name: "mainland", source: "github", enabled: "true", country: "CN", peer: "1.2.3.4:123", seen: "1.2.3.4"},
 		{name: "explicit github", source: "controller", enabled: "true", country: "CN", peer: "1.2.3.4:123", seen: "1.2.3.4", githubPath: true},
 		{name: "hong kong", source: "github", enabled: "true", country: "HK", peer: "1.2.3.4:123", seen: "1.2.3.4", redirect: true},

@@ -1635,7 +1635,7 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	}
 	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
-	out[resourceDownloadCNControllerSetting] = settingBool(items, resourceDownloadCNControllerSetting, false)
+	out[resourceDownloadCNControllerSetting] = settingBool(items, resourceDownloadCNControllerSetting, true)
 	out[agentAutoUpdateSetting] = settingBool(items, agentAutoUpdateSetting, false)
 	out[subscriptionRelayAutoUpdateSetting] = settingBool(items, subscriptionRelayAutoUpdateSetting, false)
 	out[agentUpdateMaxConcurrencySetting] = settingInt(items, agentUpdateMaxConcurrencySetting, 0, 0, 32)
