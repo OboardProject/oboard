@@ -1,29 +1,30 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, formatBucketTime, splitSeriesSegments } from './server-unified-chart'
+import { alignFailedProbePoints, alignUnifiedMetrics, buildAreaPath, buildLinePath, computeMaxLatency, DEFAULT_CONNECT_GAPS, DEFAULT_SMOOTH_LINES, DEFAULT_CLIP_SPIKES, suppressLatencySpikes, formatBucketTime, splitSeriesSegments } from './server-unified-chart'
 
 const monitorSource = readFileSync(new URL('./components/server/ServerUnifiedTelemetryChart.tsx', import.meta.url), 'utf8')
 const monitorStyles = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
 
 describe('server-unified-chart helper', () => {
-  it('uses connect-gaps on and smoothing off as the dialog defaults', () => {
+  it('uses smooth curves and gap connection by default with optional spike suppression', () => {
     expect(DEFAULT_CONNECT_GAPS).toBe(true)
-    expect(DEFAULT_SMOOTH_LINES).toBe(false)
+    expect(DEFAULT_SMOOTH_LINES).toBe(true)
+    expect(DEFAULT_CLIP_SPIKES).toBe(false)
   })
 
   it('renders exactly two native pressed-state controls with compact spring feedback', () => {
     expect(monitorSource.match(/className={`komari-chart-option/g)).toHaveLength(2)
     expect(monitorSource).toContain('aria-pressed={connectGaps}')
-    expect(monitorSource).toContain('aria-pressed={smoothLines}')
+    expect(monitorSource).toContain('aria-pressed={clipSpikes}')
     expect(monitorSource).toContain('>断点连接</button>')
-    expect(monitorSource).toContain('>平滑</button>')
+    expect(monitorSource).toContain('>削峰</button>')
     expect(monitorStyles).toContain('cubic-bezier(0.175, 0.885, 0.32, 1.5)')
     expect(monitorStyles).toContain('transform: scale(0.97) translateY(1px)')
   })
 
   it('keeps each enabled series shadow visible independently of connect-gaps', () => {
     expect(monitorSource).toContain('stopColor={series.color}')
-    expect(monitorSource).toContain('const areaPath = buildAreaPath(points, padB, smoothLines)')
+    expect(monitorSource).toContain('const areaPath = buildAreaPath(points, padB, DEFAULT_SMOOTH_LINES)')
     expect(monitorSource).not.toContain('connectGaps ? buildAreaPath')
     expect(monitorSource).toContain('const singlePoint = points.length === 1 ? points[0] : null')
     expect(monitorSource).toContain('fill={`url(#${gradientPrefix}-${seriesIndex})`}')
@@ -199,4 +200,49 @@ describe('server-unified-chart helper', () => {
     const maxLat = computeMaxLatency(buckets, enabled)
     expect(maxLat).toBeGreaterThanOrEqual(230)
   })
+})
+
+
+describe('optional latency spike suppression', () => {
+  const series = [{ id: 'latency', label: 'latency', unit: 'ms', yAxis: 'right', color: 'red' }, { id: 'cpu', label: 'cpu', unit: '%', yAxis: 'left', color: 'blue' }] as const
+  const filter = (values: Array<number | null>) => {
+    const buckets = values.map((value, timestamp) => ({ timestamp, timeLabel: '', values: { latency: value, cpu: value } }))
+    const before = structuredClone(buckets)
+    const output = suppressLatencySpikes(buckets, [...series])
+    expect(buckets).toEqual(before)
+    expect(output.map(bucket => bucket.values.cpu)).toEqual(values)
+    return output.map(bucket => bucket.values.latency)
+  }
+  it('removes isolated and two-point high spikes without changing input or resource data', () => {
+    expect(filter([20, 20, 200, 20, 20])).toEqual([20, 20, 20, 20, 20])
+    expect(filter([20, 20, 200, 220, 20, 20])).toEqual([20, 20, 20, 20, 20, 20])
+  })
+  it('preserves sustained plateaus, steps and ordinary variation', () => {
+    for (const values of [[20,20,200,200,200,20,20], [20,20,200,200,200,200], [20,22,25,21,20]]) expect(filter(values)).toEqual(values)
+  })
+  it('does not cross missing samples or guess at window boundaries', () => {
+    for (const values of [[20,null,200,20,20], [20,20,200,null,20], [200,20,20,20,200]]) expect(filter(values)).toEqual(values)
+  })
+  it('does not manufacture low spikes when drawing the default smooth curve', () => {
+    const path = buildLinePath([{ x: 0, y: 10 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 10 }], DEFAULT_SMOOTH_LINES)
+    const coordinates = path.match(/-?\d+\.\d+,-?\d+\.\d+/g) || []
+    for (const coordinate of coordinates) {
+      const y = Number(coordinate.split(',')[1])
+      expect(y).toBeGreaterThanOrEqual(0)
+      expect(y).toBeLessThanOrEqual(10)
+    }
+  })
+})
+
+
+it('retains every returned point at fine precision and only pairs them at standard precision', () => {
+  const now = Date.parse('2026-09-12T00:00:00Z')
+  const start = now - 86400000
+  const latencyPoints = Array.from({ length: 360 }, (_, index) => ({ at: new Date(start + (index + 0.5) * 240000).toISOString(), avg_ms: index + 1, count: 1 }))
+  const fine = alignUnifiedMetrics({ latencyPoints, includeResources: false, now, bucketCount: 360 })
+  const standard = alignUnifiedMetrics({ latencyPoints, includeResources: false, now, bucketCount: 180 })
+  expect(fine.buckets.map(bucket => bucket.values.public_latency)).toEqual(latencyPoints.map(point => point.avg_ms))
+  expect(standard.buckets).toHaveLength(180)
+  expect(standard.buckets[0].values.public_latency).toBe(1.5)
+  expect(standard.buckets[179].values.public_latency).toBe(359.5)
 })

@@ -24,9 +24,8 @@ import { ServerUnifiedTelemetryChart } from './ServerUnifiedTelemetryChart'
 const EMPTY_STATS: LatencyProbeTargetStat[] = []
 
 const GRANULARITY_OPTIONS = [
-  { value: '30', label: '较粗' },
-  { value: '60', label: '默认' },
-  { value: '120', label: '较细' },
+  { value: '180', label: '标准' },
+  { value: '360', label: '精细' },
 ] as const
 
 function formatMS(value: number | null | undefined) {
@@ -79,10 +78,10 @@ export function LatencyDashboard({
   const [includePublicPref, setIncludePublicPref] = useState(readIncludePublicStats)
   const [worstOnly, setWorstOnly] = useState(false)
   const [compareMode, setCompareMode] = useState(false)
-  const [granularity, setGranularity] = useState('60')
+  const [granularity, setGranularity] = useState('360')
   const [enabledSeries, setEnabledSeries] = useState<Record<string, boolean>>({})
   const includePublic = shouldIncludePublicInOverview(stats, includePublicPref)
-  const bucketCount = Number(granularity) || 60
+  const bucketCount = Number(granularity) || 360
   const effectiveWindowHours = Math.max(1, (Date.parse(response.window.to) - Date.parse(response.window.from)) / 3_600_000) || windowHours
 
   const aligned = useMemo(() => alignUnifiedMetrics({
@@ -238,8 +237,8 @@ export function LatencyDashboard({
             <h3>趋势</h3>
             <div className="latency-trend-controls">
               <label className="latency-granularity">
-                <span>数据粒度</span>
-                <Select value={granularity} onChange={event => setGranularity(event.target.value)} aria-label="数据粒度">
+                <span>显示精度</span>
+                <Select value={granularity} onChange={event => setGranularity(event.target.value)} aria-label="显示精度">
                   {GRANULARITY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </Select>
               </label>

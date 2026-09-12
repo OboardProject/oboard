@@ -8,6 +8,8 @@ import {
   computeMaxLatency,
   DEFAULT_CONNECT_GAPS,
   DEFAULT_SMOOTH_LINES,
+  DEFAULT_CLIP_SPIKES,
+  suppressLatencySpikes,
   splitSeriesSegments,
   type LatencyProbeResultSample,
   type MetricSeries,
@@ -64,14 +66,15 @@ export function ServerUnifiedTelemetryChart({
   const fallbackEnd = useMemo(() => Date.now(), [resourcePoints, latencyPoints, regionalProbes, failedProbePoints, windowHours, windowEndAt])
   const responseEnd = windowEndAt ? new Date(windowEndAt).getTime() : fallbackEnd
   const windowEndMS = Number.isFinite(responseEnd) ? responseEnd : fallbackEnd
-  const { seriesList, buckets } = useMemo(() => {
+  const { seriesList, buckets: rawBuckets } = useMemo(() => {
     if (aligned) return aligned
     return alignUnifiedMetrics({ resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, bucketCount, now: windowEndMS })
   }, [aligned, resourcePoints, latencyPoints, regionalProbes, includeResources, windowHours, windowEndMS, bucketCount])
 
   const [internalEnabled, setInternalEnabled] = useState<Record<string, boolean>>({})
   const [connectGaps, setConnectGaps] = useState(DEFAULT_CONNECT_GAPS)
-  const [smoothLines, setSmoothLines] = useState(DEFAULT_SMOOTH_LINES)
+  const [clipSpikes, setClipSpikes] = useState(DEFAULT_CLIP_SPIKES)
+  const buckets = useMemo(() => clipSpikes ? suppressLatencySpikes(rawBuckets, seriesList) : rawBuckets, [rawBuckets, seriesList, clipSpikes])
   const enabledSeries = seriesEnabled ?? internalEnabled
   const setEnabledSeries = onSeriesEnabledChange ?? setInternalEnabled
 
@@ -160,8 +163,8 @@ export function ServerUnifiedTelemetryChart({
         <g key={series.id}>
           {segments.map((segment, segmentIndex) => {
             const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
-            const linePath = buildLinePath(points, smoothLines)
-            const areaPath = buildAreaPath(points, padB, smoothLines)
+            const linePath = buildLinePath(points, DEFAULT_SMOOTH_LINES)
+            const areaPath = buildAreaPath(points, padB, DEFAULT_SMOOTH_LINES)
             const singlePoint = points.length === 1 ? points[0] : null
             return (
               <React.Fragment key={segmentIndex}>
@@ -197,7 +200,7 @@ export function ServerUnifiedTelemetryChart({
         </g>
       )
     })
-  ), [activeSeries, buckets, connectGaps, smoothLines, maxLatency, W, H, padL, gradientPrefix])
+  ), [activeSeries, buckets, connectGaps, maxLatency, W, H, padL, gradientPrefix])
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!svgRef.current || !buckets.length) return
@@ -235,13 +238,13 @@ export function ServerUnifiedTelemetryChart({
               <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(true)}>全选</button>
               <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(false)}>清空</button>
             </div>
-            <ChartDrawOptions connectGaps={connectGaps} smoothLines={smoothLines} onConnectGaps={setConnectGaps} onSmoothLines={setSmoothLines} />
+            <ChartDrawOptions connectGaps={connectGaps} clipSpikes={clipSpikes} onConnectGaps={setConnectGaps} onClipSpikes={setClipSpikes} />
           </div>
         </div>
       )}
       {hideLegend && (
         <div className="komari-chart-header">
-          <ChartDrawOptions connectGaps={connectGaps} smoothLines={smoothLines} onConnectGaps={setConnectGaps} onSmoothLines={setSmoothLines} />
+          <ChartDrawOptions connectGaps={connectGaps} clipSpikes={clipSpikes} onConnectGaps={setConnectGaps} onClipSpikes={setClipSpikes} />
         </div>
       )}
       <div ref={canvasRef} className="komari-chart-canvas-wrap">
@@ -352,6 +355,8 @@ export function ServerUnifiedTelemetryChart({
                 {activeSeries.map(series => {
                   const val = hoveredBucket.values[series.id]
                   if (val == null) return null
+                  const rawValue = hoveredIdx !== null ? rawBuckets[hoveredIdx]?.values[series.id] : null
+                  const originalNote = rawValue != null && rawValue !== val ? `（原始 ${Math.round(rawValue)} ms）` : ''
                   let formattedVal = series.unit === '%' ? `${val.toFixed(1)}%` : `${Math.round(val)} ms`
                   if (series.id === 'memory' && hoveredBucket.memoryUsedBytes && hoveredBucket.memoryTotalBytes) {
                     formattedVal = `${val.toFixed(1)}% (${formatBytes(hoveredBucket.memoryUsedBytes)} / ${formatBytes(hoveredBucket.memoryTotalBytes)})`
@@ -362,7 +367,7 @@ export function ServerUnifiedTelemetryChart({
                         <span className="komari-legend-dot" style={{ backgroundColor: series.color }} />
                         {series.label}
                       </span>
-                      <span className="komari-tooltip-val">{formattedVal}</span>
+                      <span className="komari-tooltip-val">{formattedVal}{originalNote}</span>
                     </div>
                   )
                 })}
@@ -377,14 +382,14 @@ export function ServerUnifiedTelemetryChart({
 
 function ChartDrawOptions({
   connectGaps,
-  smoothLines,
+  clipSpikes,
   onConnectGaps,
-  onSmoothLines,
+  onClipSpikes,
 }: {
   connectGaps: boolean
-  smoothLines: boolean
+  clipSpikes: boolean
   onConnectGaps: (value: boolean | ((current: boolean) => boolean)) => void
-  onSmoothLines: (value: boolean | ((current: boolean) => boolean)) => void
+  onClipSpikes: (value: boolean | ((current: boolean) => boolean)) => void
 }) {
   return (
     <div className="komari-chart-options" aria-label="延迟图绘制选项">
@@ -397,11 +402,11 @@ function ChartDrawOptions({
       >断点连接</button>
       <button
         type="button"
-        className={`komari-chart-option${smoothLines ? ' active' : ''}`}
-        aria-pressed={smoothLines}
-        title="使用平滑曲线显示延迟趋势"
-        onClick={() => onSmoothLines(value => !value)}
-      >平滑</button>
+        className={`komari-chart-option${clipSpikes ? ' active' : ''}`}
+        aria-pressed={clipSpikes}
+        title="削除短暂延迟毛刺；保留持续高延迟、丢包和原始统计"
+        onClick={() => onClipSpikes(value => !value)}
+      >削峰</button>
     </div>
   )
 }

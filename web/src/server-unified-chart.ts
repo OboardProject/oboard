@@ -91,7 +91,8 @@ export interface FailedProbePoint {
 }
 
 export const DEFAULT_CONNECT_GAPS = true
-export const DEFAULT_SMOOTH_LINES = false
+export const DEFAULT_SMOOTH_LINES = true
+export const DEFAULT_CLIP_SPIKES = false
 
 export const REGIONAL_SERIES_COLORS = [
   '#8b5cf6', // purple
@@ -140,6 +141,26 @@ export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: str
   return segments
 }
 
+// Upper-only five-point Hampel filter; gaps and sustained changes stay intact.
+export function suppressLatencySpikes(buckets: UnifiedBucketPoint[], seriesList: MetricSeries[]): UnifiedBucketPoint[] {
+  const result = buckets.map(bucket => ({ ...bucket, values: { ...bucket.values } }))
+  const median = (values: number[]) => values.sort((a, b) => a - b)[2]
+  for (const series of seriesList) {
+    if (series.unit !== 'ms') continue
+    for (let index = 2; index < buckets.length - 2; index += 1) {
+      const window = buckets.slice(index - 2, index + 3).map(bucket => bucket.values[series.id])
+      if (window.some(value => value == null || !Number.isFinite(value) || value < 0)) continue
+      const values = window as number[]
+      const baseline = median([...values])
+      const deviation = median(values.map(value => Math.abs(value - baseline)))
+      if (values[2] > baseline + Math.max(10, 3 * 1.4826 * deviation)) {
+        result[index].values[series.id] = baseline
+      }
+    }
+  }
+  return result
+}
+
 export function buildLinearPath(points: { x: number; y: number }[]): string {
   if (points.length === 0) return ''
   return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')
@@ -154,10 +175,11 @@ export function buildSmoothPath(points: { x: number; y: number }[]): string {
     const current = points[index]
     const next = points[index + 1]
     const following = index < points.length - 2 ? points[index + 2] : next
-    const control1X = current.x + (next.x - previous.x) / 6
-    const control1Y = current.y + (next.y - previous.y) / 6
-    const control2X = next.x - (following.x - current.x) / 6
-    const control2Y = next.y - (following.y - current.y) / 6
+    const clamp = (value: number, a: number, b: number) => Math.max(Math.min(a, b), Math.min(Math.max(a, b), value))
+    const control1X = clamp(current.x + (next.x - previous.x) / 6, current.x, next.x)
+    const control1Y = clamp(current.y + (next.y - previous.y) / 6, current.y, next.y)
+    const control2X = clamp(next.x - (following.x - current.x) / 6, current.x, next.x)
+    const control2Y = clamp(next.y - (following.y - current.y) / 6, current.y, next.y)
     path += ` C ${control1X.toFixed(1)},${control1Y.toFixed(1)} ${control2X.toFixed(1)},${control2Y.toFixed(1)} ${next.x.toFixed(1)},${next.y.toFixed(1)}`
   }
   return path
