@@ -6,11 +6,16 @@ import (
 	"time"
 )
 
-func TestLatencyRollupScheduleIsOptInAndBounded(t *testing.T) {
+func TestLatencyRollupScheduleDefaultsOnAndBounded(t *testing.T) {
 	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "")
 	t.Setenv("OBOARD_SLA_PROJECTION_WRITE", "")
+	if state := newLatencyRollupSchedule(); state == nil || !state.latencyEnabled || !state.slaEnabled {
+		t.Fatal("summary worker not enabled for existing configurations without flags")
+	}
+	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "0")
+	t.Setenv("OBOARD_SLA_PROJECTION_WRITE", "0")
 	if newLatencyRollupSchedule() != nil {
-		t.Fatal("summary worker enabled by default")
+		t.Fatal("explicit disable ignored")
 	}
 	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "1")
 	schedule := newLatencyRollupSchedule()
@@ -36,7 +41,7 @@ func TestLatencyRollupScheduleIsOptInAndBounded(t *testing.T) {
 }
 
 func TestSLAProjectionUsesExistingMaintenanceBudget(t *testing.T) {
-	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "")
+	t.Setenv("OBOARD_LATENCY_ROLLUP_WRITE", "0")
 	t.Setenv("OBOARD_SLA_PROJECTION_WRITE", "1")
 	state := newLatencyRollupSchedule()
 	if state == nil || !state.slaEnabled || state.latencyEnabled || state.rows != 500 {

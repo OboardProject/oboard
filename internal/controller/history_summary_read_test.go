@@ -127,7 +127,7 @@ func TestLatencyChartTargetFilterContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, enabled := range []string{"0", "1"} {
+	for _, enabled := range []string{"0", "1", ""} {
 		t.Setenv("OBOARD_LATENCY_ROLLUP_READ", enabled)
 		result, err := app.readLatencyChart(ctx, principal, input)
 		if err != nil {

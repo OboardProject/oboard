@@ -133,7 +133,7 @@ func (s *Server) readLatencyChart(ctx context.Context, p application.Principal, 
 	}
 	pointBudget := min(12000, (latencyResponseMaxBytes-128*1024)/(384+6*maxLabelBytes))
 	points := min(input.MaxPoints, max(1, pointBudget/(len(tasks)+2)))
-	summaryRead := os.Getenv("OBOARD_LATENCY_ROLLUP_READ") == "1"
+	summaryRead := os.Getenv("OBOARD_LATENCY_ROLLUP_READ") != "0"
 	interval := time.Duration(math.Ceil(effective.Duration.Seconds()/float64(points))) * time.Second
 	if summaryRead || len(input.TargetIDs) > 0 {
 		base := time.Minute

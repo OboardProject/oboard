@@ -1297,8 +1297,8 @@ func TestControllerInstallHistorySummaryDefaults(t *testing.T) {
 		want                   string
 	}{
 		{"fresh", "install", "", false, "1"},
-		{"upgrade-missing-config", "update", "", false, "0"},
-		{"reinstall-with-data", "install", "", true, "0"},
+		{"upgrade-missing-config", "update", "", false, "1"},
+		{"reinstall-with-data", "install", "", true, "1"},
 		{"old-config", "update", "OBOARD_ADDR=:2787\n", true, ""},
 		{"explicit-disabled", "install", "OBOARD_LATENCY_ROLLUP_READ=0\n", false, ""},
 		{"enabled-config", "update", "OBOARD_LATENCY_ROLLUP_READ=1\n", true, ""},

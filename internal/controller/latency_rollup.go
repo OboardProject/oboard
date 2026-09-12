@@ -26,7 +26,7 @@ type latencyRollupSchedule struct {
 }
 
 func newLatencyRollupSchedule() *latencyRollupSchedule {
-	latency, sla := os.Getenv("OBOARD_LATENCY_ROLLUP_WRITE") == "1", os.Getenv("OBOARD_SLA_PROJECTION_WRITE") == "1"
+	latency, sla := os.Getenv("OBOARD_LATENCY_ROLLUP_WRITE") != "0", os.Getenv("OBOARD_SLA_PROJECTION_WRITE") != "0"
 	if !latency && !sla {
 		return nil
 	}

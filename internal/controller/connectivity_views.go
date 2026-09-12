@@ -124,7 +124,7 @@ func (s *Server) readConnectivityDetails(ctx context.Context, p application.Prin
 	entry, err := s.historyReads().getOrBuild(ctx, key, 0, func(buildCtx context.Context) (json.RawMessage, time.Time, error) {
 		metadata := connectivityViewMetadata{Source: "raw_state_events", RetentionClipped: window.Duration < requestedDuration}
 		var response any
-		if view == "sla" && os.Getenv("OBOARD_SLA_PROJECTION_READ") == "1" {
+		if view == "sla" && os.Getenv("OBOARD_SLA_PROJECTION_READ") != "0" {
 			built, err := s.readSummarizedSLA(buildCtx, input.ServerID, days, window)
 			if err != nil {
 				return nil, time.Time{}, err

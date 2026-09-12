@@ -121,6 +121,7 @@ func TestLatencyChartCacheAuthorizationAndInvalidation(t *testing.T) {
 }
 
 func TestLatencyChartHTTPContract(t *testing.T) {
+	t.Setenv("OBOARD_LATENCY_ROLLUP_READ", "")
 	db, err := store.Open(filepath.Join(t.TempDir(), "chart.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +145,7 @@ func TestLatencyChartHTTPContract(t *testing.T) {
 		t.Fatal("chart cached live state")
 	}
 	metadata := result["metadata"].(map[string]any)
-	if metadata["aggregation_state"] != "ready" || metadata["observed_through"] != nil {
+	if metadata["aggregation_state"] != "catching_up" || metadata["observed_through"] != nil {
 		t.Fatalf("metadata=%v", metadata)
 	}
 	request(t, handler, http.MethodGet, path+"0", token, nil, 400)

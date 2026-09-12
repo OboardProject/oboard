@@ -648,15 +648,10 @@ clear_bootstrap_admin_password() {
 }
 
 initialize_controller_env() {
-  local template=$1 key
+  local template=$1
   [ ! -f "$CONTROLLER_ENV" ] || return 0
   cp "$template" "$CONTROLLER_ENV"
   chmod 0600 "$CONTROLLER_ENV"
-  if [ "$ACTION" != install ] || [ "${CONTROLLER_DATA_EXISTED:-0}" = 1 ]; then
-    for key in OBOARD_LATENCY_ROLLUP_WRITE OBOARD_LATENCY_ROLLUP_READ OBOARD_SLA_PROJECTION_WRITE OBOARD_SLA_PROJECTION_READ; do
-      set_controller_env_value "$key" 0
-    done
-  fi
 }
 
 prepare_controller_env() {
