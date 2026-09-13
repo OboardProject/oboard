@@ -107,6 +107,42 @@ describe('UserPlanDialog', () => {
     expect(document.body.textContent).toContain('已保存分配：变更 #33')
   })
 
+  it('does not claim a failure when the answer never came back', async () => {
+    const refresh = vi.fn()
+    const request = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/users/7/nodes') return { nodes: [] }
+      if (path.startsWith('/user-node-exceptions?')) return { user_node_exceptions: [] }
+      if (path === '/users/plan-assignment/apply' && init?.method === 'POST') {
+        // No status: the request never reached an answer, so whether the
+        // assignment landed is unknown.
+        throw new Error('Failed to fetch')
+      }
+      throw new Error(`unexpected request: ${path}`)
+    })
+    await act(async () => {
+      root.render(
+        <UserPlanDialog
+          isOpen
+          user={{ id: 7, username: 'TEST' }}
+          binding={{ user_id: 7, plan_id: 1 }}
+          plans={[{ id: 1, name: '标准套餐', enabled: true }]}
+          client={{ request }}
+          onRefresh={async () => { refresh() }}
+          onClose={() => undefined}
+        />,
+      )
+    })
+    await flushEffects()
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(button => button.textContent === '保存套餐')
+    act(() => saveButton?.click())
+    await flushEffects()
+    expect(document.body.textContent).toContain('提交结果未知')
+    expect(document.body.textContent).not.toContain('应用失败')
+    // The dialog re-reads instead of guessing, so the operator sees the state
+    // the server actually has.
+    expect(refresh).toHaveBeenCalled()
+  })
+
   it('tells the operator to re-check when someone else changed the plan first', async () => {
     const refresh = vi.fn()
     const request = vi.fn(async (path: string, init?: RequestInit) => {

@@ -9,6 +9,7 @@ import { Input } from '../components/ui/input'
 import { DateTimePicker } from '../components/ui/datetime-picker'
 import { RefreshCw, Trash2, Plus } from 'lucide-react'
 import { useRegisterPageRefresh } from '../page-refresh-context'
+import { createMutationCoordinator } from '../mutation-coordinator'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
 
@@ -61,6 +62,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
   const [searchQuery, setSearchQuery] = React.useState('')
   const [searchResults, setSearchResults] = React.useState<CatalogNode[]>([])
   const [changeID, setChangeID] = React.useState<number | null>(null)
+  const [unconfirmed, setUnconfirmed] = React.useState(false)
   const { status: deliveryStatus, snapshot: changeSnapshot } = useAccessChangeStatus(client, changeID)
 
   const reload = async () => {
@@ -92,7 +94,17 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
   useRegisterPageRefresh(() => {
     if (!isOpen) return
     return reload()
-  })
+  }, ['user-plan', 'users'])
+
+  const reloadRef = React.useRef(reload)
+  reloadRef.current = reload
+
+  // One coordinator per dialog instance: it orders the saves for this user,
+  // rolls back only the one the server refused, and keeps a save whose answer
+  // never arrived visible as unconfirmed instead of guessing either way.
+  const coordinator = React.useMemo(() => createMutationCoordinator({
+    refresh: async () => { await reloadRef.current() },
+  }), [])
 
   React.useEffect(() => {
     if (!isOpen) return
@@ -122,35 +134,56 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
     if (!remove && !planID) { setMessage('请先选择套餐'); return }
     setApplyBusy(true)
     setMessage('')
-    try {
-      // The plan this dialog is showing. The server only applies the change if
-      // the user is still on it, so an assignment made from a stale view is
-      // reported instead of quietly replacing someone else's.
-      const expected = { [String(user.id)]: binding?.plan_id || 0 }
-      const res = await client.request<any>('/users/plan-assignment/apply', {
+    // The plan this dialog is showing. The server only applies the change if
+    // the user is still on it, so an assignment made from a stale view is
+    // reported instead of quietly replacing someone else's.
+    const expected = { [String(user.id)]: binding?.plan_id || 0 }
+    const target = remove ? 0 : planID
+    const outcome = await coordinator.submit<any>({
+      key: `user-plan:${user.id}`,
+      resources: ['user-plan'],
+      optimistic: () => {
+        const previous = planID
+        setPlanID(target)
+        return () => setPlanID(previous)
+      },
+      run: () => client.request<any>('/users/plan-assignment/apply', {
         method: 'POST',
         body: JSON.stringify(remove
           ? { user_ids: [user.id], plan_id: 0, expected_plan_ids: expected }
           : { user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt), expected_plan_ids: expected }),
-      })
-      if (res.access_change_id) setChangeID(res.access_change_id)
-      setRemoveOpen(false)
-      setMessage(remove
-        ? `已提交移除套餐${res.access_change_id ? `（变更 #${res.access_change_id}）` : ''}`
-        : res.status === 'scheduled'
-        ? `已排定：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
-        : res.access_change_id ? `已保存分配：变更 #${res.access_change_id}（${res.status}）` : '已保存')
-      await reload()
-    } catch (e: any) {
-      if (e?.status === 409) {
-        setMessage('该用户的套餐已被其他人修改，已为你刷新为最新状态，请确认后再提交')
-        await reload()
-      } else {
-        setMessage('应用失败：' + (e?.message || String(e)))
-      }
-    } finally {
-      setApplyBusy(false)
+      }),
+    })
+    setApplyBusy(false)
+    if (outcome.outcome === 'superseded') return
+    if (outcome.outcome === 'unknown') {
+      // The answer never came back, so whether the assignment landed is not
+      // known. Saying "failed" would invite the operator to repeat something
+      // that may already have happened; the dialog shows the state it just
+      // re-read and asks them to confirm.
+      const reason = (outcome.error as { message?: string } | undefined)?.message || String(outcome.error)
+      setUnconfirmed(true)
+      setMessage(`提交结果未知（${reason}），已为你刷新为最新状态，请确认是否已生效`)
+      return
     }
+    if (outcome.outcome === 'rejected') {
+      const error = outcome.error as { status?: number; message?: string } | undefined
+      if (error?.status === 409) {
+        setMessage('该用户的套餐已被其他人修改，已为你刷新为最新状态，请确认后再提交')
+      } else {
+        setMessage('应用失败：' + (error?.message || String(outcome.error)))
+      }
+      return
+    }
+    const res = outcome.value || {}
+    setUnconfirmed(false)
+    if (res.access_change_id) setChangeID(res.access_change_id)
+    setRemoveOpen(false)
+    setMessage(remove
+      ? `已提交移除套餐${res.access_change_id ? `（变更 #${res.access_change_id}）` : ''}`
+      : res.status === 'scheduled'
+      ? `已排定：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
+      : res.access_change_id ? `已保存分配：变更 #${res.access_change_id}（${res.status}）` : '已保存')
   }
 
   const searchNodes = async (query: string) => {
@@ -217,7 +250,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
       footer={<Button variant="outline" onClick={onClose}>关闭</Button>}
     >
       <div className="user-plan-dialog-stack">
-        {message && <p role="status" className="user-plan-dialog-message" style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
+        {message && <p role="status" className="user-plan-dialog-message" style={{ color: message.includes('失败') ? 'var(--color-danger)' : unconfirmed ? 'var(--color-warning, #d97706)' : 'var(--color-success, #16a34a)' }}>{message}</p>}
         {changeID ? <AuthorizationStatusBadge status={deliveryStatus} /> : null}
         <div className="user-plan-dialog-layout">
           <div className="user-plan-dialog-col">
@@ -322,7 +355,7 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
       </>}
     >
       <p>将移除 {user.username} 的「{currentPlan?.name}」套餐分配，并撤销来自该套餐的节点权限。套餐本身和单独设置的用户授权会保留。</p>
-      {message.includes('失败') && <p role="alert">{message}</p>}
+      {(message.includes('失败') || unconfirmed) && <p role="alert">{message}</p>}
     </Dialog>
     </>
   )
