@@ -241,6 +241,16 @@ func (s *Service) Serve(ctx context.Context) error {
 			_ = os.Chown(filepath.Dir(s.config.SocketPath), 0, gid)
 		}
 	}
+	// Unlinking the path unconditionally let a second updater take the control
+	// channel away from the one systemd is running: the displaced process keeps
+	// serving an unlinked inode nobody can reach, and every Controller update
+	// request then goes to the newcomer. A production host was found with three
+	// processes listening on this path, the real service holding it only
+	// because it had restarted most recently. A live socket is another
+	// instance's, so refuse instead of stealing it.
+	if err := errIfSocketIsLive(s.config.SocketPath); err != nil {
+		return err
+	}
 	if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -1418,4 +1428,19 @@ func waitForContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// errIfSocketIsLive reports whether another process is already serving the
+// updater socket. A Unix socket file outlives the process that created it, so
+// its presence alone means nothing; only a successful connection does.
+func errIfSocketIsLive(path string) error {
+	conn, err := net.DialTimeout("unix", path, 2*time.Second)
+	if err != nil {
+		// Refused or absent: a stale file from a process that is gone.
+		return nil
+	}
+	if err := conn.Close(); err != nil {
+		return err
+	}
+	return fmt.Errorf("another oboard-controller-updater is already serving %s", path)
 }
