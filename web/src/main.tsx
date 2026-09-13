@@ -167,6 +167,7 @@ import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData
 import { createPageRefreshRegistry, pageRefreshIncludesLiveServers } from './page-refresh'
 import { PageRefreshProvider, useRefreshResources, useRegisterPageRefresh } from './page-refresh-context'
 import { describeMutationOutcome } from './mutation-coordinator'
+import { markIndeterminateMutation } from './mutation-outcome'
 import { useMutationCoordinator } from './use-mutation-coordinator'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { useCoalescedReadRequest } from './request-coalesce'
@@ -1920,7 +1921,10 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
       })
     } catch (error) {
       if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
-      throw error
+      // The request never reached an answer. For a write that is not a
+      // failure, so it is reported as an outcome to be confirmed rather than
+      // one to be repeated.
+      throw mutation ? markIndeterminateMutation(error) : error
     }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -1929,7 +1933,8 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
         if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
         throw apiRequestError({ error: '登录已过期，请重新登录' }, res)
       }
-      throw apiRequestError(data, res)
+      const failure = apiRequestError(data, res)
+      throw mutation ? markIndeterminateMutation(failure) : failure
     }
     if (mutation) onMutationResponse?.(path, { ...data, mutation_pending: false }, method)
     return data
@@ -1952,7 +1957,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
       })
     } catch (error) {
       if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
-      throw error
+      throw mutation ? markIndeterminateMutation(error) : error
     }
     const payload = await res.json().catch(() => ({})) as any
     if (!res.ok) {
@@ -1962,7 +1967,8 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
         throw new Error('登录已过期，请重新登录')
       }
       const v2Error = payload?.error && typeof payload.error === 'object' ? payload.error : null
-      throw apiRequestError({ error: v2Error?.message || payload?.error, message: payload?.message }, res)
+      const failure = apiRequestError({ error: v2Error?.message || payload?.error, message: payload?.message }, res)
+      throw mutation ? markIndeterminateMutation(failure) : failure
     }
     if (mutation) onMutationResponse?.(path, { ...(payload.data || {}), mutation_pending: false }, method)
     return payload.data as T

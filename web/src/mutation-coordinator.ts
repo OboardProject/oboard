@@ -13,6 +13,8 @@
 // confirmed, because that was true at some point, while the optimistic state is
 // only a guess about a request nobody answered.
 
+import { isIndeterminateMutationFailure } from './mutation-outcome'
+
 export type MutationOutcome = 'applied' | 'rejected' | 'unknown' | 'superseded'
 
 export type MutationResource = string
@@ -51,14 +53,11 @@ export type MutationCoordinatorOptions = {
 }
 
 // isDefiniteFailure reports whether the write is known not to have happened.
-// A 4xx is that answer: the request was refused before it changed anything. A
-// 5xx, a 408, or no status at all is not - the write may have committed and the
-// answer got lost on the way back - so those stay unknown and are resolved by
-// re-reading. This matches how server create and delete already reconcile an
-// ambiguous response.
+// One rule decides this for the whole panel: the api client marks the same
+// class of failure on every mutation it issues, and this coordinator classifies
+// the ones it runs itself the same way.
 export function isDefiniteFailure(error: unknown): boolean {
-  const status = Number((error as { status?: unknown } | null)?.status || 0)
-  return status >= 400 && status < 500 && status !== 408
+  return !isIndeterminateMutationFailure(error)
 }
 
 export function createMutationCoordinator(options: MutationCoordinatorOptions = {}) {
