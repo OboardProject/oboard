@@ -183,6 +183,9 @@ type Server struct {
 	controllerUpdateProgress      atomic.Value
 	agentUpdates                  *agentUpdateCoordinator
 	recoveryDeployments           *coalescedQueue
+	fleetMetricsCache             atomic.Pointer[fleetMetricsEntry]
+	fleetMetricsMu                sync.Mutex
+	fleetMetricsInflight          *fleetMetricsBuild
 	controllerActivityMu          sync.Mutex
 	controllerActiveRequests      int
 	controllerLastActivity        time.Time
@@ -632,7 +635,9 @@ func (s *Server) Handler() http.Handler {
 	rootMux.HandleFunc("/.well-known/oauth-authorization-server", mux.ServeHTTP)
 	rootMux.HandleFunc("/.well-known/oauth-protected-resource", mux.ServeHTTP)
 	rootMux.Handle("/", mux)
-	return s.withSubscriptionRelay(s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withSecurityHeaders(s.realtimeInvalidation(s.apiVersionGate(rootMux)))))))
+	// Compression sits inside requestLogger so the logged byte count is what
+	// actually went over the wire, and outside everything that produces a body.
+	return s.withSubscriptionRelay(s.withTrustedProxyState(s.withBasePath(s.requestLogger(s.withCompression(s.withSecurityHeaders(s.realtimeInvalidation(s.apiVersionGate(rootMux))))))))
 }
 
 // webAPIPrefix exposes the existing Web handler surface as /api/v1/ui while
@@ -2522,7 +2527,7 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			var samples []model.ServerMetricSample
-			samples, err = s.store.ListServerMetricSamples(ctx, 0, 60)
+			samples, err = s.fleetMetrics(ctx)
 			out["server_metrics"] = samples
 		}
 		if err == nil && roleAllows(role, model.RoleAdmin) {
@@ -3807,7 +3812,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 		s.annotateServerDeliveryStatus(r.Context(), items)
 		out := map[string]any{"servers": items}
 		if r.URL.Query().Get("include_metrics") == "1" {
-			samples, err := s.store.ListServerMetricSamples(r.Context(), 0, 60)
+			samples, err := s.fleetMetrics(r.Context())
 			if err != nil {
 				fail(w, err, 500)
 				return
