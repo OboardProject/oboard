@@ -126,15 +126,6 @@ func (s *Store) ensureNullableProxyPathInbound(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
-		return err
-	}
-	defer s.db.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	createSQL := `create table proxy_paths_nullable_inbound (
 			id integer primary key autoincrement,
 			inbound_id integer references inbounds(id) on delete cascade,
@@ -154,18 +145,25 @@ func (s *Store) ensureNullableProxyPathInbound(ctx context.Context) error {
 	copySQL := fmt.Sprintf(`insert into proxy_paths_nullable_inbound(id,inbound_id,kind,branch_source_step_id,name_mode,name_template_json,exit_region_mode,exit_region_code,secret,enabled,template_id,family,created_at,updated_at)
 			select id,inbound_id,%s,%s,%s,%s,%s,%s,%s,enabled,%s,%s,created_at,updated_at from proxy_paths`,
 		kindExpr, branchExpr, nameModeExpr, templateJSONExpr, exitModeExpr, exitCodeExpr, secretExpr, templateIDExpr, familyExpr)
-	for _, statement := range []string{
-		createSQL,
-		copySQL,
-		`drop table proxy_paths`,
-		`alter table proxy_paths_nullable_inbound rename to proxy_paths`,
-		`create unique index if not exists idx_proxy_paths_template_family on proxy_paths(template_id, family) where template_id is not null`,
-	} {
-		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("migrate nullable proxy path inbound: %w", err)
+	return s.withForeignKeysDisabled(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+		for _, statement := range []string{
+			createSQL,
+			copySQL,
+			`drop table proxy_paths`,
+			`alter table proxy_paths_nullable_inbound rename to proxy_paths`,
+			`create unique index if not exists idx_proxy_paths_template_family on proxy_paths(template_id, family) where template_id is not null`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("migrate nullable proxy path inbound: %w", err)
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func (s *Store) backfillFamilySplitTemplates(ctx context.Context) error {

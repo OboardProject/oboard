@@ -32,11 +32,13 @@ func (s *Store) ensureOptionalEncryptedDNSList(ctx context.Context) error {
 	if err := s.dropTriggersReferencingTable(ctx, "server_dns_policies"); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
-		return err
-	}
-	defer s.db.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
-	tx, err := s.db.BeginTx(ctx, nil)
+	return s.withForeignKeysDisabled(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		return migrateOptionalEncryptedDNSListTx(ctx, conn)
+	})
+}
+
+func migrateOptionalEncryptedDNSListTx(ctx context.Context, conn *sql.Conn) error {
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

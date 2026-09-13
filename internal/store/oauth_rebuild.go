@@ -48,11 +48,6 @@ func (s *Store) DropLegacyOAuthScopeColumns(ctx context.Context) error {
 	if !has {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, `pragma foreign_keys=off`); err != nil {
-		return err
-	}
-	defer func() { _, _ = s.db.ExecContext(ctx, `pragma foreign_keys=on`) }()
-
 	type rebuild struct {
 		table   string
 		create  string
@@ -162,29 +157,31 @@ func (s *Store) DropLegacyOAuthScopeColumns(ctx context.Context) error {
 	if len(pending) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, item := range pending {
-		if _, err := tx.ExecContext(ctx, item.create); err != nil {
-			return fmt.Errorf("create %s_v2: %w", item.table, err)
+	return s.withForeignKeysDisabled(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return err
 		}
-		if _, err := tx.ExecContext(ctx, item.copy); err != nil {
-			return fmt.Errorf("copy %s: %w", item.table, err)
-		}
-		if _, err := tx.ExecContext(ctx, `drop table `+item.table); err != nil {
-			return fmt.Errorf("drop %s: %w", item.table, err)
-		}
-		if _, err := tx.ExecContext(ctx, `alter table `+item.table+`_v2 rename to `+item.table); err != nil {
-			return fmt.Errorf("rename %s: %w", item.table, err)
-		}
-		for _, index := range item.indexes {
-			if _, err := tx.ExecContext(ctx, index); err != nil {
-				return fmt.Errorf("index %s: %w", item.table, err)
+		defer tx.Rollback()
+		for _, item := range pending {
+			if _, err := tx.ExecContext(ctx, item.create); err != nil {
+				return fmt.Errorf("create %s_v2: %w", item.table, err)
+			}
+			if _, err := tx.ExecContext(ctx, item.copy); err != nil {
+				return fmt.Errorf("copy %s: %w", item.table, err)
+			}
+			if _, err := tx.ExecContext(ctx, `drop table `+item.table); err != nil {
+				return fmt.Errorf("drop %s: %w", item.table, err)
+			}
+			if _, err := tx.ExecContext(ctx, `alter table `+item.table+`_v2 rename to `+item.table); err != nil {
+				return fmt.Errorf("rename %s: %w", item.table, err)
+			}
+			for _, index := range item.indexes {
+				if _, err := tx.ExecContext(ctx, index); err != nil {
+					return fmt.Errorf("index %s: %w", item.table, err)
+				}
 			}
 		}
-	}
-	return tx.Commit()
+		return tx.Commit()
+	})
 }

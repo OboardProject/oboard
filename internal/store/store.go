@@ -6362,16 +6362,10 @@ func (s *Store) SetTaskStateForTest(ctx context.Context, id int64, status string
 // connections keep enforcement on; the update cannot otherwise introduce an
 // orphaned reference.
 func (s *Store) SetProxyPathStepServerForTest(ctx context.Context, stepID, serverID int64) error {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
+	return s.withForeignKeysDisabled(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		_, err := conn.ExecContext(ctx, `update proxy_path_steps set server_id=? where id=?`, serverID, stepID)
 		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `pragma foreign_keys=off`); err != nil {
-		return err
-	}
-	_, err = conn.ExecContext(ctx, `update proxy_path_steps set server_id=? where id=?`, serverID, stepID)
-	return err
+	})
 }
 
 // SetProxyPathStepProcessingRoleForTest rewrites a step's derived processing
