@@ -13503,15 +13503,8 @@ func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identi
 }
 
 func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
-	// Only this account's readiness is being answered, so only this account's
-	// credentials need decrypting. Loading the whole fleet's credentials made
-	// one subscription pull pay for every other account's material.
+	// Both subscription and preview callers supply this account's resolved credentials.
 	data.Users = []model.User{user}
-	var err error
-	data, err = s.loadProxyCredentialData(ctx, data)
-	if err != nil {
-		return nil, err
-	}
 	sshServers := map[int64]bool{}
 	for _, inbound := range data.Inbounds {
 		if inbound.Enabled && inbound.Protocol == model.ProtocolSSH {

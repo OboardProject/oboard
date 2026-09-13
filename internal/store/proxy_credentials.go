@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -214,7 +215,18 @@ func (s *Store) LoadProxyCredentials(ctx context.Context, secret string, users [
 		out[i].ProxyCredentials = []model.ProxyCredential{}
 		indexes[out[i].ID] = append(indexes[out[i].ID], i)
 	}
-	rows, err := s.db.QueryContext(ctx, `select id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,protocol,status,material_encrypted from proxy_credentials where status='active' order by id`)
+	if len(indexes) == 0 {
+		return out, nil
+	}
+	query := `select id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,protocol,status,material_encrypted from proxy_credentials where status='active'`
+	var args []any
+	if len(indexes) <= 128 {
+		for id := range indexes {
+			args = append(args, id)
+		}
+		query += ` and user_id in (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)`
+	}
+	rows, err := s.db.QueryContext(ctx, query+` order by id`, args...)
 	if err != nil {
 		return nil, err
 	}
