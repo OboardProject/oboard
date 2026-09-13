@@ -41,6 +41,7 @@ type Service struct {
 	revisionResolvers map[string]RevisionResolver
 	applyObserver     ApplyObserver
 	replayAuthorizer  ReplayAuthorizer
+	resultAuthorizer  ReplayAuthorizer
 	now               func() time.Time
 }
 
@@ -108,6 +109,12 @@ func (s *Service) SetApplyObserver(observer ApplyObserver) {
 func (s *Service) SetReplayAuthorizer(authorizer ReplayAuthorizer) {
 	s.mu.Lock()
 	s.replayAuthorizer = authorizer
+	s.mu.Unlock()
+}
+
+func (s *Service) SetResultAuthorizer(authorizer ReplayAuthorizer) {
+	s.mu.Lock()
+	s.resultAuthorizer = authorizer
 	s.mu.Unlock()
 }
 
@@ -431,6 +438,7 @@ type StartWorkflowRequest struct {
 	Reason         string
 	IdempotencyKey string
 	ChangesetID    string
+	// ExternalAction is current execution readiness, not client request identity.
 	ExternalAction bool
 }
 
@@ -439,13 +447,22 @@ func (s *Service) StartWorkflow(ctx context.Context, principal application.Princ
 	if request.IdempotencyKey == "" || len(request.IdempotencyKey) > 128 {
 		return nil, errors.New("workflow idempotency_key is required and must not exceed 128 characters")
 	}
-	if existing, err := s.store.FindAutomationWorkflowByIdempotency(ctx, principal.ID, request.IdempotencyKey); err == nil {
-		return existing, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	request.Kind = strings.TrimSpace(request.Kind)
+	if request.Kind == "" {
+		request.Kind = "changeset"
+	}
+	request.Reason = strings.TrimSpace(request.Reason)
+	request.ChangesetID = strings.TrimSpace(request.ChangesetID)
+	changeset, err := s.authorizedChangeset(ctx, principal, request.ChangesetID)
+	if err != nil {
 		return nil, err
 	}
-	changeset, err := s.authorizedChangeset(ctx, principal, strings.TrimSpace(request.ChangesetID))
-	if err != nil {
+	if err := s.authorizeChangesetResult(ctx, principal, changeset, false); err != nil {
+		return nil, err
+	}
+	if existing, err := s.store.FindAutomationWorkflowByIdempotency(ctx, principal.ID, request.IdempotencyKey); err == nil {
+		return replayWorkflow(existing, request)
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	id, err := prefixedID("wf")
@@ -485,9 +502,6 @@ func (s *Service) StartWorkflow(ctx context.Context, principal application.Princ
 		NextAction: nextAction, CompletedAt: completedAt,
 		Steps: []model.AutomationWorkflowStep{{ID: stepID, Position: 1, Name: "changeset", Status: stepStatus, Attempt: 1, IdempotencyKey: request.IdempotencyKey + ":changeset", InputDigest: hex.EncodeToString(inputDigest[:]), OutputDigest: hex.EncodeToString(outputDigest[:]), Retryable: false, NextAction: nextAction, CorrelationID: correlationID}},
 	}
-	if item.Kind == "" {
-		item.Kind = "changeset"
-	}
 	now := s.now().UTC()
 	item.Steps[0].StartedAt = &now
 	if stepStatus == "succeeded" || stepStatus == "failed" {
@@ -495,7 +509,7 @@ func (s *Service) StartWorkflow(ctx context.Context, principal application.Princ
 	}
 	if err := s.store.CreateAutomationWorkflow(ctx, item); err != nil {
 		if existing, findErr := s.store.FindAutomationWorkflowByIdempotency(ctx, principal.ID, request.IdempotencyKey); findErr == nil {
-			return existing, nil
+			return replayWorkflow(existing, request)
 		}
 		return nil, err
 	}
@@ -506,6 +520,13 @@ func (s *Service) GetWorkflow(ctx context.Context, principal application.Princip
 	item, err := s.store.GetAutomationWorkflow(ctx, strings.TrimSpace(id))
 	if err != nil || item.PrincipalID != principal.ID && !(principal.Interactive && model.HasManagementAccess(principal.Role)) {
 		return nil, sql.ErrNoRows
+	}
+	changeset, err := s.authorizedChangeset(ctx, principal, item.ChangesetID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeChangesetResult(ctx, principal, changeset, true); err != nil {
+		return nil, err
 	}
 	return s.synchronizeWorkflow(ctx, item)
 }

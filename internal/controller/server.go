@@ -331,6 +331,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.scriptGateway = scripting.NewGateway(store, s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
 	s.automation.SetReplayAuthorizer(s.authorizeAutomationReplay)
+	s.automation.SetResultAuthorizer(s.authorizeAutomationResult)
 	s.restoreControllerUpdateMaintenance(context.Background())
 	s.recoverControllerUpdateRun(context.Background())
 	s.initializeTrustedProxies()

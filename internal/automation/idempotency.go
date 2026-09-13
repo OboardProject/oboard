@@ -52,16 +52,36 @@ func (s *Service) replayChangeset(ctx context.Context, principal application.Pri
 	if want != got {
 		return nil, ErrIdempotencyConflict
 	}
+	if err := s.authorizeChangesetResult(ctx, principal, existing, false); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+func (s *Service) authorizeChangesetResult(ctx context.Context, principal application.Principal, item *model.AutomationChangeset, readOnly bool) error {
 	s.mu.RLock()
 	authorizer := s.replayAuthorizer
+	if readOnly && principal.AccessLevel != "" {
+		authorizer = s.resultAuthorizer
+	}
 	s.mu.RUnlock()
-	for _, op := range existing.Operations {
+	for _, op := range item.Operations {
+		if !readOnly || principal.AccessLevel == "" {
+			if _, authorized := s.catalog.Authorize(principal, op.Capability); !authorized {
+				return errors.New("operation result is not authorized")
+			}
+		}
 		if authorizer != nil {
 			if err := authorizer(ctx, principal, op); err != nil {
-				return nil, err
+				return err
 			}
 		} else if principal.AccessLevel != "" {
-			return nil, errors.New("replay is not authorized without a current grant check")
+			return errors.New("replay is not authorized without a current grant check")
+		}
+		// The OAuth authorizer resolves current resource permissions without
+		// repeating mutation validation (a saved create now has an existing name).
+		if principal.AccessLevel != "" {
+			continue
 		}
 		filter := strings.TrimSpace(string(principal.ResourceFilter))
 		if principal.Type == model.APIPrincipalScript || filter != "" && filter != "{}" && filter != "null" {
@@ -69,12 +89,19 @@ func (s *Service) replayChangeset(ctx context.Context, principal application.Pri
 			// result. Restricted callers must pass the current domain check.
 			validator := s.validator(op.Capability)
 			if validator == nil {
-				return nil, errors.New("replay resource is not authorized")
+				return errors.New("replay resource is not authorized")
 			}
 			if _, err := validator(ctx, principal, op.Input); err != nil {
-				return nil, errors.New("replay resource is not authorized")
+				return errors.New("replay resource is not authorized")
 			}
 		}
+	}
+	return nil
+}
+
+func replayWorkflow(existing *model.AutomationWorkflow, request StartWorkflowRequest) (*model.AutomationWorkflow, error) {
+	if existing.Kind != request.Kind || existing.Reason != request.Reason || existing.ChangesetID != request.ChangesetID {
+		return nil, ErrIdempotencyConflict
 	}
 	return existing, nil
 }
