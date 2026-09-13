@@ -469,7 +469,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成")
 			continue
 		}
-		if err := s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task)); err != nil {
+		if err := s.store.MarkConfigurationSyncDeploymentQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task)); err != nil {
 			logConfigurationError("mark queued", err)
 		}
 	}
@@ -527,6 +527,10 @@ func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store
 	if err != nil {
 		return allChangedProjectionPlan(claimed)
 	}
+	flags, err := s.store.ListServerDeliveryFlags(ctx)
+	if err != nil {
+		return allChangedProjectionPlan(claimed)
+	}
 	ledger := core.NewProxyPathPortLedger(data.ProxyPathPortAllocations)
 	if derived, err := core.DerivedPortForwardsFromProxyPathsWithLedger(data.ProxyPaths, data.ProxyPathSteps, data.Servers, data.Inbounds, ledger); err == nil {
 		forwards = append(forwards, derived...)
@@ -565,6 +569,12 @@ func (s *Server) automaticProjectionChanges(ctx context.Context, claimed []store
 		last := lastDeploymentProjection(payload, configJSON, server)
 		equal := current.topologyEqual(last)
 		if strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerAgentDrift {
+			plan.changed[state.ServerID] = true
+			continue
+		}
+		policy := flags[state.ServerID]
+		policyPending := policy.Revision > policy.AppliedRevision
+		if policyPending && (policy.ProcessingRevision != policy.Revision || policy.ProcessingConfigVersion != latest.ConfigVersion || latest.Status == "succeeded" || strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerOperatorRetry || strings.TrimSpace(state.TriggerReason) == store.ConfigurationSyncTriggerSuperseded) {
 			plan.changed[state.ServerID] = true
 			continue
 		}

@@ -106,9 +106,9 @@ type ConfigOptions struct {
 	// working without a database.
 	PortLedger *ProxyPathPortLedger
 	// RuntimeUsersOut, when non-nil, receives the runtime-user package collected
-	// from this generation. Baseline inbound users stay in the rendered config
-	// for restart; the operational digest later strips them for declared inbounds.
-	RuntimeUsersOut **RuntimeUserPackage
+	// from this generation. Managed identities use the separate users lane.
+	RuntimeUsersOut     **RuntimeUserPackage
+	DisableRuntimeUsers bool
 }
 
 type configBuildMode int
@@ -701,8 +701,10 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 		if len(pathRules) > 0 {
 			config.Route["rules"] = pathRules
 		}
-		if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
-			*opts.RuntimeUsersOut = pkg
+		if !opts.DisableRuntimeUsers {
+			if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
+				*opts.RuntimeUsersOut = pkg
+			}
 		}
 		return config, nil
 	}
@@ -797,8 +799,10 @@ func buildServerConfig(server model.Server, inbounds []model.Inbound, outbounds 
 	if ruleSets := buildRouteRuleSets(server, opts.RoutingRules, opts.RoutingRuleSets); len(ruleSets) > 0 {
 		config.Route["rule_set"] = ruleSets
 	}
-	if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
-		*opts.RuntimeUsersOut = pkg
+	if !opts.DisableRuntimeUsers {
+		if pkg := applyRuntimeUserStructure(&config, server); pkg != nil && opts.RuntimeUsersOut != nil {
+			*opts.RuntimeUsersOut = pkg
+		}
 	}
 	return config, nil
 }

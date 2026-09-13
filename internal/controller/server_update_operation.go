@@ -11,54 +11,55 @@ import (
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 type serverUpdateChanges struct {
-	Name                     *string                     `json:"name,omitempty"`
-	EntryAddress             *string                     `json:"entry_address,omitempty"`
-	EntryIPMode              *model.EntryIPMode          `json:"entry_ip_mode,omitempty"`
-	RegionMode               *string                     `json:"region_mode,omitempty"`
-	RegionCode               *string                     `json:"region_code,omitempty"`
-	ListenIP                 *string                     `json:"listen_ip,omitempty"`
-	ListenMode               *model.ListenMode           `json:"listen_mode,omitempty"`
-	IPStack                  *model.IPStack              `json:"ip_stack,omitempty"`
-	UDPInboundMode           *model.UDPInboundMode       `json:"udp_inbound_mode,omitempty"`
-	MTUMode                  *model.MTUMode              `json:"mtu_mode,omitempty"`
-	MTUValue                 *int                        `json:"mtu_value,omitempty"`
-	MTUProbeHost             *string                     `json:"mtu_probe_host,omitempty"`
-	MTUProbePort             *int                        `json:"mtu_probe_port,omitempty"`
-	MTUOverheadBytes         *int                        `json:"mtu_overhead_bytes,omitempty"`
-	BBREnabled               *bool                       `json:"bbr_enabled,omitempty"`
-	PortRangeStart           *int                        `json:"port_range_start,omitempty"`
-	PortRangeEnd             *int                        `json:"port_range_end,omitempty"`
-	InternalPortRangeStart   *int                        `json:"internal_port_range_start,omitempty"`
-	InternalPortRangeEnd     *int                        `json:"internal_port_range_end,omitempty"`
-	ConnectionAuditEnabled   *bool                       `json:"connection_audit_enabled,omitempty"`
-	ResourceHistoryEnabled   *bool                       `json:"resource_history_enabled,omitempty"`
-	MonitoringTargetTaskID   *int64                      `json:"monitoring_target_task_id,omitempty"`
-	LatencyProbeEnabled      *bool                       `json:"latency_probe_enabled,omitempty"`
-	LatencyProbeMode         *model.LatencyProbeMode     `json:"latency_probe_mode,omitempty"`
-	LatencyProbePublicTarget *model.ConnectivityTarget   `json:"latency_probe_public_target,omitempty"`
-	LatencyProbeInterval     *int                        `json:"latency_probe_interval_seconds,omitempty"`
-	LatencyProbeSamples      *int                        `json:"latency_probe_sample_count,omitempty"`
-	LatencyProbeMaxTargets   *int                        `json:"latency_probe_max_targets,omitempty"`
-	TimeCorrectionMode       *model.TimeCorrectionMode   `json:"time_correction_mode,omitempty"`
-	OfflineNotifyEnabled     *bool                       `json:"offline_notify_enabled,omitempty"`
-	OfflineAfterSeconds      *int                        `json:"offline_after_seconds,omitempty"`
-	ServiceStartAt           *time.Time                  `json:"service_start_at,omitempty"`
-	ClearServiceStartAt      *bool                       `json:"clear_service_start_at,omitempty"`
-	ExpiresAt                *time.Time                  `json:"expires_at,omitempty"`
-	ClearExpiresAt           *bool                       `json:"clear_expires_at,omitempty"`
-	RenewalCycle             *model.ServerRenewalCycle   `json:"renewal_cycle,omitempty"`
-	AutoRenewEnabled         *bool                       `json:"auto_renew_enabled,omitempty"`
-	ExpiryNotifyEnabled      *bool                       `json:"expiry_notify_enabled,omitempty"`
-	TrafficResetMode         *string                     `json:"traffic_reset_mode,omitempty"`
-	TrafficResetDay          *int                        `json:"traffic_reset_day,omitempty"`
-	TrafficLimitBytes        *int64                      `json:"traffic_limit_bytes,omitempty"`
-	TrafficUsedBytes         *int64                      `json:"traffic_used_bytes,omitempty"`
-	DisplayTags              *[]model.ServerDisplayTag   `json:"display_tags,omitempty"`
-	AuthorizationFastLane    *bool                       `json:"authorization_fast_lane,omitempty"`
-	RuntimeUsersEnabled      *bool                       `json:"runtime_users_enabled,omitempty"`
+	Name                     *string                   `json:"name,omitempty"`
+	EntryAddress             *string                   `json:"entry_address,omitempty"`
+	EntryIPMode              *model.EntryIPMode        `json:"entry_ip_mode,omitempty"`
+	RegionMode               *string                   `json:"region_mode,omitempty"`
+	RegionCode               *string                   `json:"region_code,omitempty"`
+	ListenIP                 *string                   `json:"listen_ip,omitempty"`
+	ListenMode               *model.ListenMode         `json:"listen_mode,omitempty"`
+	IPStack                  *model.IPStack            `json:"ip_stack,omitempty"`
+	UDPInboundMode           *model.UDPInboundMode     `json:"udp_inbound_mode,omitempty"`
+	MTUMode                  *model.MTUMode            `json:"mtu_mode,omitempty"`
+	MTUValue                 *int                      `json:"mtu_value,omitempty"`
+	MTUProbeHost             *string                   `json:"mtu_probe_host,omitempty"`
+	MTUProbePort             *int                      `json:"mtu_probe_port,omitempty"`
+	MTUOverheadBytes         *int                      `json:"mtu_overhead_bytes,omitempty"`
+	BBREnabled               *bool                     `json:"bbr_enabled,omitempty"`
+	PortRangeStart           *int                      `json:"port_range_start,omitempty"`
+	PortRangeEnd             *int                      `json:"port_range_end,omitempty"`
+	InternalPortRangeStart   *int                      `json:"internal_port_range_start,omitempty"`
+	InternalPortRangeEnd     *int                      `json:"internal_port_range_end,omitempty"`
+	ConnectionAuditEnabled   *bool                     `json:"connection_audit_enabled,omitempty"`
+	ResourceHistoryEnabled   *bool                     `json:"resource_history_enabled,omitempty"`
+	MonitoringTargetTaskID   *int64                    `json:"monitoring_target_task_id,omitempty"`
+	LatencyProbeEnabled      *bool                     `json:"latency_probe_enabled,omitempty"`
+	LatencyProbeMode         *model.LatencyProbeMode   `json:"latency_probe_mode,omitempty"`
+	LatencyProbePublicTarget *model.ConnectivityTarget `json:"latency_probe_public_target,omitempty"`
+	LatencyProbeInterval     *int                      `json:"latency_probe_interval_seconds,omitempty"`
+	LatencyProbeSamples      *int                      `json:"latency_probe_sample_count,omitempty"`
+	LatencyProbeMaxTargets   *int                      `json:"latency_probe_max_targets,omitempty"`
+	TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode,omitempty"`
+	OfflineNotifyEnabled     *bool                     `json:"offline_notify_enabled,omitempty"`
+	OfflineAfterSeconds      *int                      `json:"offline_after_seconds,omitempty"`
+	ServiceStartAt           *time.Time                `json:"service_start_at,omitempty"`
+	ClearServiceStartAt      *bool                     `json:"clear_service_start_at,omitempty"`
+	ExpiresAt                *time.Time                `json:"expires_at,omitempty"`
+	ClearExpiresAt           *bool                     `json:"clear_expires_at,omitempty"`
+	RenewalCycle             *model.ServerRenewalCycle `json:"renewal_cycle,omitempty"`
+	AutoRenewEnabled         *bool                     `json:"auto_renew_enabled,omitempty"`
+	ExpiryNotifyEnabled      *bool                     `json:"expiry_notify_enabled,omitempty"`
+	TrafficResetMode         *string                   `json:"traffic_reset_mode,omitempty"`
+	TrafficResetDay          *int                      `json:"traffic_reset_day,omitempty"`
+	TrafficLimitBytes        *int64                    `json:"traffic_limit_bytes,omitempty"`
+	TrafficUsedBytes         *int64                    `json:"traffic_used_bytes,omitempty"`
+	DisplayTags              *[]model.ServerDisplayTag `json:"display_tags,omitempty"`
+	AuthorizationFastLane    *bool                     `json:"authorization_fast_lane,omitempty"`
+	RuntimeUsersEnabled      *bool                     `json:"runtime_users_enabled,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -294,10 +295,7 @@ func (s *Server) registerServerUpdateOperation() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes); err != nil {
-			return nil, err
-		}
-		if err := s.applyServerDeliveryFlags(ctx, next.ID, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled); err != nil {
+		if err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled); err != nil {
 			return nil, err
 		}
 		if current.TimeCorrectionMode != next.TimeCorrectionMode {
@@ -309,14 +307,23 @@ func (s *Server) registerServerUpdateOperation() {
 	})
 }
 
-func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64) error {
-	if trafficUsed == nil {
-		return s.store.UpdateServer(ctx, server)
+func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64, auth, users *bool) error {
+	options := store.ServerUpdateOptions{TrafficUsedBytes: trafficUsed, AuthorizationFastLane: auth, RuntimeUsersEnabled: users}
+	if trafficUsed != nil {
+		settings, err := s.store.ListSettings(ctx)
+		if err != nil {
+			return err
+		}
+		key, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
+		options.TrafficWindow = model.ServerTrafficWindow{Key: key, Start: start, End: end}
 	}
-	settings, err := s.store.ListSettings(ctx)
-	if err != nil {
+	if err := s.store.UpdateServerSettings(ctx, server, options); err != nil {
 		return err
 	}
-	key, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
-	return s.store.UpdateServerWithTraffic(ctx, server, *trafficUsed, model.ServerTrafficWindow{Key: key, Start: start, End: end})
+	if auth != nil || users != nil {
+		s.wakeAuthorizationSync()
+		s.wakeRuntimeUsersSync()
+		s.signalConfigurationReconcile()
+	}
+	return nil
 }

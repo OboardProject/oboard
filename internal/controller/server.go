@@ -4432,11 +4432,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes); err != nil {
-			fail(w, err, 500)
-			return
-		}
-		if err := s.applyServerDeliveryFlags(r.Context(), v.ID, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
+		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
 			fail(w, err, 500)
 			return
 		}
@@ -12939,6 +12935,11 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			}
 		}
 
+		policy, err := s.store.ServerDeliveryFlags(ctx, server.ID)
+		if err != nil {
+			return nil, 0, deploymentFail(500, err)
+		}
+		serverForceRefresh := forceRefresh || policy.Revision > policy.AppliedRevision
 		generated, err := s.generateServerCoreConfigWithLedger(ctx, server, data, ledger)
 		if err != nil {
 			if automaticConfigurationSync(ctx) && errors.Is(err, errCertificateProvisioning) {
@@ -12954,14 +12955,14 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 		configChanged := true
 		if cmp, err := s.compareServerConfigState(ctx, server.ID, cfg); err != nil {
 			return nil, 0, deploymentFail(500, err)
-		} else if cmp.DataPlaneEqual && !forceRefresh {
+		} else if cmp.DataPlaneEqual && !serverForceRefresh {
 			configChanged = false
 		}
 		triggerReason := "manual_deploy"
 		if automaticConfigurationSync(ctx) {
 			triggerReason = "configuration_recovery"
 		}
-		if forceRefresh {
+		if serverForceRefresh {
 			triggerReason = "runtime_refresh"
 			configChanged = true
 		}
@@ -13030,7 +13031,7 @@ func (s *Server) deployConfigurationScoped(ctx context.Context, selectedServerID
 			Version:              version,
 			Config:               model.ApplyCoreConfigTaskPayload{Config: cfg, Assets: managedAssets},
 			ConfigChanged:        configChanged,
-			ForceRefresh:         forceRefresh,
+			ForceRefresh:         serverForceRefresh,
 			TriggerReason:        triggerReason,
 			WARPRequests:         warpRequests,
 			TimeCheck:            &timePlan,
@@ -14061,13 +14062,18 @@ func (s *Server) generateServerCoreConfigInner(ctx context.Context, server model
 			return generatedServerCoreConfig{}, err
 		}
 	}
+	flags, err := s.store.ServerDeliveryFlags(ctx, server.ID)
+	if err != nil {
+		return generatedServerCoreConfig{}, err
+	}
 	var runtimeUsers *core.RuntimeUserPackage
 	config, err := core.GenerateServerConfigWithOptions(server, inbounds, data.Outbounds, dnsState, data.Users, core.ConfigOptions{
 		RoutingRules: data.RoutingRules, RoutingRuleSets: data.RoutingRuleSets, ExternalOutbounds: data.ExternalOutbounds, ProxyPaths: data.ProxyPaths, ProxyPathSteps: data.ProxyPathSteps,
 		Servers: data.Servers, Inbounds: inbounds, WARPProfiles: data.WARPProfiles, InboundUsers: bindings, ProxyPathUsers: pathBindings,
 		UserPolicies: userPolicies, TrafficPolicies: trafficPolicies,
-		PortLedger:      ledger,
-		RuntimeUsersOut: &runtimeUsers,
+		PortLedger:          ledger,
+		RuntimeUsersOut:     &runtimeUsers,
+		DisableRuntimeUsers: !flags.RuntimeUsersEnabled,
 	})
 	if err != nil {
 		return generatedServerCoreConfig{}, err

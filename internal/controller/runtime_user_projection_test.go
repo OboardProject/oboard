@@ -2,9 +2,11 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
+	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
@@ -81,6 +83,58 @@ func TestRuntimeUserPackageMatchesFullConfigProjection(t *testing.T) {
 			projected.Entries[i].InboundTag != full.Entries[i].InboundTag ||
 			projected.Entries[i].AuthorizationKey != full.Entries[i].AuthorizationKey {
 			t.Fatalf("entry %d diverged: projected=%+v full=%+v", i, projected.Entries[i], full.Entries[i])
+		}
+	}
+}
+
+func TestDisabledRuntimeUsersKeepsFullConfigurationCredentials(t *testing.T) {
+	ctx := context.Background()
+	db, srv, server, _, _ := hotPathFixture(t)
+	before, err := srv.buildRuntimeUserPackage(ctx, *server, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Entries) == 0 {
+		t.Fatal("fixture has no runtime users")
+	}
+	off := false
+	if err := srv.saveServerUpdate(ctx, server, nil, nil, &off); err != nil {
+		t.Fatal(err)
+	}
+	data, err := db.FullRoutingConfigData(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := srv.generateServerCoreConfigWithLedger(ctx, *server, data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generated.RuntimeUsers != nil {
+		t.Fatal("disabled lane still extracted runtime users")
+	}
+	var config core.SingBoxConfig
+	if err := json.Unmarshal([]byte(generated.Config), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.OBoard != nil && config.OBoard.RuntimeUsers != nil {
+		t.Fatal("disabled lane left managed-user declaration")
+	}
+	for _, entry := range before.Entries {
+		found := false
+		for _, inbound := range config.Inbounds {
+			if inbound["tag"] != entry.InboundTag {
+				continue
+			}
+			users, _ := inbound["users"].([]any)
+			for _, raw := range users {
+				user, _ := raw.(map[string]any)
+				if user["name"] == entry.AuthUser {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("full-config fallback lost identity %s", entry.AuthUser)
 		}
 	}
 }

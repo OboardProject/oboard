@@ -35,34 +35,6 @@ func (s *Server) runtimeUsersLaneEnabled(ctx context.Context, server model.Serve
 	return flags.RuntimeUsersEnabled
 }
 
-func (s *Server) applyServerDeliveryFlags(ctx context.Context, serverID int64, authorizationFastLane, runtimeUsersEnabled *bool) error {
-	if authorizationFastLane == nil && runtimeUsersEnabled == nil {
-		return nil
-	}
-	current, err := s.store.ServerDeliveryFlags(ctx, serverID)
-	if err != nil {
-		return err
-	}
-	if authorizationFastLane != nil {
-		current.AuthorizationFastLane = *authorizationFastLane
-	}
-	if runtimeUsersEnabled != nil {
-		current.RuntimeUsersEnabled = *runtimeUsersEnabled
-	}
-	current.ServerID = serverID
-	if err := s.store.SetServerDeliveryFlags(ctx, current); err != nil {
-		return err
-	}
-	s.wakeAuthorizationSync()
-	s.wakeRuntimeUsersSync()
-	if !current.RuntimeUsersEnabled {
-		if err := s.queueCoreConfigRefreshForServers(ctx, []int64{serverID}, "runtime_users_disabled"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func applyDeliveryFlagsToServer(server *model.Server, flags store.ServerDeliveryFlags) {
 	if server == nil {
 		return

@@ -1090,6 +1090,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.migrateConfigurationRevisionTriggers(ctx); err != nil {
 		return err
 	}
+	if err := s.migrateDeliveryPolicyRevisions(ctx); err != nil {
+		return err
+	}
 	for _, column := range []struct {
 		name string
 		sql  string
@@ -2854,14 +2857,22 @@ func (s *Store) createServer(ctx context.Context, v *model.Server, used *int64, 
 }
 
 func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
-	return s.updateServer(ctx, v, nil, model.ServerTrafficWindow{})
+	return s.UpdateServerSettings(ctx, v, ServerUpdateOptions{})
 }
 
 func (s *Store) UpdateServerWithTraffic(ctx context.Context, v *model.Server, used int64, window model.ServerTrafficWindow) error {
-	return s.updateServer(ctx, v, &used, window)
+	return s.UpdateServerSettings(ctx, v, ServerUpdateOptions{TrafficUsedBytes: &used, TrafficWindow: window})
 }
 
-func (s *Store) updateServer(ctx context.Context, v *model.Server, used *int64, window model.ServerTrafficWindow) error {
+type ServerUpdateOptions struct {
+	TrafficUsedBytes      *int64
+	TrafficWindow         model.ServerTrafficWindow
+	AuthorizationFastLane *bool
+	RuntimeUsersEnabled   *bool
+}
+
+func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, options ServerUpdateOptions) error {
+	used, window := options.TrafficUsedBytes, options.TrafficWindow
 	if v == nil || v.ID <= 0 {
 		return errors.New("server update requires a server")
 	}
@@ -2913,6 +2924,14 @@ func (s *Store) updateServer(ctx context.Context, v *model.Server, used *int64, 
 			return err
 		}
 	}
+	if options.AuthorizationFastLane != nil || options.RuntimeUsersEnabled != nil {
+		flags, err := updateServerDeliveryFlagsTx(ctx, tx, v.ID, options.AuthorizationFastLane, options.RuntimeUsersEnabled)
+		if err != nil {
+			return err
+		}
+		v.AuthorizationFastLane, v.RuntimeUsersEnabled = flags.AuthorizationFastLane, flags.RuntimeUsersEnabled
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}

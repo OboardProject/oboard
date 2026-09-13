@@ -253,8 +253,36 @@ func (s *Store) MarkConfigurationSyncPreparationFailure(ctx context.Context, ser
 }
 
 func (s *Store) MarkConfigurationSyncQueued(ctx context.Context, serverID int64, revision uint64, configVersion, taskID int64, payloadDigest string) error {
-	_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='queued',wanted_digest=?,last_config_version=?,last_task_id=?,next_retry_at=null,last_error='',updated_at=? where server_id=? and wanted_revision=?`, strings.TrimSpace(payloadDigest), configVersion, taskID, time.Now().UTC().Format(time.RFC3339Nano), serverID, revision)
-	return err
+	return s.markConfigurationSyncQueued(ctx, serverID, revision, configVersion, taskID, payloadDigest, false)
+}
+
+// Only a freshly prepared deployment may capture an unapplied delivery policy.
+// Adopting an existing task must never confirm a policy saved after that task.
+func (s *Store) MarkConfigurationSyncDeploymentQueued(ctx context.Context, serverID int64, revision uint64, configVersion, taskID int64, payloadDigest string) error {
+	return s.markConfigurationSyncQueued(ctx, serverID, revision, configVersion, taskID, payloadDigest, true)
+}
+
+func (s *Store) markConfigurationSyncQueued(ctx context.Context, serverID int64, revision uint64, configVersion, taskID int64, payloadDigest string, prepared bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `update configuration_sync_states set state='queued',wanted_digest=?,last_config_version=?,last_task_id=?,next_retry_at=null,last_error='',updated_at=? where server_id=? and wanted_revision=? and (?=0 or state='preparing')`, strings.TrimSpace(payloadDigest), configVersion, taskID, time.Now().UTC().Format(time.RFC3339Nano), serverID, revision, boolInt(prepared))
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if prepared && count == 1 {
+		if _, err := tx.ExecContext(ctx, `update server_delivery_flags set processing_revision=revision,processing_config_version=? where server_id=? and revision<=? and revision>applied_revision
+			and exists(select 1 from agent_tasks where id=? and server_id=? and config_version=? and type='apply_deployment' and json_extract(payload_json,'$.force_refresh')=1)`, configVersion, serverID, revision, taskID, serverID, configVersion); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // MarkConfigurationSyncUnchangedFailure restores a claimed row to failed when
@@ -273,8 +301,19 @@ func (s *Store) MarkConfigurationSyncUnchangedFailure(ctx context.Context, serve
 func (s *Store) MarkConfigurationSyncResult(ctx context.Context, serverID, configVersion int64, succeeded bool, resultError string) error {
 	now := time.Now().UTC()
 	if succeeded {
-		_, err := s.db.ExecContext(ctx, `update configuration_sync_states set state='synced',last_error='',next_retry_at=null,updated_at=? where server_id=? and last_config_version=? and state in ('queued','running')`, now.Format(time.RFC3339Nano), serverID, configVersion)
-		return err
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `update server_delivery_flags set applied_revision=max(applied_revision,processing_revision)
+			where server_id=? and processing_config_version=? and exists(select 1 from configuration_sync_states where server_id=? and last_config_version=? and state in ('queued','running') and wanted_revision>=server_delivery_flags.processing_revision)`, serverID, configVersion, serverID, configVersion); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `update configuration_sync_states set state=case when exists(select 1 from server_delivery_flags f where f.server_id=configuration_sync_states.server_id and f.revision>f.applied_revision) then 'pending' else 'synced' end,last_error='',next_retry_at=null,updated_at=? where server_id=? and last_config_version=? and state in ('queued','running')`, now.Format(time.RFC3339Nano), serverID, configVersion); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	var retryCount int
 	if err := s.db.QueryRowContext(ctx, `select retry_count from configuration_sync_states where server_id=? and last_config_version=? and state in ('queued','running')`, serverID, configVersion).Scan(&retryCount); err != nil {
