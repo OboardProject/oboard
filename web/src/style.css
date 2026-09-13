@@ -63,6 +63,10 @@
   --sidebar-collapsed-width: 72px;
   --settings-sidebar-width: minmax(176px, 208px);
   --app-viewport-height: 100dvh;
+  --mobile-edge-gap: 12px;
+  --mobile-surface-top: max(var(--mobile-edge-gap), env(safe-area-inset-top, 0px));
+  --mobile-surface-bottom: calc(var(--mobile-edge-gap) + env(safe-area-inset-bottom, 0px));
+  --mobile-surface-height: calc(100dvh - var(--mobile-surface-top) - var(--mobile-surface-bottom));
   --app-sticky-header-clearance: 96px;
   --layout-scrollbar-gutter: stable;
 
@@ -232,6 +236,7 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   max-width: 100%;
   overflow-x: clip;
   color: var(--text-strong);
@@ -246,6 +251,7 @@ body {
   min-width: 0;
   max-width: 100%;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: clip;
 }
 
@@ -7453,7 +7459,7 @@ body:has(.dialog-layer) .main {
   isolation: isolate;
 }
 .popover-layer > * { pointer-events: auto; }
-.popover-layer[data-popover-active="false"] { visibility: hidden; }
+.popover-layer[data-popover-active="false"] { display: none; }
 .popover-layer > :not(.node-scope-menu-overlay) {
   animation: surface-menu-enter 160ms var(--ease-appica-out) both;
 }
@@ -11391,6 +11397,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   display: none;
 }
 .sidebar-backdrop {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 90;
@@ -11398,49 +11405,54 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   backdrop-filter: blur(4px);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.25s ease;
+  transition: opacity 0.25s ease, display 0.25s allow-discrete;
 }
 .sidebar-backdrop.open {
+  display: block;
   opacity: 1;
   pointer-events: auto;
 }
 
 @media (max-width: 900px) {
   html, body {
-    overflow-x: hidden;
+    overflow-x: clip;
   }
   .app {
     height: auto;
     min-height: 100vh;
     min-height: 100dvh;
     grid-template-columns: 1fr;
-    overflow-x: hidden;
+    overflow-x: clip;
     overflow-y: visible;
   }
   .sidebar {
     position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
+    top: var(--mobile-surface-top);
+    left: max(var(--mobile-edge-gap), env(safe-area-inset-left, 0px));
+    bottom: var(--mobile-surface-bottom);
     z-index: 100;
     width: min(75vw, 256px);
-    height: 100vh;
-    height: 100dvh;
-    max-height: 100dvh;
-    border-right: 1px solid var(--border);
-    border-radius: 0 var(--sidebar-radius) var(--sidebar-radius) 0;
-    transform: translateX(-100%);
-    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    height: auto;
+    max-height: var(--mobile-surface-height);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-window);
+    transform: translateX(calc(-100% - var(--mobile-edge-gap)));
+    transition: transform 0.25s var(--ease-appica-out), display 0.25s allow-discrete;
     box-shadow: var(--shadow);
     background: var(--surface-solid);
     overflow: hidden;
-    display: flex;
+    display: none;
     flex-direction: column;
     gap: 10px;
     padding: 14px 14px max(14px, env(safe-area-inset-bottom));
   }
   .sidebar.open {
+    display: flex;
     transform: translateX(0);
+  }
+  @starting-style {
+    .sidebar.open { transform: translateX(calc(-100% - var(--mobile-edge-gap))); }
+    .sidebar-backdrop.open { opacity: 0; }
   }
   .brand {
     padding: 4px 2px 12px;
@@ -11546,7 +11558,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     height: auto;
     min-height: 0;
     overflow-y: visible;
-    overflow-x: hidden;
+    overflow-x: clip;
     scrollbar-gutter: auto;
     padding: 0 var(--main-pad-x) max(36px, calc(24px + env(safe-area-inset-bottom, 0px)));
   }
@@ -18840,13 +18852,13 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
 }
 
 .graph-context-menu.is-sheet {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
+  left: max(var(--mobile-edge-gap), env(safe-area-inset-left, 0px));
+  right: max(var(--mobile-edge-gap), env(safe-area-inset-right, 0px));
+  bottom: var(--mobile-surface-bottom);
+  width: auto;
   min-width: 0;
-  max-height: min(72vh, 560px);
-  padding: 8px 10px max(12px, env(safe-area-inset-bottom));
+  max-height: min(72dvh, var(--mobile-surface-height), 560px);
+  padding: 8px 10px 12px;
   overflow: auto;
   overscroll-behavior: contain;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -23018,7 +23030,7 @@ button.ui-btn-ghost:hover {
   }
 
   .dialog-layer {
-    padding: 8px 8px 0;
+    padding: var(--mobile-surface-top) max(var(--mobile-edge-gap), env(safe-area-inset-right, 0px)) var(--mobile-surface-bottom) max(var(--mobile-edge-gap), env(safe-area-inset-left, 0px));
     align-items: end;
     touch-action: pan-y;
   }
@@ -24464,7 +24476,7 @@ button.dns-policy-row-main:focus {
     left: max(8px, env(safe-area-inset-left, 0px)) !important;
     right: max(8px, env(safe-area-inset-right, 0px)) !important;
     top: auto !important;
-    bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+    bottom: var(--mobile-surface-bottom) !important;
     width: auto;
     min-width: 0;
     max-width: none;
@@ -28591,11 +28603,6 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 @media (max-width: 720px) {
-  .dialog-layer.dialog-root:has(.probe-task-dialog),
-  .dialog-layer.dialog-root:has(.probe-settings-dialog) {
-    padding: 8px 0 0;
-    align-items: end;
-  }
   .dialog.probe-task-dialog,
   .dialog.probe-settings-dialog {
     width: 100%;
@@ -28904,8 +28911,13 @@ button.probe-preset-option:active {
 }
 
 @media (max-width: 720px) {
-  .dialog-panel:is(.node-scope-action-dialog, .node-scope-auth-dialog, .probe-task-dialog, .probe-settings-dialog) {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
+  .dialog-layer .dialog-panel.dialog {
+    max-height: var(--mobile-surface-height);
+    border-radius: var(--radius-window);
   }
+  .dialog-layer .dialog.remote-terminal-dialog,
+  .dialog-layer .dialog.remote-terminal-dialog.remote-terminal-fullscreen {
+    height: var(--mobile-surface-height);
+  }
+  .graph-context-menu.is-sheet { border-radius: var(--radius-menu); }
 }
