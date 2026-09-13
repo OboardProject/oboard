@@ -20,7 +20,7 @@ const accessChangeSelectSQL = `select id,change_type,coalesce(source_plan_id,0),
 // CreateAccessChange inserts the change and its per-server targets in one
 // transaction.
 func (s *Store) CreateAccessChange(ctx context.Context, v *model.AccessChange, serverIDs []int64) (int64, error) {
-	return s.CreateAccessChangeWithPendingBindings(ctx, v, serverIDs, nil)
+	return s.CreateAccessChangeWithPendingBindings(ctx, v, serverIDs, nil, nil)
 }
 
 // CreateAccessChangeWithPendingBindings commits the change together with the
@@ -28,14 +28,14 @@ func (s *Store) CreateAccessChange(ctx context.Context, v *model.AccessChange, s
 // binding written without its change never activates and silently leaves the
 // user without the plan the operator assigned, and a change written without
 // its binding activates nothing.
-func (s *Store) CreateAccessChangeWithPendingBindings(ctx context.Context, v *model.AccessChange, serverIDs []int64, bindings []model.UserPlanBinding) (int64, error) {
+func (s *Store) CreateAccessChangeWithPendingBindings(ctx context.Context, v *model.AccessChange, serverIDs []int64, bindings []model.UserPlanBinding, expected map[int64]int64) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 	ts := now()
-	if err := setUserPlanBindingsTx(ctx, tx, bindings, userPlanBindingPending, ts); err != nil {
+	if err := setUserPlanBindingsTx(ctx, tx, bindings, userPlanBindingPending, ts, expected); err != nil {
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx, `insert into access_changes(change_type,source_plan_id,candidate_revision_id,expected_active_revision_id,status,preview_hash,affected_user_count,activate_at,payload_json,prepare_projection_json,finalize_projection_json,error,created_by,created_at,updated_at,kind,old_scope_json) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,

@@ -1834,6 +1834,12 @@ type userPlanAssignmentRequest struct {
 	Deploy    bool    `json:"deploy"`
 	StartsAt  *string `json:"starts_at"`
 	ExpiresAt *string `json:"expires_at"`
+	// ExpectedPlanIDs is the plan the caller saw each user on, keyed by user
+	// ID, where 0 means "no plan". When present the assignment only lands if
+	// that is still true, so two administrators working from the same list
+	// cannot silently overwrite each other. Callers that omit it keep the
+	// previous last-write-wins behaviour.
+	ExpectedPlanIDs map[string]int64 `json:"expected_plan_ids"`
 }
 
 func (s *Server) userPlanAssignment(w http.ResponseWriter, r *http.Request) {
@@ -1905,7 +1911,19 @@ func (s *Server) planAssignmentPreview(w http.ResponseWriter, r *http.Request) {
 		selected = append(selected, user)
 	}
 	preview := core.PreviewPlanAssignment(selected, data.bindings, data.plans, data.planNodes, data.exceptions, targetPlan, targetNodes, data.config.ProxyPaths, data.config.ProxyPathSteps, data.config.Inbounds, data.serverOnline, data.now())
-	write(w, 200, map[string]any{"preview": preview, "runtime_authorization_mode": s.authorizationMode(r.Context())})
+	// The plan each selected user is on right now. Sending it back with the
+	// apply request makes the assignment conditional on nothing having changed
+	// in between, instead of overwriting whatever another administrator did.
+	current := map[string]int64{}
+	for _, user := range selected {
+		current[strconv.FormatInt(user.ID, 10)] = 0
+	}
+	for _, binding := range data.bindings {
+		if _, ok := current[strconv.FormatInt(binding.UserID, 10)]; ok && binding.Enabled {
+			current[strconv.FormatInt(binding.UserID, 10)] = binding.PlanID
+		}
+	}
+	write(w, 200, map[string]any{"preview": preview, "current_plan_ids": current, "runtime_authorization_mode": s.authorizationMode(r.Context())})
 }
 
 func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
@@ -1987,8 +2005,27 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 	// transaction as the change that activates them, so the plan snapshot keeps
 	// ignoring them until activation while prepare deploys old-union-new
 	// credentials first.
-	change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, previous, bindings, startsAt, expiresAt)
+	expectedPlans, err := parseExpectedPlanIDs(req.ExpectedPlanIDs, userIDs)
 	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, previous, bindings, startsAt, expiresAt, expectedPlans)
+	if err != nil {
+		var conflict *store.UserPlanBindingConflictError
+		if errors.As(err, &conflict) {
+			// Somebody else assigned these users between this request reading
+			// their plan and writing it. Nothing was applied; naming the users
+			// lets the operator re-check them instead of discovering later
+			// that one of the two assignments vanished.
+			write(w, http.StatusConflict, map[string]any{
+				"error":             err.Error(),
+				"conflict":          "user_plan_assignment_changed",
+				"conflict_user_ids": conflict.UserIDs,
+				"applied":           false,
+			})
+			return
+		}
 		fail(w, err, 500)
 		return
 	}
@@ -1999,6 +2036,29 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 		out["activate_at"] = startsAt
 	}
 	write(w, 200, out)
+}
+
+// parseExpectedPlanIDs turns the request's string-keyed map into the plan each
+// assigned user must still be on. Every assigned user must be covered, so a
+// partially filled map cannot silently skip the check for the rest.
+func parseExpectedPlanIDs(raw map[string]int64, userIDs []int64) (map[int64]int64, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	expected := make(map[int64]int64, len(raw))
+	for key, planID := range raw {
+		userID, err := strconv.ParseInt(strings.TrimSpace(key), 10, 64)
+		if err != nil || userID <= 0 {
+			return nil, fmt.Errorf("expected_plan_ids has an invalid user id %q", key)
+		}
+		expected[userID] = planID
+	}
+	for _, userID := range userIDs {
+		if _, ok := expected[userID]; !ok {
+			return nil, fmt.Errorf("expected_plan_ids is missing user %d", userID)
+		}
+	}
+	return expected, nil
 }
 
 func (s *Server) resolveAssignmentTarget(ctx context.Context, data *planAssignmentData, planID int64) (*model.SubscriptionPlan, []model.SubscriptionPlanNode, error) {

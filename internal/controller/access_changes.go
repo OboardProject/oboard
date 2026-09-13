@@ -412,6 +412,9 @@ type accessChangeDraft struct {
 	pendingBindings []model.UserPlanBinding
 	previousBinding []int64
 	pendingUserIDs  []int64
+	// expectedBinding is the plan each user must still be on for this
+	// assignment to be the one that lands. Nil disables the check.
+	expectedBinding map[int64]int64
 }
 
 func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft accessChangeDraft) (*model.AccessChange, error) {
@@ -453,7 +456,7 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 		FinalizeProjectionJSON:   string(finalizeJSON),
 		CreatedBy:                createdBy,
 	}
-	changeID, err := s.store.CreateAccessChangeWithPendingBindings(ctx, change, draft.serverIDs, draft.pendingBindings)
+	changeID, err := s.store.CreateAccessChangeWithPendingBindings(ctx, change, draft.serverIDs, draft.pendingBindings, draft.expectedBinding)
 	if err != nil {
 		return nil, err
 	}
@@ -1332,7 +1335,7 @@ func (s *Server) createPlanDeleteChange(ctx context.Context, r *http.Request, ac
 // change activates, so reading it after the assignment already disabled the
 // previous binding would make prepare drop the access it is supposed to
 // preserve.
-func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, data store.FullRoutingConfig, userIDs []int64, oldEnabled, newBindings []model.UserPlanBinding, startsAt, expiresAt *time.Time) (*model.AccessChange, error) {
+func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, data store.FullRoutingConfig, userIDs []int64, oldEnabled, newBindings []model.UserPlanBinding, startsAt, expiresAt *time.Time, expectedPlans map[int64]int64) (*model.AccessChange, error) {
 	now := time.Now()
 	exceptions, err := s.store.ListUserNodeExceptions(ctx)
 	if err != nil {
@@ -1362,6 +1365,7 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 		pendingBindings:    newBindings,
 		previousBinding:    previousIDs,
 		pendingUserIDs:     userIDs,
+		expectedBinding:    expectedPlans,
 	})
 	if err != nil {
 		return nil, err

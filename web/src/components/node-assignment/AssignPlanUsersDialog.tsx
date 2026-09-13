@@ -57,6 +57,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
   const [startsAt, setStartsAt] = React.useState('')
   const [expiresAt, setExpiresAt] = React.useState('')
   const [preview, setPreview] = React.useState<PlanChangePreview | null>(null)
+  const [expectedPlans, setExpectedPlans] = React.useState<Record<string, number> | null>(null)
   const [previewBusy, setPreviewBusy] = React.useState(false)
   const [applyBusy, setApplyBusy] = React.useState(false)
   const [message, setMessage] = React.useState('')
@@ -68,6 +69,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
       setStartsAt('')
       setExpiresAt('')
       setPreview(null)
+      setExpectedPlans(null)
       setMessage('')
     }
   }, [open, defaultPlanID])
@@ -78,7 +80,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
     setPreviewBusy(true)
     setMessage('')
     try {
-      const res = await client.request<{ preview: PlanChangePreview }>('/users/plan-assignment/preview', {
+      const res = await client.request<{ preview: PlanChangePreview; current_plan_ids?: Record<string, number> }>('/users/plan-assignment/preview', {
         method: 'POST',
         body: JSON.stringify({
           user_ids: [...userIDs],
@@ -88,6 +90,9 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
         }),
       })
       setPreview(res.preview || null)
+      // Captured with the preview so the apply below is conditional on the
+      // users still being on the plans this preview was computed from.
+      setExpectedPlans(res.current_plan_ids || null)
     } catch (e: any) {
       setMessage('预览失败：' + (e?.message || String(e)))
     } finally {
@@ -107,15 +112,23 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
           plan_id: planID,
           starts_at: fromLocalInputValue(startsAt),
           expires_at: fromLocalInputValue(expiresAt),
+          ...(expectedPlans ? { expected_plan_ids: expectedPlans } : {}),
         }),
       })
       notify?.(res.status === 'scheduled'
         ? `已排定套餐分配：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
         : `已提交套餐分配：变更 #${res.access_change_id}（${res.status}），排队 ${res.queued_tasks} 个任务`, 'success')
       setPreview(null)
+      setExpectedPlans(null)
       await onDone()
     } catch (e: any) {
-      setMessage('应用失败：' + (e?.message || String(e)))
+      if (e?.status === 409) {
+        setPreview(null)
+        setExpectedPlans(null)
+        setMessage('这些用户的套餐已被其他人修改，请重新预览后再提交')
+      } else {
+        setMessage('应用失败：' + (e?.message || String(e)))
+      }
     } finally {
       setApplyBusy(false)
     }

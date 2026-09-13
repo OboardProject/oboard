@@ -2018,14 +2018,44 @@ func (s *Store) setUserPlanBindings(ctx context.Context, bindings []model.UserPl
 		return err
 	}
 	defer tx.Rollback()
-	if err := setUserPlanBindingsTx(ctx, tx, bindings, status, now()); err != nil {
+	if err := setUserPlanBindingsTx(ctx, tx, bindings, status, now(), nil); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func setUserPlanBindingsTx(ctx context.Context, tx *sql.Tx, bindings []model.UserPlanBinding, status, ts string) error {
+// UserPlanBindingConflictError reports that the binding an assignment was
+// built against is no longer the one in force: somebody else assigned those
+// users in between. Overwriting anyway would silently discard their change and
+// leave the panel showing an assignment nobody can account for.
+type UserPlanBindingConflictError struct{ UserIDs []int64 }
+
+func (e *UserPlanBindingConflictError) Error() string {
+	parts := make([]string, 0, len(e.UserIDs))
+	for _, id := range e.UserIDs {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return "user plan assignment changed since it was read: users " + strings.Join(parts, ", ")
+}
+
+// setUserPlanBindingsTx stages bindings. When expected is non-nil it is an
+// optimistic check: expected[userID] is the plan the caller believes the user
+// is on, where 0 means "no plan at all". A mismatch means a concurrent
+// assignment won, and the whole staging is rejected rather than applied on top
+// of state the caller never saw.
+func setUserPlanBindingsTx(ctx context.Context, tx *sql.Tx, bindings []model.UserPlanBinding, status, ts string, expected map[int64]int64) error {
+	var conflicts []int64
 	for _, v := range bindings {
+		if expected != nil {
+			current, err := currentEnabledBindingPlanID(ctx, tx, v.UserID)
+			if err != nil {
+				return err
+			}
+			if current != expected[v.UserID] {
+				conflicts = append(conflicts, v.UserID)
+				continue
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `update user_plan_bindings set enabled=0,updated_at=? where user_id=? and enabled=1`, ts, v.UserID); err != nil {
 			return err
 		}
@@ -2043,7 +2073,18 @@ func setUserPlanBindingsTx(ctx context.Context, tx *sql.Tx, bindings []model.Use
 			return err
 		}
 	}
+	if len(conflicts) > 0 {
+		return &UserPlanBindingConflictError{UserIDs: conflicts}
+	}
 	return nil
+}
+
+// currentEnabledBindingPlanID returns the plan in force for a user, or 0 when
+// the user has none.
+func currentEnabledBindingPlanID(ctx context.Context, tx *sql.Tx, userID int64) (int64, error) {
+	var planID int64
+	err := tx.QueryRowContext(ctx, `select coalesce((select plan_id from user_plan_bindings where user_id=? and enabled=1 order by id desc limit 1),0)`, userID).Scan(&planID)
+	return planID, err
 }
 
 // RevertPendingUserPlanBindings undoes an assignment whose access change could

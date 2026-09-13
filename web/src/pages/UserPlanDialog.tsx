@@ -123,11 +123,15 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
     setApplyBusy(true)
     setMessage('')
     try {
+      // The plan this dialog is showing. The server only applies the change if
+      // the user is still on it, so an assignment made from a stale view is
+      // reported instead of quietly replacing someone else's.
+      const expected = { [String(user.id)]: binding?.plan_id || 0 }
       const res = await client.request<any>('/users/plan-assignment/apply', {
         method: 'POST',
         body: JSON.stringify(remove
-          ? { user_ids: [user.id], plan_id: 0 }
-          : { user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt) }),
+          ? { user_ids: [user.id], plan_id: 0, expected_plan_ids: expected }
+          : { user_ids: [user.id], plan_id: planID, starts_at: fromLocalInputValue(startsAt), expires_at: fromLocalInputValue(expiresAt), expected_plan_ids: expected }),
       })
       if (res.access_change_id) setChangeID(res.access_change_id)
       setRemoveOpen(false)
@@ -138,7 +142,12 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
         : res.access_change_id ? `已保存分配：变更 #${res.access_change_id}（${res.status}）` : '已保存')
       await reload()
     } catch (e: any) {
-      setMessage('应用失败：' + (e?.message || String(e)))
+      if (e?.status === 409) {
+        setMessage('该用户的套餐已被其他人修改，已为你刷新为最新状态，请确认后再提交')
+        await reload()
+      } else {
+        setMessage('应用失败：' + (e?.message || String(e)))
+      }
     } finally {
       setApplyBusy(false)
     }
