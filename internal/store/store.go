@@ -674,7 +674,16 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		// keeping a second B-tree over the same rows.
 		`drop index if exists idx_connection_audit_user_started`,
 		`create index if not exists idx_connection_audit_server_time on connection_audit_reports(server_id, ended_at desc)`,
-		`create index if not exists idx_connection_audit_source_time on connection_audit_reports(source_ip, ended_at desc)`,
+		// user_id is carried so the shared-address probe - "does anyone else
+		// report from this address in the window?" - is answered from the index.
+		// Without it, deciding that an address belongs to a single user meant
+		// seeking the table once per row under it, and on a production
+		// Controller the busiest address held 40,507 rows in a 24h window.
+		//
+		// As with the user window index above, this widens an existing B-tree
+		// rather than adding one.
+		`drop index if exists idx_connection_audit_source_time`,
+		`create index if not exists idx_connection_audit_source_window on connection_audit_reports(source_ip, ended_at desc, user_id)`,
 		`create index if not exists idx_connection_audit_time on connection_audit_reports(ended_at desc)`,
 		`create index if not exists idx_traffic_periods_user on traffic_periods(user_id, period_key)`,
 		`create index if not exists idx_traffic_periods_user_started on traffic_periods(user_id, started_at desc)`,

@@ -387,8 +387,19 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 	if err := presenceRows.Err(); err != nil {
 		return overview, err
 	}
-	sharedIPRows, err := s.db.QueryContext(ctx, `select r.user_id,count(distinct r.source_ip) from connection_audit_reports r
-		where r.user_id in (`+inClause(len(seen))+`) and r.ended_at>=? and exists(
+	// The addresses are deduplicated before the correlated EXISTS, not after.
+	//
+	// The subquery depends only on (user_id, source_ip), which is exactly what
+	// the result counts distinct values of, so running it once per distinct pair
+	// instead of once per row is the same answer. It is not the same work: on a
+	// production Controller the busiest user had 135,451 rows in the window and
+	// 19 distinct addresses in them, so the original shape ran the probe more
+	// than seven thousand times per address.
+	sharedIPRows, err := s.db.QueryContext(ctx, `select r.user_id,count(*) from (
+			select distinct user_id,source_ip from connection_audit_reports
+			where user_id in (`+inClause(len(seen))+`) and ended_at>=?
+		) r
+		where exists(
 			select 1 from connection_audit_reports shared where shared.source_ip=r.source_ip and shared.user_id<>r.user_id and shared.ended_at>=?
 		) group by r.user_id`, append(seenAny(seen), since, since)...)
 	if err != nil {

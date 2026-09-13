@@ -142,11 +142,24 @@ func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, 
 	start := connectionAuditHourStart(utcHour)
 	end := start.Add(time.Hour)
 	var total int64
+	// started_at has no index; ended_at does. A report always satisfies
+	// started_at <= ended_at, so every row this bucket wants also satisfies
+	// ended_at >= start: adding that predicate cannot drop a row, and it turns
+	// the scan from "every report this user ever filed" into a range.
+	//
+	// Without it the plan was SEARCH (user_id=?) with no time bound at all. On a
+	// production Controller the busiest user held 937k of the table's 1.06M
+	// rows, and summing one hour cost 14.7s — for each of up to 64 dirty
+	// buckets per maintenance pass.
+	//
+	// ended_at cannot be bounded above for the same reason it can be bounded
+	// below: a connection may end long after the hour it started in. The
+	// started_at predicates below stay as the exact filter.
 	err := s.db.QueryRowContext(ctx, `select coalesce(sum(connection_count),0)
 		from connection_audit_reports
-		where user_id=? and started_at>=? and started_at<? and internal_probe=0
+		where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
 			and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
-		userID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&total)
+		userID, start.Format(time.RFC3339Nano), start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&total)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,5 +160,93 @@ func TestConnectionAuditHourlyBackfillPages(t *testing.T) {
 	}
 	if !state.BackfillComplete || state.ReadPath != "hourly" {
 		t.Fatalf("state=%+v", state)
+	}
+}
+
+// The hourly bucket is keyed by started_at, but only ended_at is indexed. The
+// recompute narrows the scan with ended_at >= hour start, which is sound only
+// because a report always satisfies started_at <= ended_at. A connection that
+// starts inside the hour and ends well after it is the case that predicate must
+// not drop, and the case a naive ended_at window would have lost.
+func TestHourlyRecomputeKeepsAConnectionThatOutlivesItsHour(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "hourly.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	user := &model.User{Username: "long-connection", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "hourly-node", PublicIPv4: "203.0.113.50", Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	hour := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	report := func(id string, started, ended time.Time, count int64) model.ConnectionAuditReport {
+		return model.ConnectionAuditReport{
+			ReportID: id, ServerID: server.ID, UserID: user.ID, SourceIP: "203.0.113.10", Network: "tcp",
+			ConnectionCount: count, BucketCapacity: 1,
+			CollectionStartedAt: started, CollectionEndedAt: ended,
+			StartedAt: started, EndedAt: ended, CreatedAt: started,
+		}
+	}
+	if _, err := s.AddConnectionAuditReportsResult(ctx, []model.ConnectionAuditReport{
+		// Starts in the hour, still running six hours later.
+		report("long", hour.Add(10*time.Minute), hour.Add(6*time.Hour), 7),
+		// Starts and ends inside the hour.
+		report("short", hour.Add(20*time.Minute), hour.Add(21*time.Minute), 3),
+		// Started in the previous hour and ended in this one: not this bucket's.
+		report("earlier", hour.Add(-30*time.Minute), hour.Add(5*time.Minute), 100),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key := ConnectionAuditHourKey(hour)
+	if err := s.RecomputeConnectionAuditHour(ctx, user.ID, key, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `select connection_count from connection_audit_hourly where user_id=? and utc_hour=?`, user.ID, key).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 10 {
+		t.Fatalf("hourly total = %d, want 10 (the long and the short connection, not the earlier one)", total)
+	}
+}
+
+// Without a time bound the plan was SEARCH (user_id=?) over every report the
+// user ever filed: 14.7s per bucket on a production Controller where one user
+// held 937k of 1.06M rows.
+func TestHourlyRecomputeScanIsBoundedByTime(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "hourly.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	rows, err := s.db.QueryContext(ctx, `explain query plan select coalesce(sum(connection_count),0)
+		from connection_audit_reports
+		where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
+			and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
+		int64(1), "2026-09-08T12:00:00Z", "2026-09-08T12:00:00Z", "2026-09-08T13:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	plan := ""
+	for rows.Next() {
+		var id, parent, notUsed int64
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan += detail + "\n"
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan, "ended_at>") {
+		t.Fatalf("hourly recompute scans without a time bound:\n%s", plan)
 	}
 }
