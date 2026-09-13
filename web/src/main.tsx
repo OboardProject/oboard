@@ -165,7 +165,9 @@ import v2rayNClientIcon from './assets/subscription-clients/v2rayn.png'
 import clashClassicClientIcon from './assets/subscription-clients/clash-classic.png'
 import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData } from './page-data'
 import { createPageRefreshRegistry, pageRefreshIncludesLiveServers } from './page-refresh'
-import { PageRefreshProvider, useRegisterPageRefresh } from './page-refresh-context'
+import { PageRefreshProvider, useRefreshResources, useRegisterPageRefresh } from './page-refresh-context'
+import { describeMutationOutcome } from './mutation-coordinator'
+import { useMutationCoordinator } from './use-mutation-coordinator'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
 import { useCoalescedReadRequest } from './request-coalesce'
 import { useServerMonitorQuery } from './use-server-monitor-query'
@@ -3501,6 +3503,11 @@ function AIProviderRawLogDialog({ client, onClose }: { client: ReturnType<typeof
 function SubscriptionRelayManager({ data, client, load, notify }: { data: any; client: ReturnType<typeof api>; load: PageLoad; notify?: (message: string, kind?: ToastKind) => void }) {
   const dialogs = useDialogs()
   const [relays, setRelays] = useState<SubscriptionRelay[]>(data.subscription_relays || [])
+  // relaysRef is the list as it stands when an operation starts, so an undo
+  // restores exactly that and not a list two operations old.
+  const relaysRef = useRef(relays)
+  relaysRef.current = relays
+  const mutations = useMutationCoordinator(useRefreshResources())
   const [controllerDirectEnabled, setControllerDirectEnabled] = useState(settingEnabled(data.settings?.subscription_controller_direct_enabled, false))
   const [editor, setEditor] = useState<{ relay?: SubscriptionRelay } | null>(null)
   const [commandTarget, setCommandTarget] = useState<{ relay: SubscriptionRelay; token: string } | null>(null)
@@ -3624,17 +3631,29 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
     })
     if (!confirmed) return
     setBusy(`delete-${relay.id}`)
-    try {
-      await client.request(`/subscription-relays/${relay.id}`, { method: 'DELETE' })
-      setRelays(current => current.filter(item => item.id !== relay.id))
+    const outcome = await mutations.submit({
+      key: `subscription-relay:${relay.id}`,
+      resources: ['subscription-relays'],
+      // The row disappears immediately and comes back only if the server
+      // refused this one delete. Another relay being edited at the same time is
+      // untouched by that rollback.
+      optimistic: () => {
+        const previous = relaysRef.current
+        setRelays(current => current.filter(item => item.id !== relay.id))
+        return () => setRelays(previous)
+      },
+      run: () => client.request(`/subscription-relays/${relay.id}`, { method: 'DELETE' }),
+    })
+    setBusy('')
+    if (outcome.outcome === 'superseded') return
+    if (outcome.outcome === 'applied') {
       if (relay.active) setControllerDirectEnabled(true)
       notify?.('中继记录已删除', 'success')
       reload()
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setBusy('')
+      return
     }
+    notify?.(describeMutationOutcome(outcome, '删除中继记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    reload()
   }
 
   return <section className="settings-card subscription-relay-manager">
@@ -5661,6 +5680,10 @@ function isOBoardDNSRecord(record: DNSRecord) {
 }
 
 function ManagedDNSSettings({ data, client, load, notify }: any) {
+  // One coordinator for this panel: it orders operations per object, rolls back
+  // only what the server refused, and keeps an operation whose answer was lost
+  // from being reported as a failure the operator would repeat.
+  const mutations = useMutationCoordinator(useRefreshResources())
   const dialogs = useDialogs()
   const credentials: DNSCredential[] = data.dns_credentials || []
   const servers: Server[] = data.servers || []
@@ -5796,7 +5819,15 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const deleteCredential = async (credential: DNSCredential) => {
     const ok = await dialogs.confirm({ title: '删除域名服务账号', message: `确认删除 ${credential.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    try { await client.request(`/dns-credentials/${credential.id}`, { method: 'DELETE' }); await load(); notify?.('域名服务账号已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    const outcome = await mutations.submit({
+      key: `dns-credential:${credential.id}`,
+      resources: ['dns'],
+      run: () => client.request(`/dns-credentials/${credential.id}`, { method: 'DELETE' }),
+    })
+    if (outcome.outcome === 'applied') { await load(); notify?.('域名服务账号已删除', 'success'); return }
+    if (outcome.outcome === 'superseded') return
+    await load()
+    notify?.(describeMutationOutcome(outcome, '删除域名服务账号'), outcome.outcome === 'unknown' ? 'warning' : 'error')
   }
   const loadRecords = async (zoneID = selectedZoneID) => {
     if (!zoneID) { setRecords([]); return }
@@ -5829,7 +5860,15 @@ function ManagedDNSSettings({ data, client, load, notify }: any) {
   const deleteRecord = async (record: DNSRecord) => {
     const ok = await dialogs.confirm({ title: '删除解析记录', message: `${record.type} ${record.name}`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    try { await client.request(`/dns-records?dns_zone_id=${selectedZoneID}&id=${encodeURIComponent(record.id)}`, { method: 'DELETE' }); await loadRecords(); notify?.('解析记录已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    const outcome = await mutations.submit({
+      key: `dns-record:${selectedZoneID}:${record.id}`,
+      resources: ['dns'],
+      run: () => client.request(`/dns-records?dns_zone_id=${selectedZoneID}&id=${encodeURIComponent(record.id)}`, { method: 'DELETE' }),
+    })
+    if (outcome.outcome === 'applied') { await loadRecords(); notify?.('解析记录已删除', 'success'); return }
+    if (outcome.outcome === 'superseded') return
+    await loadRecords()
+    notify?.(describeMutationOutcome(outcome, '删除解析记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
   }
   const selectedOption = zoneOptions.find(item => item.zone.id === selectedZoneID)
   const serverName = (id?: number) => id ? serverNames.get(id) || '' : ''
@@ -5976,6 +6015,7 @@ function CertificateEABDialog({ keyID, hmacKey, remark, retain, retainLocked = f
 }
 
 function CertificateSettings({ data, client, load, notify }: any) {
+  const mutations = useMutationCoordinator(useRefreshResources())
   const dialogs = useDialogs()
   const certificates: Certificate[] = data.certificates || []
   const credentials: DNSCredential[] = data.dns_credentials || []
@@ -6044,7 +6084,15 @@ function CertificateSettings({ data, client, load, notify }: any) {
   const deleteCertificate = async (certificate: Certificate) => {
     const ok = await dialogs.confirm({ title: '删除证书', message: `确认删除 ${certificate.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    try { await client.request(`/certificates/${certificate.id}`, { method: 'DELETE' }); await load(); notify?.('证书已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    const outcome = await mutations.submit({
+      key: `certificate:${certificate.id}`,
+      resources: ['certificates'],
+      run: () => client.request(`/certificates/${certificate.id}`, { method: 'DELETE' }),
+    })
+    if (outcome.outcome === 'applied') { await load(); notify?.('证书已删除', 'success'); return }
+    if (outcome.outcome === 'superseded') return
+    await load()
+    notify?.(describeMutationOutcome(outcome, '删除证书'), outcome.outcome === 'unknown' ? 'warning' : 'error')
   }
   const saveMatching = async () => {
     if (autoIssueCA === 'google' && !autoIssueEABCredentialID) return

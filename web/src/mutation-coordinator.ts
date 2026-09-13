@@ -157,3 +157,15 @@ export function createMutationCoordinator(options: MutationCoordinatorOptions = 
 }
 
 export type MutationCoordinator = ReturnType<typeof createMutationCoordinator>
+
+// describeMutationOutcome turns a settled operation into the sentence an
+// operator should read. The distinction the wording has to carry is between
+// "this did not happen" and "nobody knows yet": the second one must not read as
+// a failure, or the operator repeats an operation that may already have landed.
+export function describeMutationOutcome(outcome: MutationResult<unknown>, action: string): string {
+  const reason = (outcome.error as { message?: string } | undefined)?.message || String(outcome.error ?? '')
+  if (outcome.outcome === 'unknown') {
+    return `${action}的结果未知${reason ? `（${reason}）` : ''}，已为你刷新，请确认是否已生效`
+  }
+  return `${action}失败${reason ? `：${reason}` : ''}`
+}
