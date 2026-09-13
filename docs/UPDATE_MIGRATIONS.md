@@ -43,6 +43,7 @@
 
 | ID | 组件 | 类别 | 引入版本 | 首次稳定版 | 状态 | 移除版本 |
 |---|---|---|---|---|---|---|
+| CONFIGURATION-INTENT-HANDOFF-001 | Controller | 配置事务交接 | dev-284f06497e3d | 待发布 | 生效中 | — |
 | `controller-db-20260829-server-cpu-cores` | Controller | SQLite schema / wire protocol | `dev-0fc17b734fa3` | 待发布 | 生效中 | - |
 | `controller-db-20260829-server-display-tags` | Controller | SQLite schema | `dev-5e3028465dda` | 待发布 | 生效中 | - |
 | `controller-db-20260829-subscription-client-templates` | Controller | SQLite schema | `dev-57aafe877b1c` | 待发布 | 生效中 | - |
@@ -964,3 +965,20 @@
 - **移除提交：** `owner/repository@<full-commit>`
 - **移除依据：** <最老升级版本、备份下限和验证证据>
 ```
+
+## CONFIGURATION-INTENT-HANDOFF-001 — 配置写入事务内可靠交接
+
+- **组件 / 责任方：** Controller / Store。
+- **类别 / 状态：** schema、数据交接、触发器切换；生效中。
+- **引入提交 / 版本：** `284f06497e3dc7ba2ff69ca8b304141a57eb0e84` / `dev-284f06497e3d`。
+- **首次稳定版：** 待发布。
+- **源状态：** 包含 configuration_revision、但没有 configuration_sync_intents 的旧数据库；旧 HTTP/Changeset 回调在提交后标记同步状态，可能遗漏已提交工作。
+- **目标状态：** 业务 revision 触发器同事务合并持久化意图，由现有配置协调器有界写入 configuration_sync_states。回调只唤醒，不重复调度。
+- **数据影响：** 首次创建意图表时，按已有非零 configuration_revision 写入一条 upgrade_handoff。保留现有业务、凭据、授权、计费及任务数据，不复制配置。未接入目标等待身份绑定；绑定变化产生新意图。
+- **幂等性：** 表存在时不重复写升级种子。意图来源与范围唯一；领取和服务器同步状态同事务，重复启动、重复领取可恢复。每批最多 64 个来源、128 个目标；处理中更新保留游标，完成后追赶最新版本。
+- **失败行为：** 建表、种子、托管触发器替换同事务回滚；领取失败保留意图。恢复不依赖进程内唤醒，不在启动时重新全量种子。
+- **实现位置：** internal/store/configuration_sync_intents.go、routing_revision.go、configuration_sync.go；internal/controller/configuration_reconciler.go、realtime.go。
+- **真实源状态测试：** testdata/configuration_revision_aaff751.sql 捕获 aaff75142d31 的旧配置触发器；TestConfigurationIntentMigrationFromPreviousTriggers 覆盖缺口、升级及重复打开，TestConfigurationIntentTriggerMigrationFailureIsAtomic 覆盖安装失败。另有真实子进程提交后退出、领取回滚、接入和有界游标恢复测试。
+- **兼容回退：** 未完成精确影响计算的来源标记 unresolved，记录 source/revision/targets 并有界扫描。C4 必须以增量/全量对照测试消除此保守路径；当前不宣称影响范围验收完成。
+- **移除门槛：** 除通用门槛外，最老直升版本和所有备份恢复路径必须已包含该表或强制经过 C 桥接版本；混合版本、回滚不得重建旧写入路径。仅可移除旧源状态种子与专用旧夹具，正式意图、当前 schema、恢复和版本约束必须保留。
+- **回滚边界：** 优先使用理解新表的修复版本；不得把直接切换旧二进制视为已验证回滚。完整备份恢复与 C 发布演练仍是发布前置条件，本开发提交不构成发布验收。
