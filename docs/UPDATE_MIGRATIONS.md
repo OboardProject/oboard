@@ -982,3 +982,19 @@
 - **兼容回退：** 未完成精确影响计算的来源标记 unresolved，记录 source/revision/targets 并有界扫描。C4 必须以增量/全量对照测试消除此保守路径；当前不宣称影响范围验收完成。
 - **移除门槛：** 除通用门槛外，最老直升版本和所有备份恢复路径必须已包含该表或强制经过 C 桥接版本；混合版本、回滚不得重建旧写入路径。仅可移除旧源状态种子与专用旧夹具，正式意图、当前 schema、恢复和版本约束必须保留。
 - **回滚边界：** 优先使用理解新表的修复版本；不得把直接切换旧二进制视为已验证回滚。完整备份恢复与 C 发布演练仍是发布前置条件，本开发提交不构成发布验收。
+
+## DELIVERY-POLICY-HANDOFF-001 — 投递策略保存与配置确认
+
+- **所有者 / 类别 / 状态：** Controller Store；SQLite schema 与一次性数据交接；生效中。
+- **引入提交 / 版本：** `4cd81248996f2583e87df677c423822ad9fad030` / `dev-4cd81248996f`。
+- **首次稳定版：** 待发布。
+- **源状态：** 9a7fc86 的 server_delivery_flags 只有 server_id 和两个开关；提交后配置刷新失败可能丢失后续处理。
+- **目标状态：** 原表新增 revision、applied_revision、processing_revision、processing_config_version；同事务写入 delivery_policy 显式目标意图，复用 configuration_sync_states 与原配置协调器。
+- **数据影响：** 保留原开关、凭据、授权关系和计费数据。已有开关行各补一次待处理意图；无开关行仍默认全开。新安装直接建立当前 schema。
+- **实现 / 执行阶段：** internal/store/delivery_flags.go:migrateDeliveryPolicyRevisions；Store 启动迁移，在配置 revision 和意图表初始化后执行。无需独立更新脚本或 Agent wire 适配。
+- **幂等与失败：** DDL、单次 revision 推进、旧行赋值、意图写入同事务。失败整体回滚并停止该次打开；重试可恢复。revision 列存在时不再回填。
+- **正式生效约束：** 新构建只能绑定 preparing 与目标 revision 匹配的同步状态，不捕获更晚保存的策略；旧任务沿用不能绑定新策略。匹配的配置回执才确认处理版本，较新策略保留待处理。授权和运行时用户仍使用各自确认通道。
+- **回归：** TestDeliveryPolicyMigrationFrom9a7fc86 使用真实旧建表 SQL，覆盖失败回滚、再次升级、重复打开；另有保存回滚、重启恢复、旧回执、构建中修改、语义相同仍刷新及显式重试测试。
+- **删除实现：** Controller applyServerDeliveryFlags 提交后独立写入及同步核心刷新已移除；Web 与 servers.update 共用正式 Store 事务。关闭运行时用户快速通道时，完整配置保留静态用户，不再抽取到已停用通道。
+- **移除门槛：** 记录首次稳定版，强制最老直升/恢复版本已包含该状态或经过 C 桥接；旧二进制、混合写入和备份恢复不能重建源状态。届时只删除旧表升级分支与旧夹具，保留正式版本确认、意图及当前 schema。
+- **回滚：** 使用理解新 schema 的修复版本，或经演练的完整备份恢复；不得直接以旧二进制替换视为安全回滚。C 混合版本、恢复演练和性能验收尚未完成，本提交不是 C 发布。
