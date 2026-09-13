@@ -208,6 +208,62 @@ func TestControllerConnectionPresenceIsIdempotent(t *testing.T) {
 	}
 }
 
+// A long-lived connection that has gone quiet keeps emitting activity_refresh
+// with its original payload time. On the live fleet one such connection made
+// every presence delta from that server invalid, and because the whole batch
+// was refused the server's presence stopped landing entirely.
+func TestLongLivedQuietConnectionKeepsReportingPresence(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	server := &model.Server{Name: "presence-node", AgentID: "presence-agent", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "presence-user", PasswordHash: "unused", Role: model.RoleViewer, Status: "active", ProxyUUID: "55555555-5555-4555-8555-555555555555", ProxyPassword: "presence-password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	grantTestPlanInboundNode(t, db, user.ID, inbound.ID)
+	nowTime := time.Now().UTC()
+	quiet := model.ConnectionPresenceEvent{Sequence: 1, ServerID: server.ID, UserID: user.ID, InboundID: inbound.ID, SourceIP: "198.51.100.10", Network: "tcp", Event: "activity_refresh", State: "active", ActiveConnections: 1, Meaningful: true, PayloadLastAt: nowTime.Add(-40 * time.Minute), At: nowTime}
+	// Emitted in the same drain as the quiet refresh, so the old whole-batch
+	// refusal took this one down with it.
+	live := quiet
+	live.Sequence = 2
+	live.SourceIP = "198.51.100.11"
+	live.PayloadLastAt = nowTime
+	corrupt := quiet
+	corrupt.Sequence = 3
+	corrupt.SourceIP = "198.51.100.12"
+	corrupt.PayloadLastAt = nowTime.Add(time.Hour)
+
+	sut := newTestServer(db, "test-secret", "")
+	accepted, err := sut.acceptConnectionPresenceDelta(ctx, server, connectionPresenceDelta{Events: []model.ConnectionPresenceEvent{quiet, live, corrupt}})
+	if err != nil {
+		t.Fatalf("presence delta rejected: %v", err)
+	}
+	if len(accepted) != 2 {
+		t.Fatalf("accepted %d events, want the quiet and the live one", len(accepted))
+	}
+	detail, err := db.ConnectionAuditUserDetail(ctx, user.ID, 24, store.DefaultAuditPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The quiet connection is recorded but is outside the meaningful-payload
+	// window, so exactly the live one counts as an online device.
+	if len(detail.Presence) != 2 || detail.Summary.OnlineDeviceLower != 1 {
+		t.Fatalf("presence=%d online_lower=%d, want 2 and 1", len(detail.Presence), detail.Summary.OnlineDeviceLower)
+	}
+}
+
 func TestConnectionAuditAutomaticActionTargetsOnlyBoundDevice(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {

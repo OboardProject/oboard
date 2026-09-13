@@ -13,6 +13,11 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+// connectionPresencePayloadHorizon bounds how far behind its event a payload
+// timestamp may sit. A connection can stay open for days, so this is a sanity
+// bound against a corrupt clock, not a freshness check.
+const connectionPresencePayloadHorizon = 30 * 24 * time.Hour
+
 type connectionPresenceDelta struct {
 	Events       []model.ConnectionPresenceEvent `json:"events"`
 	DroppedCount int64                           `json:"dropped_count"`
@@ -49,9 +54,19 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 		}
 	}
 	accepted := make([]model.ConnectionPresenceEvent, 0, len(delta.Events))
+	skipped := 0
+	skippedReason := ""
 	for _, event := range delta.Events {
 		if err := validateConnectionPresenceEvent(event, server.ID); err != nil {
-			return nil, err
+			// One malformed event is dropped on its own. Failing the delta
+			// discarded up to 500 valid events with it, and the Agent resent the
+			// same batch, so a single bad event silenced a server's presence for
+			// as long as it kept being produced.
+			skipped++
+			if skippedReason == "" {
+				skippedReason = err.Error()
+			}
+			continue
 		}
 		user, ok := users[event.UserID]
 		if !ok || user.Status != "active" {
@@ -84,6 +99,14 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 		event.RouteID = s.auditRouteID(event.SourceIP, report.SourceCountryCode, report.SourceISP)
 		event.AgentID = server.AgentID
 		accepted = append(accepted, event)
+	}
+	if skipped > 0 {
+		// A malformed event drains once the Agent prunes it. A sustained stream
+		// from one server is the signal that its kernel emits something this
+		// Controller does not accept, which the previous whole-batch failure
+		// reported only as a rejected delta.
+		log.Printf("connection presence skipped %d unusable event(s) from agent=%s server_id=%d first_reason=%s",
+			skipped, server.AgentID, server.ID, skippedReason)
 	}
 	// The write re-checks the effective audit state under the same per-server
 	// lock the disabled-state cleanup uses, so a report that passed the gate
@@ -150,7 +173,20 @@ func validateConnectionPresenceEvent(event model.ConnectionPresenceEvent, server
 		return errors.New("connection presence time is invalid")
 	}
 	if event.Meaningful {
-		if event.PayloadLastAt.IsZero() || event.PayloadLastAt.After(event.At.Add(2*time.Minute)) || event.PayloadLastAt.Before(event.At.Add(-10*time.Minute)) {
+		// PayloadLastAt is historical: it is when this connection last moved
+		// payload, not when the event was emitted. The kernel re-emits
+		// activity_refresh every 30s for as long as the connection is open, so
+		// a session that stays open while idle legitimately carries a payload
+		// time arbitrarily far behind At. Requiring recency here rejected every
+		// refresh for such a connection.
+		//
+		// Whether presence is *currently* meaningful is decided on read, where
+		// connectionAuditMeaningfulPresence applies the TCP 120s / UDP 60s
+		// window to this same field. An old payload time is data that answers
+		// "not online", not a malformed event. Only an impossible one is
+		// refused: ahead of the event, or beyond the retention horizon behind
+		// it.
+		if event.PayloadLastAt.IsZero() || event.PayloadLastAt.After(event.At.Add(2*time.Minute)) || event.PayloadLastAt.Before(event.At.Add(-connectionPresencePayloadHorizon)) {
 			return errors.New("connection presence payload time is invalid")
 		}
 	} else if !event.PayloadLastAt.IsZero() {
