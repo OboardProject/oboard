@@ -27,8 +27,15 @@ describe('global overlay layers', () => {
 
   it('binds shared portal surfaces to semantic layers', () => {
     expect(stylesheet).toMatch(/\.top-toast-viewport\s*\{[^}]*z-index:\s*var\(--z-toast\)/s)
-    expect(stylesheet).toMatch(/\.dialog-layer\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ var\(--dialog-layer-index, 0\)\)/s)
-    expect(stylesheet).toMatch(/\.dialog-layer\[data-modal-top="false"\] \.dialog-backdrop\s*\{[^}]*background:\s*transparent/s)
+    // Each dialog takes two slots so its popover layer can sit directly above
+    // it without reaching the next dialog: popovers use the odd slot
+    // (`* 2 + 1`), dialogs the even one.
+    expect(stylesheet).toMatch(/\.dialog-layer\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ var\(--dialog-layer-index, 0\) \* 2\)/s)
+    expect(stylesheet).toMatch(/\.popover-layer\s*\{[^}]*z-index:\s*calc\(var\(--z-dialog\) \+ var\(--popover-owner-index, -1\) \* 2 \+ 1\)/s)
+    // Only the bottom-most dialog dims. Stacked dialogs each adding their own
+    // scrim would darken the page once per open dialog.
+    expect(stylesheet).toMatch(/\.dialog-backdrop\s*\{[^}]*background:\s*transparent/s)
+    expect(stylesheet).toMatch(/\.dialog-layer\[data-modal-index="0"\] > \.dialog-backdrop\s*\{[^}]*background:\s*rgba/s)
     expect(stylesheet).not.toMatch(/--z-dialog-(nested|system)/)
     expect(stylesheet).not.toMatch(/\.dialog-backdrop-(nested|system)/)
     expect(stylesheet).toMatch(/\.custom-select-menu\s*\{[^}]*z-index:\s*var\(--z-popover\)/s)
