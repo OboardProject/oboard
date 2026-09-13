@@ -4434,7 +4434,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, store.ErrServerRevisionConflict) {
+			if errors.Is(err, store.ErrServerRevisionConflict) || errors.Is(err, store.ErrServerDeleting) {
 				status = http.StatusConflict
 			}
 			fail(w, err, status)
@@ -6061,7 +6061,11 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	token, expiresAt, _, err := s.issueServerEnrollmentToken(r.Context(), id)
 	if err != nil {
-		fail(w, err, 500)
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrServerDeleting) {
+			status = http.StatusConflict
+		}
+		fail(w, err, status)
 		return
 	}
 	auditReq(s, r, "create", "enroll-token", fmt.Sprint(id))

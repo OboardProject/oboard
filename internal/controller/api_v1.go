@@ -1614,6 +1614,8 @@ func v2Error(w http.ResponseWriter, r *http.Request, status int, code, message s
 
 func v2HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, store.ErrServerDeleting):
+		v2Error(w, r, http.StatusConflict, "server_deleting", err.Error())
 	case errors.Is(err, store.ErrServerRevisionConflict):
 		v2Error(w, r, http.StatusConflict, "revision_conflict", err.Error())
 	case errors.Is(err, automation.ErrIdempotencyConflict):

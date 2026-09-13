@@ -20,6 +20,12 @@ const (
 	ServerDeletionExternal = "external"
 )
 
+// ErrServerDeleting is returned when work is requested for a server whose
+// deletion has already been claimed. The row may still exist while its history
+// drains, or while a restart-interrupted deletion is being finished; either way
+// accepting new work would resurrect a server the operator removed.
+var ErrServerDeleting = errors.New("server is being deleted")
+
 // ServerDeletion is the durable record of a server removal in progress. It
 // deliberately has no foreign key to servers: it has to outlive the row so the
 // external cleanup that follows the row delete can still be resumed and
@@ -57,6 +63,23 @@ func (s *Store) BeginServerDeletion(ctx context.Context, serverID int64, name, p
 		return ServerDeletion{}, false, err
 	}
 	return deletion, inserted > 0, nil
+}
+
+// HasServerDeletion reports whether this server's deletion was already
+// claimed. It is a primary-key lookup, so the write paths that guard on it pay
+// one indexed read.
+func (s *Store) HasServerDeletion(ctx context.Context, serverID int64) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `select count(*) from server_deletions where server_id=?`, serverID).Scan(&count)
+	return count > 0, err
+}
+
+// serverDeletionClaimedTx is the same check inside a transaction, so a guard
+// and the write it protects cannot straddle a concurrent delete claim.
+func serverDeletionClaimedTx(ctx context.Context, tx *sql.Tx, serverID int64) (bool, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, `select count(*) from server_deletions where server_id=?`, serverID).Scan(&count)
+	return count > 0, err
 }
 
 func (s *Store) GetServerDeletion(ctx context.Context, serverID int64) (ServerDeletion, error) {

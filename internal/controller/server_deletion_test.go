@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -240,5 +241,43 @@ func TestUninstallCallbackIsNotFailedByPanelSideCleanup(t *testing.T) {
 	srv.runServerDeletions(ctx)
 	if len(records) != 0 {
 		t.Fatalf("records after retry = %#v", records)
+	}
+}
+
+// TestDeletionClaimBlocksNewWorkOnTheServer covers the window where a deletion
+// is claimed but not finished — the normal purge, and everything after a
+// restart that interrupted one. Accepting an edit, a task, or a fresh
+// enrollment token there is how a removed server comes back.
+func TestDeletionClaimBlocksNewWorkOnTheServer(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "doomed", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)["server"].(map[string]any)
+	serverID := int64(created["id"].(float64))
+
+	// A deletion was claimed and the process died before it finished.
+	if _, _, err := db.BeginServerDeletion(ctx, serverID, "doomed", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	request(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/ui/servers/%d", serverID), token, map[string]any{"name": "renamed"}, http.StatusConflict)
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/servers/%d/enroll-token", serverID), token, map[string]any{}, http.StatusConflict)
+	if _, err := srv.queueAgentTask(ctx, serverID, model.AgentTaskTypeDiagnoseNetwork, map[string]any{}, time.Now().Unix()); !errors.Is(err, store.ErrServerDeleting) {
+		t.Fatalf("queued work for a server being deleted: %v", err)
+	}
+	current, err := db.GetServer(ctx, serverID)
+	if err != nil || current.Name != "doomed" {
+		t.Fatalf("the rejected edit still landed: %+v err=%v", current, err)
+	}
+
+	srv.runServerDeletions(ctx)
+	if _, err := db.GetServer(ctx, serverID); err == nil {
+		t.Fatal("the interrupted deletion was not finished")
 	}
 }

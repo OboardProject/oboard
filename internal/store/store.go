@@ -2871,6 +2871,12 @@ func (s *Store) UpdateServerWithTraffic(ctx context.Context, v *model.Server, us
 var ErrServerRevisionConflict = errors.New("server revision conflict: reload the server before saving")
 
 type ServerUpdateOptions struct {
+	// RejectWhenDeleting makes a management save fail once the server's
+	// deletion has been claimed. Agent-driven health updates deliberately do
+	// not set it: they only refresh state that is about to be removed anyway,
+	// and failing them would turn a delete into an Agent-visible error.
+	RejectWhenDeleting bool
+
 	ExpectedUpdatedAt     *time.Time
 	TrafficUsedBytes      *int64
 	TrafficWindow         model.ServerTrafficWindow
@@ -2897,6 +2903,15 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 		return err
 	}
 	defer tx.Rollback()
+	if options.RejectWhenDeleting {
+		claimed, err := serverDeletionClaimedTx(ctx, tx, v.ID)
+		if err != nil {
+			return err
+		}
+		if claimed {
+			return ErrServerDeleting
+		}
+	}
 	if options.ExpectedUpdatedAt != nil {
 		var revision string
 		if err := tx.QueryRowContext(ctx, `select updated_at from servers where id=?`, v.ID).Scan(&revision); err != nil {
@@ -2980,6 +2995,18 @@ func (s *Store) UpdateServerRuntimeState(ctx context.Context, v *model.Server) e
 // expiresAt is required when setting a hash; cleared tokens also clear expiry.
 func (s *Store) SetServerEnrollmentHash(ctx context.Context, serverID int64, hash string, expiresAt time.Time) error {
 	ts := now()
+	if strings.TrimSpace(hash) != "" {
+		// Handing out a fresh enrollment token for a server that is being
+		// deleted is how a removed node comes back: the Agent would re-enroll
+		// into a record the operator already removed.
+		claimed, err := s.HasServerDeletion(ctx, serverID)
+		if err != nil {
+			return err
+		}
+		if claimed {
+			return ErrServerDeleting
+		}
+	}
 	if strings.TrimSpace(hash) == "" {
 		_, err := s.db.ExecContext(ctx, `update servers set enrollment_hash=NULL, enrollment_expires_at=NULL, updated_at=? where id=?`, ts, serverID)
 		return err
@@ -6136,6 +6163,9 @@ func (s *Store) ListInboundProbeResults(ctx context.Context, serverID, inboundID
 	return out, rows.Err()
 }
 
+// CreateTask queues one Agent task. A server whose deletion was already
+// claimed accepts no new work: the task would either run against a node that is
+// being removed or recreate state the delete just cleaned up.
 func (s *Store) CreateTask(ctx context.Context, v *model.AgentTask) error {
 	ts := now()
 	v.CreatedAt = parseTime(ts)
@@ -6146,12 +6176,24 @@ func (s *Store) CreateTask(ctx context.Context, v *model.AgentTask) error {
 		t := parseTime(ts)
 		v.CompletedAt = &t
 	}
-	res, err := s.db.ExecContext(ctx, `insert into agent_tasks(server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at) values(?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Type, v.PayloadJSON, v.Status, v.ResultJSON, v.ConfigVersion, v.Nonce, ts, ts, completed)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	claimed, err := serverDeletionClaimedTx(ctx, tx, v.ServerID)
+	if err != nil {
+		return err
+	}
+	if claimed {
+		return ErrServerDeleting
+	}
+	res, err := tx.ExecContext(ctx, `insert into agent_tasks(server_id,type,payload_json,status,result_json,config_version,nonce,created_at,updated_at,completed_at) values(?,?,?,?,?,?,?,?,?,?)`, v.ServerID, v.Type, v.PayloadJSON, v.Status, v.ResultJSON, v.ConfigVersion, v.Nonce, ts, ts, completed)
 	if err != nil {
 		return err
 	}
 	v.ID, _ = res.LastInsertId()
-	return nil
+	return tx.Commit()
 }
 
 func isTerminalTaskStatus(status string) bool {

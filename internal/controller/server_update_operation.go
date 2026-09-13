@@ -317,7 +317,7 @@ func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, tra
 		}
 		expected = parsed
 	}
-	options := store.ServerUpdateOptions{ExpectedUpdatedAt: &expected, TrafficUsedBytes: trafficUsed, AuthorizationFastLane: auth, RuntimeUsersEnabled: users}
+	options := store.ServerUpdateOptions{ExpectedUpdatedAt: &expected, TrafficUsedBytes: trafficUsed, AuthorizationFastLane: auth, RuntimeUsersEnabled: users, RejectWhenDeleting: true}
 	if trafficUsed != nil {
 		settings, err := s.store.ListSettings(ctx)
 		if err != nil {

@@ -191,6 +191,26 @@ func TestProxyPathsPageDataIsReadOnly(t *testing.T) {
 	if len(paths) != 1 || paths[0].NameMode != model.ProxyPathNameAuto {
 		t.Fatalf("invalid custom name mode not reconciled: %#v", paths)
 	}
+	// Losing a step to the orphan prune disables the path: the remaining
+	// prefix is a shorter route nobody chose, so it waits for an operator
+	// instead of silently carrying traffic.
+	if paths[0].Enabled {
+		t.Fatalf("path kept running after its dependency was pruned: %#v", paths[0])
+	}
+	// Processing roles are derived for paths that are actually deployed, so
+	// the normalization applies once the operator repairs and re-enables it.
+	repaired := paths[0]
+	repaired.Enabled = true
+	if err := db.UpdateProxyPath(ctx, &repaired); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.normalizeEnabledProxyPathProcessingRoles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	steps, err = db.ListProxyPathSteps(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, item := range steps {
 		if item.ID == step.ID && item.ProcessingRole {
 			t.Fatalf("processing role not normalized: %#v", item)
