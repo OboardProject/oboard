@@ -233,6 +233,12 @@ type Server struct {
 	// runtimeUserPackages caches the generated per-server runtime user package
 	// so a snapshot pull and the recovery scan share one configuration build.
 	runtimeUserPackages runtimeUserPackageCache
+	// subscriptionPublications keeps rendered subscription bodies keyed by the
+	// inputs they were rendered from, so a client refresh that changes nothing
+	// does not rebuild every node.
+	subscriptionPublications      *subscriptionPublicationCache
+	subscriptionPublicationHits   atomic.Int64
+	subscriptionPublicationBuilds atomic.Int64
 	// auditOverviews caches the audit console summaries, which three polling
 	// endpoints request for the same reporting window.
 	auditOverviews         auditOverviewCache
@@ -320,6 +326,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 		pollerID = fmt.Sprintf("controller-%d", time.Now().UnixNano())
 	}
 	s := &Server{store: store, sessionSecret: sessionSecret, staticDir: staticDir, basePath: basePath, application: application.NewService(store), capabilities: catalog, automation: automation.NewService(store, catalog), auditIntel: auditIntel, auditReviews: auditreview.New(store, auditIntel, sessionSecret), aiModelDiscoveries: newAIModelDiscoveryQueue(), aiModelDiscoveryTimeout: aiModelDiscoveryTimeout, aiTests: newAITaskQueue[airpc.AITestRequest, aiTestResult](), aiTestTimeout: aiTestTimeout, apiInFlight: map[string]int{}, allowedOrigins: parseAllowedOrigins(os.Getenv("OBOARD_CORS_ORIGINS")), dnsEndpoints: defaultDNSProviderEndpoints(), acmeCommand: acmeCommand, acmeHome: acmeHome, logs: logs, realtime: newRealtimeBroker(), activeProbes: map[int64]bool{}, agentConnectionCount: map[int64]int{}, notificationWake: make(chan struct{}, 1), periodicLogNext: map[string]time.Time{}, controllerNTPQuery: queryControllerNTP, notificationSender: sendNotification, telegramAPI: telegramBotHTTP, telegramPollerID: pollerID, certificateIssues: map[int64]bool{}, controllerUpdater: controllerupdate.NewClient(socketPath), geoIPStatus: model.GeoDatabaseStatus{Provider: "ip2region", Error: "IP 归属库不可用"}, subscriptionRelayNonces: map[string]time.Time{}, tasks: newTaskNotifier(), taskRecoveryScanMin: defaultTaskRecoveryScanMin, taskRecoveryScanMax: defaultTaskRecoveryScanMax, configurationWake: make(chan struct{}, 1), configurationDelay: defaultConfigurationReconcileDelay, agentCallbackRate: newMemoryRateLimiter(), agentAuthFailures: newMemoryRateLimiter(), unknownAgents: newTTLCache(), agentAuthBans: newTTLCache(), agentDiagnosticRate: newMemoryRateLimiter(), accessWorkersWake: make(chan struct{}, 1), accessDeadlineWake: make(chan struct{}, 1), authorizationSyncWake: make(chan struct{}, 1), authorizationSyncInFlight: map[int64]bool{}, runtimeUsersSyncWake: make(chan struct{}, 1), runtimeUsersSyncInFlight: map[int64]bool{}, planReconcileWake: make(chan struct{}, 1), nodeRefreshSem: make(chan struct{}, 4), nodeRefreshUsers: map[int64]bool{}, backupJobs: make(chan controllerBackupJob, 4)}
+	s.subscriptionPublications = newSubscriptionPublicationCache()
 	s.auditRisk = newAuditRiskQueue(s.evaluateConnectionAuditRisks)
 	s.oauthRefreshGrace = oauthRefreshReplayGrace
 	s.agentLive = map[int64][]chan any{}
@@ -14474,19 +14481,49 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	// Everything the rendered body depends on, so a repeated pull with nothing
+	// changed reuses the published body instead of rebuilding every node. A
+	// burn-after-read credential is never published: its payload is delivered
+	// once and must not outlive the request that spent it.
+	publication := subscriptionPublicationInputs{
+		RoutingRevision: routing.revision,
+		UserID:          user.ID,
+		UserUpdatedAt:   user.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		ProfileID:       subscriptionOutput.ID,
+		ProfileRevision: subscriptionOutput.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Format:          string(format),
+		RequestedFormat: string(resolution.Requested),
+		AutoFormat:      resolution.Auto,
+		UserAgent:       r.UserAgent(),
+		Query:           r.URL.RawQuery,
+		TemplateDigest:  templateDigest,
+		AlwaysDomain:    settingBool(settings, settingSubscriptionAlwaysUseDomainHost, false),
+		EffectiveNodes:  effectiveNodes,
+		EffectiveGroups: effectiveGroups,
+		HiddenInbounds:  subscriptionHiddenInboundList(hiddenInbounds),
+		NodeNames:       subscriptionNodeNameOverrides(globalNodeNames),
+		PlanNodeNames:   subscriptionNodeNameOverrides(planNodeNames),
+		OrderPositions:  orderPositions,
+		OrderPolicy:     fmt.Sprint(orderPolicy),
+		SSHHostKeys:     sshServerHostKeys,
+		DeliveryStates:  subscriptionDeliveryStates(servers),
+		Credentials:     subscriptionCredentialFingerprint(s.sessionSecret, subscriptionUser),
+		AgeRecipient:    fmt.Sprint(ageRecipient),
+		AgeEncrypted:    ageEncrypted,
+	}
+	if user.SubscriptionBurnAfterRead || custom {
+		publication = subscriptionPublicationInputs{}
+	}
 	renderOpts.Template = templateContent
 	renderOpts.TemplateDigest = templateDigest
 	renderOpts.UserAgent = r.UserAgent()
 	renderOpts.RequestedFormat = resolution.Requested
-	sub, err := core.RenderSubscriptionNodesWithOptions(selectedNodes, format, renderOpts)
+	sub, subscriptionRevision, etag, err := s.publishSubscription(publication, selectedNodes, format, renderOpts, subscriptionOutput.ID, ageRecipient)
 	if err != nil {
 		s.recordRejectedSubscriptionPull(r, user.ID, resolution, requestedProfileID, ageEncrypted, "subscription generation failed")
 		fail(w, err, 500)
 		return
 	}
-	revisionDigest := sha256.Sum256([]byte("oboard-subscription-v3\x00" + strconv.FormatInt(subscriptionOutput.ID, 10) + "\x00" + string(format) + "\x00" + templateDigest + "\x00" + sub + "\x00" + fmt.Sprint(ageRecipient)))
-	subscriptionRevision := fmt.Sprintf("sub_%x", revisionDigest[:16])
-	etag := fmt.Sprintf("W/\"%s\"", subscriptionRevision)
 	event := s.newSubscriptionPullAudit(r, user.ID, resolution, requestedProfileID, ageEncrypted)
 	event.SubscriptionRevision = subscriptionRevision
 	event.RouteID = s.subscriptionAuditRouteID(event)
