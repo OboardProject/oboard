@@ -11,6 +11,69 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func TestUpdateServerRollsBackAllSettingsAndIntent(t *testing.T) {
+	for _, stage := range []string{"display_tags", "server_telemetry", "server_latency_probe_settings"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			server := &model.Server{Name: "before", DisplayTags: []model.ServerDisplayTag{{Text: "before"}}, TrafficLimitBytes: 1000}
+			if err := db.CreateServer(ctx, server); err != nil {
+				t.Fatal(err)
+			}
+			before, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := db.ConfigurationRevision(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := `create trigger fail_server_update before insert on ` + stage + ` begin select raise(abort,'injected failure'); end`
+			if stage == "display_tags" {
+				query = `create trigger fail_server_update before update of display_tags_json on servers begin select raise(abort,'injected failure'); end`
+			}
+			if _, err := db.db.ExecContext(ctx, query); err != nil {
+				t.Fatal(err)
+			}
+			changed := *before
+			changed.Name = "after"
+			changed.DisplayTags = []model.ServerDisplayTag{{Text: "after"}}
+			changed.TrafficLimitBytes = 2000
+			changed.LatencyProbeEnabled = !before.LatencyProbeEnabled
+			if err := db.UpdateServer(ctx, &changed); err == nil {
+				t.Fatal("injected failure ignored")
+			}
+			after, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Name != before.Name || after.DisplayTags[0].Text != before.DisplayTags[0].Text || after.TrafficLimitBytes != before.TrafficLimitBytes || after.LatencyProbeEnabled != before.LatencyProbeEnabled || !after.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Fatalf("failed update left partially committed settings: name=%s tags=%v limit=%d probe=%v updated=%s", after.Name, after.DisplayTags, after.TrafficLimitBytes, after.LatencyProbeEnabled, after.UpdatedAt)
+			}
+			if next, err := db.ConfigurationRevision(ctx); err != nil || next != revision {
+				t.Fatalf("failed update advanced desired revision: %d -> %d: %v", revision, next, err)
+			}
+			if !changed.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Fatal("failed update exposed an uncommitted timestamp")
+			}
+			if _, err := db.db.ExecContext(ctx, `drop trigger fail_server_update`); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.UpdateServer(ctx, &changed); err != nil {
+				t.Fatal(err)
+			}
+			after, err = db.GetServer(ctx, server.ID)
+			if err != nil || after.Name != changed.Name || after.TrafficLimitBytes != changed.TrafficLimitBytes || after.LatencyProbeEnabled != changed.LatencyProbeEnabled {
+				t.Fatalf("retry did not commit settings: %v %v", after, err)
+			}
+		})
+	}
+}
+
 func TestCreateServerRollsBackInitializationFailure(t *testing.T) {
 	for _, stage := range []string{"server_telemetry", "server_latency_probe_settings", "server_dns_policies", "initial_traffic", "missing_dns_default"} {
 		t.Run(stage, func(t *testing.T) {

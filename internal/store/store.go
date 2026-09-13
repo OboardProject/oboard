@@ -2854,23 +2854,46 @@ func (s *Store) createServer(ctx context.Context, v *model.Server, used *int64, 
 }
 
 func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
+	if v == nil || v.ID <= 0 {
+		return errors.New("server update requires a server")
+	}
+	result := v
+	updated := *v
+	v = &updated
 	v.UpdatedAt = time.Now().UTC()
 	normalizeServerEntryIP(v)
 	normalizeServerRegion(v)
 	// Note: enrollment_hash is intentionally not cleared via empty string here —
 	// coalesce(nullif('',''), enrollment_hash) would preserve the old hash.
 	// Use SetServerEnrollmentHash / ClaimServerEnrollment for one-time token lifecycle.
-	_, err := s.db.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, internal_port_range_start=?, internal_port_range_end=?, port_policy_revision=case when ?<=0 then port_policy_revision else ? end, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, cpu_cores=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, disk_total_bytes=?, tcp_connection_count=?, udp_connection_count=?, process_count=?, agent_version=?, agent_build=?, sing_box_version=?, kernel_capabilities_json=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.PortPolicyRevision, v.PortPolicyRevision, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.CPUCores, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, stringSliceJSON(v.KernelCapabilities), boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := s.saveServerDisplayTags(ctx, v.ID, v.DisplayTags); err != nil {
+	defer tx.Rollback()
+	row, err := tx.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, internal_port_range_start=?, internal_port_range_end=?, port_policy_revision=case when ?<=0 then port_policy_revision else ? end, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, cpu_cores=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, disk_total_bytes=?, tcp_connection_count=?, udp_connection_count=?, process_count=?, agent_version=?, agent_build=?, sing_box_version=?, kernel_capabilities_json=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.PortPolicyRevision, v.PortPolicyRevision, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.CPUCores, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, stringSliceJSON(v.KernelCapabilities), boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
+	if err != nil {
 		return err
 	}
-	if err := s.updateServerTelemetrySettingsWithTransition(ctx, v); err != nil {
+	if count, err := row.RowsAffected(); err != nil {
+		return err
+	} else if count != 1 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.ExecContext(ctx, `update servers set display_tags_json=? where id=?`, displayTagsJSON(v.DisplayTags), v.ID); err != nil {
 		return err
 	}
-	return s.UpdateServerLatencyProbeSettings(ctx, v)
+	if err := updateServerTelemetrySettingsTx(ctx, tx, v); err != nil {
+		return err
+	}
+	if err := updateServerLatencyProbeSettingsTx(ctx, tx, v); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	*result = *v
+	return nil
 }
 
 // UpdateServerRuntimeState persists Agent health-report state without touching
@@ -3091,11 +3114,6 @@ func parseDisplayTagsJSON(raw string) []model.ServerDisplayTag {
 	return normalized
 }
 
-func (s *Store) saveServerDisplayTags(ctx context.Context, serverID int64, tags []model.ServerDisplayTag) error {
-	_, err := s.db.ExecContext(ctx, `update servers set display_tags_json=? where id=?`, displayTagsJSON(tags), serverID)
-	return err
-}
-
 func randomServerChainSecret() (string, error) {
 	value := make([]byte, 32)
 	if _, err := rand.Read(value); err != nil {
@@ -3160,6 +3178,13 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 		return err
 	}
 	defer tx.Rollback()
+	if err := updateServerTelemetrySettingsTx(ctx, tx, server); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func updateServerTelemetrySettingsTx(ctx context.Context, tx *sql.Tx, server *model.Server) error {
 	server.MonitoringMode = normalizeServerMonitoringMode(server.MonitoringMode)
 	server.TrafficResetMode = normalizeTrafficResetMode(server.TrafficResetMode)
 	server.TrafficResetDay = normalizeTrafficResetDay(server.TrafficResetDay)
@@ -3182,7 +3207,7 @@ func (s *Store) updateServerTelemetrySettingsWithTransition(ctx context.Context,
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *Store) SetServerTrafficUsed(ctx context.Context, serverID int64, used int64, window model.ServerTrafficWindow) error {
