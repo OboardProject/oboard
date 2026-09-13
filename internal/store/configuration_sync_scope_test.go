@@ -138,3 +138,74 @@ func TestConfigurationScopeMarksOnlyRelatedServers(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthorizationScopeFollowsGrantedNodes covers the authorization half of
+// the mapping: a user, device, binding or plan change reaches the servers that
+// actually serve that user's nodes, and leaves the rest of the fleet alone.
+func TestAuthorizationScopeFollowsGrantedNodes(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "auth-scope.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	newServer := func(name, agent string) *model.Server {
+		server := &model.Server{Name: name, AgentID: agent, Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+		return server
+	}
+	granted, other := newServer("granted", "agent-granted"), newServer("other", "agent-other")
+	grantedInbound := &model.Inbound{ServerID: granted.ID, Name: "granted-in", Protocol: model.ProtocolVLESS, Port: 443, ListenIP: "0.0.0.0", Enabled: true}
+	if err := db.CreateInbound(ctx, grantedInbound); err != nil {
+		t.Fatal(err)
+	}
+	otherInbound := &model.Inbound{ServerID: other.ID, Name: "other-in", Protocol: model.ProtocolVLESS, Port: 444, ListenIP: "0.0.0.0", Enabled: true}
+	if err := db.CreateInbound(ctx, otherInbound); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "scoped", PasswordHash: "hash", Role: model.RoleViewer, Status: "active"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	plan := &model.SubscriptionPlan{Name: "scoped-plan", Enabled: true}
+	if err := db.CreateSubscriptionPlan(ctx, plan, []model.SubscriptionPlanNode{{NodeType: model.AssignableNodeInbound, NodeID: grantedInbound.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: user.ID, PlanID: plan.ID, Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	drainedTargets(t, db)
+
+	// The plan grants a node on one server only.
+	marked := drainedTargets(t, db)
+	if len(marked) != 0 {
+		t.Fatalf("baseline drain left work behind: %v", marked)
+	}
+
+	// An exception that grants a node on the other server reaches it, and only
+	// it: the plan's own node has not changed.
+	exception := &model.UserNodeException{UserID: user.ID, NodeType: model.AssignableNodeInbound, NodeID: otherInbound.ID, Effect: model.UserNodeExceptionAllow, Status: model.UserNodeExceptionActive}
+	if err := db.CreateUserNodeException(ctx, exception); err != nil {
+		t.Fatal(err)
+	}
+	marked = drainedTargets(t, db)
+	if len(marked) != 1 || marked[0] != other.ID {
+		t.Fatalf("exception marked %v, want the server hosting the excepted node", marked)
+	}
+
+	// Removing the plan binding reaches the server that was serving it.
+	if err := db.SetUserPlanBindings(ctx, []model.UserPlanBinding{{UserID: user.ID, PlanID: 0}}); err != nil {
+		t.Fatal(err)
+	}
+	marked = drainedTargets(t, db)
+	if len(marked) == 0 {
+		t.Fatal("unbinding a plan marked nothing")
+	}
+	for _, id := range marked {
+		if id != granted.ID && id != other.ID {
+			t.Fatalf("unbinding marked unrelated server %d", id)
+		}
+	}
+}

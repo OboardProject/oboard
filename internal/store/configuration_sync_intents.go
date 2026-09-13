@@ -59,8 +59,8 @@ func migrateConfigurationSyncIntentsTx(ctx context.Context, tx *sql.Tx) error {
 func configurationSyncIntentSQL(table, event string) string {
 	statements := ""
 	for _, alias := range configurationSyncScopeAliases(event) {
-		scope := configurationSyncScopeSelect(table, alias)
-		if scope == "" {
+		seeds := configurationSyncScopeSeeds(table, alias)
+		if seeds.empty() {
 			statements = ""
 			break
 		}
@@ -68,7 +68,7 @@ func configurationSyncIntentSQL(table, event string) string {
 		select '%s.%s','explicit_ids',t.server_id,cr.revision,strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now'),strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now')
 		from (%s) t, configuration_revision cr
 		where cr.id=1 and t.server_id is not null and t.server_id>0
-		on conflict(source,scope,server_id) do update set revision=excluded.revision,updated_at=excluded.updated_at;`, table, event, scope)
+		on conflict(source,scope,server_id) do update set revision=excluded.revision,updated_at=excluded.updated_at;`, table, event, configurationScopeServerSelect(seeds))
 	}
 	if statements != "" {
 		return statements
