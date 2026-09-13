@@ -261,3 +261,47 @@ func TestDeleteServerRollsBackRoutingAndTelemetry(t *testing.T) {
 		t.Fatalf("retry deletion: %v", err)
 	}
 }
+
+func TestServerUpdateExpectedRevisionRejectsStaleFieldsAndEffects(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "initial"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	stale := *server
+	first := *server
+	first.Name = "first"
+	expected := first.UpdatedAt
+	if err := db.UpdateServerSettings(ctx, &first, ServerUpdateOptions{ExpectedUpdatedAt: &expected}); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := db.ConfigurationRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	stale.Name = "stale"
+	if err := db.UpdateServerSettings(ctx, &stale, ServerUpdateOptions{ExpectedUpdatedAt: &expected, RuntimeUsersEnabled: &off}); !errors.Is(err, ErrServerRevisionConflict) {
+		t.Fatalf("err=%v", err)
+	}
+	actual, err := db.GetServer(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags, err := db.ServerDeliveryFlags(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.ConfigurationRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Name != "first" || !actual.UpdatedAt.Equal(first.UpdatedAt) || !flags.RuntimeUsersEnabled || after != revision {
+		t.Fatal("stale write changed server or effects")
+	}
+}

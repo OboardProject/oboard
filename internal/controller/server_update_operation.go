@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/application"
+	"github.com/OboardProject/oboard/internal/automation"
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
@@ -308,7 +309,15 @@ func (s *Server) registerServerUpdateOperation() {
 }
 
 func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64, auth, users *bool) error {
-	options := store.ServerUpdateOptions{TrafficUsedBytes: trafficUsed, AuthorizationFastLane: auth, RuntimeUsersEnabled: users}
+	expected := server.UpdatedAt
+	if revision, ok := automation.ApprovedResourceRevision(ctx, "server:"+strconv.FormatInt(server.ID, 10)); ok {
+		parsed, err := time.Parse(time.RFC3339Nano, revision)
+		if err != nil {
+			return store.ErrServerRevisionConflict
+		}
+		expected = parsed
+	}
+	options := store.ServerUpdateOptions{ExpectedUpdatedAt: &expected, TrafficUsedBytes: trafficUsed, AuthorizationFastLane: auth, RuntimeUsersEnabled: users}
 	if trafficUsed != nil {
 		settings, err := s.store.ListSettings(ctx)
 		if err != nil {

@@ -2864,7 +2864,10 @@ func (s *Store) UpdateServerWithTraffic(ctx context.Context, v *model.Server, us
 	return s.UpdateServerSettings(ctx, v, ServerUpdateOptions{TrafficUsedBytes: &used, TrafficWindow: window})
 }
 
+var ErrServerRevisionConflict = errors.New("server revision conflict: reload the server before saving")
+
 type ServerUpdateOptions struct {
+	ExpectedUpdatedAt     *time.Time
 	TrafficUsedBytes      *int64
 	TrafficWindow         model.ServerTrafficWindow
 	AuthorizationFastLane *bool
@@ -2890,6 +2893,19 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 		return err
 	}
 	defer tx.Rollback()
+	if options.ExpectedUpdatedAt != nil {
+		var revision string
+		if err := tx.QueryRowContext(ctx, `select updated_at from servers where id=?`, v.ID).Scan(&revision); err != nil {
+			return err
+		}
+		if !parseTime(revision).Equal(*options.ExpectedUpdatedAt) {
+			return ErrServerRevisionConflict
+		}
+		if !v.UpdatedAt.After(*options.ExpectedUpdatedAt) {
+			v.UpdatedAt = options.ExpectedUpdatedAt.Add(time.Nanosecond)
+		}
+	}
+
 	row, err := tx.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, port_range_start=?, port_range_end=?, internal_port_range_start=?, internal_port_range_end=?, port_policy_revision=case when ?<=0 then port_policy_revision else ? end, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, cpu_cores=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, disk_total_bytes=?, tcp_connection_count=?, udp_connection_count=?, process_count=?, agent_version=?, agent_build=?, sing_box_version=?, kernel_capabilities_json=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.PortPolicyRevision, v.PortPolicyRevision, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.CPUCores, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, stringSliceJSON(v.KernelCapabilities), boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
 	if err != nil {
 		return err

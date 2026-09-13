@@ -21,6 +21,7 @@ import (
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 type apiPrincipalContextKey struct{}
@@ -1613,6 +1614,8 @@ func v2Error(w http.ResponseWriter, r *http.Request, status int, code, message s
 
 func v2HandleError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, store.ErrServerRevisionConflict):
+		v2Error(w, r, http.StatusConflict, "revision_conflict", err.Error())
 	case errors.Is(err, automation.ErrIdempotencyConflict):
 		v2Error(w, r, http.StatusConflict, "idempotency_conflict", err.Error())
 	case errors.Is(err, sql.ErrNoRows):

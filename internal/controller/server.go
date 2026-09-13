@@ -4433,21 +4433,24 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
-			fail(w, err, 500)
+			status := http.StatusInternalServerError
+			if errors.Is(err, store.ErrServerRevisionConflict) {
+				status = http.StatusConflict
+			}
+			fail(w, err, status)
 			return
 		}
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
-		updated, _ := s.store.GetServer(r.Context(), v.ID)
-		if updated != nil {
-			items := []model.Server{*updated}
-			if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
-				fail(w, err, 500)
-				return
-			}
+		updated := &v
+		response := map[string]any{"server": updated}
+		items := []model.Server{v}
+		if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
+			response["warning"] = "服务器已保存，展示信息暂未刷新"
+		} else {
 			updated = &items[0]
+			response["server"] = updated
 		}
 		s.annotateOneServerDeliveryStatus(r.Context(), updated)
-		response := map[string]any{"server": updated}
 		if current.TimeCorrectionMode != v.TimeCorrectionMode && strings.TrimSpace(current.AgentID) != "" && current.Status != model.ServerOffline {
 			if task, err := s.queueTimeCheck(r.Context(), *updated, true); err == nil {
 				response["time_check_task"] = task

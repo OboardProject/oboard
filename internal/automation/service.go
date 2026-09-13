@@ -363,13 +363,14 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 	persistedResults := make([]any, 0, len(item.Operations))
 	responseResults := make([]any, 0, len(item.Operations))
 	hasOneTimeResults := false
+	mutationContext := context.WithValue(ctx, approvedRevisionsContextKey{}, item.BaseRevisions)
 	for index := range item.Operations {
 		op := &item.Operations[index]
 		handler := s.handler(op.Capability)
 		if handler == nil {
 			return s.failOperation(ctx, item, op, "capability_unavailable", "capability is not executable in this Controller build")
 		}
-		result, applyErr := handler(ctx, principal, op.Input)
+		result, applyErr := handler(mutationContext, principal, op.Input)
 		completed := s.now().UTC()
 		op.CompletedAt = &completed
 		if applyErr != nil {

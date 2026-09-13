@@ -329,6 +329,9 @@ func fastPathError(code, message string, recoverable bool, nextAction string) *T
 }
 
 func fastPathCodedError(err error, recoverable bool, nextAction string) *ToolEnvelope {
+	if errors.Is(err, store.ErrServerRevisionConflict) {
+		return fastPathError("revision_conflict", err.Error(), false, "review_plan")
+	}
 	if errors.Is(err, automation.ErrIdempotencyConflict) {
 		return fastPathError(mcpauth.CodeIdempotencyConflict, err.Error(), false, "review_plan")
 	}
