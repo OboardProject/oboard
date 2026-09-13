@@ -384,7 +384,9 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		return
 	}
 	for _, intent := range intents {
-		if intent.Scope == "unresolved" {
+		// The periodic sweep is fleet-wide by design; only a change that could
+		// not be mapped to its servers is a fallback worth reporting.
+		if intent.Scope == "unresolved" && intent.Source != store.ConfigurationSyncSweepSource {
 			log.Printf("configuration sync scope fallback source=%s revision=%d targets=%d", intent.Source, intent.Revision, intent.TargetCount)
 		}
 	}
