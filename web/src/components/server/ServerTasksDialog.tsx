@@ -39,7 +39,7 @@ export function ServerTasksDialog({ server, client, onClose }: { server: Server;
         ))}
         <button type="button" className="ghost" onClick={()=>void load()} style={{marginLeft:'auto'}}>刷新</button>
       </div>
-      <div className="dialog-body" style={{display:'grid', gridTemplateColumns: selected? '1fr 360px':'1fr', gap:16, minHeight:380}}>
+      <div className={`dialog-body server-tasks-body${selected ? ' has-selection' : ''}`}>
         <div className="server-tasks-list">
           {loading ? <p className="muted">正在加载…</p> : error ? <div className="access-note warning"><span>{error}</span></div> : !filtered.length ? <p className="muted">暂无任务</p> : (
             <table className="server-tasks-table" style={{width:'100%', borderCollapse:'collapse'}}>
@@ -57,7 +57,7 @@ export function ServerTasksDialog({ server, client, onClose }: { server: Server;
           )}
         </div>
         {selected && (
-          <div className="server-tasks-detail" style={{borderLeft:'1px solid var(--border)', paddingLeft:16}}>
+          <div className="server-tasks-detail">
             <h3>任务 #{selected.id}</h3>
             <dl className="server-detail-grid" style={{gridTemplateColumns:'1fr'}}>
               <div className="server-about-item"><span className="server-about-label">类型</span><span className="server-about-value">{selected.type||'—'}</span></div>

@@ -1,6 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { m, usePresence, useReducedMotion } from "motion/react"
+import { trackModalViewport } from "./modal-viewport"
 import { useSurfaceResize, type SurfaceMotion } from "./surface-motion"
 
 const APPICA_SPRING = [0.175, 0.885, 0.32, 1.5] as const
@@ -42,6 +43,7 @@ let layers: LayerID[] = []
 const layerOwners = new Map<LayerID, LayerID | null>()
 let bodyStyleSnapshot: BodyStyleSnapshot | null = null
 let mainStyleSnapshot: string | null = null
+let releaseViewport: (() => void) | undefined
 let stackFocusTarget: HTMLElement | null = null
 const listeners = new Set<() => void>()
 
@@ -64,6 +66,7 @@ function lockBodyScroll() {
     body.style.paddingRight = `${currentPadding + scrollbarWidth}px`
   }
   body.style.overflow = "hidden"
+  releaseViewport = trackModalViewport()
 
   const main = document.querySelector<HTMLElement>('.main')
   if (main) {
@@ -77,6 +80,8 @@ function unlockBodyScroll() {
   document.body.style.overflow = bodyStyleSnapshot.overflow
   document.body.style.paddingRight = bodyStyleSnapshot.paddingRight
   bodyStyleSnapshot = null
+  releaseViewport?.()
+  releaseViewport = undefined
 
   const main = document.querySelector<HTMLElement>('.main')
   if (main && mainStyleSnapshot !== null) {

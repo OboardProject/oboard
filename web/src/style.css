@@ -7424,8 +7424,10 @@ body:has(.dialog-layer) .main {
 }
 
 .dialog-layer {
+  --dialog-available-height: calc(var(--dialog-viewport-height, 100dvh) - 40px);
   position: fixed;
-  inset: 0;
+  inset: var(--dialog-viewport-top, 0px) 0 auto;
+  height: var(--dialog-viewport-height, 100dvh);
   z-index: calc(var(--z-dialog) + var(--dialog-layer-index, 0) * 2);
   display: grid;
   place-items: center;
@@ -23030,6 +23032,7 @@ button.ui-btn-ghost:hover {
   }
 
   .dialog-layer {
+    --dialog-available-height: calc(var(--dialog-viewport-height, 100dvh) - var(--mobile-surface-top) - var(--mobile-surface-bottom));
     padding: var(--mobile-surface-top) max(var(--mobile-edge-gap), env(safe-area-inset-right, 0px)) var(--mobile-surface-bottom) max(var(--mobile-edge-gap), env(safe-area-inset-left, 0px));
     align-items: end;
     touch-action: pan-y;
@@ -28912,12 +28915,104 @@ button.probe-preset-option:active {
 
 @media (max-width: 720px) {
   .dialog-layer .dialog-panel.dialog {
-    max-height: var(--mobile-surface-height);
+    max-height: var(--dialog-available-height);
     border-radius: var(--radius-window);
   }
   .dialog-layer .dialog.remote-terminal-dialog,
   .dialog-layer .dialog.remote-terminal-dialog.remote-terminal-fullscreen {
-    height: var(--mobile-surface-height);
+    height: var(--dialog-available-height);
   }
   .graph-context-menu.is-sheet { border-radius: var(--radius-menu); }
+}
+
+/* Shared dialog bounds also cover landscape phones and the software keyboard. */
+.dialog-layer .dialog-panel.dialog {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+}
+.dialog-chrome-head { flex-shrink: 0; min-width: 0; }
+.dialog-chrome-head h3 { min-width: 0; overflow-wrap: anywhere; }
+.dialog-layer :is(.dialog-body, .dialog-chrome-body, .server-workspace-body) {
+  min-width: 0;
+  min-height: 0;
+  scroll-padding-block: 12px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .dialog-layer .dialog-panel.dialog { max-height: var(--dialog-available-height); }
+  .dialog-layer :is(.dialog-head, .dialog-chrome-head) { min-width: 0; }
+  .dialog-layer .dialog-head > div { min-width: 0; }
+  .dialog-layer :is(.dialog-head h2, .dialog-head p) { overflow-wrap: anywhere; }
+  .dialog-layer .dialog-close { flex: 0 0 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  .dialog-layer :is(.dialog-actions, .dialog-chrome-foot, .server-workspace-footer, .server-workspace-actions) {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .dialog-layer :is(.dialog-actions, .dialog-chrome-foot, .server-workspace-footer, .server-workspace-actions) > button {
+    min-width: 0;
+    max-width: 100%;
+    min-height: 44px;
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .dialog-layer :is(.server-workspace-tabs, .server-workspace-tabs button, [data-horizontal-scroll], .dialog-body pre) {
+    touch-action: pan-x pan-y;
+  }
+  .server-workspace-title { flex: 1 1 auto; flex-wrap: wrap; gap: 4px 8px; }
+  .server-workspace-title-text { flex: 1 1 0; flex-wrap: wrap; }
+  .server-workspace-title-text h2 { max-width: 100%; }
+  .server-workspace-subtitle { margin-left: 0; }
+  .server-workspace-tabs button { min-height: 44px; }
+}
+
+/* When chrome and actions exceed the keyboard's remaining space, scroll the
+   whole form rather than compressing its content area down to zero. */
+:root[data-dialog-compact-viewport] .dialog-layer .dialog-panel.dialog {
+  max-height: var(--dialog-available-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+:root[data-dialog-compact-viewport] .dialog-panel > :is(.dialog-body, .dialog-chrome-body, .server-workspace-body) {
+  flex: 0 0 auto;
+  max-height: none;
+  overflow: visible !important;
+}
+
+.server-tasks-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.server-tasks-body.has-selection { grid-template-columns: minmax(0, 1fr) minmax(0, 360px); }
+.server-tasks-list { min-width: 0; overflow-x: auto; touch-action: pan-x pan-y; }
+.server-tasks-detail { min-width: 0; border-left: 1px solid var(--border); padding-left: 16px; }
+@media (max-width: 720px) {
+  .server-tasks-body.has-selection { grid-template-columns: minmax(0, 1fr); }
+  .server-tasks-body.has-selection .server-tasks-list { max-height: 240px; overflow-y: auto; }
+  .server-tasks-detail { border-left: 0; border-top: 1px solid var(--border); padding: 16px 0 0; }
+}
+
+@media (max-width: 840px) {
+  .dialog.routing-composer-dialog .dialog-actions.routing-composer-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .routing-footer-left,
+  .routing-footer-right { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; }
+  .routing-footer-left:empty { display: none; }
+  .dialog-layer :is(.routing-footer-left, .routing-footer-right) > button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;
+    height: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+:root[data-dialog-compact-viewport] .dialog.routing-composer-dialog .routing-composer-body {
+  overflow: visible !important;
+}
+:root[data-dialog-compact-viewport] .routing-composer-main.mobile-show,
+:root[data-dialog-compact-viewport] .routing-composer-sidebar.mobile-show {
+  height: auto;
+  overflow: visible;
 }
