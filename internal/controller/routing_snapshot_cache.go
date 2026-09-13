@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -118,7 +119,22 @@ type routingSnapshotBuild struct {
 // Concurrent misses coalesce into one build that runs outside the management
 // lock so Agent traffic reports that already hold a fresh snapshot are not
 // blocked by a slow rebuild.
+//
+// A waiter that joined a build which finished against an older revision does
+// not receive that entry: it rebuilds instead, so a caller never observes
+// authorization state the database has already replaced.
 func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		entry, err := s.routingSnapshotOnce(ctx)
+		if errors.Is(err, errRoutingSnapshotStaleJoin) {
+			continue
+		}
+		return entry, err
+	}
+	return nil, errRoutingSnapshotChanged
+}
+
+func (s *Server) routingSnapshotOnce(ctx context.Context) (*routingSnapshot, error) {
 	revision, err := s.store.RoutingCacheRevision(ctx)
 	if err != nil {
 		return nil, err
@@ -136,6 +152,16 @@ func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) 
 		s.routingSnapshotMu.Unlock()
 		select {
 		case <-build.done:
+			if build.err == nil && (build.entry == nil || build.entry.revision < revision) {
+				// The builder clears this before waking waiters; drop a
+				// finished build defensively so the retry cannot rejoin it.
+				s.routingSnapshotMu.Lock()
+				if s.routingSnapshotInflight == build {
+					s.routingSnapshotInflight = nil
+				}
+				s.routingSnapshotMu.Unlock()
+				return nil, errRoutingSnapshotStaleJoin
+			}
 			return build.entry, build.err
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -162,7 +188,38 @@ func (s *Server) routingSnapshot(ctx context.Context) (*routingSnapshot, error) 
 	return entry, buildErr
 }
 
+var (
+	// errRoutingSnapshotChanged is terminal: routing kept changing for every
+	// bounded attempt, so no snapshot can be certified against one revision.
+	errRoutingSnapshotChanged = errors.New("routing configuration changed during snapshot construction; retry")
+	// errRoutingSnapshotStaleJoin is internal: a coalesced waiter found the
+	// build it joined older than the revision it needs and must rebuild.
+	errRoutingSnapshotStaleJoin = errors.New("joined routing snapshot build is older than the required revision")
+)
+
 func (s *Server) buildRoutingSnapshotLocked(ctx context.Context, revision uint64) (*routingSnapshot, error) {
+	return loadConsistentRoutingSnapshot(ctx, revision, s.store.RoutingCacheRevision, s.readRoutingSnapshot)
+}
+
+func loadConsistentRoutingSnapshot(ctx context.Context, revision uint64, readRevision func(context.Context) (uint64, error), read func(context.Context, uint64) (*routingSnapshot, error)) (*routingSnapshot, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		entry, err := read(ctx, revision)
+		if err != nil {
+			return nil, err
+		}
+		current, err := readRevision(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if current == revision {
+			return entry, nil
+		}
+		revision = current
+	}
+	return nil, errRoutingSnapshotChanged
+}
+
+func (s *Server) readRoutingSnapshot(ctx context.Context, revision uint64) (*routingSnapshot, error) {
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
 		return nil, err
@@ -174,13 +231,6 @@ func (s *Server) buildRoutingSnapshotLocked(ctx context.Context, revision uint64
 	snap, err := s.buildAccessSnapshot(ctx, data)
 	if err != nil {
 		return nil, err
-	}
-	currentRevision, err := s.store.RoutingCacheRevision(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if currentRevision != revision {
-		revision = currentRevision
 	}
 	return buildRoutingSnapshot(revision, data, snap), nil
 }

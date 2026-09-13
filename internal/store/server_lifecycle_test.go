@@ -305,3 +305,53 @@ func TestServerUpdateExpectedRevisionRejectsStaleFieldsAndEffects(t *testing.T) 
 		t.Fatal("stale write changed server or effects")
 	}
 }
+
+func TestDeletedExitCannotLeaveEnabledPathPrefix(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	pathID, _, _, exitStepID := proxyPathTruncationFixture(t, db)
+	steps, err := db.ListProxyPathStepsForPath(ctx, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exitServer int64
+	for _, step := range steps {
+		if step.ID == exitStepID && step.ServerID != nil {
+			exitServer = *step.ServerID
+		}
+	}
+	if exitServer == 0 {
+		t.Fatal("missing exit")
+	}
+	if err := db.CleanupRoutingForServer(ctx, exitServer); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := db.ListProxyPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, path := range paths {
+		if path.ID == pathID {
+			found = true
+			if path.Enabled {
+				t.Fatal("deleted exit silently left a live shortened path")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("surviving path prefix should remain available for repair")
+	}
+	steps, err = db.ListProxyPathStepsForPath(ctx, pathID)
+	if err != nil || len(steps) != 1 {
+		t.Fatalf("prefix=%+v err=%v", steps, err)
+	}
+	var audits int
+	if err := db.db.QueryRowContext(ctx, `select count(*) from audit_logs where action='dependency_invalidated' and target='proxy_path'`).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("diagnostic audits=%d err=%v", audits, err)
+	}
+}

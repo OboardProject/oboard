@@ -4941,6 +4941,21 @@ func truncateProxyPathStepsTx(ctx context.Context, tx *sql.Tx, matchQuery string
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	for _, item := range cuts {
+		result, err := tx.ExecContext(ctx, `update proxy_paths set enabled=0,updated_at=? where id=? and enabled=1`, now(), item.pathID)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			if _, err := tx.ExecContext(ctx, `insert into audit_logs(action,target,detail,ip,created_at) values('dependency_invalidated','proxy_path',?,'',?)`, fmt.Sprintf("path_id=%d dependency removed at step position=%d; path disabled", item.pathID, item.position), now()); err != nil {
+				return err
+			}
+		}
+	}
 	var deletedStepIDs []int64
 	for _, item := range cuts {
 		stepIDs, err := queryInt64sTx(ctx, tx, `select id from proxy_path_steps where path_id=? and position>=?`, item.pathID, item.position)
@@ -5023,8 +5038,8 @@ func (s *Store) DeleteProxyPathStepsForExternal(ctx context.Context, externalID 
 }
 
 // CleanupRoutingForServer removes topology edges owned by or targeting a
-// server. For ordered proxy paths it cuts the path at the first affected step
-// rather than retaining later nodes as a silently rewired chain.
+// server. A path losing a dependency is disabled before its invalid suffix is
+// removed; the surviving prefix requires an explicit operator repair.
 func (s *Store) CleanupRoutingForServer(ctx context.Context, serverID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
