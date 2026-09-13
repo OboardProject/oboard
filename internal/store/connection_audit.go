@@ -300,6 +300,18 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 // and shared-IP evidence still consider all users) but skips materializing the
 // summaries of every other user, so the auto-action path evaluates only the
 // users that just reported.
+// connectionAuditOverviewUsersQuery is the per-user window aggregate the audit
+// risk queue re-runs for every dirty user. Every column it reads from
+// connection_audit_reports is carried by idx_connection_audit_user_window, so
+// it is answered without touching the table; TestConnectionAuditOverviewIsIndexOnly
+// fails if a column is added here that the index does not cover.
+func connectionAuditOverviewUsersQuery(users int) string {
+	return `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
+		from connection_audit_reports r join users u on u.id=r.user_id
+		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
+		where r.user_id in (` + inClause(users) + `) and r.ended_at>=? group by r.user_id,u.username,u.nickname`
+}
+
 func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours int, connectionAuditEnabled bool, policy model.AuditPolicy, userIDs []int64) (model.ConnectionAuditOverview, error) {
 	if windowHours < 1 {
 		windowHours = 24
@@ -324,10 +336,7 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 	if len(seen) == 0 {
 		return overview, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `select r.user_id,u.username,u.nickname,count(distinct r.source_ip),count(distinct r.server_id),coalesce(sum(r.connection_count),0),coalesce(max(r.active_peak),0),count(*),max(r.ended_at),coalesce(u.device_limit,0),coalesce(user_device_counts.active_count,0)
-		from connection_audit_reports r join users u on u.id=r.user_id
-		left join (select user_id, count(*) as active_count from user_devices where status='active' group by user_id) user_device_counts on user_device_counts.user_id=u.id
-		where r.user_id in (`+inClause(len(seen))+`) and r.ended_at>=? group by r.user_id,u.username,u.nickname`, append(seenAny(seen), since)...)
+	rows, err := s.db.QueryContext(ctx, connectionAuditOverviewUsersQuery(len(seen)), append(seenAny(seen), since)...)
 	if err != nil {
 		return overview, err
 	}
