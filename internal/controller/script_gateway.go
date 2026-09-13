@@ -78,19 +78,19 @@ func (s *Server) ServerStatus(ctx context.Context, principal application.Princip
 		reason = "last trusted communication is stale"
 	}
 	return map[string]any{
-		"server_id":                      formatScriptID(server.ID),
-		"control_connected":              agentConnected,
-		"last_trusted_communication_at":  lastSeen,
-		"observed_at":                    now.Format(time.RFC3339Nano),
-		"status_version":                 server.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		"stale":                          stale,
-		"maintenance":                    serverExpiresSoon(server, now),
-		"capabilities":                   append([]string(nil), server.KernelCapabilities...),
-		"agent_connected":                agentConnected,
-		"core_running":                   coreRunning,
-		"inbound_available":              inboundAvailable,
-		"config_applied":                 configApplied,
-		"reason":                         reason,
+		"server_id":                     formatScriptID(server.ID),
+		"control_connected":             agentConnected,
+		"last_trusted_communication_at": lastSeen,
+		"observed_at":                   now.Format(time.RFC3339Nano),
+		"status_version":                server.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"stale":                         stale,
+		"maintenance":                   serverExpiresSoon(server, now),
+		"capabilities":                  append([]string(nil), server.KernelCapabilities...),
+		"agent_connected":               agentConnected,
+		"core_running":                  coreRunning,
+		"inbound_available":             inboundAvailable,
+		"config_applied":                configApplied,
+		"reason":                        reason,
 	}, nil
 }
 
@@ -127,14 +127,14 @@ func (s *Server) GetIncident(ctx context.Context, principal application.Principa
 		return nil, scripting.ErrResourceOutOfScope
 	}
 	return map[string]any{
-		"incident_id":      formatScriptID(item.ID),
+		"incident_id":       formatScriptID(item.ID),
 		"subject_server_id": formatScriptID(item.ServerID),
-		"status":           item.Status,
-		"kind":             item.Kind,
-		"first_offline_at": formatOptionalTime(item.FirstOfflineAt),
-		"detected_at":      formatOptionalTime(item.DetectedAt),
-		"resolved_at":      formatOptionalTimePtr(item.ResolvedAt),
-		"flap_count":       item.FlapCount,
+		"status":            item.Status,
+		"kind":              item.Kind,
+		"first_offline_at":  formatOptionalTime(item.FirstOfflineAt),
+		"detected_at":       formatOptionalTime(item.DetectedAt),
+		"resolved_at":       formatOptionalTimePtr(item.ResolvedAt),
+		"flap_count":        item.FlapCount,
 	}, nil
 }
 

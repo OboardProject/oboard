@@ -14,7 +14,7 @@ import (
 )
 
 type serverRemoteAccessUpdateOperation struct {
-	ServerID               int64 `json:"server_id"`
+	ServerID              int64 `json:"server_id"`
 	RemoteTerminalEnabled *bool `json:"remote_terminal_enabled"`
 	MCPEnabled            *bool `json:"mcp_enabled"`
 }
@@ -99,7 +99,7 @@ func (s *Server) registerRemoteAccessPolicyOperation() {
 			"preview": map[string]any{
 				"effective_remote_terminal_enabled": effectiveRemote,
 				"effective_mcp_enabled":             effectiveMCP,
-				"global": global,
+				"global":                            global,
 			},
 		}, nil
 	})
@@ -164,7 +164,7 @@ func (s *Server) registerRemoteAccessPolicyOperation() {
 		}
 		return map[string]any{
 			"server_id": server.ID, "server_name": server.Name,
-			"remote_access": view,
+			"remote_access":       view,
 			"requires_deployment": false,
 			"requires_restart":    false,
 		}, nil

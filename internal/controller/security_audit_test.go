@@ -27,6 +27,7 @@ func TestReenrollmentEvictsPreviousAgentSession(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 	srv := newTestServer(db, "test-secret", "")
+	settleRecovery := runRecoveryDeployments(t, srv)
 	httpServer := httptest.NewServer(srv.Handler())
 	defer httpServer.Close()
 	h := srv.Handler()
@@ -103,6 +104,7 @@ func TestReenrollmentEvictsPreviousAgentSession(t *testing.T) {
 		t.Fatal("previous agent websocket stayed open after re-enrollment")
 	}
 
+	settleRecovery()
 	fresh, err := db.ActiveTaskByServerType(ctx, node.ID, model.AgentTaskTypeApplyDeployment)
 	if err != nil {
 		t.Fatalf("re-enrollment did not queue a deployment: %v", err)

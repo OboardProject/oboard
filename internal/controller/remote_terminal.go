@@ -28,14 +28,14 @@ const (
 	terminalMaxCols          = 400
 	terminalMaxRows          = 150
 
-	terminalMCPBufferMax      = 256 << 10
-	terminalMCPReadMax        = 64 << 10
-	terminalMCPMaxPerGrant    = 4
-	terminalMCPMaxPerServer   = 1
-	terminalMCPMaxInput       = 64 << 10
-	terminalMCPMaxWaitMS      = 3000
-	terminalIdleTimeout       = 15 * time.Minute
-	terminalAbsTimeout        = time.Hour
+	terminalMCPBufferMax    = 256 << 10
+	terminalMCPReadMax      = 64 << 10
+	terminalMCPMaxPerGrant  = 4
+	terminalMCPMaxPerServer = 1
+	terminalMCPMaxInput     = 64 << 10
+	terminalMCPMaxWaitMS    = 3000
+	terminalIdleTimeout     = 15 * time.Minute
+	terminalAbsTimeout      = time.Hour
 )
 
 var terminalPrepareTimeout = 20 * time.Second
@@ -159,41 +159,41 @@ func (b *TerminalOutputBuffer) NextSeq() int64 {
 }
 
 type terminalSession struct {
-	ID                 string
-	ServerID           int64
-	OwnerType          InteractiveOwnerType
-	UserID             int64
-	OAuthGrantID       string
-	OAuthClientID      string
-	PrivilegedGrantID  int64
-	Nonce              string
-	ExpiresAt          time.Time
-	CreatedAt          time.Time
-	LastActivityAt     time.Time
-	Ticket             string
-	TicketUsed         bool
-	Cols               int
-	Rows               int
-	Mode               string
-	LoginEnv           bool
-	PrepareExp         string
-	Origin             string
-	browser            *websocket.Conn
-	agent              *websocket.Conn
-	outputBuffer       *TerminalOutputBuffer
-	Ready              bool
-	Closed             bool
-	CloseReason        string
-	relaying           bool
-	agentReady         bool
-	closed             bool
-	prepareTimer       *time.Timer
-	idleTimer          *time.Timer
-	absTimer           *time.Timer
-	readyCh            chan struct{}
-	readyErr           string
-	mu                 sync.Mutex
-	writeMu            sync.Mutex
+	ID                string
+	ServerID          int64
+	OwnerType         InteractiveOwnerType
+	UserID            int64
+	OAuthGrantID      string
+	OAuthClientID     string
+	PrivilegedGrantID int64
+	Nonce             string
+	ExpiresAt         time.Time
+	CreatedAt         time.Time
+	LastActivityAt    time.Time
+	Ticket            string
+	TicketUsed        bool
+	Cols              int
+	Rows              int
+	Mode              string
+	LoginEnv          bool
+	PrepareExp        string
+	Origin            string
+	browser           *websocket.Conn
+	agent             *websocket.Conn
+	outputBuffer      *TerminalOutputBuffer
+	Ready             bool
+	Closed            bool
+	CloseReason       string
+	relaying          bool
+	agentReady        bool
+	closed            bool
+	prepareTimer      *time.Timer
+	idleTimer         *time.Timer
+	absTimer          *time.Timer
+	readyCh           chan struct{}
+	readyErr          string
+	mu                sync.Mutex
+	writeMu           sync.Mutex
 }
 
 type terminalSessionHub struct {

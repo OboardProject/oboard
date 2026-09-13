@@ -95,15 +95,15 @@ func TestInferredInboundKindHY2Salamander(t *testing.T) {
 
 func TestMergeInboundPresetConfigSkipsHY2BandwidthAndObfsPassword(t *testing.T) {
 	preset := map[string]any{
-		"tls":      map[string]any{"enabled": true},
-		"up_mbps":  100,
+		"tls":       map[string]any{"enabled": true},
+		"up_mbps":   100,
 		"down_mbps": 100,
-		"obfs":     map[string]any{"type": "salamander", "password": "from-preset"},
+		"obfs":      map[string]any{"type": "salamander", "password": "from-preset"},
 	}
 	inbound := map[string]any{
-		"up_mbps":  1000,
+		"up_mbps":   1000,
 		"down_mbps": 500,
-		"obfs":     map[string]any{"type": "salamander", "password": "from-inbound"},
+		"obfs":      map[string]any{"type": "salamander", "password": "from-inbound"},
 	}
 	merged := mergeInboundPresetConfig(preset, inbound)
 	if merged["up_mbps"] != 1000 || merged["down_mbps"] != 500 {

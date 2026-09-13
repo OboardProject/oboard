@@ -58,12 +58,12 @@ func TestUsersContentDigestIgnoresLeaseAccounting(t *testing.T) {
 
 	// Everything that is not lease accounting must still move the gate.
 	for name, mutate := range map[string]func(*model.UsersInstallEntry){
-		"credential":   func(e *model.UsersInstallEntry) { e.Credential.UUID = "changed" },
-		"route":        func(e *model.UsersInstallEntry) { e.RouteOutbound = "path-9-step-1" },
-		"speed limit":  func(e *model.UsersInstallEntry) { e.Policy.SpeedLimitMbps = 50 },
-		"quota limit":  func(e *model.UsersInstallEntry) { e.Policy.TrafficLimitBytes = 2 << 30 },
-		"quota state":  func(e *model.UsersInstallEntry) { e.Policy.QuotaState = "quota_exceeded" },
-		"period":       func(e *model.UsersInstallEntry) { e.Policy.PeriodKey = "2026-10" },
+		"credential":    func(e *model.UsersInstallEntry) { e.Credential.UUID = "changed" },
+		"route":         func(e *model.UsersInstallEntry) { e.RouteOutbound = "path-9-step-1" },
+		"speed limit":   func(e *model.UsersInstallEntry) { e.Policy.SpeedLimitMbps = 50 },
+		"quota limit":   func(e *model.UsersInstallEntry) { e.Policy.TrafficLimitBytes = 2 << 30 },
+		"quota state":   func(e *model.UsersInstallEntry) { e.Policy.QuotaState = "quota_exceeded" },
+		"period":        func(e *model.UsersInstallEntry) { e.Policy.PeriodKey = "2026-10" },
 		"credential ep": func(e *model.UsersInstallEntry) { e.Identity.CredentialEpoch = 3 },
 	} {
 		changed := []model.UsersInstallEntry{base[0]}

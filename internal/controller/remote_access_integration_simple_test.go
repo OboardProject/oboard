@@ -102,8 +102,8 @@ func TestRemoteAccessManageIsolated(t *testing.T) {
 		t.Fatal("descriptor not found")
 	}
 	grantPrincipal := mcpauth.GrantPrincipal{
-		Grant: mcpauth.GrantPolicy{GrantID: grant.ID, AccessLevel: mcpauth.AccessOperate, ResourceBoundary: mcpauth.ResourceBoundary{Version: 1, Resources: map[string]mcpauth.ResourceSelection{"server": {Selection: mcpauth.SelectionAll}}}},
-		Role: model.RoleAdmin,
+		Grant:           mcpauth.GrantPolicy{GrantID: grant.ID, AccessLevel: mcpauth.AccessOperate, ResourceBoundary: mcpauth.ResourceBoundary{Version: 1, Resources: map[string]mcpauth.ResourceSelection{"server": {Selection: mcpauth.SelectionAll}}}},
+		Role:            model.RoleAdmin,
 		PrivilegedGrant: &mcpauth.PrivilegedGrantPolicy{Capabilities: []string{model.PrivilegeRemoteShell}, ResourceBoundary: mcpauth.ResourceBoundary{Version: 1, Resources: map[string]mcpauth.ResourceSelection{"server": {Selection: mcpauth.SelectionAll}}}},
 	}
 	spec := srv.capabilitySpec(desc)
@@ -279,8 +279,8 @@ func TestDiagnosticToolRemediation(t *testing.T) {
 	db.UpsertMCPPrivilegedGrant(ctx, model.MCPPrivilegedGrant{OAuthGrantID: grant.ID, OAuthClientID: client.ID, AuthorizedUserID: admin.ID, Capabilities: []string{model.PrivilegeRemoteShell}, ResourceBoundaryJSON: boundary, CreatedByUserID: admin.ID})
 	// Build grant principal for diagnostic
 	gp := &mcpauth.GrantPrincipal{
-		Grant: mcpauth.GrantPolicy{GrantID: grant.ID, AccessLevel: mcpauth.AccessOperate, ResourceBoundary: mcpauth.ResourceBoundary{Version: 1, Resources: map[string]mcpauth.ResourceSelection{"server": {Selection: mcpauth.SelectionAll}}}},
-		Role: model.RoleAdmin,
+		Grant:           mcpauth.GrantPolicy{GrantID: grant.ID, AccessLevel: mcpauth.AccessOperate, ResourceBoundary: mcpauth.ResourceBoundary{Version: 1, Resources: map[string]mcpauth.ResourceSelection{"server": {Selection: mcpauth.SelectionAll}}}},
+		Role:            model.RoleAdmin,
 		PrivilegedGrant: &mcpauth.PrivilegedGrantPolicy{Capabilities: []string{model.PrivilegeRemoteShell}, ResourceBoundary: mcpauth.ResourceBoundary{Version: 1, Resources: map[string]mcpauth.ResourceSelection{"server": {Selection: mcpauth.SelectionAll}}}},
 	}
 	diag, err := srv.remoteAccessDiagnosticView(ctx, srvModel, gp)
@@ -297,7 +297,6 @@ func TestDiagnosticToolRemediation(t *testing.T) {
 		t.Fatalf("effective %#v", diag)
 	}
 }
-
 
 func TestRemoteAccessRevokesMCPSessionOnDisable(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "revoke.sqlite"))
@@ -347,7 +346,7 @@ func TestRemoteAccessRevokesMCPSessionOnDisable(t *testing.T) {
 }
 
 func TestMCPDiagnosticTool(t *testing.T) {
-db, _, session, _, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
+	db, _, session, _, closeServer := newMCPTestEnvironment(t, "operate", []string{"oboard:read", "oboard:operate"})
 	defer closeServer()
 	ctx := context.Background()
 	node := &model.Server{Name: "Aether", AgentID: "agent-diag", AgentTokenHash: security.HashSecret("tok"), ChainSecret: "chain", ListenIP: "0.0.0.0", Status: model.ServerOnline}

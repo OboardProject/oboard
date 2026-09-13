@@ -198,5 +198,3 @@ func TestServerExpirySettingsRoundTrip(t *testing.T) {
 		t.Fatalf("default expiry lead days = %#v", settings[settingServerExpiryNotifyLeadDays])
 	}
 }
-
-

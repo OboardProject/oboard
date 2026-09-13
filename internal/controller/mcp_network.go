@@ -432,13 +432,13 @@ func (s *Server) registerDNSTaskOperations() {
 }
 
 type serverTaskInput struct {
-	ServerID     int64  `json:"server_id"`
-	Action       string `json:"action"`
-	TargetHost   string `json:"target_host"`
-	TargetPort   int    `json:"target_port"`
+	ServerID      int64  `json:"server_id"`
+	Action        string `json:"action"`
+	TargetHost    string `json:"target_host"`
+	TargetPort    int    `json:"target_port"`
 	InterfaceName string `json:"interface_name"`
 	OverheadBytes int    `json:"overhead_bytes"`
-	DesiredMTU   int    `json:"desired_mtu"`
+	DesiredMTU    int    `json:"desired_mtu"`
 }
 
 func (s *Server) serverTaskAutomationRevision(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
@@ -1053,7 +1053,7 @@ func automationPortForwardResult(forward model.PortForward, changed []string) (a
 		"target_address": forward.TargetAddress, "target_port": forward.TargetPort,
 		"protocol": forward.Protocol, "backend": forward.Backend, "probe_mode": forward.ProbeMode,
 		"probe_interval_seconds": forward.ProbeIntervalSeconds,
-		"priority": forward.Priority, "enabled": forward.Enabled,
+		"priority":               forward.Priority, "enabled": forward.Enabled,
 		"created_at": forward.CreatedAt, "updated_at": forward.UpdatedAt,
 	}
 	if len(changed) == 0 {
@@ -1287,4 +1287,3 @@ func automationTunnelResult(tunnel model.Tunnel, changed []string) (any, error) 
 	}
 	return map[string]any{"tunnel": view, "changed_fields": changed}, nil
 }
-

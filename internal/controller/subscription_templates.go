@@ -60,8 +60,8 @@ func (s *Server) subscriptionTemplateItem(w http.ResponseWriter, r *http.Request
 		write(w, 200, map[string]any{"subscription_template": item})
 	case http.MethodPut:
 		var request struct {
-			Content           string `json:"content"`
-			ExpectedRevision  int64  `json:"expected_revision"`
+			Content          string `json:"content"`
+			ExpectedRevision int64  `json:"expected_revision"`
 		}
 		if !decode(w, r, &request) {
 			return

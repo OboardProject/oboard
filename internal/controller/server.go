@@ -182,6 +182,7 @@ type Server struct {
 	controllerUpdateAbort         context.CancelFunc
 	controllerUpdateProgress      atomic.Value
 	agentUpdates                  *agentUpdateCoordinator
+	recoveryDeployments           *coalescedQueue
 	controllerActivityMu          sync.Mutex
 	controllerActiveRequests      int
 	controllerLastActivity        time.Time
@@ -266,7 +267,7 @@ type Server struct {
 	agentAuthLookups    atomic.Uint64
 	agentDiagnosticRate *memoryRateLimiter
 	// auditRisk is the bounded, userID-coalescing audit risk evaluation queue.
-	auditRisk *auditRiskQueue
+	auditRisk *coalescedQueue
 	// accessWorkersWake coalesces wake events for the access change and
 	// authorization lifecycle workers; the database remains the recovery
 	// fallback for both.
@@ -334,6 +335,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.remoteExecHub = newRemoteExecResultHub()
 	s.terminalHub = newTerminalSessionHub()
 	s.agentUpdates = newAgentUpdateCoordinator(s)
+	s.recoveryDeployments = newRecoveryDeploymentQueue(s)
 	s.scripts = scripting.NewService(store, catalog.RBAC())
 	s.scriptGateway = scripting.NewGateway(store, s)
 	s.automation.SetApplyObserver(s.configurationChangesetApplied)
@@ -14710,7 +14712,7 @@ func (s *Server) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	s.invalidateAuthorizationLease(server.ID)
 	s.wakeAuthorizationSyncFor(accessSyncReasonReconnect, server.ID)
 	s.wakeRuntimeUsersSyncFor(accessSyncReasonReconnect, server.ID)
-	s.queueDeploymentAfterReconnect(r.Context(), server.ID)
+	s.enqueueRecoveryDeployment(server.ID)
 	_ = s.store.AddAudit(r.Context(), model.AuditLog{Action: "agent_enroll", Target: "server", Detail: server.Name, IP: clientIP(r)})
 	log.Printf("agent enrolled server=%d(%s) agent_id=%s remote=%s", server.ID, safeLogField(server.Name), safeLogField(agentID), safeLogField(clientIP(r)))
 	write(w, 200, model.AgentEnrollResponse{ServerID: server.ID, AgentID: agentID, AgentToken: agentToken, ConnectionAuditEnabled: s.effectiveConnectionAuditEnabled(r.Context(), server)})

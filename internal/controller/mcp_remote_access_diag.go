@@ -72,12 +72,12 @@ func (s *Server) mcpRemoteAccessBlockerDetails(ctx context.Context, server *mode
 	global, _ := s.globalRemoteAccessPolicyFromContext(ctx)
 	policy, _ := s.store.GetServerRemoteAccessPolicy(ctx, server.ID)
 	details = map[string]any{
-		"server_id":            server.ID,
-		"global_mcp_enabled":   global.MCPEnabled,
-		"server_mcp_enabled":   policy.MCPEnabled,
-		"effective_mcp_enabled": global.MCPEnabled && policy.MCPEnabled,
-		"global_remote_terminal_enabled":   global.RemoteTerminalEnabled,
-		"server_remote_terminal_enabled":   policy.RemoteTerminalEnabled,
+		"server_id":                         server.ID,
+		"global_mcp_enabled":                global.MCPEnabled,
+		"server_mcp_enabled":                policy.MCPEnabled,
+		"effective_mcp_enabled":             global.MCPEnabled && policy.MCPEnabled,
+		"global_remote_terminal_enabled":    global.RemoteTerminalEnabled,
+		"server_remote_terminal_enabled":    policy.RemoteTerminalEnabled,
 		"effective_remote_terminal_enabled": global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled,
 	}
 	if !global.MCPEnabled {
@@ -98,4 +98,3 @@ func enhanceMCPDeniedResult(base *mcp.CallToolResult, blocker string, serverID i
 	// For future: inject remediation into envelope. To keep simple, return base; client can call server_remote_access_get for remediation.
 	return base
 }
-

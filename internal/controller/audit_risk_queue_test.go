@@ -16,8 +16,8 @@ func TestAuditRiskQueueDebouncesBurst(t *testing.T) {
 		evaluated <- userID
 		return nil
 	})
-	queue.debounce = 10 * time.Millisecond
-	queue.minInterval = 50 * time.Millisecond
+	queue.config.debounce = 10 * time.Millisecond
+	queue.config.minInterval = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	queue.start(ctx)
 	defer func() {
@@ -55,8 +55,8 @@ func TestAuditRiskQueueDefersOneTrailingEvaluation(t *testing.T) {
 		}
 		return nil
 	})
-	queue.debounce = 5 * time.Millisecond
-	queue.minInterval = 80 * time.Millisecond
+	queue.config.debounce = 5 * time.Millisecond
+	queue.config.minInterval = 80 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	queue.start(ctx)
 	defer func() {
@@ -96,8 +96,8 @@ func TestAuditRiskQueueKeepsCooldownAfterIdleEvaluation(t *testing.T) {
 		finished <- time.Now()
 		return nil
 	})
-	queue.debounce = 5 * time.Millisecond
-	queue.minInterval = 80 * time.Millisecond
+	queue.config.debounce = 5 * time.Millisecond
+	queue.config.minInterval = 80 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	queue.start(ctx)
 	defer func() {
@@ -136,8 +136,8 @@ func TestAuditRiskQueueRetriesEvaluationError(t *testing.T) {
 		finished <- nil
 		return nil
 	})
-	queue.debounce = 5 * time.Millisecond
-	queue.minInterval = 20 * time.Millisecond
+	queue.config.debounce = 5 * time.Millisecond
+	queue.config.minInterval = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	queue.start(ctx)
 	defer func() {

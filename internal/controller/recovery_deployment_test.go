@@ -45,7 +45,9 @@ func TestRecoveryQueuesDeploymentAndSupersedesStaleTask(t *testing.T) {
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	settle := runRecoveryDeployments(t, srv)
 	srv.handleServerRecovered(ctx, server.ID)
+	settle()
 
 	storedStale, err := db.GetTask(ctx, stale.ID)
 	if err != nil {
@@ -99,7 +101,9 @@ func TestRecoverySkipsDeploymentWithoutRelevantState(t *testing.T) {
 	if err := db.UpdateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	settle := runRecoveryDeployments(t, srv)
 	srv.handleServerRecovered(ctx, server.ID)
+	settle()
 
 	tasks, err := db.ListTasksByServer(ctx, server.ID, 100)
 	if err != nil {
@@ -117,7 +121,8 @@ func TestEnrollmentQueuesDeploymentForExistingTopology(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	h := newTestServer(db, "test-secret", "").Handler()
+	srv := newTestServer(db, "test-secret", "")
+	h := srv.Handler()
 
 	server := &model.Server{Name: "reinstall", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 60000, Status: model.ServerOffline}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -132,6 +137,7 @@ func TestEnrollmentQueuesDeploymentForExistingTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	settle := runRecoveryDeployments(t, srv)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/enroll", strings.NewReader(`{"enrollment_token":"`+enrollmentToken+`","health":{"status":"online","os":"linux","arch":"amd64","agent_version":"0.1.0","agent_build":"20260711050000"}}`))
 	req.Header.Set("content-type", "application/json")
 	rr := httptest.NewRecorder()
@@ -139,6 +145,7 @@ func TestEnrollmentQueuesDeploymentForExistingTopology(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("enroll status = %d body=%s", rr.Code, rr.Body.String())
 	}
+	settle()
 
 	stored, err := db.GetServer(ctx, server.ID)
 	if err != nil {
@@ -193,7 +200,9 @@ func TestRecoveryOfTransparentForwardMemberExpandsToFullDeployment(t *testing.T)
 	if err := db.UpdateServer(ctx, root); err != nil {
 		t.Fatal(err)
 	}
+	settle := runRecoveryDeployments(t, srv)
 	srv.handleServerRecovered(ctx, root.ID)
+	settle()
 
 	for _, server := range []*model.Server{root, processing} {
 		fresh, err := db.ActiveTaskByServerType(ctx, server.ID, model.AgentTaskTypeApplyDeployment)
@@ -216,5 +225,41 @@ func TestRecoveryOfTransparentForwardMemberExpandsToFullDeployment(t *testing.T)
 	}
 	if rootTask.ConfigVersion == 0 || rootTask.ConfigVersion != processingTask.ConfigVersion {
 		t.Fatalf("trusted members deployed with different versions: root=%d processing=%d", rootTask.ConfigVersion, processingTask.ConfigVersion)
+	}
+}
+
+// runRecoveryDeployments starts the bounded reconnect worker for the test's
+// lifetime and returns a function that waits for the queue to go idle.
+//
+// The push became asynchronous so a fleet-wide reconnect cannot start every
+// deployment build at once. Tests therefore have to wait for it the way the
+// fleet does, rather than reading the result on the line after the trigger.
+func runRecoveryDeployments(t *testing.T, srv *Server) func() {
+	t.Helper()
+	srv.recoveryDeployments.config.debounce = time.Millisecond
+	srv.recoveryDeployments.config.minInterval = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv.recoveryDeployments.start(ctx)
+	t.Cleanup(func() { srv.recoveryDeployments.stop() })
+	return func() {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			srv.recoveryDeployments.mu.Lock()
+			idle := true
+			for _, state := range srv.recoveryDeployments.states {
+				if state.dirty || state.queued || state.running {
+					idle = false
+					break
+				}
+			}
+			srv.recoveryDeployments.mu.Unlock()
+			if idle {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatal("recovery deployment queue did not drain")
 	}
 }

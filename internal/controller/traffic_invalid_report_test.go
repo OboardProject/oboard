@@ -23,7 +23,7 @@ func TestAgentTrafficInboundlessReportDoesNotPoisonTheBatch(t *testing.T) {
 	// limit carried no inbound_id: every field valid except inbound_id.
 	poison := map[string]any{
 		"report_id": "tr-poison", "source": "core", "stream_id": "ts_core", "counter_epoch": "ce_1",
-		"user_id": user.ID,
+		"user_id":           user.ID,
 		"from_upload_bytes": 0, "to_upload_bytes": 50, "from_download_bytes": 0, "to_download_bytes": 60,
 	}
 	response := postAgentTraffic(t, h, server.AgentID, "token-a", map[string]any{"reports": []map[string]any{healthy, poison}}, http.StatusOK)

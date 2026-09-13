@@ -191,8 +191,8 @@ func TestInboundUpdateReplacesDNSRecordsAndFollowsCertificateDomain(t *testing.T
 
 	type cfRecord struct {
 		ID, Type, Name, Content, Comment string
-		Proxied                       bool
-		TTL                           int
+		Proxied                          bool
+		TTL                              int
 	}
 	records := map[string]cfRecord{}
 	nextID := 0

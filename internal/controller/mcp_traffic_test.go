@@ -149,7 +149,7 @@ func TestFamilySplitRoutingRuleCapabilityAndResourceFilter(t *testing.T) {
 		"scope": model.RoutingRuleScopePathStage, "proxy_path_id": sourcePath.ID, "sort_position": 0,
 		"name": "family split", "match_json": `{}`, "action": model.RouteActionFamilySplit,
 		"family_split_template_id": template.ID,
-		"family_dns_strategy": model.FamilyDNSStrategyPreferIPv6, "enabled": true,
+		"family_dns_strategy":      model.FamilyDNSStrategyPreferIPv6, "enabled": true,
 	}})
 	applyAutomationChangeset(t, server, principal, "routing-family-create", automation.OperationRequest{Capability: "routing_rules.create", Input: createInput})
 	rules, err := db.ListRoutingRules(ctx)

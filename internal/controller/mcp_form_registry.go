@@ -37,15 +37,15 @@ type formValidationError struct {
 }
 
 type formValidationResult struct {
-	Valid             bool                   `json:"valid"`
-	FormID            string                 `json:"form_id"`
-	Mode              string                 `json:"mode"`
-	NormalizedValues  map[string]any         `json:"normalized_values"`
-	AppliedDefaults   []map[string]any       `json:"applied_defaults"`
-	Warnings          []string               `json:"warnings"`
-	Errors            []formValidationError  `json:"errors"`
-	ValidationContext map[string]string      `json:"validation_context"`
-	ValidationDigest  string                 `json:"validation_digest"`
+	Valid             bool                  `json:"valid"`
+	FormID            string                `json:"form_id"`
+	Mode              string                `json:"mode"`
+	NormalizedValues  map[string]any        `json:"normalized_values"`
+	AppliedDefaults   []map[string]any      `json:"applied_defaults"`
+	Warnings          []string              `json:"warnings"`
+	Errors            []formValidationError `json:"errors"`
+	ValidationContext map[string]string     `json:"validation_context"`
+	ValidationDigest  string                `json:"validation_digest"`
 }
 
 // formRegistry is the single source for all node-mutation forms.

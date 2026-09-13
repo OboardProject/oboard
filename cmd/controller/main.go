@@ -148,6 +148,7 @@ func main() {
 	go app.StartControllerUpdates(ctx)
 	go app.StartControllerBackups(ctx)
 	go app.StartDatabaseMaintenance(ctx)
+	go app.StartRecoveryDeploymentWorker(ctx)
 	go app.StartAccessChangeWorker(ctx)
 	go app.StartAuthorizationSyncWorker(ctx)
 	go app.StartRuntimeUsersSyncWorker(ctx)

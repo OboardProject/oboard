@@ -9,8 +9,6 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
-
-
 func TestDNSListAndPolicyCapabilities(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	server := newTestServer(db, "test-secret", "")

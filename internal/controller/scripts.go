@@ -459,33 +459,33 @@ func (s *Server) apiV1ScriptRuntime(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) registerScriptAutomationOperations() {
 	type idInput struct {
-		ID         int64           `json:"id"`
-		ScriptID   int64           `json:"script_id"`
-		RevisionID int64           `json:"revision_id"`
-		Name       string          `json:"name"`
-		Description string         `json:"description"`
-		Status     string          `json:"status"`
-		Source     string          `json:"source"`
-		Manifest   json.RawMessage `json:"manifest"`
-		Params     json.RawMessage `json:"params"`
-		Env        json.RawMessage `json:"env"`
-		Kind       string          `json:"kind"`
-		Spec       json.RawMessage `json:"spec"`
-		Enabled    *bool           `json:"enabled"`
-		IdempotencyKey string      `json:"idempotency_key"`
-		ExpectedUpdatedAt string   `json:"expected_updated_at"`
-		ExpectedBindingRevision int64 `json:"expected_binding_revision"`
-		Capabilities json.RawMessage `json:"capabilities"`
-		ResourceScope json.RawMessage `json:"resource_scope"`
-		Constraints json.RawMessage `json:"constraints"`
-		BindingID  *int64          `json:"binding_id"`
-		HostActionsEnabled *bool   `json:"host_actions_enabled"`
-		SchedulerPaused    *bool   `json:"scheduler_paused"`
-		MaxConcurrency     int     `json:"max_concurrency"`
-		MaxTimeoutSeconds  int     `json:"max_timeout_seconds"`
-		ServerID           int64   `json:"server_id"`
-		ScriptsEnabled     *bool   `json:"scripts_enabled"`
-		ScriptsPowerEnabled *bool  `json:"scripts_power_enabled"`
+		ID                      int64           `json:"id"`
+		ScriptID                int64           `json:"script_id"`
+		RevisionID              int64           `json:"revision_id"`
+		Name                    string          `json:"name"`
+		Description             string          `json:"description"`
+		Status                  string          `json:"status"`
+		Source                  string          `json:"source"`
+		Manifest                json.RawMessage `json:"manifest"`
+		Params                  json.RawMessage `json:"params"`
+		Env                     json.RawMessage `json:"env"`
+		Kind                    string          `json:"kind"`
+		Spec                    json.RawMessage `json:"spec"`
+		Enabled                 *bool           `json:"enabled"`
+		IdempotencyKey          string          `json:"idempotency_key"`
+		ExpectedUpdatedAt       string          `json:"expected_updated_at"`
+		ExpectedBindingRevision int64           `json:"expected_binding_revision"`
+		Capabilities            json.RawMessage `json:"capabilities"`
+		ResourceScope           json.RawMessage `json:"resource_scope"`
+		Constraints             json.RawMessage `json:"constraints"`
+		BindingID               *int64          `json:"binding_id"`
+		HostActionsEnabled      *bool           `json:"host_actions_enabled"`
+		SchedulerPaused         *bool           `json:"scheduler_paused"`
+		MaxConcurrency          int             `json:"max_concurrency"`
+		MaxTimeoutSeconds       int             `json:"max_timeout_seconds"`
+		ServerID                int64           `json:"server_id"`
+		ScriptsEnabled          *bool           `json:"scripts_enabled"`
+		ScriptsPowerEnabled     *bool           `json:"scripts_power_enabled"`
 	}
 	register := func(name string, apply func(context.Context, application.Principal, idInput) (any, error)) {
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
@@ -768,4 +768,3 @@ func scriptHTTPStatus(err error) int {
 		return http.StatusBadRequest
 	}
 }
-

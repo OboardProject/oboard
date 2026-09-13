@@ -197,8 +197,8 @@ func (s *Server) mcpDiscoverCompactData(ctx context.Context) map[string]any {
 	}
 	return map[string]any{
 		"primary_tool": "oboard_task", "recipes": recipes, "capability_groups": capabilityGroups,
-		"fallback_tools": []string{"oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset"},
-		"workflow_rules":     map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false},
+		"fallback_tools":      []string{"oboard_get_capability_schema", "oboard_plan_desired_state", "oboard_validate_desired_state", "oboard_validate_form", "oboard_submit_changeset"},
+		"workflow_rules":      map[string]any{"write_via_changeset": true, "execution_via_workflow": true, "ssh_supported": false},
 		"capability_revision": manifest.CapabilityRevision, "toolset_hash": manifest.ToolsetHash, "api_version": manifest.APIVersion,
 	}
 }

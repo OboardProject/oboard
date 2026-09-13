@@ -33,18 +33,18 @@ func percentileNearestRank(sorted []time.Duration, p float64) time.Duration {
 }
 
 type hotPathBenchmarkReport struct {
-	Commit           string            `json:"commit"`
-	Spec             perfload.Spec     `json:"spec"`
-	SynchronousMode  string            `json:"synchronous_mode"`
-	Samples          int               `json:"samples"`
-	PackageHitP50MS  float64           `json:"package_hit_p50_ms"`
-	PackageHitP95MS  float64           `json:"package_hit_p95_ms"`
-	LeaseHitP50MS    float64           `json:"lease_hit_p50_ms"`
-	LeaseHitP95MS    float64           `json:"lease_hit_p95_ms"`
-	AuditHitP50MS    float64           `json:"audit_hit_p50_ms"`
-	AuditHitP95MS    float64           `json:"audit_hit_p95_ms"`
-	GeneratedAt      time.Time         `json:"generated_at"`
-	Notes            []string          `json:"notes"`
+	Commit          string        `json:"commit"`
+	Spec            perfload.Spec `json:"spec"`
+	SynchronousMode string        `json:"synchronous_mode"`
+	Samples         int           `json:"samples"`
+	PackageHitP50MS float64       `json:"package_hit_p50_ms"`
+	PackageHitP95MS float64       `json:"package_hit_p95_ms"`
+	LeaseHitP50MS   float64       `json:"lease_hit_p50_ms"`
+	LeaseHitP95MS   float64       `json:"lease_hit_p95_ms"`
+	AuditHitP50MS   float64       `json:"audit_hit_p50_ms"`
+	AuditHitP95MS   float64       `json:"audit_hit_p95_ms"`
+	GeneratedAt     time.Time     `json:"generated_at"`
+	Notes           []string      `json:"notes"`
 }
 
 // TestHotPathBenchmarkSmallSpec produces a machine-readable latency report for

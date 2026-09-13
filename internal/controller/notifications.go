@@ -404,7 +404,7 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	if err := s.store.CancelServerOfflineNotice(ctx, serverID); err != nil {
 		log.Printf("cancel offline notice for server %d: %v", serverID, err)
 	}
-	s.queueDeploymentAfterReconnect(ctx, serverID)
+	s.enqueueRecoveryDeployment(serverID)
 	s.retryBasePathMigrationForServer(ctx, serverID)
 	if s.agentUpdates != nil {
 		s.agentUpdates.Wake()
@@ -428,6 +428,20 @@ func (s *Server) handleServerRecovered(ctx context.Context, serverID int64) {
 	if err := s.store.UpsertServerOfflineNotice(ctx, serverID, store.ServerOfflineNoticeStatusOnline, now, now.Add(onlineAfter), ""); err != nil {
 		log.Printf("queue online notice for server %d: %v", serverID, err)
 	}
+}
+
+// enqueueRecoveryDeployment schedules the reconnect push instead of running it
+// here.
+//
+// This used to build the deployment inline, on the health report's own request
+// context. A Controller restart makes the whole fleet reconnect within seconds,
+// so every one of those reports started a full deployment build at once: a
+// production Controller was observed running nine concurrently, which
+// saturated the single SQLite writer and turned every Agent endpoint into a
+// 503 until they drained. The queue bounds that to a small number at a time and
+// collapses repeated reconnects of one server into one push.
+func (s *Server) enqueueRecoveryDeployment(serverID int64) {
+	s.recoveryDeployments.enqueue(serverID)
 }
 
 // queueDeploymentAfterReconnect pushes the current desired state to a server

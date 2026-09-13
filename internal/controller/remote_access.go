@@ -431,13 +431,13 @@ var _ = mcpauth.ResourceBoundary{}
 
 // RemoteAccessMachineView is the machine-readable status for GET /api/v1/servers/:id/remote-access
 type RemoteAccessMachineView struct {
-	ServerID   int64                       `json:"server_id"`
-	ServerName string                      `json:"server_name"`
-	Configured RemoteAccessConfiguredView   `json:"configured"`
-	Global     RemoteAccessGlobalPolicy     `json:"global"`
-	Effective  RemoteAccessEffectiveView    `json:"effective"`
-	Agent      model.ServerRemoteAccessStatus `json:"agent"`
-	MCPExecution RemoteAccessMCPExecution   `json:"mcp_execution"`
+	ServerID     int64                          `json:"server_id"`
+	ServerName   string                         `json:"server_name"`
+	Configured   RemoteAccessConfiguredView     `json:"configured"`
+	Global       RemoteAccessGlobalPolicy       `json:"global"`
+	Effective    RemoteAccessEffectiveView      `json:"effective"`
+	Agent        model.ServerRemoteAccessStatus `json:"agent"`
+	MCPExecution RemoteAccessMCPExecution       `json:"mcp_execution"`
 }
 
 type RemoteAccessConfiguredView struct {
@@ -451,8 +451,8 @@ type RemoteAccessEffectiveView struct {
 }
 
 type RemoteAccessMCPExecution struct {
-	Available bool                     `json:"available"`
-	Blockers  []RemoteAccessBlocker    `json:"blockers,omitempty"`
+	Available bool                  `json:"available"`
+	Blockers  []RemoteAccessBlocker `json:"blockers,omitempty"`
 }
 
 type RemoteAccessBlocker struct {
@@ -463,17 +463,17 @@ type RemoteAccessBlocker struct {
 
 // RemoteAccessDiagnosticView is the MCP tool view for server_remote_access_get
 type RemoteAccessDiagnosticView struct {
-	Server               map[string]any `json:"server"`
-	GlobalMCPEnabled     bool           `json:"global_mcp_enabled"`
-	ServerMCPEnabled     bool           `json:"server_mcp_enabled"`
-	EffectiveMCPEnabled  bool           `json:"effective_mcp_enabled"`
-	GlobalTerminalEnabled bool          `json:"global_remote_terminal_enabled"`
-	ServerTerminalEnabled bool          `json:"server_remote_terminal_enabled"`
-	EffectiveTerminalEnabled bool       `json:"effective_remote_terminal_enabled"`
-	PrivilegedGrant      map[string]any `json:"privileged_grant,omitempty"`
-	Agent                map[string]any `json:"agent"`
-	Blockers             []string       `json:"blockers"`
-	Remediation          map[string]any `json:"remediation,omitempty"`
+	Server                   map[string]any `json:"server"`
+	GlobalMCPEnabled         bool           `json:"global_mcp_enabled"`
+	ServerMCPEnabled         bool           `json:"server_mcp_enabled"`
+	EffectiveMCPEnabled      bool           `json:"effective_mcp_enabled"`
+	GlobalTerminalEnabled    bool           `json:"global_remote_terminal_enabled"`
+	ServerTerminalEnabled    bool           `json:"server_remote_terminal_enabled"`
+	EffectiveTerminalEnabled bool           `json:"effective_remote_terminal_enabled"`
+	PrivilegedGrant          map[string]any `json:"privileged_grant,omitempty"`
+	Agent                    map[string]any `json:"agent"`
+	Blockers                 []string       `json:"blockers"`
+	Remediation              map[string]any `json:"remediation,omitempty"`
 }
 
 // updateServerRemoteAccessPolicy is the single domain service for policy mutation.
@@ -519,13 +519,13 @@ func (s *Server) updateServerRemoteAccessPolicy(ctx context.Context, server *mod
 		// Leave nil, store will keep null; the audit event's ActorType distinguishes
 	}
 	event := model.RemoteAccessAuditEvent{
-		EventType: model.RemoteAccessAuditServerPolicyUpdated,
-		ActorType: actorType,
-		ActorUserID: actorUserID,
-		ServerID: &server.ID,
-		Capability: "server_remote_access",
-		Result: "updated",
-		SourceIP: sourceIP,
+		EventType:    model.RemoteAccessAuditServerPolicyUpdated,
+		ActorType:    actorType,
+		ActorUserID:  actorUserID,
+		ServerID:     &server.ID,
+		Capability:   "server_remote_access",
+		Result:       "updated",
+		SourceIP:     sourceIP,
 		MetadataJSON: metadata,
 	}
 	_ = s.store.InsertRemoteAccessAudit(ctx, event)
@@ -579,12 +579,12 @@ func (s *Server) remoteAccessMachineView(ctx context.Context, server *model.Serv
 	effectiveRemote := global.RemoteTerminalEnabled && policy.RemoteTerminalEnabled
 	effectiveMCP := global.MCPEnabled && policy.MCPEnabled
 	view := RemoteAccessMachineView{
-		ServerID: server.ID,
+		ServerID:   server.ID,
 		ServerName: server.Name,
 		Configured: RemoteAccessConfiguredView{RemoteTerminalEnabled: policy.RemoteTerminalEnabled, MCPEnabled: policy.MCPEnabled},
-		Global: global,
-		Effective: RemoteAccessEffectiveView{RemoteTerminal: effectiveRemote, MCPEnabled: effectiveMCP},
-		Agent: status,
+		Global:     global,
+		Effective:  RemoteAccessEffectiveView{RemoteTerminal: effectiveRemote, MCPEnabled: effectiveMCP},
+		Agent:      status,
 	}
 	blockers := []RemoteAccessBlocker{}
 	if !global.MCPEnabled {
@@ -674,10 +674,10 @@ func (s *Server) remoteAccessDiagnosticView(ctx context.Context, server *model.S
 	agentInfo := map[string]any{
 		// online is reachability (the live control channel counts); status stays
 		// the persisted row so a diagnostic can show both.
-		"online": reachable,
-		"status": string(server.Status),
+		"online":       reachable,
+		"status":       string(server.Status),
 		"capabilities": status.Capabilities,
-		"local_mode": status.LocalMode,
+		"local_mode":   status.LocalMode,
 	}
 	if !reachable {
 		agentInfo["remote_terminal_supported"] = false
@@ -693,17 +693,17 @@ func (s *Server) remoteAccessDiagnosticView(ctx context.Context, server *model.S
 		remediation = map[string]any{"type": "enable_global_remote_access", "scope": "global"}
 	}
 	out := RemoteAccessDiagnosticView{
-		Server: map[string]any{"id": server.ID, "name": server.Name},
-		GlobalMCPEnabled: global.MCPEnabled,
-		ServerMCPEnabled: policy.MCPEnabled,
-		EffectiveMCPEnabled: effectiveMCP,
-		GlobalTerminalEnabled: global.RemoteTerminalEnabled,
-		ServerTerminalEnabled: policy.RemoteTerminalEnabled,
+		Server:                   map[string]any{"id": server.ID, "name": server.Name},
+		GlobalMCPEnabled:         global.MCPEnabled,
+		ServerMCPEnabled:         policy.MCPEnabled,
+		EffectiveMCPEnabled:      effectiveMCP,
+		GlobalTerminalEnabled:    global.RemoteTerminalEnabled,
+		ServerTerminalEnabled:    policy.RemoteTerminalEnabled,
 		EffectiveTerminalEnabled: effectiveTerminal,
-		PrivilegedGrant: privInfo,
-		Agent: agentInfo,
-		Blockers: blockers,
-		Remediation: remediation,
+		PrivilegedGrant:          privInfo,
+		Agent:                    agentInfo,
+		Blockers:                 blockers,
+		Remediation:              remediation,
 	}
 	return out, nil
 }
@@ -744,10 +744,10 @@ func (s *Server) handleGlobalRemoteAccessChange(ctx context.Context, changedKeys
 				s.closeAllMCPTerminals("remote_access_global_disabled")
 			}
 			audit := model.RemoteAccessAuditEvent{
-				EventType:  "remote_access.global_policy.updated",
-				ActorType:  "system",
-				Result:     stringBool(enabled),
-				Capability: "mcp",
+				EventType:    "remote_access.global_policy.updated",
+				ActorType:    "system",
+				Result:       stringBool(enabled),
+				Capability:   "mcp",
 				MetadataJSON: json.RawMessage(`{"setting":"mcp_enabled","enabled":` + stringBoolJSON(enabled) + `}`),
 			}
 			_ = s.store.InsertRemoteAccessAudit(ctx, audit)
@@ -757,10 +757,10 @@ func (s *Server) handleGlobalRemoteAccessChange(ctx context.Context, changedKeys
 				s.closeAllHumanTerminals("remote_access_global_disabled")
 			}
 			audit := model.RemoteAccessAuditEvent{
-				EventType:  "remote_access.global_policy.updated",
-				ActorType:  "system",
-				Result:     stringBool(enabled),
-				Capability: "remote_terminal",
+				EventType:    "remote_access.global_policy.updated",
+				ActorType:    "system",
+				Result:       stringBool(enabled),
+				Capability:   "remote_terminal",
 				MetadataJSON: json.RawMessage(`{"setting":"remote_terminal_enabled","enabled":` + stringBoolJSON(enabled) + `}`),
 			}
 			_ = s.store.InsertRemoteAccessAudit(ctx, audit)

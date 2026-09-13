@@ -274,9 +274,9 @@ func (s *Server) extendServerExpiryHandler(w http.ResponseWriter, r *http.Reques
 	}
 	auditReq(s, r, "extend_expiry", "server", fmt.Sprint(serverID))
 	write(w, http.StatusOK, map[string]any{
-		"server":    updated,
-		"server_id": serverID,
-		"days":      request.Days,
+		"server":     updated,
+		"server_id":  serverID,
+		"days":       request.Days,
 		"expires_at": next.Format(time.RFC3339Nano),
 	})
 }
@@ -338,8 +338,8 @@ func (s *Server) registerServerExpiryOperation() {
 			return nil, err
 		}
 		return map[string]any{
-			"server_id": request.ServerID,
-			"days":      request.Days,
+			"server_id":  request.ServerID,
+			"days":       request.Days,
 			"expires_at": next.Format(time.RFC3339Nano),
 		}, nil
 	})

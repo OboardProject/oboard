@@ -206,10 +206,10 @@ func (s *Server) accessChangeDeliveryView(ctx context.Context, change *model.Acc
 		return map[string]any{"change_id": 0, "retryable": false, "pending_servers": []int64{}, "completion": "confirmed"}
 	}
 	out := map[string]any{
-		"change_id":        change.ID,
-		"retryable":        change.Status == model.AccessChangeFailed,
-		"pending_servers":  []int64{},
-		"completion":       "confirmed",
+		"change_id":       change.ID,
+		"retryable":       change.Status == model.AccessChangeFailed,
+		"pending_servers": []int64{},
+		"completion":      "confirmed",
 	}
 	targets, err := s.store.ListAccessChangeTargets(ctx, change.ID)
 	if err != nil || len(targets) == 0 {
