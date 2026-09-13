@@ -45,7 +45,12 @@ func TestConfigurationIntentDrainBudgetAndNewRevisionDuringProgress(t *testing.T
 			t.Fatal("initial intent never drained")
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `update servers set name='next-'||name`); err != nil {
+	// The fleet-wide backstop is now the producer of unresolved intents: a
+	// change with a derivable scope marks only the servers it maps to.
+	if _, err := s.db.ExecContext(ctx, `update servers set name='next-'||name where id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.QueueConfigurationSyncSweep(ctx); err != nil {
 		t.Fatal(err)
 	}
 	firstRevision, err := s.ConfigurationRevision(ctx)
@@ -53,8 +58,19 @@ func TestConfigurationIntentDrainBudgetAndNewRevisionDuringProgress(t *testing.T
 		t.Fatal(err)
 	}
 	first, err := s.DrainConfigurationSyncIntents(ctx)
-	if err != nil || len(first) != 1 || first[0].TargetCount != configurationSyncTargetBatchSize {
-		t.Fatalf("unbounded drain=%v err=%v", first, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sweepIntent *ConfigurationSyncIntent
+	budget := 0
+	for i := range first {
+		budget += first[i].TargetCount
+		if first[i].Source == ConfigurationSyncSweepSource {
+			sweepIntent = &first[i]
+		}
+	}
+	if sweepIntent == nil || budget != configurationSyncTargetBatchSize {
+		t.Fatalf("unbounded drain=%v budget=%d", first, budget)
 	}
 	if _, err := s.db.ExecContext(ctx, `update servers set name='latest-'||name where id=1`); err != nil {
 		t.Fatal(err)
@@ -72,8 +88,29 @@ func TestConfigurationIntentDrainBudgetAndNewRevisionDuringProgress(t *testing.T
 	}
 	defer s.Close()
 	second, err := s.DrainConfigurationSyncIntents(ctx)
-	if err != nil || len(second) != 1 || second[0].TargetCount != 12 {
-		t.Fatalf("progress restarted on new revision: %v %v", second, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The sweep has to resume where it stopped rather than restart, so the
+	// servers it had not reached yet are exactly what is left to do.
+	resumed := false
+	for _, intent := range second {
+		if intent.Source == ConfigurationSyncSweepSource {
+			resumed = true
+			if intent.TargetCount == 0 || intent.TargetCount > configurationSyncTargetBatchSize {
+				t.Fatalf("sweep resumed with %d targets: %v", intent.TargetCount, second)
+			}
+		}
+	}
+	if !resumed {
+		t.Fatalf("sweep did not resume: %v", second)
+	}
+	var pending int
+	if err := s.db.QueryRowContext(ctx, `select count(*) from configuration_sync_intents where source=?`, ConfigurationSyncSweepSource).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("sweep did not finish the fleet: %d intents left", pending)
 	}
 	state, err := s.ConfigurationSyncState(ctx, lastID)
 	if err != nil || state.WantedRevision != firstRevision {
@@ -98,9 +135,15 @@ func TestConfigurationIntentDrainBudgetAndNewRevisionDuringProgress(t *testing.T
 			t.Fatal("latest revision never drained")
 		}
 	}
+	// The change that arrived mid-sweep targets one server, so that server has
+	// to carry the newest revision while the sweep keeps walking the rest.
+	changed, err := s.ConfigurationSyncState(ctx, 1)
+	if err != nil || changed.WantedRevision != latestRevision {
+		t.Fatalf("new intent lost: %v %v", changed, err)
+	}
 	state, err = s.ConfigurationSyncState(ctx, lastID)
-	if err != nil || state.WantedRevision != latestRevision {
-		t.Fatalf("new intent lost: %v %v", state, err)
+	if err != nil || state.WantedRevision < firstRevision {
+		t.Fatalf("sweep did not reach the last server: %v %v", state, err)
 	}
 	var id, parent, unused int
 	var detail string

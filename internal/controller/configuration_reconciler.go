@@ -18,6 +18,15 @@ import (
 )
 
 const defaultConfigurationReconcileDelay = 150 * time.Millisecond
+
+// configurationSweepPeriod is how often the fleet-wide backstop runs. Per-change
+// intents are scoped to the servers the changed row maps to, so a mapping that
+// is too narrow would leave a server stale indefinitely: nothing else re-marks
+// it, because the convergence hint an Agent receives is its own wanted
+// revision, not the global one. A server whose projection is unchanged settles
+// as a semantic no-op, so the sweep costs a projection per server, not a
+// deployment.
+const configurationSweepPeriod = 10 * time.Minute
 const certificateConfigurationRetryDelay = time.Second
 const configurationSyncBusyRetryDelay = 2 * time.Second
 const configurationSyncBusyWaitReason = "主控数据库正忙，稍后自动重试"
@@ -43,8 +52,10 @@ func (s *Server) StartConfigurationReconciler(ctx context.Context) {
 	s.cleanupTrafficStormPendingDeployments(ctx)
 	timer := time.NewTimer(s.configurationReconcileDelay())
 	recovery := time.NewTicker(time.Second)
+	sweep := time.NewTicker(configurationSweepPeriod)
 	defer timer.Stop()
 	defer recovery.Stop()
+	defer sweep.Stop()
 	pending := true
 	for {
 		select {
@@ -65,6 +76,12 @@ func (s *Server) StartConfigurationReconciler(ctx context.Context) {
 				pending = false
 			}
 		case <-recovery.C:
+			s.reconcileConfiguration(ctx)
+		case <-sweep.C:
+			if err := s.store.QueueConfigurationSyncSweep(ctx); err != nil {
+				logConfigurationError("queue periodic sweep", err)
+				continue
+			}
 			s.reconcileConfiguration(ctx)
 		}
 	}

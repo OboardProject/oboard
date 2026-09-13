@@ -1892,6 +1892,10 @@ func (s *Store) migrateRoutingRuleScopes(ctx context.Context) error {
 	return tx.Commit()
 }
 
+// dropColumn removes a column once. SQLite refuses to drop a column any
+// trigger body mentions, and the revision triggers now read the columns that
+// map a changed row to the servers it affects, so the managed triggers are
+// dropped first and reinstalled from the current definitions afterwards.
 func (s *Store) dropColumn(ctx context.Context, table, column, alterSQL string) error {
 	var count int
 	if err := s.db.QueryRowContext(ctx, `select count(*) from pragma_table_info(?) where name=?`, table, column).Scan(&count); err != nil {
@@ -1900,8 +1904,13 @@ func (s *Store) dropColumn(ctx context.Context, table, column, alterSQL string) 
 	if count == 0 {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, alterSQL)
-	return err
+	if err := s.dropTriggersReferencingTable(ctx, table); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, alterSQL); err != nil {
+		return err
+	}
+	return s.migrateManagedRevisionTriggers(ctx)
 }
 
 func (s *Store) resetLegacyDNSSchema(ctx context.Context) error {

@@ -52,19 +52,47 @@ func migrateConfigurationSyncIntentsTx(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
+// configurationSyncIntentSQL is the statement each configuration trigger runs
+// inside the mutating transaction. A table with a derivable server mapping
+// records one intent per affected server; anything else records the
+// `unresolved` scope the drain expands to the whole fleet.
 func configurationSyncIntentSQL(table, event string) string {
-	scope, target := "unresolved", "0"
-	if table == "servers" && event == "insert" {
-		scope, target = "explicit_ids", "new.id"
-	} else if table == "server_dns_policies" {
-		scope, target = "explicit_ids", "new.server_id"
-		if event == "delete" {
-			target = "old.server_id"
+	statements := ""
+	for _, alias := range configurationSyncScopeAliases(event) {
+		scope := configurationSyncScopeSelect(table, alias)
+		if scope == "" {
+			statements = ""
+			break
 		}
+		statements += fmt.Sprintf(`insert into configuration_sync_intents(source,scope,server_id,revision,first_changed_at,updated_at)
+		select '%s.%s','explicit_ids',t.server_id,cr.revision,strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now'),strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now')
+		from (%s) t, configuration_revision cr
+		where cr.id=1 and t.server_id is not null and t.server_id>0
+		on conflict(source,scope,server_id) do update set revision=excluded.revision,updated_at=excluded.updated_at;`, table, event, scope)
+	}
+	if statements != "" {
+		return statements
 	}
 	return fmt.Sprintf(`insert into configuration_sync_intents(source,scope,server_id,revision,first_changed_at,updated_at)
-		select '%s.%s','%s',%s,revision,strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now'),strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now') from configuration_revision where id=1
-		on conflict(source,scope,server_id) do update set revision=excluded.revision,updated_at=excluded.updated_at;`, table, event, scope, target)
+		select '%s.%s','unresolved',0,revision,strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now'),strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ','now') from configuration_revision where id=1
+		on conflict(source,scope,server_id) do update set revision=excluded.revision,updated_at=excluded.updated_at;`, table, event)
+}
+
+// ConfigurationSyncSweepSource is the intent source of the periodic backstop.
+const ConfigurationSyncSweepSource = "sweep.periodic"
+
+// QueueConfigurationSyncSweep records one fleet-wide intent. Per-change scopes
+// are derived from the changed row, so a mapping that is too narrow would leave
+// a server pending nothing forever. This sweep is the backstop: it re-marks
+// every enrolled server on a slow cadence, using the same paginated drain, and
+// a server whose projection is unchanged settles as a semantic no-op without
+// queuing anything.
+func (s *Store) QueueConfigurationSyncSweep(ctx context.Context) error {
+	ts := now()
+	_, err := s.db.ExecContext(ctx, `insert into configuration_sync_intents(source,scope,server_id,revision,first_changed_at,updated_at)
+		select ?,'unresolved',0,revision,?,? from configuration_revision where id=1 and revision>0
+		on conflict(source,scope,server_id) do update set revision=excluded.revision,updated_at=excluded.updated_at`, ConfigurationSyncSweepSource, ts, ts)
+	return err
 }
 
 // DrainConfigurationSyncIntents hands committed intent to the existing server

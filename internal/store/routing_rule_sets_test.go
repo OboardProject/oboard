@@ -32,6 +32,12 @@ func TestRoutingRuleScopeMigrationFromPreviousTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		// The configuration triggers reference the columns being removed, so
+		// they are dropped first exactly as the real table rebuilds do. Open()
+		// reinstalls them.
+		`drop trigger if exists config_rev_routing_rules_insert`,
+		`drop trigger if exists config_rev_routing_rules_update`,
+		`drop trigger if exists config_rev_routing_rules_delete`,
 		`drop index idx_routing_rules_sync_group`,
 		`drop index idx_routing_rules_target_path`,
 		`drop index idx_routing_rules_stage_order`,
@@ -243,6 +249,12 @@ func TestRoutingRuleChainAndSyncColumnsMigrateFromPreviousSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		// The configuration triggers reference the columns being removed, so
+		// they are dropped first exactly as the real table rebuilds do. Open()
+		// reinstalls them.
+		`drop trigger if exists config_rev_routing_rules_insert`,
+		`drop trigger if exists config_rev_routing_rules_update`,
+		`drop trigger if exists config_rev_routing_rules_delete`,
 		`drop index idx_routing_rules_sync_group`,
 		`drop index idx_routing_rules_target_path`,
 		`alter table routing_rules drop column sync_group_id`,
