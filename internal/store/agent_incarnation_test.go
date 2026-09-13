@@ -100,4 +100,16 @@ func TestAppliedReportFromANewIncarnationReplacesTheWatermark(t *testing.T) {
 	if auth.ConfirmedRevision != 4 || auth.ConfirmedBootID != "boot-b" {
 		t.Fatalf("authorization watermark still describes the previous node: %+v", auth)
 	}
+
+	// An Agent old enough not to report a boot id keeps the strict forward-only
+	// behaviour: without an incarnation there is nothing to tell apart, and
+	// silently accepting a lower revision would let a late report undo a
+	// confirmation.
+	if advanced, err := db.RestateRuntimeUserConfirmation(ctx, server.ID, 2, "digest-2", ""); err != nil || advanced {
+		t.Fatalf("report without an incarnation moved the watermark: advanced=%v err=%v", advanced, err)
+	}
+	state, _ = db.RuntimeUserState(ctx, server.ID)
+	if state.ConfirmedRevision != 4 {
+		t.Fatalf("watermark = %d, want 4", state.ConfirmedRevision)
+	}
 }
