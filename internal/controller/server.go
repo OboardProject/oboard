@@ -15479,10 +15479,12 @@ func (s *Server) agentTaskResults(w http.ResponseWriter, r *http.Request) {
 		if uninstallPayload.ActorID > 0 {
 			actorID = &uninstallPayload.ActorID
 		}
-		if deleteStatus, deleteErr := s.deleteServerRecord(context.WithoutCancel(r.Context()), task.ServerID, actorID, "controller"); deleteErr != nil {
+		// The remote uninstall already happened. Acknowledging it must not
+		// depend on the panel-side removal: reporting a failure here makes the
+		// Agent retry a result it has no way to change, and the record removal
+		// is durable and retried on its own once it is claimed.
+		if _, deleteErr := s.deleteServerRecord(context.WithoutCancel(r.Context()), task.ServerID, actorID, "controller"); deleteErr != nil {
 			log.Printf("delete server %d after agent uninstall: %v", task.ServerID, deleteErr)
-			fail(w, deleteErr, deleteStatus)
-			return
 		}
 	}
 	write(w, 200, map[string]any{"ok": true})

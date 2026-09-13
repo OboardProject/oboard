@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 )
 
@@ -172,5 +176,69 @@ func TestServerDeleteResumesAfterRestart(t *testing.T) {
 	}
 	if _, err := db.GetServerDeletion(ctx, serverID); err == nil {
 		t.Fatal("the resumed deletion is still pending")
+	}
+}
+
+// TestUninstallCallbackIsNotFailedByPanelSideCleanup separates the remote
+// uninstall from the panel-side removal. The Agent already uninstalled itself;
+// answering its callback with an error only makes it retry a result it cannot
+// change, and would previously also leave the server in place because the
+// unreachable DNS provider aborted the delete.
+func TestUninstallCallbackIsNotFailedByPanelSideCleanup(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	records := map[string]fakeCloudflareRecord{}
+	down := false
+	cf := newFakeCloudflare(t, records, &down)
+	defer cf.Close()
+	srv := newTestServer(db, "test-secret", "")
+	srv.dnsEndpoints.cloudflare = cf.URL
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	token := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
+	server := &model.Server{Name: "edge", AgentID: "agent-edge", AgentTokenHash: security.HashSecret("agent-token"), PublicIPv4: "203.0.113.10", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	credential := request(t, h, http.MethodPost, "/api/v1/ui/dns-credentials", token, map[string]any{"name": "primary", "provider": "cloudflare", "zone_name": "example.com", "config": map[string]any{"api_token": "cf-token"}}, http.StatusCreated)["dns_credential"].(map[string]any)
+	credentialID := int64(credential["id"].(float64))
+	request(t, h, http.MethodPost, fmt.Sprintf("/api/v1/ui/dns-credentials/%d/verify", credentialID), token, map[string]any{}, http.StatusOK)
+	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{
+		"server_id": server.ID, "name": "edge-ss", "kind": "ss-2022-128", "listen_ip": "0.0.0.0", "port": 10001,
+		"dns_sync_enabled": true, "dns_credential_id": credentialID, "dns_domain": "edge.example.com", "dns_record_types": "a",
+		"enabled": true,
+	}, http.StatusCreated)["inbound"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/dns-sync", token, map[string]any{"inbound_id": int64(inbound["id"].(float64))}, http.StatusOK)
+
+	task, err := srv.queueAgentTask(ctx, server.ID, model.AgentTaskTypeUninstallAgent, model.UninstallAgentTaskPayload{Purge: true, ActorID: 7}, time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	down = true
+	body, _ := json.Marshal(map[string]any{"task_id": task.ID, "status": "succeeded", "result_json": `{"message":"ok"}`})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/task-results", bytes.NewReader(body))
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("X-Agent-ID", "agent-edge")
+	req.Header.Set("Authorization", "Bearer agent-token")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("uninstall callback status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := db.GetServer(ctx, server.ID); err == nil {
+		t.Fatal("the server survived an uninstall that succeeded remotely")
+	}
+	pending, err := db.GetServerDeletion(ctx, server.ID)
+	if err != nil || pending.Stage != store.ServerDeletionExternal {
+		t.Fatalf("pending=%+v err=%v", pending, err)
+	}
+	down = false
+	srv.runServerDeletions(ctx)
+	if len(records) != 0 {
+		t.Fatalf("records after retry = %#v", records)
 	}
 }
