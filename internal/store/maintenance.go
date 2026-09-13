@@ -22,6 +22,22 @@ const (
 	// maintenanceWALTruncateFrames is the WAL size, in frames, past which the
 	// passive checkpoint is assumed to be losing to readers.
 	maintenanceWALTruncateFrames = 4096
+	// maintenanceWALForceTruncateFrames is the size past which a truncating
+	// checkpoint is attempted even though a reader is still holding the
+	// backfill back.
+	//
+	// A passive checkpoint never resets the WAL file: it only backfills frames
+	// older than the oldest live read snapshot. On a Controller that is always
+	// serving somebody - a fleet of Agents reporting, a panel polling - the
+	// backfill can sit at one frame for hours while the log keeps extending,
+	// and every page read then pays to search an ever larger WAL index. A
+	// production Controller was found at 318k WAL frames (1.3 GB) with the
+	// backfill pinned, spending a fifth of a saturated CPU inside
+	// walFindFrame alone. Waiting for a quiet moment that never comes is worse
+	// than a bounded wait: the truncating attempt below is limited by the
+	// connection's busy timeout and simply reports failure if readers outlast
+	// it.
+	maintenanceWALForceTruncateFrames = 65536
 	// maintenanceCheckpointEveryBatches asks SQLite to flush WAL frames after
 	// this many delete batches so a catch-up pass cannot rebuild a multi-GB
 	// WAL while it is the only thing shrinking the reporting tables.
@@ -265,21 +281,37 @@ func (s *Store) recordWALCheckpoint(ctx context.Context, result *MaintenanceResu
 	); err != nil {
 		return fmt.Errorf("passive WAL checkpoint: %w", err)
 	}
-	pending := result.WALLogFrames - result.WALCheckpointedFrames
+	if !shouldTruncateWAL(result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames) {
+		return nil
+	}
+	var busy, log, checkpointed int
+	if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
+		result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames = busy, log, checkpointed
+	}
+	return nil
+}
+
+// shouldTruncateWAL decides whether to follow a passive checkpoint with a
+// truncating one.
+//
+// The cheap case is a log that is already fully backfilled: truncating then
+// costs nothing and returns the file's space. The expensive case is a log that
+// has grown far past what a passive checkpoint will ever reclaim because a
+// reader is pinning the backfill - there the wait is worth paying, because the
+// alternative is an unbounded WAL and the read amplification that comes with
+// it.
+func shouldTruncateWAL(busy, log, checkpointed int) bool {
+	if log <= maintenanceWALTruncateFrames {
+		return false
+	}
+	pending := log - checkpointed
 	if pending < 0 {
 		pending = 0
 	}
-	// Truncate only when passive already advanced through the log and the
-	// remaining size still exceeds the threshold. A truncating checkpoint
-	// against busy readers waits for them and can materialize a multi-GB WAL
-	// into the main file on a nearly full disk.
-	if result.WALBusyFrames == 0 && pending == 0 && result.WALLogFrames > maintenanceWALTruncateFrames {
-		var busy, log, checkpointed int
-		if err := s.db.QueryRowContext(ctx, `pragma wal_checkpoint(truncate)`).Scan(&busy, &log, &checkpointed); err == nil && busy == 0 {
-			result.WALBusyFrames, result.WALLogFrames, result.WALCheckpointedFrames = busy, log, checkpointed
-		}
+	if busy == 0 && pending == 0 {
+		return true
 	}
-	return nil
+	return log > maintenanceWALForceTruncateFrames
 }
 
 // reclaimFreePages returns up to maxPages free pages to the filesystem.
