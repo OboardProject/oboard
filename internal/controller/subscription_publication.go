@@ -12,6 +12,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // subscriptionPublicationTTL bounds how long a published body is kept. The key
@@ -42,41 +43,92 @@ type subscriptionPublication struct {
 // stale subscription means handing a client the authorization state of a
 // moment that has passed.
 type subscriptionPublicationInputs struct {
-	RoutingRevision uint64            `json:"routing_revision"`
-	UserID          int64             `json:"user_id"`
-	UserUpdatedAt   string            `json:"user_updated_at"`
-	ProfileID       int64             `json:"profile_id"`
-	ProfileRevision string            `json:"profile_revision"`
-	Format          string            `json:"format"`
-	RequestedFormat string            `json:"requested_format"`
-	AutoFormat      bool              `json:"auto_format"`
-	UserAgent       string            `json:"user_agent"`
-	Query           string            `json:"query"`
-	TemplateDigest  string            `json:"template_digest"`
-	AlwaysDomain    bool              `json:"always_domain"`
-	EffectiveNodes  map[string]bool   `json:"effective_nodes"`
-	EffectiveGroups map[string]string `json:"effective_groups"`
-	HiddenInbounds  []int64           `json:"hidden_inbounds"`
-	NodeNames       map[string]string `json:"node_names"`
-	PlanNodeNames   map[string]string `json:"plan_node_names"`
-	OrderPositions  map[string]int    `json:"order_positions"`
-	OrderPolicy     string            `json:"order_policy"`
-	SSHHostKeys     map[int64]string  `json:"ssh_host_keys"`
-	DeliveryStates  map[int64][2]bool `json:"delivery_states"`
-	Credentials     map[string]string `json:"credentials"`
-	AgeRecipient    string            `json:"age_recipient"`
-	AgeEncrypted    bool              `json:"age_encrypted"`
+	// NodeFingerprints is what each of this user's nodes is rendered from.
+	// Keying on it rather than the global routing revision is what makes a
+	// change reach the users it concerns: editing one inbound used to
+	// invalidate every published body in the fleet.
+	NodeFingerprints map[string]string `json:"node_fingerprints"`
+	UserID           int64             `json:"user_id"`
+	UserUpdatedAt    string            `json:"user_updated_at"`
+	ProfileID        int64             `json:"profile_id"`
+	ProfileRevision  string            `json:"profile_revision"`
+	Format           string            `json:"format"`
+	RequestedFormat  string            `json:"requested_format"`
+	AutoFormat       bool              `json:"auto_format"`
+	UserAgent        string            `json:"user_agent"`
+	Query            string            `json:"query"`
+	TemplateDigest   string            `json:"template_digest"`
+	AlwaysDomain     bool              `json:"always_domain"`
+	EffectiveNodes   map[string]bool   `json:"effective_nodes"`
+	EffectiveGroups  map[string]string `json:"effective_groups"`
+	HiddenInbounds   []int64           `json:"hidden_inbounds"`
+	NodeNames        map[string]string `json:"node_names"`
+	PlanNodeNames    map[string]string `json:"plan_node_names"`
+	OrderPositions   map[string]int    `json:"order_positions"`
+	OrderPolicy      string            `json:"order_policy"`
+	SSHHostKeys      map[int64]string  `json:"ssh_host_keys"`
+	DeliveryStates   map[int64][2]bool `json:"delivery_states"`
+	Credentials      map[string]string `json:"credentials"`
+	AgeRecipient     string            `json:"age_recipient"`
+	AgeEncrypted     bool              `json:"age_encrypted"`
 }
 
 // subscriptionDeliveryStates captures the per-server delivery confirmation the
 // Snell shared-port annotation writes into the rendered servers. It changes on
-// Agent confirmations, so it has to be part of the key.
-func subscriptionDeliveryStates(servers []model.Server) map[int64][2]bool {
-	states := make(map[int64][2]bool, len(servers))
+// Agent confirmations, so it has to be part of the key - but only for the
+// servers this user's nodes sit on, otherwise an unrelated node confirming
+// would republish everyone.
+func subscriptionDeliveryStates(servers []model.Server, nodes map[string]bool, data store.FullRoutingConfig) map[int64][2]bool {
+	wanted := subscriptionNodeServerIDs(nodes, data)
+	states := make(map[int64][2]bool, len(wanted))
 	for _, server := range servers {
+		if !wanted[server.ID] {
+			continue
+		}
 		states[server.ID] = [2]bool{server.UsersConfirmed, server.AuthorizationConfirmed}
 	}
 	return states
+}
+
+// subscriptionNodeServerIDs is every server that renders part of these nodes.
+func subscriptionNodeServerIDs(nodes map[string]bool, data store.FullRoutingConfig) map[int64]bool {
+	inboundServer := make(map[int64]int64, len(data.Inbounds))
+	for _, inbound := range data.Inbounds {
+		inboundServer[inbound.ID] = inbound.ServerID
+	}
+	pathRoot := make(map[int64]int64, len(data.ProxyPaths))
+	for _, path := range data.ProxyPaths {
+		pathRoot[path.ID] = path.InboundID
+	}
+	out := map[int64]bool{}
+	for key, granted := range nodes {
+		if !granted {
+			continue
+		}
+		nodeType, nodeID, ok := core.ParseNodeKey(key)
+		if !ok {
+			continue
+		}
+		switch nodeType {
+		case model.AssignableNodeInbound:
+			out[inboundServer[nodeID]] = true
+		case model.AssignableNodeProxyPath:
+			out[inboundServer[pathRoot[nodeID]]] = true
+			for _, step := range data.ProxyPathSteps {
+				if step.PathID != nodeID {
+					continue
+				}
+				if step.ServerID != nil {
+					out[*step.ServerID] = true
+				}
+				if step.InboundID != nil {
+					out[inboundServer[*step.InboundID]] = true
+				}
+			}
+		}
+	}
+	delete(out, 0)
+	return out
 }
 
 // subscriptionCredentialFingerprint identifies the rendered user's credential

@@ -96,6 +96,20 @@ func TestSubscriptionPublicationIsReusedAndInvalidatedByItsInputs(t *testing.T) 
 	if srv.subscriptionPublicationBuilds.Load() == builds {
 		t.Fatal("a credential rotation served the previously published body")
 	}
+
+	// A change to a node this user does not have must leave their published
+	// body alone. Keying on the global routing revision used to republish every
+	// subscription in the fleet for an edit like this one.
+	pull("")
+	builds = srv.subscriptionPublicationBuilds.Load()
+	unrelated := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "unrelated-node", "entry_ip_mode": "custom", "entry_address": "203.0.113.6", "listen_ip": "0.0.0.0", "port_range_start": 11000, "port_range_end": 11010}, http.StatusCreated)["server"].(map[string]any)
+	request(t, h, http.MethodPost, "/api/v1/ui/inbounds", adminToken, map[string]any{"server_id": int64(unrelated["id"].(float64)), "name": "unrelated-in", "protocol": "vless", "listen_ip": "0.0.0.0", "port": 443, "config_json": `{}`, "enabled": true}, http.StatusCreated)
+	if after := pull(""); after.status != http.StatusOK {
+		t.Fatalf("pull after an unrelated change = %+v", after)
+	}
+	if srv.subscriptionPublicationBuilds.Load() != builds {
+		t.Fatal("an unrelated node rebuilt this user's subscription")
+	}
 }
 
 // TestBurnAfterReadSubscriptionIsNeverPublished keeps the one-time semantics

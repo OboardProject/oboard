@@ -46,6 +46,12 @@ type routingSnapshot struct {
 	allowedOnce  sync.Once
 	allowedPairs map[accessPair]struct{}
 
+	// nodeFingerprintOnce guards the per-node rendering digests. They are the
+	// same for every user in this revision, so they are built once and shared
+	// instead of per subscription pull.
+	nodeFingerprintOnce sync.Once
+	nodeFingerprints    map[string]string
+
 	// projectionOnce guards the inputs every per-server runtime-user projection
 	// needs. They are server-independent, so a fleet poll cycle derives them
 	// once per revision instead of once per server.
