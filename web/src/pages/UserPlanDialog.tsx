@@ -8,7 +8,7 @@ import { Select } from '../components/ui/select'
 import { Input } from '../components/ui/input'
 import { DateTimePicker } from '../components/ui/datetime-picker'
 import { RefreshCw, Trash2, Plus } from 'lucide-react'
-import { useRegisterPageRefresh } from '../page-refresh-context'
+import { useRefreshResources, useRegisterPageRefresh } from '../page-refresh-context'
 import { createMutationCoordinator } from '../mutation-coordinator'
 
 type AnyClient = { request<T = any>(path: string, init?: RequestInit): Promise<T> }
@@ -98,12 +98,24 @@ export function UserPlanDialog({ isOpen, user, binding, plans, client, onRefresh
 
   const reloadRef = React.useRef(reload)
   reloadRef.current = reload
+  const refreshResources = useRefreshResources()
+  const refreshResourcesRef = React.useRef(refreshResources)
+  refreshResourcesRef.current = refreshResources
 
   // One coordinator per dialog instance: it orders the saves for this user,
   // rolls back only the one the server refused, and keeps a save whose answer
   // never arrived visible as unconfirmed instead of guessing either way.
   const coordinator = React.useMemo(() => createMutationCoordinator({
-    refresh: async () => { await reloadRef.current() },
+    refresh: async resources => {
+      // Inside the panel this re-reads only the pages that declared these
+      // resources; on its own the dialog re-reads itself.
+      const partial = refreshResourcesRef.current
+      if (partial) {
+        await partial(resources)
+        return
+      }
+      await reloadRef.current()
+    },
   }), [])
 
   React.useEffect(() => {

@@ -33,15 +33,18 @@ export function usePageRefreshAction() {
 }
 
 // useRefreshResources returns a partial refresh for the resources a mutation
-// changed, falling back to the page refresh when nothing declared them.
-export function useRefreshResources() {
+// changed, or null when the component is rendered outside a provider so the
+// caller can fall back to re-reading its own data.
+export function useRefreshResources(): ((resources: string[]) => Promise<void>) | null {
   const context = React.useContext(PageRefreshContext)
-  return React.useCallback(async (resources: string[]) => {
-    if (!context) return
-    if (context.refreshResources) {
-      await context.refreshResources(resources)
-      return
+  return React.useMemo(() => {
+    if (!context) return null
+    return async (resources: string[]) => {
+      if (context.refreshResources) {
+        await context.refreshResources(resources)
+        return
+      }
+      await context.refresh()
     }
-    await context.refresh()
   }, [context])
 }
