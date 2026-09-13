@@ -2003,6 +2003,12 @@ func (s *Store) SetUserPlanBindingsPending(ctx context.Context, bindings []model
 	return s.setUserPlanBindings(ctx, bindings, "pending")
 }
 
+// User plan binding lifecycle states.
+const (
+	userPlanBindingActive  = "active"
+	userPlanBindingPending = "pending"
+)
+
 func (s *Store) setUserPlanBindings(ctx context.Context, bindings []model.UserPlanBinding, status string) error {
 	if len(bindings) == 0 {
 		return nil
@@ -2012,7 +2018,13 @@ func (s *Store) setUserPlanBindings(ctx context.Context, bindings []model.UserPl
 		return err
 	}
 	defer tx.Rollback()
-	ts := now()
+	if err := setUserPlanBindingsTx(ctx, tx, bindings, status, now()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func setUserPlanBindingsTx(ctx context.Context, tx *sql.Tx, bindings []model.UserPlanBinding, status, ts string) error {
 	for _, v := range bindings {
 		if _, err := tx.ExecContext(ctx, `update user_plan_bindings set enabled=0,updated_at=? where user_id=? and enabled=1`, ts, v.UserID); err != nil {
 			return err
@@ -2031,7 +2043,44 @@ func (s *Store) setUserPlanBindings(ctx context.Context, bindings []model.UserPl
 			return err
 		}
 	}
+	return nil
+}
+
+// RevertPendingUserPlanBindings undoes an assignment whose access change could
+// not be started: the pending rows are dropped and the bindings that were
+// disabled to make room for them are enabled again. Without it a failed
+// assignment would leave the user with no plan at all.
+func (s *Store) RevertPendingUserPlanBindings(ctx context.Context, userIDs, previousIDs []int64) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ts := now()
+	users, args := placeholderList(userIDs)
+	if _, err := tx.ExecContext(ctx, `delete from user_plan_bindings where status='pending' and enabled=1 and user_id in (`+users+`)`, args...); err != nil { // #nosec G202 -- placeholders contains only generated question marks.
+		return err
+	}
+	if len(previousIDs) > 0 {
+		ids, idArgs := placeholderList(previousIDs)
+		if _, err := tx.ExecContext(ctx, `update user_plan_bindings set enabled=1,updated_at=? where id in (`+ids+`)`, append([]any{ts}, idArgs...)...); err != nil { // #nosec G202 -- placeholders contains only generated question marks.
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+func placeholderList(ids []int64) (string, []any) {
+	marks := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		marks = append(marks, "?")
+		args = append(args, id)
+	}
+	return strings.Join(marks, ","), args
 }
 
 // SetUserPlanBindingsActive flips pending bindings to active. The lifecycle

@@ -1970,22 +1970,29 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 	}
 	bindings := make([]model.UserPlanBinding, 0, len(req.UserIDs))
 	for _, userID := range req.UserIDs {
-		bindings = append(bindings, model.UserPlanBinding{UserID: userID, PlanID: req.PlanID, AssignedBy: assignedBy, StartsAt: startsAt, ExpiresAt: expiresAt})
+		// Enabled marks this as the binding that will be in force. The row is
+		// stored enabled either way; the projection math needs it too, and
+		// without it the change prepares nothing for the plan being assigned.
+		bindings = append(bindings, model.UserPlanBinding{UserID: userID, PlanID: req.PlanID, Enabled: true, AssignedBy: assignedBy, StartsAt: startsAt, ExpiresAt: expiresAt})
 	}
-	// Two-phase assignment: the new bindings are stored pending so the plan
-	// snapshot keeps ignoring them until the access change activation flips
-	// them active. Prepare deploys old-union-new credentials first.
-	if err := s.store.SetUserPlanBindingsPending(r.Context(), bindings); err != nil {
-		fail(w, err, 500)
-		return
-	}
-	auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
 	userIDs := append([]int64(nil), req.UserIDs...)
-	change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, bindings, startsAt, expiresAt)
+	// The bindings in force right now, read before anything is staged: prepare
+	// has to keep exactly these alive until the change activates.
+	previous, err := s.store.ListEnabledUserPlanBindings(r.Context(), userIDs)
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
+	// Two-phase assignment: the new bindings are stored pending, in the same
+	// transaction as the change that activates them, so the plan snapshot keeps
+	// ignoring them until activation while prepare deploys old-union-new
+	// credentials first.
+	change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, previous, bindings, startsAt, expiresAt)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
 	out := map[string]any{"applied": true, "affected_users": len(selected), "access_change_id": change.ID, "status": change.Status, "queued_tasks": len(change.Targets), "runtime_authorization_mode": s.authorizationMode(r.Context())}
 	if startsAt != nil && startsAt.After(time.Now()) {
 		out["status"] = "scheduled"

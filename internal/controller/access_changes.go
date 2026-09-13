@@ -407,6 +407,11 @@ type accessChangeDraft struct {
 	finalizeProjection       core.AccessProjection
 	serverIDs                []int64
 	createdBy                *int64
+	// pendingBindings are written in the same transaction as the change that
+	// activates them, and rolled back when the change cannot be started.
+	pendingBindings []model.UserPlanBinding
+	previousBinding []int64
+	pendingUserIDs  []int64
 }
 
 func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft accessChangeDraft) (*model.AccessChange, error) {
@@ -448,13 +453,21 @@ func (s *Server) createAccessChange(ctx context.Context, r *http.Request, draft 
 		FinalizeProjectionJSON:   string(finalizeJSON),
 		CreatedBy:                createdBy,
 	}
-	changeID, err := s.store.CreateAccessChange(ctx, change, draft.serverIDs)
+	changeID, err := s.store.CreateAccessChangeWithPendingBindings(ctx, change, draft.serverIDs, draft.pendingBindings)
 	if err != nil {
 		return nil, err
 	}
 	change.ID = changeID
 	if _, err := s.queueAccessChangePhase(ctx, change, "prepare"); err != nil {
 		_ = s.store.UpdateAccessChangeStatus(ctx, changeID, []model.AccessChangeStatus{model.AccessChangePreparing}, model.AccessChangeFailed, err.Error())
+		if len(draft.pendingUserIDs) > 0 {
+			// The bindings were committed with the change that can no longer
+			// activate them; leaving them pending would strand the users
+			// between their old plan and one that never takes effect.
+			if revertErr := s.store.RevertPendingUserPlanBindings(ctx, draft.pendingUserIDs, draft.previousBinding); revertErr != nil {
+				log.Printf("access change %d: revert pending bindings: %v", changeID, revertErr)
+			}
+		}
 		return nil, err
 	}
 	change.Targets, err = s.store.ListAccessChangeTargets(ctx, changeID)
@@ -1313,13 +1326,15 @@ func (s *Server) createPlanDeleteChange(ctx context.Context, r *http.Request, ac
 // plan assignment. The new bindings are stored pending; activation flips them
 // active (at starts_at when the assignment is scheduled) and finalize prunes
 // the old plan's credentials.
-func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, data store.FullRoutingConfig, userIDs []int64, newBindings []model.UserPlanBinding, startsAt, expiresAt *time.Time) (*model.AccessChange, error) {
+// createUserBindingChange materializes the two-phase projections for one
+// assignment. oldEnabled must be the bindings as they were *before* the new
+// ones were staged: the old projection is what prepare keeps alive until the
+// change activates, so reading it after the assignment already disabled the
+// previous binding would make prepare drop the access it is supposed to
+// preserve.
+func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, data store.FullRoutingConfig, userIDs []int64, oldEnabled, newBindings []model.UserPlanBinding, startsAt, expiresAt *time.Time) (*model.AccessChange, error) {
 	now := time.Now()
 	exceptions, err := s.store.ListUserNodeExceptions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	oldEnabled, err := s.store.ListEnabledUserPlanBindings(ctx, userIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1331,6 +1346,10 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 	prepare := core.MergeProjections(oldSnap.Projection(), newSnap.Projection())
 	finalize := newSnap.Projection()
 	servers := accessServersFromProjections(oldSnap.Projection(), finalize, data)
+	previousIDs := make([]int64, 0, len(oldEnabled))
+	for _, binding := range oldEnabled {
+		previousIDs = append(previousIDs, binding.ID)
+	}
 	change, err := s.createAccessChange(ctx, r, accessChangeDraft{
 		changeType:         model.AccessChangeUserBindings,
 		affectedUserCount:  len(userIDs),
@@ -1340,6 +1359,9 @@ func (s *Server) createUserBindingChange(ctx context.Context, r *http.Request, d
 		oldProjection:      oldSnap.Projection(),
 		finalizeProjection: finalize,
 		serverIDs:          servers,
+		pendingBindings:    newBindings,
+		previousBinding:    previousIDs,
+		pendingUserIDs:     userIDs,
 	})
 	if err != nil {
 		return nil, err
