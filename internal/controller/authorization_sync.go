@@ -418,7 +418,24 @@ func (s *Server) recordAuthorizationApplied(ctx context.Context, server *model.S
 	if applied == nil || applied.Revision <= 0 {
 		return
 	}
-	s.recordAuthorizationAck(ctx, server, model.AuthorizationAck{Revision: applied.Revision, Sequence: applied.Sequence, Digest: applied.Digest, BootID: applied.BootID, Confirmed: true})
+	// This is the node describing its own state, not acknowledging a message,
+	// so a report from a new incarnation replaces a watermark left by the one
+	// it replaced - including when the new node is behind.
+	advanced, err := s.store.RestateAuthorizationConfirmation(ctx, server.ID, applied.Revision, applied.Sequence, applied.Digest, applied.BootID)
+	if err != nil {
+		log.Printf("record authorization applied server=%d: %v", server.ID, err)
+		return
+	}
+	state, err := s.store.AuthorizationState(ctx, server.ID)
+	if err != nil {
+		return
+	}
+	if !state.Confirmed() {
+		s.wakeAuthorizationSync()
+	}
+	if advanced {
+		s.publishRealtime("authorization")
+	}
 }
 
 // agentAuthorization serves GET /api/v1/agent/authorization: the same signed

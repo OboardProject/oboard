@@ -297,6 +297,26 @@ func (s *Store) RecordAuthorizationDelivery(ctx context.Context, serverID, revis
 	return err
 }
 
+// RestateAuthorizationConfirmation records what a node reports it currently
+// has. See RestateRuntimeUserConfirmation: a report from a different
+// incarnation replaces the watermark even when it is behind, while an
+// acknowledgement may only move it forward.
+func (s *Store) RestateAuthorizationConfirmation(ctx context.Context, serverID, revision, sequence int64, digest, bootID string) (bool, error) {
+	boot := strings.TrimSpace(bootID)
+	if serverID <= 0 || revision <= 0 || boot == "" {
+		return s.RecordAuthorizationConfirmation(ctx, serverID, revision, sequence, digest, bootID)
+	}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.ExecContext(ctx, `update authorization_states set confirmed_revision=?,confirmed_sequence=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason='',last_error='',updated_at=? where server_id=? and confirmed_boot_id<>'' and confirmed_boot_id<>? and confirmed_revision>?`, revision, sequence, strings.TrimSpace(digest), boot, ts, ts, serverID, boot, revision)
+	if err != nil {
+		return false, err
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return true, nil
+	}
+	return s.RecordAuthorizationConfirmation(ctx, serverID, revision, sequence, digest, bootID)
+}
+
 // RecordAuthorizationConfirmation applies an Agent acknowledgement. Older or
 // equal (revision, sequence) pairs are ignored so a late acknowledgement of a
 // superseded message cannot move the confirmed watermark backwards. It also

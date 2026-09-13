@@ -147,6 +147,29 @@ func (s *Store) RecordRuntimeUserConfirmation(ctx context.Context, serverID, rev
 	return affected > 0, nil
 }
 
+// RestateRuntimeUserConfirmation records what a node reports it currently has.
+// Unlike an acknowledgement, which confirms one delivered message and may only
+// move the watermark forward, this is the node describing its own state: when
+// the report comes from a different incarnation than the one that confirmed, it
+// replaces the watermark even if it is behind. The recorded one belongs to an
+// Agent that no longer exists, and leaving it in place would keep the lane from
+// ever redelivering to the node that replaced it.
+func (s *Store) RestateRuntimeUserConfirmation(ctx context.Context, serverID, revision int64, digest, bootID string) (bool, error) {
+	boot := strings.TrimSpace(bootID)
+	if serverID <= 0 || revision <= 0 || boot == "" {
+		return s.RecordRuntimeUserConfirmation(ctx, serverID, revision, digest, bootID)
+	}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.ExecContext(ctx, `update runtime_user_states set confirmed_revision=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason='',last_error='',updated_at=? where server_id=? and confirmed_boot_id<>'' and confirmed_boot_id<>? and confirmed_revision>?`, revision, strings.TrimSpace(digest), boot, ts, ts, serverID, boot, revision)
+	if err != nil {
+		return false, err
+	}
+	if affected, _ := result.RowsAffected(); affected > 0 {
+		return true, nil
+	}
+	return s.RecordRuntimeUserConfirmation(ctx, serverID, revision, digest, bootID)
+}
+
 func (s *Store) MarkRuntimeUsersPending(ctx context.Context, serverID int64, reason, lastError string, retryable bool) error {
 	return s.MarkRuntimeUserPending(ctx, serverID, reason, lastError, retryable)
 }

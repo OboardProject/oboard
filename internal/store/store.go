@@ -3035,9 +3035,16 @@ func (s *Store) ClaimServerEnrollment(ctx context.Context, enrollmentHash, agent
 		return nil, sql.ErrNoRows
 	}
 	ts := now()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 	// Clear expired tokens first so they cannot race with a claim.
-	_, _ = s.db.ExecContext(ctx, `update servers set enrollment_hash=NULL, enrollment_expires_at=NULL, updated_at=? where enrollment_hash=? and enrollment_expires_at is not null and enrollment_expires_at < ?`, ts, enrollmentHash, ts)
-	res, err := s.db.ExecContext(ctx, `update servers set agent_id=?, agent_token_hash=?, enrollment_hash=NULL, enrollment_expires_at=NULL, status=?, last_seen_at=?, updated_at=? where enrollment_hash=? and (enrollment_expires_at is null or enrollment_expires_at >= ?)`, agentID, agentTokenHash, model.ServerOnline, ts, ts, enrollmentHash, ts)
+	if _, err := tx.ExecContext(ctx, `update servers set enrollment_hash=NULL, enrollment_expires_at=NULL, updated_at=? where enrollment_hash=? and enrollment_expires_at is not null and enrollment_expires_at < ?`, ts, enrollmentHash, ts); err != nil {
+		return nil, err
+	}
+	res, err := tx.ExecContext(ctx, `update servers set agent_id=?, agent_token_hash=?, enrollment_hash=NULL, enrollment_expires_at=NULL, status=?, last_seen_at=?, updated_at=? where enrollment_hash=? and (enrollment_expires_at is null or enrollment_expires_at >= ?)`, agentID, agentTokenHash, model.ServerOnline, ts, ts, enrollmentHash, ts)
 	if err != nil {
 		return nil, err
 	}
@@ -3048,7 +3055,33 @@ func (s *Store) ClaimServerEnrollment(ctx context.Context, enrollmentHash, agent
 	if n != 1 {
 		return nil, sql.ErrNoRows
 	}
+	var serverID int64
+	if err := tx.QueryRowContext(ctx, `select id from servers where agent_id=?`, agentID).Scan(&serverID); err != nil {
+		return nil, err
+	}
+	// The node that enrolled here has nothing installed. Its predecessor's
+	// confirmations describe an Agent that no longer exists, and a watermark
+	// nobody can honour keeps the fast lanes from ever delivering again.
+	if err := clearDeliveredLaneStateTx(ctx, tx, serverID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetServerByAgent(ctx, agentID)
+}
+
+// clearDeliveredLaneStateTx forgets what a previous Agent incarnation had
+// received and confirmed on the authorization and runtime-user lanes. Desired
+// state is deliberately left alone: it is what the new incarnation still has to
+// be given.
+func clearDeliveredLaneStateTx(ctx context.Context, tx *sql.Tx, serverID int64) error {
+	ts := now()
+	if _, err := tx.ExecContext(ctx, `update authorization_states set delivered_revision=0,delivered_sequence=0,delivered_message_id='',delivered_at=null,confirmed_revision=0,confirmed_sequence=0,confirmed_digest='',confirmed_boot_id='',confirmed_at=null,updated_at=? where server_id=?`, ts, serverID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `update runtime_user_states set delivered_revision=0,delivered_message_id='',delivered_at=null,confirmed_revision=0,confirmed_digest='',confirmed_boot_id='',confirmed_at=null,updated_at=? where server_id=?`, ts, serverID)
+	return err
 }
 
 func (s *Store) ListServers(ctx context.Context) ([]model.Server, error) {

@@ -466,7 +466,25 @@ func (s *Server) recordUsersApplied(ctx context.Context, server *model.Server, a
 	if applied == nil || applied.Revision <= 0 {
 		return
 	}
-	s.recordUsersAck(ctx, server, model.UsersAck{Revision: applied.Revision, Digest: applied.Digest, BootID: applied.BootID, Confirmed: true})
+	// A node reporting its own installed state, not an acknowledgement: a new
+	// incarnation replaces the watermark its predecessor left behind, even when
+	// it is behind, so the lane redelivers instead of believing state that is
+	// no longer on the node.
+	advanced, err := s.store.RestateRuntimeUserConfirmation(ctx, server.ID, applied.Revision, applied.Digest, applied.BootID)
+	if err != nil {
+		log.Printf("record runtime users applied server=%d: %v", server.ID, err)
+		return
+	}
+	state, err := s.store.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		return
+	}
+	if !state.Confirmed() {
+		s.wakeRuntimeUsersSync()
+	}
+	if advanced {
+		s.publishRealtime("authorization")
+	}
 }
 
 func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
