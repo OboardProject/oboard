@@ -317,10 +317,6 @@ func (s *Server) registerServerUpdateOperation() {
 				_, _ = s.queueTimeCheck(ctx, *next, true)
 			}
 		}
-		updated, err := s.store.GetServer(ctx, next.ID)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"server_id": updated.ID, "revision": updated.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}, nil
+		return map[string]any{"server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}, nil
 	})
 }
