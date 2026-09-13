@@ -1,5 +1,5 @@
 import { ExternalLink, GitCommitHorizontal, Scale } from 'lucide-react'
-import logo from '../assets/logo.svg'
+import logo from '../assets/logo.png'
 
 export type OBoardVersionInfo = {
   name?: string

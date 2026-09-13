@@ -608,6 +608,12 @@ textarea:disabled {
   box-shadow: none;
 }
 
+:root[data-theme="dark"] :is(.brand-mark, .about-product-logo),
+:root.dark :is(.brand-mark, .about-product-logo),
+.dark :is(.brand-mark, .about-product-logo) {
+  filter: brightness(0) invert(1);
+}
+
 .brand-text { min-width: 0; display: grid; gap: 1px; }
 .brand h1 { margin: 0; color: var(--text-strong); font-size: 16px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
 .brand p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.3; }

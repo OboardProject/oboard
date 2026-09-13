@@ -105,7 +105,7 @@ import { Badge } from './components/ui/badge'
 import { AuthorizationStatusBadge } from './components/authorization/AuthorizationStatusBadge'
 import { Switch } from './components/ui/switch'
 import { DateTimePicker } from './components/ui/datetime-picker'
-import logo from './assets/logo.svg'
+import logo from './assets/logo.png'
 import { 
   LayoutDashboard, Server as ServerIcon, Workflow, Users as UsersIcon, Link as LinkIcon, 
   Bell, CheckSquare, ClipboardList, Settings as SettingsIcon, LogOut, Shield,
