@@ -14365,18 +14365,22 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	requestedProfileID = &subscriptionOutput.ID
-	data, err := s.store.FullRoutingConfigData(r.Context())
+	// A pull reads the revision-keyed routing snapshot instead of re-reading the
+	// whole routing configuration and rebuilding the effective access snapshot
+	// per request, so a client refresh is not charged for work a configuration
+	// change already paid for. The entry is immutable: `servers` is copied
+	// before annotation and nothing else here writes through the shared slices.
+	// Rendering now answers from the same access snapshot the nodes enforce, so
+	// a binding that expires by time passing takes effect on both sides
+	// together instead of the subscription and the kernel disagreeing.
+	routing, err := s.routingSnapshot(r.Context())
 	if err != nil {
 		fail(w, err, 500)
 		return
 	}
+	data, snapshot := routing.data, routing.snapshot
 	servers, in := append([]model.Server(nil), data.Servers...), data.Inbounds
 	s.annotateSnellSubscriptionDelivery(r.Context(), servers, in)
-	snapshot, err := s.buildAccessSnapshot(r.Context(), data)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
 	effectiveNodes := s.filterSubscriptionNodesByDelivery(r.Context(), *user, data, snapshot, snapshot.EffectiveNodeKeys(user.ID))
 	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
 	hiddenInbounds, err := s.store.ListHiddenInboundIDs(r.Context())
