@@ -1988,7 +1988,7 @@ func (s *Store) ensureBuiltinUserGroups(ctx context.Context) error {
 		where not exists(select 1 from user_groups where system_key=?)`, UserGroupSystemUsers, ts, ts, UserGroupSystemUsers); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `update user_groups set role='admin',enabled=1,updated_at=? where system_key=?`, ts, UserGroupSystemAdmins); err != nil {
+	if _, err := s.db.ExecContext(ctx, `update user_groups set role='admin',enabled=1,updated_at=? where system_key=? and (role<>'admin' or enabled<>1)`, ts, UserGroupSystemAdmins); err != nil {
 		return err
 	}
 	var adminID int64

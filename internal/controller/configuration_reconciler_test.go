@@ -74,39 +74,6 @@ func TestConfigurationMutationClassification(t *testing.T) {
 		}
 	}
 
-	capabilities := []struct {
-		name string
-		want bool
-	}{
-		{name: "servers.update", want: true},
-		{name: "servers.delete", want: true},
-		{name: "servers.enrollment.issue", want: false},
-		{name: "servers.extend_expiry", want: false},
-		{name: "servers.reset_traffic", want: false},
-		{name: "servers.update_agent", want: false},
-		{name: "servers.uninstall_agent", want: false},
-		{name: "servers.dns_policy.set", want: true},
-		{name: "servers.dns_test", want: false},
-		{name: "inbounds.create", want: true},
-		{name: "inbounds.padding.update", want: true},
-		{name: "inbounds.probe", want: false},
-		{name: "proxy_paths.update", want: true},
-		{name: "proxy_paths.probe_egress", want: false},
-		{name: "port_forwards.create", want: true},
-		{name: "deployments.apply", want: false},
-		{name: "servers.runtime.refresh", want: false},
-		{name: "certificates.issue", want: false},
-		{name: "subscription_plans.update", want: true},
-		{name: "user_node_exceptions.update", want: false},
-		{name: "user_devices.revoke", want: false},
-		{name: "subscriptions.rotate", want: false},
-		{name: "users.credentials.rotate", want: false},
-	}
-	for _, item := range capabilities {
-		if got := configurationCapability(item.name); got != item.want {
-			t.Errorf("capability %s configuration mutation = %t, want %t", item.name, got, item.want)
-		}
-	}
 }
 
 func TestConfigurationMutationAffectedServerScope(t *testing.T) {
@@ -286,19 +253,21 @@ func TestConfigurationWriteRespondsBeforeAsyncDeployment(t *testing.T) {
 	if created["desired_revision"] == nil {
 		t.Fatalf("save response missing desired_revision: %#v", created)
 	}
-	// The save response sync metadata is filtered to the affected server IDs (which is empty for a plain server create -> global broadcast).
-	// For a global broadcast, all enrolled servers get a pending row. Verify the new unenrolled server did NOT get one.
+	// The save only commits intent. No HTTP callback materializes server state
+	// or queues tasks; the existing reconciler owns that handoff.
 	if _, err := db.ConfigurationSyncState(ctx, createdID); err == nil {
 		t.Fatalf("unenrolled server must not have a configuration_sync row, but one exists")
 	}
 	state, err := db.ConfigurationSyncState(ctx, preEnrolled.ID)
-	if err != nil || state.State != "pending" || state.LastTaskID != 0 {
-		t.Fatalf("global change did not leave pending for enrolled server = %#v err=%v", state, err)
+	if err == nil {
+		t.Fatalf("HTTP save materialized configuration state: %#v", state)
 	}
 	if tasks, err := db.ListTasksByServer(ctx, preEnrolled.ID, 10); err != nil || len(tasks) != 0 {
 		t.Fatalf("save response waited for or synchronously queued tasks = %#v err=%v", tasks, err)
 	}
-	go srv.StartConfigurationReconciler(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); srv.StartConfigurationReconciler(ctx) }()
+	defer func() { cancel(); <-done }()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		state, err = db.ConfigurationSyncState(ctx, preEnrolled.ID)
@@ -438,7 +407,7 @@ func TestConfigurationSyncRetryOnlyReopensFailures(t *testing.T) {
 	request(t, handler, "POST", "/api/v1/ui/configuration-sync/retry", token, map[string]any{"server_ids": []int64{server.ID}}, 409)
 }
 
-func TestChangesetConfigurationObserverExcludesCommandOperations(t *testing.T) {
+func TestChangesetConfigurationIntentExcludesCommandOperations(t *testing.T) {
 	db := openControllerAutomationTestStore(t)
 	srv := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
@@ -447,15 +416,18 @@ func TestChangesetConfigurationObserverExcludesCommandOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal := userAutomationPrincipal(t, db, user.ID)
-	// The observer queues a sync only for servers an Agent is bound to: a
-	// server with no agent has nowhere to deploy, so MarkConfigurationSyncPending
-	// skips it and no sync row would ever appear.
 	server := &model.Server{Name: "observer-node", AgentID: "observer-agent", Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
 	if err := db.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
 	update, _ := json.Marshal(map[string]any{"server_id": server.ID, "changes": map[string]any{"ip_stack": "ipv4_only"}})
 	applyAutomationChangeset(t, srv, principal, "observer-config", automation.OperationRequest{Capability: "servers.update", Input: update})
+	if state, err := db.ConfigurationSyncState(ctx, server.ID); err == nil {
+		t.Fatalf("observer materialized state outside the reconciler: %#v", state)
+	}
+	if _, err := db.DrainConfigurationSyncIntents(ctx); err != nil {
+		t.Fatal(err)
+	}
 	state, err := db.ConfigurationSyncState(ctx, server.ID)
 	if err != nil || state.State != "pending" || state.WantedRevision == 0 {
 		t.Fatalf("configuration Changeset did not mark pending = %#v err=%v", state, err)
@@ -468,6 +440,9 @@ func TestChangesetConfigurationObserverExcludesCommandOperations(t *testing.T) {
 	before := state.WantedRevision
 	diagnose, _ := json.Marshal(map[string]any{"server_id": server.ID})
 	applyAutomationChangeset(t, srv, principal, "observer-command", automation.OperationRequest{Capability: "servers.diagnose", Input: diagnose})
+	if intents, err := db.DrainConfigurationSyncIntents(ctx); err != nil || len(intents) != 0 {
+		t.Fatalf("command created configuration intent: %v %v", intents, err)
+	}
 	after, err := db.ConfigurationSyncState(ctx, server.ID)
 	if err != nil || after.WantedRevision != before {
 		t.Fatalf("command Changeset changed desired revision: before=%d after=%#v err=%v", before, after, err)
@@ -1111,4 +1086,32 @@ func TestRecordConfigurationPrepareErrorWaitsOnSQLiteBusy(t *testing.T) {
 	if err != nil || failed.State != "failed" || failed.RetryCount != 1 || failed.LastError != "invalid desired state" {
 		t.Fatalf("real prepare error = %#v err=%v", failed, err)
 	}
+}
+
+func (s *Server) markConfigurationChanged(ctx context.Context, path, method string) {
+	if s.store == nil || !configurationMutationPath(path, method) {
+		return
+	}
+	revision, err := s.store.ConfigurationRevision(ctx)
+	if err != nil || revision == 0 {
+		if err != nil {
+			logConfigurationError("read revision", err)
+		}
+		return
+	}
+	s.markConfigurationRevision(ctx, revision, s.configurationMutationServerIDs(ctx, path, method))
+}
+
+func (s *Server) markConfigurationRevision(ctx context.Context, revision uint64, serverIDs []int64) {
+	defer s.signalConfigurationReconcile()
+
+	ids, err := s.store.MarkConfigurationSyncPending(context.WithoutCancel(ctx), revision, serverIDs)
+	if err != nil {
+		logConfigurationError("mark pending", err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	s.publishRealtime("configuration", "deployments", "tasks")
 }

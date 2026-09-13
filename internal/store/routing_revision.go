@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -127,7 +128,7 @@ func configurationRevisionTriggerStatements() []string {
 	out := []string{fmt.Sprintf(`insert or ignore into %s(id,revision) values(1,0)`, configurationRevisionTable)}
 	updateWhen := map[string]string{
 		"proxy_credentials":   `old.status<>new.status`,
-		"servers":             `old.name<>new.name or old.chain_secret<>new.chain_secret or coalesce(old.entry_address,'')<>coalesce(new.entry_address,'') or old.region_code<>new.region_code or old.region_mode<>new.region_mode or old.entry_ip_mode<>new.entry_ip_mode or coalesce(old.listen_ip,'')<>coalesce(new.listen_ip,'') or old.listen_mode<>new.listen_mode or old.ip_stack<>new.ip_stack or old.udp_inbound_mode<>new.udp_inbound_mode or old.mtu_mode<>new.mtu_mode or old.mtu_value<>new.mtu_value or old.mtu_probe_host<>new.mtu_probe_host or old.mtu_probe_port<>new.mtu_probe_port or old.mtu_overhead_bytes<>new.mtu_overhead_bytes or old.bbr_enabled<>new.bbr_enabled or old.port_range_start<>new.port_range_start or old.port_range_end<>new.port_range_end or old.internal_port_range_start<>new.internal_port_range_start or old.internal_port_range_end<>new.internal_port_range_end or old.port_policy_revision<>new.port_policy_revision or old.connection_audit_enabled<>new.connection_audit_enabled`,
+		"servers":             `coalesce(old.agent_id,'')<>coalesce(new.agent_id,'') or old.name<>new.name or old.chain_secret<>new.chain_secret or coalesce(old.entry_address,'')<>coalesce(new.entry_address,'') or old.region_code<>new.region_code or old.region_mode<>new.region_mode or old.entry_ip_mode<>new.entry_ip_mode or coalesce(old.listen_ip,'')<>coalesce(new.listen_ip,'') or old.listen_mode<>new.listen_mode or old.ip_stack<>new.ip_stack or old.udp_inbound_mode<>new.udp_inbound_mode or old.mtu_mode<>new.mtu_mode or old.mtu_value<>new.mtu_value or old.mtu_probe_host<>new.mtu_probe_host or old.mtu_probe_port<>new.mtu_probe_port or old.mtu_overhead_bytes<>new.mtu_overhead_bytes or old.bbr_enabled<>new.bbr_enabled or old.port_range_start<>new.port_range_start or old.port_range_end<>new.port_range_end or old.internal_port_range_start<>new.internal_port_range_start or old.internal_port_range_end<>new.internal_port_range_end or old.port_policy_revision<>new.port_policy_revision or old.connection_audit_enabled<>new.connection_audit_enabled`,
 		"inbounds":            `old.server_id<>new.server_id or old.name<>new.name or old.protocol<>new.protocol or old.listen_ip<>new.listen_ip or old.port<>new.port or coalesce(old.advertise_port,0)<>coalesce(new.advertise_port,0) or old.entry_ip_mode<>new.entry_ip_mode or old.external_ip<>new.external_ip or old.dns_sync_enabled<>new.dns_sync_enabled or coalesce(old.dns_credential_id,0)<>coalesce(new.dns_credential_id,0) or old.dns_domain<>new.dns_domain or old.dns_proxy_enabled<>new.dns_proxy_enabled or old.dns_record_types<>new.dns_record_types or old.ddns_enabled<>new.ddns_enabled or old.ddns_interval_seconds<>new.ddns_interval_seconds or old.tls<>new.tls or old.config_json<>new.config_json or old.enabled<>new.enabled`,
 		"routing_rule_sets":   `old.name<>new.name or old.url<>new.url or old.format<>new.format or old.mihomo_behavior<>new.mihomo_behavior`,
 		"subscription_plans":  `old.enabled<>new.enabled or coalesce(old.active_revision_id,0)<>coalesce(new.active_revision_id,0) or coalesce(old.current_revision_id,0)<>coalesce(new.current_revision_id,0)`,
@@ -140,9 +141,9 @@ func configurationRevisionTriggerStatements() []string {
 			fmt.Sprintf(`drop trigger if exists config_rev_%s_insert`, table),
 			fmt.Sprintf(`drop trigger if exists config_rev_%s_update`, table),
 			fmt.Sprintf(`drop trigger if exists config_rev_%s_delete`, table),
-			fmt.Sprintf(`create trigger config_rev_%s_insert after insert on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, insertCondition, configurationRevisionTable),
-			fmt.Sprintf(`create trigger config_rev_%s_delete after delete on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, deleteCondition, configurationRevisionTable),
-			fmt.Sprintf(`create trigger config_rev_%s_update after update on %s when %s begin update %s set revision=revision+1 where id=1; end`, table, table, updateCondition, configurationRevisionTable),
+			fmt.Sprintf(`create trigger config_rev_%s_insert after insert on %s when %s begin update %s set revision=revision+1 where id=1; %s end`, table, table, insertCondition, configurationRevisionTable, configurationSyncIntentSQL(table, "insert")),
+			fmt.Sprintf(`create trigger config_rev_%s_delete after delete on %s when %s begin update %s set revision=revision+1 where id=1; %s end`, table, table, deleteCondition, configurationRevisionTable, configurationSyncIntentSQL(table, "delete")),
+			fmt.Sprintf(`create trigger config_rev_%s_update after update on %s when %s begin update %s set revision=revision+1 where id=1; %s end`, table, table, updateCondition, configurationRevisionTable, configurationSyncIntentSQL(table, "update")),
 		)
 	}
 	out = append(out,
@@ -152,9 +153,9 @@ func configurationRevisionTriggerStatements() []string {
 		`drop trigger if exists config_rev_user_devices_insert`,
 		`drop trigger if exists config_rev_user_devices_update`,
 		`drop trigger if exists config_rev_user_devices_delete`,
-		`create trigger config_rev_user_devices_insert after insert on user_devices begin update configuration_revision set revision=revision+1 where id=1; end`,
-		`create trigger config_rev_user_devices_update after update on user_devices when `+userDevicesUpdateWhen+` begin update configuration_revision set revision=revision+1 where id=1; end`,
-		`create trigger config_rev_user_devices_delete after delete on user_devices begin update configuration_revision set revision=revision+1 where id=1; end`,
+		`create trigger config_rev_user_devices_insert after insert on user_devices begin update configuration_revision set revision=revision+1 where id=1; `+configurationSyncIntentSQL("user_devices", "insert")+` end`,
+		`create trigger config_rev_user_devices_update after update on user_devices when `+userDevicesUpdateWhen+` begin update configuration_revision set revision=revision+1 where id=1; `+configurationSyncIntentSQL("user_devices", "update")+` end`,
+		`create trigger config_rev_user_devices_delete after delete on user_devices begin update configuration_revision set revision=revision+1 where id=1; `+configurationSyncIntentSQL("user_devices", "delete")+` end`,
 	)
 	return out
 }
@@ -208,8 +209,8 @@ func (s *Store) dropTriggersReferencingTable(ctx context.Context, table string) 
 	return nil
 }
 
-func (s *Store) dropManagedRevisionTriggers(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `select name from sqlite_master where type='trigger' and (name like 'routing_rev_%' or name like 'config_rev_%')`)
+func dropManagedRevisionTriggersTx(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `select name from sqlite_master where type='trigger' and (name like 'routing_rev_%' or name like 'config_rev_%')`)
 	if err != nil {
 		return err
 	}
@@ -225,8 +226,9 @@ func (s *Store) dropManagedRevisionTriggers(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	rows.Close()
 	for _, name := range names {
-		if _, err := s.db.ExecContext(ctx, `drop trigger if exists `+name); err != nil {
+		if _, err := tx.ExecContext(ctx, `drop trigger if exists `+name); err != nil {
 			return fmt.Errorf("drop managed revision trigger %s: %w", name, err)
 		}
 	}
@@ -234,20 +236,28 @@ func (s *Store) dropManagedRevisionTriggers(ctx context.Context) error {
 }
 
 func (s *Store) migrateManagedRevisionTriggers(ctx context.Context) error {
-	if err := s.dropManagedRevisionTriggers(ctx); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := migrateConfigurationSyncIntentsTx(ctx, tx); err != nil {
+		return err
+	}
+	if err := dropManagedRevisionTriggersTx(ctx, tx); err != nil {
 		return err
 	}
 	for _, stmt := range routingRevisionTriggerStatements() {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("install routing cache revision trigger: %w", err)
 		}
 	}
 	for _, stmt := range configurationRevisionTriggerStatements() {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("install configuration revision trigger: %w", err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) migrateRoutingCacheRevisionTriggers(ctx context.Context) error {

@@ -79,7 +79,6 @@ func (s *Store) MarkConfigurationSyncPending(ctx context.Context, revision uint6
 	}
 	unique := make(map[int64]struct{}, len(serverIDs))
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	digest := fmt.Sprintf("routing:%d", revision)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -90,20 +89,7 @@ func (s *Store) MarkConfigurationSyncPending(ctx context.Context, revision uint6
 			continue
 		}
 		unique[serverID] = struct{}{}
-		_, err := tx.ExecContext(ctx, `
-			insert into configuration_sync_states(server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,trigger_reason,sync_strategy,changed_at,updated_at)
-			values(?,?,?,'pending',0,0,0,null,'',?,'',?,?)
-			on conflict(server_id) do update set
-				wanted_revision=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.wanted_revision else configuration_sync_states.wanted_revision end,
-				wanted_digest=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.wanted_digest else configuration_sync_states.wanted_digest end,
-				state=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then 'pending' else configuration_sync_states.state end,
-				retry_count=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then 0 else configuration_sync_states.retry_count end,
-				next_retry_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then null else configuration_sync_states.next_retry_at end,
-				last_error=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then '' else configuration_sync_states.last_error end,
-				trigger_reason=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.trigger_reason else configuration_sync_states.trigger_reason end,
-				sync_strategy=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then '' else configuration_sync_states.sync_strategy end,
-				changed_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.changed_at else configuration_sync_states.changed_at end,
-				updated_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.updated_at else configuration_sync_states.updated_at end`, serverID, revision, digest, ConfigurationSyncTriggerRevision, now, now)
+		err := markConfigurationSyncPendingTx(ctx, tx, serverID, revision, now)
 		if err != nil {
 			return nil, err
 		}
@@ -412,3 +398,19 @@ func minInt(left, right int) int {
 	}
 	return right
 }
+
+const configurationSyncPendingSQL = `
+			insert into configuration_sync_states(server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,trigger_reason,sync_strategy,changed_at,updated_at)
+			values(?,?,?,'pending',0,0,0,null,'',?,'',?,?)
+			on conflict(server_id) do update set
+				wanted_revision=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.wanted_revision else configuration_sync_states.wanted_revision end,
+				wanted_digest=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.wanted_digest else configuration_sync_states.wanted_digest end,
+				state=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then 'pending' else configuration_sync_states.state end,
+				retry_count=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then 0 else configuration_sync_states.retry_count end,
+				next_retry_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then null else configuration_sync_states.next_retry_at end,
+				last_error=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then '' else configuration_sync_states.last_error end,
+				trigger_reason=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.trigger_reason else configuration_sync_states.trigger_reason end,
+				sync_strategy=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then '' else configuration_sync_states.sync_strategy end,
+				changed_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.changed_at else configuration_sync_states.changed_at end,
+				updated_at=case when excluded.wanted_revision>configuration_sync_states.wanted_revision then excluded.updated_at else configuration_sync_states.updated_at end
+			where excluded.wanted_revision>configuration_sync_states.wanted_revision`

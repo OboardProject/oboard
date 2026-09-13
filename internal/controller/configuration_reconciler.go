@@ -41,29 +41,6 @@ func (s *Server) StartConfigurationReconciler(ctx context.Context) {
 		logConfigurationError("recover", err)
 	}
 	s.cleanupTrafficStormPendingDeployments(ctx)
-	// The watermark advances in the same SQLite transaction as the domain
-	// mutation. Re-seeding existing servers closes the crash window between
-	// that commit and the asynchronous sync-state write.
-	if revision, err := s.store.ConfigurationRevision(ctx); err != nil {
-		logConfigurationError("read configuration revision", err)
-	} else if revision > 0 {
-		if servers, listErr := s.store.ListServers(ctx); listErr != nil {
-			logConfigurationError("list servers for recovery", listErr)
-		} else {
-			for _, server := range servers {
-				relevant, relevantErr := s.store.ServerEverDeployedOrHasState(ctx, server.ID)
-				if relevantErr != nil {
-					logConfigurationError("check server recovery scope", relevantErr)
-					continue
-				}
-				if relevant {
-					if _, markErr := s.store.EnsureConfigurationSyncRevision(context.WithoutCancel(ctx), server.ID, revision); markErr != nil {
-						logConfigurationError("repair configuration sync state", markErr)
-					}
-				}
-			}
-		}
-	}
 	timer := time.NewTimer(s.configurationReconcileDelay())
 	recovery := time.NewTicker(time.Second)
 	defer timer.Stop()
@@ -114,57 +91,7 @@ func (s *Server) configurationChangesetApplied(ctx context.Context, item *model.
 	if item == nil || afterRevision <= beforeRevision {
 		return
 	}
-	for _, operation := range item.Operations {
-		if configurationCapability(operation.Capability) {
-			s.markConfigurationRevision(ctx, afterRevision, nil)
-			return
-		}
-	}
-}
-
-func configurationCapability(name string) bool {
-	switch name {
-	case "servers.onboard", "servers.update", "servers.delete", "servers.dns_policy.set",
-		"subscription_plans.create", "subscription_plans.update", "subscription_plans.delete",
-		"subscription_plans.nodes.update":
-		return true
-	case "inbounds.probe", "proxy_paths.probe_egress", "routing_rule_sets.refresh":
-		return false
-	}
-	for _, prefix := range []string{"inbounds.", "outbounds.", "external_outbounds.", "routing_rules.", "routing_rule_sets.", "topology.", "proxy_paths.", "proxy_path_steps.", "port_forwards.", "tunnels.", "dns_lists.", "user_groups.", "user_group_members."} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) markConfigurationChanged(ctx context.Context, path, method string) {
-	if s.store == nil || !configurationMutationPath(path, method) {
-		return
-	}
-	revision, err := s.store.ConfigurationRevision(ctx)
-	if err != nil || revision == 0 {
-		if err != nil {
-			logConfigurationError("read revision", err)
-		}
-		return
-	}
-	s.markConfigurationRevision(ctx, revision, s.configurationMutationServerIDs(ctx, path, method))
-}
-
-func (s *Server) markConfigurationRevision(ctx context.Context, revision uint64, serverIDs []int64) {
-	defer s.signalConfigurationReconcile()
-
-	ids, err := s.store.MarkConfigurationSyncPending(context.WithoutCancel(ctx), revision, serverIDs)
-	if err != nil {
-		logConfigurationError("mark pending", err)
-		return
-	}
-	if len(ids) == 0 {
-		return
-	}
-	s.publishRealtime("configuration", "deployments", "tasks")
+	s.signalConfigurationReconcile()
 }
 
 func configurationMutationPath(path, method string) bool {
@@ -434,6 +361,16 @@ func valueOrZero(value *int64) int64 {
 }
 
 func (s *Server) reconcileConfiguration(ctx context.Context) {
+	intents, intentErr := s.store.DrainConfigurationSyncIntents(ctx)
+	if intentErr != nil {
+		logConfigurationError("drain committed intent", intentErr)
+		return
+	}
+	for _, intent := range intents {
+		if intent.Scope == "unresolved" {
+			log.Printf("configuration sync scope fallback source=%s revision=%d targets=%d", intent.Source, intent.Revision, intent.TargetCount)
+		}
+	}
 	if revision, err := s.store.RoutingCacheRevision(ctx); err != nil {
 		logConfigurationError("read credential revision", err)
 		return

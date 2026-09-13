@@ -789,7 +789,7 @@ func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
 							affectedServerIDs = responseServerIDs
 						}
 					}
-					s.markConfigurationRevision(r.Context(), afterRevision, affectedServerIDs)
+					s.signalConfigurationReconcile()
 					responseBody = s.configurationMutationResponse(r.Context(), responseBody, afterRevision, affectedServerIDs)
 				}
 			}
