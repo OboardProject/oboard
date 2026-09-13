@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -107,3 +108,44 @@ func TestServerDeletionClaimIsIdempotentAndOutlivesTheServer(t *testing.T) {
 		t.Fatalf("completed deletion still present: %v", err)
 	}
 }
+
+// TestDeletedServerLeavesNoOpenIncident covers the per-server tables that carry
+// a server_id without a foreign key, so nothing removes them with the server.
+// An incident left open for a deleted node keeps showing in the console, keeps
+// its publication isolations applied, and keeps producing notifications about a
+// server that no longer exists.
+func TestDeletedServerLeavesNoOpenIncident(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "incidents.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "flapping", EntryAddress: "198.51.100.31", Status: "offline"}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	incident, _, err := db.OpenOrReopenNodeIncident(ctx, *server, at.Add(-10*time.Minute), at, 5*time.Minute, 2*time.Minute, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `insert into node_publication_isolations(incident_id,inbound_name,server_id,recovery_policy,status,actor_user_id,created_at,updated_at) values(?,?,?,'manual','hidden',1,?,?)`, incident.ID, "edge-ss", server.ID, now(), now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteServer(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	open, err := db.ListNodeIncidents(ctx, "active", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("deleted server still has open incidents: %+v", open)
+	}
+	var isolations int
+	if err := db.db.QueryRowContext(ctx, `select count(*) from node_publication_isolations where server_id=?`, server.ID).Scan(&isolations); err != nil || isolations != 0 {
+		t.Fatalf("publication isolations survived the server: %d err=%v", isolations, err)
+	}
+}
+
