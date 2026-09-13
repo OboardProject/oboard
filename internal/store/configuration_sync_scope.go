@@ -54,6 +54,15 @@ func configurationSyncScopeSelect(table, alias string) string {
 		return fmt.Sprintf(`select %[1]s.server_id as server_id
 			union select i.server_id from inbounds i where i.id=%[1]s.inbound_id
 			union %[2]s`, alias, serversOfProxyPaths(fmt.Sprintf(`select %s.path_id`, alias)))
+	case "dns_lists":
+		return fmt.Sprintf(`select p.server_id as server_id from server_dns_policies p where p.encrypted_list_id=%[1]s.id or p.bootstrap_list_id=%[1]s.id`, alias)
+	case "external_outbounds":
+		return serversOfProxyPaths(fmt.Sprintf(`select path_id from proxy_path_steps where external_outbound_id=%s.id`, alias))
+	case "family_split_templates":
+		return serversOfProxyPaths(fmt.Sprintf(`select id from proxy_paths where template_id=%s.id`, alias))
+	case "routing_rule_sets":
+		return fmt.Sprintf(`select r.server_id as server_id from routing_rules r where r.rule_set_id=%[1]s.id
+			union %[2]s`, alias, serversOfProxyPaths(fmt.Sprintf(`select proxy_path_id from routing_rules where rule_set_id=%s.id`, alias)))
 	case "routing_rules":
 		return fmt.Sprintf(`select %[1]s.server_id as server_id
 			union select %[1]s.target_server_id

@@ -38,6 +38,12 @@ func TestRoutingRuleScopeMigrationFromPreviousTable(t *testing.T) {
 		`drop trigger if exists config_rev_routing_rules_insert`,
 		`drop trigger if exists config_rev_routing_rules_update`,
 		`drop trigger if exists config_rev_routing_rules_delete`,
+		// Scoped intents let a trigger on one table read a column of another,
+		// so every trigger that mentions routing_rules has to go before its
+		// columns can be dropped. Open() reinstalls them.
+		`drop trigger if exists config_rev_routing_rule_sets_insert`,
+		`drop trigger if exists config_rev_routing_rule_sets_update`,
+		`drop trigger if exists config_rev_routing_rule_sets_delete`,
 		`drop index idx_routing_rules_sync_group`,
 		`drop index idx_routing_rules_target_path`,
 		`drop index idx_routing_rules_stage_order`,
