@@ -31,3 +31,17 @@ export function useRegisterPageRefresh(handler: PageRefreshHandler, resources?: 
 export function usePageRefreshAction() {
   return React.useContext(PageRefreshContext)
 }
+
+// useRefreshResources returns a partial refresh for the resources a mutation
+// changed, falling back to the page refresh when nothing declared them.
+export function useRefreshResources() {
+  const context = React.useContext(PageRefreshContext)
+  return React.useCallback(async (resources: string[]) => {
+    if (!context) return
+    if (context.refreshResources) {
+      await context.refreshResources(resources)
+      return
+    }
+    await context.refresh()
+  }, [context])
+}

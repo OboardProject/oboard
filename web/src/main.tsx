@@ -2321,8 +2321,14 @@ export function App() {
     }
   }
 
-  const registerPageRefresh = React.useCallback((handler: () => Promise<void> | void) => {
-    return pageRefreshRegistryRef.current.register(handler)
+  const registerPageRefresh = React.useCallback((handler: () => Promise<void> | void, options?: { resources?: string[] }) => {
+    return pageRefreshRegistryRef.current.register(handler, options)
+  }, [])
+
+  // refreshPageResources re-reads only the handlers that declared one of these
+  // resources, so a save reloads what it changed instead of the whole page.
+  const refreshPageResources = React.useCallback(async (resources: string[]) => {
+    await pageRefreshRegistryRef.current.runFor(resources)
   }, [])
 
   const refreshCurrentPage = async () => {
@@ -2721,7 +2727,7 @@ export function App() {
 
   return (
     <DialogContext.Provider value={dialogs}>
-      <PageRefreshProvider register={registerPageRefresh} refresh={refreshCurrentPage} refreshing={pageRefreshing}>
+      <PageRefreshProvider register={registerPageRefresh} refresh={refreshCurrentPage} refreshing={pageRefreshing} refreshResources={refreshPageResources}>
       <LoadingContext.Provider value={loading}>
         <AnimatePresence>
           {showPortalLoader && (
