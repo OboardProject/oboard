@@ -3,6 +3,7 @@ import { ServerMonitoringTargetDialog } from './components/server/ServerMonitori
 import { ReturnLatencyPage } from './components/server/ReturnLatencyPage'
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { createPopoverPortal } from './components/ui/modal-layer'
 import { createRoot } from 'react-dom/client'
 import {
   type ThemeOrigin,
@@ -788,7 +789,7 @@ function RegionPicker({ value, onChange, servers = [] }: { value: string; onChan
       <small>{selectedCode}</small>
       <ChevronDown size={16} aria-hidden="true" />
     </button>
-    {open && position && createPortal(
+    {open && position && createPopoverPortal(
       <div
         ref={panelRef}
         data-popover="true"
@@ -931,7 +932,7 @@ function ServerRegionFilterDropdown({
         <small className="server-region-filter-trigger-count">{isAll ? `${total} 台` : `${selectedCode || '—'} · ${selectedCount} 台`}</small>
         <ChevronDown size={14} aria-hidden="true" className={`server-region-filter-chevron ${open ? 'rotated' : ''}`} />
       </button>
-      {open && position && createPortal(
+      {open && position && createPopoverPortal(
         <div
           ref={panelRef}
           data-popover="true"
@@ -1091,7 +1092,7 @@ function ServerFilterDropdown({
         <SlidersHorizontal size={15} />
         {hasActiveFilters && <span className="server-filter-badge" />}
       </button>
-      {open && position && createPortal(
+      {open && position && createPopoverPortal(
         <div
           ref={panelRef}
           data-popover="true"
@@ -7479,7 +7480,7 @@ function ServerAddressBadge({ server }: { server: Server }) {
         {v6 ? <ServerAddressLine family="v6" value={v6} copied={copied === 'v6'} onCopy={() => void copy('v6', v6)} /> : null}
         {!v4 && !v6 ? <span className="server-address-empty">待检测</span> : null}
       </div>
-      {entry && tipOpen ? createPortal(
+      {entry && tipOpen ? createPopoverPortal(
         <div
           id={tipID}
           role="tooltip"
@@ -13091,7 +13092,7 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
         </ReactFlow>
         <ProxyGraphLegend />
         {!nodes.length && <div className="graph-empty-state"><ServerIcon size={22} /><strong>还没有服务器</strong><span>添加服务器后即可创建入口和代理拓扑。</span><button onClick={() => addServer()}>添加服务器</button></div>}
-        {graphMenu && createPortal(
+        {graphMenu && createPopoverPortal(
           <>
             {graphMenu.sheet && <div className="graph-context-menu-overlay is-sheet" onPointerDown={dismissGraphMenu} />}
             <div
@@ -18249,7 +18250,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
         type="button"
         onClick={event => { event.stopPropagation(); if (!isOpen) placeMenu(); setIsOpen(!isOpen) }}
         className="ghost icon-button"
-        style={{ width: '30px', height: '30px', borderRadius: '999px', border: '1px solid var(--border)', display: 'grid', placeContent: 'center', backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)', color: 'var(--text-secondary)' }}
+        style={{ width: '30px', height: '30px', borderRadius: 'var(--radius-full)', border: '1px solid var(--border)', display: 'grid', placeContent: 'center', backgroundColor: isOpen ? 'var(--bg-control)' : 'var(--bg-card)', color: 'var(--text-secondary)' }}
         title="更多操作"
         aria-label="更多操作"
         aria-haspopup="menu"
@@ -18257,7 +18258,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
       >
         <MoreHorizontal size={15} aria-hidden="true" />
       </button>
-      {isOpen && menuStyle && createPortal(
+      {isOpen && menuStyle && createPopoverPortal(
         <div ref={menuRef} className="server-actions-menu action-menu-portal" role="menu" style={menuStyle}>
           {groups.map((group, groupIdx) => (
             <React.Fragment key={group.title || groupIdx}>
@@ -18389,7 +18390,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
       >
         <MoreHorizontal size={16} />
       </button>
-      {isOpen && menuStyle && createPortal(
+      {isOpen && menuStyle && createPopoverPortal(
         <div ref={menuRef} className="user-actions-menu action-menu-popover action-menu-portal" role="menu" style={menuStyle}>
           {items.map(item => (
             <button
@@ -18867,7 +18868,7 @@ function UserTrafficLedgerDialog({ user, client, onCancel }: { user: User; clien
       <p>限额 {Number(period.limit_bytes || 0) > 0 ? formatBytes(Number(period.limit_bytes || 0)) : '不限量'}{Number(period.limit_bytes || 0) > 0 ? ` · 剩余 ${formatBytes(remaining)}` : ''}</p>
       <div className="form-section-title" style={{ marginTop: 16 }}>服务器</div>
       {(ledger?.servers || []).length ? (ledger.servers as any[]).map(server => (
-        <div key={server.server_id} style={{ marginBottom: 12, padding: 12, borderRadius: 12, background: 'var(--bg-control)' }}>
+        <div key={server.server_id} style={{ marginBottom: 12, padding: 12, borderRadius: 'var(--radius-md)', background: 'var(--bg-control)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <strong>{server.server_name || `服务器 ${server.server_id}`}</strong>
             <span style={{ color: syncTone(String(server.sync?.status || '')) }}>{server.sync?.status || 'healthy'}</span>
@@ -22252,7 +22253,7 @@ function TableActions({ children }: { children: React.ReactNode }) {
   }, [open, items.length])
 
   if (items.length <= 1) return <>{items.map((item, index) => cloneAction(item, index, itemIsDanger(item) ? 'danger-ghost' : 'ghost'))}</>
-  const menu = open && menuStyle ? createPortal(
+  const menu = open && menuStyle ? createPopoverPortal(
     <div ref={menuRef} className="action-menu-popover action-menu-portal" role="menu" style={menuStyle}>
       {items.map((item, index) => cloneAction(item, index, itemIsDanger(item) ? 'ghost danger-ghost' : 'ghost', () => setOpen(false)))}
     </div>,

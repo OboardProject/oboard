@@ -1,6 +1,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { m, usePresence, useReducedMotion } from "motion/react"
+import { useSurfaceResize, type SurfaceMotion } from "./surface-motion"
 
 const APPICA_SPRING = [0.175, 0.885, 0.32, 1.5] as const
 const BACKDROP_EASE = [0.16, 1, 0.3, 1] as const
@@ -28,13 +29,17 @@ const FOCUSABLE_SELECTOR = [
 ].join(', ')
 
 function isInsidePopover(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && Boolean(target.closest(POPOVER_SELECTOR))
+  if (!(target instanceof HTMLElement)) return false
+  const scope = target.closest<HTMLElement>('[data-popover-layer]')
+  return Boolean(target.closest(POPOVER_SELECTOR)) && (scope ? scope.dataset.popoverActive === 'true' : Boolean(target.closest('[data-modal-top="true"]')))
 }
 
 type LayerID = symbol
+const ModalOwnerContext = React.createContext<LayerID | null>(null)
 type BodyStyleSnapshot = { overflow: string; paddingRight: string }
 
 let layers: LayerID[] = []
+const layerOwners = new Map<LayerID, LayerID | null>()
 let bodyStyleSnapshot: BodyStyleSnapshot | null = null
 let mainStyleSnapshot: string | null = null
 let stackFocusTarget: HTMLElement | null = null
@@ -85,17 +90,28 @@ function unlockBodyScroll() {
   }
 }
 
-function registerLayer(id: LayerID, initialFocusTarget: HTMLElement | null) {
+function registerLayer(id: LayerID, initialFocusTarget: HTMLElement | null, owner: LayerID | null) {
   if (layers.includes(id)) return () => undefined
   if (layers.length === 0) {
     stackFocusTarget = initialFocusTarget
     lockBodyScroll()
   }
-  layers = [...layers, id]
+  layerOwners.set(id, owner)
+  const descendantIndex = layers.findIndex(layer => {
+    let ancestor = layerOwners.get(layer)
+    while (ancestor) {
+      if (ancestor === id) return true
+      ancestor = layerOwners.get(ancestor)
+    }
+    return false
+  })
+  const insertAt = descendantIndex < 0 ? layers.length : descendantIndex
+  layers = [...layers.slice(0, insertAt), id, ...layers.slice(insertAt)]
   emitLayerChange()
   return () => {
     if (!layers.includes(id)) return
     layers = layers.filter(layer => layer !== id)
+    layerOwners.delete(id)
     if (layers.length === 0) {
       const target = stackFocusTarget
       stackFocusTarget = null
@@ -122,10 +138,11 @@ function getLayers() {
 const emptyLayers: LayerID[] = []
 
 function useModalLayer(initialFocusTarget: HTMLElement | null) {
+  const owner = React.useContext(ModalOwnerContext)
   const idRef = React.useRef<LayerID>(Symbol("modal-layer"))
   const snapshot = React.useSyncExternalStore(subscribe, getLayers, () => emptyLayers)
 
-  React.useLayoutEffect(() => registerLayer(idRef.current, initialFocusTarget), [])
+  React.useLayoutEffect(() => registerLayer(idRef.current, initialFocusTarget, owner), [])
 
   const registeredIndex = snapshot.indexOf(idRef.current)
   const index = registeredIndex >= 0 ? registeredIndex : snapshot.length
@@ -133,7 +150,26 @@ function useModalLayer(initialFocusTarget: HTMLElement | null) {
     ? index === snapshot.length - 1
     : snapshot.length === 0
 
-  return { index, isTopmost }
+  return { id: idRef.current, index, isTopmost, count: snapshot.length }
+}
+
+function PopoverLayer({ children }: { children: React.ReactNode }) {
+  const owner = React.useContext(ModalOwnerContext)
+  const snapshot = React.useSyncExternalStore(subscribe, getLayers, () => emptyLayers)
+  const index = owner ? snapshot.indexOf(owner) : -1
+  const active = owner ? index >= 0 && index === snapshot.length - 1 : snapshot.length === 0
+  return <div
+    data-popover-layer=""
+    data-popover-active={active ? 'true' : 'false'}
+    className="popover-layer"
+    inert={!active}
+    aria-hidden={active ? undefined : true}
+    style={{ '--popover-owner-index': index } as React.CSSProperties}
+  >{children}</div>
+}
+
+export function createPopoverPortal(children: React.ReactNode, container: Element | DocumentFragment) {
+  return createPortal(<PopoverLayer>{children}</PopoverLayer>, container)
 }
 
 function focusableElements(panel: HTMLElement) {
@@ -158,6 +194,7 @@ export interface ModalSurfaceProps {
   ariaLabelledBy?: string
   restoreFocus?: HTMLElement | null
   portal?: boolean
+  surfaceMotion?: SurfaceMotion
 }
 
 export function ModalSurface({
@@ -169,6 +206,7 @@ export function ModalSurface({
   ariaLabelledBy,
   restoreFocus,
   portal = true,
+  surfaceMotion = "form",
 }: ModalSurfaceProps) {
   const shouldReduceMotion = useReducedMotion()
   const [isPresent, safeToRemove] = usePresence()
@@ -177,7 +215,8 @@ export function ModalSurface({
     ? document.activeElement
     : null
   const previousFocusRef = React.useRef<HTMLElement | null>(restoreFocus || focusBeforeRender)
-  const { index, isTopmost } = useModalLayer(previousFocusRef.current)
+  const { id, index, isTopmost, count } = useModalLayer(previousFocusRef.current)
+  useSurfaceResize(panelRef, !shouldReduceMotion && isPresent && isTopmost, surfaceMotion)
   const capturedFocusRef = React.useRef(Boolean(restoreFocus || focusBeforeRender))
   const onCloseRef = React.useRef(onClose)
   const isTopmostRef = React.useRef(isTopmost)
@@ -217,6 +256,8 @@ export function ModalSurface({
       if (!panel || !isTopmostRef.current) return
       if (isInsidePopover(target) || isInsidePopover(document.activeElement)) return
       if (event.key === "Escape") {
+        const activePopover = document.querySelector('[data-popover-active="true"]')
+        if (activePopover?.querySelector(POPOVER_SELECTOR) || panel.querySelector(POPOVER_SELECTOR)) return
         event.preventDefault()
         event.stopPropagation()
         onCloseRef.current()
@@ -279,9 +320,9 @@ export function ModalSurface({
   }, [])
 
   const reducedPanelState = { opacity: 1 }
-  const panelInitial = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 14, scale: 0.96 }
+  const panelInitial = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }
   const panelAnimate = shouldReduceMotion ? reducedPanelState : { opacity: 1, y: 0, scale: 1 }
-  const panelExit = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.97 }
+  const panelExit = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 5, scale: 0.99 }
   const panelTarget = isPresent ? panelAnimate : panelExit
   const layerStyle = { "--dialog-layer-index": index } as React.CSSProperties
 
@@ -300,7 +341,7 @@ export function ModalSurface({
           if (isTopmostRef.current && event.target === event.currentTarget) onCloseRef.current()
         }}
         initial={{ opacity: 0 }}
-        animate={{ opacity: isPresent ? 1 : 0 }}
+        animate={{ opacity: isPresent || count > 1 ? 1 : 0 }}
         exit={{ opacity: 0 }}
         transition={{ duration: shouldReduceMotion ? 0.01 : 0.22, ease: BACKDROP_EASE as any }}
         aria-hidden="true"
@@ -319,7 +360,7 @@ export function ModalSurface({
         exit={panelExit}
         transition={{ duration: shouldReduceMotion ? 0.01 : 0.28, ease: APPICA_SPRING as any }}
       >
-        {children}
+        <ModalOwnerContext.Provider value={id}>{children}</ModalOwnerContext.Provider>
       </m.section>
     </m.div>
   )

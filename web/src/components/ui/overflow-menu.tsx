@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { createPopoverPortal as createPortal } from './modal-layer'
 import { MoreHorizontal } from 'lucide-react'
 
 type IconComponent = React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean | 'true' | 'false' }>

@@ -90,7 +90,7 @@ export function NetworkDiagnosticsTab({ server, client, notify, disabled, disabl
         {result ? (
           <details className="task-details" style={{marginTop:12}} open>
             <summary>详细输出</summary>
-            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', maxHeight:420, overflow:'auto', background:'var(--surface-2)', padding:12, borderRadius:8}}>{JSON.stringify(result, null, 2)}</pre>
+            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', maxHeight:420, overflow:'auto', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{JSON.stringify(result, null, 2)}</pre>
             {result?.ip_addr || result?.ip_route ? (
               <div style={{marginTop:10}}>
                 {result.ip_addr && <><strong>ip addr</strong><pre>{typeof result.ip_addr==='string'? result.ip_addr : JSON.stringify(result.ip_addr,null,2)}</pre></>}

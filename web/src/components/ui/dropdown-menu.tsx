@@ -1,6 +1,9 @@
 import * as React from "react"
+import { createPopoverPortal } from "./modal-layer"
 
 interface DropdownContextType {
+  anchorRef: React.RefObject<HTMLDivElement | null>
+  contentRef: React.RefObject<HTMLDivElement | null>
   isOpen: boolean
   setIsOpen: (open: boolean) => void
 }
@@ -10,19 +13,30 @@ const DropdownContext = React.createContext<DropdownContextType | null>(null)
 export function Dropdown({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
+      if (ref.current && !ref.current.contains(event.target as Node) && !contentRef.current?.contains(event.target as Node)) {
         setIsOpen(false)
       }
     }
+    if (!isOpen) return
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setIsOpen(false)
+      ref.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    }
     document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [])
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [isOpen])
 
   return (
-    <DropdownContext.Provider value={{ isOpen, setIsOpen }}>
+    <DropdownContext.Provider value={{ isOpen, setIsOpen, anchorRef: ref, contentRef }}>
       <div ref={ref} className="relative inline-block text-left">
         {children}
       </div>
@@ -35,6 +49,8 @@ export function DropdownTrigger({ children }: { children: React.ReactNode }) {
   if (!context) throw new Error("DropdownTrigger must be used within Dropdown")
 
   return React.cloneElement(children as React.ReactElement<any>, {
+    "aria-haspopup": "menu",
+    "aria-expanded": context.isOpen,
     onClick: (e: React.MouseEvent) => {
       e.preventDefault()
       context.setIsOpen(!context.isOpen)
@@ -50,17 +66,47 @@ export function DropdownContent({ children, align = "right", className = "", ...
   const context = React.useContext(DropdownContext)
   if (!context) throw new Error("DropdownContent must be used within Dropdown")
 
-  if (!context.isOpen) return null
+  const [position, setPosition] = React.useState<React.CSSProperties>({ visibility: 'hidden' })
+  const { isOpen, anchorRef, contentRef } = context
+  React.useLayoutEffect(() => {
+    if (!isOpen) return
+    const place = () => {
+      const anchor = anchorRef.current?.getBoundingClientRect()
+      const menu = contentRef.current
+      if (!anchor || !menu) return
+      const width = menu.offsetWidth
+      const height = menu.offsetHeight
+      setPosition({
+        position: 'fixed',
+        left: Math.max(8, Math.min(align === 'left' ? anchor.left : anchor.right - width, window.innerWidth - width - 8)),
+        top: anchor.bottom + height + 6 <= window.innerHeight - 8 ? anchor.bottom + 6 : Math.max(8, anchor.top - height - 6),
+        maxHeight: 'calc(100dvh - 16px)',
+        maxWidth: 'calc(100vw - 16px)',
+        overflowY: 'auto',
+      })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [isOpen, align, anchorRef, contentRef])
+  if (!isOpen) return null
 
-  const alignClass = align === "left" ? "left-0" : "right-0"
-
-  return (
+  return createPopoverPortal(
     <div
-      className={`absolute ${alignClass} z-50 mt-2 w-56 origin-top-right rounded-xl border border-border bg-popover p-1.5 text-foreground shadow-lg backdrop-blur-md ring-1 ring-black/5 dark:ring-white/10 focus:outline-none dropdown-menu-content ${className}`}
+      ref={contentRef}
+      data-popover="true"
+      role="menu"
+      style={position}
+      className={`fixed w-56 origin-top-right rounded-xl border border-border bg-popover p-1.5 text-foreground shadow-lg backdrop-blur-md ring-1 ring-black/5 dark:ring-white/10 focus:outline-none dropdown-menu-content ${className}`}
       {...props}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -84,6 +130,7 @@ export function DropdownItem({
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={() => {
         if (!disabled && onClick) {
           onClick()

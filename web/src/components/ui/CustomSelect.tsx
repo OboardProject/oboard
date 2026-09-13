@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { createPopoverPortal as createPortal } from './modal-layer'
 import { ChevronDown, Check } from 'lucide-react'
 
 export interface CustomSelectOption {

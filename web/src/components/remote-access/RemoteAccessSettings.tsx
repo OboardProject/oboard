@@ -334,7 +334,7 @@ function RemoteAccessServerDialog({
         </div>
         {/* Global MCP status banners per spec §7 */}
         {!loading && !loadError && rows.length > 0 && globalMcp && mcpConfiguredCount === 0 ? (
-          <div className="remote-access-global-warning" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: 'var(--warning-bg, #fef3c7)', border: '1px solid #f59e0b', color: '#92400e', fontSize: 13 }}>
+          <div className="remote-access-global-warning" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--warning-bg, #fef3c7)', border: '1px solid #f59e0b', color: '#92400e', fontSize: 13 }}>
             <AlertTriangle size={16} aria-hidden="true" />
             <span>MCP 远程控制总开关已开启，但当前没有任何服务器授权 MCP 远程控制。</span>
           </div>

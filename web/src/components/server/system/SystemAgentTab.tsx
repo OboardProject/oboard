@@ -56,7 +56,7 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
             <button type="button" onClick={()=>void handleEnroll()} disabled={loading || disabled}>{loading? '生成中...':'生成接入命令'}</button>
             {token ? (
               <div style={{marginTop:12}}>
-                <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:8}}>{agentScriptCommand(controllerURL,'install', token, server)}</pre>
+                <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{agentScriptCommand(controllerURL,'install', token, server)}</pre>
                 <div style={{marginTop:8, display:'flex', gap:8}}>
                   <CopyButton value={agentScriptCommand(controllerURL,'install', token, server)} label="复制接入命令" />
                 </div>
@@ -107,7 +107,7 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
         </div>
         {token ? (
           <div style={{marginTop:12}}>
-            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:8}}>{agentScriptCommand(controllerURL,'install', token, server)}</pre>
+            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{agentScriptCommand(controllerURL,'install', token, server)}</pre>
             <CopyButton value={agentScriptCommand(controllerURL,'install', token, server)} label="复制接入命令" />
           </div>
         ) : null}

@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { createPortal } from 'react-dom'
+import { createPopoverPortal as createPortal } from '../ui/modal-layer'
 import { ChevronRight } from 'lucide-react'
 
 export type ScopeNode = {

@@ -1,6 +1,7 @@
 import * as React from "react"
 import { m, useReducedMotion } from "motion/react"
 import { ModalSurface } from "./modal-layer"
+import type { SurfaceMotion } from "./surface-motion"
 
 const easeOut = [0.22, 1, 0.36, 1] as const
 const easeIn = [0.4, 0, 1, 1] as const
@@ -46,6 +47,7 @@ export function MotionDialogPanel({
   className = "",
   ariaLabel = "对话框",
   restoreFocus,
+  surfaceMotion,
   "aria-labelledby": ariaLabelledBy,
 }: {
   onCancel: () => void
@@ -53,6 +55,7 @@ export function MotionDialogPanel({
   className?: string
   ariaLabel?: string
   restoreFocus?: HTMLElement | null
+  surfaceMotion?: SurfaceMotion
   "aria-labelledby"?: string
 }) {
   return (
@@ -62,6 +65,7 @@ export function MotionDialogPanel({
       ariaLabel={ariaLabel}
       ariaLabelledBy={ariaLabelledBy}
       restoreFocus={restoreFocus}
+      surfaceMotion={surfaceMotion}
     >
       {children}
     </ModalSurface>

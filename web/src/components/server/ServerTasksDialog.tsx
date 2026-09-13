@@ -68,7 +68,7 @@ export function ServerTasksDialog({ server, client, onClose }: { server: Server;
             </dl>
             <details className="task-details" open style={{marginTop:12}}>
               <summary>原始结果</summary>
-              <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:10, borderRadius:8, maxHeight:360, overflow:'auto'}}>{(() => { try{ return JSON.stringify(JSON.parse(selected.result_json||'{}'), null, 2)}catch{return selected.result_json||'—'}})()}</pre>
+              <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:10, borderRadius:'var(--radius-sm)', maxHeight:360, overflow:'auto'}}>{(() => { try{ return JSON.stringify(JSON.parse(selected.result_json||'{}'), null, 2)}catch{return selected.result_json||'—'}})()}</pre>
             </details>
             <button type="button" className="ghost" style={{marginTop:10}} onClick={()=>setSelected(null)}>关闭详情</button>
           </div>

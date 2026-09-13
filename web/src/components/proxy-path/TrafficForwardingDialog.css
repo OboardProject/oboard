@@ -156,7 +156,7 @@
   height: 30px;
   color: var(--muted);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 
@@ -175,7 +175,7 @@
 .traffic-forwarding-server-icon[data-online="true"]::after { background: var(--success); }
 
 .traffic-forwarding-server-icon .region-flag {
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   object-fit: cover;
 }
 
@@ -191,7 +191,7 @@
 }
 
 .traffic-forwarding-route-title-wrap .region-flag {
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   object-fit: cover;
 }
 
@@ -224,7 +224,7 @@
   color: var(--muted);
   text-align: center;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: 9.5px;
   line-height: 1.35;
@@ -433,7 +433,7 @@
   color: var(--text-strong);
   text-align: center;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   font-size: 9.5px;
   font-weight: 750;
@@ -504,7 +504,7 @@
   height: 30px;
   min-height: 30px;
   padding: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
 }
 
 .traffic-forwarding-empty {

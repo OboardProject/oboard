@@ -1084,7 +1084,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
               <div className="animate-page-in" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {failedPendingChange ? (
-                  <div className="plan-detail-failure" role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--color-danger)', borderRadius: 6 }}>
+                  <div className="plan-detail-failure" role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '10px 12px', border: '1px solid var(--color-danger)', borderRadius: 'var(--radius-sm)' }}>
                     <div>
                       <strong style={{ color: 'var(--color-danger)' }}>上一次节点变更应用失败</strong>
                       <p style={{ margin: '2px 0 0', fontSize: 12 }}>{failedPendingChange.error || `变更 #${failedPendingChange.id} 未能完成`}。你可以重试原变更，也可以直接修改并保存；新保存会自动取代这次失败，不会被它阻塞。</p>

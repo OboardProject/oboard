@@ -179,6 +179,24 @@ describe('Dialog modal stack', () => {
     expect(document.querySelector('[aria-label="动效弹窗"]')).toBeNull()
   })
 
+  it('dismisses a portaled menu before its containing dialog', async () => {
+    const { Dropdown, DropdownTrigger, DropdownContent, DropdownItem } = await import('./dropdown-menu')
+    const onClose = vi.fn()
+    await act(async () => root.render(<Dialog isOpen onClose={onClose} title="设置">
+      <Dropdown><DropdownTrigger><button>更多设置</button></DropdownTrigger>
+        <DropdownContent><DropdownItem>菜单操作</DropdownItem></DropdownContent>
+      </Dropdown>
+    </Dialog>))
+    const trigger = Array.from(document.querySelectorAll('button')).find(button => button.textContent === '更多设置')!
+    await act(async () => trigger.click())
+    expect(document.querySelector('[data-popover-active="true"] [role="menu"]')).not.toBeNull()
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="menu"]')).toBeNull()
+    act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('traps forward and reverse Tab navigation inside the top dialog', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(
@@ -198,5 +216,36 @@ describe('Dialog modal stack', () => {
 
     act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })))
     expect(document.activeElement).toBe(last)
+  })
+})
+
+// Nested surfaces can mount in one React commit (child effects run first).
+describe('nested surface ownership', () => {
+  it('keeps the child above its parent and suspends the parent menu', async () => {
+    const { createPopoverPortal } = await import('./modal-layer')
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+    function Menu() {
+      return createPopoverPortal(<div role="menu"><button>菜单操作</button></div>, document.body)
+    }
+    try {
+      await act(async () => root.render(
+        <Dialog isOpen onClose={() => {}} title="父窗口">
+          <Menu />
+          <Dialog isOpen onClose={() => {}} title="子窗口"><button>子操作</button></Dialog>
+        </Dialog>,
+      ))
+      const top = document.querySelector('[data-modal-top="true"] [role="dialog"]')!
+      expect(top.textContent).toContain('子窗口')
+      expect(document.querySelector('[data-popover-layer]')?.getAttribute('data-popover-active')).toBe('false')
+      expect(document.querySelector<HTMLElement>('[data-popover-layer]')?.hasAttribute('inert')).toBe(true)
+      expect(Array.from(document.querySelectorAll('[data-modal-index]')).map(node => node.getAttribute('data-modal-index')).sort()).toEqual(['0', '1'])
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+      ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = false
+    }
   })
 })

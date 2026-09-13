@@ -2,6 +2,7 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import { AnimatePresence } from "motion/react"
 import { ModalSurface } from "./modal-layer"
+import type { SurfaceMotion } from "./surface-motion"
 
 export interface DialogProps {
   isOpen: boolean
@@ -11,6 +12,7 @@ export interface DialogProps {
   className?: string
   size?: "default" | "sm" | "lg" | "xl"
   footer?: React.ReactNode
+  surfaceMotion?: SurfaceMotion
 }
 
 export function Dialog({
@@ -21,6 +23,7 @@ export function Dialog({
   className = "",
   size = "default",
   footer,
+  surfaceMotion,
 }: DialogProps) {
   const titleID = React.useId()
   const sizeClasses = {
@@ -42,6 +45,7 @@ export function Dialog({
           ariaLabelledBy={title ? titleID : undefined}
           ariaLabel={title ? undefined : "对话框"}
           portal={false}
+          surfaceMotion={surfaceMotion ?? (isCompact ? "compact" : "form")}
         >
           {title && (
             <div className={`dialog-chrome-head flex items-center justify-between gap-3 ${isCompact ? "" : "border-b border-border pb-4 mb-4"}`}>

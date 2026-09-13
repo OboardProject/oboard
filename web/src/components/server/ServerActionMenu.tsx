@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { createPopoverPortal as createPortal } from '../ui/modal-layer'
 import { Info, SlidersHorizontal, SquareTerminal, Network, Settings2, ClipboardList, Trash2, Terminal, Gauge, RefreshCw, MoreVertical } from 'lucide-react'
 import type { Server } from '../proxy-path/types'
 

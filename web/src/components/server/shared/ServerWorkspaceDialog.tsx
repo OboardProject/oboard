@@ -43,7 +43,7 @@ export function ServerWorkspaceDialog({ server, title, tabs, activeTab, onTabCha
   const status = serverStatusLabel(server)
   const region = serverRegionCodeLocal(server)
   return (
-    <MotionDialogPanel onCancel={onClose} className="server-workspace-dialog">
+    <MotionDialogPanel onCancel={onClose} className="server-workspace-dialog" surfaceMotion="workspace" ariaLabel={title}>
       <header className="server-workspace-header">
         <div className="server-workspace-title">
           <RegionFlagInline code={region} size={22} />

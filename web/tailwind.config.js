@@ -10,9 +10,14 @@ export default {
   theme: {
     extend: {
       borderRadius: {
-        lg: "var(--radius-lg, 12px)",
-        md: "var(--radius-md, 8px)",
-        sm: "var(--radius-sm, 6px)",
+        DEFAULT: "var(--radius-xs)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+        '2xl': "var(--radius-xl)",
+        '3xl': "var(--radius-xl)",
+        full: "var(--radius-full)",
       },
       colors: {
         border: "var(--border)",
