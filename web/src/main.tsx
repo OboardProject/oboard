@@ -6820,6 +6820,9 @@ function AIAuditReviews({ data, client, notify }: any) {
   const dialogs = useDialogs()
   const [providers, setProviders] = useState<any[]>([])
   const [reviews, setReviews] = useState<AuditReview[]>([])
+  const reviewsRef = useRef(reviews)
+  reviewsRef.current = reviews
+  const mutations = useMutationCoordinator(useRefreshResources())
   const [loadingReviews, setLoadingReviews] = useState(true)
   const [working, setWorking] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
@@ -6945,16 +6948,24 @@ function AIAuditReviews({ data, client, notify }: any) {
     })
     if (!confirmed) return
     setWorking(`delete-${review.id}`)
-    try {
-      await client.request(`/audit/ai-reviews/${review.id}`, { method: 'DELETE' })
+    const outcome = await mutations.submit({
+      key: `audit-review:${review.id}`,
+      resources: ['audit'],
+      optimistic: () => {
+        const previous = reviewsRef.current
+        setReviews(current => current.filter(item => item.id !== review.id))
+        return () => setReviews(previous)
+      },
+      run: () => client.request(`/audit/ai-reviews/${review.id}`, { method: 'DELETE' }),
+    })
+    setWorking('')
+    if (outcome.outcome === 'superseded') return
+    if (outcome.outcome === 'applied') {
       if (detail?.review.id === review.id) setDetail(null)
-      setReviews(current => current.filter(item => item.id !== review.id))
       notify?.('AI 审查记录已删除', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
+      return
     }
+    notify?.(describeMutationOutcome(outcome, '删除 AI 审查记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
   }
   const toggleEvidence = (value: string) => setDraft(current => ({ ...current, evidenceTypes: current.evidenceTypes.includes(value) ? current.evidenceTypes.filter(item => item !== value) : [...current.evidenceTypes, value] }))
   const selectedProvider = providers.find(item => item.id === draft.providerID)
@@ -19368,6 +19379,7 @@ function DNSListDialog({ draft, setDraft, editing, saving, onCancel, onSave }: {
 }
 
 function DNSListSettings({ data, client, load, notify }: any) {
+  const mutations = useMutationCoordinator(useRefreshResources())
   const dialogs = useDialogs()
   const lists: DNSList[] = data.dns_lists || []
   const [filter, setFilter] = useState<DNSListKind>('encrypted')
@@ -19405,7 +19417,14 @@ function DNSListSettings({ data, client, load, notify }: any) {
   const removeList = async (list: DNSList) => {
     const ok = await dialogs.confirm({ title: '删除服务列表', message: `确认删除 ${list.name}？`, confirmText: '删除', tone: 'danger' })
     if (!ok) return
-    try { await client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }); notify?.('解析服务列表已删除', 'success') } catch (error: any) { notify?.(localizeErrorMessage(error?.message || error), 'error') }
+    const outcome = await mutations.submit({
+      key: `dns-list:${list.id}`,
+      resources: ['dns'],
+      run: () => client.request(`/dns-lists/${list.id}`, { method: 'DELETE' }),
+    })
+    if (outcome.outcome === 'superseded') return
+    if (outcome.outcome === 'applied') { notify?.('解析服务列表已删除', 'success'); return }
+    notify?.(describeMutationOutcome(outcome, '删除解析服务列表'), outcome.outcome === 'unknown' ? 'warning' : 'error')
   }
   const listMenuGroups = (list: DNSList): OverflowMenuGroup[] => [
     {

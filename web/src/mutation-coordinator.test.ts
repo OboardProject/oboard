@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createMutationCoordinator, isDefiniteFailure } from './mutation-coordinator'
+import { createMutationCoordinator, describeMutationOutcome, isDefiniteFailure } from './mutation-coordinator'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -121,5 +121,19 @@ describe('mutation coordinator', () => {
     await running
     expect(coordinator.state().pending).toBe(0)
     expect(seen).toEqual([1, 0])
+  })
+})
+
+describe('mutation outcome wording', () => {
+  it('reads as a failure only when the server actually refused', async () => {
+    const coordinator = createMutationCoordinator()
+    const refused = await coordinator.submit({ key: 'a', run: async () => { throw httpError(409) } })
+    expect(describeMutationOutcome(refused, '删除证书')).toContain('删除证书失败')
+
+    const lost = await coordinator.submit({ key: 'b', run: async () => { throw new Error('服务暂时不可用') } })
+    const text = describeMutationOutcome(lost, '删除证书')
+    expect(text).toContain('删除证书的结果未知')
+    expect(text).toContain('服务暂时不可用')
+    expect(text).not.toContain('失败')
   })
 })
