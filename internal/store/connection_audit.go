@@ -1588,7 +1588,25 @@ func inClause(count int) string {
 // batchConnectionAuditReportsForRisk loads the most recent risk-limit reports
 // per user in one query, preserving the per-user ended_at DESC truncation of
 // listConnectionAuditReportsForRisk.
+// connectionAuditRiskReportColumns is the row shape both report loaders below
+// read, kept in one place so the single-user and batch forms cannot drift.
+const connectionAuditRiskReportColumns = `report_id,server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,client_instance_id_hash,
+	source_ip,route_id,source_geo_code,source_country_code,source_country,source_province,source_city,source_isp,geo_database_revision,
+	network,destination,destination_port,outbound_tag,outbound_type,connection_count,closed_count,duration_total_ms,duration_max_ms,
+	upload_bytes,download_bytes,payload_first_at,payload_last_at,duration_le_1s_count,duration_le_5s_count,duration_le_20s_count,duration_gt_20s_count,
+	probe_state,internal_probe,presence_sequence,active_peak,active_at_end,collection_generation,bucket_capacity,dropped_bucket_count,
+	collection_started_at,collection_ended_at,started_at,ended_at,created_at`
+
 func (s *Store) batchConnectionAuditReportsForRisk(ctx context.Context, userIDs []int64, since string, limit int) (map[int64][]model.ConnectionAuditReport, error) {
+	// The risk queue evaluates one user at a time, and for one user the window
+	// function is the same answer as an ordered limit - with none of the work.
+	// row_number() has to number every row in the window before the outer
+	// filter can drop any, so it read and materialised the user's whole day to
+	// return a prefix of it. Ordered by the index instead, SQLite stops once it
+	// has the rows asked for.
+	if len(userIDs) == 1 {
+		return s.connectionAuditReportsForRisk(ctx, userIDs[0], since, limit)
+	}
 	args := []any{since}
 	for _, userID := range userIDs {
 		args = append(args, userID)
@@ -1613,6 +1631,27 @@ func (s *Store) batchConnectionAuditReportsForRisk(ctx context.Context, userIDs 
 			where r.ended_at>=? and r.user_id in (` + inClause(len(userIDs)) + `)
 		) where _rn<=?` // #nosec G201 -- placeholders are generated as ?,? only.
 	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]model.ConnectionAuditReport{}
+	for rows.Next() {
+		item, scanErr := scanConnectionAuditReportRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out[item.UserID] = append(out[item.UserID], item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) connectionAuditReportsForRisk(ctx context.Context, userID int64, since string, limit int) (map[int64][]model.ConnectionAuditReport, error) {
+	rows, err := s.db.QueryContext(ctx, `select `+connectionAuditRiskReportColumns+`
+		from connection_audit_reports
+		where user_id=? and ended_at>=?
+		order by ended_at desc
+		limit ?`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}

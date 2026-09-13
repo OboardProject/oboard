@@ -175,3 +175,67 @@ func TestSharedSourceIPCountIgnoresRepeatedRows(t *testing.T) {
 		t.Fatal("subject missing from overview")
 	}
 }
+
+// The risk queue evaluates one user at a time. For one user the window-function
+// form and the ordered-limit form must return the same rows in the same order;
+// only the work differs, because row_number() numbers the whole window before
+// the outer filter can drop anything.
+func TestSingleUserRiskReportsMatchTheBatchForm(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "risk.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "risk-node", PublicIPv4: "203.0.113.9", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	subject := &model.User{Username: "subject", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
+	if err := db.CreateUser(ctx, subject); err != nil {
+		t.Fatal(err)
+	}
+	other := &model.User{Username: "other", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
+	if err := db.CreateUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Add(-2 * time.Hour)
+	reports := []model.ConnectionAuditReport{}
+	for i := 0; i < 60; i++ {
+		ended := base.Add(time.Duration(i) * time.Minute)
+		for _, userID := range []int64{subject.ID, other.ID} {
+			reports = append(reports, model.ConnectionAuditReport{
+				ReportID: fmt.Sprintf("r-%d-%d", userID, i), ServerID: server.ID, UserID: userID,
+				SourceIP: "198.51.100.5", Network: "tcp", ConnectionCount: int64(i + 1), BucketCapacity: 1,
+				CollectionStartedAt: ended.Add(-time.Minute), CollectionEndedAt: ended,
+				StartedAt: ended.Add(-time.Minute), EndedAt: ended, CreatedAt: ended,
+			})
+		}
+	}
+	if _, err := db.AddConnectionAuditReportsResult(ctx, reports); err != nil {
+		t.Fatal(err)
+	}
+	since := base.Add(-time.Hour).Format(time.RFC3339Nano)
+
+	for _, limit := range []int{5, 25, 1000} {
+		single, err := db.connectionAuditReportsForRisk(ctx, subject.ID, since, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The batch form with two users exercises the window function; the
+		// subject's slice must match what the single-user form returned.
+		batch, err := db.batchConnectionAuditReportsForRisk(ctx, []int64{subject.ID, other.ID}, since, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, want := single[subject.ID], batch[subject.ID]
+		if len(got) != len(want) {
+			t.Fatalf("limit %d: single returned %d reports, batch %d", limit, len(got), len(want))
+		}
+		for i := range got {
+			if got[i].ReportID != want[i].ReportID {
+				t.Fatalf("limit %d: position %d single=%s batch=%s", limit, i, got[i].ReportID, want[i].ReportID)
+			}
+		}
+	}
+}
