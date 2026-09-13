@@ -1986,30 +1986,47 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 	if user := currentUser(r); user != nil {
 		assignedBy = &user.ID
 	}
-	bindings := make([]model.UserPlanBinding, 0, len(req.UserIDs))
-	for _, userID := range req.UserIDs {
+	requestedIDs := append([]int64(nil), req.UserIDs...)
+	// The bindings in force right now, read before anything is staged: prepare
+	// has to keep exactly these alive until the change activates.
+	previous, err := s.store.ListEnabledUserPlanBindings(r.Context(), requestedIDs)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
+	expectedPlans, err := parseExpectedPlanIDs(req.ExpectedPlanIDs, requestedIDs)
+	if err != nil {
+		fail(w, err, 400)
+		return
+	}
+	// A batch is graded per user. One member whose plan changed under the
+	// operator must not discard the other 49 assignments, and it must not be
+	// applied on top of somebody else's change either: it is reported by name
+	// and left as it is.
+	userIDs, conflicts := splitAssignmentConflicts(requestedIDs, previous, expectedPlans)
+	if len(userIDs) == 0 {
+		write(w, http.StatusConflict, map[string]any{
+			"error":             (&store.UserPlanBindingConflictError{UserIDs: conflictUserIDs(conflicts)}).Error(),
+			"conflict":          "user_plan_assignment_changed",
+			"conflict_user_ids": conflictUserIDs(conflicts),
+			"conflicts":         conflicts,
+			"applied":           false,
+		})
+		return
+	}
+	bindings := make([]model.UserPlanBinding, 0, len(userIDs))
+	for _, userID := range userIDs {
 		// Enabled marks this as the binding that will be in force. The row is
 		// stored enabled either way; the projection math needs it too, and
 		// without it the change prepares nothing for the plan being assigned.
 		bindings = append(bindings, model.UserPlanBinding{UserID: userID, PlanID: req.PlanID, Enabled: true, AssignedBy: assignedBy, StartsAt: startsAt, ExpiresAt: expiresAt})
 	}
-	userIDs := append([]int64(nil), req.UserIDs...)
-	// The bindings in force right now, read before anything is staged: prepare
-	// has to keep exactly these alive until the change activates.
-	previous, err := s.store.ListEnabledUserPlanBindings(r.Context(), userIDs)
-	if err != nil {
-		fail(w, err, 500)
-		return
-	}
+	previous = filterBindingsForUsers(previous, userIDs)
+	expectedPlans = filterExpectedPlans(expectedPlans, userIDs)
 	// Two-phase assignment: the new bindings are stored pending, in the same
 	// transaction as the change that activates them, so the plan snapshot keeps
 	// ignoring them until activation while prepare deploys old-union-new
 	// credentials first.
-	expectedPlans, err := parseExpectedPlanIDs(req.ExpectedPlanIDs, userIDs)
-	if err != nil {
-		fail(w, err, 400)
-		return
-	}
 	change, err := s.createUserBindingChange(r.Context(), r, data.config, userIDs, previous, bindings, startsAt, expiresAt, expectedPlans)
 	if err != nil {
 		var conflict *store.UserPlanBindingConflictError
@@ -2030,12 +2047,86 @@ func (s *Server) planAssignmentApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditReq(s, r, "assign", "user-plan", fmt.Sprintf("users=%d plan=%d", len(req.UserIDs), req.PlanID))
-	out := map[string]any{"applied": true, "affected_users": len(selected), "access_change_id": change.ID, "status": change.Status, "queued_tasks": len(change.Targets), "runtime_authorization_mode": s.authorizationMode(r.Context())}
+	out := map[string]any{"applied": true, "affected_users": len(userIDs), "access_change_id": change.ID, "status": change.Status, "queued_tasks": len(change.Targets), "runtime_authorization_mode": s.authorizationMode(r.Context())}
+	if len(conflicts) > 0 {
+		// Partially applied: the response names what was skipped so the panel
+		// can show it instead of reporting a clean success.
+		out["conflicts"] = conflicts
+		out["conflict_user_ids"] = conflictUserIDs(conflicts)
+		out["skipped_users"] = len(conflicts)
+	}
 	if startsAt != nil && startsAt.After(time.Now()) {
 		out["status"] = "scheduled"
 		out["activate_at"] = startsAt
 	}
 	write(w, 200, out)
+}
+
+// assignmentConflict is one user a batch could not touch, with what the caller
+// believed and what is actually in force.
+type assignmentConflict struct {
+	UserID       int64 `json:"user_id"`
+	ExpectedPlan int64 `json:"expected_plan_id"`
+	CurrentPlan  int64 `json:"current_plan_id"`
+}
+
+// splitAssignmentConflicts separates the users this request may still change
+// from the ones somebody else moved in the meantime. With no expectation to
+// check against, every requested user is applicable.
+func splitAssignmentConflicts(userIDs []int64, previous []model.UserPlanBinding, expected map[int64]int64) ([]int64, []assignmentConflict) {
+	if expected == nil {
+		return userIDs, nil
+	}
+	current := map[int64]int64{}
+	for _, binding := range previous {
+		if binding.Enabled {
+			current[binding.UserID] = binding.PlanID
+		}
+	}
+	applicable := make([]int64, 0, len(userIDs))
+	var conflicts []assignmentConflict
+	for _, userID := range userIDs {
+		want, ok := expected[userID]
+		if !ok || want == current[userID] {
+			applicable = append(applicable, userID)
+			continue
+		}
+		conflicts = append(conflicts, assignmentConflict{UserID: userID, ExpectedPlan: want, CurrentPlan: current[userID]})
+	}
+	return applicable, conflicts
+}
+
+func conflictUserIDs(conflicts []assignmentConflict) []int64 {
+	out := make([]int64, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		out = append(out, conflict.UserID)
+	}
+	return out
+}
+
+func filterBindingsForUsers(bindings []model.UserPlanBinding, userIDs []int64) []model.UserPlanBinding {
+	wanted := make(map[int64]bool, len(userIDs))
+	for _, id := range userIDs {
+		wanted[id] = true
+	}
+	out := make([]model.UserPlanBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		if wanted[binding.UserID] {
+			out = append(out, binding)
+		}
+	}
+	return out
+}
+
+func filterExpectedPlans(expected map[int64]int64, userIDs []int64) map[int64]int64 {
+	if expected == nil {
+		return nil
+	}
+	out := make(map[int64]int64, len(userIDs))
+	for _, id := range userIDs {
+		out[id] = expected[id]
+	}
+	return out
 }
 
 // parseExpectedPlanIDs turns the request's string-keyed map into the plan each

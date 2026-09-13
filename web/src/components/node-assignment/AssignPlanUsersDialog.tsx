@@ -105,7 +105,7 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
     setApplyBusy(true)
     setMessage('')
     try {
-      const res = await client.request<{ applied: boolean; affected_users: number; access_change_id: number; status: string; queued_tasks: number; activate_at?: string }>('/users/plan-assignment/apply', {
+      const res = await client.request<{ applied: boolean; affected_users: number; access_change_id: number; status: string; queued_tasks: number; activate_at?: string; skipped_users?: number; conflict_user_ids?: number[] }>('/users/plan-assignment/apply', {
         method: 'POST',
         body: JSON.stringify({
           user_ids: [...userIDs],
@@ -115,9 +115,20 @@ export function AssignPlanUsersDialog({ open, defaultPlanID, plans, users, clien
           ...(expectedPlans ? { expected_plan_ids: expectedPlans } : {}),
         }),
       })
-      notify?.(res.status === 'scheduled'
+      const skipped = res.skipped_users || 0
+      const skippedNames = (res.conflict_user_ids || [])
+        .map(id => users.find(user => user.id === id)?.username || `#${id}`)
+        .join('、')
+      const summary = res.status === 'scheduled'
         ? `已排定套餐分配：变更 #${res.access_change_id}，将于 ${fmtDate(res.activate_at)} 生效`
-        : `已提交套餐分配：变更 #${res.access_change_id}（${res.status}），排队 ${res.queued_tasks} 个任务`, 'success')
+        : `已提交套餐分配：变更 #${res.access_change_id}（${res.status}），排队 ${res.queued_tasks} 个任务`
+      if (skipped > 0) {
+        // Partially applied: the users somebody else moved in between are named
+        // rather than folded into a clean success.
+        notify?.(`${summary}；${skipped} 个用户的套餐已被其他人修改，未包含在本次分配：${skippedNames}`, 'warning')
+      } else {
+        notify?.(summary, 'success')
+      }
       setPreview(null)
       setExpectedPlans(null)
       await onDone()
