@@ -11,6 +11,10 @@ const (
 	databaseMaintenanceTick           = 30 * time.Second
 	databaseMaintenanceTimeout        = 2 * time.Minute
 	databaseMaintenanceCatchUpTimeout = 5 * time.Minute
+	// A deferred index build is one-time and does not block serving, so it is
+	// given room to finish on a slow host instead of being retried from the
+	// start on every boot.
+	deferredIndexMigrationTimeout = 30 * time.Minute
 
 	// Connection presence expires on a much shorter horizon than the hourly
 	// retention sweep, so it gets its own cadence inside the same loop rather
@@ -33,6 +37,11 @@ func (s *Server) StartDatabaseMaintenance(ctx context.Context) {
 		return
 	}
 	defer s.databaseMaintenanceStarted.Store(false)
+	// Deferred index builds run before the first maintenance pass but after the
+	// server is already answering, and on their own budget: they are a one-time
+	// migration over a grown reporting table, not part of the recurring
+	// retention work whose timeout they would otherwise consume.
+	s.migrateDeferredIndexes(ctx)
 	catchUp := s.runDatabaseMaintenance(ctx, true)
 	lastFull := time.Now()
 	ticker := time.NewTicker(databaseMaintenanceTick)
@@ -131,4 +140,27 @@ func (s *Server) runConnectionPresencePrune(ctx context.Context) time.Duration {
 		return presencePruneCatchUpDelay
 	}
 	return presencePruneInterval
+}
+
+// migrateDeferredIndexes completes index migrations that are too large to run
+// while the Controller is starting. A failure is logged and left for the next
+// start: the queries involved stay correct without the new index, so there is
+// nothing to roll back and nothing that must succeed before serving.
+func (s *Server) migrateDeferredIndexes(ctx context.Context) {
+	pending, err := s.store.PendingDeferredIndexes(ctx)
+	if err != nil {
+		log.Printf("check deferred indexes: %v", err)
+		return
+	}
+	if len(pending) == 0 {
+		return
+	}
+	migrateCtx, cancel := context.WithTimeout(ctx, deferredIndexMigrationTimeout)
+	defer cancel()
+	startedAt := time.Now()
+	if err := s.store.MigrateDeferredIndexes(migrateCtx); err != nil {
+		log.Printf("migrate deferred indexes pending=%v after %s: %v", pending, time.Since(startedAt).Round(time.Millisecond), err)
+		return
+	}
+	log.Printf("migrated deferred indexes %v in %s", pending, time.Since(startedAt).Round(time.Millisecond))
 }

@@ -25,6 +25,9 @@ func TestConnectionAuditOverviewIsIndexOnly(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
+	if err := db.MigrateDeferredIndexes(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	rows, err := db.db.QueryContext(ctx, `explain query plan `+connectionAuditOverviewUsersQuery(1), int64(1), "2026-09-13T00:00:00Z")
 	if err != nil {
@@ -58,6 +61,9 @@ func TestSharedSourceProbeIsIndexOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.MigrateDeferredIndexes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	rows, err := db.db.QueryContext(context.Background(), `explain query plan select 1 from connection_audit_reports shared
 		where shared.source_ip=? and shared.user_id<>? and shared.ended_at>=?`, "198.51.100.1", int64(1), "2026-09-13T00:00:00Z")
 	if err != nil {
@@ -89,6 +95,9 @@ func TestConnectionAuditUserIndexIsNotDuplicated(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.MigrateDeferredIndexes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	var count int
 	if err := db.db.QueryRowContext(context.Background(), `select count(*) from sqlite_master where type='index' and name='idx_connection_audit_user_time'`).Scan(&count); err != nil {
 		t.Fatal(err)

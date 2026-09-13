@@ -654,19 +654,11 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_controller_backups_created on controller_backups(created_at desc)`,
 		`create index if not exists idx_traffic_server on traffic_stats(server_id, created_at)`,
 		`create index if not exists idx_traffic_reports_user_period on traffic_reports(user_id, period_key)`,
-		// The per-user risk window aggregate is the heaviest read in the
-		// database: the audit risk queue recomputes a user's 24h overview every
-		// 15 seconds, and a busy user has six figures of rows in that window. A
-		// (user_id, ended_at) index located those rows but held none of the
-		// columns being aggregated, so each one cost a random seek into the
-		// largest table in the database. Measured on a production Controller
-		// with 135k rows in one user's window, the seeks were 3.0s of a 3.7s
-		// query; carrying the aggregated columns in the index removes them.
-		//
-		// This widens the existing B-tree rather than adding one, so the insert
-		// path still maintains the same number of indexes.
-		`drop index if exists idx_connection_audit_user_time`,
-		`create index if not exists idx_connection_audit_user_window on connection_audit_reports(user_id, ended_at desc, source_ip, server_id, connection_count, active_peak)`,
+		// idx_connection_audit_user_window carries the columns the per-user risk
+		// window aggregate reads, so it is answered without seeking the report
+		// table. It is built by MigrateDeferredIndexes rather than here: over a
+		// grown reporting table the build outlasts the window the updater waits
+		// for a starting Controller in. See internal/store/deferred_indexes.go.
 		// Every audit insert updates each index on this table, and the table is
 		// the heaviest writer in the database. A report always satisfies
 		// started_at <= ended_at, so the one caller that wanted a started_at
@@ -674,16 +666,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		// keeping a second B-tree over the same rows.
 		`drop index if exists idx_connection_audit_user_started`,
 		`create index if not exists idx_connection_audit_server_time on connection_audit_reports(server_id, ended_at desc)`,
-		// user_id is carried so the shared-address probe - "does anyone else
-		// report from this address in the window?" - is answered from the index.
-		// Without it, deciding that an address belongs to a single user meant
-		// seeking the table once per row under it, and on a production
-		// Controller the busiest address held 40,507 rows in a 24h window.
-		//
-		// As with the user window index above, this widens an existing B-tree
-		// rather than adding one.
-		`drop index if exists idx_connection_audit_source_time`,
-		`create index if not exists idx_connection_audit_source_window on connection_audit_reports(source_ip, ended_at desc, user_id)`,
+		// idx_connection_audit_source_window carries user_id so the
+		// shared-address probe is answered from the index. Deferred for the same
+		// reason as the user window index above.
 		`create index if not exists idx_connection_audit_time on connection_audit_reports(ended_at desc)`,
 		`create index if not exists idx_traffic_periods_user on traffic_periods(user_id, period_key)`,
 		`create index if not exists idx_traffic_periods_user_started on traffic_periods(user_id, started_at desc)`,

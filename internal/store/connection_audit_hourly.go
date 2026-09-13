@@ -362,31 +362,6 @@ func (s *Store) loadConnectionAuditHourlyBuckets(ctx context.Context, userIDs []
 	return out, rows.Err()
 }
 
-func (s *Store) connectionAuditHourlyDirtyUsers(ctx context.Context, userIDs []int64, since, until time.Time) (map[int64]struct{}, error) {
-	out := map[int64]struct{}{}
-	if len(userIDs) == 0 {
-		return out, nil
-	}
-	args := []any{since.UTC().Format("2006-01-02T15:00:00Z"), until.UTC().Format("2006-01-02T15:00:00Z")}
-	for _, id := range userIDs {
-		args = append(args, id)
-	}
-	rows, err := s.db.QueryContext(ctx, `select distinct user_id from connection_audit_hourly_dirty
-		where utc_hour>=? and utc_hour<? and user_id in (`+inClause(len(userIDs))+`)`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var userID int64
-		if err := rows.Scan(&userID); err != nil {
-			return nil, err
-		}
-		out[userID] = struct{}{}
-	}
-	return out, rows.Err()
-}
-
 // PurgeConnectionAuditHourlyBefore removes hourly rows older than the raw
 // retention window. It never shortens raw report retention.
 func (s *Store) PurgeConnectionAuditHourlyBefore(ctx context.Context, cutoff time.Time) (int64, error) {
@@ -404,4 +379,88 @@ func (s *Store) PurgeConnectionAuditHourlyBefore(ctx context.Context, cutoff tim
 
 func sortAuditHourBuckets(buckets []auditHourBucket) {
 	sort.SliceStable(buckets, func(i, j int) bool { return buckets[i].at.Before(buckets[j].at) })
+}
+
+// connectionAuditMaxRepairedHours bounds how many dirty hours are repaired from
+// raw reports beside the rollup. Beyond it, one aggregate over the whole window
+// is the cheaper shape.
+const connectionAuditMaxRepairedHours = 48
+
+// connectionAuditHourlyDirtyHours returns the dirty hour keys per user in the
+// window, rather than only which users have any.
+func (s *Store) connectionAuditHourlyDirtyHours(ctx context.Context, userIDs []int64, since, until time.Time) (map[int64][]string, error) {
+	out := map[int64][]string{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	args := []any{since.UTC().Format("2006-01-02T15:00:00Z"), until.UTC().Format("2006-01-02T15:00:00Z")}
+	for _, id := range userIDs {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `select user_id,utc_hour from connection_audit_hourly_dirty
+		where utc_hour>=? and utc_hour<? and user_id in (`+inClause(len(userIDs))+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID int64
+		var hour string
+		if err := rows.Scan(&userID, &hour); err != nil {
+			return nil, err
+		}
+		out[userID] = append(out[userID], hour)
+	}
+	return out, rows.Err()
+}
+
+// connectionAuditRawHourBuckets aggregates specific hours from raw reports
+// under the same filters as the rollup, so a stale or missing bucket can be
+// replaced without re-reading the user's whole window.
+func (s *Store) connectionAuditRawHourBuckets(ctx context.Context, userID int64, hours []string) (map[string]float64, error) {
+	out := make(map[string]float64, len(hours))
+	for _, hour := range hours {
+		start := connectionAuditHourStart(hour)
+		if start.IsZero() {
+			continue
+		}
+		end := start.Add(time.Hour)
+		var total float64
+		// ended_at bounds the scan; started_at remains the exact filter. See
+		// RecomputeConnectionAuditHour for why that narrowing is lossless.
+		if err := s.db.QueryRowContext(ctx, `select coalesce(sum(connection_count),0)
+			from connection_audit_reports
+			where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
+				and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
+			userID, start.Format(time.RFC3339Nano), start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&total); err != nil {
+			return nil, err
+		}
+		out[hour] = total
+	}
+	return out, nil
+}
+
+// mergeAuditHourBuckets replaces the named hours in buckets with freshly
+// aggregated values, dropping a stale rollup row for an hour that no longer has
+// any qualifying report.
+func mergeAuditHourBuckets(buckets []auditHourBucket, hours []string, repaired map[string]float64) []auditHourBucket {
+	replaced := make(map[string]struct{}, len(hours))
+	for _, hour := range hours {
+		replaced[hour] = struct{}{}
+	}
+	out := make([]auditHourBucket, 0, len(buckets)+len(repaired))
+	for _, bucket := range buckets {
+		if _, ok := replaced[ConnectionAuditHourKey(bucket.at)]; ok {
+			continue
+		}
+		out = append(out, bucket)
+	}
+	for hour, value := range repaired {
+		if value == 0 {
+			continue
+		}
+		out = append(out, auditHourBucket{at: connectionAuditHourStart(hour), value: value})
+	}
+	sortAuditHourBuckets(out)
+	return out
 }

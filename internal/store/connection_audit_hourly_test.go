@@ -250,3 +250,95 @@ func TestHourlyRecomputeScanIsBoundedByTime(t *testing.T) {
 		t.Fatalf("hourly recompute scans without a time bound:\n%s", plan)
 	}
 }
+
+// An active user always has a dirty current hour. Falling back to raw for the
+// whole 28-day window whenever any hour was dirty meant the rollup was never
+// used for them: on a production Controller that re-aggregated 937k rows every
+// 15 seconds. The repaired path must reach the same buckets as the raw one.
+func TestDirtyHourIsRepairedWithoutRereadingTheWindow(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "hourly.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	user := &model.User{Username: "active-user", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
+	if err := s.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "hourly-node", PublicIPv4: "203.0.113.50", Status: model.ServerOnline}
+	if err := s.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Truncate(time.Hour).Add(30 * time.Minute)
+	reports := []model.ConnectionAuditReport{}
+	for hoursAgo := 0; hoursAgo < 12; hoursAgo++ {
+		started := at.Add(-time.Duration(hoursAgo) * time.Hour)
+		reports = append(reports, model.ConnectionAuditReport{
+			ReportID: "r-" + started.Format("20060102150405"), ServerID: server.ID, UserID: user.ID,
+			SourceIP: "203.0.113.10", Network: "tcp", ConnectionCount: int64(5 + hoursAgo), BucketCapacity: 1,
+			CollectionStartedAt: started, CollectionEndedAt: started.Add(time.Minute),
+			StartedAt: started, EndedAt: started.Add(time.Minute), CreatedAt: started,
+		})
+	}
+	if _, err := s.AddConnectionAuditReportsResult(ctx, reports); err != nil {
+		t.Fatal(err)
+	}
+	// Roll every hour up, then make the current one dirty again with a report
+	// the rollup has not seen - exactly the steady state of an active user.
+	dirty, err := s.ListConnectionAuditHourlyDirty(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range dirty {
+		if err := s.RecomputeConnectionAuditHour(ctx, item.UserID, item.UTCHour, item.DirtyAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetAuditRollupState(ctx, AuditRollupState{BackfillComplete: true, ReadPath: "hourly", AlgorithmVersion: connectionAuditHourlyAlgorithm}); err != nil {
+		t.Fatal(err)
+	}
+	late := at.Add(15 * time.Minute)
+	if _, err := s.AddConnectionAuditReportsResult(ctx, []model.ConnectionAuditReport{{
+		ReportID: "r-late", ServerID: server.ID, UserID: user.ID, SourceIP: "203.0.113.11", Network: "tcp",
+		ConnectionCount: 41, BucketCapacity: 1,
+		CollectionStartedAt: late, CollectionEndedAt: late.Add(time.Minute),
+		StartedAt: late, EndedAt: late.Add(time.Minute), CreatedAt: late,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.connectionAuditHourlyDirtyHours(ctx, []int64{user.ID}, at.Add(-28*24*time.Hour), at.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending[user.ID]) != 1 {
+		t.Fatalf("dirty hours = %v, want only the current one", pending[user.ID])
+	}
+
+	raw, err := s.batchConnectionAuditRobustZBucketsRaw(ctx, []int64{user.ID}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := s.batchConnectionAuditRobustZBuckets(ctx, []int64{user.ID}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := computeConnectionAuditRobustZ(raw[user.ID], at)
+	got := computeConnectionAuditRobustZ(repaired[user.ID], at)
+	if got != want {
+		t.Fatalf("robustZ repaired=%v raw=%v", got, want)
+	}
+	if len(repaired[user.ID]) != len(raw[user.ID]) {
+		t.Fatalf("bucket count repaired=%d raw=%d", len(repaired[user.ID]), len(raw[user.ID]))
+	}
+	// The late report must be reflected, not the stale rollup value.
+	currentKey := ConnectionAuditHourKey(at)
+	for _, bucket := range repaired[user.ID] {
+		if ConnectionAuditHourKey(bucket.at) != currentKey {
+			continue
+		}
+		if bucket.value != 46 {
+			t.Fatalf("current hour = %v, want 46 (5 plus the late 41)", bucket.value)
+		}
+	}
+}

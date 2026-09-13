@@ -1676,14 +1676,23 @@ func (s *Store) batchConnectionAuditRobustZBuckets(ctx context.Context, userIDs 
 	until := currentStart.Add(time.Hour)
 	state, err := s.GetAuditRollupState(ctx)
 	if err == nil && state.BackfillComplete && state.ReadPath == "hourly" && state.AlgorithmVersion == connectionAuditHourlyAlgorithm {
-		dirty, dirtyErr := s.connectionAuditHourlyDirtyUsers(ctx, userIDs, since, until)
+		// A dirty hour invalidates that hour, not the user's whole window.
+		//
+		// Falling back to raw for the entire 28 days as soon as one bucket was
+		// dirty meant the rollup was never used for exactly the users it
+		// matters for: an active user always has a dirty current hour, so every
+		// evaluation re-aggregated every report they had ever filed. On a
+		// production Controller that was 937k rows, every 15 seconds.
+		dirty, dirtyErr := s.connectionAuditHourlyDirtyHours(ctx, userIDs, since, until)
 		if dirtyErr != nil {
 			return nil, dirtyErr
 		}
 		hourlyUsers := make([]int64, 0, len(userIDs))
 		rawUsers := make([]int64, 0)
 		for _, userID := range userIDs {
-			if _, ok := dirty[userID]; ok {
+			// Past a bound the per-hour repair stops being cheaper than one
+			// window aggregate, so a large backlog keeps the old path.
+			if len(dirty[userID]) > connectionAuditMaxRepairedHours {
 				rawUsers = append(rawUsers, userID)
 				continue
 			}
@@ -1697,6 +1706,17 @@ func (s *Store) batchConnectionAuditRobustZBuckets(ctx context.Context, userIDs 
 			}
 			for userID, buckets := range hourly {
 				out[userID] = buckets
+			}
+			for _, userID := range hourlyUsers {
+				hours := dirty[userID]
+				if len(hours) == 0 {
+					continue
+				}
+				repaired, repairErr := s.connectionAuditRawHourBuckets(ctx, userID, hours)
+				if repairErr != nil {
+					return nil, repairErr
+				}
+				out[userID] = mergeAuditHourBuckets(out[userID], hours, repaired)
 			}
 		}
 		if len(rawUsers) > 0 {
