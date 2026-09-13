@@ -411,6 +411,11 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		}
 		return
 	}
+	if len(states) == store.ConfigurationSyncStateBatchSize {
+		// A full batch means more servers are waiting. Ask for another pass
+		// rather than holding them until the next tick.
+		defer s.signalConfigurationReconcile()
+	}
 	claimed := []store.ConfigurationSyncState{}
 	for _, state := range states {
 		ok, claimErr := s.store.ClaimConfigurationSync(ctx, state.ServerID, state.WantedRevision)

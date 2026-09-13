@@ -2,9 +2,11 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
@@ -206,6 +208,46 @@ func TestAuthorizationScopeFollowsGrantedNodes(t *testing.T) {
 	for _, id := range marked {
 		if id != granted.ID && id != other.ID {
 			t.Fatalf("unbinding marked unrelated server %d", id)
+		}
+	}
+}
+
+// TestPendingStatesAreBatchedOldestFirst pins the fairness rule the fleet-wide
+// sweep depends on: one pass prepares a bounded number of servers, and the
+// oldest wanted revision goes first so an earlier save is never starved by a
+// newer one.
+func TestPendingStatesAreBatchedOldestFirst(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "batch.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := 0; i < ConfigurationSyncStateBatchSize+5; i++ {
+		server := &model.Server{Name: fmt.Sprintf("batch-%d", i), AgentID: fmt.Sprintf("agent-%d", i), Status: model.ServerOnline, ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 20000}
+		if err := db.CreateServer(ctx, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for pass := 0; pass < 20; pass++ {
+		intents, err := db.DrainConfigurationSyncIntents(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(intents) == 0 {
+			break
+		}
+	}
+	states, err := db.ListConfigurationSyncStates(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != ConfigurationSyncStateBatchSize {
+		t.Fatalf("one pass returned %d states, want the batch bound %d", len(states), ConfigurationSyncStateBatchSize)
+	}
+	for i := 1; i < len(states); i++ {
+		if states[i].WantedRevision < states[i-1].WantedRevision {
+			t.Fatalf("a newer save was served before an older one: %d before %d", states[i].WantedRevision, states[i-1].WantedRevision)
 		}
 	}
 }

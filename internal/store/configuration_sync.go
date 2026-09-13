@@ -166,9 +166,17 @@ func (s *Store) MarkConfigurationSyncWaiting(ctx context.Context, serverID int64
 	return err
 }
 
+// ConfigurationSyncStateBatchSize bounds how many servers one reconcile pass
+// prepares. Ordering is oldest wanted revision first, so an earlier save is
+// never starved by a newer one, and the caller re-signals while a full batch
+// comes back. Without the bound a fleet-wide mark - the periodic sweep, or one
+// change that really does touch everything - would compute every server's
+// projection in a single pass.
+const ConfigurationSyncStateBatchSize = 64
+
 func (s *Store) ListConfigurationSyncStates(ctx context.Context, now time.Time) ([]ConfigurationSyncState, error) {
 	formattedNow := now.UTC().Format(time.RFC3339Nano)
-	query := fmt.Sprintf(`select server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,ifnull(trigger_reason,''),ifnull(sync_strategy,''),changed_at,updated_at from configuration_sync_states where (state='pending' and (next_retry_at is null or next_retry_at<=?)) or (state='failed' and last_config_version=0 and retry_count<%d and (next_retry_at is null or next_retry_at<=?)) order by wanted_revision,server_id`, ConfigurationSyncMaxPreparationRetries)
+	query := fmt.Sprintf(`select server_id,wanted_revision,wanted_digest,state,last_config_version,last_task_id,retry_count,next_retry_at,last_error,ifnull(trigger_reason,''),ifnull(sync_strategy,''),changed_at,updated_at from configuration_sync_states where (state='pending' and (next_retry_at is null or next_retry_at<=?)) or (state='failed' and last_config_version=0 and retry_count<%d and (next_retry_at is null or next_retry_at<=?)) order by wanted_revision,server_id limit %d`, ConfigurationSyncMaxPreparationRetries, ConfigurationSyncStateBatchSize)
 	rows, err := s.db.QueryContext(ctx, query, formattedNow, formattedNow)
 	if err != nil {
 		return nil, err
