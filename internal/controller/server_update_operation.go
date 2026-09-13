@@ -294,29 +294,29 @@ func (s *Server) registerServerUpdateOperation() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.store.UpdateServer(ctx, next); err != nil {
+		if err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes); err != nil {
 			return nil, err
-		}
-		if request.Changes.TrafficUsedBytes != nil {
-			settings, _ := s.store.ListSettings(ctx)
-			location := trafficLocation(settings)
-			key, start, end := trafficWindow(time.Now(), next.TrafficResetMode, next.TrafficResetDay, time.Time{}, location)
-			window := model.ServerTrafficWindow{Key: key, Start: start, End: end}
-			if err := s.store.SetServerTrafficUsed(ctx, next.ID, *request.Changes.TrafficUsedBytes, window); err != nil {
-				return nil, err
-			}
 		}
 		if err := s.applyServerDeliveryFlags(ctx, next.ID, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled); err != nil {
 			return nil, err
 		}
 		if current.TimeCorrectionMode != next.TimeCorrectionMode {
-			if err := s.store.ResetServerTimeCheck(ctx, next.ID); err != nil {
-				return nil, err
-			}
 			if next.AgentID != "" && next.Status != model.ServerOffline {
 				_, _ = s.queueTimeCheck(ctx, *next, true)
 			}
 		}
 		return map[string]any{"server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}, nil
 	})
+}
+
+func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64) error {
+	if trafficUsed == nil {
+		return s.store.UpdateServer(ctx, server)
+	}
+	settings, err := s.store.ListSettings(ctx)
+	if err != nil {
+		return err
+	}
+	key, start, end := trafficWindow(time.Now(), server.TrafficResetMode, server.TrafficResetDay, time.Time{}, trafficLocation(settings))
+	return s.store.UpdateServerWithTraffic(ctx, server, *trafficUsed, model.ServerTrafficWindow{Key: key, Start: start, End: end})
 }

@@ -11,6 +11,84 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func TestServerUpdateTrafficAndTimeCheckAreAtomic(t *testing.T) {
+	for _, stage := range []string{"traffic", "time_check"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			server := &model.Server{Name: "before", TimeCorrectionMode: model.TimeCorrectionOff}
+			if err := db.CreateServer(ctx, server); err != nil {
+				t.Fatal(err)
+			}
+			window := model.ServerTrafficWindow{Key: "2026-09", Start: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
+			if err := db.SetServerTrafficUsed(ctx, server.ID, 10, window); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.db.ExecContext(ctx, `update server_telemetry set time_check_status='ok' where server_id=?`, server.ID); err != nil {
+				t.Fatal(err)
+			}
+			before, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revision, err := db.ConfigurationRevision(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			column := "period_key"
+			if stage == "time_check" {
+				column = "time_check_status"
+			}
+			if _, err := db.db.ExecContext(ctx, `create trigger reject_extra_update before update of `+column+` on server_telemetry begin select raise(abort,'injected failure'); end`); err != nil {
+				t.Fatal(err)
+			}
+			candidate := *before
+			candidate.Name = "after"
+			candidate.TimeCorrectionMode = model.TimeCorrectionAuto
+			if err := db.UpdateServerWithTraffic(ctx, &candidate, 20, window); err == nil {
+				t.Fatal("injected failure ignored")
+			}
+			after, err := db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Name != before.Name || after.TimeCorrectionMode != before.TimeCorrectionMode || after.TimeCheckStatus != before.TimeCheckStatus || after.TrafficUploadBytes != 10 || !after.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Fatalf("partial update: name=%s mode=%s check=%s traffic=%d", after.Name, after.TimeCorrectionMode, after.TimeCheckStatus, after.TrafficUploadBytes)
+			}
+			if next, err := db.ConfigurationRevision(ctx); err != nil || next != revision {
+				t.Fatalf("failed update advanced revision: %d -> %d %v", revision, next, err)
+			}
+			if _, err := db.db.ExecContext(ctx, `drop trigger reject_extra_update`); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.UpdateServerWithTraffic(ctx, &candidate, 20, window); err != nil {
+				t.Fatal(err)
+			}
+			after, err = db.GetServer(ctx, server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Name != "after" || after.TrafficUploadBytes != 20 || after.TimeCheckStatus != "pending" {
+				t.Fatalf("retry did not commit all changes: %s %d %s", after.Name, after.TrafficUploadBytes, after.TimeCheckStatus)
+			}
+			if _, err := db.db.ExecContext(ctx, `update server_telemetry set time_check_status='ok' where server_id=?`, server.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.UpdateServer(ctx, after); err != nil {
+				t.Fatal(err)
+			}
+			after, err = db.GetServer(ctx, server.ID)
+			if err != nil || after.TimeCheckStatus != "ok" {
+				t.Fatalf("unchanged mode reset verification: %v %v", after, err)
+			}
+		})
+	}
+}
+
 func TestUpdateServerRollsBackAllSettingsAndIntent(t *testing.T) {
 	for _, stage := range []string{"display_tags", "server_telemetry", "server_latency_probe_settings"} {
 		t.Run(stage, func(t *testing.T) {

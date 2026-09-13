@@ -4432,19 +4432,9 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.store.UpdateServer(r.Context(), &v); err != nil {
+		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes); err != nil {
 			fail(w, err, 500)
 			return
-		}
-		if input.TrafficUsedBytes != nil {
-			settings, _ := s.store.ListSettings(r.Context())
-			loc := trafficLocation(settings)
-			k, sTime, eTime := trafficWindow(time.Now(), v.TrafficResetMode, v.TrafficResetDay, time.Time{}, loc)
-			window := model.ServerTrafficWindow{Key: k, Start: sTime, End: eTime}
-			if err := s.store.SetServerTrafficUsed(r.Context(), v.ID, *input.TrafficUsedBytes, window); err != nil {
-				fail(w, err, 500)
-				return
-			}
 		}
 		if err := s.applyServerDeliveryFlags(r.Context(), v.ID, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
 			fail(w, err, 500)
@@ -4462,14 +4452,6 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		s.annotateOneServerDeliveryStatus(r.Context(), updated)
 		response := map[string]any{"server": updated}
-		if current.TimeCorrectionMode != v.TimeCorrectionMode {
-			if err := s.store.ResetServerTimeCheck(r.Context(), v.ID); err != nil {
-				fail(w, err, 500)
-				return
-			}
-			updated, _ = s.store.GetServer(r.Context(), v.ID)
-			response["server"] = updated
-		}
 		if current.TimeCorrectionMode != v.TimeCorrectionMode && strings.TrimSpace(current.AgentID) != "" && current.Status != model.ServerOffline {
 			if task, err := s.queueTimeCheck(r.Context(), *updated, true); err == nil {
 				response["time_check_task"] = task

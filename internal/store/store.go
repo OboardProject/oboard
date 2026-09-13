@@ -2854,6 +2854,14 @@ func (s *Store) createServer(ctx context.Context, v *model.Server, used *int64, 
 }
 
 func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
+	return s.updateServer(ctx, v, nil, model.ServerTrafficWindow{})
+}
+
+func (s *Store) UpdateServerWithTraffic(ctx context.Context, v *model.Server, used int64, window model.ServerTrafficWindow) error {
+	return s.updateServer(ctx, v, &used, window)
+}
+
+func (s *Store) updateServer(ctx context.Context, v *model.Server, used *int64, window model.ServerTrafficWindow) error {
 	if v == nil || v.ID <= 0 {
 		return errors.New("server update requires a server")
 	}
@@ -2883,11 +2891,27 @@ func (s *Store) UpdateServer(ctx context.Context, v *model.Server) error {
 	if _, err := tx.ExecContext(ctx, `update servers set display_tags_json=? where id=?`, displayTagsJSON(v.DisplayTags), v.ID); err != nil {
 		return err
 	}
+	var previousTimeMode string
+	if err := tx.QueryRowContext(ctx, `select time_correction_mode from server_telemetry where server_id=?`, v.ID).Scan(&previousTimeMode); err != nil && err != sql.ErrNoRows {
+		return err
+	}
 	if err := updateServerTelemetrySettingsTx(ctx, tx, v); err != nil {
 		return err
 	}
 	if err := updateServerLatencyProbeSettingsTx(ctx, tx, v); err != nil {
 		return err
+	}
+	if used != nil {
+		if err := setServerTrafficUsed(ctx, tx, v.ID, *used, window); err != nil {
+			return err
+		}
+		v.TrafficUploadBytes, v.TrafficDownloadBytes = uint64(*used), 0
+		v.TrafficPeriodStart, v.TrafficPeriodEnd = window.Start.UTC().Format(time.RFC3339Nano), window.End.UTC().Format(time.RFC3339Nano)
+	}
+	if previousTimeMode != string(v.TimeCorrectionMode) {
+		if _, err := tx.ExecContext(ctx, `update server_telemetry set time_check_status='pending',time_check_error='',time_unsupported_paths_json='[]',time_checked_at=NULL,updated_at=? where server_id=?`, v.UpdatedAt.Format(time.RFC3339Nano), v.ID); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
