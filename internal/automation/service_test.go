@@ -94,7 +94,7 @@ func TestMachineDeniedApprovalPolicyIsEnforced(t *testing.T) {
 	}
 }
 
-func TestLegacyOAuthDeniedPolicyRequiresApprovalInsteadOfRemovingRoleAccess(t *testing.T) {
+func TestOAuthDeniedPolicyRejectsValidation(t *testing.T) {
 	db := openAutomationTestStore(t)
 	principalModel := &model.APIPrincipal{ID: "oauth_legacy_denied", Name: "legacy OAuth", Type: model.APIPrincipalOAuth, Enabled: true, Scopes: []string{"servers:onboard"}, ResourceFilter: json.RawMessage([]byte("{}")), RateLimitPerMinute: 60, MaxConcurrency: 2}
 	if err := db.CreateAPIPrincipal(context.Background(), principalModel); err != nil {
@@ -107,12 +107,15 @@ func TestLegacyOAuthDeniedPolicyRequiresApprovalInsteadOfRemovingRoleAccess(t *t
 		t.Fatal(err)
 	}
 	item := createAutomationTestChangeset(t, service, principal, "legacy-oauth-denied", json.RawMessage([]byte("{}")))
-	validated, err := service.Validate(context.Background(), principal, item.ID)
+	if _, err := service.Validate(context.Background(), principal, item.ID); err == nil || !strings.Contains(err.Error(), "denies") {
+		t.Fatalf("denied OAuth validation err=%v", err)
+	}
+	stored, err := service.Get(context.Background(), item.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if validated.Status != model.ChangesetAwaitingApproval {
-		t.Fatalf("legacy OAuth denied policy status=%s, want awaiting approval", validated.Status)
+	if stored.Status != model.ChangesetDraft {
+		t.Fatalf("denied OAuth plan became approvable: %s", stored.Status)
 	}
 }
 
