@@ -156,6 +156,7 @@ func main() {
 	go app.StartConfigurationReconciler(ctx)
 	go app.StartSubscriptionPlanReconciler(ctx)
 	go app.StartTaskRecoveryScan(ctx)
+	go app.StartServerDeletionWorker(ctx)
 	go app.StartAuditRiskWorker(ctx)
 	go app.StartPlanRuleReconciler(ctx)
 	go app.StartRoutingRuleSetRefresh(ctx)

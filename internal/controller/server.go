@@ -4495,26 +4495,34 @@ func (s *Server) deleteServerRecord(ctx context.Context, id int64, actorID *int6
 	if len(applying) > 0 {
 		return http.StatusConflict, fmt.Errorf("%w: %s", store.ErrPlanVersionApplying, strings.Join(applying, ", "))
 	}
-	for _, inbound := range inbounds {
-		if inbound.ServerID == id {
-			if err := s.deleteDNSInboundRecords(ctx, inbound); err != nil {
-				return http.StatusBadGateway, err
-			}
-		}
+	// Which provider records this server owns can only be answered while the
+	// server still exists, so ownership is captured from local state first and
+	// the provider is called after the record is gone. A DNS provider that is
+	// unreachable used to fail the whole delete with 502 and leave the server
+	// in place; now the deletion is durable and the records are released by
+	// the retrying worker.
+	name := ""
+	if current, err := s.store.GetServer(ctx, id); err == nil {
+		name = current.Name
 	}
-	if err := s.store.DeleteServer(ctx, id); err != nil {
+	payload, err := json.Marshal(s.captureServerDNSOwnership(ctx, id, inbounds))
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	deletion, _, err := s.store.BeginServerDeletion(ctx, id, name, string(payload))
+	if err != nil {
+		return http.StatusInternalServerError, err
+	}
+	if err := s.finishServerDeletion(ctx, deletion); err != nil {
 		if errors.Is(err, store.ErrPlanVersionApplying) {
 			return http.StatusConflict, err
 		}
-		return http.StatusInternalServerError, err
+		if !errors.Is(err, errServerExternalCleanupPending) {
+			// The record itself is still there, so this is a real failure.
+			return http.StatusInternalServerError, err
+		}
+		log.Printf("server delete %d: %v", id, err)
 	}
-	// Every per-server cache entry and lock object goes away with the server.
-	s.forgetLatencyProbePlan(id)
-	s.forgetRemoteAccessStatus(id)
-	s.forgetPresenceAuditState(id)
-	s.forgetAuthorizationLease(id)
-	s.forgetRuntimeUsersSettled(id)
-	s.store.ForgetMetricSampleAdmission(id)
 	_ = s.store.AddAudit(ctx, model.AuditLog{ActorID: actorID, Action: "delete", Target: "server", Detail: fmt.Sprint(id), IP: ip})
 	return 0, nil
 }
