@@ -90,7 +90,7 @@ func TestOpenRestrictsDatabaseFilePermissions(t *testing.T) {
 	}
 }
 
-func TestServerListenModeInterfaceIPv6AndKernelCapabilitiesPersistAndMigrate(t *testing.T) {
+func TestServerListenModeInterfaceIPv6AndKernelCapabilitiesRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "oboard.sqlite")
 	s, err := Open(path)
@@ -131,61 +131,6 @@ func TestServerListenModeInterfaceIPv6AndKernelCapabilitiesPersistAndMigrate(t *
 	}
 	if stored.InterfaceIPv6 != "" {
 		t.Fatalf("empty health report did not clear interface_ipv6: %q", stored.InterfaceIPv6)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dropConfigurationRevisionTriggersForPreviousSchema(t, raw)
-	for _, column := range []string{"listen_mode", "interface_ipv6", "kernel_capabilities_json"} {
-		if _, err := raw.Exec(`alter table servers drop column ` + column); err != nil {
-			t.Fatalf("drop %s: %v", column, err)
-		}
-	}
-	if err := raw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if err := s.Migrate(ctx); err != nil {
-		t.Fatalf("repeat migration: %v", err)
-	}
-	if err := s.CheckHealth(ctx); err != nil {
-		t.Fatalf("health check after migration: %v", err)
-	}
-	columns := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `select name from pragma_table_info('servers')`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		columns[name] = true
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for _, column := range []string{"listen_mode", "interface_ipv6", "kernel_capabilities_json"} {
-		if !columns[column] {
-			t.Errorf("missing migrated column %q", column)
-		}
-	}
-	stored, err = s.GetServer(ctx, server.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.ListenMode != model.ListenModeAuto || stored.InterfaceIPv6 != "" || len(stored.KernelCapabilities) != 0 {
-		t.Fatalf("migrated defaults = listen_mode=%q interface_ipv6=%q capabilities=%v", stored.ListenMode, stored.InterfaceIPv6, stored.KernelCapabilities)
 	}
 }
 

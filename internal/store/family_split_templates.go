@@ -14,20 +14,14 @@ func (s *Store) migrateFamilySplitTemplates(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `create table if not exists family_split_templates (id integer primary key autoincrement, name text not null, created_at text not null, updated_at text not null)`); err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "routing_rules", "family_split_template_id", `alter table routing_rules add column family_split_template_id integer references family_split_templates(id) on delete restrict`); err != nil {
-		return err
-	}
 	pathsExist, err := s.tableExists(ctx, "proxy_paths")
 	if err != nil {
 		return err
 	}
 	if pathsExist {
-		if err := s.ensureColumn(ctx, "proxy_paths", "template_id", `alter table proxy_paths add column template_id integer references family_split_templates(id) on delete cascade`); err != nil {
-			return err
-		}
-		if err := s.ensureColumn(ctx, "proxy_paths", "family", `alter table proxy_paths add column family text not null default ''`); err != nil {
-			return err
-		}
+		// template_id and family are declared by the proxy_paths create table,
+		// so only a database created before they were added there needed them
+		// backfilled. See R-CLEANUP-001.
 		if err := s.ensureNullableProxyPathInbound(ctx); err != nil {
 			return err
 		}

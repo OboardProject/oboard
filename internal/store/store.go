@@ -930,15 +930,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		column string
 		sql    string
 	}{
-		{"subscription_plans", "lock_version", `alter table subscription_plans add column lock_version integer not null default 1`},
-		{"subscription_plans", "current_revision_id", `alter table subscription_plans add column current_revision_id integer references subscription_plan_revisions(id) on delete set null`},
-		{"subscription_plans", "latest_revision_id", `alter table subscription_plans add column latest_revision_id integer references subscription_plan_revisions(id) on delete set null`},
-		{"subscription_plans", "pending_revision_id", `alter table subscription_plans add column pending_revision_id integer references subscription_plan_revisions(id) on delete set null`},
-		{"subscription_plan_revisions", "version_no", `alter table subscription_plan_revisions add column version_no integer`},
-		{"subscription_plan_revisions", "based_on_revision_id", `alter table subscription_plan_revisions add column based_on_revision_id integer`},
-		{"subscription_plan_revisions", "change_kind", `alter table subscription_plan_revisions add column change_kind text not null default ''`},
-		{"subscription_plan_revisions", "change_summary", `alter table subscription_plan_revisions add column change_summary text not null default ''`},
-		{"subscription_plan_revisions", "activation_change_id", `alter table subscription_plan_revisions add column activation_change_id integer`},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.sql); err != nil {
 			return err
@@ -1056,9 +1047,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	if err := s.ensureColumn(ctx, "access_changes", "old_scope_json", `alter table access_changes add column old_scope_json text not null default '{}'`); err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "warp_profiles", "underlay_json", `alter table warp_profiles add column underlay_json text not null default '{}'`); err != nil {
-		return err
-	}
 	if err := s.ensureColumn(ctx, "servers", "network_inventory_json", `alter table servers add column network_inventory_json text not null default ''`); err != nil {
 		return err
 	}
@@ -1075,9 +1063,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.ensureColumn(ctx, "servers", "port_policy_revision", `alter table servers add column port_policy_revision integer not null default 1`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "server_remote_access_policies", "mcp_enabled", `alter table server_remote_access_policies add column mcp_enabled integer not null default 0`); err != nil {
 		return err
 	}
 	if err := s.ensureProxyCredentials(ctx); err != nil {
@@ -1158,61 +1143,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
-	if err := s.ensureColumn(ctx, "certificates", "eab_key_id", `alter table certificates add column eab_key_id text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "certificates", "eab_hmac_key_encrypted", `alter table certificates add column eab_hmac_key_encrypted text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "certificates", "google_eab_credential_id", `alter table certificates add column google_eab_credential_id integer references google_eab_credentials(id) on delete restrict`); err != nil {
-		return err
-	}
 	if _, err := s.db.ExecContext(ctx, `create index if not exists idx_certificates_google_eab_credential on certificates(google_eab_credential_id)`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "controller_backups", "remote_target", `alter table controller_backups add column remote_target text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "ai_providers", "api_format", `alter table ai_providers add column api_format text not null default 'chat_completions'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "ai_providers", "capability_json", `alter table ai_providers add column capability_json text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "ai_providers", "provider_kind", `alter table ai_providers add column provider_kind text not null default 'openai'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "ai_providers", "default_model", `alter table ai_providers add column default_model text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "ai_providers", "routing_strategy", `alter table ai_providers add column routing_strategy text not null default 'ordered_failover'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "ai_audit_review_jobs", "error_detail", `alter table ai_audit_review_jobs add column error_detail text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "name_mode", `alter table proxy_paths add column name_mode text not null default 'auto'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "kind", `alter table proxy_paths add column kind text not null default 'chain'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "branch_source_step_id", `alter table proxy_paths add column branch_source_step_id integer references proxy_path_steps(id) on delete set null`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "name_template_json", `alter table proxy_paths add column name_template_json text not null default '[]'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "exit_region_mode", `alter table proxy_paths add column exit_region_mode text not null default 'auto'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "proxy_paths", "exit_region_code", `alter table proxy_paths add column exit_region_code text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "external_outbounds", "region_mode", `alter table external_outbounds add column region_mode text not null default 'auto'`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "external_outbounds", "region_code", `alter table external_outbounds add column region_code text not null default ''`); err != nil {
 		return err
 	}
 	if err := s.dropColumn(ctx, "proxy_paths", "name", `alter table proxy_paths drop column name`); err != nil {
@@ -1248,9 +1179,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		return err
 	}
 	if err := s.migrateUserPlanBindingDeployTracking(ctx); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "inbounds", "advertise_port", `alter table inbounds add column advertise_port integer not null default 0`); err != nil {
 		return err
 	}
 	// Freeze Snell server PSKs before dropping inbound_users; that table is

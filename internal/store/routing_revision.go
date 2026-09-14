@@ -275,12 +275,6 @@ func (s *Store) migrateTrafficPolicyRevision(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `insert or ignore into traffic_policy_revision(id,revision) values(1,0)`); err != nil {
 		return err
 	}
-	if err := s.ensureColumn(ctx, "configuration_sync_states", "trigger_reason", `alter table configuration_sync_states add column trigger_reason text not null default ''`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "configuration_sync_states", "sync_strategy", `alter table configuration_sync_states add column sync_strategy text not null default ''`); err != nil {
-		return err
-	}
 	return nil
 }
 

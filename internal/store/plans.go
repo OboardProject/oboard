@@ -2565,12 +2565,6 @@ func isUniqueConstraintError(err error) bool {
 // from the old plan-level limit columns and the legacy subscription_plan_nodes
 // table. Fresh databases already have the new schema and skip the backfill.
 func (s *Store) migratePlanRevisions(ctx context.Context) error {
-	if err := s.ensureColumn(ctx, "subscription_plans", "active_revision_id", `alter table subscription_plans add column active_revision_id integer references subscription_plan_revisions(id) on delete set null`); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "subscription_plans", "draft_revision_id", `alter table subscription_plans add column draft_revision_id integer references subscription_plan_revisions(id) on delete set null`); err != nil {
-		return err
-	}
 	rows, err := s.db.QueryContext(ctx, `select id from subscription_plans where active_revision_id is null`)
 	if err != nil {
 		return err
