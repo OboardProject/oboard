@@ -746,7 +746,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
-			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
+			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
 			"enrollment_expires_at": stringValue, "enrollment_token": stringValue,
 		}), "server_ids"
 	case "servers.delete":

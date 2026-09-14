@@ -102,7 +102,7 @@ func (s *Server) issueServerEnrollmentToken(ctx context.Context, serverID int64)
 
 func enrollmentServerView(srv model.Server) map[string]any {
 	return map[string]any{
-		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled,
+		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled, "stealth_enabled": srv.StealthEnabled,
 		"agent_connected": srv.AgentID != "", "status": srv.Status,
 	}
 }
