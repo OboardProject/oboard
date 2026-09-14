@@ -17,8 +17,14 @@ import (
 )
 
 const (
-	connectionAuditRetention   = 30 * 24 * time.Hour
-	connectionAuditRiskWindow  = 15 * time.Minute
+	connectionAuditRetention  = 30 * 24 * time.Hour
+	connectionAuditRiskWindow = 15 * time.Minute
+	// connectionAuditRiskReportLimit bounds how many reports one user's risk
+	// evaluation loads. It is a memory bound, not a statement about the window:
+	// a busy user produces far more than this in a day, and when it is reached
+	// the evidence is the newest prefix of the window rather than all of it.
+	connectionAuditRiskReportLimit = 50000
+
 	connectionAuditPresenceTCP = 120 * time.Second
 	connectionAuditPresenceUDP = 60 * time.Second
 	connectionAuditProbeWindow = 20 * time.Second
@@ -277,7 +283,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		}
 		item.SourceSubnetCount = len(subnetsByUser[item.UserID])
 		item.SharedSourceIPCount = len(sharedIPsByUser[item.UserID])
-		evaluateConnectionAuditUser(item, batch.reportsByUser[item.UserID], batch.episodesByUser[item.UserID], batch.robustZByUser[item.UserID], presence, policy, sharedRoutes, nowTime)
+		evaluateConnectionAuditUser(item, batch.reportsByUser[item.UserID], batch.episodesByUser[item.UserID], batch.robustZByUser[item.UserID], presence, policy, sharedRoutes, nowTime, batch.truncatedUsers[item.UserID])
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
@@ -438,7 +444,7 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 			}
 		}
 		item.SharedSourceIPCount = sharedIPsByUser[item.UserID]
-		evaluateConnectionAuditUser(item, batch.reportsByUser[item.UserID], batch.episodesByUser[item.UserID], batch.robustZByUser[item.UserID], presence, policy, sharedRoutes, nowTime)
+		evaluateConnectionAuditUser(item, batch.reportsByUser[item.UserID], batch.episodesByUser[item.UserID], batch.robustZByUser[item.UserID], presence, policy, sharedRoutes, nowTime, batch.truncatedUsers[item.UserID])
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
@@ -473,7 +479,7 @@ func scanConnectionAuditOverviewUsers(rows *sql.Rows) ([]model.ConnectionAuditUs
 // from its already-loaded inputs. It is the single per-user evaluation shared
 // by the batched overview driver and the parity reference implementation, so
 // batching queries can never drift from the per-user algorithm.
-func evaluateConnectionAuditUser(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, episodes []model.ConnectionProbeEpisode, robustZ float64, presence []model.ConnectionPresenceEvent, policy model.AuditPolicy, sharedRoutes map[string]int, at time.Time) {
+func evaluateConnectionAuditUser(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, episodes []model.ConnectionProbeEpisode, robustZ float64, presence []model.ConnectionPresenceEvent, policy model.AuditPolicy, sharedRoutes map[string]int, at time.Time, truncated bool) {
 	item.UploadBytes, item.DownloadBytes = 0, 0
 	for _, report := range selectedReports {
 		if connectionAuditMeaningfulReport(report) {
@@ -498,7 +504,7 @@ func evaluateConnectionAuditUser(item *model.ConnectionAuditUserSummary, selecte
 		item.RiskWindowStartedAt = &startedAt
 		item.RiskWindowEndedAt = &endedAt
 	}
-	evaluateConnectionAuditRisk(item, selectedReports, robustZ, presence, episodes, policy, strongest, sharedRoutes, at)
+	evaluateConnectionAuditRisk(item, selectedReports, robustZ, presence, episodes, policy, strongest, sharedRoutes, at, truncated)
 }
 
 func (s *Store) ConnectionAuditUserDetail(ctx context.Context, userID int64, windowHours int, policy model.AuditPolicy) (model.ConnectionAuditUserDetail, error) {
@@ -550,7 +556,7 @@ func (s *Store) connectionAuditUserDetailWithEvidence(ctx context.Context, userI
 	if err != nil {
 		return detail, err
 	}
-	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, parseTime(since), 50000)
+	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, parseTime(since), connectionAuditRiskReportLimit)
 	if err != nil {
 		return detail, err
 	}
@@ -633,7 +639,7 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	if err != nil {
 		return nil, err
 	}
-	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, since, 50000)
+	reports, err := s.listConnectionAuditReportsForRisk(ctx, userID, since, connectionAuditRiskReportLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -700,7 +706,9 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 			item.DownloadBytes += report.DownloadBytes
 		}
 	}
-	evaluateConnectionAuditRisk(&item, selected, robustZ, presence, episodes, policy, strongest, sharedRoutes, at)
+	// The same 50,000-row ceiling as the batch path, and the same consequence:
+	// hitting it means the evidence is a prefix of the window, not the window.
+	evaluateConnectionAuditRisk(&item, selected, robustZ, presence, episodes, policy, strongest, sharedRoutes, at, len(reports) >= connectionAuditRiskReportLimit)
 	return &item, nil
 }
 
@@ -1138,7 +1146,7 @@ func auditSubnet(raw string) string {
 	return netip.PrefixFrom(ip, bits).Masked().String()
 }
 
-func evaluateConnectionAuditRisk(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, robustZ float64, presence []model.ConnectionPresenceEvent, episodes []model.ConnectionProbeEpisode, policy model.AuditPolicy, strongest *model.ConnectionAuditRiskEvent, sharedRoutes map[string]int, at time.Time) {
+func evaluateConnectionAuditRisk(item *model.ConnectionAuditUserSummary, selectedReports []model.ConnectionAuditReport, robustZ float64, presence []model.ConnectionPresenceEvent, episodes []model.ConnectionProbeEpisode, policy model.AuditPolicy, strongest *model.ConnectionAuditRiskEvent, sharedRoutes map[string]int, at time.Time, truncated bool) {
 	if item == nil {
 		return
 	}
@@ -1146,7 +1154,7 @@ func evaluateConnectionAuditRisk(item *model.ConnectionAuditUserSummary, selecte
 	item.EvidenceCategories = []string{}
 	item.CounterEvidence = []string{}
 	identityQuality := connectionAuditOnlineDevices(item, selectedReports, presence, at)
-	item.CoverageQuality, item.CoverageComplete = connectionAuditCoverage(selectedReports)
+	item.CoverageQuality, item.CoverageComplete = connectionAuditCoverage(selectedReports, truncated)
 	item.ProbeEpisodeCount = 0
 	probeRecent := 0
 	for _, episode := range episodes {
@@ -1434,9 +1442,17 @@ func connectionAuditMeaningfulPresence(event model.ConnectionPresenceEvent, at t
 	return !event.PayloadLastAt.Before(at.Add(-ttl))
 }
 
-func connectionAuditCoverage(reports []model.ConnectionAuditReport) (float64, bool) {
+// connectionAuditCoverage reports how much of the window the evidence covers.
+//
+// It used to answer only "did the kernel drop buckets", so an evidence set the
+// loader had truncated was still reported as complete. That is the wrong answer
+// twice over: the panel showed a whole-window risk assessment built from a
+// fraction of it, and CoverageComplete gates automatic device restriction, so a
+// restriction could be decided on evidence that silently omitted most of the
+// window.
+func connectionAuditCoverage(reports []model.ConnectionAuditReport, truncated bool) (float64, bool) {
 	if len(reports) == 0 {
-		return 1, true
+		return 1, !truncated
 	}
 	type collectionCoverage struct {
 		capacity int
@@ -1448,7 +1464,7 @@ func connectionAuditCoverage(reports []model.ConnectionAuditReport) (float64, bo
 		collections[key] = collectionCoverage{capacity: max(1, report.BucketCapacity), dropped: max(int64(0), report.DroppedBucketCount)}
 	}
 	quality := 0.0
-	complete := true
+	complete := !truncated
 	for _, coverage := range collections {
 		if coverage.dropped > 0 {
 			complete = false
@@ -1536,6 +1552,11 @@ type connectionAuditOverviewBatch struct {
 	reportsByUser  map[int64][]model.ConnectionAuditReport
 	episodesByUser map[int64][]model.ConnectionProbeEpisode
 	robustZByUser  map[int64]float64
+	// truncatedUsers marks users whose report load hit its limit, so the
+	// evidence behind their risk assessment covers less than the window asked
+	// for. On a production Controller the busiest user had 864,676 reports in a
+	// 30-day window against a 50,000-row limit: the newest 22.6 hours of it.
+	truncatedUsers map[int64]bool
 }
 
 // loadConnectionAuditOverviewBatch replaces the per-user N+1 report, probe
@@ -1548,6 +1569,7 @@ func (s *Store) loadConnectionAuditOverviewBatch(ctx context.Context, userIDs []
 		reportsByUser:  make(map[int64][]model.ConnectionAuditReport, len(userIDs)),
 		episodesByUser: make(map[int64][]model.ConnectionProbeEpisode, len(userIDs)),
 		robustZByUser:  make(map[int64]float64, len(userIDs)),
+		truncatedUsers: make(map[int64]bool, len(userIDs)),
 	}
 	if len(userIDs) == 0 {
 		return out, nil
@@ -1559,12 +1581,15 @@ func (s *Store) loadConnectionAuditOverviewBatch(ctx context.Context, userIDs []
 			end = len(userIDs)
 		}
 		batch := userIDs[offset:end]
-		reports, err := s.batchConnectionAuditReportsForRisk(ctx, batch, sinceText, 50000)
+		reports, err := s.batchConnectionAuditReportsForRisk(ctx, batch, sinceText, connectionAuditRiskReportLimit)
 		if err != nil {
 			return nil, err
 		}
 		for userID, items := range reports {
 			out.reportsByUser[userID] = items
+			if len(items) >= connectionAuditRiskReportLimit {
+				out.truncatedUsers[userID] = true
+			}
 		}
 		episodes, err := s.batchConnectionProbeEpisodes(ctx, batch, sinceText, 200)
 		if err != nil {

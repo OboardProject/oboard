@@ -277,7 +277,7 @@ func legacyConnectionAuditOverviewPerUser(ctx context.Context, t testing.TB, s *
 		if loadErr != nil {
 			t.Fatal(loadErr)
 		}
-		evaluateConnectionAuditUser(item, selectedReports, episodes, robustZ, presence, policy, sharedRoutes, nowTime)
+		evaluateConnectionAuditUser(item, selectedReports, episodes, robustZ, presence, policy, sharedRoutes, nowTime, false)
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
