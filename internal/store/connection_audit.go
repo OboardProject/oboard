@@ -21,7 +21,7 @@ const (
 	// 28-day window robust-Z reads, independently of how long raw reports are
 	// kept.
 	connectionAuditHourlyRetention = 30 * 24 * time.Hour
-	connectionAuditRiskWindow = 15 * time.Minute
+	connectionAuditRiskWindow      = 15 * time.Minute
 	// connectionAuditRiskReportLimit bounds how many reports one user's risk
 	// evaluation loads. It is a memory bound, not a statement about the window:
 	// a busy user produces far more than this in a day, and when it is reached
@@ -1623,6 +1623,86 @@ func inClause(count int) string {
 // batchConnectionAuditReportsForRisk loads the most recent risk-limit reports
 // per user in one query, preserving the per-user ended_at DESC truncation of
 // listConnectionAuditReportsForRisk.
+// connectionAuditEvaluationColumns is the subset of a report the risk
+// evaluation reads.
+//
+// The evaluation path loaded all 47 columns of up to
+// connectionAuditRiskReportLimit rows per user and then read 20 of them. On a
+// production Controller that was 65,013 rows for the busiest user, reloaded
+// every time the queue re-evaluated them, and it was the single largest
+// consumer of Controller CPU.
+//
+// The set below is exactly what evaluateConnectionAuditUser and everything it
+// calls touch - 26 of the 47. A report loaded this way is deliberately partial,
+// which is a real hazard: a risk rule that starts reading a 27th field would
+// silently see a zero value.
+//
+// The guard against that is not this comment but
+// TestConnectionAuditUserDetailUsesSingleUserRiskPath, which compares the
+// summary produced from a full row load against the one produced from this
+// projection and requires them to be identical. Three separate omissions were
+// caught by it while this list was being derived: node identity (inbound_id,
+// outbound_tag), the fanout window (started_at, ended_at) and geo quality
+// (geo_database_revision).
+const connectionAuditEvaluationColumns = `server_id,user_id,inbound_id,outbound_tag,device_id_hash,source_ip,route_id,
+	source_country_code,source_country,source_isp,geo_database_revision,network,connection_count,
+	upload_bytes,download_bytes,payload_first_at,payload_last_at,probe_state,internal_probe,
+	active_peak,bucket_capacity,dropped_bucket_count,collection_generation,collection_ended_at,
+	started_at,ended_at`
+
+func scanConnectionAuditEvaluationRow(rows *sql.Rows) (model.ConnectionAuditReport, error) {
+	var item model.ConnectionAuditReport
+	var payloadFirstAt, payloadLastAt sql.NullString
+	var collectionEndedAt, startedAt, endedAt string
+	var internalProbe int
+	var inboundID sql.NullInt64
+	if err := rows.Scan(&item.ServerID, &item.UserID, &inboundID, &item.OutboundTag, &item.DeviceIDHash, &item.SourceIP, &item.RouteID,
+		&item.SourceCountryCode, &item.SourceCountry, &item.SourceISP, &item.GeoDatabaseRevision, &item.Network, &item.ConnectionCount,
+		&item.UploadBytes, &item.DownloadBytes, &payloadFirstAt, &payloadLastAt, &item.ProbeState, &internalProbe,
+		&item.ActivePeak, &item.BucketCapacity, &item.DroppedBucketCount, &item.CollectionGeneration, &collectionEndedAt,
+		&startedAt, &endedAt); err != nil {
+		return item, err
+	}
+	item.InternalProbe = internalProbe == 1
+	if inboundID.Valid {
+		value := inboundID.Int64
+		item.InboundID = &value
+	}
+	if payloadFirstAt.Valid {
+		item.PayloadFirstAt = parseTime(payloadFirstAt.String)
+	}
+	if payloadLastAt.Valid {
+		item.PayloadLastAt = parseTime(payloadLastAt.String)
+	}
+	item.CollectionEndedAt = parseTime(collectionEndedAt)
+	item.StartedAt = parseTime(startedAt)
+	item.EndedAt = parseTime(endedAt)
+	return item, nil
+}
+
+// connectionAuditEvaluationReports loads one user's reports for risk
+// evaluation, newest first.
+func (s *Store) connectionAuditEvaluationReports(ctx context.Context, userID int64, since string, limit int) ([]model.ConnectionAuditReport, error) {
+	rows, err := s.db.QueryContext(ctx, `select `+connectionAuditEvaluationColumns+`
+		from connection_audit_reports
+		where user_id=? and ended_at>=?
+		order by ended_at desc
+		limit ?`, userID, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.ConnectionAuditReport{}
+	for rows.Next() {
+		item, scanErr := scanConnectionAuditEvaluationRow(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 // connectionAuditRiskReportColumns is the row shape both report loaders below
 // read, kept in one place so the single-user and batch forms cannot drift.
 const connectionAuditRiskReportColumns = `report_id,server_id,user_id,inbound_id,path_id,device_id_hash,credential_epoch,client_instance_id_hash,
@@ -1640,7 +1720,11 @@ func (s *Store) batchConnectionAuditReportsForRisk(ctx context.Context, userIDs 
 	// return a prefix of it. Ordered by the index instead, SQLite stops once it
 	// has the rows asked for.
 	if len(userIDs) == 1 {
-		return s.connectionAuditReportsForRisk(ctx, userIDs[0], since, limit)
+		items, err := s.connectionAuditEvaluationReports(ctx, userIDs[0], since, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[int64][]model.ConnectionAuditReport{userIDs[0]: items}, nil
 	}
 	args := []any{since}
 	for _, userID := range userIDs {
@@ -1666,27 +1750,6 @@ func (s *Store) batchConnectionAuditReportsForRisk(ctx context.Context, userIDs 
 			where r.ended_at>=? and r.user_id in (` + inClause(len(userIDs)) + `)
 		) where _rn<=?` // #nosec G201 -- placeholders are generated as ?,? only.
 	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[int64][]model.ConnectionAuditReport{}
-	for rows.Next() {
-		item, scanErr := scanConnectionAuditReportRow(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		out[item.UserID] = append(out[item.UserID], item)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) connectionAuditReportsForRisk(ctx context.Context, userID int64, since string, limit int) (map[int64][]model.ConnectionAuditReport, error) {
-	rows, err := s.db.QueryContext(ctx, `select `+connectionAuditRiskReportColumns+`
-		from connection_audit_reports
-		where user_id=? and ended_at>=?
-		order by ended_at desc
-		limit ?`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}

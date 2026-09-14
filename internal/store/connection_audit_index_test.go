@@ -218,10 +218,11 @@ func TestSingleUserRiskReportsMatchTheBatchForm(t *testing.T) {
 	since := base.Add(-time.Hour).Format(time.RFC3339Nano)
 
 	for _, limit := range []int{5, 25, 1000} {
-		single, err := db.connectionAuditReportsForRisk(ctx, subject.ID, since, limit)
+		items, err := db.connectionAuditEvaluationReports(ctx, subject.ID, since, limit)
 		if err != nil {
 			t.Fatal(err)
 		}
+		single := map[int64][]model.ConnectionAuditReport{subject.ID: items}
 		// The batch form with two users exercises the window function; the
 		// subject's slice must match what the single-user form returned.
 		batch, err := db.batchConnectionAuditReportsForRisk(ctx, []int64{subject.ID, other.ID}, since, limit)
@@ -232,9 +233,12 @@ func TestSingleUserRiskReportsMatchTheBatchForm(t *testing.T) {
 		if len(got) != len(want) {
 			t.Fatalf("limit %d: single returned %d reports, batch %d", limit, len(got), len(want))
 		}
+		// The narrow loader does not carry report_id, so order is compared on a
+		// column both forms select. The fixture numbers connection_count in
+		// insertion order, which is ended_at order.
 		for i := range got {
-			if got[i].ReportID != want[i].ReportID {
-				t.Fatalf("limit %d: position %d single=%s batch=%s", limit, i, got[i].ReportID, want[i].ReportID)
+			if got[i].ConnectionCount != want[i].ConnectionCount {
+				t.Fatalf("limit %d: position %d narrow=%d batch=%d", limit, i, got[i].ConnectionCount, want[i].ConnectionCount)
 			}
 		}
 	}
@@ -313,5 +317,102 @@ func TestUserRiskAggregateIsIndexOnlyAndCountsMatchedRows(t *testing.T) {
 		where u.id=? group by u.id`, "2026-09-13T00:00:00Z", reported.ID)
 	if !strings.Contains(plan, "COVERING INDEX idx_connection_audit_user_window") {
 		t.Fatalf("user risk aggregate seeks the report table:\n%s", plan)
+	}
+}
+
+// The evaluation loader is deliberately partial: it selects the 20 columns the
+// risk path reads out of the report's 47. This pins both halves of that
+// contract, so adding a field to a risk rule without adding it to
+// connectionAuditEvaluationColumns fails here rather than silently reading a
+// zero value in production.
+func TestEvaluationReportsCarryOnlyWhatTheRiskPathReads(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "narrow.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &model.Server{Name: "narrow-node", PublicIPv4: "203.0.113.60", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "narrow-user", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "narrow-entry", Protocol: model.ProtocolVLESS, ListenIP: "0.0.0.0", Port: 12443, ConfigJSON: "{}", Enabled: true}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC()
+	inboundID := inbound.ID
+	report := model.ConnectionAuditReport{
+		ReportID: "narrow-1", ServerID: server.ID, UserID: user.ID, InboundID: &inboundID,
+		DeviceIDHash: "device-hash", SourceIP: "198.51.100.70", RouteID: "route-7",
+		SourceCountryCode: "SG", SourceCountry: "Singapore", SourceISP: "example", GeoDatabaseRevision: "geo-rev-1",
+		Network: "tcp", ConnectionCount: 4, UploadBytes: 1200, DownloadBytes: 3400,
+		PayloadFirstAt: at.Add(-2 * time.Minute), PayloadLastAt: at.Add(-time.Minute),
+		ProbeState: "", InternalProbe: false, ActivePeak: 3,
+		BucketCapacity: 8, DroppedBucketCount: 2, CollectionGeneration: 11,
+		Destination: "example.com", DestinationPort: 443, OutboundTag: "out-1", ClosedCount: 9,
+		CollectionStartedAt: at.Add(-3 * time.Minute), CollectionEndedAt: at,
+		StartedAt: at.Add(-3 * time.Minute), EndedAt: at, CreatedAt: at,
+	}
+	if _, err := db.AddConnectionAuditReportsResult(ctx, []model.ConnectionAuditReport{report}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := db.connectionAuditEvaluationReports(ctx, user.ID, at.Add(-time.Hour).Format(time.RFC3339Nano), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("loaded %d reports, want 1", len(items))
+	}
+	got := items[0]
+
+	// Everything the risk path reads must survive the narrow projection.
+	for _, check := range []struct {
+		name string
+		ok   bool
+	}{
+		{"ServerID", got.ServerID == server.ID},
+		{"UserID", got.UserID == user.ID},
+		{"DeviceIDHash", got.DeviceIDHash == "device-hash"},
+		{"SourceIP", got.SourceIP == "198.51.100.70"},
+		{"RouteID", got.RouteID == "route-7"},
+		{"SourceCountryCode", got.SourceCountryCode == "SG"},
+		{"SourceCountry", got.SourceCountry == "Singapore"},
+		{"SourceISP", got.SourceISP == "example"},
+		{"Network", got.Network == "tcp"},
+		{"ConnectionCount", got.ConnectionCount == 4},
+		{"UploadBytes", got.UploadBytes == 1200},
+		{"DownloadBytes", got.DownloadBytes == 3400},
+		{"PayloadFirstAt", !got.PayloadFirstAt.IsZero()},
+		{"PayloadLastAt", !got.PayloadLastAt.IsZero()},
+		{"InternalProbe", !got.InternalProbe},
+		{"ActivePeak", got.ActivePeak == 3},
+		{"BucketCapacity", got.BucketCapacity == 8},
+		{"DroppedBucketCount", got.DroppedBucketCount == 2},
+		{"CollectionGeneration", got.CollectionGeneration == 11},
+		{"CollectionEndedAt", !got.CollectionEndedAt.IsZero()},
+		// The node fanout window sorts and slides on these two.
+		{"StartedAt", !got.StartedAt.IsZero()},
+		{"EndedAt", !got.EndedAt.IsZero()},
+		// connectionAuditNode identifies a node by these two.
+		{"InboundID", got.InboundID != nil && *got.InboundID == inbound.ID},
+		{"OutboundTag", got.OutboundTag == "out-1"},
+		// Geo quality is the share of public source IPs that resolved.
+		{"GeoDatabaseRevision", got.GeoDatabaseRevision == "geo-rev-1"},
+	} {
+		if !check.ok {
+			t.Fatalf("%s did not survive the evaluation projection: %#v", check.name, got)
+		}
+	}
+
+	// And the columns it does not read must stay absent, so the projection is
+	// not quietly widened back to the full row.
+	if got.ReportID != "" || got.Destination != "" || got.DestinationPort != 0 || got.ClosedCount != 0 || !got.CollectionStartedAt.IsZero() {
+		t.Fatalf("the evaluation projection carries columns the risk path does not read: %#v", got)
 	}
 }
