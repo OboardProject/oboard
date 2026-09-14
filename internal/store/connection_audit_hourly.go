@@ -12,6 +12,11 @@ import (
 
 const connectionAuditHourlyAlgorithm = 1
 
+// connectionAuditHourlyTotalsVersion is the shape of the extended totals
+// columns. An hourly row carrying this value has every column the window totals
+// read; a row below it predates them and is not counted.
+const connectionAuditHourlyTotalsVersion = 1
+
 // ConnectionAuditHourKey is the canonical UTC hour bucket used by Robust-Z.
 func ConnectionAuditHourKey(at time.Time) string {
 	at = at.UTC()
@@ -89,6 +94,16 @@ func (s *Store) ensureConnectionAuditHourlySchema(ctx context.Context) error {
 		{"dropped_bucket_count", `alter table connection_audit_hourly add column dropped_bucket_count integer not null default 0`},
 		{"capacity_total", `alter table connection_audit_hourly add column capacity_total integer not null default 0`},
 		{"dimensions_complete", `alter table connection_audit_hourly add column dimensions_complete integer not null default 1`},
+		// totals_version marks an hour whose extended columns were actually
+		// computed. Rows written before those columns existed keep 0 and are
+		// excluded from window totals, because their zeros are "not measured",
+		// not "nothing happened" - reading them as totals would make a month
+		// look empty.
+		//
+		// This is deliberately separate from algorithm_version, which the
+		// 28-day robust-Z baseline filters on: bumping that would have hidden
+		// every legacy hour from the baseline as well.
+		{"totals_version", `alter table connection_audit_hourly add column totals_version integer not null default 0`},
 	} {
 		if err := s.ensureColumn(ctx, "connection_audit_hourly", column.name, column.sql); err != nil {
 			return err
@@ -243,8 +258,8 @@ func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, 
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `insert into connection_audit_hourly(user_id,utc_hour,connection_count,report_count,active_peak,
 			upload_bytes,download_bytes,last_ended_at,collection_count,dropped_bucket_count,capacity_total,dimensions_complete,
-			algorithm_version,source_watermark,updated_at)
-		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			totals_version,algorithm_version,source_watermark,updated_at)
+		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		on conflict(user_id,utc_hour) do update set
 			connection_count=excluded.connection_count,
 			report_count=excluded.report_count,
@@ -256,12 +271,13 @@ func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, 
 			dropped_bucket_count=excluded.dropped_bucket_count,
 			capacity_total=excluded.capacity_total,
 			dimensions_complete=excluded.dimensions_complete,
+			totals_version=excluded.totals_version,
 			algorithm_version=excluded.algorithm_version,
 			source_watermark=excluded.source_watermark,
 			updated_at=excluded.updated_at`,
 		userID, utcHour, bucket.ConnectionCount, bucket.ReportCount, bucket.ActivePeak,
 		bucket.UploadBytes, bucket.DownloadBytes, bucket.LastEndedAt, bucket.CollectionCount,
-		bucket.DroppedBucketCount, bucket.CapacityTotal, boolInt(complete),
+		bucket.DroppedBucketCount, bucket.CapacityTotal, boolInt(complete), connectionAuditHourlyTotalsVersion,
 		connectionAuditHourlyAlgorithm, end.Format(time.RFC3339Nano), ts); err != nil {
 		return err
 	}
@@ -644,6 +660,12 @@ type ConnectionAuditWindowTotals struct {
 	RegionCount        int
 	SourceIPs          []string
 	DimensionsComplete bool
+	// CoveredFromHour is the earliest hour in the requested window that
+	// actually carries measured totals. Hours written before the extended
+	// columns existed are excluded, so this can be later than the window start
+	// and the console reports the difference rather than presenting a month of
+	// mostly-unmeasured hours as a month of low activity.
+	CoveredFromHour time.Time
 }
 
 // ConnectionAuditWindowTotalsFromRollup reads window totals for the given users
@@ -656,7 +678,7 @@ func (s *Store) ConnectionAuditWindowTotalsFromRollup(ctx context.Context, userI
 	}
 	fromHour := ConnectionAuditHourKey(since)
 	toHour := ConnectionAuditHourKey(until)
-	args := []any{fromHour, toHour, connectionAuditHourlyAlgorithm}
+	args := []any{fromHour, toHour, connectionAuditHourlyAlgorithm, connectionAuditHourlyTotalsVersion}
 	for _, id := range userIDs {
 		args = append(args, id)
 	}
@@ -670,9 +692,10 @@ func (s *Store) ConnectionAuditWindowTotalsFromRollup(ctx context.Context, userI
 			coalesce(sum(collection_count),0),
 			coalesce(sum(dropped_bucket_count),0),
 			coalesce(sum(capacity_total),0),
-			min(dimensions_complete)
+			min(dimensions_complete),
+			min(utc_hour)
 		from connection_audit_hourly
-		where utc_hour>=? and utc_hour<=? and algorithm_version=? and user_id in (`+inClause(len(userIDs))+`)
+		where utc_hour>=? and utc_hour<=? and algorithm_version=? and totals_version>=? and user_id in (`+inClause(len(userIDs))+`)
 		group by user_id`, args...)
 	if err != nil {
 		return nil, err
@@ -680,13 +703,16 @@ func (s *Store) ConnectionAuditWindowTotalsFromRollup(ctx context.Context, userI
 	defer rows.Close()
 	for rows.Next() {
 		var userID int64
-		var lastEndedAt string
+		var lastEndedAt, earliestHour string
 		var complete sql.NullInt64
 		item := &ConnectionAuditWindowTotals{DimensionsComplete: true}
 		if err := rows.Scan(&userID, &item.ConnectionCount, &item.ReportCount, &item.ActivePeak,
 			&item.UploadBytes, &item.DownloadBytes, &lastEndedAt, &item.CollectionCount,
-			&item.DroppedBucketCount, &item.CapacityTotal, &complete); err != nil {
+			&item.DroppedBucketCount, &item.CapacityTotal, &complete, &earliestHour); err != nil {
 			return nil, err
+		}
+		if earliestHour != "" {
+			item.CoveredFromHour = parseTime(earliestHour)
 		}
 		if lastEndedAt != "" {
 			item.LastEndedAt = parseTime(lastEndedAt)

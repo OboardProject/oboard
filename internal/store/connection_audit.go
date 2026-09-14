@@ -302,9 +302,11 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		}
 	}
 	if overview.TotalsFromRollup {
-		if err := s.applyRollupWindowTotals(ctx, overview.Users, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime); err != nil {
+		covered, err := s.applyRollupWindowTotals(ctx, overview.Users, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime)
+		if err != nil {
 			return overview, err
 		}
+		overview.TotalsWindowHours = rollupCoveredHours(covered, nowTime, windowHours)
 		overview.TotalConnections = 0
 		for index := range overview.Users {
 			overview.TotalConnections += overview.Users[index].ConnectionCount
@@ -478,9 +480,11 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 		}
 	}
 	if overview.TotalsFromRollup {
-		if err := s.applyRollupWindowTotals(ctx, overview.Users, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime); err != nil {
+		covered, err := s.applyRollupWindowTotals(ctx, overview.Users, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime)
+		if err != nil {
 			return overview, err
 		}
+		overview.TotalsWindowHours = rollupCoveredHours(covered, nowTime, windowHours)
 		overview.TotalConnections = 0
 		for index := range overview.Users {
 			overview.TotalConnections += overview.Users[index].ConnectionCount
@@ -2269,9 +2273,10 @@ func (s *Store) connectionAuditRawWindowHours(ctx context.Context) int {
 // - risk score, clone evidence, node fanout, online devices, coverage - keeps
 // the value the evidence window produced, because the rollup cannot reconstruct
 // it and pretending otherwise would be the opposite of useful.
-func (s *Store) applyRollupWindowTotals(ctx context.Context, users []model.ConnectionAuditUserSummary, since, until time.Time) error {
+func (s *Store) applyRollupWindowTotals(ctx context.Context, users []model.ConnectionAuditUserSummary, since, until time.Time) (time.Time, error) {
+	covered := time.Time{}
 	if len(users) == 0 {
-		return nil
+		return covered, nil
 	}
 	userIDs := make([]int64, 0, len(users))
 	for index := range users {
@@ -2279,13 +2284,16 @@ func (s *Store) applyRollupWindowTotals(ctx context.Context, users []model.Conne
 	}
 	totals, err := s.ConnectionAuditWindowTotalsFromRollup(ctx, userIDs, since, until)
 	if err != nil {
-		return err
+		return covered, err
 	}
 	for index := range users {
 		item := &users[index]
 		windowTotals := totals[item.UserID]
 		if windowTotals == nil {
 			continue
+		}
+		if !windowTotals.CoveredFromHour.IsZero() && (covered.IsZero() || windowTotals.CoveredFromHour.Before(covered)) {
+			covered = windowTotals.CoveredFromHour
 		}
 		item.ConnectionCount = windowTotals.ConnectionCount
 		item.ReportCount = windowTotals.ReportCount
@@ -2321,5 +2329,24 @@ func (s *Store) applyRollupWindowTotals(ctx context.Context, users []model.Conne
 			item.CounterEvidence = uniqueStrings(append(item.CounterEvidence, "窗口内某些小时的去重取值超出上限，来源数量为下限估计"))
 		}
 	}
-	return nil
+	return covered, nil
+}
+
+// rollupCoveredHours reports how much of the requested window the rollup
+// actually measured. An installation upgraded into the extended rollup carries
+// hours whose totals columns were never computed; those hours are excluded from
+// the totals, and this is what the console states instead of implying the whole
+// window was quiet.
+func rollupCoveredHours(covered, now time.Time, windowHours int) int {
+	if covered.IsZero() {
+		return 0
+	}
+	hours := int(now.Sub(covered).Hours()) + 1
+	if hours > windowHours {
+		return windowHours
+	}
+	if hours < 0 {
+		return 0
+	}
+	return hours
 }

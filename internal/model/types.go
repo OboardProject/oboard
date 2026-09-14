@@ -3061,7 +3061,13 @@ type ConnectionAuditOverview struct {
 	EvidenceWindowHours int `json:"evidence_window_hours"`
 	// TotalsFromRollup reports that the window totals were merged from the
 	// hourly rollup rather than scanned from raw reports.
-	TotalsFromRollup   bool                         `json:"totals_from_rollup"`
+	TotalsFromRollup bool `json:"totals_from_rollup"`
+	// TotalsWindowHours is how much of WindowHours the totals were actually
+	// measured over. It is shorter when the rollup does not reach back that far
+	// yet - an installation upgraded into the extended rollup has no measured
+	// totals for the hours it recorded before. Presenting those hours as zero
+	// would read as "quiet month" rather than "not recorded".
+	TotalsWindowHours  int                          `json:"totals_window_hours"`
 	RiskWindowMinutes  int                          `json:"risk_window_minutes"`
 	GeneratedAt        time.Time                    `json:"generated_at"`
 	GeoDatabase        GeoDatabaseStatus            `json:"geo_database"`
