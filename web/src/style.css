@@ -22798,10 +22798,10 @@ button.ui-btn-ghost:hover {
 }
 
 .portal-loader-mark {
-  --sq-size: 24px;
-  --step-x: 32.4px;
-  --step-y: 40px;
-  --logo-offset-x: 8.2px;
+  --sq-size: 19.2px;
+  --step-x: 25.92px;
+  --step-y: 32px;
+  --logo-offset-x: 6.56px;
   position: relative;
   width: calc(var(--step-x) * 2 + var(--sq-size));
   height: calc(var(--step-y) * 2 + var(--sq-size));
@@ -22816,7 +22816,7 @@ button.ui-btn-ghost:hover {
   height: var(--sq-size);
   margin: calc(var(--sq-size) / -2);
   background: currentColor;
-  border-radius: 2px;
+  border-radius: 1.6px;
   transform: translate(var(--end-x, 0px), var(--end-y, 0px));
 }
 
@@ -22826,10 +22826,10 @@ button.ui-btn-ghost:hover {
 .portal-loader .sq-bl { --start-x: calc(-1 * var(--step-x)); --start-y: var(--step-y); --mid-x: calc(-1 * var(--step-x)); --mid-y: 0px; --end-x: calc(-1 * var(--step-x)); --end-y: calc(-1 * var(--step-y)); }
 
 .portal-loader .sq-c {
-  width: 21.25px;
-  height: 21px;
-  margin-left: -10.625px;
-  margin-top: -10.63px;
+  width: 17px;
+  height: 16.8px;
+  margin-left: -8.5px;
+  margin-top: -8.504px;
 }
 
 .portal-loader.is-loading .portal-loader-square {
