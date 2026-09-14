@@ -26165,7 +26165,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .settings-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
+  gap: 12px;
   padding: 18px;
   align-items: start;
 }
@@ -26176,7 +26176,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   flex-wrap: wrap;
   gap: 6px;
   margin: 0;
-  padding: 0 0 14px;
+  padding: 0 0 10px;
   border-bottom: 1px solid var(--border);
 }
 .settings-topbar .settings-tabs button {
@@ -26202,35 +26202,12 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   border-radius: 0;
   background: transparent;
 }
-.settings-group > .settings-disclosure > summary { padding: 18px 22px; }
-.settings-group > .settings-disclosure > .settings-disclosure-body { padding: 14px 22px 18px; }
+.settings-group > .settings-disclosure > summary { padding: 10px 20px; }
+.settings-group > .settings-disclosure > .settings-disclosure-body { padding: 12px 20px; }
 
 
 .settings-content {
   min-width: 0;
-}
-
-.settings-content-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 2px 2px 16px;
-}
-
-.settings-content-head h2 {
-  margin: 0 0 4px;
-  color: var(--text-strong);
-  font-size: 20px;
-  letter-spacing: 0;
-}
-
-.settings-content-head p {
-  max-width: 720px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
 }
 
 .controller-url-warning {
@@ -26299,6 +26276,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   overflow: hidden;
 }
 
+.settings-card:has(> .settings-group) { gap: 0; }
+
+.settings-shell .settings-form { gap: 10px; }
+
 .settings-card > .settings-card-head {
   padding: 18px 20px 14px;
 }
@@ -26328,11 +26309,11 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  padding: 18px 20px 12px;
+  padding: 14px 20px 8px;
 }
 
 .settings-group-head h3 {
-  margin: 0 0 4px;
+  margin: 0;
   color: var(--text-strong);
   font-size: 15px;
 }
@@ -26354,7 +26335,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 .settings-group-body {
   min-width: 0;
   display: grid;
-  padding: 0 20px 16px;
+  padding: 0 20px 12px;
 }
 
 .node-presets-toolbar {
@@ -26941,8 +26922,6 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 @media (max-width: 620px) {
   .settings-shell { padding: 10px; }
-  .settings-content-head { padding-inline: 2px; }
-  .settings-content-head h2 { font-size: 18px; }
   .settings-card > .settings-card-head { padding: 16px; }
   .settings-card > :not(.settings-card-head):not(.settings-group) {
     margin-inline: 16px;
@@ -26950,7 +26929,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
     min-width: 0;
     box-sizing: border-box;
   }
-  .settings-group-head { padding: 16px 16px 10px; }
+  .settings-group-head { padding: 12px 16px 8px; }
+  .settings-group > .settings-disclosure > summary { padding-inline: 16px; }
+  .settings-group > .settings-disclosure > .settings-disclosure-body { padding-inline: 16px; }
   .settings-group-body { padding: 0 16px 12px; }
   .snell-profiles-head,
   .node-presets-toolbar {

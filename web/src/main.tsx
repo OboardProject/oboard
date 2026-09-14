@@ -3969,7 +3969,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
     { key: 'about', label: '关于', icon: Info, description: '版本、内核和许可证信息。' },
   ]
-  const activeNavigationItem = settingsNavigation.find(item => item.key === activeSection) || settingsNavigation[0]
   return <section className="settings-shell">
     <div className="settings-topbar">
       <nav className="settings-nav" aria-label="设置菜单">
@@ -3983,9 +3982,6 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       </nav>
     </div>
     <div className="settings-content">
-      <header className="settings-content-head">
-        <div className="settings-heading"><h2>{activeNavigationItem.label}</h2><FieldHelp label={activeNavigationItem.label} hint={activeNavigationItem.description} placement="bottom" /></div>
-      </header>
       {!savedURL && <div className="controller-url-warning settings-controller-url-warning" role="status">
         <AlertTriangle size={18} />
         <div><strong>尚未保存主控公开地址</strong><span>请在“面板访问”中保存服务器可连接的 HTTPS 地址，否则无法安装或更新。</span></div>
