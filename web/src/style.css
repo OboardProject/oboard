@@ -22798,10 +22798,10 @@ button.ui-btn-ghost:hover {
 }
 
 .portal-loader-mark {
-  --sq-size: 15.36px;
-  --step-x: 20.736px;
-  --step-y: 25.6px;
-  --logo-offset-x: 5.248px;
+  --sq-size: 12px;
+  --step-x: 24px;
+  --step-y: var(--step-x);
+  --logo-offset-x: 6px;
   position: relative;
   width: calc(var(--step-x) * 2 + var(--sq-size));
   height: calc(var(--step-y) * 2 + var(--sq-size));
@@ -22816,7 +22816,7 @@ button.ui-btn-ghost:hover {
   height: var(--sq-size);
   margin: calc(var(--sq-size) / -2);
   background: currentColor;
-  border-radius: 1.088px;
+  border-radius: 0;
   transform: translate(var(--end-x, 0px), var(--end-y, 0px));
 }
 
@@ -22824,18 +22824,6 @@ button.ui-btn-ghost:hover {
 .portal-loader .sq-tr { --start-x: var(--step-x); --start-y: calc(-1 * var(--step-y)); --mid-x: var(--step-x); --mid-y: 0px; --end-x: var(--step-x); --end-y: var(--step-y); }
 .portal-loader .sq-br { --start-x: var(--step-x); --start-y: var(--step-y); --mid-x: 0px; --mid-y: var(--step-y); --end-x: calc(-1 * var(--step-x)); --end-y: var(--step-y); }
 .portal-loader .sq-bl { --start-x: calc(-1 * var(--step-x)); --start-y: var(--step-y); --mid-x: calc(-1 * var(--step-x)); --mid-y: 0px; --end-x: calc(-1 * var(--step-x)); --end-y: calc(-1 * var(--step-y)); }
-
-.portal-loader-square:not(.sq-c) {
-  --sq-size: 11.1px;
-  border-radius: 0.925px;
-}
-
-.portal-loader .sq-c {
-  width: 11.56px;
-  height: 11.424px;
-  margin-left: -5.78px;
-  margin-top: -5.795px;
-}
 
 .portal-loader.is-loading .portal-loader-square {
   animation: portal-matrix-orbit 850ms cubic-bezier(0.7, 0, 0.3, 1) infinite;
