@@ -21,6 +21,18 @@ type UsersInstallRequest struct {
 	BaseRevision  int64               `json:"base_revision,omitempty"`
 	Chunk         *UsersInstallChunk  `json:"chunk,omitempty"`
 	Entries       []UsersInstallEntry `json:"entries"`
+
+	// ContentDigest is the identity the revision is allocated against: the
+	// snapshot without the lease-accounting counters the traffic lane owns.
+	//
+	// UsersDigest covers those counters, because the kernel recomputes it over
+	// the bytes it is handed. They move on every accepted traffic report, so one
+	// revision legitimately describes several delivered payloads, and a gate
+	// built on UsersDigest alone reads that refresh as a conflict and stops the
+	// lane for good. This field is what makes the revision gate decidable: equal
+	// revision plus equal content is the same desired state, whatever the
+	// counters say.
+	ContentDigest string `json:"content_digest,omitempty"`
 }
 
 type UsersInstallEntry struct {

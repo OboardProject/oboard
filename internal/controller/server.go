@@ -259,6 +259,9 @@ type Server struct {
 	// opens the panel pays nothing for it.
 	configHealthCache atomic.Pointer[configHealthSnapshot]
 	configHealthMu    sync.Mutex
+	// syncLanes holds what nodes report about the delivery lanes, which is the
+	// only place a version gate the two sides disagree on becomes visible.
+	syncLanes syncLaneObservations
 	// agentCallbackRate is the process-local budget for authenticated Agent
 	// callbacks. It replaces a SQLite write transaction per callback; durable
 	// budgets (enrollment, certificate issuance) stay on the store.
@@ -3853,6 +3856,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			model.Server
 			MTUMode                *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled             *bool                     `json:"bbr_enabled"`
+			StealthEnabled         *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled *bool                     `json:"resource_history_enabled"`
 			LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled"`
@@ -3888,6 +3892,9 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = defaultBBR
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.StealthEnabled != nil {
+			v.StealthEnabled = *input.StealthEnabled
 		}
 		if input.TimeCorrectionMode == nil {
 			v.TimeCorrectionMode = defaultTimeMode
@@ -4261,6 +4268,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			model.Server
 			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled               *bool                     `json:"bbr_enabled"`
+			StealthEnabled           *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled   *bool                     `json:"resource_history_enabled"`
 			LatencyProbeEnabled      *bool                     `json:"latency_probe_enabled"`
@@ -4313,6 +4321,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = current.BBREnabled
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.StealthEnabled == nil {
+			v.StealthEnabled = current.StealthEnabled
+		} else {
+			v.StealthEnabled = *input.StealthEnabled
 		}
 		if input.TimeCorrectionMode == nil {
 			v.TimeCorrectionMode = current.TimeCorrectionMode
@@ -4493,6 +4506,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			response["server"] = updated
 		}
 		s.annotateOneServerDeliveryStatus(r.Context(), updated)
+		if stealthTask, queued, stealthErr := s.maybeQueueStealthSwitch(r.Context(), *current, *updated); stealthErr != nil {
+			response["stealth_task_error"] = stealthErr.Error()
+		} else if queued {
+			response["stealth_task"] = stealthTask
+		}
 		if current.TimeCorrectionMode != v.TimeCorrectionMode && strings.TrimSpace(current.AgentID) != "" && current.Status != model.ServerOffline {
 			if task, err := s.queueTimeCheck(r.Context(), *updated, true); err == nil {
 				response["time_check_task"] = task
@@ -15178,6 +15196,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
+				s.syncLanes.recordProbe(server.ID, h.AppliedLatencyProbe)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishServerPatch(result)
 			}
@@ -16107,10 +16126,16 @@ UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
 UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
 INSTALL_BBR=${OBOARD_INSTALL_BBR:-0}
+STEALTH_MODE=${OBOARD_INSTALL_STEALTH:-0}
 BBR_AVAILABLE_PATH=${OBOARD_BBR_AVAILABLE_PATH:-/proc/sys/net/ipv4/tcp_available_congestion_control}
 BBR_CONGESTION_PATH=${OBOARD_BBR_CONGESTION_PATH:-/proc/sys/net/ipv4/tcp_congestion_control}
 BBR_QDISC_PATH=${OBOARD_BBR_QDISC_PATH:-/proc/sys/net/core/default_qdisc}
 BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-oboard-bbr.conf}
+# The security-process layout must not leave OBoard-named files behind; BBR
+# uses a neutral sysctl file name instead.
+if [ "$STEALTH_MODE" = 1 ]; then
+  BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-net-tuning.conf}
+fi
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
 ACME_SH_VERSION=3.1.4
 ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
@@ -16344,6 +16369,11 @@ verify_core_runtime() {
 }
 
 resolve_agent_install_dir
+
+if [ "$ACTION" = uninstall ] && [ "$STEALTH_MODE" = 1 ]; then
+  echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板卸载 Agent。" >&2
+  exit 1
+fi
 
 if [ "$ACTION" = uninstall ]; then
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -17222,32 +17252,83 @@ case "$ACTION" in
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
     acquire_core_lifecycle_lock
     download_binaries
-    persist_agent_install_dir
-    write_units
-    echo "[4/4] 注册并启动 Agent 服务"
-    resolve_update_policy
-    try_enable_bbr_fq
-    if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
-      -config "$CONFIG_PATH" \
-      -controller "$BASE_URL" \
-      -state-dir "$STATE_DIR" \
-      -core-binary "$INSTALL_DIR/oboard-sb" \
-      -core-service oboard-sb \
-      -update-source "$UPDATE_SOURCE" \
-      -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
-      -update-repo "$UPDATE_REPO" \
-      -enroll-only >> "$INSTALL_LOG" 2>&1; then
-      echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
-      exit 1
+    if [ "$STEALTH_MODE" = 1 ]; then
+      resolve_update_policy
+      try_enable_bbr_fq
+      # Security-process layout: the bootstrap renames the binaries, writes
+      # the encrypted config and key, and installs the renamed units. It
+      # prints shell variables describing the layout; nothing OBoard-named
+      # survives on disk.
+      echo "[3/4] 生成安全进程布局"
+      if ! stealth_env=$("$INSTALL_DIR/oboard-agent" -stealth-bootstrap \
+          -install-dir "$INSTALL_DIR" \
+          -manager "$SERVICE_MANAGER" \
+          -controller-url "$BASE_URL" \
+          -update-source "$UPDATE_SOURCE" \
+          -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
+          -update-repo "$UPDATE_REPO" 2>>"$INSTALL_LOG"); then
+        echo "安全进程布局初始化失败，详细信息见 $INSTALL_LOG。" >&2
+        exit 1
+      fi
+      eval "$stealth_env"
+      echo "[4/4] 注册并启动 Agent 服务"
+      if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
+        -config "$STEALTH_CONFIG_PATH" \
+        -key "$STEALTH_KEY_PATH" \
+        -controller "$BASE_URL" \
+        -enroll-only >> "$INSTALL_LOG" 2>&1; then
+        echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
+        exit 1
+      fi
+      unset OBOARD_ENROLL_TOKEN
+      release_core_lifecycle_lock
+      if [ "$SERVICE_MANAGER" = systemd ]; then
+        systemctl restart "$STEALTH_AGENT_SERVICE" >> "$INSTALL_LOG" 2>&1
+      elif [ "$SERVICE_MANAGER" = openrc ]; then
+        rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1
+      else
+        echo "请手动启动服务：$STEALTH_AGENT_SERVICE" >&2
+      fi
+      if [ -n "${TARGET_BUILD:-}" ] && [ -x "$STEALTH_AGENT_BIN" ]; then
+        if ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+          echo "安装的 Agent 二进制 build 与目标 build 不一致，操作未完成。请检查下载缓存或重新执行命令。" >&2
+          exit 1
+        fi
+      fi
+      echo "安装完成：Agent 已以安全进程模式运行，进程、服务与文件名均已随机化。"
+      echo "此服务器后续请通过面板完成 Agent 更新与卸载。"
+    else
+      persist_agent_install_dir
+      write_units
+      echo "[4/4] 注册并启动 Agent 服务"
+      resolve_update_policy
+      try_enable_bbr_fq
+      if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
+        -config "$CONFIG_PATH" \
+        -controller "$BASE_URL" \
+        -state-dir "$STATE_DIR" \
+        -core-binary "$INSTALL_DIR/oboard-sb" \
+        -core-service oboard-sb \
+        -update-source "$UPDATE_SOURCE" \
+        -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
+        -update-repo "$UPDATE_REPO" \
+        -enroll-only >> "$INSTALL_LOG" 2>&1; then
+        echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
+        exit 1
+      fi
+      unset OBOARD_ENROLL_TOKEN
+      release_core_lifecycle_lock
+      restart_after_install
+      verify_installed_versions
+      print_management_help "安装完成"
+      echo "提示：oboard-sb 会在面板首次下发配置后自动启动。"
     fi
-    unset OBOARD_ENROLL_TOKEN
-    release_core_lifecycle_lock
-    restart_after_install
-    verify_installed_versions
-    print_management_help "安装完成"
-    echo "提示：oboard-sb 会在面板首次下发配置后自动启动。"
     ;;
   update)
+    if [ "$STEALTH_MODE" = 1 ]; then
+      echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板更新 Agent。" >&2
+      exit 1
+    fi
     need_base_url
     acquire_core_lifecycle_lock
     download_binaries

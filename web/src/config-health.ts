@@ -3,8 +3,8 @@
 // grouping, selection and copy can be tested without rendering.
 
 export type ConfigHealthSeverity = 'blocking' | 'warning' | 'notice'
-export type ConfigHealthScope = 'inbound' | 'proxy_path' | 'routing_rule' | 'dns_policy'
-export type ConfigHealthRemedyKind = 'none' | 'normalize' | 'disable' | 'delete'
+export type ConfigHealthScope = 'inbound' | 'proxy_path' | 'routing_rule' | 'dns_policy' | 'sync_lane'
+export type ConfigHealthRemedyKind = 'none' | 'normalize' | 'disable' | 'delete' | 'resync'
 
 export interface ConfigHealthRemedy {
   kind: ConfigHealthRemedyKind
@@ -79,6 +79,7 @@ export const scopeLabels: Record<ConfigHealthScope, string> = {
   proxy_path: '链路',
   routing_rule: '分流',
   dns_policy: 'DNS 策略',
+  sync_lane: '节点下发',
 }
 
 export const remedyLabels: Record<ConfigHealthRemedyKind, string> = {
@@ -86,6 +87,7 @@ export const remedyLabels: Record<ConfigHealthRemedyKind, string> = {
   normalize: '清理不规范字段',
   disable: '停用',
   delete: '删除',
+  resync: '重新下发',
 }
 
 export function configHealthHeadline(summary: ConfigHealthSummary): string {
@@ -102,7 +104,7 @@ export interface ConfigHealthGroup {
   findings: ConfigHealthFinding[]
 }
 
-const scopeOrder: ConfigHealthScope[] = ['inbound', 'proxy_path', 'routing_rule', 'dns_policy']
+const scopeOrder: ConfigHealthScope[] = ['sync_lane', 'inbound', 'proxy_path', 'routing_rule', 'dns_policy']
 
 export function groupConfigHealthFindings(findings: ConfigHealthFinding[]): ConfigHealthGroup[] {
   const buckets = new Map<ConfigHealthScope, ConfigHealthFinding[]>()

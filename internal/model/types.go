@@ -994,6 +994,7 @@ type Server struct {
 	MTUProbePort                int                `json:"mtu_probe_port"`
 	MTUOverheadBytes            int                `json:"mtu_overhead_bytes"`
 	BBREnabled                  bool               `json:"bbr_enabled"`
+	StealthEnabled              bool               `json:"stealth_enabled"`
 	PortRangeStart              int                `json:"port_range_start"`
 	PortRangeEnd                int                `json:"port_range_end"`
 	InternalPortRangeStart      int                `json:"internal_port_range_start"`
@@ -2090,9 +2091,18 @@ const (
 	AgentTaskTypeIssueCertificateHTTP  = "issue_certificate_http01"
 	AgentTaskTypeRemoteExec            = "remote_exec"
 	AgentTaskTypeRemoteOperation       = "remote_operation"
+	AgentTaskTypeApplyStealth          = "apply_stealth"
 )
 
 const AgentCapabilityTrafficPolicy = "traffic_policy_v1"
+
+// AgentCapabilityStealth is advertised by Agents that support the
+// apply_stealth task; AgentCapabilityStealthActive is reported while the
+// security-process layout is actually running.
+const (
+	AgentCapabilityStealth       = "stealth_v1"
+	AgentCapabilityStealthActive = "stealth_active_v1"
+)
 
 type NetworkInterfaceInfo struct {
 	Name      string   `json:"name"`
@@ -2389,6 +2399,13 @@ type UpdateAgentTaskPayload struct {
 
 type UninstallAgentTaskPayload struct {
 	Purge   bool  `json:"purge"`
+	ActorID int64 `json:"actor_id,omitempty"`
+}
+
+// ApplyStealthTaskPayload is the apply_stealth task body. The Agent generates
+// every hidden name and key locally; only the desired state travels.
+type ApplyStealthTaskPayload struct {
+	Enable  bool  `json:"enable"`
 	ActorID int64 `json:"actor_id,omitempty"`
 }
 
@@ -3428,6 +3445,10 @@ type HealthReport struct {
 	// carries no grants, credentials, or task payloads.
 	AppliedAuthorization *AuthorizationAppliedSnapshot `json:"applied_authorization,omitempty"`
 	AppliedUsers         *UsersAppliedSnapshot         `json:"applied_users,omitempty"`
+	// AppliedLatencyProbe is the probe plan this node currently runs. It is
+	// diagnostic only: it never selects a plan, it only lets the Controller see
+	// that the node holds a different plan than the one bound to that version.
+	AppliedLatencyProbe *LatencyProbeAppliedSnapshot `json:"applied_latency_probe,omitempty"`
 }
 
 type StorageDiskInfo struct {

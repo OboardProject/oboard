@@ -19,9 +19,11 @@ type RuntimeUserPackage struct {
 	Chunk         *model.UsersInstallChunk  `json:"chunk,omitempty"`
 	Entries       []model.UsersInstallEntry `json:"entries"`
 
-	// ContentDigest is the cached UsersContentDigest of Scope+Entries. It is
-	// Controller-local bookkeeping so a cached package does not re-sort, re-encode
-	// and re-hash every entry on each Agent pull; Request() never carries it.
+	// ContentDigest is the cached UsersContentDigest of Scope+Entries, computed
+	// once per build so a cached package does not re-sort, re-encode and re-hash
+	// every entry on each Agent pull. Request() delivers it: the revision is
+	// allocated against this identity, so it is the only thing that tells the
+	// node whether a redelivery at the same revision is the same desired state.
 	ContentDigest string `json:"-"`
 }
 
@@ -115,6 +117,9 @@ func RuntimeUserPackageFromConfig(config SingBoxConfig, revision int64) (Runtime
 		return RuntimeUserPackage{}, err
 	}
 	pkg.UsersDigest = digest
+	if content, contentErr := UsersContentDigest(pkg.Scope, pkg.Entries); contentErr == nil {
+		pkg.ContentDigest = content
+	}
 	pkg.Mode = "full"
 	return *pkg, nil
 }
@@ -477,5 +482,8 @@ func (p *RuntimeUserPackage) Request() model.UsersInstallRequest {
 		BaseRevision:  p.BaseRevision,
 		Chunk:         p.Chunk,
 		Entries:       append([]model.UsersInstallEntry(nil), p.Entries...),
+		// The revision is allocated against this identity, so the node needs it
+		// to tell a redelivery of the same desired state from a real change.
+		ContentDigest: p.ContentDigest,
 	}
 }

@@ -157,7 +157,7 @@ export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: C
       <>
         <div className="config-health-toolbar">
           <p className="muted">
-            这里可以移除普通表单无法保存修正的内容。选中后可先预览改动，删除类操作需要二次确认。
+            这里可以移除普通表单无法保存修正的内容，也可以为版本冲突的下发通道重新分配版本号。选中后可先预览改动，删除类操作需要二次确认。
             {report?.summary.truncated ? ' 问题过多，仅显示前若干项。' : ''}
           </p>
           <button type="button" className="ghost" disabled={busy || selectable.length === 0} onClick={toggleAll}>
@@ -190,7 +190,7 @@ export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: C
                     </label>
                     <p className="config-health-item-target">
                       {item.resource_name ? `${item.resource_name} · ` : ''}#{item.resource_id}
-                      {item.server_name ? ` · ${item.server_name}` : ''}
+                      {item.server_name && item.server_name !== item.resource_name ? ` · ${item.server_name}` : ''}
                       {item.path ? ` · ${item.path}` : ''}
                     </p>
                     {item.detail && <p className="muted config-health-item-detail">{item.detail}</p>}

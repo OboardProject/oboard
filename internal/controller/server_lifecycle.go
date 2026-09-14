@@ -114,9 +114,20 @@ func agentInstallBBRValue(enabled bool) string {
 	return "0"
 }
 
-func agentInstallCommand(baseURL, bbrValue string) string {
+// agentInstallStealthValue renders the security-process switch for install
+// commands. Like BBR, the literal is always explicit (0 or 1) so a stale
+// default can never leak through.
+func agentInstallStealthValue(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return "0"
+}
+
+func agentInstallCommand(baseURL, bbrValue, stealthValue string) string {
 	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(baseURL, "/")+"/install/agent.sh") +
-		` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR=` + shellSingleQuote(bbrValue) + " sh"
+		` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR=` + shellSingleQuote(bbrValue) +
+		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
 func (s *Server) registerServerLifecycleOperations() {
