@@ -3051,7 +3051,17 @@ type ConnectionAuditDimension struct {
 }
 
 type ConnectionAuditOverview struct {
-	WindowHours        int                          `json:"window_hours"`
+	WindowHours int `json:"window_hours"`
+	// EvidenceWindowHours is how much of WindowHours the risk assessment
+	// actually saw report-level evidence for. Totals cover the whole window and
+	// are exact; clone detection, node fanout and online devices need the
+	// reports themselves, which are kept for a shorter time. When the two
+	// differ the console says so rather than presenting a month-long risk
+	// verdict built from the last day.
+	EvidenceWindowHours int `json:"evidence_window_hours"`
+	// TotalsFromRollup reports that the window totals were merged from the
+	// hourly rollup rather than scanned from raw reports.
+	TotalsFromRollup   bool                         `json:"totals_from_rollup"`
 	RiskWindowMinutes  int                          `json:"risk_window_minutes"`
 	GeneratedAt        time.Time                    `json:"generated_at"`
 	GeoDatabase        GeoDatabaseStatus            `json:"geo_database"`

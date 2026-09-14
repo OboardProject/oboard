@@ -17690,6 +17690,20 @@ button.user-table-compact-button:hover {
   .ai-endpoint-editor-head { align-items: flex-start; }
 }
 
+/* Long audit windows serve exact totals from the hourly rollup while the risk
+   assessment behind them only sees the shorter span raw reports are kept for.
+   The two ranges are stated rather than presented as one. */
+.audit-evidence-note {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.28));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2, #f8fafc) 88%, transparent);
+  color: var(--text-secondary, #475569);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .audit-overview-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

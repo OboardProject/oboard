@@ -137,7 +137,10 @@ func legacyConnectionAuditOverviewPerUser(ctx context.Context, t testing.TB, s *
 	if ValidateAuditPolicy(policy) != nil {
 		policy = DefaultAuditPolicy()
 	}
-	overview := model.ConnectionAuditOverview{WindowHours: windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
+	// The reference mirrors the production shape: with raw retention covering
+	// the whole window, evidence covers it too and no totals come from the
+	// rollup.
+	overview := model.ConnectionAuditOverview{WindowHours: windowHours, EvidenceWindowHours: windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
 	if err := s.db.QueryRowContext(ctx, `select count(*) from servers where connection_audit_enabled=1`).Scan(&overview.EnabledServerCount); err != nil {
 		t.Fatal(err)
 	}

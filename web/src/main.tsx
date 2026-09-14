@@ -474,7 +474,7 @@ type ConnectionAuditUser = {
   source_ip_count: number; source_subnet_count: number; shared_source_ip_count: number; source_region_count: number; risk_source_ip_count: number; risk_region_count: number; risk_regions: string[]; risk_window_started_at?: string; risk_window_ended_at?: string
   server_count: number; connection_count: number; active_peak: number; active_connection_count: number; report_count: number; last_seen_at: string
 }
-type ConnectionAuditOverview = { window_hours: number; risk_window_minutes: number; generated_at: string; geo_database: GeoDatabaseStatus; policy: AuditPolicy; enabled_server_count: number; reporting_user_count: number; elevated_risk_count: number; total_connections: number; unique_source_ips: number; users: ConnectionAuditUser[] }
+type ConnectionAuditOverview = { window_hours: number; evidence_window_hours?: number; totals_from_rollup?: boolean; risk_window_minutes: number; generated_at: string; geo_database: GeoDatabaseStatus; policy: AuditPolicy; enabled_server_count: number; reporting_user_count: number; elevated_risk_count: number; total_connections: number; unique_source_ips: number; users: ConnectionAuditUser[] }
 type ConnectionAuditDimension = { key: string; label: string; secondary?: string; connection_count: number; active_peak: number; last_seen_at: string }
 type ConnectionAuditReport = { report_id: string; server_id: number; user_id: number; inbound_id?: number; path_id?: number; device_id_hash?: string; credential_epoch?: number; client_instance_id_hash?: string; source_ip: string; route_id?: string; source_geo_code?: string; source_country_code?: string; source_country?: string; source_province?: string; source_city?: string; source_isp?: string; network: string; destination?: string; destination_port?: number; outbound_tag?: string; outbound_type?: string; connection_count: number; closed_count: number; duration_total_ms: number; duration_max_ms: number; upload_bytes: number; download_bytes: number; payload_first_at?: string; payload_last_at?: string; duration_le_1s_count: number; duration_le_5s_count: number; duration_le_20s_count: number; duration_gt_20s_count: number; probe_state?: string; internal_probe: boolean; presence_sequence?: number; active_peak: number; active_at_end: number; dropped_bucket_count: number; started_at: string; ended_at: string }
 type ConnectionAuditUserDetail = { summary: ConnectionAuditUser; sources: ConnectionAuditDimension[]; destinations: ConnectionAuditDimension[]; outbounds: ConnectionAuditDimension[]; servers: ConnectionAuditDimension[]; recent: ConnectionAuditReport[]; risk_events: ConnectionAuditRiskEvent[]; probe_episodes: ConnectionProbeEpisode[]; presence: ConnectionPresenceEvent[] }
@@ -6452,26 +6452,27 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
   </section>
 }
 
+function formatAuditWindowLabel(hours: number): string {
+  if (hours >= 24 && hours % 24 === 0) return `${hours / 24} 天`
+  return `${hours} 小时`
+}
+
 function AuditConsole({ data, client, load, loading, notify }: any) {
   const dialogs = useDialogs()
   const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'policy' | 'settings' | 'operations' | 'ai'>('combined')
-  // The console used to offer 7 and 30 day ranges regardless of how long
-  // reports are actually kept, so picking one answered from whatever survived
-  // the last purge - which reads as "less activity", not "that history is
-  // gone". The options now follow the retention setting, and the server clamps
-  // the request as well.
+  // Long windows are served from the hourly rollup, so they are available
+  // regardless of how long raw reports are kept. Their totals are exact; the
+  // risk assessment behind them only sees report-level evidence for as long as
+  // those reports exist, which the banner below states.
   const auditRetentionDays = Math.min(30, Math.max(1, Number(data.settings?.connection_audit_retention_days) || 7))
   const auditWindowOptions = [
     { hours: 1, label: '最近 1 小时' },
     { hours: 24, label: '最近 24 小时' },
     { hours: 168, label: '最近 7 天' },
     { hours: 720, label: '最近 30 天' },
-  ].filter(option => option.hours <= auditRetentionDays * 24 || option.hours === 1)
+  ]
   const [windowHours, setWindowHours] = useState(24)
-  useEffect(() => {
-    const maxHours = auditRetentionDays * 24
-    if (windowHours > maxHours) setWindowHours(maxHours >= 24 ? 24 : 1)
-  }, [auditRetentionDays, windowHours])
+
   const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
   const [query, setQuery] = useState('')
   const [connectionOverview, setConnectionOverview] = useState<ConnectionAuditOverview | null>(data.connection_audit || null)
@@ -6582,6 +6583,13 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
       <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
     </div>
     {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : view === 'policy' && isAdmin ? <AuditPolicySettings initialPolicy={subscriptionOverview?.policy || connectionOverview?.policy || data.settings?.audit_policy} auditAction={String(data.settings?.audit_action || 'restrict')} client={client} notify={notify} onSaved={savedPolicy => { setSubscriptionOverview(current => current ? { ...current, policy: savedPolicy } : current); setConnectionOverview(current => current ? { ...current, policy: savedPolicy } : current) }} /> : view === 'settings' && isAdmin ? <AuditSettingsPanel data={data} client={client} load={load} notify={notify} /> : <>
+      {connectionOverview?.totals_from_rollup && (connectionOverview?.evidence_window_hours || 0) > 0 ? (
+        <div className="audit-evidence-note">
+          统计总量覆盖完整的 {formatAuditWindowLabel(windowHours)}，数据精确。
+          但克隆判定、节点扇度与在线设备需要逐条连接记录，这类记录只保留 {formatAuditWindowLabel(connectionOverview.evidence_window_hours || 0)}，
+          因此风险研判基于这段较短的范围。要让风险研判覆盖更长时间，请在设置中调高「连接审计保留天数」。
+        </div>
+      ) : null}
       <div className="audit-overview-grid">
         {view === 'combined' ? <>
           <div><span>审计用户</span><strong>{combinedOverview?.users?.length || 0}</strong><small>{windowHours} 小时历史范围</small></div>

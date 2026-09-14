@@ -154,11 +154,20 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		windowHours = 30 * 24
 	}
 	nowTime := time.Now().UTC()
-	since := nowTime.Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339Nano)
+	// Report-level evidence only exists for as long as raw reports are kept.
+	// Everything that needs the reports themselves - clone detection, node
+	// fanout, online devices - is evaluated over that shorter window, and the
+	// window totals are merged from the rollup instead of scanned, which is
+	// both cheaper and exact.
+	evidenceHours := windowHours
+	if retained := s.connectionAuditRawWindowHours(ctx); retained > 0 && retained < evidenceHours {
+		evidenceHours = retained
+	}
+	since := nowTime.Add(-time.Duration(evidenceHours) * time.Hour).Format(time.RFC3339Nano)
 	if ValidateAuditPolicy(policy) != nil {
 		policy = DefaultAuditPolicy()
 	}
-	overview := model.ConnectionAuditOverview{WindowHours: windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
+	overview := model.ConnectionAuditOverview{WindowHours: windowHours, EvidenceWindowHours: evidenceHours, TotalsFromRollup: evidenceHours < windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
 	if err := s.db.QueryRowContext(ctx, `select count(*) from servers where connection_audit_enabled=1`).Scan(&overview.EnabledServerCount); err != nil {
 		return overview, err
 	}
@@ -271,7 +280,7 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 	for index := range overview.Users {
 		userIDs = append(userIDs, overview.Users[index].UserID)
 	}
-	batch, err := s.loadConnectionAuditOverviewBatch(ctx, userIDs, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime)
+	batch, err := s.loadConnectionAuditOverviewBatch(ctx, userIDs, nowTime.Add(-time.Duration(evidenceHours)*time.Hour), nowTime)
 	if err != nil {
 		return overview, err
 	}
@@ -290,6 +299,15 @@ func (s *Store) ConnectionAuditOverview(ctx context.Context, windowHours int, co
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
+		}
+	}
+	if overview.TotalsFromRollup {
+		if err := s.applyRollupWindowTotals(ctx, overview.Users, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime); err != nil {
+			return overview, err
+		}
+		overview.TotalConnections = 0
+		for index := range overview.Users {
+			overview.TotalConnections += overview.Users[index].ConnectionCount
 		}
 	}
 	overview.ReportingUserCount = len(overview.Users)
@@ -329,11 +347,17 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 		windowHours = 30 * 24
 	}
 	nowTime := time.Now().UTC()
-	since := nowTime.Add(-time.Duration(windowHours) * time.Hour).Format(time.RFC3339Nano)
+	// Same split as the fleet-wide overview: totals cover the requested window,
+	// report-level evidence covers only as long as raw reports are kept.
+	evidenceHours := windowHours
+	if retained := s.connectionAuditRawWindowHours(ctx); retained > 0 && retained < evidenceHours {
+		evidenceHours = retained
+	}
+	since := nowTime.Add(-time.Duration(evidenceHours) * time.Hour).Format(time.RFC3339Nano)
 	if ValidateAuditPolicy(policy) != nil {
 		policy = DefaultAuditPolicy()
 	}
-	overview := model.ConnectionAuditOverview{WindowHours: windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
+	overview := model.ConnectionAuditOverview{WindowHours: windowHours, EvidenceWindowHours: evidenceHours, TotalsFromRollup: evidenceHours < windowHours, RiskWindowMinutes: int(connectionAuditRiskWindow / time.Minute), GeneratedAt: nowTime, Policy: policy, Users: []model.ConnectionAuditUserSummary{}}
 	seen := make([]int64, 0, len(userIDs))
 	seenSet := map[int64]bool{}
 	for _, userID := range userIDs {
@@ -433,7 +457,7 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 	if err != nil {
 		return overview, err
 	}
-	batch, err := s.loadConnectionAuditOverviewBatch(ctx, seen, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime)
+	batch, err := s.loadConnectionAuditOverviewBatch(ctx, seen, nowTime.Add(-time.Duration(evidenceHours)*time.Hour), nowTime)
 	if err != nil {
 		return overview, err
 	}
@@ -451,6 +475,15 @@ func (s *Store) ConnectionAuditOverviewForUsers(ctx context.Context, windowHours
 		overview.TotalConnections += item.ConnectionCount
 		if item.RiskScore >= 55 {
 			overview.ElevatedRiskCount++
+		}
+	}
+	if overview.TotalsFromRollup {
+		if err := s.applyRollupWindowTotals(ctx, overview.Users, nowTime.Add(-time.Duration(windowHours)*time.Hour), nowTime); err != nil {
+			return overview, err
+		}
+		overview.TotalConnections = 0
+		for index := range overview.Users {
+			overview.TotalConnections += overview.Users[index].ConnectionCount
 		}
 	}
 	overview.ReportingUserCount = len(overview.Users)
@@ -2216,4 +2249,77 @@ func (s *Store) listConnectionProbeEpisodes(ctx context.Context, userID int64, s
 		out = append(out, episode)
 	}
 	return out, rows.Err()
+}
+
+// connectionAuditRawWindowHours is how far back report-level evidence exists.
+// A window longer than this is served with rollup totals and a shorter evidence
+// window rather than silently answering from whatever survived the last purge.
+func (s *Store) connectionAuditRawWindowHours(ctx context.Context) int {
+	settings, err := s.ListSettings(ctx)
+	if err != nil {
+		return DefaultConnectionAuditRetentionDays * 24
+	}
+	return ConnectionAuditRetentionDays(settings) * 24
+}
+
+// applyRollupWindowTotals replaces the window totals that were computed from
+// the shorter evidence window with the exact totals for the requested window.
+//
+// Only the totals are replaced. Everything derived from the reports themselves
+// - risk score, clone evidence, node fanout, online devices, coverage - keeps
+// the value the evidence window produced, because the rollup cannot reconstruct
+// it and pretending otherwise would be the opposite of useful.
+func (s *Store) applyRollupWindowTotals(ctx context.Context, users []model.ConnectionAuditUserSummary, since, until time.Time) error {
+	if len(users) == 0 {
+		return nil
+	}
+	userIDs := make([]int64, 0, len(users))
+	for index := range users {
+		userIDs = append(userIDs, users[index].UserID)
+	}
+	totals, err := s.ConnectionAuditWindowTotalsFromRollup(ctx, userIDs, since, until)
+	if err != nil {
+		return err
+	}
+	for index := range users {
+		item := &users[index]
+		windowTotals := totals[item.UserID]
+		if windowTotals == nil {
+			continue
+		}
+		item.ConnectionCount = windowTotals.ConnectionCount
+		item.ReportCount = windowTotals.ReportCount
+		item.UploadBytes = windowTotals.UploadBytes
+		item.DownloadBytes = windowTotals.DownloadBytes
+		if windowTotals.ActivePeak > item.ActivePeak {
+			item.ActivePeak = windowTotals.ActivePeak
+		}
+		if windowTotals.LastEndedAt.After(item.LastSeenAt) {
+			item.LastSeenAt = windowTotals.LastEndedAt
+		}
+		if windowTotals.SourceIPCount > 0 {
+			item.SourceIPCount = windowTotals.SourceIPCount
+		}
+		if windowTotals.ServerCount > 0 {
+			item.ServerCount = windowTotals.ServerCount
+		}
+		if windowTotals.RegionCount > 0 {
+			item.SourceRegionCount = windowTotals.RegionCount
+		}
+		if len(windowTotals.SourceIPs) > 0 {
+			subnets := map[string]struct{}{}
+			for _, ip := range windowTotals.SourceIPs {
+				if prefix := auditSubnet(ip); prefix != "" {
+					subnets[prefix] = struct{}{}
+				}
+			}
+			if len(subnets) > 0 {
+				item.SourceSubnetCount = len(subnets)
+			}
+		}
+		if !windowTotals.DimensionsComplete {
+			item.CounterEvidence = uniqueStrings(append(item.CounterEvidence, "窗口内某些小时的去重取值超出上限，来源数量为下限估计"))
+		}
+	}
+	return nil
 }

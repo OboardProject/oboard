@@ -60,13 +60,19 @@ const (
 	// 1.0 GB of a 1.87 GB database at 20 days, heading for about 2.5 GB at the
 	// fixed 30 days it used to keep.
 	//
-	// It is now an operator setting with a shorter default, because the fixed
-	// 30 days bought very little: a user's risk evaluation loads at most
+	// It is now an operator setting with a short default. The fixed 30 days
+	// bought very little: a user's risk evaluation loads at most
 	// connectionAuditRiskReportLimit reports, and for a busy user that ceiling
 	// is reached inside a day, so the raw rows behind it were stored, indexed
 	// and backed up without any consumer able to read them.
+	//
+	// Window totals no longer depend on this. They are merged from the hourly
+	// rollup, which keeps its own 30 days and reproduces the same numbers
+	// exactly, so shortening this only shortens how far back report-level
+	// evidence - clone detection, node fanout, online devices - can look. That
+	// is stated to the operator as the evidence window rather than hidden.
 	ConnectionAuditRetentionDaysSetting = "connection_audit_retention_days"
-	DefaultConnectionAuditRetentionDays = 7
+	DefaultConnectionAuditRetentionDays = 2
 	MinConnectionAuditRetentionDays     = 1
 	MaxConnectionAuditRetentionDays     = 30
 )

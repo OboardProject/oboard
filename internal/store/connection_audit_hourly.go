@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,6 +35,18 @@ func (s *Store) ensureConnectionAuditHourlySchema(ctx context.Context) error {
 			primary key(user_id, utc_hour)
 		)`,
 		`create index if not exists idx_connection_audit_hourly_hour on connection_audit_hourly(utc_hour)`,
+		// The distinct values behind count(distinct ...) for a window. Counts
+		// of distinct things cannot be merged from per-hour counts, so the
+		// values themselves are kept - a handful per user-hour against the
+		// thousands of raw rows they summarise.
+		`create table if not exists connection_audit_hourly_dimensions (
+			user_id integer not null references users(id) on delete cascade,
+			utc_hour text not null,
+			dimension text not null,
+			value text not null,
+			primary key(user_id, utc_hour, dimension, value)
+		)`,
+		`create index if not exists idx_connection_audit_hourly_dimensions_window on connection_audit_hourly_dimensions(user_id, dimension, utc_hour)`,
 		`create table if not exists connection_audit_hourly_dirty (
 			user_id integer not null references users(id) on delete cascade,
 			utc_hour text not null,
@@ -52,6 +65,32 @@ func (s *Store) ensureConnectionAuditHourlySchema(ctx context.Context) error {
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	// Columns the console's window totals are served from once the window
+	// reaches past raw retention. Every one of these merges exactly across
+	// hours, so a total read from here equals the same total computed from the
+	// raw reports it was built from.
+	//
+	// dimensions_complete is 0 when an hour had more distinct values than
+	// connectionAuditHourlyDimensionCap, so a count derived from that hour is a
+	// lower bound rather than an exact number and is reported as one.
+	for _, column := range []struct {
+		name string
+		sql  string
+	}{
+		{"report_count", `alter table connection_audit_hourly add column report_count integer not null default 0`},
+		{"active_peak", `alter table connection_audit_hourly add column active_peak integer not null default 0`},
+		{"upload_bytes", `alter table connection_audit_hourly add column upload_bytes integer not null default 0`},
+		{"download_bytes", `alter table connection_audit_hourly add column download_bytes integer not null default 0`},
+		{"last_ended_at", `alter table connection_audit_hourly add column last_ended_at text not null default ''`},
+		{"collection_count", `alter table connection_audit_hourly add column collection_count integer not null default 0`},
+		{"dropped_bucket_count", `alter table connection_audit_hourly add column dropped_bucket_count integer not null default 0`},
+		{"capacity_total", `alter table connection_audit_hourly add column capacity_total integer not null default 0`},
+		{"dimensions_complete", `alter table connection_audit_hourly add column dimensions_complete integer not null default 1`},
+	} {
+		if err := s.ensureColumn(ctx, "connection_audit_hourly", column.name, column.sql); err != nil {
 			return err
 		}
 	}
@@ -135,49 +174,109 @@ type ConnectionAuditHourDirty struct {
 // RecomputeConnectionAuditHour replaces one hourly bucket from raw reports
 // under the same filters as Robust-Z, then clears the matching dirty mark only
 // when no newer dirty_at arrived during the recompute.
+// connectionAuditHourlyDimensionCap bounds how many distinct values one hour
+// keeps per dimension. A user-hour realistically has a handful; the cap exists
+// so a pathological hour cannot turn the rollup into a second copy of the raw
+// table. When it is hit the hour is marked incomplete and its counts are
+// reported as lower bounds.
+const connectionAuditHourlyDimensionCap = 256
+
+// connectionAuditHourlyDimensions are the count(distinct ...) dimensions the
+// console shows over a window. Counts of distinct things do not merge from
+// per-hour counts, so the values are kept and re-deduplicated across the
+// window.
+const (
+	auditDimensionSourceIP = "source_ip"
+	auditDimensionServer   = "server"
+	auditDimensionCountry  = "country"
+)
+
+// RecomputeConnectionAuditHour replaces one hourly bucket from raw reports
+// under the same filters as Robust-Z, then clears the matching dirty mark only
+// when no newer dirty_at arrived during the recompute.
+//
+// The bucket carries everything the console's window totals need. Each field is
+// chosen so that merging hours reproduces the same number the raw reports would
+// have given: sums add, peaks take a maximum, last-seen takes a maximum, and
+// the distinct dimensions are re-deduplicated from their stored values rather
+// than added up.
 func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, utcHour string, dirtyAt time.Time) error {
 	if userID <= 0 || strings.TrimSpace(utcHour) == "" {
 		return nil
 	}
 	start := connectionAuditHourStart(utcHour)
 	end := start.Add(time.Hour)
-	var total int64
-	// started_at has no index; ended_at does. A report always satisfies
-	// started_at <= ended_at, so every row this bucket wants also satisfies
-	// ended_at >= start: adding that predicate cannot drop a row, and it turns
-	// the scan from "every report this user ever filed" into a range.
-	//
-	// Without it the plan was SEARCH (user_id=?) with no time bound at all. On a
-	// production Controller the busiest user held 937k of the table's 1.06M
-	// rows, and summing one hour cost 14.7s — for each of up to 64 dirty
-	// buckets per maintenance pass.
-	//
-	// ended_at cannot be bounded above for the same reason it can be bounded
-	// below: a connection may end long after the hour it started in. The
-	// started_at predicates below stay as the exact filter.
-	err := s.db.QueryRowContext(ctx, `select coalesce(sum(connection_count),0)
+	var bucket connectionAuditHourAggregate
+	// ended_at bounds the scan; started_at remains the exact filter. A report
+	// always satisfies started_at <= ended_at, so this cannot drop a row the
+	// bucket wants. Without it the plan had no time bound at all and summing
+	// one hour scanned every report the user had ever filed.
+	err := s.db.QueryRowContext(ctx, `select
+			coalesce(sum(connection_count),0),
+			count(*),
+			coalesce(max(active_peak),0),
+			coalesce(sum(case when upload_bytes+download_bytes>0 and payload_first_at is not null then upload_bytes else 0 end),0),
+			coalesce(sum(case when upload_bytes+download_bytes>0 and payload_first_at is not null then download_bytes else 0 end),0),
+			coalesce(max(ended_at),''),
+			count(distinct server_id||char(0)||collection_generation||char(0)||collection_ended_at),
+			coalesce(sum(dropped_bucket_count),0),
+			coalesce(sum(max(bucket_capacity,1)),0)
 		from connection_audit_reports
 		where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
 			and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
-		userID, start.Format(time.RFC3339Nano), start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&total)
+		userID, start.Format(time.RFC3339Nano), start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).
+		Scan(&bucket.ConnectionCount, &bucket.ReportCount, &bucket.ActivePeak, &bucket.UploadBytes, &bucket.DownloadBytes,
+			&bucket.LastEndedAt, &bucket.CollectionCount, &bucket.DroppedBucketCount, &bucket.CapacityTotal)
 	if err != nil {
 		return err
 	}
+	dimensions, complete, err := s.connectionAuditHourDimensions(ctx, userID, start, end)
+	if err != nil {
+		return err
+	}
+
 	ts := now()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `insert into connection_audit_hourly(user_id,utc_hour,connection_count,algorithm_version,source_watermark,updated_at)
-		values(?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `insert into connection_audit_hourly(user_id,utc_hour,connection_count,report_count,active_peak,
+			upload_bytes,download_bytes,last_ended_at,collection_count,dropped_bucket_count,capacity_total,dimensions_complete,
+			algorithm_version,source_watermark,updated_at)
+		values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		on conflict(user_id,utc_hour) do update set
 			connection_count=excluded.connection_count,
+			report_count=excluded.report_count,
+			active_peak=excluded.active_peak,
+			upload_bytes=excluded.upload_bytes,
+			download_bytes=excluded.download_bytes,
+			last_ended_at=excluded.last_ended_at,
+			collection_count=excluded.collection_count,
+			dropped_bucket_count=excluded.dropped_bucket_count,
+			capacity_total=excluded.capacity_total,
+			dimensions_complete=excluded.dimensions_complete,
 			algorithm_version=excluded.algorithm_version,
 			source_watermark=excluded.source_watermark,
 			updated_at=excluded.updated_at`,
-		userID, utcHour, total, connectionAuditHourlyAlgorithm, end.Format(time.RFC3339Nano), ts); err != nil {
+		userID, utcHour, bucket.ConnectionCount, bucket.ReportCount, bucket.ActivePeak,
+		bucket.UploadBytes, bucket.DownloadBytes, bucket.LastEndedAt, bucket.CollectionCount,
+		bucket.DroppedBucketCount, bucket.CapacityTotal, boolInt(complete),
+		connectionAuditHourlyAlgorithm, end.Format(time.RFC3339Nano), ts); err != nil {
 		return err
+	}
+	// The hour is replaced, not merged, so its previous dimension values go
+	// with it.
+	if _, err := tx.ExecContext(ctx, `delete from connection_audit_hourly_dimensions where user_id=? and utc_hour=?`, userID, utcHour); err != nil {
+		return err
+	}
+	for dimension, values := range dimensions {
+		for value := range values {
+			if _, err := tx.ExecContext(ctx, `insert or ignore into connection_audit_hourly_dimensions(user_id,utc_hour,dimension,value) values(?,?,?,?)`,
+				userID, utcHour, dimension, value); err != nil {
+				return err
+			}
+		}
 	}
 	// Only clear the dirty mark if it was not refreshed while we recomputed.
 	if dirtyAt.IsZero() {
@@ -191,6 +290,64 @@ func (s *Store) RecomputeConnectionAuditHour(ctx context.Context, userID int64, 
 		}
 	}
 	return tx.Commit()
+}
+
+type connectionAuditHourAggregate struct {
+	ConnectionCount    int64
+	ReportCount        int64
+	ActivePeak         int64
+	UploadBytes        int64
+	DownloadBytes      int64
+	LastEndedAt        string
+	CollectionCount    int64
+	DroppedBucketCount int64
+	CapacityTotal      int64
+}
+
+// connectionAuditHourDimensions reads the distinct values one hour contributes,
+// capped. The second return is false when a dimension hit the cap, which makes
+// every window count derived from that hour a lower bound.
+func (s *Store) connectionAuditHourDimensions(ctx context.Context, userID int64, start, end time.Time) (map[string]map[string]struct{}, bool, error) {
+	out := map[string]map[string]struct{}{
+		auditDimensionSourceIP: {},
+		auditDimensionServer:   {},
+		auditDimensionCountry:  {},
+	}
+	rows, err := s.db.QueryContext(ctx, `select distinct source_ip,server_id,source_country_code
+		from connection_audit_reports
+		where user_id=? and ended_at>=? and started_at>=? and started_at<? and internal_probe=0
+			and probe_state not in ('confirmed','candidate') and dropped_bucket_count=0`,
+		userID, start.Format(time.RFC3339Nano), start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	complete := true
+	for rows.Next() {
+		var sourceIP, countryCode string
+		var serverID int64
+		if err := rows.Scan(&sourceIP, &serverID, &countryCode); err != nil {
+			return nil, false, err
+		}
+		add := func(dimension, value string) {
+			if strings.TrimSpace(value) == "" {
+				return
+			}
+			set := out[dimension]
+			if _, ok := set[value]; ok {
+				return
+			}
+			if len(set) >= connectionAuditHourlyDimensionCap {
+				complete = false
+				return
+			}
+			set[value] = struct{}{}
+		}
+		add(auditDimensionSourceIP, sourceIP)
+		add(auditDimensionServer, strconv.FormatInt(serverID, 10))
+		add(auditDimensionCountry, strings.ToUpper(strings.TrimSpace(countryCode)))
+	}
+	return out, complete, rows.Err()
 }
 
 // DrainConnectionAuditHourlyDirty recomputes up to limit dirty buckets.
@@ -463,4 +620,132 @@ func mergeAuditHourBuckets(buckets []auditHourBucket, hours []string, repaired m
 	}
 	sortAuditHourBuckets(out)
 	return out
+}
+
+// ConnectionAuditWindowTotals is one user's window totals read from the rollup.
+//
+// Every field here is what the same window would have produced from the raw
+// reports: the sums and peaks merge arithmetically, and the distinct counts are
+// re-deduplicated from the values each hour stored rather than added up.
+// DimensionsComplete is false when some hour in the window hit its dimension
+// cap, which makes the three distinct counts lower bounds.
+type ConnectionAuditWindowTotals struct {
+	ConnectionCount    int64
+	ReportCount        int64
+	ActivePeak         int64
+	UploadBytes        int64
+	DownloadBytes      int64
+	LastEndedAt        time.Time
+	CollectionCount    int64
+	DroppedBucketCount int64
+	CapacityTotal      int64
+	SourceIPCount      int
+	ServerCount        int
+	RegionCount        int
+	SourceIPs          []string
+	DimensionsComplete bool
+}
+
+// ConnectionAuditWindowTotalsFromRollup reads window totals for the given users
+// from the hourly rollup. since is inclusive and until exclusive, both aligned
+// to the hour the caller wants covered.
+func (s *Store) ConnectionAuditWindowTotalsFromRollup(ctx context.Context, userIDs []int64, since, until time.Time) (map[int64]*ConnectionAuditWindowTotals, error) {
+	out := map[int64]*ConnectionAuditWindowTotals{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	fromHour := ConnectionAuditHourKey(since)
+	toHour := ConnectionAuditHourKey(until)
+	args := []any{fromHour, toHour, connectionAuditHourlyAlgorithm}
+	for _, id := range userIDs {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `select user_id,
+			coalesce(sum(connection_count),0),
+			coalesce(sum(report_count),0),
+			coalesce(max(active_peak),0),
+			coalesce(sum(upload_bytes),0),
+			coalesce(sum(download_bytes),0),
+			coalesce(max(last_ended_at),''),
+			coalesce(sum(collection_count),0),
+			coalesce(sum(dropped_bucket_count),0),
+			coalesce(sum(capacity_total),0),
+			min(dimensions_complete)
+		from connection_audit_hourly
+		where utc_hour>=? and utc_hour<=? and algorithm_version=? and user_id in (`+inClause(len(userIDs))+`)
+		group by user_id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID int64
+		var lastEndedAt string
+		var complete sql.NullInt64
+		item := &ConnectionAuditWindowTotals{DimensionsComplete: true}
+		if err := rows.Scan(&userID, &item.ConnectionCount, &item.ReportCount, &item.ActivePeak,
+			&item.UploadBytes, &item.DownloadBytes, &lastEndedAt, &item.CollectionCount,
+			&item.DroppedBucketCount, &item.CapacityTotal, &complete); err != nil {
+			return nil, err
+		}
+		if lastEndedAt != "" {
+			item.LastEndedAt = parseTime(lastEndedAt)
+		}
+		if complete.Valid && complete.Int64 == 0 {
+			item.DimensionsComplete = false
+		}
+		out[userID] = item
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	return out, s.attachConnectionAuditWindowDimensions(ctx, out, fromHour, toHour)
+}
+
+func (s *Store) attachConnectionAuditWindowDimensions(ctx context.Context, totals map[int64]*ConnectionAuditWindowTotals, fromHour, toHour string) error {
+	userIDs := make([]any, 0, len(totals))
+	for userID := range totals {
+		userIDs = append(userIDs, userID)
+	}
+	args := append([]any{fromHour, toHour}, userIDs...)
+	rows, err := s.db.QueryContext(ctx, `select user_id,dimension,value
+		from connection_audit_hourly_dimensions
+		where utc_hour>=? and utc_hour<=? and user_id in (`+inClause(len(userIDs))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	seen := map[int64]map[string]map[string]struct{}{}
+	for rows.Next() {
+		var userID int64
+		var dimension, value string
+		if err := rows.Scan(&userID, &dimension, &value); err != nil {
+			return err
+		}
+		if seen[userID] == nil {
+			seen[userID] = map[string]map[string]struct{}{}
+		}
+		if seen[userID][dimension] == nil {
+			seen[userID][dimension] = map[string]struct{}{}
+		}
+		seen[userID][dimension][value] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for userID, item := range totals {
+		dimensions := seen[userID]
+		item.SourceIPCount = len(dimensions[auditDimensionSourceIP])
+		item.ServerCount = len(dimensions[auditDimensionServer])
+		item.RegionCount = len(dimensions[auditDimensionCountry])
+		item.SourceIPs = make([]string, 0, len(dimensions[auditDimensionSourceIP]))
+		for value := range dimensions[auditDimensionSourceIP] {
+			item.SourceIPs = append(item.SourceIPs, value)
+		}
+		sort.Strings(item.SourceIPs)
+	}
+	return nil
 }
