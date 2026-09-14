@@ -178,6 +178,9 @@ import { clearLatencyWindowCache } from './latency-window-cache'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
 import { useDocumentVisible, usePausedInterval } from './visibility'
 import { ConfigurationSyncStatus } from './configuration-sync-ui'
+import { ConfigHealthCard } from './components/config-health/ConfigHealthCard'
+import { ConfigHealthDialog } from './components/config-health/ConfigHealthDialog'
+import { configHealthSummaryOf } from './config-health'
 import { realtimeInvalidatedPages, scheduleRealtimeRefresh } from './realtime-pages'
 import { isConfigurationMutationPath, mergeConfigurationMutationResponse, MutationActivityTracker, type ConfigurationSyncRow } from './configuration-sync'
 import { removeServerSnapshot, upsertServerSnapshot } from './server-state'
@@ -3223,7 +3226,7 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'dashboard') {
     const displayName = sessionUser?.nickname || data.current_user?.nickname || sessionUser?.username || data.current_user?.username || '用户'
     return roleRanks[sessionUser?.role || 'viewer'] >= roleRanks.operator
-      ? <Dashboard data={data} loading={loading} displayName={displayName} />
+      ? <Dashboard data={data} loading={loading} displayName={displayName} client={client} canCleanup={canManageAdministratorAccounts(sessionUser?.role || data.session?.role || 'viewer')} onCleaned={load} />
       : <UserDashboardPage overview={data.user_overview as UserDashboardOverview | undefined} announcements={data.user_announcements || []} displayName={displayName} loading={loading} onNavigateSubscriptions={() => goTab('nodes')} />
   }
   if (tab === 'return-latency') return <ReturnLatencyPage servers={data.servers || []} client={client} loading={loading} canManage={hasManagementAccess(data.session?.role || sessionUser?.role || 'viewer')} onRefresh={load} renderHistory={(server, onClose) => <ServerConnectivityDialog server={server} client={client} initialView="latency" onClose={onClose} onUpdated={() => void load()} />} />
@@ -7316,7 +7319,9 @@ function AuditLogs({ data, loading, embedded = false }: any) {
   return embedded ? content : <Panel title="审计日志">{content}</Panel>
 }
 
-function Dashboard({ data, loading, displayName: preferredDisplayName }: any) {
+function Dashboard({ data, loading, displayName: preferredDisplayName, client, canCleanup, onCleaned }: any) {
+  const [configHealthOpen, setConfigHealthOpen] = useState(false)
+  const configHealth = configHealthSummaryOf(data)
   const summary = data.summary || {}
   const servers = data.servers || []
   const displayName = String(preferredDisplayName || data.current_user?.nickname || data.current_user?.username || 'Admin')
@@ -7403,6 +7408,16 @@ function Dashboard({ data, loading, displayName: preferredDisplayName }: any) {
           <small>{totalServers} 台服务器 · 当前账期累计</small>
         </div>
       </section>
+
+      <ConfigHealthCard summary={configHealth} onOpen={() => setConfigHealthOpen(true)} />
+      {configHealthOpen && (
+        <ConfigHealthDialog
+          client={client}
+          canCleanup={Boolean(canCleanup)}
+          onClose={() => setConfigHealthOpen(false)}
+          onCleaned={() => onCleaned?.()}
+        />
+      )}
 
       <section className="dash-lower">
         <div>

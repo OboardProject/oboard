@@ -30,6 +30,9 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 		preview, _, err := s.previewSnellMode(ctx, principal, req)
 		return preview, err
 
+	case "config_health.report":
+		return s.readConfigHealthCapability(ctx, input)
+
 	case "traffic.get_user_ledger", "traffic.get_server_sync_state", "traffic.list_reconciliation_issues":
 		return s.queryTrafficLedgerCapability(ctx, principal, capabilityName, input)
 	case "servers.connectivity.sla", "servers.connectivity.events":

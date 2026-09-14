@@ -29041,3 +29041,84 @@ button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font
 .user-ledger-key { display: flex; gap: 16px; margin: 8px 0 16px; }
 .user-ledger-key span { display: flex; align-items: center; gap: 5px; }
 .user-ledger-key span::before { content: ''; width: 8px; height: 8px; border-radius: 50%; }
+
+/* ---- 配置体检 ---- */
+.config-health-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border-color));
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.config-health-card.tone-danger { border-color: color-mix(in srgb, var(--danger) 28%, var(--border-color)); }
+.config-health-card.tone-neutral { border-color: var(--border-color); }
+.config-health-card:hover { box-shadow: var(--shadow-md); }
+.config-health-card-copy { min-width: 0; display: grid; gap: 4px; }
+.config-health-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.config-health-card-head strong { font-size: 15px; }
+.config-health-card p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.config-health-card small { color: var(--muted); font-size: 12px; }
+
+.config-health-severity {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 18px;
+  background: var(--color-primary-light);
+  color: var(--text-secondary);
+}
+.config-health-severity.severity-blocking { background: var(--color-danger-bg); color: var(--danger); }
+.config-health-severity.severity-warning { background: var(--color-warning-bg); color: var(--warning); }
+
+.config-health-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.config-health-toolbar p { margin: 0; flex: 1 1 280px; font-size: 13px; }
+.config-health-group { margin-bottom: 18px; }
+.config-health-group h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.config-health-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.config-health-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-solid);
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.config-health-item.severity-blocking { border-left-color: var(--danger); }
+.config-health-item.severity-warning { border-left-color: var(--warning); }
+.config-health-item.is-selected { background: var(--color-primary-light); border-color: var(--border-focus); }
+.config-health-item-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.config-health-item-head input[type='checkbox'] { flex: 0 0 auto; }
+.config-health-item-head input[type='checkbox']:disabled { cursor: not-allowed; }
+.config-health-item-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.config-health-item-title strong { font-size: 13px; font-weight: 600; }
+.config-health-item-target { margin: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.config-health-item-detail { margin: 0; font-size: 12px; word-break: break-word; }
+.config-health-item-remedy { margin: 0; font-size: 12px; color: var(--text-secondary); }
+.config-health-item-remedy > span { font-weight: 600; }
+.config-health-item-preview {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-control);
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}

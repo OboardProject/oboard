@@ -254,6 +254,11 @@ type Server struct {
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
 	settingsCache atomic.Pointer[settingsSnapshot]
+	// configHealthCache is the revision-keyed configuration health report.
+	// It is derived only when a console asks for it, so an operator who never
+	// opens the panel pays nothing for it.
+	configHealthCache atomic.Pointer[configHealthSnapshot]
+	configHealthMu    sync.Mutex
 	// agentCallbackRate is the process-local budget for authenticated Agent
 	// callbacks. It replaces a SQLite write transaction per callback; durable
 	// budgets (enrollment, certificate issuance) stay on the store.
@@ -457,6 +462,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/controller-update/backups", s.auth(s.controllerUpdateBackups, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/backups/", s.auth(s.controllerUpdateBackupSubroutes, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/controller-update/activity", s.auth(s.controllerUpdateActivity, model.RoleNone))
+	mux.HandleFunc("/api/v1/config-health", s.auth(s.configHealthHandler, model.RoleOperator))
+	mux.HandleFunc("/api/v1/config-health/cleanup", s.auth(s.configHealthCleanupHandler, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/agent-updates/status", s.auth(s.agentUpdatesStatus, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/agent-updates/pause", s.auth(s.agentUpdatesPause, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/agent-updates/resume", s.auth(s.agentUpdatesResume, model.RoleAdmin))
@@ -2497,6 +2504,14 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = timing.run("audit_badge", func() error {
 				out["connection_audit"], err = s.dashboardConnectionAudit(ctx)
+				return err
+			})
+		}
+		if err == nil {
+			// Counts only. The findings themselves are fetched on demand, so a
+			// broken configuration never inflates the dashboard poll.
+			err = timing.run("config_health", func() error {
+				out["config_health"], err = s.dashboardConfigHealth(ctx)
 				return err
 			})
 		}

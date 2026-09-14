@@ -3,6 +3,7 @@ import { Switch } from './ui/switch'
 import { Select } from './ui/select'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './settings/SettingsLayout'
 import type { DialogApi } from './ui/dialog-context'
+import { blockingDeploymentNotice } from '../config-health'
 
 export interface AgentSettingsPanelProps {
   data: any
@@ -150,9 +151,17 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
 
   const refreshAllRuntime = async () => {
     if (savingKey) return
+    // Warn about configuration that is already known to fail, but never refuse
+    // the push: the other nodes still need it, and a health lookup that fails
+    // must not stand between the operator and a recovery action.
+    let healthNotice = ''
+    try {
+      const report = await client.request('/config-health')
+      healthNotice = blockingDeploymentNotice(report?.report || null)
+    } catch { healthNotice = '' }
     const ok = await confirm?.({
       title: '刷新全部节点配置？',
-      message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证也会重新从主控下发。',
+      message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证也会重新从主控下发。' + (healthNotice ? `\n\n${healthNotice}` : ''),
       confirmText: '刷新全部节点',
       tone: 'danger',
     })

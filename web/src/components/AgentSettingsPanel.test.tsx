@@ -208,6 +208,64 @@ describe('AgentSettingsPanel', () => {
     })
 
     expect(mockConfirm).toHaveBeenCalled()
-    expect(mockClient.request).not.toHaveBeenCalled()
+    // The read-only config-health lookup that builds the warning may run; the
+    // refresh itself must not.
+    expect(mockClient.request).not.toHaveBeenCalledWith('/deployments/refresh-runtime', expect.anything())
+  })
+
+  it('warns about blocking configuration before a fleet refresh without blocking it', async () => {
+    const mockClient = {
+      request: vi.fn(async (path: string) => {
+        if (path === '/config-health') {
+          return {
+            revision: 7,
+            report: {
+              summary: { blocking: 1, warning: 0, notice: 0, total: 1 },
+              findings: [{
+                code: 'inbound.config.invalid', severity: 'blocking', scope: 'inbound',
+                resource_id: 10, server_name: 'hk-1', title: '入口配置不符合当前协议模型',
+                remedy: { kind: 'normalize' },
+              }],
+            },
+          }
+        }
+        return { delivery_retried: 3 }
+      }),
+    }
+    const mockConfirm = vi.fn(async () => true)
+
+    act(() => {
+      root.render(<AgentSettingsPanel data={mockData} client={mockClient} load={vi.fn()} notify={vi.fn()} confirm={mockConfirm} />)
+    })
+    const refreshButton = Array.from(container.querySelectorAll('button')).find(btn => btn.textContent === '刷新全部节点配置')!
+    await act(async () => { refreshButton.click() })
+
+    expect(String(mockConfirm.mock.calls[0][0].message)).toContain('1 项配置会导致下发失败')
+    // Informing, not gating: confirming still runs the refresh.
+    expect(mockClient.request).toHaveBeenCalledWith('/deployments/refresh-runtime', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    })
+  })
+
+  it('still refreshes when the health lookup fails', async () => {
+    const mockClient = {
+      request: vi.fn(async (path: string) => {
+        if (path === '/config-health') throw new Error('unavailable')
+        return { delivery_retried: 1 }
+      }),
+    }
+    const mockConfirm = vi.fn(async () => true)
+
+    act(() => {
+      root.render(<AgentSettingsPanel data={mockData} client={mockClient} load={vi.fn()} notify={vi.fn()} confirm={mockConfirm} />)
+    })
+    const refreshButton = Array.from(container.querySelectorAll('button')).find(btn => btn.textContent === '刷新全部节点配置')!
+    await act(async () => { refreshButton.click() })
+
+    expect(mockClient.request).toHaveBeenCalledWith('/deployments/refresh-runtime', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true }),
+    })
   })
 })

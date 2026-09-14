@@ -29,6 +29,7 @@ func (s *Server) registerNetworkAutomationOperations() {
 	s.registerDNSRecordOperations()
 	s.registerPortForwardOperations()
 	s.registerTunnelOperations()
+	s.registerConfigHealthOperations()
 }
 
 // ---- DNS lists ----
