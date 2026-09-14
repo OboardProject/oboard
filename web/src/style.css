@@ -22792,48 +22792,75 @@ button.ui-btn-ghost:hover {
   text-align: center;
 }
 
+.portal-loader.is-fading {
+  opacity: 0;
+  transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .portal-loader-mark {
+  --sq-size: 24px;
+  --step-x: 32.4px;
+  --step-y: 40px;
+  --logo-offset-x: 8.2px;
   position: relative;
-  width: 76px;
-  height: 76px;
+  width: calc(var(--step-x) * 2 + var(--sq-size));
+  height: calc(var(--step-y) * 2 + var(--sq-size));
+  color: var(--text-strong);
 }
 
-.portal-loader-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  box-sizing: border-box;
-}
-
-.portal-loader-ring-outer {
-  border: 3px solid color-mix(in srgb, var(--primary) 14%, transparent);
-  border-top-color: var(--primary);
-  animation: portal-spin 1.15s linear infinite;
-}
-
-.portal-loader-ring-inner {
-  inset: 12px;
-  border: 2.5px solid color-mix(in srgb, var(--success) 14%, transparent);
-  border-top-color: var(--success);
-  animation: portal-spin-reverse 0.9s linear infinite;
-}
-
-.portal-loader-badge {
+.portal-loader-square {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--primary);
-  color: var(--primary-contrast);
-  font-family: var(--font-display);
-  font-size: 13px;
-  font-weight: 800;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 24%, transparent);
+  width: var(--sq-size);
+  height: var(--sq-size);
+  margin: calc(var(--sq-size) / -2);
+  background: currentColor;
+  border-radius: 2px;
+  transform: translate(var(--end-x, 0px), var(--end-y, 0px));
+}
+
+.portal-loader .sq-tl { --start-x: calc(-1 * var(--step-x)); --start-y: calc(-1 * var(--step-y)); --mid-x: 0px; --mid-y: calc(-1 * var(--step-y)); --end-x: var(--step-x); --end-y: calc(-1 * var(--step-y)); }
+.portal-loader .sq-tr { --start-x: var(--step-x); --start-y: calc(-1 * var(--step-y)); --mid-x: var(--step-x); --mid-y: 0px; --end-x: var(--step-x); --end-y: var(--step-y); }
+.portal-loader .sq-br { --start-x: var(--step-x); --start-y: var(--step-y); --mid-x: 0px; --mid-y: var(--step-y); --end-x: calc(-1 * var(--step-x)); --end-y: var(--step-y); }
+.portal-loader .sq-bl { --start-x: calc(-1 * var(--step-x)); --start-y: var(--step-y); --mid-x: calc(-1 * var(--step-x)); --mid-y: 0px; --end-x: calc(-1 * var(--step-x)); --end-y: calc(-1 * var(--step-y)); }
+
+.portal-loader .sq-c {
+  width: 21.25px;
+  height: 21px;
+  margin-left: -10.625px;
+  margin-top: -10.63px;
+}
+
+.portal-loader.is-loading .portal-loader-square {
+  animation: portal-matrix-orbit 850ms cubic-bezier(0.7, 0, 0.3, 1) infinite;
+  will-change: transform;
+}
+
+.portal-loader.is-loading .sq-c {
+  animation-name: portal-matrix-center;
+}
+
+.portal-loader.is-finished .sq-c,
+.portal-loader.is-fading .sq-c {
+  transform: translateX(var(--logo-offset-x));
+  transition: transform 500ms cubic-bezier(0.25, 1.25, 0.5, 1);
+}
+
+.portal-loader.is-finished .sq-c {
+  will-change: transform;
+}
+
+@keyframes portal-matrix-orbit {
+  0% { transform: translate(var(--start-x), var(--start-y)); }
+  50% { transform: translate(var(--mid-x), var(--mid-y)); }
+  100% { transform: translate(var(--end-x), var(--end-y)); }
+}
+
+@keyframes portal-matrix-center {
+  0% { transform: scale(1) rotate(0deg); }
+  50% { transform: scale(0.76) rotate(45deg); }
+  100% { transform: scale(1) rotate(90deg); }
 }
 
 .portal-loader-copy {
@@ -22859,21 +22886,17 @@ button.ui-btn-ghost:hover {
   font-weight: 500;
 }
 
-@keyframes portal-spin {
-  to { transform: rotate(360deg); }
-}
-@keyframes portal-spin-reverse {
-  to { transform: rotate(-360deg); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .portal-loader-ring-outer,
-  .portal-loader-ring-inner {
+  .portal-loader .portal-loader-square {
     animation: none !important;
-    border-top-color: var(--primary);
+    transition: none !important;
+    will-change: auto;
   }
-  .portal-loader-ring-inner {
-    border-top-color: var(--success);
+  .portal-loader .sq-c {
+    transform: translateX(var(--logo-offset-x));
+  }
+  .portal-loader.is-fading {
+    transition: none;
   }
 }
 

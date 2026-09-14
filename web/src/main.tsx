@@ -1,3 +1,4 @@
+import { MatrixLogoLoader } from './components/MatrixLogoLoader'
 import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './components/users/user-display'
 import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
@@ -1998,34 +1999,7 @@ function api(token: string, onUnauthorized?: (failedToken: string) => boolean, o
 }
 
 function PortalLoader({ loading }: { loading: boolean }) {
-  return (
-    <motion.div
-      className="portal-loader"
-      initial={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-    >
-      <div className="portal-loader-mark" aria-hidden="true">
-        <span className="portal-loader-ring portal-loader-ring-outer" />
-        <span className="portal-loader-ring portal-loader-ring-inner" />
-        <span className="portal-loader-badge">O</span>
-      </div>
-      <div className="portal-loader-copy">
-        <h2>OBoard 控制台</h2>
-        <AnimatePresence mode="wait">
-          <motion.span
-            key={loading ? 'loading' : 'preparing'}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          >
-            {loading ? '正在加载当前页面...' : '正在准备控制台...'}
-          </motion.span>
-        </AnimatePresence>
-      </div>
-    </motion.div>
-  )
+  return <MatrixLogoLoader loading={loading} />
 }
 
 export function App() {
