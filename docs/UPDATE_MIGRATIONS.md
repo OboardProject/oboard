@@ -203,6 +203,26 @@
 - **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema；入网/心跳路径不再出现无 `cpu_cores` 的 Agent。
 - **移除状态：** 生效中。
 
+### controller-db-20260915-server-stealth-switch
+
+- **引入日期：** 2026-09-15
+- **引入提交：** `OboardProject/oboard@ada407b3bede`（feat/security-process 分支，待合入）
+- **引入版本：** `dev-ada407b3bede`
+- **首次稳定版：** 待发布
+- **所有者：** Controller `internal/store`、`internal/model`、`internal/controller`、`internal/capability`、Web
+- **类别：** SQLite schema
+- **原因：** 安全进程（隐身）功能需要每服务器独立的期望状态开关：决定面板生成的安装命令是否以隐身模式初始化，并在已注册服务器上触发 apply_stealth 布局切换任务。
+- **源状态：** `servers` 没有 `stealth_enabled` 列。
+- **目标状态：** `servers.stealth_enabled integer not null default 0`；缺列的旧库补列后为 0（关闭）。
+- **实现位置：** `oboard/internal/store/store.go`（`create table` 与 `ensureColumn`）、`internal/model/types.go`、`internal/controller/server.go`、`stealth.go`、`server_update_operation.go`、`internal/capability/catalog.go`
+- **更新脚本：** 无专用脚本。Controller 打开 SQLite 时幂等补列。
+- **数据影响：** 既有服务器开关为关闭；不改写其他服务器字段。
+- **重复执行：** `ensureColumn`；重复打开不改写已有值。
+- **失败行为：** 补列失败会阻止打开数据库。
+- **回归测试：** `TestStealthColumnMigrationFromPreviousSchema`、`TestStealthSwitchToggleQueuesApplyStealthTask`、`TestServerPatchStealthRoundTrip`、`TestAgentInstallScriptStealthBranch`
+- **移除条件：** 最老支持数据库和所有可恢复备份必须已包含该列；恢复入口不得导入缺少它的 schema。
+- **移除状态：** 生效中。
+
 ### controller-db-20260829-server-display-tags
 
 - **引入日期：** 2026-08-29
