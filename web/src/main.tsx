@@ -1,3 +1,5 @@
+import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './components/users/user-display'
+import { useUserAction } from './components/users/useUserAction'
 import { connectivityLatencyLabel, serverMonitoring } from './server-monitoring'
 import { ServerMonitoringTargetDialog } from './components/server/ServerMonitoringTargetDialog'
 import { ReturnLatencyPage } from './components/server/ReturnLatencyPage'
@@ -18378,6 +18380,7 @@ function SubscriptionUserRowMenu({ user, client, load, notify, subscriptionForma
 
 
 function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, onPassword, onCredentials, onDelete }: any) {
+  const actionState = useUserAction(localizeErrorMessage)
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null)
@@ -18385,12 +18388,11 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null)
 
   const items = [
-    { label: '基础设置', action: 'edit' },
-    { label: '修改密码', action: 'password' },
-    { label: '复制订阅', action: 'copy-sub' },
+        { label: '修改登录密码', action: 'password' },
+    { label: '复制订阅链接', action: 'copy-sub' },
     { label: user.subscription_burn_after_read ? '关闭阅后即焚' : '开启阅后即焚', action: 'burn' },
-    { label: '用户凭证', action: 'credentials' },
-    { label: '注销所有会话', action: 'revoke-sessions', danger: true },
+    { label: '管理订阅与节点密码', action: 'credentials' },
+    { label: '退出所有登录设备', action: 'revoke-sessions', danger: true },
     ...(!user.protected ? [{ label: '删除用户', action: 'delete', danger: true }] : []),
   ];
 
@@ -18399,7 +18401,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
     if (!rect) return
     const viewportPadding = 8
     const gap = 6
-    const width = 148
+    const width = 208
     const estimatedHeight = Math.min(items.length * 32 + 12, window.innerHeight - viewportPadding * 2)
     const height = menuRef.current?.offsetHeight || estimatedHeight
     const roomBelow = window.innerHeight - rect.bottom - viewportPadding - gap
@@ -18444,35 +18446,38 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
     if (action === 'edit') onEdit(user);
     else if (action === 'password') onPassword(user);
     else if (action === 'copy-sub') await copyManagedUserSubscription(user, notify)
-    else if (action === 'burn') await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs);
+    else if (action === 'burn') await setSubscriptionBurnPolicy(client, user, !user.subscription_burn_after_read, load, dialogs, notify);
     else if (action === 'credentials') onCredentials(user);
     else if (action === 'revoke-sessions') {
       const ok = await dialogs.confirm({ title: '注销所有会话', message: `确认注销 ${user.username} 的所有登录会话？`, tone: 'danger', confirmText: '注销' })
       if (!ok) return
       await client.request(`/users/${user.id}/sessions/revoke`, { method: 'POST', body: '{}' })
       await load()
+      notify?.('已退出所有登录设备', 'success')
     }
-    else if (action === 'delete') onDelete(user);
+    else if (action === 'delete') await onDelete(user);
   };
 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
       <button
         ref={buttonRef}
+        disabled={actionState.pending}
         onClick={(e) => {
           e.stopPropagation();
           if (!isOpen) placeMenu()
           setIsOpen(!isOpen);
         }}
-        className="btn-custom btn-secondary user-row-icon-button"
+        className="ghost user-row-text-button"
         style={{ backgroundColor: isOpen ? 'var(--bg-control)' : 'transparent', color: 'var(--text-secondary)' }}
-        title="更多操作"
-        aria-label="更多操作"
+        title={actionState.pending ? '处理中…' : '更多操作'}
+        aria-label={`${user.username} 更多操作`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
       >
-        <MoreHorizontal size={16} />
+        {actionState.pending ? <RefreshCw size={16} className="spin" /> : <MoreHorizontal size={16} />}<span>{actionState.pending ? '处理中' : '更多'}</span>
       </button>
+      {actionState.error && <span className="user-action-error" role="alert">{actionState.error}</span>}
       {isOpen && menuStyle && createPopoverPortal(
         <div ref={menuRef} className="user-actions-menu action-menu-popover action-menu-portal" role="menu" style={menuStyle}>
           {items.map(item => (
@@ -18480,7 +18485,7 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
               key={item.action}
               type="button"
               role="menuitem"
-              onClick={() => handleActionClick(item.action)}
+              onClick={() => void actionState.run(() => handleActionClick(item.action))}
               className={item.danger ? 'danger' : ''}
             >
               {item.label}
@@ -18493,8 +18498,16 @@ function UserMoreActionsDropdown({ user, client, load, dialogs, notify, onEdit, 
   );
 }
 
-function UserManagement({ data, client, load, notify }: any) {
+export function UserManagement({ data, client, load, notify }: any) {
   const dialogs = useDialogs()
+  const groupAction = useUserAction(localizeErrorMessage)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState('all')
+  const refreshAfterSave = async (message: string) => {
+    notify?.(message, 'success')
+    try { await load() } catch { notify?.('操作已保存，但列表刷新失败，请刷新页面查看。', 'warning') }
+  }
+
   const actorRole: Role = data.session?.role || data.current_user?.role || 'viewer'
   const canManageAdministrators = canManageAdministratorAccounts(actorRole)
   const [draft, setDraft] = useState<UserDraft>(() => defaultUserDraft())
@@ -18514,10 +18527,13 @@ function UserManagement({ data, client, load, notify }: any) {
   const [ledgerUser, setLedgerUser] = useState<User | null>(null)
   const [createErrors, setCreateErrors] = useState<{ username?: string; password?: string }>({})
   const [createSubmitting, setCreateSubmitting] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const createLock = useRef(false)
   const planDialogUserRef = useRef<User | null>(null)
   if (planUser) planDialogUserRef.current = planUser
   const planDialogUser = planDialogUserRef.current
   const handleCloseCreate = () => {
+    if (createSubmitting) return
     setCreateOpen(false)
     setCreateErrors({})
     setCreateSubmitting(false)
@@ -18532,9 +18548,11 @@ function UserManagement({ data, client, load, notify }: any) {
   const openCreateUser = () => {
     setDraft(defaultUserDraft())
     setCreateErrors({})
+    setCreateError('')
     setCreateOpen(true)
   }
   const createUser = async () => {
+    if (createLock.current) return
     if (!canManageAdministrators && draft.role === 'admin') return
     const usernameErr = validateUsername(draft.username)
     const passwordErr = draft.password && draft.password.length > 0 && draft.password.length < 8 ? '密码至少需要 8 个字符' : null
@@ -18548,6 +18566,8 @@ function UserManagement({ data, client, load, notify }: any) {
       else await dialogs.alert({ title: '无法创建用户', message: usernameErr || passwordErr || nicknameErr || '请检查输入' })
       return
     }
+    setCreateError('')
+    createLock.current = true
     setCreateSubmitting(true)
     setCreateErrors({})
     const originalPassword = (draft.password || '').trim()
@@ -18556,7 +18576,9 @@ function UserManagement({ data, client, load, notify }: any) {
       const result: any = await client.request('/users', { method: 'POST', body: JSON.stringify(userDraftPayload(draft, true)) })
       const generated: string | undefined = result?.generated_password || result?.generatedPassword
       const finalPassword = isAutoGenerated && generated ? generated : ''
-      handleCloseCreate()
+      setCreateOpen(false)
+      setCreateErrors({})
+      await refreshAfterSave(`用户 ${draft.username.trim()} 已创建`)
       setDraft(defaultUserDraft())
       if (isAutoGenerated && finalPassword) {
         await dialogs.alert({
@@ -18570,13 +18592,12 @@ function UserManagement({ data, client, load, notify }: any) {
           ),
         })
         // try clipboard auto-copy
-        try { await copyText(finalPassword); if (notify) notify('随机密码已复制到剪贴板', 'success') } catch {}
-      } else {
-        if (notify) notify(`用户 ${draft.username.trim()} 已创建`, 'success')
+        try { if (await copyText(finalPassword)) notify?.('随机密码已复制到剪贴板', 'success') } catch {}
       }
     } catch (error: any) {
       const raw = String(error?.message || error || '')
       const localized = localizeErrorMessage(raw)
+      setCreateError(localized)
       const lower = raw.toLowerCase() + ' ' + localized.toLowerCase()
       const errs: { username?: string; password?: string } = {}
       if (lower.includes('用户名已被占用') || lower.includes('username') && lower.includes('unique') || lower.includes('already exists') || error?.status === 409) {
@@ -18590,6 +18611,7 @@ function UserManagement({ data, client, load, notify }: any) {
       if (notify) notify(localized, 'error')
       else await dialogs.alert({ title: '创建失败', message: localized })
     } finally {
+      createLock.current = false
       setCreateSubmitting(false)
     }
   }
@@ -18601,6 +18623,7 @@ function UserManagement({ data, client, load, notify }: any) {
   const updateUser = async () => {
     if (!editUser) return
     await client.request('/users/' + editUser.id, { method: 'PATCH', body: JSON.stringify(userDraftPayload(editDraft, false)) })
+    await refreshAfterSave(`用户 ${editUser.username} 已保存`)
     setEditUser(null)
   }
   const updatePassword = async (password: string, confirm: string) => {
@@ -18614,12 +18637,13 @@ function UserManagement({ data, client, load, notify }: any) {
     }
     if (!passwordUser) return
     await client.request('/users/' + passwordUser.id, { method: 'PATCH', body: JSON.stringify({ password }) })
+    await refreshAfterSave('登录密码已修改')
     setPasswordUser(null)
-    await dialogs.alert({ title: '密码已修改', message: '用户密码已更新。' })
   }
   const createGroup = async () => {
     if (!canManageAdministrators && groupDraft.role === 'admin') return
     await client.request('/user-groups', { method: 'POST', body: JSON.stringify(groupDraft) })
+    await refreshAfterSave('用户组已创建')
     setGroupCreateOpen(false)
     setGroupDraft(defaultUserGroupDraft())
   }
@@ -18635,22 +18659,28 @@ function UserManagement({ data, client, load, notify }: any) {
   const updateGroup = async () => {
     if (!editingGroup) return
     await client.request('/user-groups/' + editingGroup.id, { method: 'PATCH', body: JSON.stringify(groupEditDraft) })
+    await refreshAfterSave('用户组已保存')
     setEditingGroup(null)
   }
   const addGroupMember = async (groupID: number) => {
     const userID = memberDraft[groupID] || 0
     if (!userID) return dialogs.alert({ title: '无法添加成员', message: '请选择用户。' })
     await client.request('/user-group-members', { method: 'POST', body: JSON.stringify({ group_id: groupID, user_id: userID, enabled: true }) })
-    setMemberDraft({ ...memberDraft, [groupID]: 0 })
+    setMemberDraft(current => ({ ...current, [groupID]: 0 }))
+    await refreshAfterSave('成员已添加')
   }
   const deleteGroup = async (group: UserGroup) => {
     const ok = await dialogs.confirm({ title: '删除用户组', message: `确认删除用户组 ${group.name}？相关入口授权会一起移除。`, tone: 'danger', confirmText: '删除' })
     if (!ok) return
     await client.request(`/user-groups/${group.id}`, { method: 'DELETE' })
     if (selectedScope === group.id) setSelectedScope('all')
+    await refreshAfterSave('用户组已删除')
   }
   const deleteMember = async (member: UserGroupMember) => {
+    const username = userByID(data, member.user_id)?.username || '该用户'
+    if (!await dialogs.confirm({ title: '移出用户组？', message: `${username} 将失去此用户组提供的权限，账号仍保留。`, confirmText: '移出用户组', tone: 'danger' })) return
     await client.request(`/user-group-members/${member.id}`, { method: 'DELETE' })
+    await refreshAfterSave('成员已移出用户组')
   }
   const users: User[] = data.users || []
   const groups: UserGroup[] = data.user_groups || []
@@ -18659,197 +18689,144 @@ function UserManagement({ data, client, load, notify }: any) {
   const selectedGroupProtected = Boolean(selectedGroup && selectedGroup.role === 'admin' && !canManageAdministrators)
   const scope: UserScopeKey = typeof selectedScope === 'number' && !selectedGroup ? 'all' : selectedScope
   const showGroupsColumn = scope === 'all'
-  const visibleUsers = users.filter(usr => {
+  const scopedUsers = users.filter(usr => {
     if (scope === 'all') return true
     const groupIDs = members.filter(member => member.user_id === usr.id && member.enabled !== false).map(member => member.group_id)
     if (scope === 'ungrouped') return groupIDs.length === 0
     return groupIDs.includes(scope)
+  })
+  const bindings = new Map<number, any>((data.user_plan_bindings || []).map((item: any) => [item.user_id, item]))
+  const plans = new Map<number, any>((data.subscription_plans || []).map((item: any) => [item.id, item]))
+  const now = Date.now()
+  const planFor = (user: User) => {
+    const binding = bindings.get(user.id)
+    return userPlanDisplay(binding, plans.get(binding?.plan_id), now)
+  }
+  const summary = {
+    all: scopedUsers.length,
+    attention: scopedUsers.filter(user => userAccountDisplay(user).attention).length,
+    expiring: scopedUsers.filter(user => planFor(user).expiring).length,
+    unassigned: scopedUsers.filter(user => !bindings.has(user.id)).length,
+  }
+  const visibleUsers = scopedUsers.filter(user => {
+    const binding = bindings.get(user.id)
+    const search = [user.username, user.nickname, plans.get(binding?.plan_id)?.name].join(' ').toLocaleLowerCase()
+    if (!search.includes(query.trim().toLocaleLowerCase())) return false
+    return filter === 'all' || (filter === 'attention' && userAccountDisplay(user).attention) || (filter === 'expiring' && planFor(user).expiring) || (filter === 'unassigned' && !binding)
   })
   const scopeTitle = selectedGroup ? selectedGroup.name : scope === 'ungrouped' ? '未分组' : '全部用户'
   const scopeDescription = selectedGroup
     ? (selectedGroup.description || `${sessionRoleLabel(selectedGroup.role)}权限，由组内成员共用。`)
     : scope === 'ungrouped'
       ? '这些账号还没有加入任何分组，也就没有面板权限。'
-      : '改密、用户凭证、套餐和删除都从表格操作。'
+      : '查看账号、套餐有效期和本期用量。'
   const emptyCopy = selectedGroup
     ? '该分组还没有成员。'
     : scope === 'ungrouped'
       ? '所有用户都已加入分组。'
       : '还没有用户。'
-  return <Panel title="用户与分组" className="user-management-panel">
+  return <Panel title="用户与用户组" className="user-management-panel">
     <div className="user-management-layout">
-    <UserScopeNav users={users} groups={groups} members={members} scope={scope} onSelect={setSelectedScope} onCreateGroup={openCreateGroup} />
+    <UserScopeNav users={users} groups={groups} members={members} scope={scope} onSelect={next => { setSelectedScope(next); setFilter('all'); setQuery('') }} onCreateGroup={openCreateGroup} />
     <div className="user-management-main">
     <div className="section-toolbar">
       <div>
         <div className="user-scope-heading">
           <h3>{scopeTitle}</h3>
+          <FieldHelp label={scopeTitle} hint={scopeDescription} placement="bottom" />
           {selectedGroup?.system_key && <span className="badge neutral">系统组</span>}
           {selectedGroup && <span className={`badge ${selectedGroup.enabled === false ? 'neutral' : 'success'}`}>{selectedGroup.enabled === false ? '已停用' : '启用中'}</span>}
           {selectedGroup && <span className="badge neutral">{sessionRoleLabel(selectedGroup.role)}</span>}
           <span className="user-scope-count">{visibleUsers.length}</span>
         </div>
-        <p className="muted">{scopeDescription}</p>
       </div>
       <div className="section-actions">
         {selectedGroupProtected && <span className="muted" title="操作员不能编辑管理员组或其成员">管理员组仅管理员可操作</span>}
         {selectedGroup && !selectedGroupProtected && <>
           <button className="ghost" onClick={() => setManagingGroupID(selectedGroup.id)}><UsersIcon size={15} />管理成员</button>
-          <button className="ghost icon-button" onClick={() => openEditGroup(selectedGroup)} title="编辑分组" aria-label={`编辑 ${selectedGroup.name}`}><Edit3 /></button>
-          {!selectedGroup.system_key && <button className="ghost icon-button danger-text" onClick={() => void deleteGroup(selectedGroup)} title="删除分组" aria-label={`删除 ${selectedGroup.name}`}><Trash2 /></button>}
+          <button className="ghost" onClick={() => openEditGroup(selectedGroup)} title="编辑分组" aria-label={`编辑 ${selectedGroup.name}`}><Edit3 size={15} />编辑用户组</button>
+          {!selectedGroup.system_key && <button className="ghost danger-text" disabled={groupAction.pending} onClick={() => void groupAction.run(() => deleteGroup(selectedGroup))} title="删除分组" aria-label={`删除 ${selectedGroup.name}`}><Trash2 size={15} />{groupAction.pending ? '删除中…' : '删除用户组'}</button>}
         </>}
-        <button onClick={openCreateUser}>添加用户</button>
+        <button onClick={openCreateUser}>创建账号</button>
       </div>
     </div>
     
+    {groupAction.error && <p className="user-action-error" role="alert">{groupAction.error}</p>}
+    <div className="user-overview-stats" aria-label="当前用户组概览">
+      {([{ key: 'all', label: '用户总数', tone: 'neutral' }, { key: 'attention', label: '需关注账号', tone: 'danger' }, { key: 'expiring', label: '7 天内套餐到期', tone: 'warning' }, { key: 'unassigned', label: '未分配套餐', tone: 'neutral' }] as const).map(item => <button type="button" key={item.key} className={`user-overview-stat ${item.tone}${filter === item.key ? ' is-active' : ''}`} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}><span>{item.label}</span><strong>{summary[item.key]}</strong></button>)}
+    </div>
+    <div className="user-list-filters">
+      <input type="search" aria-label="搜索用户或套餐" placeholder="搜索用户名、昵称或套餐" value={query} onChange={event => setQuery(event.target.value)} />
+      <span role="status">显示 {visibleUsers.length} / {scopedUsers.length} 位用户</span>
+      {(query || filter !== 'all') && <button type="button" className="ghost" onClick={() => { setQuery(''); setFilter('all') }}>清除筛选</button>}
+    </div>
     {visibleUsers.length ? <div className="card-custom user-table-card">
       <div className="user-table-scroll">
-        <table className={`user-data-table${showGroupsColumn ? '' : ' is-scoped'}`}>
-          <colgroup>
-            <col style={{ width: showGroupsColumn ? '18%' : '22%' }} />
-            <col style={{ width: showGroupsColumn ? '10%' : '12%' }} />
-            <col style={{ width: showGroupsColumn ? '8%' : '10%' }} />
-            {showGroupsColumn && <col style={{ width: '12%' }} />}
-            <col style={{ width: showGroupsColumn ? '18%' : '20%' }} />
-            <col style={{ width: showGroupsColumn ? '16%' : '18%' }} />
-            <col style={{ width: showGroupsColumn ? '18%' : '18%' }} />
-          </colgroup>
-          <thead>
-            <tr style={{ borderBottom: '1.5px solid var(--border-color)', color: 'var(--text-muted)' }}>
-              <th className="user-col-user" style={{ fontWeight: 600 }}>用户</th>
-              <th className="user-col-plan" style={{ fontWeight: 600 }}>套餐</th>
-              <th className="user-col-limit" style={{ fontWeight: 600 }}>限速</th>
-              {showGroupsColumn && <th className="user-col-groups" style={{ fontWeight: 600 }}>所属组</th>}
-              <th className="user-col-traffic" style={{ fontWeight: 600 }}>流量配额</th>
-              <th className="user-col-subscription" style={{ fontWeight: 600 }}>订阅凭证</th>
-              <th className="user-col-actions" style={{ fontWeight: 600, textAlign: 'right' }}>操作</th>
+        <table className={`user-data-table user-overview-table${showGroupsColumn ? '' : ' is-scoped'}`}>
+          <thead><tr>
+            <th>用户与状态</th><th>套餐与有效期</th><th>本期用量</th>
+            {showGroupsColumn && <th>用户组</th>}<th>订阅链接</th><th>操作</th>
+          </tr></thead>
+          <tbody>{visibleUsers.map((usr: User) => {
+            const canManageUser = canManageAdministrators || effectiveUserRole(usr, groups, members) !== 'admin'
+            const account = userAccountDisplay(usr)
+            const limits = effectiveUserLimits(data, usr)
+            const usage = userUsageDisplay(usr.traffic_used_bytes, limits.traffic)
+            const binding = bindings.get(usr.id)
+            const plan = plans.get(binding?.plan_id)
+            const validity = userPlanDisplay(binding, plan, now)
+            const groupList = members.filter(member => member.user_id === usr.id && member.enabled !== false).map(member => groups.find(group => group.id === member.group_id)).filter((group): group is UserGroup => Boolean(group))
+            const subscriptionStatus = userSubscriptionStatus(usr)
+            return <tr key={usr.id}>
+              <td className="user-col-user" data-label="用户">
+                <div className="user-table-identity">
+                  <strong className="user-table-name">{usr.username}</strong>
+                  {usr.nickname && <span className="muted">{usr.nickname}</span>}
+                  <div><span className={`user-state-pill ${account.tone}`}>{account.label}</span>{usr.protected && <span className="badge neutral">受保护</span>}</div>
+                </div>
+              </td>
+              <td className="user-col-plan" data-label="套餐与有效期">
+                <div className="user-plan-summary">
+                  <strong>{plan?.name || (binding ? '套餐不可用' : '未分配套餐')}</strong>
+                  {binding && <><span className={`user-state-pill ${validity.tone}`}>{validity.label}</span><span className={validity.expiring ? 'user-expiry-warning' : 'muted'}>{validity.expiry}</span>
+                    {binding.expires_at && <time dateTime={binding.expires_at}>到期 {formatTableTime(binding.expires_at)}</time>}
+                    {binding.starts_at && new Date(binding.starts_at).getTime() > now && <time dateTime={binding.starts_at}>开始 {formatTableTime(binding.starts_at)}</time>}
+                  </>}
+                </div>
+              </td>
+              <td className="user-col-traffic" data-label="本期用量">
+                <div className="user-table-traffic">
+                  <div className="user-table-traffic-copy"><strong>{formatBytes(usage.bytes)}</strong><span>{usage.bounded ? `/ ${formatBytes(limits.traffic)}` : '不限量'}</span></div>
+                  {usage.bounded && <><div className="user-table-traffic-bar" role="progressbar" aria-label={`${usr.username} 本期流量使用率`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage.progress)} aria-valuetext={`已用 ${usage.percent.toFixed(1)}%，剩余 ${formatBytes(usage.remaining || 0)}`}><div className={usage.tone === 'danger' ? 'is-danger' : usage.tone === 'warning' ? 'is-warning' : ''} style={{ width: `${usage.progress}%` }} /></div><span className={`user-usage-caption ${usage.tone}`}>{usage.percent.toFixed(1)}% · 剩余 {formatBytes(usage.remaining || 0)}</span></>}
+                  <span className="muted">{limits.speed > 0 ? `限速 ${limits.speed} Mbps` : '不限速'}</span>
+                  {usr.traffic_period_end && <time dateTime={usr.traffic_period_end}>流量重置 {formatTableTime(usr.traffic_period_end)}</time>}
+                  <button type="button" className="user-table-compact-button" onClick={() => setLedgerUser(usr)} aria-label={`查看 ${usr.username} 的流量明细`}>流量明细</button>
+                </div>
+              </td>
+              {showGroupsColumn && <td className="user-col-groups" data-label="用户组"><div className="user-group-tags">{groupList.length ? groupList.map(group => <button key={group.id} type="button" className="ghost user-group-link" onClick={() => { setSelectedScope(group.id); setFilter('all'); setQuery('') }}>{group.name}{group.enabled === false ? ' · 已停用' : ''}</button>) : <span className="muted">未分组</span>}</div></td>}
+              <td className="user-col-subscription" data-label="订阅链接"><div className="user-subscription-status"><span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label === '长期有效' ? '可重复使用' : subscriptionStatus.label}</span></div></td>
+              <td className="user-col-actions" data-label="操作">
+                {canManageUser ? <div className="user-row-actions">
+                  <button type="button" className="ghost user-row-text-button" onClick={() => openEditUser(usr)} aria-label={`编辑 ${usr.username}`}><Edit3 size={14} />编辑</button>
+                  <button type="button" className="ghost user-row-text-button" onClick={() => setPlanUser(usr)} aria-label={`管理 ${usr.username} 的套餐`}><Layers size={14} />管理套餐</button>
+                  <UserMoreActionsDropdown user={usr} client={client} load={load} dialogs={dialogs} notify={notify} onEdit={openEditUser} onPassword={setPasswordUser} onCredentials={setCredentialsUser} onDelete={async (user: User) => {
+                    if (!await dialogs.confirm({ title: `删除用户 ${user.username}？`, message: '账号及其订阅授权将被删除，此操作无法撤销。', tone: 'danger', confirmText: '删除用户' })) return
+                    await client.request(`/users/${user.id}`, { method: 'DELETE' })
+                    await refreshAfterSave('用户已删除')
+                  }} />
+                </div> : <span className="muted">仅管理员可操作</span>}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {visibleUsers.map((usr: User) => {
-              const administratorAccount = effectiveUserRole(usr, groups, members) === 'admin'
-              const canManageUser = canManageAdministrators || !administratorAccount
-              const limits = effectiveUserLimits(data, usr);
-              const isSuspended = usr.status === 'suspended';
-              const isQuotaExceeded = usr.traffic_quota_state === 'quota_exceeded';
-              const isUnavailable = isSuspended || isQuotaExceeded;
-              const speedLimitText = limits.speed > 0 ? `${limits.speed} Mbps` : '不限速';
-              const planBinding = (data.user_plan_bindings || []).find((b: any) => b.user_id === usr.id);
-              const userPlan = planBinding ? (data.subscription_plans || []).find((p: any) => p.id === planBinding.plan_id) : null;
-              
-              // Groups membership
-              const userMembers = (data.user_group_members || []).filter((m: UserGroupMember) => m.user_id === usr.id && m.enabled !== false);
-              const groupList = userMembers.map((m: UserGroupMember) => {
-                const g = (data.user_groups || []).find((x: UserGroup) => x.id === m.group_id);
-                return g ? g.name : null;
-              }).filter(Boolean);
-              const groupsText = groupList.length ? groupList.join(', ') : '无组';
-
-              // Traffic details
-              const usagePercent = limits.traffic > 0 ? (usr.traffic_used_bytes / limits.traffic) * 100 : 0;
-              const subscriptionStatus = userSubscriptionStatus(usr)
-              
-              return (
-                <tr key={usr.id} style={{ 
-                  borderBottom: '1px solid var(--border-color)', 
-                  opacity: isUnavailable ? 0.72 : 1,
-                  backgroundColor: isUnavailable ? 'var(--bg-page)' : 'transparent',
-                  transition: 'background-color 0.2s'
-                }} className="table-row-hover">
-                  <td className="user-col-user" style={{ fontWeight: 600 }}>
-                    <div className="user-table-identity">
-                      <div>
-                        <span className="user-table-name">{usr.username}</span>
-                        <span className={`badge-custom ${isUnavailable ? 'badge-danger' : 'badge-success'}`}>
-                          {isSuspended ? '已暂停' : isQuotaExceeded ? '已达量' : '正常'}
-                        </span>
-                        {usr.status === 'disabled' ? <AuthorizationStatusBadge status="revoking" /> : null}
-                      </div>
-                      {(usr.traffic_period_end || isQuotaExceeded) && (
-                        <span className="user-table-period">
-                          {usr.traffic_period_end ? `到期 ${formatDate(usr.traffic_period_end)}` : trafficQuotaLabel(usr.traffic_quota_state)}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="user-col-plan" data-label="套餐">
-                    {userPlan ? (
-                      <span className="badge-custom badge-muted user-table-group" style={{ fontWeight: 500 }} title={planBinding.expires_at ? `到期 ${formatDate(planBinding.expires_at)}` : '长期有效'}>
-                        {userPlan.name}{planBinding.starts_at ? ' · 待生效' : ''}
-                      </span>
-                    ) : <span className="muted" style={{ fontSize: 12 }}>无套餐</span>}
-                  </td>
-                  <td className="user-col-limit" data-label="限速" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
-                    {speedLimitText}
-                  </td>
-                  {showGroupsColumn && <td className="user-col-groups" data-label="所属组">
-                    <span className="badge-custom badge-muted user-table-group" style={{ fontWeight: 500 }} title={groupsText}>
-                      {groupsText}
-                    </span>
-                  </td>}
-                  <td className="user-col-traffic" data-label="流量配额">
-                    <div className="user-table-traffic">
-                      <div className="user-table-traffic-copy">
-                        <span>{formatBytes(usr.traffic_used_bytes || 0)}</span>
-                        <span>共 {limits.traffic > 0 ? formatBytes(limits.traffic) : '不限量'}</span>
-                      </div>
-                      {limits.traffic > 0 && (
-                        <div className="user-table-traffic-bar" aria-hidden="true">
-                          <div className={usagePercent > 90 ? 'is-danger' : usagePercent > 70 ? 'is-warning' : ''} style={{ width: `${Math.min(100, usagePercent)}%` }} />
-                        </div>
-                      )}
-                      <button type="button" className="user-table-compact-button" onClick={() => setLedgerUser(usr)}>查看明细</button>
-                    </div>
-                  </td>
-                  <td className="user-col-subscription" data-label="订阅凭证">
-                    <div className="user-subscription-status">
-                      <span className={`sub-pill ${subscriptionStatus.tone}`}>{subscriptionStatus.label}</span>
-                    </div>
-                  </td>
-                  <td className="user-col-actions" style={{ textAlign: 'right' }}>
-                    {canManageUser ? <div className="user-row-actions">
-                      <button 
-                        onClick={() => setPlanUser(usr)}
-                        className="btn-custom btn-secondary user-row-icon-button" 
-                        title="套餐与例外"
-                        aria-label={`套餐与例外 ${usr.username}`}
-                      >
-                        <Layers size={14} />
-                      </button>
-                      <button 
-                        onClick={() => openEditUser(usr)}
-                        className="btn-custom btn-secondary user-row-icon-button" 
-                        title="编辑"
-                        aria-label={`编辑 ${usr.username}`}
-                      >
-                        <Edit3 size={14} />
-                      </button>
-                      <UserMoreActionsDropdown 
-                        user={usr} 
-                        client={client} 
-                        load={load} 
-                        dialogs={dialogs}
-                        notify={notify}
-                        onEdit={openEditUser}
-                        onPassword={setPasswordUser}
-                        onCredentials={setCredentialsUser}
-                        onDelete={(u: any) => remove(client, `/users/${u.id}`, load, dialogs, u)}
-                      />
-                    </div> : <span className="muted" title="操作员不能编辑或删除管理员账号">仅管理员可操作</span>}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
+          })}</tbody>
         </table>
       </div>
     </div> : <div className="empty small user-scope-empty-main">
-      <p>{emptyCopy}</p>
-      {selectedGroup && !selectedGroupProtected ? <button onClick={() => setManagingGroupID(selectedGroup.id)}><UserPlus size={15} />管理成员</button> : scope === 'all' ? <button onClick={openCreateUser}>添加用户</button> : null}
+      <p>{query || filter !== 'all' ? '没有符合筛选条件的用户。' : emptyCopy}</p>
+      {selectedGroup && !selectedGroupProtected ? <button onClick={() => setManagingGroupID(selectedGroup.id)}><UserPlus size={15} />管理成员</button> : scope === 'all' ? <button onClick={openCreateUser}>创建账号</button> : null}
     </div>}
     </div>
     </div>
-    <AnimatePresence>{createOpen && <UserCreateDialog draft={draft} setDraft={handleDraftChange} canAssignAdmin={canManageAdministrators} onCancel={handleCloseCreate} onSubmit={createUser} usernameError={createErrors.username} passwordError={createErrors.password} submitting={createSubmitting} />}</AnimatePresence>
+    <AnimatePresence>{createOpen && <UserCreateDialog draft={draft} setDraft={handleDraftChange} canAssignAdmin={canManageAdministrators} onCancel={handleCloseCreate} onSubmit={createUser} usernameError={createErrors.username} passwordError={createErrors.password} submitting={createSubmitting} error={createError} />}</AnimatePresence>
     <AnimatePresence>{editUser && <UserEditDialog user={editUser} draft={editDraft} setDraft={setEditDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setEditUser(null)} onSubmit={updateUser} />}</AnimatePresence>
     <AnimatePresence>{groupCreateOpen && <UserGroupCreateDialog draft={groupDraft} setDraft={setGroupDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setGroupCreateOpen(false)} onSubmit={createGroup} />}</AnimatePresence>
     <AnimatePresence>{editingGroup && <UserGroupEditDialog group={editingGroup} draft={groupEditDraft} setDraft={setGroupEditDraft} canAssignAdmin={canManageAdministrators} onCancel={() => setEditingGroup(null)} onSubmit={updateGroup} />}</AnimatePresence>
@@ -18869,32 +18846,32 @@ function UserScopeNav({ users, groups, members, scope, onSelect, onCreateGroup }
   for (const member of enabledMembers) {
     countByGroup.set(member.group_id, (countByGroup.get(member.group_id) || 0) + 1)
   }
-  return <nav className="user-scope-nav" aria-label="用户与分组">
+  return <nav className="user-scope-nav" aria-label="用户组筛选">
     <div className="user-scope-section">
-      <button type="button" className={scope === 'all' ? 'is-active' : ''} onClick={() => onSelect('all')}>
+      <button type="button" aria-current={scope === 'all' ? 'page' : undefined} className={scope === 'all' ? 'is-active' : ''} onClick={() => onSelect('all')}>
         <span>全部用户</span><span>{users.length}</span>
       </button>
-      <button type="button" className={scope === 'ungrouped' ? 'is-active' : ''} onClick={() => onSelect('ungrouped')}>
+      <button type="button" aria-current={scope === 'ungrouped' ? 'page' : undefined} className={scope === 'ungrouped' ? 'is-active' : ''} onClick={() => onSelect('ungrouped')}>
         <span>未分组</span><span>{ungroupedCount}</span>
       </button>
     </div>
     <div className="user-scope-section">
-      <div className="user-scope-label">分组</div>
       {groups.length ? groups.map(group => (
         <button
           type="button"
           key={group.id}
+          aria-current={scope === group.id ? 'page' : undefined}
           className={`${scope === group.id ? 'is-active' : ''}${group.enabled === false ? ' is-disabled' : ''}`}
           onClick={() => onSelect(group.id)}
         >
           <span className="user-scope-item-name">
-            <span>{group.name}</span>
+            <span>{group.name}{group.enabled === false ? ' · 已停用' : ''}</span>
             {group.system_key && <span className="badge neutral">系统</span>}
           </span>
           <span>{countByGroup.get(group.id) || 0}</span>
         </button>
-      )) : <div className="user-scope-empty">暂无分组</div>}
-      <button type="button" className="user-scope-create" onClick={onCreateGroup}><Plus size={15} />新建分组</button>
+      )) : <div className="user-scope-empty">暂无用户组</div>}
+      <button type="button" className="user-scope-create" onClick={onCreateGroup}><Plus size={15} />新建用户组</button>
     </div>
   </nav>
 }
@@ -18917,6 +18894,7 @@ function UserTrafficLedgerDialog({ user, client, onCancel }: { user: User; clien
   }
   useEffect(() => { void loadLedger() }, [user.id])
   const reconcile = async () => {
+    if (busy) return
     setBusy(true)
     setError('')
     try {
@@ -18936,57 +18914,67 @@ function UserTrafficLedgerDialog({ user, client, onCancel }: { user: User; clien
     if (['stale', 'recovering'].includes(status)) return 'var(--color-warning)'
     return 'var(--text-secondary)'
   }
-  return <MotionDialogPanel onCancel={onCancel} className="user-form-dialog">
+  return <MotionDialogPanel aria-labelledby="user-traffic-ledger-title" onCancel={onCancel} className="user-form-dialog">
     <header className="dialog-head">
       <div>
-        <h2 id="user-traffic-ledger-title">流量账本</h2>
-        <p className="muted">{user.username} 的当期确认用量、Lease 与对账状态</p>
+        <h2 id="user-traffic-ledger-title">流量明细</h2>
+        <p className="muted">{user.username} 的本期用量与服务器同步情况</p>
       </div>
       <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
-      {error ? <p className="muted" style={{ color: 'var(--color-danger)' }}>{error}</p> : null}
-      <div className="form-section-title">本期</div>
-      <p>已用 {formatBytes(Number(period.used_bytes || 0))} · 上传 {formatBytes(Number(period.upload_bytes || 0))} · 下载 {formatBytes(Number(period.download_bytes || 0))}</p>
+      {error ? <p className="user-action-error" role="alert">{error}</p> : null}
+      {!ledger ? <p role="status">{busy ? '正在读取流量明细…' : '暂时无法读取流量明细'}</p> : <>
+      <div className="user-ledger-stats">
+        <div><span>本期已用</span><strong>{formatBytes(Number(period.used_bytes || 0))}</strong></div>
+        <div><span>上传</span><strong>{formatBytes(Number(period.upload_bytes || 0))}</strong></div>
+        <div><span>下载</span><strong>{formatBytes(Number(period.download_bytes || 0))}</strong></div>
+      </div>
+      {Number(period.upload_bytes || 0) + Number(period.download_bytes || 0) > 0 && <div className="user-ledger-split" role="img" aria-label={`上传 ${formatBytes(Number(period.upload_bytes || 0))}，下载 ${formatBytes(Number(period.download_bytes || 0))}`}><span style={{ flex: Number(period.upload_bytes || 0) }} /><span style={{ flex: Number(period.download_bytes || 0) }} /></div>}
+      <div className="user-ledger-key"><span>上传</span><span>下载</span></div>
       <p>限额 {Number(period.limit_bytes || 0) > 0 ? formatBytes(Number(period.limit_bytes || 0)) : '不限量'}{Number(period.limit_bytes || 0) > 0 ? ` · 剩余 ${formatBytes(remaining)}` : ''}</p>
       <div className="form-section-title" style={{ marginTop: 16 }}>服务器</div>
       {(ledger?.servers || []).length ? (ledger.servers as any[]).map(server => (
         <div key={server.server_id} style={{ marginBottom: 12, padding: 12, borderRadius: 'var(--radius-md)', background: 'var(--bg-control)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <strong>{server.server_name || `服务器 ${server.server_id}`}</strong>
-            <span style={{ color: syncTone(String(server.sync?.status || '')) }}>{server.sync?.status || 'healthy'}</span>
+            <span style={{ color: syncTone(String(server.sync?.status || '')) }}>{({ healthy: '已同步', stale: '等待同步', recovering: '同步恢复中', counter_regression: '用量异常', checkpoint_gap: '记录缺失', checkpoint_overlap: '记录重复', epoch_conflict: '记录冲突', state_corrupt: '记录异常' } as Record<string, string>)[server.sync?.status] || '等待确认'}</span>
           </div>
           <p className="muted">已确认 {formatBytes(Number((server.streams || []).reduce((sum: number, stream: any) => sum + Number(stream.accepted_upload_bytes || 0) + Number(stream.accepted_download_bytes || 0), 0)))}</p>
-          <p className="muted">Lease {formatBytes(Number(server.lease?.granted_bytes || 0))} · 已消费 {formatBytes(Number(server.lease?.consumed_bytes || 0))} · 剩余 {formatBytes(Number(server.lease?.remaining_bytes || 0))}</p>
+          <p className="muted">已下发额度 {formatBytes(Number(server.lease?.granted_bytes || 0))} · 已使用 {formatBytes(Number(server.lease?.consumed_bytes || 0))} · 剩余 {formatBytes(Number(server.lease?.remaining_bytes || 0))}</p>
           <p className="muted">最后同步 {server.sync?.last_seen_at ? formatDate(server.sync.last_seen_at) : '尚未同步'}</p>
-          {['counter_regression', 'checkpoint_gap', 'checkpoint_overlap', 'epoch_conflict', 'state_corrupt'].includes(String(server.sync?.status || '')) ? <p style={{ color: 'var(--color-danger)' }}>需要对账</p> : null}
+          {['counter_regression', 'checkpoint_gap', 'checkpoint_overlap', 'epoch_conflict', 'state_corrupt'].includes(String(server.sync?.status || '')) ? <p style={{ color: 'var(--color-danger)' }}>请重新同步核对用量</p> : null}
         </div>
       )) : <p className="muted">{busy ? '正在加载…' : '还没有服务器同步记录'}</p>}
+      </>}
     </div>
     <footer className="dialog-actions">
-      <button type="button" className="btn-custom btn-secondary" onClick={() => void reconcile()} disabled={busy}>重新同步</button>
+      <button type="button" className="btn-custom btn-secondary" onClick={() => void reconcile()} disabled={busy}>{busy ? '同步中…' : '重新同步用量'}</button>
       <button type="button" onClick={onCancel}>关闭</button>
     </footer>
   </MotionDialogPanel>
 }
 
 function UserGroupMembersDialog({ groupID, data, canManageAdministrators, selectedUserID, onSelectUser, onAddMember, onDeleteMember, onCancel }: { groupID: number; data: any; canManageAdministrators: boolean; selectedUserID: number; onSelectUser: (userID: number) => void; onAddMember: () => Promise<void>; onDeleteMember: (member: UserGroupMember) => Promise<void>; onCancel: () => void }) {
+  const action = useUserAction(localizeErrorMessage)
+  const close = () => { if (!action.pending) onCancel() }
   const group = (data.user_groups || []).find((item: UserGroup) => item.id === groupID)
   const members: UserGroupMember[] = (data.user_group_members || []).filter((member: UserGroupMember) => member.group_id === groupID && member.enabled !== false)
   const used = new Set(members.map(member => member.user_id))
   const availableUsers: User[] = (data.users || []).filter((user: User) => !used.has(user.id) && (canManageAdministrators || effectiveUserRole(user, data.user_groups || [], data.user_group_members || []) !== 'admin'))
-  return <MotionDialogPanel onCancel={onCancel} className="user-group-members-dialog user-form-dialog">
+  return <MotionDialogPanel aria-labelledby="user-group-members-title" onCancel={close} className="user-group-members-dialog user-form-dialog">
     <header className="dialog-head">
       <div><h2 id="user-group-members-title">管理成员</h2><p className="muted">用户组：{group?.name || `#${groupID}`}</p></div>
-      <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+      <button className="ghost dialog-close icon-button" onClick={close} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
-    <div className="dialog-body user-group-members-body">
+    <div className="dialog-body user-group-members-body" aria-busy={action.pending}>
+      {action.error && <p className="user-action-error" role="alert">{action.error}</p>}
       <div className="user-group-member-add">
         <Select value={selectedUserID} onChange={event => onSelectUser(Number(event.target.value))} aria-label="选择用户">
           <option value={0}>{availableUsers.length ? '选择要添加的用户' : '所有用户均已加入'}</option>
           {availableUsers.map(user => <option key={user.id} value={user.id}>{user.username}（{labelValue(user.status)}）</option>)}
         </Select>
-        <button onClick={onAddMember} disabled={!selectedUserID}><UserPlus size={15} />添加成员</button>
+        <button onClick={() => void action.run(onAddMember)} disabled={action.pending || !selectedUserID}><UserPlus size={15} />{action.pending ? '处理中…' : '添加成员'}</button>
       </div>
       <div className="user-group-member-list">
         <div className="user-group-member-list-head"><strong>当前成员</strong><span>{members.length} 人</span></div>
@@ -18996,34 +18984,40 @@ function UserGroupMembersDialog({ groupID, data, canManageAdministrators, select
           return <div className="user-group-member-row" key={member.id}>
             <div className="user-group-member-avatar">{username.slice(0, 1).toUpperCase()}</div>
             <div><strong>{username}</strong><span>{labelValue(user?.status || 'unknown')}</span></div>
-            {!(group?.system_key === 'administrators' && user?.protected) && (canManageAdministrators || !user || effectiveUserRole(user, data.user_groups || [], data.user_group_members || []) !== 'admin') && <button className="ghost icon-button danger-text" onClick={() => onDeleteMember(member)} title={`移除 ${username}`} aria-label={`移除 ${username}`}><X size={15} /></button>}
+            {!(group?.system_key === 'administrators' && user?.protected) && (canManageAdministrators || !user || effectiveUserRole(user, data.user_groups || [], data.user_group_members || []) !== 'admin') && <button className="ghost danger-text" onClick={() => void action.run(() => onDeleteMember(member))} disabled={action.pending} title={`移除 ${username}`} aria-label={`移除 ${username}`}><X size={15} />移出用户组</button>}
           </div>
         }) : <div className="empty small">该分组还没有成员。</div>}
       </div>
     </div>
-    <footer className="dialog-actions"><button onClick={onCancel}>完成</button></footer>
+    <footer className="dialog-actions"><button onClick={close}>完成</button></footer>
   </MotionDialogPanel>
 }
 
 function UserCredentialsDialog({ user, client, load, notify, onCancel }: { user: User; client: ReturnType<typeof api>; load: () => Promise<void>; notify?: (message: string, tone?: ToastKind) => void; onCancel: () => void }) {
   const dialogs = useDialogs()
   const [working, setWorking] = useState('')
+  const [error, setError] = useState('')
+  const close = () => { if (!working) onCancel() }
   const run = async (kind: 'subscription' | 'password') => {
     if (working) return
     setWorking(kind)
+    setError('')
     try {
       if (kind === 'subscription') await rotateSub(client, user, load, dialogs, notify)
       else await rotateNodePassword(client, user, load, dialogs, notify)
+    } catch (error: any) {
+      setError(localizeErrorMessage(error?.message || error))
     } finally {
       setWorking('')
     }
   }
-  return <MotionDialogPanel onCancel={onCancel} className="user-settings-dialog">
+  return <MotionDialogPanel aria-labelledby="user-credentials-title" onCancel={close} className="user-settings-dialog">
     <header className="dialog-head">
       <div><h2 id="user-credentials-title">用户凭证</h2><p className="muted">用户：{user.username}</p></div>
-      <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+      <button className="ghost dialog-close icon-button" onClick={close} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button>
     </header>
     <div className="dialog-body">
+      {error && <p className="user-action-error" role="alert">{error}</p>}
       <div className="user-credentials-actions">
         <button type="button" className="ghost user-credentials-action" onClick={() => void run('subscription')} disabled={Boolean(working)}>
           <RotateCcw size={16} aria-hidden="true" />
@@ -19041,29 +19035,33 @@ function UserCredentialsDialog({ user, client, load, notify, onCancel }: { user:
         </button>
       </div>
     </div>
-    <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>关闭</button></footer>
+    <footer className="dialog-actions"><button className="ghost" onClick={close} disabled={Boolean(working)}>关闭</button></footer>
   </MotionDialogPanel>
 }
 
 function UserPasswordDialog({ user, onCancel, onSubmit }: { user: User; onCancel: () => void; onSubmit: (password: string, confirm: string) => Promise<void> }) {
+  const action = useUserAction(localizeErrorMessage)
+  const close = () => { if (!action.pending) onCancel() }
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  return <MotionDialogPanel onCancel={onCancel} className="user-settings-dialog">
+  return <MotionDialogPanel aria-labelledby="user-password-title" onCancel={close} className="user-settings-dialog">
       <header className="dialog-head">
         <div><h2 id="user-password-title">修改用户密码</h2><p className="muted">用户：{user.username}</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={close} disabled={action.pending} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body">
+      <div className="dialog-body" aria-busy={action.pending}>
+        {action.error && <p className="user-action-error" role="alert">{action.error}</p>}
         <div className="form user-settings-form user-form">
           <FormField label="新密码" required hint="至少 8 位。">
-            <input value={password} onChange={e => setPassword(e.target.value)} placeholder="新密码" type="password" autoComplete="new-password" />
+            <input aria-label="新密码" value={password} onChange={e => setPassword(e.target.value)} placeholder="新密码" type="password" disabled={action.pending} autoComplete="new-password" />
           </FormField>
           <FormField label="确认密码" required>
-            <input value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="再次输入新密码" type="password" autoComplete="new-password" />
+            <input aria-label="确认密码" value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="再次输入新密码" type="password" disabled={action.pending} autoComplete="new-password" />
           </FormField>
         </div>
+        {confirm && password !== confirm && <p className="user-action-error" role="alert">两次输入的密码不一致</p>}
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={() => onSubmit(password, confirm)}>保存密码</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={close} disabled={action.pending}>取消</button><button onClick={() => void action.run(() => onSubmit(password, confirm))} disabled={action.pending || password.length < 8 || password !== confirm}>{action.pending ? '保存中…' : '修改登录密码'}</button></footer>
   </MotionDialogPanel>
 }
 
@@ -19075,7 +19073,7 @@ function UserFieldError({ message }: { message?: string | null }) {
 function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>> }) {
   return <>
     <FormField label="限速策略" hint="个人设置优先于套餐。">
-      <Select className="full-width" variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && Number(draft.speed_limit_mbps) <= 0 ? 10 : draft.speed_limit_mbps }) }}>
+      <Select aria-label="限速策略" className="full-width" variant="segmented" value={draft.speed_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, speed_limit_mode: mode, speed_limit_mbps: mode === 'custom' && Number(draft.speed_limit_mbps) <= 0 ? 10 : draft.speed_limit_mbps }) }}>
         <option value="inherit">跟随套餐</option>
         <option value="unlimited">不限速</option>
         <option value="custom">自定义</option>
@@ -19085,6 +19083,7 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
       <div className="input-with-unit">
         <input
           type="number"
+          aria-label="用户限速 Mbps"
           min={1}
           placeholder="10"
           value={(draft.speed_limit_mbps as any) === '' || draft.speed_limit_mbps === 0 ? '' : draft.speed_limit_mbps}
@@ -19098,7 +19097,7 @@ function UserLimitFields({ draft, setDraft }: { draft: UserDraft; setDraft: Reac
       </div>
     </FormField>}
     <FormField label="流量策略" hint="个人设置优先于套餐。">
-      <Select className="full-width" variant="segmented" value={draft.traffic_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, traffic_limit_mode: mode, traffic_limit_bytes: mode === 'custom' && draft.traffic_limit_bytes <= 0 ? 1073741824 : draft.traffic_limit_bytes }) }}>
+      <Select aria-label="流量策略" className="full-width" variant="segmented" value={draft.traffic_limit_mode} onChange={e => { const mode = e.target.value as LimitMode; setDraft({ ...draft, traffic_limit_mode: mode, traffic_limit_bytes: mode === 'custom' && draft.traffic_limit_bytes <= 0 ? 1073741824 : draft.traffic_limit_bytes }) }}>
         <option value="inherit">跟随套餐</option>
         <option value="unlimited">不限量</option>
         <option value="custom">自定义</option>
@@ -19117,7 +19116,7 @@ function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number
   const effectiveMode = mode || 'monthly'
   return <>
     <FormField label="流量重置" hint="统计周期与日期未填写时，默认按自然月统计。自然月模式下重置日不生效。">
-      <Select className="full-width" variant="segmented" value={effectiveMode} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
+      <Select aria-label="流量重置方式" className="full-width" variant="segmented" value={effectiveMode} onChange={e => onChange({ traffic_reset_mode: e.target.value })}>
         <option value="monthly">自然月</option>
         <option value="month_day">每月指定日</option>
       </Select>
@@ -19125,6 +19124,7 @@ function TrafficResetFields({ mode, day, onChange }: { mode: string; day: number
     <FormField label="重置日" hint={effectiveMode === 'monthly' ? '自然月模式下按自然月统计，重置日不生效。' : '1–31；短月使用当月最后一天，未填写默认为 1 日。'}>
       <input
         type="number"
+        aria-label="流量重置日"
         min={1}
         max={31}
         placeholder="1"
@@ -19153,20 +19153,20 @@ function UserBaseFields({ draft, setDraft, includePassword, canAssignAdmin, user
     <div className="user-form-identity">
       <FormField label="用户名" required hint="用于登录面板，3-32 字符，仅字母/数字/下划线/连字符/点。">
         <div className="field-with-error">
-          <input value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} placeholder="例如：zhangsan" autoComplete="off" aria-invalid={Boolean(displayUsernameError)} />
+          <input aria-label="用户名" value={draft.username} onChange={e => setDraft({ ...draft, username: e.target.value })} placeholder="例如：zhangsan" autoComplete="off" aria-invalid={Boolean(displayUsernameError)} />
           <UserFieldError message={displayUsernameError} />
         </div>
       </FormField>
       <FormField label="昵称" hint="用于面板显示。">
         <div className="field-with-error">
-          <input value={draft.nickname} onChange={e => setDraft({ ...draft, nickname: e.target.value })} placeholder="可选" maxLength={40} aria-invalid={Boolean(nicknameError)} />
+          <input aria-label="昵称" value={draft.nickname} onChange={e => setDraft({ ...draft, nickname: e.target.value })} placeholder="可选" maxLength={40} aria-invalid={Boolean(nicknameError)} />
           <UserFieldError message={nicknameError} />
         </div>
       </FormField>
       {includePassword && <FormField label="初始密码" hint={pwd ? '至少 8 位，建议含大小写、数字和符号；留空将自动生成。' : '留空将自动生成 16 位随机密码，创建后仅显示一次，请及时复制。'}>
         <div className="user-password-row">
           <div className="user-password-input field-with-error">
-            <input value={pwd} onChange={e => setDraft({ ...draft, password: e.target.value })} placeholder="留空自动生成" type={showPassword ? 'text' : 'password'} autoComplete="new-password" aria-invalid={Boolean(displayPasswordError)} />
+            <input aria-label="初始密码" value={pwd} onChange={e => setDraft({ ...draft, password: e.target.value })} placeholder="留空自动生成" type={showPassword ? 'text' : 'password'} autoComplete="new-password" aria-invalid={Boolean(displayPasswordError)} />
             <button type="button" onClick={onToggleShowPassword} aria-label={showPassword ? '隐藏密码' : '显示密码'} title={showPassword ? '隐藏' : '显示'} className="user-password-toggle">
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
@@ -19191,7 +19191,7 @@ function UserBaseFields({ draft, setDraft, includePassword, canAssignAdmin, user
     </div>
     <div className="user-form-options">
       <FormField label="角色">
-        <Select className="full-width" variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}>
+        <Select aria-label="角色" className="full-width" variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}>
           <option value="none">无权限</option>
           <option value="viewer">只读</option>
           <option value="operator">操作员</option>
@@ -19199,9 +19199,9 @@ function UserBaseFields({ draft, setDraft, includePassword, canAssignAdmin, user
         </Select>
       </FormField>
       <FormField label="状态">
-        <Select className="full-width" variant="segmented" value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value })}>
-          <option value="active">活跃</option>
-          <option value="disabled">禁用</option>
+        <Select aria-label="账号状态" className="full-width" variant="segmented" value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value })}>
+          <option value="active">启用</option>
+          <option value="disabled">停用</option>
         </Select>
       </FormField>
       <UserLimitFields draft={draft} setDraft={setDraft} />
@@ -19209,7 +19209,7 @@ function UserBaseFields({ draft, setDraft, includePassword, canAssignAdmin, user
   </div>
 }
 
-function UserCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit, usernameError, passwordError, submitting }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void>; usernameError?: string; passwordError?: string; submitting?: boolean }) {
+function UserCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit, usernameError, passwordError, submitting, error }: { draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void>; usernameError?: string; passwordError?: string; submitting?: boolean; error?: string }) {
   const [showPassword, setShowPassword] = useState(false)
   const handleGenerate = () => {
     const pwd = generateRandomPassword(16)
@@ -19220,14 +19220,15 @@ function UserCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit,
   const passwordInvalid = draft.password ? draft.password.length < 8 : false
   const nicknameInvalid = draft.nickname.length > 40
   const canSubmit = !submitting && !usernameInvalid && !passwordInvalid && !nicknameInvalid && draft.username.trim().length > 0
-  return <MotionDialogPanel onCancel={onCancel} className="user-create-dialog user-form-dialog">
+  return <MotionDialogPanel aria-labelledby="user-create-title" onCancel={onCancel} className="user-create-dialog user-form-dialog">
       <header className="dialog-head">
-        <div><h2 id="user-create-title">添加用户</h2><p className="muted">创建登录账号和订阅凭据。{draft.password ? '' : '留空密码将自动生成随机密码。'}</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <div><h2 id="user-create-title">创建账号</h2><p className="muted">创建登录账号和订阅凭据。{draft.password ? '' : '留空密码将自动生成随机密码。'}</p></div>
+        <button className="ghost dialog-close icon-button" onClick={onCancel} disabled={submitting} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body">
+      <div className="dialog-body" aria-busy={submitting}>
+        {error && <p className="user-action-error" role="alert">{error}</p>}
         <div className="form user-create-form user-form">
-          <UserBaseFields draft={draft} setDraft={setDraft} includePassword canAssignAdmin={canAssignAdmin} usernameError={usernameError} passwordError={passwordError} showPassword={showPassword} onToggleShowPassword={() => setShowPassword(v => !v)} onGenerateRandom={handleGenerate} />
+          <fieldset className="user-pending-fields" disabled={submitting}><UserBaseFields draft={draft} setDraft={setDraft} includePassword canAssignAdmin={canAssignAdmin} usernameError={usernameError} passwordError={passwordError} showPassword={showPassword} onToggleShowPassword={() => setShowPassword(v => !v)} onGenerateRandom={handleGenerate} /></fieldset>
         </div>
       </div>
       <footer className="dialog-actions"><button className="ghost" onClick={onCancel} disabled={!!submitting}>取消</button><button onClick={() => void onSubmit()} disabled={!canSubmit} title={!draft.username.trim() ? '请先填写用户名' : usernameInvalid ? '请修正用户名' : passwordInvalid ? '密码至少需要 8 位' : undefined} style={{ opacity: canSubmit ? 1 : 0.5 }}>{submitting ? '创建中…' : '创建'}</button></footer>
@@ -19235,48 +19236,57 @@ function UserCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit,
 }
 
 function UserEditDialog({ user, draft, setDraft, canAssignAdmin, onCancel, onSubmit }: { user: User; draft: UserDraft; setDraft: React.Dispatch<React.SetStateAction<UserDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  return <MotionDialogPanel onCancel={onCancel} className="user-create-dialog user-form-dialog">
+  const action = useUserAction(localizeErrorMessage)
+  const close = () => { if (!action.pending) onCancel() }
+  return <MotionDialogPanel aria-labelledby="user-edit-title" onCancel={close} className="user-create-dialog user-form-dialog">
       <header className="dialog-head">
         <div><h2 id="user-edit-title">编辑用户</h2><p className="muted">用户：{user.username}</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={close} disabled={action.pending} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body">
+      <div className="dialog-body" aria-busy={action.pending}>
+        {action.error && <p className="user-action-error" role="alert">{action.error}</p>}
         <div className="form user-create-form user-form">
-          <UserBaseFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} />
+          <fieldset className="user-pending-fields" disabled={action.pending}><UserBaseFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></fieldset>
         </div>
       </div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit}>保存</button></footer>
+      <footer className="dialog-actions"><button className="ghost" onClick={close} disabled={action.pending}>取消</button><button onClick={() => void action.run(onSubmit)} disabled={action.pending}>{action.pending ? '保存中…' : '保存更改'}</button></footer>
   </MotionDialogPanel>
 }
 
 function UserGroupFields({ draft, setDraft, canAssignAdmin }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; canAssignAdmin: boolean }) {
   return <div className="form user-group-form">
-    <FormField label="分组名称" required><input autoFocus value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="例如：高级用户" /></FormField>
+    <FormField label="分组名称" required><input aria-label="用户组名称" autoFocus value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} placeholder="例如：高级用户" /></FormField>
     <FormField label="后台权限" hint="成员继承该组权限。"><Select variant="segmented" value={draft.role} onChange={e => setDraft({ ...draft, role: e.target.value as Role })}><option value="viewer">普通用户</option><option value="operator">操作员</option>{canAssignAdmin && <option value="admin">管理员</option>}</Select></FormField>
     <FormField label="状态"><Select variant="segmented" value={String(draft.enabled)} onChange={e => setDraft({ ...draft, enabled: e.target.value === 'true' })}><option value="true">启用</option><option value="false">停用</option></Select></FormField>
-    <FormField className="user-group-description-field" label="备注"><input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="可选" /></FormField>
+    <FormField className="user-group-description-field" label="备注"><input aria-label="用户组备注" value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="可选" /></FormField>
   </div>
 }
 
 function UserGroupCreateDialog({ draft, setDraft, canAssignAdmin, onCancel, onSubmit }: { draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  return <MotionDialogPanel onCancel={onCancel} className="user-group-dialog user-form-dialog">
+  const action = useUserAction(localizeErrorMessage)
+  const close = () => { if (!action.pending) onCancel() }
+  return <MotionDialogPanel aria-labelledby="user-group-create-title" onCancel={close} className="user-group-dialog user-form-dialog">
       <header className="dialog-head">
         <div><h2 id="user-group-create-title">新建用户组</h2><p className="muted">设置成员共用的后台权限。</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={close} disabled={action.pending} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit} disabled={!draft.name.trim()}>创建分组</button></footer>
+      <div className="dialog-body" aria-busy={action.pending}>
+        {action.error && <p className="user-action-error" role="alert">{action.error}</p>}<fieldset className="user-pending-fields" disabled={action.pending}><UserGroupFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></fieldset></div>
+      <footer className="dialog-actions"><button className="ghost" onClick={close} disabled={action.pending}>取消</button><button onClick={() => void action.run(onSubmit)} disabled={action.pending || !draft.name.trim()}>{action.pending ? '创建中…' : '创建用户组'}</button></footer>
   </MotionDialogPanel>
 }
 
 function UserGroupEditDialog({ group, draft, setDraft, canAssignAdmin, onCancel, onSubmit }: { group: UserGroup; draft: UserGroupDraft; setDraft: React.Dispatch<React.SetStateAction<UserGroupDraft>>; canAssignAdmin: boolean; onCancel: () => void; onSubmit: () => Promise<void> }) {
-  return <MotionDialogPanel onCancel={onCancel} className="user-group-dialog user-form-dialog">
+  const action = useUserAction(localizeErrorMessage)
+  const close = () => { if (!action.pending) onCancel() }
+  return <MotionDialogPanel aria-labelledby="user-group-edit-title" onCancel={close} className="user-group-dialog user-form-dialog">
       <header className="dialog-head">
         <div><h2 id="user-group-edit-title">编辑用户组</h2><p className="muted">用户组：{group.name}</p></div>
-        <button className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><XIcon /></button>
+        <button className="ghost dialog-close icon-button" onClick={close} disabled={action.pending} aria-label="关闭" title="关闭"><XIcon /></button>
       </header>
-      <div className="dialog-body"><UserGroupFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></div>
-      <footer className="dialog-actions"><button className="ghost" onClick={onCancel}>取消</button><button onClick={onSubmit} disabled={!draft.name.trim()}>保存</button></footer>
+      <div className="dialog-body" aria-busy={action.pending}>
+        {action.error && <p className="user-action-error" role="alert">{action.error}</p>}<fieldset className="user-pending-fields" disabled={action.pending}><UserGroupFields draft={draft} setDraft={setDraft} canAssignAdmin={canAssignAdmin} /></fieldset></div>
+      <footer className="dialog-actions"><button className="ghost" onClick={close} disabled={action.pending}>取消</button><button onClick={() => void action.run(onSubmit)} disabled={action.pending || !draft.name.trim()}>{action.pending ? '保存中…' : '保存更改'}</button></footer>
   </MotionDialogPanel>
 }
 

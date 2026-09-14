@@ -14,7 +14,7 @@ describe('User table subscription column', () => {
 
   it('shows subscription status instead of copy-link buttons in the user list', () => {
     expect(source).toMatch(/function userSubscriptionStatus\(/)
-    expect(source).toMatch(/label: '复制订阅', action: 'copy-sub'/)
+    expect(source).toMatch(/label: '复制订阅链接', action: 'copy-sub'/)
     expect(tableSource).toMatch(/className="user-subscription-status"/)
     expect(tableSource).not.toMatch(/CopySubscriptionButton/)
     expect(tableSource).not.toMatch(/快速一次性/)

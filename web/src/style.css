@@ -15757,29 +15757,34 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 
 .user-management-layout {
   display: grid;
-  grid-template-columns: minmax(188px, 220px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   min-height: 420px;
 }
 
 .user-scope-nav {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 14px 10px 16px;
-  border-right: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface-2) 70%, var(--surface-solid));
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--border);
 }
 
 .user-scope-section {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .user-scope-section + .user-scope-section {
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
 }
 
 .user-scope-label {
@@ -15790,7 +15795,9 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
 }
 
 .user-scope-nav button {
-  width: 100%;
+  width: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
   min-width: 0;
   min-height: 36px;
   display: flex;
@@ -28953,3 +28960,70 @@ button.probe-preset-option:active {
   height: auto;
   overflow: visible;
 }
+
+/* User overview */
+.user-overview-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+button.user-overview-stat { border-radius: var(--radius-md); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; padding: 14px 16px; text-align: left; background: var(--surface-solid); color: var(--text-secondary); border: 1px solid var(--border); box-shadow: none; }
+.user-overview-stat span { font-size: 12px; }
+.user-overview-stat strong { font-size: 26px; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+button.user-overview-stat.is-active { border-color: var(--primary); background: var(--primary-soft); }
+.user-overview-stat.warning strong, .user-expiry-warning, .user-usage-caption.warning { color: var(--color-warning); }
+.user-overview-stat.danger strong, .user-usage-caption.danger { color: var(--color-danger); }
+.user-list-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+.user-list-filters input { width: min(100%, 360px); }
+.user-list-filters > span { color: var(--muted); font-size: 12px; }
+.user-state-pill { display: inline-flex; align-items: center; width: fit-content; padding: 3px 8px; border-radius: var(--radius-full); font-size: 11px; font-weight: 600; line-height: 1.5; background: var(--surface-2); color: var(--text-secondary); }
+.user-state-pill.success { color: var(--color-success); background: var(--color-success-bg); }
+.user-state-pill.warning { color: var(--color-warning); background: var(--color-warning-bg); }
+.user-state-pill.danger { color: var(--color-danger); background: var(--color-danger-bg); }
+.user-plan-summary { display: grid; justify-items: start; gap: 5px; min-width: 0; }
+.user-plan-summary strong, .user-group-link { overflow-wrap: anywhere; }
+.user-management-panel .user-overview-table { min-width: 960px; table-layout: auto; }
+.user-management-panel .user-overview-table th { white-space: nowrap; }
+.user-management-panel .user-overview-table td { vertical-align: top; }
+.user-management-panel .user-overview-table .user-table-identity { gap: 8px; }
+.user-management-panel .user-overview-table time { display: block; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.user-management-panel .user-overview-table .user-table-traffic { min-width: 180px; max-width: 280px; align-items: stretch; gap: 6px; }
+.user-management-panel .user-overview-table .user-table-traffic-copy { align-items: baseline; justify-content: flex-start; gap: 6px; font-variant-numeric: tabular-nums; }
+.user-management-panel .user-overview-table .user-table-traffic-bar { width: 100%; height: 6px; }
+.user-usage-caption { font-size: 11px; font-variant-numeric: tabular-nums; }
+.user-group-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+button.user-group-link { padding: 3px 7px; min-height: 28px; height: auto; font-size: 11px; white-space: normal; text-align: left; }
+.user-management-panel .user-row-actions { flex-wrap: wrap; justify-content: flex-start; gap: 6px; min-width: 150px; }
+button.user-row-text-button { min-height: 32px; padding: 5px 8px; gap: 5px; font-size: 12px; white-space: nowrap; }
+.user-action-error { display: block; margin: 8px 0; padding: 8px 10px; border-radius: var(--radius-sm); color: var(--color-danger); background: var(--color-danger-bg); font-size: 12px; overflow-wrap: anywhere; }
+.user-management-panel .user-scope-nav button:focus-visible, .user-overview-stat:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@container user-management (max-width: 1000px) {
+  .user-management-panel .user-overview-table { min-width: 0; display: block; }
+  .user-management-panel .user-overview-table thead { display: none; }
+  .user-management-panel .user-overview-table tbody { display: grid; gap: 12px; }
+  .user-management-panel .user-overview-table tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; gap: 16px; padding: 16px; }
+  .user-management-panel .user-overview-table tbody td { display: block; grid-column: auto; grid-row: auto; width: auto; max-width: none; min-width: 0; padding: 0 !important; }
+  .user-management-panel .user-overview-table td[data-label]::before { display: block; content: attr(data-label); margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+  .user-management-panel .user-overview-table .user-col-user, .user-management-panel .user-overview-table .user-col-actions { grid-column: 1 / -1; }
+  .user-management-panel .user-overview-table .user-table-identity { display: grid; justify-content: start; }
+  .user-management-panel .user-overview-table .user-table-traffic { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: none; }
+  .user-management-panel .user-overview-table .user-subscription-status { justify-content: flex-start; }
+  .user-management-panel .user-overview-table .user-col-actions { margin: 0; border-top: 1px solid var(--border); padding-top: 12px !important; }
+  .user-management-panel .user-overview-table .user-row-actions { justify-content: flex-start; }
+}
+@container user-management (max-width: 600px) {
+  .user-overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  button.user-overview-stat { padding: 12px; }
+  .user-list-filters input { width: 100%; }
+  .user-management-panel .user-overview-table tbody tr { gap: 14px; }
+  .user-management-panel .user-overview-table .user-table-name { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  .user-management-panel .user-overview-table .user-col-plan, .user-management-panel .user-overview-table .user-col-traffic { grid-column: 1 / -1; }
+}
+
+.user-pending-fields { border: 0; padding: 0; margin: 0; min-width: 0; width: 100%; }
+.user-ledger-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.user-ledger-stats > div { display: grid; gap: 6px; padding: 12px; background: var(--surface-2); border-radius: var(--radius-md); }
+.user-ledger-stats span, .user-ledger-key { color: var(--muted); font-size: 12px; }
+.user-ledger-stats strong { font-variant-numeric: tabular-nums; }
+.user-ledger-split { display: flex; height: 10px; border-radius: var(--radius-full); overflow: hidden; margin-top: 16px; }
+.user-ledger-split > span:first-child, .user-ledger-key > span:first-child::before { background: var(--color-success); }
+.user-ledger-split > span:last-child, .user-ledger-key > span:last-child::before { background: var(--primary); }
+.user-ledger-key { display: flex; gap: 16px; margin: 8px 0 16px; }
+.user-ledger-key span { display: flex; align-items: center; gap: 5px; }
+.user-ledger-key span::before { content: ''; width: 8px; height: 8px; border-radius: 50%; }
