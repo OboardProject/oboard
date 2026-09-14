@@ -22798,10 +22798,10 @@ button.ui-btn-ghost:hover {
 }
 
 .portal-loader-mark {
-  --sq-size: 19.2px;
-  --step-x: 25.92px;
-  --step-y: 32px;
-  --logo-offset-x: 6.56px;
+  --sq-size: 15.36px;
+  --step-x: 20.736px;
+  --step-y: 25.6px;
+  --logo-offset-x: 5.248px;
   position: relative;
   width: calc(var(--step-x) * 2 + var(--sq-size));
   height: calc(var(--step-y) * 2 + var(--sq-size));
@@ -22816,7 +22816,7 @@ button.ui-btn-ghost:hover {
   height: var(--sq-size);
   margin: calc(var(--sq-size) / -2);
   background: currentColor;
-  border-radius: 1.6px;
+  border-radius: 1.088px;
   transform: translate(var(--end-x, 0px), var(--end-y, 0px));
 }
 
@@ -22826,15 +22826,15 @@ button.ui-btn-ghost:hover {
 .portal-loader .sq-bl { --start-x: calc(-1 * var(--step-x)); --start-y: var(--step-y); --mid-x: calc(-1 * var(--step-x)); --mid-y: 0px; --end-x: calc(-1 * var(--step-x)); --end-y: calc(-1 * var(--step-y)); }
 
 .portal-loader-square:not(.sq-c) {
-  --sq-size: 16.32px;
-  border-radius: 1.36px;
+  --sq-size: 11.1px;
+  border-radius: 0.925px;
 }
 
 .portal-loader .sq-c {
-  width: 17px;
-  height: 16.8px;
-  margin-left: -8.5px;
-  margin-top: -8.504px;
+  width: 11.56px;
+  height: 11.424px;
+  margin-left: -5.78px;
+  margin-top: -5.795px;
 }
 
 .portal-loader.is-loading .portal-loader-square {
