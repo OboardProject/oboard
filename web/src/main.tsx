@@ -3768,7 +3768,7 @@ function SubscriptionRelayCommandDialog({ relay, enrollmentToken, controllerURL,
 
 function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevision, realtimeResources, onControllerUpdateInProgressChange }: any) {
   const dialogs = useDialogs()
-  const [activeSection, setActiveSection] = useState<'connection' | 'registration' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'backups' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
+  const [activeSection, setActiveSection] = useState<'connection' | 'servers' | 'certificates' | 'subscriptions' | 'notifications' | 'updates' | 'logs' | 'presets' | 'about'>('connection')
   const currentOrigin = appControllerURL()
   const savedURL = data.settings?.controller_url || ''
   const currentBasePath = String(data.settings?.base_path || '')
@@ -3982,15 +3982,13 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     }, '通知提醒设置已保存')
   }
   const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
-    { key: 'connection', label: '面板访问', icon: LinkIcon, description: '设置面板地址、反向代理和远程访问权限。' },
-    { key: 'registration', label: '用户注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
+    { key: 'connection', label: '面板访问', icon: LinkIcon, description: '设置面板地址、用户注册和远程访问权限。' },
     { key: 'servers', label: '服务器', icon: ServerIcon, description: '管理新服务器默认值、下载来源和数据保留时间。' },
     { key: 'presets', label: '节点预设', icon: Layers, description: '保存常用协议参数，创建入口时直接套用。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
     { key: 'subscriptions', label: '订阅', icon: Shield, description: '管理订阅加密、连接地址和订阅中继。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
-    { key: 'backups', label: '备份恢复', icon: Database, description: '备份、恢复和第三方存储。' },
-    { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
+    { key: 'updates', label: '备份与更新', icon: Download, description: '管理版本更新、数据备份与恢复。' },
     { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
     { key: 'about', label: '关于', icon: Info, description: '版本、内核和许可证信息。' },
   ]
@@ -4102,9 +4100,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
         </SettingsGroup>
         <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />
-      </section>}
-      {activeSection === 'registration' && <section id="settings-panel-registration" className="settings-card">
-        <SettingsGroup title="公开注册" description="控制登录页注册入口与新用户的初始权限。">
+        <SettingsGroup title="用户注册" description="控制登录页注册入口与新用户的初始权限。">
           <SettingsSwitchRow label="开放注册" description="允许访客在登录页自行创建账号。" checked={registrationEnabled} onChange={setRegistrationEnabled} disabled={Boolean(saving)} ariaLabel="开放注册" />
           <SettingsRow label="默认注册用户组" description="未分配用户组的新用户没有面板权限。">
             <Select value={registrationDefaultGroupID} onChange={event => setRegistrationDefaultGroupID(Number(event.target.value))} aria-label="默认注册用户组">
@@ -4188,11 +4184,11 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </SettingsGroup>
       </section>}
-      {activeSection === 'backups' && <>
+      {activeSection === 'updates' && <>
+        <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
         <StorageDiagnosticsCard settings={data.settings} />
         <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />
       </>}
-      {activeSection === 'updates' && <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
         dialogs={dialogs}
