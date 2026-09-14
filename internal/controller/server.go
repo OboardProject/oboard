@@ -54,6 +54,7 @@ const (
 	settingServerDefaultBBREnabled        = "server_default_bbr_enabled"
 	settingServerDefaultTimeCorrection    = "server_default_time_correction_mode"
 	settingServerMonitoringRetentionDays  = "server_monitoring_retention_days"
+	settingConnectionAuditRetentionDays   = "connection_audit_retention_days"
 	settingTimeCheckNTPServers            = "time_check_ntp_servers"
 	settingAuditEnabled                   = "audit_enabled"
 	settingSubscriptionAuditEnabled       = "subscription_audit_enabled"
@@ -1049,6 +1050,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			ServerDefaultBBREnabled                   *bool              `json:"server_default_bbr_enabled"`
 			ServerDefaultTimeCorrection               *string            `json:"server_default_time_correction_mode"`
 			ServerMonitoringRetentionDays             *int               `json:"server_monitoring_retention_days"`
+			ConnectionAuditRetentionDays              *int               `json:"connection_audit_retention_days"`
 			TimeCheckNTPServers                       []string           `json:"time_check_ntp_servers"`
 			TrustedProxyCIDRs                         *[]string          `json:"trusted_proxy_cidrs"`
 			NotificationOfflineAfter                  *int               `json:"notification_server_offline_after_seconds"`
@@ -1466,6 +1468,17 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			changed = append(changed, settingServerMonitoringRetentionDays)
+		}
+		if req.ConnectionAuditRetentionDays != nil {
+			if *req.ConnectionAuditRetentionDays < store.MinConnectionAuditRetentionDays || *req.ConnectionAuditRetentionDays > store.MaxConnectionAuditRetentionDays {
+				fail(w, fmt.Errorf("connection_audit_retention_days must be between %d and %d", store.MinConnectionAuditRetentionDays, store.MaxConnectionAuditRetentionDays), http.StatusBadRequest)
+				return
+			}
+			if err := s.store.SetSetting(r.Context(), settingConnectionAuditRetentionDays, strconv.Itoa(*req.ConnectionAuditRetentionDays)); err != nil {
+				fail(w, err, http.StatusInternalServerError)
+				return
+			}
+			changed = append(changed, settingConnectionAuditRetentionDays)
 		}
 		if req.TimeCheckNTPServers != nil {
 			servers, err := normalizeTimeCheckNTPServers(req.TimeCheckNTPServers)

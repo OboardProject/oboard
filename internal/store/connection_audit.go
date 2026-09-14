@@ -17,7 +17,10 @@ import (
 )
 
 const (
-	connectionAuditRetention  = 30 * 24 * time.Hour
+	// connectionAuditHourlyRetention keeps the hourly rollup well past the
+	// 28-day window robust-Z reads, independently of how long raw reports are
+	// kept.
+	connectionAuditHourlyRetention = 30 * 24 * time.Hour
 	connectionAuditRiskWindow = 15 * time.Minute
 	// connectionAuditRiskReportLimit bounds how many reports one user's risk
 	// evaluation loads. It is a memory bound, not a statement about the window:

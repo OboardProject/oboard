@@ -194,7 +194,7 @@ func (s *Server) subscriptionAuditOverview(w http.ResponseWriter, r *http.Reques
 		method(w)
 		return
 	}
-	_, overview, _, err := s.auditOverviewData(r.Context(), intQuery(r, "window_hours", 24))
+	_, overview, _, err := s.auditOverviewData(r.Context(), s.auditWindowHours(r.Context(), r, 24))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -221,7 +221,7 @@ func (s *Server) subscriptionAuditUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid subscription audit user id"), http.StatusBadRequest)
 		return
 	}
-	detail, err := s.store.SubscriptionAuditUserDetail(r.Context(), userID, intQuery(r, "window_hours", 24), s.auditPolicy(r.Context()))
+	detail, err := s.store.SubscriptionAuditUserDetail(r.Context(), userID, s.auditWindowHours(r.Context(), r, 24), s.auditPolicy(r.Context()))
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, sql.ErrNoRows) {
@@ -238,7 +238,7 @@ func (s *Server) combinedAuditOverview(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	connectionOverview, subscriptionOverview, combinedOverview, err := s.auditOverviewData(r.Context(), intQuery(r, "window_hours", 24))
+	connectionOverview, subscriptionOverview, combinedOverview, err := s.auditOverviewData(r.Context(), s.auditWindowHours(r.Context(), r, 24))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return

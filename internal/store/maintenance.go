@@ -54,6 +54,21 @@ const (
 	DefaultServerMonitoringRetentionDays = 7
 	MinServerMonitoringRetentionDays     = 1
 	MaxServerMonitoringRetentionDays     = 30
+
+	// Connection audit retention is by far the heaviest thing this database
+	// stores: on a production Controller the reports and their indexes were
+	// 1.0 GB of a 1.87 GB database at 20 days, heading for about 2.5 GB at the
+	// fixed 30 days it used to keep.
+	//
+	// It is now an operator setting with a shorter default, because the fixed
+	// 30 days bought very little: a user's risk evaluation loads at most
+	// connectionAuditRiskReportLimit reports, and for a busy user that ceiling
+	// is reached inside a day, so the raw rows behind it were stored, indexed
+	// and backed up without any consumer able to read them.
+	ConnectionAuditRetentionDaysSetting = "connection_audit_retention_days"
+	DefaultConnectionAuditRetentionDays = 7
+	MinConnectionAuditRetentionDays     = 1
+	MaxConnectionAuditRetentionDays     = 30
 )
 
 const historicalTaskRetention = 30 * 24 * time.Hour
@@ -93,6 +108,7 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		return result, fmt.Errorf("load monitoring retention setting: %w", err)
 	}
 	monitoringRetention := time.Duration(ServerMonitoringRetentionDays(settings)) * 24 * time.Hour
+	auditRetention := time.Duration(ConnectionAuditRetentionDays(settings)) * 24 * time.Hour
 	jobs := []struct {
 		name   string
 		query  string
@@ -103,7 +119,7 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		{
 			name:   "connection audit retention",
 			query:  `delete from connection_audit_reports where rowid in (select rowid from connection_audit_reports where ended_at < ? order by ended_at limit ?)`,
-			cutoff: at.Add(-connectionAuditRetention),
+			cutoff: at.Add(-auditRetention),
 			count:  &result.ConnectionAuditsDeleted,
 		},
 		{
@@ -115,7 +131,7 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		{
 			name:   "connection probe episode retention",
 			query:  `delete from connection_probe_episodes where rowid in (select rowid from connection_probe_episodes where ended_at < ? order by ended_at limit ?)`,
-			cutoff: at.Add(-connectionAuditRetention),
+			cutoff: at.Add(-auditRetention),
 			count:  &result.ProbeEpisodesDeleted,
 		},
 		{
@@ -209,9 +225,12 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			return result, fmt.Errorf("%s: %w", job.name, jobErr)
 		}
 	}
-	// Hourly rollups follow the same 30-day raw retention; never purge raw
-	// reports early just because hourly rows exist.
-	if _, err := s.PurgeConnectionAuditHourlyBefore(ctx, at.Add(-connectionAuditRetention)); err != nil {
+	// The hourly rollup outlives the raw reports on purpose. It is one row per
+	// user per hour - a few thousand rows for a fleet - and it is what the
+	// 28-day robust-Z baseline reads, so shortening raw retention must not take
+	// the long-term signal with it. Raw reports are still never purged early
+	// just because hourly rows exist.
+	if _, err := s.PurgeConnectionAuditHourlyBefore(ctx, at.Add(-connectionAuditHourlyRetention)); err != nil {
 		return result, fmt.Errorf("connection audit hourly retention: %w", err)
 	}
 	// Low-priority rollup work after accounting deletes. Cap wall time so a
@@ -334,6 +353,17 @@ func (s *Store) reclaimFreePages(ctx context.Context, maxPages int) (int64, erro
 		return 0, nil
 	}
 	return before - after, nil
+}
+
+// ConnectionAuditRetentionDays reports how long raw connection audit reports
+// are kept. The audit window a caller may ask for is clamped to this, so the
+// console cannot offer a range the database no longer holds.
+func ConnectionAuditRetentionDays(settings map[string]string) int {
+	days, err := strconv.Atoi(strings.TrimSpace(settings[ConnectionAuditRetentionDaysSetting]))
+	if err != nil || days < MinConnectionAuditRetentionDays || days > MaxConnectionAuditRetentionDays {
+		return DefaultConnectionAuditRetentionDays
+	}
+	return days
 }
 
 func ServerMonitoringRetentionDays(settings map[string]string) int {

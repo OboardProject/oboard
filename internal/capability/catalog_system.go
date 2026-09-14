@@ -182,6 +182,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			"server_default_mtu_mode":                stringValue, "server_default_bbr_enabled": boolValue,
 			"server_default_time_correction_mode": stringValue, "time_check_ntp_servers": stringArray(0, 8),
 			"server_monitoring_retention_days":          map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
+			"connection_audit_retention_days":           map[string]any{"type": "integer", "minimum": 1, "maximum": 30},
 			"notification_server_offline_after_seconds": map[string]any{"type": "integer", "minimum": 30, "maximum": 86400},
 			"notification_server_online_after_seconds":  map[string]any{"type": "integer", "minimum": 0, "maximum": 86400},
 			"server_expiry_notify_lead_days":            map[string]any{"type": "array", "minItems": 1, "maxItems": 10, "items": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}},

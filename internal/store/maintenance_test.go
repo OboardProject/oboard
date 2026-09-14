@@ -54,7 +54,7 @@ func insertMaintenanceSubscriptionAudit(t *testing.T, s *Store, userID int64, re
 func TestMaintenancePrunesConnectionAudits(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
 	at := time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
-	old := at.Add(-connectionAuditRetention - time.Second)
+	old := at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour - time.Second)
 	tx, err := s.db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -69,8 +69,8 @@ func TestMaintenancePrunesConnectionAudits(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "boundary", at.Add(-connectionAuditRetention))
-	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "new", at.Add(-connectionAuditRetention+time.Second))
+	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "boundary", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour))
+	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "new", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour+time.Second))
 	result, err := s.RunMaintenance(context.Background(), at)
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestMaintenancePrunesProbeEpisodes(t *testing.T) {
 	for _, item := range []struct {
 		id string
 		at time.Time
-	}{{"old", at.Add(-connectionAuditRetention - time.Second)}, {"boundary", at.Add(-connectionAuditRetention)}, {"new", at.Add(-connectionAuditRetention + time.Second)}} {
+	}{{"old", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour - time.Second)}, {"boundary", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays) * 24 * time.Hour)}, {"new", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour + time.Second)}} {
 		ts := item.at.Format(time.RFC3339Nano)
 		if _, err := s.db.Exec(`insert into connection_probe_episodes(id,user_id,state,score,node_count,connection_count,started_at,ended_at,updated_at) values(?,?,?,?,?,?,?,?,?)`, item.id, user.ID, "candidate", 1, 4, 4, ts, ts, ts); err != nil {
 			t.Fatal(err)
@@ -302,9 +302,12 @@ func TestAuditWritesDoNotRunRetentionCleanup(t *testing.T) {
 	s, server, user := newMaintenanceTestStore(t)
 	ctx := context.Background()
 	at := time.Now().UTC()
-	oldAt := at.Add(-connectionAuditRetention - time.Hour)
+	// Each subsystem ages past its own retention: connection audit is an
+	// operator setting, subscription audit is still a fixed 30 days.
+	oldAt := at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour - time.Hour)
+	oldSubscriptionAt := at.Add(-subscriptionAuditRetention - time.Hour)
 	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "old-hot-path", oldAt)
-	oldSubscriptionID := insertMaintenanceSubscriptionAudit(t, s, user.ID, oldAt)
+	oldSubscriptionID := insertMaintenanceSubscriptionAudit(t, s, user.ID, oldSubscriptionAt)
 	if _, err := s.db.Exec(`insert into subscription_rate_buckets(bucket_key,level,updated_at) values(?,?,?)`, "old-hot-path", 1, oldAt.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}

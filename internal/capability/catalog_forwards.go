@@ -19,7 +19,7 @@ func forwardsDescriptors(positiveID map[string]any, stringValue, boolValue map[s
 		"target_address": stringValue, "target_port": map[string]any{"type": "integer"},
 		"protocol": stringValue, "backend": stringValue, "probe_mode": stringValue,
 		"probe_interval_seconds": map[string]any{"type": "integer"},
-		"priority": map[string]any{"type": "integer"}, "enabled": boolValue,
+		"priority":               map[string]any{"type": "integer"}, "enabled": boolValue,
 		"created_at": stringValue, "updated_at": stringValue,
 	})
 	portForwardFields := closedObject(map[string]any{

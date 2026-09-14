@@ -1212,7 +1212,14 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		}
 	}
 	for _, stmt := range []string{
-		`create index if not exists idx_connection_audit_device_time on connection_audit_reports(device_id_hash,ended_at desc)`,
+		// device_id_hash is carried on every report but is never a search key:
+		// no query on this table filters, groups or orders by it, and it has no
+		// foreign key. The index was 78 MB of the audit footprint and one of
+		// seven B-trees maintained on every insert into the heaviest writer in
+		// the database, for nothing. server_id keeps its index because the
+		// cascade from servers needs it, and route_id keeps its own because the
+		// shared-route probe skip-scans it.
+		`drop index if exists idx_connection_audit_device_time`,
 		`create index if not exists idx_connection_audit_route_time on connection_audit_reports(route_id,ended_at desc)`,
 		`create index if not exists idx_subscription_pull_audits_device_time on subscription_pull_audits(device_id_hash,requested_at desc)`,
 		`create index if not exists idx_subscription_pull_audits_route_time on subscription_pull_audits(route_id,requested_at desc)`,

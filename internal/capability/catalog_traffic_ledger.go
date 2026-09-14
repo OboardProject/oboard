@@ -37,21 +37,21 @@ func trafficLedgerDescriptors(positiveID map[string]any, stringValue map[string]
 	return []Descriptor{
 		{
 			Name: "traffic.get_user_ledger", Description: "读取用户当期流量账本：已确认用量、各服务器 Lease 与对账状态。不含密码、UUID、内部用户名或 Agent 令牌",
-			InputSchema: schemaObject(map[string]any{"user_id": positiveID, "server_id": positiveID, "period_key": stringValue}, "user_id"),
+			InputSchema:  schemaObject(map[string]any{"user_id": positiveID, "server_id": positiveID, "period_key": stringValue}, "user_id"),
 			OutputSchema: rawSchema(ledger), RequiredScopes: []string{"users:read"}, ResourceTypes: []string{"user"},
 			ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal,
 			MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: userRefFromID,
 		},
 		{
 			Name: "traffic.get_server_sync_state", Description: "读取一台服务器上的流量同步与 Lease 状态，用于判断是否需要对账",
-			InputSchema: schemaObject(map[string]any{"server_id": positiveID, "user_id": positiveID, "period_key": stringValue}, "server_id"),
+			InputSchema:  schemaObject(map[string]any{"server_id": positiveID, "user_id": positiveID, "period_key": stringValue}, "server_id"),
 			OutputSchema: rawSchema(map[string]any{"type": "object"}), RequiredScopes: []string{"servers:read"}, ResourceTypes: []string{"server"},
 			ResourceEvaluator: "server_ids", ReadOnly: true, Idempotent: true, DataClassification: DataInternal,
 			MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: serverRefFromServerID,
 		},
 		{
 			Name: "traffic.list_reconciliation_issues", Description: "列出未解决的流量对账事件，例如 counter_regression、checkpoint_gap、checkpoint_overlap",
-			InputSchema: schemaObject(map[string]any{"user_id": positiveID, "server_id": positiveID, "period_key": stringValue, "kind": stringValue}),
+			InputSchema:  schemaObject(map[string]any{"user_id": positiveID, "server_id": positiveID, "period_key": stringValue, "kind": stringValue}),
 			OutputSchema: schemaObject(map[string]any{"issues": arrayOf(issue)}, "issues"), RequiredScopes: []string{"users:read"},
 			ResourceTypes: []string{"user", "server"}, ResourceEvaluator: "user_ids", ReadOnly: true, Idempotent: true,
 			DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs,

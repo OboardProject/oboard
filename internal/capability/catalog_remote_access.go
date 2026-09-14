@@ -6,13 +6,13 @@ import (
 )
 
 const (
-	PrivilegeRemoteOperations          = model.PrivilegeRemoteOperations
-	PrivilegeRemoteExec                = model.PrivilegeRemoteExec
-	PrivilegeRemoteShell               = model.PrivilegeRemoteShell
-	PrivilegeRemoteInteractive         = model.PrivilegeRemoteInteractive
+	PrivilegeRemoteOperations         = model.PrivilegeRemoteOperations
+	PrivilegeRemoteExec               = model.PrivilegeRemoteExec
+	PrivilegeRemoteShell              = model.PrivilegeRemoteShell
+	PrivilegeRemoteInteractive        = model.PrivilegeRemoteInteractive
 	PrivilegeServerRemoteAccessManage = model.PrivilegeServerRemoteAccessManage
-	ApprovalPrivilegedGrant            = model.ApprovalPolicyPrivilegedGrant
-	PermissionServersRemoteAccess      = "servers.remote_access"
+	ApprovalPrivilegedGrant           = model.ApprovalPolicyPrivilegedGrant
+	PermissionServersRemoteAccess     = "servers.remote_access"
 )
 
 func remoteAccessDescriptors(positiveID map[string]any, stringValue, boolValue map[string]any) []Descriptor {

@@ -456,7 +456,7 @@ func (s *Server) connectionAuditOverview(w http.ResponseWriter, r *http.Request)
 		method(w)
 		return
 	}
-	overview, _, _, err := s.auditOverviewData(r.Context(), intQuery(r, "window_hours", 24))
+	overview, _, _, err := s.auditOverviewData(r.Context(), s.auditWindowHours(r.Context(), r, 24))
 	if err != nil {
 		fail(w, err, http.StatusInternalServerError)
 		return
@@ -474,7 +474,7 @@ func (s *Server) connectionAuditUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid audit user id"), http.StatusBadRequest)
 		return
 	}
-	detail, err := s.store.ConnectionAuditUserDetail(r.Context(), userID, intQuery(r, "window_hours", 24), s.auditPolicy(r.Context()))
+	detail, err := s.store.ConnectionAuditUserDetail(r.Context(), userID, s.auditWindowHours(r.Context(), r, 24), s.auditPolicy(r.Context()))
 	if err != nil {
 		fail(w, err, http.StatusNotFound)
 		return

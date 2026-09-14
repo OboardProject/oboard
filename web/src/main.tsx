@@ -6455,7 +6455,23 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
 function AuditConsole({ data, client, load, loading, notify }: any) {
   const dialogs = useDialogs()
   const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'policy' | 'settings' | 'operations' | 'ai'>('combined')
+  // The console used to offer 7 and 30 day ranges regardless of how long
+  // reports are actually kept, so picking one answered from whatever survived
+  // the last purge - which reads as "less activity", not "that history is
+  // gone". The options now follow the retention setting, and the server clamps
+  // the request as well.
+  const auditRetentionDays = Math.min(30, Math.max(1, Number(data.settings?.connection_audit_retention_days) || 7))
+  const auditWindowOptions = [
+    { hours: 1, label: '最近 1 小时' },
+    { hours: 24, label: '最近 24 小时' },
+    { hours: 168, label: '最近 7 天' },
+    { hours: 720, label: '最近 30 天' },
+  ].filter(option => option.hours <= auditRetentionDays * 24 || option.hours === 1)
   const [windowHours, setWindowHours] = useState(24)
+  useEffect(() => {
+    const maxHours = auditRetentionDays * 24
+    if (windowHours > maxHours) setWindowHours(maxHours >= 24 ? 24 : 1)
+  }, [auditRetentionDays, windowHours])
   const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
   const [query, setQuery] = useState('')
   const [connectionOverview, setConnectionOverview] = useState<ConnectionAuditOverview | null>(data.connection_audit || null)
@@ -6586,7 +6602,7 @@ function AuditConsole({ data, client, load, loading, notify }: any) {
       </div>
       <div className="audit-console-toolbar">
         <label className="log-search"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索用户" /></label>
-        <Select value={String(windowHours)} onChange={event => setWindowHours(Number(event.target.value))} aria-label="审计时间窗口"><option value={1}>最近 1 小时</option><option value={24}>最近 24 小时</option><option value={168}>最近 7 天</option><option value={720}>最近 30 天</option></Select>
+        <Select value={String(windowHours)} onChange={event => setWindowHours(Number(event.target.value))} aria-label="审计时间窗口">{auditWindowOptions.map(option => <option key={option.hours} value={option.hours}>{option.label}</option>)}</Select>
         <Select value={risk} onChange={event => setRisk(event.target.value as 'all' | AuditRiskLevel)} aria-label="风险等级"><option value="all">全部风险</option><option value="confirmed">已确认</option><option value="critical">严重</option><option value="high">高风险</option><option value="alert">告警</option><option value="watch">观察</option><option value="normal">正常</option></Select>
         <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={refreshing} aria-label="刷新审计数据" title="刷新"><RefreshCw size={15} className={refreshing ? 'spin' : ''} /></button>
       </div>
