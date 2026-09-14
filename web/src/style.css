@@ -532,9 +532,9 @@ textarea:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 10px 18px;
+  padding: 4px 10px 8px;
   border-bottom: 0;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   position: relative;
   flex-shrink: 0;
 }
@@ -11639,8 +11639,8 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
     padding-bottom: 10px;
   }
   .brand {
-    margin-bottom: 2px;
-    padding-bottom: 10px;
+    margin-bottom: 0;
+    padding-bottom: 8px;
   }
   .nav-list { gap: 4px; }
   .nav-section p { margin: 3px 12px 1px; }
