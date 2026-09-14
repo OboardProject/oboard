@@ -116,6 +116,9 @@ func (s *Server) invalidateLatencyProbePlans(serverIDs ...int64) {
 // forgetLatencyProbePlan removes every trace of one server from the cache.
 func (s *Server) forgetLatencyProbePlan(serverID int64) {
 	s.latencyProbePlans.forget(serverID)
+	// The reported plan identity belongs to the same server; leaving it behind
+	// would keep a deleted node's report in the health report's input.
+	s.syncLanes.forget(serverID)
 }
 
 // latencyProbePlanServerKey renders the probe-relevant identity of one server.

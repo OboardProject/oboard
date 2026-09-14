@@ -735,14 +735,18 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 		if enabled, _ := server["bbr_enabled"].(bool); enabled {
 			installBBR = agentInstallBBRValue(true)
 		}
+		installStealth := agentInstallStealthValue(false)
+		if enabled, _ := server["stealth_enabled"].(bool); enabled {
+			installStealth = agentInstallStealthValue(true)
+		}
 		base, err := s.publicBaseURL(ctx)
 		if err != nil {
 			return "", err
 		}
 		action := map[string]any{
 			"type": "execute_on_target", "title": "安装 OBoard Agent",
-			"command":     agentInstallCommand(base, installBBR),
-			"environment": map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": installBBR},
+			"command":     agentInstallCommand(base, installBBR, installStealth),
+			"environment": map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": installBBR, "OBOARD_INSTALL_STEALTH": installStealth},
 			"expires_at":  operation["enrollment_expires_at"],
 			"sensitive":   true, "must_not_log": true,
 			"completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%v/health", server["id"]), "field": "agent_connected", "equals": true},

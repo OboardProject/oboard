@@ -42,6 +42,11 @@ const (
 	ScopeProxyPath   = "proxy_path"
 	ScopeRoutingRule = "routing_rule"
 	ScopeDNSPolicy   = "dns_policy"
+	// ScopeSyncLane is a per-server delivery lane rather than a stored record.
+	// Its findings are about the binding between a version and the content that
+	// version was issued for, which is the one kind of breakage an operator can
+	// neither see in a form nor fix by editing one.
+	ScopeSyncLane = "sync_lane"
 )
 
 // Remedy kinds, in increasing force. Every one of them is an operation the
@@ -60,6 +65,11 @@ const (
 	// RemedyDelete removes an orphan row that references something that no
 	// longer exists.
 	RemedyDelete = "delete"
+	// RemedyResync drops a delivery lane's version binding so the next delivery
+	// is issued a new version. It changes no configuration: the content stays
+	// exactly what it was, only the number it is delivered under moves, which is
+	// what lets a node that refuses the current version accept it.
+	RemedyResync = "resync"
 )
 
 // Remedy describes the cleanup this finding supports.
@@ -146,6 +156,13 @@ type Input struct {
 	UsableSnellProfileIDs  map[int64]bool
 	CertificateIDs         map[int64]bool
 	DNSCredentialIDs       map[int64]bool
+
+	// UsersLanes and ProbeLanes are delivery state, not stored configuration.
+	// They are passed in as plain facts - what the Controller bound, what the
+	// node reports - so the evaluator stays pure and the caller keeps ownership
+	// of how those facts are read.
+	UsersLanes []UsersLane
+	ProbeLanes []ProbeLane
 }
 
 // Evaluate derives the report. It never returns an error: an input it cannot
@@ -158,6 +175,7 @@ func Evaluate(in Input) Report {
 	c.checkProxyPaths()
 	c.checkRoutingRules()
 	c.checkDNSPolicies()
+	c.checkSyncLanes()
 	return c.report()
 }
 
@@ -222,6 +240,12 @@ func (c *collector) add(f Finding) {
 	}
 	if server, ok := c.serverByID[f.ServerID]; ok {
 		f.ServerName = server.Name
+		// A delivery lane's resource is the server itself, so the console would
+		// otherwise render an unnamed row for the one scope whose resource has
+		// an obvious name.
+		if f.Scope == ScopeSyncLane && f.ResourceName == "" {
+			f.ResourceName = server.Name
+		}
 	}
 	c.findings = append(c.findings, f)
 }

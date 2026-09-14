@@ -16,14 +16,14 @@ import (
 // describe an edit that the evaluator did not independently justify.
 func configHealthDescriptors(positiveID, stringValue, boolValue map[string]any) []Descriptor {
 	remedy := closedObject(map[string]any{
-		"kind":        map[string]any{"type": "string", "enum": []string{"none", "normalize", "disable", "delete"}},
+		"kind":        map[string]any{"type": "string", "enum": []string{"none", "normalize", "disable", "delete", "resync"}},
 		"summary":     stringValue,
 		"fields":      stringArray(0, 64),
 		"destructive": boolValue,
 	})
 	finding := closedObject(map[string]any{
 		"code": stringValue, "severity": map[string]any{"type": "string", "enum": []string{"blocking", "warning", "notice"}},
-		"scope":       map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "routing_rule", "dns_policy"}},
+		"scope":       map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "routing_rule", "dns_policy", "sync_lane"}},
 		"resource_id": positiveID, "resource_name": stringValue,
 		"server_id": map[string]any{"type": "integer", "minimum": 0}, "server_name": stringValue,
 		"title": stringValue, "detail": stringValue, "path": stringValue, "remedy": remedy,
@@ -37,7 +37,7 @@ func configHealthDescriptors(positiveID, stringValue, boolValue map[string]any) 
 	})
 	action := closedObject(map[string]any{
 		"code":        map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-		"scope":       map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "routing_rule", "dns_policy"}},
+		"scope":       map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "routing_rule", "dns_policy", "sync_lane"}},
 		"resource_id": positiveID,
 	}, "code", "scope", "resource_id")
 	result := closedObject(map[string]any{
@@ -49,9 +49,9 @@ func configHealthDescriptors(positiveID, stringValue, boolValue map[string]any) 
 	return []Descriptor{
 		{
 			Name:        "config_health.report",
-			Description: "读取入口、链路、分流与 DNS 策略的配置体检结果。报告按当前拓扑派生，不修改任何配置。",
+			Description: "读取入口、链路、分流、DNS 策略与节点下发通道的配置体检结果。报告按当前拓扑与下发状态派生，不修改任何配置。",
 			InputSchema: schemaObject(map[string]any{
-				"scope": map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "routing_rule", "dns_policy"}},
+				"scope": map[string]any{"type": "string", "enum": []string{"inbound", "proxy_path", "routing_rule", "dns_policy", "sync_lane"}},
 			}),
 			OutputSchema: schemaObject(map[string]any{
 				"revision": map[string]any{"type": "integer", "minimum": 0},
@@ -65,7 +65,7 @@ func configHealthDescriptors(positiveID, stringValue, boolValue map[string]any) 
 		},
 		{
 			Name: "config_health.cleanup",
-			Description: "清理体检报告中的不规范配置。只能按 code + scope + resource_id 选择一条既有结论；" +
+			Description: "清理体检报告中的不规范配置，或为版本冲突的下发通道重新分配版本号。只能按 code + scope + resource_id 选择一条既有结论；" +
 				"具体改动由 Controller 依据最新报告推导，调用方无法描述任意修改。" +
 				"confirm=false 返回逐项预览而不写入；revision 与当前不一致时整批拒绝。",
 			InputSchema: schemaObject(map[string]any{

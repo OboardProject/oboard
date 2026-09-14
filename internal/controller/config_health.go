@@ -167,7 +167,63 @@ func (s *Server) configHealthInput(ctx context.Context, data store.FullRoutingCo
 	for _, item := range credentials {
 		in.DNSCredentialIDs[item.ID] = true
 	}
+	if err := s.appendSyncLaneInput(ctx, &in); err != nil {
+		return confighealth.Input{}, err
+	}
 	return in, nil
+}
+
+// appendSyncLaneInput reads the two delivery ledgers whose version bindings a
+// node can end up disagreeing with, and pairs each with what that node last
+// reported it runs.
+//
+// Both are one bounded read per evaluation, so they follow the same cost rule as
+// the reference tables above: nothing schedules them, and the TTL is what bounds
+// how long a divergence stays unreported.
+func (s *Server) appendSyncLaneInput(ctx context.Context, in *confighealth.Input) error {
+	enrolled := make(map[int64]bool, len(in.Servers))
+	for _, server := range in.Servers {
+		if strings.TrimSpace(server.AgentID) != "" {
+			enrolled[server.ID] = true
+		}
+	}
+	userStates, err := s.store.ListRuntimeUserStates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, state := range userStates {
+		if !enrolled[state.ServerID] {
+			continue
+		}
+		// The confirmation columns are the node's own report: every health
+		// report restates what it currently runs, so they are the applied side
+		// of the comparison rather than a delivery receipt.
+		in.UsersLanes = append(in.UsersLanes, confighealth.UsersLane{
+			ServerID:             state.ServerID,
+			DesiredRevision:      state.DesiredRevision,
+			DesiredDigest:        state.DesiredDigest,
+			AppliedRevision:      state.ConfirmedRevision,
+			AppliedContentDigest: state.ConfirmedDigest,
+			PendingReason:        state.PendingReason,
+			Conflicted:           state.PendingReason == store.RuntimeUsersPendingRevisionConflict,
+		})
+	}
+	bindings, err := s.store.ListLatencyProbePlanBindings(ctx)
+	if err != nil {
+		return err
+	}
+	reported := s.syncLanes.probeSnapshot()
+	for _, binding := range bindings {
+		if !enrolled[binding.ServerID] {
+			continue
+		}
+		lane := confighealth.ProbeLane{ServerID: binding.ServerID, PlanVersion: binding.PlanVersion, PlanDigest: binding.PlanDigest}
+		if applied, ok := reported[binding.ServerID]; ok {
+			lane.AppliedVersion, lane.AppliedDigest = applied.PlanVersion, applied.PlanDigest
+		}
+		in.ProbeLanes = append(in.ProbeLanes, lane)
+	}
+	return nil
 }
 
 // dashboardConfigHealth is the counts-only projection the dashboard carries.
@@ -328,7 +384,7 @@ func (s *Server) runConfigHealthCleanup(ctx context.Context, r *http.Request, re
 	}
 
 	results := make([]configHealthCleanupResult, 0, len(request.Actions))
-	mutated := false
+	mutated, configMutated := false, false
 	for _, action := range request.Actions {
 		finding, ok := index[action]
 		if !ok {
@@ -343,6 +399,12 @@ func (s *Server) runConfigHealthCleanup(ctx context.Context, r *http.Request, re
 		result := s.applyConfigHealthAction(ctx, r, finding, request.Confirm)
 		if result.Status == cleanupStatusApplied && request.Confirm {
 			mutated = true
+			// A resync only moves a delivery version; the configuration the
+			// fleet is supposed to run is unchanged, so it must not tell the
+			// operator a deployment is now owed.
+			if finding.Remedy.Kind != confighealth.RemedyResync {
+				configMutated = true
+			}
 		}
 		results = append(results, result)
 	}
@@ -372,7 +434,7 @@ func (s *Server) runConfigHealthCleanup(ctx context.Context, r *http.Request, re
 	// Cleanup corrects stored desired state. It deliberately does not queue a
 	// deployment: reconciliation writes are not a deployment trigger, and the
 	// operator decides when the fleet gets pushed.
-	response["requires_deployment"] = mutated
+	response["requires_deployment"] = configMutated
 	return response, nil
 }
 
@@ -387,6 +449,20 @@ func (s *Server) applyConfigHealthAction(ctx context.Context, r *http.Request, f
 	switch finding.Remedy.Kind {
 	case confighealth.RemedyNormalize:
 		return s.applyConfigHealthNormalize(ctx, r, finding, confirm, result)
+	case confighealth.RemedyResync:
+		if !confirm {
+			result.Status = cleanupStatusApplied
+			result.Reason = finding.Remedy.Summary
+			return result
+		}
+		if err := s.resyncForRepair(ctx, finding); err != nil {
+			result.Status = cleanupStatusFailed
+			result.Reason = err.Error()
+			return result
+		}
+		s.auditConfigHealth(ctx, r, "config_health_resync", finding, "")
+		result.Status = cleanupStatusApplied
+		return result
 	case confighealth.RemedyDisable:
 		if !confirm {
 			result.Status = cleanupStatusApplied
@@ -498,6 +574,34 @@ func normalizedInboundDocument(inbound model.Inbound, finding confighealth.Findi
 		return "", nil, err
 	}
 	return string(encoded), removed, nil
+}
+
+// resyncForRepair drops one delivery lane's version binding for one server.
+//
+// It is not a configuration edit and not a deployment: the content the node is
+// supposed to run does not change, only the version it is offered under. That is
+// the whole repair, because the node's gate refuses the version it already holds
+// and accepts any higher one.
+func (s *Server) resyncForRepair(ctx context.Context, finding confighealth.Finding) error {
+	switch finding.Code {
+	case confighealth.CodeUsersRevisionConflict:
+		if err := s.store.ForceRuntimeUsersResync(ctx, finding.ResourceID); err != nil {
+			return err
+		}
+		s.bumpRuntimeUserPackageGeneration()
+		s.wakeRuntimeUsersSyncFor("config_health_resync", finding.ResourceID)
+		return nil
+	case confighealth.CodeProbeVersionConflict:
+		if err := s.store.RebindLatencyProbePlanVersion(ctx, finding.ResourceID); err != nil {
+			return err
+		}
+		// The rendered plan is cached per server; without this the next
+		// heartbeat would serve the cached plan and never ask for a version.
+		s.invalidateLatencyProbePlans(finding.ResourceID)
+		return nil
+	default:
+		return fmt.Errorf("%s 不支持重新同步", finding.Code)
+	}
 }
 
 func (s *Server) disableForRepair(ctx context.Context, finding confighealth.Finding) error {

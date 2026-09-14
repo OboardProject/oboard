@@ -50,7 +50,7 @@ func (s *Server) readConfigHealthCapability(ctx context.Context, input json.RawM
 
 func validConfigHealthScope(scope string) bool {
 	switch scope {
-	case confighealth.ScopeInbound, confighealth.ScopeProxyPath, confighealth.ScopeRoutingRule, confighealth.ScopeDNSPolicy:
+	case confighealth.ScopeInbound, confighealth.ScopeProxyPath, confighealth.ScopeRoutingRule, confighealth.ScopeDNSPolicy, confighealth.ScopeSyncLane:
 		return true
 	default:
 		return false

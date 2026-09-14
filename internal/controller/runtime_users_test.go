@@ -90,12 +90,21 @@ func TestRuntimeUsersFastLaneEnvelopeAndAck(t *testing.T) {
 	default:
 	}
 
-	ackRaw, _ := json.Marshal(map[string]any{"type": model.AgentControlUsersAck, "message_id": envelope.MessageID, "revision": req.UsersRevision, "digest": req.UsersDigest, "confirmed": true, "boot_id": "boot-1"})
+	// The delivered payload names the content identity the revision was
+	// allocated against. Without it the node cannot tell a redelivery carrying
+	// refreshed lease counters from a different desired state.
+	if req.ContentDigest == "" || req.ContentDigest != state.DesiredDigest {
+		t.Fatalf("delivered content digest %q does not match the desired binding %q", req.ContentDigest, state.DesiredDigest)
+	}
+	applied := map[string]any{"revision": req.UsersRevision, "digest": req.UsersDigest, "boot_id": "boot-1", "content_digest": req.ContentDigest}
+	ackRaw, _ := json.Marshal(map[string]any{"type": model.AgentControlUsersAck, "message_id": envelope.MessageID, "revision": req.UsersRevision, "digest": req.UsersDigest, "confirmed": true, "boot_id": "boot-1", "applied": applied})
 	var ackMessage map[string]json.RawMessage
 	_ = json.Unmarshal(ackRaw, &ackMessage)
 	srv.handleUsersAck(ctx, server, ackMessage)
 	state, _ = db.RuntimeUserState(ctx, server.ID)
-	if !state.Confirmed() || state.ConfirmedBootID != "boot-1" || state.ConfirmedDigest != req.UsersDigest {
+	// The lane records the content identity, not the delivered snapshot digest:
+	// only the former is comparable with the desired binding.
+	if !state.Confirmed() || state.ConfirmedBootID != "boot-1" || state.ConfirmedDigest != req.ContentDigest {
 		t.Fatalf("ack did not confirm: %+v", state)
 	}
 

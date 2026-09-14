@@ -53,7 +53,7 @@ func TestShellSingleQuoteSurvivesRealShell(t *testing.T) {
 // the only rendered values.
 func TestAgentInstallCommandQuotesRenderedValues(t *testing.T) {
 	hostile := "https://panel.example/base'; touch /tmp/pwned; '"
-	command := agentInstallCommand(hostile, "1")
+	command := agentInstallCommand(hostile, "1", "0")
 	if strings.Contains(command, "; touch /tmp/pwned; ") && !strings.Contains(command, `'\''`) {
 		t.Fatalf("install command carries an unquoted payload: %s", command)
 	}
@@ -61,7 +61,7 @@ func TestAgentInstallCommandQuotesRenderedValues(t *testing.T) {
 	marker := filepath.Join(dir, "pwned")
 	// Replace the network stage with a no-op so only the quoting is exercised.
 	script := strings.NewReplacer("curl -fsSL", "printf '%s' ", "| env", "| : env", " sh", " :").Replace(
-		agentInstallCommand("https://panel.example/x'$(touch "+marker+")'", "0"))
+		agentInstallCommand("https://panel.example/x'$(touch "+marker+")'", "0", "0"))
 	if out, err := exec.Command("/bin/sh", "-c", script).CombinedOutput(); err != nil {
 		t.Fatalf("install command did not parse as POSIX sh: %v (%s)", err, out)
 	}
