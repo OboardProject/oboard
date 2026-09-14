@@ -599,12 +599,19 @@ func (s *Store) ConnectionAuditUserRisk(ctx context.Context, userID int64, windo
 	sinceText := since.UTC().Format(time.RFC3339Nano)
 	var item model.ConnectionAuditUserSummary
 	var lastSeen sql.NullString
+	// count(r.ended_at) rather than count(r.report_id): in this left join both
+	// count exactly the matched rows, because the join condition already
+	// requires a non-null ended_at. report_id is the one column here that
+	// idx_connection_audit_user_window does not carry, so asking for it cost a
+	// seek into the report table per row - 57,641 of them for the busiest user
+	// on a production Controller, every time this user was evaluated. Naming
+	// ended_at instead keeps the whole aggregate inside the index.
 	err := s.db.QueryRowContext(ctx, `select u.id,u.username,u.nickname,
 		coalesce(count(distinct case when r.source_ip<>'' then r.source_ip end),0),
 		coalesce(count(distinct r.server_id),0),
 		coalesce(sum(r.connection_count),0),
 		coalesce(max(r.active_peak),0),
-		coalesce(count(r.report_id),0),
+		coalesce(count(r.ended_at),0),
 		max(r.ended_at),
 		coalesce(u.device_limit,0),
 		coalesce(user_device_counts.active_count,0)

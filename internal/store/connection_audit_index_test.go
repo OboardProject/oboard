@@ -239,3 +239,79 @@ func TestSingleUserRiskReportsMatchTheBatchForm(t *testing.T) {
 		}
 	}
 }
+
+// ConnectionAuditUserRisk computes the same window aggregate as the overview,
+// written as a left join from users. It asked for count(report_id), the one
+// column idx_connection_audit_user_window does not carry, which cost a seek
+// into the report table per row - 57,641 of them for the busiest user on a
+// production Controller, on every evaluation of that user.
+func TestUserRiskAggregateIsIndexOnlyAndCountsMatchedRows(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "risk-index.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.MigrateDeferredIndexes(ctx); err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "risk-node", PublicIPv4: "203.0.113.8", Status: model.ServerOnline}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	reported := &model.User{Username: "reported", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
+	if err := db.CreateUser(ctx, reported); err != nil {
+		t.Fatal(err)
+	}
+
+	at := time.Now().UTC()
+	reports := []model.ConnectionAuditReport{}
+	for i := 0; i < 9; i++ {
+		ended := at.Add(-time.Duration(i) * time.Minute)
+		reports = append(reports, model.ConnectionAuditReport{
+			ReportID: "risk-" + ended.Format("150405.000"), ServerID: server.ID, UserID: reported.ID,
+			SourceIP: "198.51.100.20", Network: "tcp", ConnectionCount: 2, BucketCapacity: 1,
+			CollectionStartedAt: ended.Add(-time.Minute), CollectionEndedAt: ended,
+			StartedAt: ended.Add(-time.Minute), EndedAt: ended, CreatedAt: ended,
+		})
+	}
+	// One outside the window, which must not be counted.
+	old := at.Add(-48 * time.Hour)
+	reports = append(reports, model.ConnectionAuditReport{
+		ReportID: "risk-old", ServerID: server.ID, UserID: reported.ID,
+		SourceIP: "198.51.100.21", Network: "tcp", ConnectionCount: 99, BucketCapacity: 1,
+		CollectionStartedAt: old.Add(-time.Minute), CollectionEndedAt: old,
+		StartedAt: old.Add(-time.Minute), EndedAt: old, CreatedAt: old,
+	})
+	if _, err := db.AddConnectionAuditReportsResult(ctx, reports); err != nil {
+		t.Fatal(err)
+	}
+
+	item, err := db.ConnectionAuditUserRisk(ctx, reported.ID, 24, DefaultAuditPolicy(), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ReportCount != 9 {
+		t.Fatalf("ReportCount = %d, want 9 matched rows in the window", item.ReportCount)
+	}
+	if item.ConnectionCount != 18 {
+		t.Fatalf("ConnectionCount = %d, want 18", item.ConnectionCount)
+	}
+	if item.SourceIPCount != 1 {
+		t.Fatalf("SourceIPCount = %d, want 1", item.SourceIPCount)
+	}
+
+	plan := explainPlan(t, db, `select u.id,
+		coalesce(count(distinct case when r.source_ip<>'' then r.source_ip end),0),
+		coalesce(count(distinct r.server_id),0),
+		coalesce(sum(r.connection_count),0),
+		coalesce(max(r.active_peak),0),
+		coalesce(count(r.ended_at),0),
+		max(r.ended_at)
+		from users u
+		left join connection_audit_reports r on r.user_id=u.id and r.ended_at>=?
+		where u.id=? group by u.id`, "2026-09-13T00:00:00Z", reported.ID)
+	if !strings.Contains(plan, "COVERING INDEX idx_connection_audit_user_window") {
+		t.Fatalf("user risk aggregate seeks the report table:\n%s", plan)
+	}
+}
