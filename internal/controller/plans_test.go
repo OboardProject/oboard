@@ -396,3 +396,75 @@ func reconcileSavedPlanChange(t *testing.T, srv *Server, saved map[string]any) i
 	}
 	return *revision.ActivationChangeID
 }
+
+func TestPlanDisableUsesSavedLockVersion(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(map[bool]string{false: "metadata", true: "pending_settings"}[pending], func(t *testing.T) {
+			h, srv, token := setupPlansAPITestServer(t)
+			created := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "ordinary", "enabled": true}, http.StatusCreated)["subscription_plan"].(map[string]any)
+			id := int64(created["id"].(float64))
+			url := "/api/v1/ui/subscription-plans/" + itoa(id)
+			patch := map[string]any{"description": "updated"}
+			if pending {
+				patch["speed_limit_mbps"] = 100
+			}
+			saved := request(t, h, http.MethodPatch, url, token, patch, http.StatusOK)["subscription_plan"].(map[string]any)
+			if saved["lock_version"] == saved["revision"] {
+				t.Fatal("expected divergent version counters after save")
+			}
+			request(t, h, http.MethodPost, url+"/disable", token, map[string]any{"expected_revision": created["lock_version"]}, http.StatusConflict)
+			current, err := srv.store.GetSubscriptionPlan(t.Context(), id)
+			if err != nil || !current.Enabled {
+				t.Fatalf("stale disable changed plan: %#v, %v", current, err)
+			}
+			result := request(t, h, http.MethodPost, url+"/disable", token, map[string]any{"expected_revision": saved["lock_version"]}, http.StatusOK)
+			change := driveAccessChange(t, srv, token, int64(result["access_change_id"].(float64)))
+			if change["status"] != "finalized" {
+				t.Fatalf("disable failed: %#v", change)
+			}
+			current, err = srv.store.GetSubscriptionPlan(t.Context(), id)
+			if err != nil || current.Enabled {
+				t.Fatalf("plan not disabled: %#v, %v", current, err)
+			}
+		})
+	}
+}
+
+func TestPlanReconcileConvergesAfterCoalescedSaves(t *testing.T) {
+	_, srv, token := setupPlansAPITestServer(t)
+	ctx := t.Context()
+	plan := &model.SubscriptionPlan{Name: "coalesced", Enabled: true}
+	if err := srv.store.CreateSubscriptionPlan(ctx, plan, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, speed := range []int{100, 200} {
+		if _, err := srv.store.CreatePlanVersion(ctx, plan.ID, store.PlanVersionMutation{Settings: &store.PlanSettingsMutation{SpeedLimitMbps: &speed}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.reconcilePlans(ctx)
+	current, err := srv.store.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.PendingRevisionID == current.LatestRevisionID {
+		t.Fatal("expected older pending pointer")
+	}
+	revision, err := srv.store.GetPlanRevision(ctx, plan.ID, current.LatestRevisionID)
+	if err != nil || revision.ActivationChangeID == nil {
+		t.Fatalf("missing access change: %#v, %v", revision, err)
+	}
+	change := driveAccessChange(t, srv, token, *revision.ActivationChangeID)
+	if change["status"] != "finalized" {
+		t.Fatalf("publish failed: %#v", change)
+	}
+	srv.reconcilePlans(ctx)
+	current, err = srv.store.GetSubscriptionPlan(ctx, plan.ID)
+	if err != nil || current.CurrentRevisionID != current.LatestRevisionID || current.PendingRevisionID != 0 {
+		t.Fatalf("plan did not converge: %#v, %v", current, err)
+	}
+	state, err := srv.store.GetPlanReconcileState(ctx, plan.ID)
+	if err != nil || state.Status != "idle" || state.ApplyingRevisionID != nil {
+		t.Fatalf("stale reconciliation: %#v, %v", state, err)
+	}
+}

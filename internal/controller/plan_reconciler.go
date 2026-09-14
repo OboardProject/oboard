@@ -80,11 +80,6 @@ func (s *Server) reconcilePlans(ctx context.Context) {
 }
 
 func (s *Server) reconcileOnePlan(ctx context.Context, plan model.SubscriptionPlan) error {
-	if plan.CurrentRevisionID == plan.LatestRevisionID && plan.CurrentRevisionID != 0 {
-		// Already converged, ensure reconcile state idle
-		_ = s.store.SetPlanReconcileIdle(ctx, plan.ID)
-		return nil
-	}
 	if plan.LatestRevisionID == 0 {
 		return nil
 	}
@@ -107,8 +102,7 @@ func (s *Server) reconcileOnePlan(ctx context.Context, plan model.SubscriptionPl
 		return err
 	}
 	if fresh.CurrentRevisionID == fresh.LatestRevisionID {
-		_ = s.store.SetPlanReconcileIdle(ctx, fresh.ID)
-		return nil
+		return s.store.SetPlanReconcileIdleIfConverged(ctx, fresh.ID)
 	}
 	targetRevisionID := fresh.LatestRevisionID
 	// Dependency check: for MVP we treat all nodes as ready; allow saving

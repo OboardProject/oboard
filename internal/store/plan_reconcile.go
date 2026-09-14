@@ -11,7 +11,7 @@ import (
 
 func (s *Store) ListSubscriptionPlansToReconcile(ctx context.Context) ([]model.SubscriptionPlan, error) {
 	rows, err := s.db.QueryContext(ctx, planSelectSQL+` where coalesce(p.latest_revision_id,0)>0 and (
-		coalesce(p.current_revision_id,0)<>p.latest_revision_id or exists (
+		coalesce(p.current_revision_id,0)<>p.latest_revision_id or coalesce(p.pending_revision_id,0)>0 or exists (
 			select 1 from subscription_plan_reconcile_states rs where rs.plan_id=p.id and rs.status<>'idle'
 		)) order by p.id`)
 	if err != nil {
@@ -98,6 +98,34 @@ func (s *Store) SetPlanReconcileIdle(ctx context.Context, planID int64) error {
 		on conflict(plan_id) do update set applying_revision_id=null, status='idle', last_access_change_id=null, blocked_reason='', blocked_json='{}', attempt_count=0, updated_at=excluded.updated_at`,
 		planID, nil, "idle", nil, "", "{}", 0, now, now)
 	return err
+}
+
+func (s *Store) SetPlanReconcileIdleIfConverged(ctx context.Context, planID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `update subscription_plans set pending_revision_id=null where id=?
+  and coalesce(current_revision_id,0)>0 and current_revision_id=latest_revision_id
+  and not exists (select 1 from access_changes where source_plan_id=? and status in ('preparing','activating','finalizing'))`, planID, planID)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	ts := now()
+	_, err = tx.ExecContext(ctx, `insert into subscription_plan_reconcile_states(plan_id,status,created_at,updated_at) values(?,'idle',?,?)
+  on conflict(plan_id) do update set applying_revision_id=null,status='idle',last_access_change_id=null,blocked_reason='',blocked_json='{}',attempt_count=0,updated_at=excluded.updated_at`, planID, ts, ts)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SetPlanReconcileApplying(ctx context.Context, planID, revisionID, accessChangeID int64, status string) error {
@@ -194,7 +222,7 @@ func scanAccessChange(row *sql.Row) (*model.AccessChange, error) {
 }
 
 func (s *Store) SetPendingIfEmpty(ctx context.Context, planID, revisionID int64) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `update subscription_plans set pending_revision_id=? where id=? and coalesce(pending_revision_id,0)=0`, revisionID, planID)
+	res, err := s.db.ExecContext(ctx, `update subscription_plans set pending_revision_id=? where id=? and coalesce(pending_revision_id,0)=0 and exists (select 1 from access_changes where source_plan_id=? and candidate_revision_id=? and status in ('preparing','activating','finalizing'))`, revisionID, planID, planID, revisionID)
 	if err != nil {
 		return false, err
 	}

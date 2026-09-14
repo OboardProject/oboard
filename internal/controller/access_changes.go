@@ -1273,7 +1273,7 @@ func (s *Server) planDisable(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, err, 404)
 		return
 	}
-	if req.ExpectedRevision != 0 && plan.Revision != req.ExpectedRevision {
+	if req.ExpectedRevision != 0 && plan.LockVersion != req.ExpectedRevision {
 		fail(w, store.ErrPlanRevisionConflict, http.StatusConflict)
 		return
 	}
