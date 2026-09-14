@@ -141,6 +141,7 @@ type Server struct {
 	hotPath                       hotPathCounters
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
+	stealthTransport              atomic.Pointer[stealthTransport]
 	agentLiveMu                   sync.Mutex
 	agentLive                     map[int64][]chan any
 	agentConnsMu                  sync.Mutex
@@ -14874,10 +14875,6 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		return conn.WriteJSON(s.withControllerTime(payload))
 	}
 	_ = writeAgentJSON(hello)
-	type agentSocketRead struct {
-		message map[string]json.RawMessage
-		err     error
-	}
 	reads := make(chan agentSocketRead, 8)
 	go func() {
 		for {
@@ -14896,10 +14893,42 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	s.agentSessionLoop(r.Context(), server, connectedAgentID, clientIP(r), controlCh, reads, writeAgentJSON, wsTransport{conn: conn, writeTimeout: writeTimeout}, pingInterval)
+}
+
+type agentSocketRead struct {
+	message map[string]json.RawMessage
+	err     error
+}
+
+// agentTransport abstracts the two control-channel transports (WebSocket and
+// the stealth binary protocol) behind the session loop.
+type agentTransport interface {
+	// ping writes one keepalive; failure proves the connection is gone.
+	ping() error
+}
+
+// wsTransport adapts the WebSocket connection to agentTransport.
+type wsTransport struct {
+	conn        *websocket.Conn
+	writeTimeout time.Duration
+}
+
+func (t wsTransport) ping() error {
+	return t.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(t.writeTimeout))
+}
+
+// agentSessionLoop drives one authenticated agent session after the hello
+// envelope has been sent. It is transport-agnostic: reads arrive on a
+// channel, writes go through writeAgentJSON, and keepalives through
+// transport. ctx is the connection's lifetime context.
+func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, connectedAgentID string, remoteIP string, controlCh chan any, reads chan agentSocketRead, writeAgentJSON func(any) error, transport agentTransport, pingInterval time.Duration) {
 	var inFlightTaskID int64
 	var inFlightTaskType string
 	var inFlightTimer *time.Timer
 	var inFlightTimeout <-chan time.Time
+	mode, _ := serverMonitoringPolicy(server)
+	auditEnabled := s.effectiveConnectionAuditEnabled(ctx, server)
 	defer func() {
 		if inFlightTimer != nil {
 			inFlightTimer.Stop()
@@ -14940,12 +14969,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	notifyCh := s.tasks.channel(server.ID)
 	claimTask := func() {
 		for inFlightTaskID == 0 {
-			latest, loadErr := s.store.GetServer(r.Context(), server.ID)
+			latest, loadErr := s.store.GetServer(ctx, server.ID)
 			if loadErr != nil || latest.AgentID != connectedAgentID {
 				return
 			}
 			server = latest
-			task, err := s.store.NextTask(r.Context(), server.ID)
+			task, err := s.store.NextTask(ctx, server.ID)
 			if err != nil {
 				return
 			}
@@ -14958,7 +14987,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 					"bytes":   len(encoded),
 					"limit":   s.agentSocketMessageLimit(),
 				})
-				if completeErr := s.store.CompleteTask(r.Context(), task.ID, "failed", string(result)); completeErr != nil {
+				if completeErr := s.store.CompleteTask(ctx, task.ID, "failed", string(result)); completeErr != nil {
 					log.Printf("fail oversized task %d: %v", task.ID, completeErr)
 					return
 				}
@@ -14992,13 +15021,10 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	defer pingTimer.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case received := <-reads:
 			if received.err != nil {
-				if websocket.IsUnexpectedCloseError(received.err) {
-					log.Printf("agent ws closed: %v", received.err)
-				}
 				return
 			}
 			var envelope struct {
@@ -15026,12 +15052,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 				s.handleInteractiveAgentStatus(server.ID, received.message)
 			}
 			if envelope.Type == model.AgentControlAuthorizationAck {
-				s.handleAuthorizationAck(r.Context(), server, received.message)
+				s.handleAuthorizationAck(ctx, server, received.message)
 			}
 			if envelope.Type == model.AgentControlUsersAck {
-				s.handleUsersAck(r.Context(), server, received.message)
+				s.handleUsersAck(ctx, server, received.message)
 			}
-			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
+			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(ctx, server, received.message, remoteIP)
 			if acceptedLatencyReportID != "" {
 				if err := writeAgentJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID}); err != nil {
 					return
@@ -15053,26 +15079,26 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-pingTimer.C:
-			// A ping is answered by the gorilla client's own pong handler, so
-			// this works against Agents that predate the keepalive. Failing to
-			// write it is itself proof the socket is gone.
-			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeTimeout)); err != nil {
+			// A ping is answered by the peer's own handler, so this works
+			// against Agents that predate the keepalive. Failing to write it
+			// is itself proof the socket is gone.
+			if err := transport.ping(); err != nil {
 				log.Printf("agent ping failed server=%d(%s): %v", server.ID, safeLogField(server.Name), err)
 				return
 			}
 			pingTimer.Reset(pingInterval)
 		case <-heartbeatTimer.C:
-			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
+			if latest, loadErr := s.store.GetServer(ctx, server.ID); loadErr == nil {
 				server = latest
 			}
 			mode, heartbeatInterval = serverMonitoringPolicy(server)
-			auditEnabled = s.effectiveConnectionAuditEnabled(r.Context(), server)
-			s.syncConnectionAuditPresence(r.Context(), server, auditEnabled)
+			auditEnabled = s.effectiveConnectionAuditEnabled(ctx, server)
+			s.syncConnectionAuditPresence(ctx, server, auditEnabled)
 			heartbeat := map[string]any{"type": "heartbeat", "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
-			for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
+			for key, value := range s.configurationHeartbeatFields(ctx, server.ID) {
 				heartbeat[key] = value
 			}
-			if plan, planErr := s.cachedLatencyProbePlanForServer(r.Context(), *server); planErr == nil {
+			if plan, planErr := s.cachedLatencyProbePlanForServer(ctx, *server); planErr == nil {
 				heartbeat["latency_probe_plan"] = plan
 			}
 			if err := writeAgentJSON(heartbeat); err != nil {
@@ -15959,7 +15985,22 @@ func (s *Server) portForwardForAgentReport(ctx context.Context, id int64) (*mode
 // retries on a fixed schedule forever; without this gate every one of those
 // retries still cost a SQLite read, and no per-Agent budget applied because
 // the budget is keyed by an identity the request never established.
+// preAuthoredAgentServerKey types the context value carrying an
+// already-authenticated agent identity for internal bridges (the stealth
+// transport authenticates once per connection, then replays callbacks).
+type preAuthoredAgentServerKey struct{}
+
+// withAuthenticatedAgent returns a request whose authAgent call resolves to
+// the given server without re-reading credentials. Only the stealth
+// transport bridge uses it; the identity was verified at connection auth.
+func withAuthenticatedAgent(r *http.Request, server *model.Server) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), preAuthoredAgentServerKey{}, server))
+}
+
 func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Server, bool) {
+	if server, ok := r.Context().Value(preAuthoredAgentServerKey{}).(*model.Server); ok && server != nil {
+		return server, true
+	}
 	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	ip := clientIP(r)
