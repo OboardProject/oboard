@@ -87,7 +87,7 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
     if (!editing) return
     if (!await dialogs.confirm({
       title: `恢复 ${editing.label} 系统模板？`,
-      message: '将删除当前自定义模板，立即改回内置配置外壳。不会下发 Agent 任务。',
+      message: '将删除当前自定义模板并恢复系统默认，下次获取订阅时生效。',
       confirmText: '恢复系统默认',
       tone: 'danger',
     })) return
@@ -107,7 +107,7 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
     <>
       <SettingsDisclosure
         title="客户端模板"
-        description="模板只描述配置外壳和分组结构。SSH、Snell、Mieru 等协议字段仍由系统转换，不会进入模板脚本。"
+        description="自定义客户端配置和分组，节点信息由系统自动填入。"
         summary={summaryText}
       >
         {loading ? <p className="muted" style={{ margin: '14px 0 0' }}>正在加载模板...</p> : (
@@ -116,7 +116,7 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
               <button key={item.format} type="button" className="subscription-template-row" onClick={() => openEditor(item)}>
                 <div>
                   <strong>{item.label}</strong>
-                  <span className="muted">{item.format} · {item.source === 'custom' ? '自定义' : '系统'} · revision {item.revision || 0}</span>
+                  <span className="muted">{item.format} · {item.source === 'custom' ? '自定义' : '系统'} · 版本 {item.revision || 0}</span>
                 </div>
                 <span className={`status-pill ${item.source === 'custom' ? 'warning' : 'ok'}`}>{item.source === 'custom' ? (item.builtin_updated ? '基于旧系统模板' : '自定义') : '系统默认'}</span>
               </button>
@@ -127,7 +127,7 @@ export function SubscriptionTemplatesPanel({ client, notify }: { client: any; no
       {editing && (
         <Dialog isOpen={Boolean(editing)} onClose={() => setEditing(null)} title={`${editing.label} 模板`} size="xl">
           <div className="subscription-template-editor">
-            <p className="muted">来源 {editing.source === 'custom' ? '自定义' : '系统'} · revision {editing.revision || 0} · 系统摘要 {editing.builtin_digest.slice(0, 12)}{editing.base_builtin_digest ? ` · 自定义基于 ${editing.base_builtin_digest.slice(0, 12)}` : ''}</p>
+            <p className="muted">来源 {editing.source === 'custom' ? '自定义' : '系统'} · 版本 {editing.revision || 0} · 系统摘要 {editing.builtin_digest.slice(0, 12)}{editing.base_builtin_digest ? ` · 自定义基于 ${editing.base_builtin_digest.slice(0, 12)}` : ''}</p>
             {editing.builtin_updated && <p className="danger-text">系统模板已有新版，当前自定义模板仍基于旧系统模板，不会自动覆盖。</p>}
             <p className="muted">可用标记：{(editing.markers || []).join(' ')}</p>
             <textarea className="monospace-input subscription-template-textarea" value={draft} onChange={event => setDraft(event.target.value)} spellCheck={false} aria-label={`${editing.label} 模板内容`} />

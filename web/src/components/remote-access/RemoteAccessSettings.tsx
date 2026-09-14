@@ -4,6 +4,7 @@ import { Server as ServerIcon, Settings2, X, AlertTriangle } from 'lucide-react'
 import { SettingsGroup, SettingsSwitchRow } from '../settings/SettingsLayout'
 import { MotionDialogPanel } from '../ui/motion'
 import { Switch } from '../ui/switch'
+import { FieldHelp } from '../ui/form-field'
 import { StepUpAuth } from './StepUpAuth'
 
 type RequestFn = (path: string, init?: RequestInit) => Promise<any>
@@ -94,12 +95,12 @@ export function RemoteAccessSettings({ data, client, load, notify }: { data: any
     <>
       <SettingsGroup
         title="远程访问"
-        description="在「管理服务器」中配置全局与逐台 Web 终端、MCP 远程控制。"
+        description="管理终端和 MCP 客户端可以访问的服务器。"
         actions={<button type="button" className="ghost remote-access-server-button" onClick={openServers}><Settings2 size={14} aria-hidden="true" />管理服务器</button>}
       >
         <SettingsSwitchRow
           label="WebSSH 密码确认"
-          description="打开终端前再次确认管理员身份。更改此设置也需要验证管理员身份。"
+          description="打开终端前验证管理员身份。修改此项也需要验证。"
           checked={passwordConfirmation}
           onChange={checked => setPendingPasswordConfirmation(checked)}
           disabled={Boolean(saving) || pendingPasswordConfirmation !== null}
@@ -302,7 +303,7 @@ function RemoteAccessServerDialog({
   return (
     <MotionDialogPanel onCancel={onClose} className="remote-access-server-dialog" aria-labelledby="remote-access-server-title">
       <header className="dialog-head">
-        <div><h2 id="remote-access-server-title">服务器远程控制</h2><p className="muted">全局开关为总闸，仅在全局与服务器均开启时对应远程能力才真正生效；关闭全局不会改写单台服务器的已配置策略。</p></div>
+        <div className="settings-heading"><h2 id="remote-access-server-title">服务器远程控制</h2><FieldHelp label="服务器远程控制" hint="全局和单台服务器都开启时才可连接。关闭全局不会改变单台服务器的选择。" /></div>
         <button type="button" className="ghost dialog-close icon-button" onClick={onClose} disabled={controlsLocked} aria-label="关闭" title="关闭"><X size={16} /></button>
       </header>
       <div className="dialog-body remote-access-server-body">
@@ -310,7 +311,7 @@ function RemoteAccessServerDialog({
           <div className="remote-access-global-item">
             <div>
               <strong>Web 远程终端</strong>
-              <span className="muted">全局远程终端总开关。只有同时开启全局开关和服务器自身的 Web 远程终端权限，Web 终端才能连接该服务器。</span>
+              <FieldHelp label="Web 远程终端" hint="开启后，可连接下方已授权服务器的终端。" />
             </div>
             <Switch
               checked={globalTerminal}
@@ -322,7 +323,7 @@ function RemoteAccessServerDialog({
           <div className="remote-access-global-item">
             <div>
               <strong>MCP 远程控制</strong>
-              <span className="muted">全局远程控制总开关。只有同时开启全局开关和服务器自身的 MCP 远程控制权限，MCP 才能对该服务器执行远程操作。</span>
+              <FieldHelp label="MCP 远程控制" hint="开启后，MCP 客户端可操作下方已授权的服务器。" />
             </div>
             <Switch
               checked={globalMcp}

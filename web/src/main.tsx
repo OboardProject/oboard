@@ -3664,7 +3664,7 @@ function SubscriptionRelayManager({ data, client, load, notify }: { data: any; c
 
   return <section className="settings-card subscription-relay-manager">
     <div className="settings-card-head">
-      <div><h3>订阅中继</h3><p className="muted">独立部署订阅入口，授权、审计和内容生成仍由主控实时处理。</p></div>
+      <div className="settings-heading"><h3>订阅中继</h3><FieldHelp label="订阅中继" hint="通过独立服务器提供订阅入口。" placement="bottom" /></div>
       <button type="button" onClick={() => setEditor({})}><Plus size={15} />创建中继</button>
     </div>
     <div className={`subscription-relay-access-row ${!hasActiveRelay ? 'is-locked' : ''}`}>
@@ -3980,42 +3980,42 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     }, '通知提醒设置已保存')
   }
   const settingsNavigation: Array<{ key: typeof activeSection; label: string; icon: any; description: string }> = [
-    { key: 'connection', label: '基础设置', icon: LinkIcon, description: '连接、代理和远程控制。' },
-    { key: 'registration', label: '公开注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
-    { key: 'servers', label: 'Agent 设置', icon: ServerIcon, description: '新节点默认值、流量、监控策略，以及刷新全部节点运行配置。' },
+    { key: 'connection', label: '面板访问', icon: LinkIcon, description: '设置面板地址、反向代理和远程访问权限。' },
+    { key: 'registration', label: '用户注册', icon: UserPlus, description: '控制访客注册入口和默认权限。' },
+    { key: 'servers', label: '服务器', icon: ServerIcon, description: '管理新服务器默认值、下载来源和数据保留时间。' },
+    { key: 'presets', label: '节点预设', icon: Layers, description: '保存常用协议参数，创建入口时直接套用。' },
     { key: 'certificates', label: '证书', icon: Lock, description: '证书签发、匹配和续期。' },
-    { key: 'subscriptions', label: '订阅', icon: Shield, description: '订阅加密、入口 Host 和独立订阅入口。' },
+    { key: 'subscriptions', label: '订阅', icon: Shield, description: '管理订阅加密、连接地址和订阅中继。' },
     { key: 'notifications', label: '通知提醒', icon: Bell, description: '服务器状态和通知窗口。' },
-    { key: 'backups', label: '数据备份', icon: Database, description: '备份、恢复和第三方存储。' },
+    { key: 'backups', label: '备份恢复', icon: Database, description: '备份、恢复和第三方存储。' },
     { key: 'updates', label: '更新', icon: Download, description: '版本通道、检查和自动更新。' },
     { key: 'logs', label: '运行日志', icon: FileText, description: '查看、下载和清理主控日志。' },
-    { key: 'presets', label: '节点预设', icon: Layers, description: '给需要模板的协议准备默认配置。创建入口时会套用对应类型的预设；密钥、密码和 Reality 密钥仍由每个入口单独生成。Snell 继续使用可共享的参数预设。' },
-    { key: 'about', label: '关于 OBoard', icon: Info, description: '版本、内核和许可证信息。' },
+    { key: 'about', label: '关于', icon: Info, description: '版本、内核和许可证信息。' },
   ]
   const activeNavigationItem = settingsNavigation.find(item => item.key === activeSection) || settingsNavigation[0]
   return <section className="settings-shell">
-    <aside className="settings-sidebar">
+    <div className="settings-topbar">
       <nav className="settings-nav" aria-label="设置菜单">
-        <div className="settings-tabs" role="tablist">
+        <div className="settings-tabs">
           {settingsNavigation.map(item => {
             const Icon = item.icon
             const active = activeSection === item.key
-            return <button key={item.key} type="button" className={active ? 'active' : ''} role="tab" aria-selected={active} aria-controls={`settings-panel-${item.key}`} onClick={() => setActiveSection(item.key)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span></button>
+            return <button key={item.key} type="button" className={active ? 'active' : ''} aria-current={active ? 'page' : undefined} onClick={() => setActiveSection(item.key)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span></button>
           })}
         </div>
       </nav>
-    </aside>
+    </div>
     <div className="settings-content">
       <header className="settings-content-head">
-        <div><h2>{activeNavigationItem.label}</h2><p>{activeNavigationItem.description}</p></div>
+        <div className="settings-heading"><h2>{activeNavigationItem.label}</h2><FieldHelp label={activeNavigationItem.label} hint={activeNavigationItem.description} placement="bottom" /></div>
       </header>
       {!savedURL && <div className="controller-url-warning settings-controller-url-warning" role="status">
         <AlertTriangle size={18} />
-        <div><strong>尚未保存主控公开地址</strong><span>Agent 安装和更新会失败。请确认下方地址是 Agent 可访问的 HTTPS 地址，然后在基础设置中保存。</span></div>
-        {activeSection !== 'connection' && <button type="button" onClick={() => setActiveSection('connection')}>前往基础设置</button>}
+        <div><strong>尚未保存主控公开地址</strong><span>请在“面板访问”中保存服务器可连接的 HTTPS 地址，否则无法安装或更新。</span></div>
+        {activeSection !== 'connection' && <button type="button" onClick={() => setActiveSection('connection')}>前往面板访问</button>}
       </div>}
       <div className="settings-grid">
-      {activeSection === 'connection' && <section id="settings-panel-connection" role="tabpanel" className="settings-card">
+      {activeSection === 'connection' && <section id="settings-panel-connection" className="settings-card">
         <SettingsGroup title="节点连接地址" description="Agent 连接面板的地址，留空时自动使用当前地址。">
         <div className="form settings-form single-field">
           <FormField label="面板访问地址" hint="Agent 连接面板的地址，留空自动使用当前地址。">
@@ -4028,7 +4028,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
         </div>
         </SettingsGroup>
-        <SettingsGroup title="面板路径" description={`当前路径：${currentBasePath || '/'}`} actions={<span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? (migration.direction === 'rollback' ? '撤销中' : '迁移中') : '已生效'}</span>}>
+        <SettingsGroup collapsible defaultOpen={migration.active} key={migration.active ? 'migrating' : 'idle'} title="面板路径" description={`当前路径：${currentBasePath || '/'}`} actions={<span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? (migration.direction === 'rollback' ? '撤销中' : '迁移中') : '已生效'}</span>}>
           <div className="base-path-settings">
             <div className="form settings-form single-field">
               <FormField label="路径前缀" hint="以 / 开头；留空表示根路径。">
@@ -4079,7 +4079,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
             </div>}
           </div>
         </SettingsGroup>
-        <SettingsGroup title="反向代理" description="仅受信来源可以声明访问协议和客户端地址。" actions={<span className={`status-pill ${reverseProxyState.tone}`}>{reverseProxyState.label}</span>}>
+        <SettingsGroup collapsible title="反向代理" description="仅受信来源可以声明访问协议和客户端地址。" actions={<span className={`status-pill ${reverseProxyState.tone}`}>{reverseProxyState.label}</span>}>
           <div className="trusted-proxy-settings">
             <div className="trusted-proxy-diagnostics" aria-live="polite">
               <span><small>当前上游</small><strong>{reverseProxyStatus.peer_ip || '未知'}</strong></span>
@@ -4101,10 +4101,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
         </SettingsGroup>
         <RemoteAccessSettings data={data} client={client} load={load} notify={notify} />
       </section>}
-      {activeSection === 'registration' && <section id="settings-panel-registration" role="tabpanel" className="settings-card">
+      {activeSection === 'registration' && <section id="settings-panel-registration" className="settings-card">
         <SettingsGroup title="公开注册" description="控制登录页注册入口与新用户的初始权限。">
-          <SettingsSwitchRow label="开放注册" description="关闭后登录页不再显示注册入口，注册接口也会拒绝请求。" checked={registrationEnabled} onChange={setRegistrationEnabled} disabled={Boolean(saving)} ariaLabel="开放注册" />
-          <SettingsRow label="默认注册用户组" description="留空表示不自动分配，新注册用户没有任何面板权限。">
+          <SettingsSwitchRow label="开放注册" description="允许访客在登录页自行创建账号。" checked={registrationEnabled} onChange={setRegistrationEnabled} disabled={Boolean(saving)} ariaLabel="开放注册" />
+          <SettingsRow label="默认注册用户组" description="未分配用户组的新用户没有面板权限。">
             <Select value={registrationDefaultGroupID} onChange={event => setRegistrationDefaultGroupID(Number(event.target.value))} aria-label="默认注册用户组">
               <option value={0}>不分配用户组（无权限）</option>
               {(data.user_groups || []).filter((group: UserGroup) => group.system_key !== 'administrators').map((group: UserGroup) => <option key={group.id} value={group.id}>{group.name}（{sessionRoleLabel(group.role)}）{group.enabled === false ? ' · 已停用' : ''}</option>)}
@@ -4115,7 +4115,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       </section>}
       {activeSection === 'servers' && <AgentSettingsPanel data={data} client={client} load={load} notify={notify} confirm={dialogs.confirm} />}
       {activeSection === 'certificates' && <CertificateSettings data={data} client={client} load={load} notify={notify} />}
-      {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" role="tabpanel" className="settings-card">
+      {activeSection === 'subscriptions' && <><section id="settings-panel-subscriptions" className="settings-card">
         <SettingsGroup title="Mihomo Age 加密" description="服务端只保存用户公钥，私钥始终留在客户端。" actions={<span className={`status-pill ${subscriptionAgePolicy === 'required' ? 'warning' : 'ok'}`}>{subscriptionAgePolicy === 'required' ? '强制开启' : '用户可选'}</span>}>
           <SettingsRow label="加密策略" description="仅影响 Mihomo 格式。">
             <Select variant="segmented" value={subscriptionAgePolicy} onChange={e => { const next = e.target.value as 'optional' | 'required'; setSubscriptionAgePolicy(next); void saveSubscriptionAgePolicy(next) }} disabled={saving === 'subscription-age'} aria-label="Age 加密策略">
@@ -4125,20 +4125,20 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <div className="subscription-security-note"><Shield size={18} /><div><strong>{subscriptionAgePolicy === 'required' ? 'Mihomo 订阅必须加密' : '普通订阅与加密订阅并存'}</strong><span>{subscriptionAgePolicy === 'required' ? '没有配置 Age 公钥的用户将无法获取 Mihomo 格式，直到保存公钥。' : '用户可在自己的账户页面开启，已有普通订阅链接不会失效。'}</span></div></div>
         </SettingsGroup>
         <SubscriptionTemplatesPanel client={client} notify={notify} />
-        <SettingsGroup title="订阅入口 Host" description="客户端连接地址。TLS 的 SNI 始终使用证书域名，与 Host 是否填 IP 无关。">
+        <SettingsGroup title="订阅连接地址" description="选择客户端使用域名还是 IP 连接服务器。">
           <SettingsSwitchRow
-            label="始终使用域名填写 Host"
-            description="默认关闭。关闭时，静态单栈入口的订阅 Host 使用公网 IP，少一次解析；双栈（A+AAAA）、动态 DNS 和自定义域名目标仍用解析域名。开启后，所有已同步 DNS 的入口都以域名为 Host。适用于全部协议。"
+            label="优先使用域名"
+            description="开启后，已配置解析的入口使用域名；关闭时，固定单栈入口使用 IP，其他入口仍用域名。"
             checked={subscriptionAlwaysUseDomainHost}
             onChange={checked => void saveSubscriptionAlwaysUseDomainHost(checked)}
             disabled={saving === 'subscription-host'}
-            ariaLabel="始终使用域名填写 Host"
+            ariaLabel="优先使用域名"
           />
         </SettingsGroup>
       </section><SubscriptionRelayManager data={data} client={client} load={load} notify={notify} /></>}
-      {activeSection === 'notifications' && <section id="settings-panel-notifications" role="tabpanel" className="settings-card">
-        <SettingsGroup title="服务器离线与恢复提醒" description="统一控制离线判断时间和恢复提醒的延迟窗口，也可以为单台服务器单独覆盖。">
-          <SettingsRow label="默认离线判断时间（秒）" description="超过该时长未上报心跳即判定离线并触发提醒。">
+      {activeSection === 'notifications' && <section id="settings-panel-notifications" className="settings-card">
+        <SettingsGroup collapsible title="服务器离线与恢复提醒" description="设置离线与恢复提醒时间，可为单台服务器单独调整。">
+          <SettingsRow label="默认离线判断时间（秒）" description="服务器超过此时间未响应时提醒。">
             <input
               type="number"
               min={30}
@@ -4173,7 +4173,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           <SettingsSwitchRow label="合并离线提醒" description="同时失联的多台服务器合并为一条通知发送。" checked={notificationMergeOffline} onChange={setNotificationMergeOffline} disabled={Boolean(saving)} ariaLabel="合并离线提醒" />
           <div className="settings-actions"><button onClick={() => void saveNotificationSettings()} disabled={Boolean(saving)}>{saving === 'notifications' ? '保存中...' : '保存通知设置'}</button></div>
         </SettingsGroup>
-        <SettingsGroup title="服务器到期提醒" description="服务器表单中开启到期提醒，并在 Bark 或 Telegram 通知频道勾选“服务器到期”事件。">
+        <SettingsGroup collapsible title="服务器到期提醒" description="需在服务器中开启到期提醒，并为通知渠道勾选“服务器到期”。">
           <SettingsRow label="第一次提醒提前天数" description="剩余天数等于该值时提醒一次，默认 7 天。">
             <input type="number" min={1} max={365} value={expiryNotifyLeadDays[0]} onChange={event => setExpiryNotifyLeadDays(current => [Math.max(1, Math.min(365, Number(event.target.value) || 1)), current[1]])} aria-label="第一次提醒提前天数" />
           </SettingsRow>
@@ -5044,7 +5044,7 @@ function StorageDiagnosticsCard({ settings }: { settings?: any }) {
   const backfillComplete = Boolean(rollup.backfill_complete)
   return <section className="settings-card" id="settings-panel-storage-diagnostics">
     <div className="settings-card-head">
-      <div><h3>存储诊断</h3><p className="muted">数据库体积、审计汇总状态和保留策略。维护由主控后台自动执行，不在面板内直接触发。</p></div>
+      <div className="settings-heading"><h3>存储诊断</h3><FieldHelp label="存储诊断" hint="查看数据占用和保留情况，系统会自动维护。" placement="bottom" /></div>
       {hint ? <span className="status-pill warning">{hint}</span> : <span className="status-pill ok">正常</span>}
     </div>
     <div className="controller-update-meta">
@@ -5456,7 +5456,7 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
   return <>
   <section className="settings-card controller-backup-card">
     <div className="settings-card-head">
-      <div><h3>主控数据备份</h3><p className="muted">备份数据库、证书续期状态和受保护配置；日志、下载缓存和程序文件不包含在内。</p></div>
+      <div className="settings-heading"><h3>主控数据备份</h3><FieldHelp label="主控数据备份" hint="备份用户数据、证书和配置，不包含日志和程序文件。" placement="bottom" /></div>
       <div className="backup-card-head-actions"><span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{working === 'load' ? '正在读取' : snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span><button type="button" className="ghost" onClick={openSettingsDialog} disabled={Boolean(working)}><Settings2 size={15} />自动备份设置</button></div>
     </div>
     {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{localizeErrorMessage(snapshot.settings.last_error)}</div>}
@@ -5465,20 +5465,20 @@ function ControllerBackupPanel({ client, notify, dialogs }: any) {
       <div><strong>{savedSettings.enabled ? '自动备份已开启' : '自动备份未开启'}</strong><span>{scheduleDescription}</span><small>{savedDestination.enabled ? `新备份会同时上传到${savedDestinationName}，远端保留 ${savedSettings.remote_retention || 1} 份。` : '第三方备份未启用，新备份只保存在本机。'}</small></div>
     </div>
     <section className="backup-password-setting">
-      <div><h3>备份密码</h3><p className="muted">用于加密新备份。恢复备份时需要输入创建该备份时使用的密码。</p></div>
+      <div className="settings-heading"><h3>备份密码</h3><FieldHelp label="备份密码" hint="用于加密新备份；恢复时须输入创建该备份时的密码。" placement="bottom" /></div>
       <div className="backup-password-setting-actions"><span className={`status-pill ${savedSettings.password_configured ? 'ok' : 'warning'}`}>{savedSettings.password_configured ? '已设置' : '未设置'}</span><button type="button" className="ghost" onClick={openPasswordDialog} disabled={Boolean(working)}><KeyRound size={15} />{savedSettings.password_configured ? '更换密码' : '设置密码'}</button></div>
     </section>
     <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working)}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
     <section className="backup-import">
-      <div><h3>导入备份</h3><p className="muted">上传本地备份文件。系统会先验证恢复密码和文件完整性。</p></div>
+      <div className="settings-heading"><h3>导入备份</h3><FieldHelp label="导入备份" hint="上传已有备份，验证密码后可恢复。" placement="bottom" /></div>
       <button type="button" className="ghost" onClick={openUploadDialog} disabled={Boolean(working)}><ArrowUp size={15} />上传备份</button>
     </section>
     <section className="backup-records">
-      <div className="settings-card-head"><div><h3>备份记录</h3><p className="muted">恢复会先创建保护备份。受保护备份不会被自动滚动删除。</p></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
+      <div className="settings-card-head"><div className="settings-heading"><h3>备份记录</h3><FieldHelp label="备份记录" hint="恢复前会创建保护备份，保护备份不会被自动清理。" placement="bottom" /></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
       {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {item.local_status === 'pending' ? '等待后台完成' : formatBytes(Number(item.size_bytes || 0)) + ' · 来源 ' + (item.source_version || '-')}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.local_status === 'pending' ? 'warning' : item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
     </section>
     <section className="backup-records">
-      <div className="settings-card-head"><div><h3>更新前备份</h3><p className="muted">更新前自动创建的数据库快照，更新成功后按保留数量自动清理。0 份表示成功后立即删除。</p></div><span className="status-pill">{`保留 ${snapshot.settings?.update_retention ?? snapshot.update_retention ?? 2} 份`}</span><button className="ghost icon-button" onClick={() => void refresh(true)} disabled={Boolean(working)} title="刷新更新前备份" aria-label="刷新更新前备份"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
+      <div className="settings-card-head"><div className="settings-heading"><h3>更新前备份</h3><FieldHelp label="更新前备份" hint="更新前创建的数据副本。保留 0 份时，更新成功后立即清理。" placement="bottom" /></div><span className="status-pill">{`保留 ${snapshot.settings?.update_retention ?? snapshot.update_retention ?? 2} 份`}</span><button className="ghost icon-button" onClick={() => void refresh(true)} disabled={Boolean(working)} title="刷新更新前备份" aria-label="刷新更新前备份"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
       {snapshot.update_backups?.length ? <div className="backup-record-list">{snapshot.update_backups.map(item => <div className="backup-record" key={item.name}><div className="backup-record-main"><strong>{item.is_latest ? '最近更新前备份' : '更新前备份'} {item.is_latest && <span className="status-pill ok" style={{marginLeft:6, fontSize:11}}>最新</span>}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))}{item.target_build ? ` · 目标构建 ${item.target_build}` : ''}</span><small title={item.path} style={{overflowWrap:'anywhere'}}>{item.name}</small></div><span className={`status-pill ${item.is_latest ? 'warning' : 'ok'}`}>{item.is_latest ? '已关联' : '已保留'}</span><div className="backup-record-actions"><button type="button" className="ghost icon-button" title="查看详情" aria-label="查看详情" onClick={() => void viewUpdateBackup(item)} disabled={Boolean(working)}><Eye size={15} /></button><button type="button" className="ghost icon-button" title="下载快照" aria-label="下载快照" onClick={() => void downloadUpdateBackup(item)} disabled={Boolean(working)}><Download size={15} /></button><button type="button" className="ghost icon-button danger-text" title="删除更新前备份" aria-label="删除更新前备份" onClick={() => void removeUpdateBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">暂无更新前备份，更新时选择“备份”后会自动创建。</p>}
     </section>
   </section>
@@ -6212,16 +6212,18 @@ function CertificateSettings({ data, client, load, notify }: any) {
       : '域名需要已解析到所选服务器，服务器会通过 80 端口完成验证；泛域名不能使用此方式。'
   return <div className="settings-grid">
     <section className="settings-card">
-      <div className="settings-card-head certificate-apply-head"><div><h3>证书申请</h3><p className="muted">需要立即为指定域名签发证书时使用，提交后可在下方查看签发进度。</p></div><div className="settings-card-actions"><button type="button" className="ghost" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />手动申请</button><button type="button" className="ghost" onClick={() => { setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); setImportDialogOpen(true) }}><ArrowUp size={14} />导入证书</button></div></div>
+      <div className="settings-card-head certificate-apply-head"><div className="settings-heading"><h3>证书</h3><FieldHelp label="证书" hint="申请或导入证书，并在下方查看签发进度。" /></div><div className="settings-card-actions"><button type="button" className="ghost" onClick={() => setCreateDialogOpen(true)}><Plus size={14} />手动申请</button><button type="button" className="ghost" onClick={() => { setImportDraft({ name: '', certificate_pem: '', fullchain_pem: '', private_key_pem: '' }); setImportDialogOpen(true) }}><ArrowUp size={14} />导入证书</button></div></div>
     </section>
     <section className="settings-card">
-      <div className="settings-card-head"><div><h3>自动匹配与证书列表</h3><p className="muted">入口域名的全局默认策略；证书状态和操作集中在下方。</p></div><button onClick={saveMatching} disabled={autoIssueCA === 'google' && !autoIssueEABCredentialID}>保存策略</button></div>
+      <SettingsGroup collapsible title="自动匹配与签发" description="为入口域名自动选择或申请证书。">
       <div className="form settings-form">
         <div className="switch-form-row"><span className="switch-form-label">启用自动匹配</span><Switch checked={autoMatch} onChange={setAutoMatch} ariaLabel="启用自动匹配" /></div>
         <FormField label="默认策略"><Select variant="segmented" value={preference} onChange={e => setPreference(e.target.value)}><option value="subdomain">精确子域证书</option><option value="wildcard">泛域名证书</option></Select></FormField>
-        <FormField label="自动签发 CA"><Select value={autoIssueCA} onChange={e => { setAutoIssueCA(e.target.value); if (e.target.value !== 'google') setAutoIssueEABCredentialID(0) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
+        <FormField label="签发机构"><Select value={autoIssueCA} onChange={e => { setAutoIssueCA(e.target.value); if (e.target.value !== 'google') setAutoIssueEABCredentialID(0) }}><option value="letsencrypt">Let's Encrypt</option><option value="zerossl">ZeroSSL</option><option value="buypass">Buypass</option><option value="google">Google Trust Services</option></Select></FormField>
         {autoIssueCA === 'google' && <div className="certificate-eab-row"><div className="certificate-eab-state"><KeyRound size={16} /><span><strong>默认 Google EAB</strong><small>{autoIssueEABCredentialID ? '新建自动证书时使用此 EAB' : 'Google Trust Services 自动签发必须选择 EAB'}</small></span></div><div className="certificate-eab-controls"><Select value={autoIssueEABCredentialID || 0} onChange={event => setAutoIssueEABCredentialID(Number(event.target.value) || 0)}><option value={0}>选择已保存的 EAB</option>{eabCredentials.map(credential => <option key={credential.id} value={credential.id}>{credential.key_id}{credential.remark ? ` · ${credential.remark}` : ''}</option>)}</Select><button type="button" className="ghost" onClick={openAutoIssueEAB}><Plus size={14} />新增 EAB</button></div></div>}
       </div>
+      <div className="settings-actions"><button onClick={saveMatching} disabled={autoIssueCA === 'google' && !autoIssueEABCredentialID}>保存策略</button></div>
+      </SettingsGroup>
       <div className="dns-record-list certificate-record-list">{certificates.map(certificate => {
         const ready = certificate.status === 'ready'
         const issueAction = ready ? 'renew' : 'issue'
@@ -6343,8 +6345,8 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
   }
   const content = String(snapshot?.content || '')
   return <section className="settings-card controller-logs-card">
-    <div className="settings-card-head"><div><h3>主控运行日志</h3><p className="muted">查看 API、后台任务和运行错误。日志会自动脱敏并按大小轮转。</p></div><span className="status-pill">{formatBytes(Number(snapshot?.total_size_bytes || 0))}</span></div>
-    <SettingsDisclosure title="日志轮转策略" description="低频调整项，日志会按大小自动轮转。" summary={`${maxMB} MB · 保留 ${backups} 份`}>
+    <div className="settings-card-head"><div className="settings-heading"><h3>主控日志</h3><FieldHelp label="主控日志" hint="查看运行记录和错误，日志会自动隐藏敏感信息。" /></div><span className="status-pill">{formatBytes(Number(snapshot?.total_size_bytes || 0))}</span></div>
+    <SettingsDisclosure title="日志保留" description="达到大小上限后自动创建新日志，并清理超出份数的旧日志。" summary={`${maxMB} MB · 保留 ${backups} 份`}>
       <div className="controller-log-policy">
         <FormField label="单个日志上限" hint="1-1024 MB">
           <input

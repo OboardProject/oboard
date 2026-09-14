@@ -104,10 +104,10 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
           {v6Modes.map(mode => <option key={mode} value={mode}>{mode === 'default' ? '默认' : mode === 'unshaped' ? '无整形' : 'unsafe-raw'}</option>)}
         </Select>
       </SettingsRow>}
-      <SettingsRow label="连接复用（reuse）" description="Snell 自带的连接复用，不使用 sing-box 通用 MUX。">
+      <SettingsRow label="连接复用（reuse）" description="复用已建立的连接，减少重复握手。">
         <input type="checkbox" checked={draft.reuse} onChange={event => setDraft({ ...draft, reuse: event.target.checked })} />
       </SettingsRow>
-      <SettingsRow label="TCP Fast Open" description="Snell 始终跑在 TCP 上。仅当服务器内核开放了 server 位（net.ipv4.tcp_fastopen 含 2）时才会真正生效。">
+      <SettingsRow label="TCP Fast Open" description="加快 TCP 连接建立，需要服务器系统支持并开启此功能。">
         <input type="checkbox" checked={draft.tcp_fast_open} onChange={event => setDraft({ ...draft, tcp_fast_open: event.target.checked })} />
       </SettingsRow>
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
@@ -160,7 +160,7 @@ export function SnellProfilesPanel({ data, client, load, notify }: SnellProfiles
   }
 
   return <section id="settings-panel-snell" role="tabpanel" className="settings-card">
-    <SettingsGroup title="Snell 参数预设" description="预设让多个服务器入口快速使用同一套 Snell 参数；修改预设后，引用它的入口会在下次部署时应用新参数。内置预设不可删除。">
+    <SettingsGroup title="Snell 参数预设" description="多个入口可共用参数，修改后在下次部署时生效。内置预设不可删除。">
        <div className="snell-profiles-head">
          <span className="muted">共 {profiles.length} 套，内置 {profiles.filter(p => p.builtin).length} 套</span>
          <button type="button" onClick={() => setEditing({ draft: emptySnellDraft(4) })}><Plus size={14} />新建预设</button>

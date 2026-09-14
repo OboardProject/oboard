@@ -43,15 +43,14 @@ describe('AgentSettingsPanel', () => {
     })
 
     expect(container.textContent).toContain('新服务器默认值')
-    expect(container.textContent).toContain('流量控制')
+    expect(container.textContent).toContain('流量统计')
     expect(container.textContent).toContain('MTU')
     expect(container.textContent).toContain('BBR + FQ')
     expect(container.textContent).toContain('时间校准')
     expect(container.textContent).toContain('NTP 时间源')
     expect(container.textContent).toContain('统计时区')
     expect(container.textContent).not.toContain('达量后处理')
-    expect(container.textContent).toContain('达量后自动断开现有连接并拒绝新连接')
-    expect(container.textContent).toContain('运行配置')
+    expect(container.textContent).toContain('维护操作')
     expect(container.textContent).toContain('刷新全部节点配置')
   })
 
@@ -62,7 +61,8 @@ describe('AgentSettingsPanel', () => {
     act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={load} notify={notify} />))
     const toggle = container.querySelector<HTMLButtonElement>('[aria-label="优先从 GitHub 下载资源"]')!
     expect(toggle.getAttribute('aria-checked')).toBe('false')
-    expect(container.textContent).toContain('订阅中继始终从主控下载')
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="资源下载说明"]')!.click())
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('订阅中继固定从主控下载')
     await act(async () => toggle.click())
     expect(client.request).toHaveBeenCalledWith('/settings', { method: 'POST', body: JSON.stringify({ resource_download_source: 'github' }) })
     act(() => root.render(<AgentSettingsPanel data={{ settings: { resource_download_source: 'github' } }} client={client} load={load} notify={notify} />))

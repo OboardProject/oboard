@@ -140,8 +140,8 @@ function isHY2Kind(kind: string) {
 }
 
 function presetNativeMuxNote(kind: string) {
-  if (kind.startsWith('anytls-')) return 'AnyTLS 协议自带 Session / Stream 复用，无需通用 MUX。'
-  if (isHY2Kind(kind)) return 'Hysteria2 走 QUIC 原生多流，数据面是 UDP。'
+  if (kind.startsWith('anytls-')) return '协议自带连接复用，无需额外开启。'
+  if (isHY2Kind(kind)) return '协议自带连接复用，使用 UDP 传输。'
   if (kind === 'mieru-basic') return 'Mieru 使用自己的复用级别（上方“多路复用”）。'
   return ''
 }
@@ -253,7 +253,7 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
             <option value="__custom__">{isCustomRealityDomain ? `${selectedRealityDomain}（自定义）` : '自定义…'}</option>
           </Select>
         </SettingsRow>
-        {showCustomReality && <SettingsRow label="自定义 SNI / 握手域名" description="输入任意域名（例如 www.example.com），不在模板列表中也将作为当前选中值保存。">
+        {showCustomReality && <SettingsRow label="自定义 SNI / 握手域名" description="填写要使用的域名，例如 www.example.com。">
           <input value={selectedRealityDomain} onChange={event => {
             const next = event.target.value
             const trimmed = next.trim()
@@ -307,7 +307,7 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
         </SettingsRow>
       </>}
       {presetSupportsGenericMux(draft.kind) && <>
-        <SettingsRow label="通用多路复用（MUX）" description="sing-box 通用 MUX（h2mux / smux / yamux 由客户端选择）。默认关闭；Shadowsocks 不能与服务器的 udp_over_tcp 策略同时使用。">
+        <SettingsRow label="通用多路复用（MUX）" description="让多个连接共享传输通道。Shadowsocks 不能同时开启 UDP over TCP。">
           <input type="checkbox" checked={Boolean(multiplex.enabled)} onChange={event => setMultiplex({ enabled: event.target.checked || undefined })} />
         </SettingsRow>
         {Boolean(multiplex.enabled) && <SettingsRow label="MUX 填充（padding）" description="为复用流增加填充，牺牲少量带宽换取更少的长度特征。">
@@ -318,10 +318,10 @@ function NodePresetEditor({ title, draft, setDraft, lockKind, onSave, onCancel, 
         <span className="muted">协议原生</span>
       </SettingsRow>}
       {presetSupportsTCPFastOpen(draft.kind, draft.config)
-        ? <SettingsRow label="TCP Fast Open" description="仅当服务器内核开放了 server 位（net.ipv4.tcp_fastopen 含 2）时才会生效，支持 TFO 的预设默认开启。">
+        ? <SettingsRow label="TCP Fast Open" description="加快 TCP 连接建立，需要服务器系统支持并开启此功能。">
           <input type="checkbox" checked={Boolean(draft.config.tcp_fast_open)} onChange={event => updateConfig({ tcp_fast_open: event.target.checked || undefined })} />
         </SettingsRow>
-        : <SettingsRow label="TCP Fast Open" description={draft.kind === 'mieru-basic' ? 'UDP 传输不使用 TCP 套接字，因此不可用。' : '该协议的数据面不跑在 TCP 上，因此不可用。'}>
+        : <SettingsRow label="TCP Fast Open" description={draft.kind === 'mieru-basic' ? 'UDP 传输无法开启此功能。' : '此协议不使用 TCP，无法开启。'}>
           <span className="muted">不适用</span>
         </SettingsRow>}
       <SettingsRow label="备注" description="可选说明，例如适用机房或用途。">
@@ -464,7 +464,7 @@ export function NodePresetsPanel({ data, client, load, notify }: NodePresetsPane
     }
   }
 
-  return <section id="settings-panel-presets" role="tabpanel" className="settings-card">
+  return <section id="settings-panel-presets" className="settings-card">
     <div className="settings-group">
       <div className="settings-group-body" style={{ paddingTop: 18 }}>
         <div className="node-presets-toolbar">

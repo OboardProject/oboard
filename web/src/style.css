@@ -61,7 +61,6 @@
 
   --sidebar-width: 248px;
   --sidebar-collapsed-width: 72px;
-  --settings-sidebar-width: minmax(176px, 208px);
   --app-viewport-height: 100dvh;
   --mobile-edge-gap: 12px;
   --mobile-surface-top: max(var(--mobile-edge-gap), env(safe-area-inset-top, 0px));
@@ -25527,7 +25526,7 @@ button.dns-policy-row-main:focus {
 }
 
 .form-field-help-popover {
-  left: -8px !important;
+  left: -8px;
   z-index: 99999 !important;
 }
 
@@ -26116,100 +26115,47 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 /* Settings workspace */
 .settings-shell {
   display: grid;
-  grid-template-columns: var(--settings-sidebar-width, minmax(176px, 208px)) minmax(0, 1fr);
-  gap: 22px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
   padding: 18px;
   align-items: start;
 }
 
-.settings-sidebar {
-  min-width: 0;
-  align-self: start;
-  position: sticky;
-  top: var(--app-sticky-header-clearance, 96px);
-  max-height: calc(100dvh - var(--app-sticky-header-clearance, 96px) - 24px);
+.settings-topbar, .settings-nav { min-width: 0; }
+.settings-topbar .settings-tabs {
   display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-.settings-nav {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.settings-sidebar .settings-tabs {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0;
+  flex-wrap: wrap;
+  gap: 6px;
   margin: 0;
-  overflow: visible;
-  min-height: 0;
-  border: 0;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--border);
 }
-
-.settings-sidebar .settings-tabs button {
-  width: 100%;
-  min-width: 0;
+.settings-topbar .settings-tabs button {
+  flex: 0 0 auto;
   min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 11px;
   padding: 9px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13.5px;
-  font-weight: 500;
-  text-align: left;
-  box-shadow: none;
-  cursor: pointer;
+  gap: 8px;
   white-space: nowrap;
 }
-
-.settings-sidebar .settings-tabs button svg {
-  flex-shrink: 0;
-  color: var(--muted);
-  transition: color var(--duration-appica) ease;
+.settings-topbar .settings-tabs button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
-
-.settings-sidebar .settings-tabs button:hover {
-  color: var(--text-strong);
-  background: var(--surface-2);
-  border-color: transparent;
-  box-shadow: none;
-  transform: none;
+.settings-heading, .settings-row-copy.settings-heading, .settings-disclosure-copy {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
 }
-
-.settings-sidebar .settings-tabs button:hover svg {
-  color: var(--text-strong);
+.settings-group > .settings-disclosure {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
+.settings-group > .settings-disclosure > summary { padding: 18px 22px; }
+.settings-group > .settings-disclosure > .settings-disclosure-body { padding: 14px 22px 18px; }
 
-.settings-sidebar .settings-tabs button:active {
-  transform: none;
-}
-
-.settings-sidebar .settings-tabs button.active {
-  color: var(--text-strong);
-  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--primary) 10%, var(--surface-solid));
-  font-weight: 600;
-  box-shadow: none;
-}
-
-.settings-sidebar .settings-tabs button.active svg {
-  color: var(--primary);
-}
 
 .settings-content {
   min-width: 0;
@@ -26639,8 +26585,9 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 
 .settings-disclosure-copy {
   min-width: 0;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .settings-disclosure-copy strong {
@@ -26656,6 +26603,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .settings-disclosure-chevron {
+  grid-column: -2 / -1;
   color: var(--muted);
   transition: transform var(--duration-appica) var(--ease-appica-spring);
 }
@@ -26934,29 +26882,12 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
 }
 
 @media (max-width: 900px) {
-  .settings-shell { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  .settings-sidebar {
-    position: static;
-    display: block;
-    max-height: none;
-    overflow: visible;
-  }
-  .settings-nav {
-    display: contents;
-    overflow: visible;
-  }
-  .settings-sidebar .settings-tabs {
-    display: flex;
-    flex-direction: row;
-    gap: 6px;
-    padding-bottom: 8px;
+  .settings-topbar .settings-tabs {
+    flex-wrap: nowrap;
     overflow-x: auto;
-    overflow-y: visible;
     scrollbar-width: thin;
-    min-height: auto;
-    flex: initial;
+    padding: 3px 3px 10px;
   }
-  .settings-sidebar .settings-tabs button { width: auto; flex: 0 0 auto; }
 }
 
 @media (max-width: 620px) {

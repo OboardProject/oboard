@@ -15,7 +15,6 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
     expect(stylesheet).toMatch(/--sidebar-collapsed-width:\s*72px/)
     expect(stylesheet).toMatch(/--app-viewport-height:\s*100dvh/)
     expect(stylesheet).toMatch(/--app-sticky-header-clearance:\s*96px/)
-    expect(stylesheet).toMatch(/--settings-sidebar-width:\s*minmax\(176px,\s*208px\)/)
     expect(stylesheet).toMatch(/--layout-scrollbar-gutter:\s*stable/)
   })
 
@@ -57,10 +56,10 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
     expect(stylesheet).toMatch(/\.main\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow-y:\s*auto[^}]*overscroll-behavior-y:\s*contain[^}]*scrollbar-gutter:\s*var\(--layout-scrollbar-gutter,\s*stable\)/s)
   })
 
-  it('configures settings sidebar as a persistent secondary sidebar under sticky header clearance with a single overflow box', () => {
-    expect(stylesheet).toMatch(/\.settings-shell\s*\{[^}]*grid-template-columns:\s*var\(--settings-sidebar-width,\s*minmax\(176px,\s*208px\)\)\s*minmax\(0,\s*1fr\)/s)
-    expect(stylesheet).toMatch(/\.settings-sidebar\s*\{[^}]*position:\s*sticky[^}]*top:\s*var\(--app-sticky-header-clearance,\s*96px\)[^}]*max-height:\s*calc\(100dvh\s*-\s*var\(--app-sticky-header-clearance,\s*96px\)\s*-\s*24px\)[^}]*overflow-y:\s*auto/s)
-    expect(stylesheet).toMatch(/\.settings-sidebar\s+\.settings-tabs\s*\{[^}]*overflow:\s*visible[^}]*min-height:\s*0/s)
+  it('gives settings the full content width with navigation above it', () => {
+    expect(stylesheet).toMatch(/\.settings-shell\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s)
+    expect(stylesheet).not.toContain('.settings-sidebar')
+    expect(stylesheet).toMatch(/\.settings-topbar\s+\.settings-tabs\s*\{[^}]*flex-wrap:\s*wrap/s)
   })
 
   it('resets mobile app and main to natural page scrolling below 901px', () => {
@@ -68,9 +67,8 @@ describe('Persistent Sidebar Layout CSS contracts', () => {
     expect(stylesheet).toMatch(/\.main\s*\{[^}]*height:\s*auto[^}]*overflow-y:\s*visible[^}]*scrollbar-gutter:\s*auto/s)
   })
 
-  it('resets mobile settings navigation to horizontal scrolling tabs below 901px', () => {
-    expect(stylesheet).toMatch(/\.settings-sidebar\s*\{[^}]*position:\s*static[^}]*max-height:\s*none/s)
-    expect(stylesheet).toMatch(/\.settings-sidebar\s+\.settings-tabs\s*\{[^}]*flex-direction:\s*row[^}]*overflow-x:\s*auto[^}]*overflow-y:\s*visible/s)
+  it('keeps settings categories horizontally scrollable on narrow screens', () => {
+    expect(stylesheet).toMatch(/@media \(max-width: 900px\)\s*\{\s*\.settings-topbar\s+\.settings-tabs\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/s)
   })
 
   it('locks .main scroll in CSS when dialog backdrops or modal roots are present', () => {

@@ -53,9 +53,6 @@ export function AboutSettingsPanel({ version = {} }: { version?: OBoardVersionIn
     <section
       id="settings-panel-about"
       className="settings-card about-settings"
-      role="tabpanel"
-      aria-labelledby="settings-tab-about"
-      tabIndex={0}
     >
       <header className="about-product">
         <img className="about-product-logo" src={logo} alt="" />

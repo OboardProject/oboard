@@ -37,6 +37,21 @@ describe('SettingsLayout', () => {
     expect(container.textContent).toContain('已开启')
   })
 
+  it('opens help without expanding the form and dismisses it with Escape', () => {
+    act(() => root.render(<SettingsGroup collapsible title="代理" description="填写可信代理地址"><input aria-label="代理地址" /></SettingsGroup>))
+    const help = container.querySelector('button[aria-label="代理说明"]') as HTMLButtonElement
+    const details = container.querySelector('details')!
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    act(() => help.click())
+    expect(details.open).toBe(false)
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('填写可信代理地址')
+    expect(container.querySelector('[role="tooltip"]')).toBeNull()
+    act(() => help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    act(() => (container.querySelector('summary') as HTMLElement).click())
+    expect(details.open).toBe(true)
+  })
+
   it('keeps segmented choices bounded and emits the selected value', () => {
     let selected = ''
     act(() => root.render(
