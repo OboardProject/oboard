@@ -15,7 +15,6 @@ func (c *collector) checkInbounds() {
 	for _, inbound := range c.input.Inbounds {
 		c.checkInboundDocument(inbound)
 		c.checkInboundReferences(inbound)
-		c.checkInboundPortRange(inbound)
 	}
 	c.checkInboundPortConflicts()
 }
@@ -66,6 +65,19 @@ func (c *collector) checkInboundDocument(inbound model.Inbound) {
 // later save of that inbound re-resolves the reference and fails, so the
 // operator cannot edit the入口 at all until the dangling key is cleared.
 func (c *collector) checkInboundReferences(inbound model.Inbound) {
+	_, ok := c.serverByID[inbound.ServerID]
+	if !ok {
+		c.add(Finding{
+			Code:         "inbound.server.missing",
+			Severity:     SeverityBlocking,
+			Scope:        ScopeInbound,
+			ResourceID:   inbound.ID,
+			ResourceName: inbound.Name,
+			Title:        "入口所属的服务器已不存在",
+			Detail:       fmt.Sprintf("服务器 %d 已被删除", inbound.ServerID),
+			Remedy:       Remedy{Kind: RemedyDelete, Summary: "删除这个没有归属服务器的入口", Destructive: true},
+		})
+	}
 	document := decodeDocument(inbound.ConfigJSON)
 
 	if id := documentInt64(document, "node_preset_id"); id > 0 && !c.input.UsableNodePresetIDs[id] {
@@ -130,45 +142,6 @@ func (c *collector) checkInboundReferences(inbound model.Inbound) {
 			Remedy:       Remedy{Kind: RemedyNone, Summary: "请重新选择 DNS 凭据或关闭记录同步"},
 		})
 	}
-}
-
-// checkInboundPortRange reports a manually chosen port that sits outside the
-// server's configured public pool. Port policy treats this as a warning only:
-// the listener works, but a later range migration will not account for it.
-func (c *collector) checkInboundPortRange(inbound model.Inbound) {
-	server, ok := c.serverByID[inbound.ServerID]
-	if !ok {
-		c.add(Finding{
-			Code:         "inbound.server.missing",
-			Severity:     SeverityBlocking,
-			Scope:        ScopeInbound,
-			ResourceID:   inbound.ID,
-			ResourceName: inbound.Name,
-			Title:        "入口所属的服务器已不存在",
-			Detail:       fmt.Sprintf("服务器 %d 已被删除", inbound.ServerID),
-			Remedy:       Remedy{Kind: RemedyDelete, Summary: "删除这个没有归属服务器的入口", Destructive: true},
-		})
-		return
-	}
-	if server.PortRangeStart <= 0 || server.PortRangeEnd <= 0 || inbound.Port <= 0 {
-		return
-	}
-	if inbound.Port >= server.PortRangeStart && inbound.Port <= server.PortRangeEnd {
-		return
-	}
-	c.add(Finding{
-		Code:         "inbound.port.outside_range",
-		Severity:     SeverityNotice,
-		Scope:        ScopeInbound,
-		ResourceID:   inbound.ID,
-		ResourceName: inbound.Name,
-		ServerID:     inbound.ServerID,
-		Title:        "入口端口不在服务器的端口范围内",
-		Detail: fmt.Sprintf("端口 %d 不在 %d-%d 内，端口迁移不会统计这个监听",
-			inbound.Port, server.PortRangeStart, server.PortRangeEnd),
-		Path:   "port",
-		Remedy: Remedy{Kind: RemedyNone, Summary: "如需纳入统一管理，请调整端口或服务器端口范围"},
-	})
 }
 
 // checkInboundPortConflicts reports two enabled listeners that would bind the

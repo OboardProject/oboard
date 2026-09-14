@@ -1,6 +1,7 @@
 package confighealth
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
@@ -141,12 +142,39 @@ func TestEvaluateIgnoresPortReuseOnDistinctListenAddresses(t *testing.T) {
 	requireNoFinding(t, Evaluate(in), "inbound.port.conflict")
 }
 
-func TestEvaluateReportsPortOutsideServerRange(t *testing.T) {
+func TestEvaluateAcceptsCustomInboundPortsOutsideManagedPool(t *testing.T) {
+	for _, port := range []int{443, 3002, 30205, 40000, 49999, 50000, 65535} {
+		t.Run(strconv.Itoa(port), func(t *testing.T) {
+			in := healthyInput()
+			in.Servers[0].PortRangeStart = 40000
+			in.Servers[0].PortRangeEnd = 49999
+			in.Inbounds[0].Port = port
+			report := Evaluate(in)
+			if !report.Summary.Clean() {
+				t.Fatalf("valid custom port %d produced findings: %v", port, codes(report))
+			}
+		})
+	}
+}
+
+func TestEvaluateReportsCustomPortConflictOutsideManagedPool(t *testing.T) {
 	in := healthyInput()
 	in.Inbounds[0].Port = 443
-	finding := findingByCode(t, Evaluate(in), "inbound.port.outside_range")
-	if finding.Severity != SeverityNotice {
-		t.Fatalf("port policy treats this as a warning only, got %s", finding.Severity)
+	duplicate := in.Inbounds[0]
+	duplicate.ID = 11
+	in.Inbounds = append(in.Inbounds, duplicate)
+	finding := findingByCode(t, Evaluate(in), "inbound.port.conflict")
+	if finding.Severity != SeverityBlocking {
+		t.Fatalf("expected blocking port conflict, got %+v", finding)
+	}
+}
+
+func TestEvaluateReportsInboundPointingAtDeletedServer(t *testing.T) {
+	in := healthyInput()
+	in.Servers = nil
+	finding := findingByCode(t, Evaluate(in), "inbound.server.missing")
+	if finding.Severity != SeverityBlocking || finding.Remedy.Kind != RemedyDelete || !finding.Remedy.Destructive {
+		t.Fatalf("an orphan inbound should offer a destructive delete, got %+v", finding)
 	}
 }
 
@@ -229,17 +257,16 @@ func TestEvaluateReportsDanglingDNSPolicyList(t *testing.T) {
 
 func TestEvaluateOrdersBlockingFindingsFirst(t *testing.T) {
 	in := healthyInput()
-	in.Inbounds[0].Port = 443                                                         // notice
 	in.Inbounds[0].ConfigJSON = `{"node_preset_id":7}`                                // warning
 	in.RoutingRules = []model.RoutingRule{{ID: 901, ServerID: 1, MatchJSON: "{oops"}} // blocking
 	report := Evaluate(in)
-	if len(report.Findings) < 3 {
-		t.Fatalf("expected three findings, got %v", codes(report))
+	if len(report.Findings) != 2 {
+		t.Fatalf("expected two findings, got %v", codes(report))
 	}
 	if report.Findings[0].Severity != SeverityBlocking {
 		t.Fatalf("blocking finding was not ranked first: %v", codes(report))
 	}
-	if report.Summary.Blocking != 1 || report.Summary.Warning != 1 || report.Summary.Notice != 1 {
+	if report.Summary.Blocking != 1 || report.Summary.Warning != 1 || report.Summary.Notice != 0 {
 		t.Fatalf("unexpected summary %+v", report.Summary)
 	}
 }
