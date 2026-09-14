@@ -1015,8 +1015,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"device_limit", `alter table users add column device_limit integer not null default 0`},
-		{"legacy_proxy_enabled", `alter table users add column legacy_proxy_enabled integer not null default 1`},
 	} {
 		if err := s.ensureColumn(ctx, "users", column.name, column.sql); err != nil {
 			return err
@@ -1026,18 +1024,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"device_id_hash", `alter table subscription_pull_audits add column device_id_hash text not null default ''`},
-		{"representation_id", `alter table subscription_pull_audits add column representation_id text not null default ''`},
-		{"subscription_revision", `alter table subscription_pull_audits add column subscription_revision text not null default ''`},
-		{"raw_request_weight", `alter table subscription_pull_audits add column raw_request_weight real not null default 1`},
-		{"logical_pull_weight", `alter table subscription_pull_audits add column logical_pull_weight real not null default 1`},
-		{"logical_fetch_id", `alter table subscription_pull_audits add column logical_fetch_id text not null default ''`},
-		{"route_id", `alter table subscription_pull_audits add column route_id text not null default ''`},
-		{"route_novelty_weight", `alter table subscription_pull_audits add column route_novelty_weight real not null default 0`},
-		{"dedupe_reason", `alter table subscription_pull_audits add column dedupe_reason text not null default ''`},
-		{"conditional_request", `alter table subscription_pull_audits add column conditional_request integer not null default 0`},
-		{"requested_format", `alter table subscription_pull_audits add column requested_format text not null default ''`},
-		{"auto_detected", `alter table subscription_pull_audits add column auto_detected integer not null default 0`},
 	} {
 		if err := s.ensureColumn(ctx, "subscription_pull_audits", column.name, column.sql); err != nil {
 			return err
@@ -1107,10 +1093,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"disk_total_bytes", `alter table servers add column disk_total_bytes integer not null default 0`},
-		{"tcp_connection_count", `alter table servers add column tcp_connection_count integer not null default 0`},
-		{"udp_connection_count", `alter table servers add column udp_connection_count integer not null default 0`},
-		{"process_count", `alter table servers add column process_count integer not null default 0`},
 	} {
 		if err := s.ensureColumn(ctx, "servers", column.name, column.sql); err != nil {
 			return err
@@ -1120,13 +1102,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"pool", `alter table proxy_path_port_allocations add column pool text not null default 'public'`},
-		{"listen_ip", `alter table proxy_path_port_allocations add column listen_ip text not null default ''`},
-		{"network", `alter table proxy_path_port_allocations add column network text not null default 'tcp_udp'`},
-		{"generation", `alter table proxy_path_port_allocations add column generation integer not null default 1`},
-		{"ordinal", `alter table proxy_path_port_allocations add column ordinal integer not null default 0`},
-		{"state", `alter table proxy_path_port_allocations add column state text not null default 'active'`},
-		{"policy_revision", `alter table proxy_path_port_allocations add column policy_revision integer not null default 0`},
 	} {
 		if err := s.ensureColumn(ctx, "proxy_path_port_allocations", column.name, column.sql); err != nil {
 			return err
@@ -1139,18 +1114,8 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"resource_history_enabled", `alter table server_telemetry add column resource_history_enabled integer not null default 1`},
 		{"offline_notify_enabled", `alter table server_telemetry add column offline_notify_enabled integer not null default 1`},
 		{"offline_after_seconds", `alter table server_telemetry add column offline_after_seconds integer not null default 0`},
-		{"time_correction_mode", `alter table server_telemetry add column time_correction_mode text not null default 'off'`},
-		{"time_check_status", `alter table server_telemetry add column time_check_status text not null default 'unknown'`},
-		{"time_offset_ms", `alter table server_telemetry add column time_offset_ms integer not null default 0`},
-		{"time_effective_offset_ms", `alter table server_telemetry add column time_effective_offset_ms integer not null default 0`},
-		{"time_check_source", `alter table server_telemetry add column time_check_source text not null default ''`},
-		{"time_check_error", `alter table server_telemetry add column time_check_error text not null default ''`},
-		{"time_logical_active", `alter table server_telemetry add column time_logical_active integer not null default 0`},
-		{"time_unsupported_paths_json", `alter table server_telemetry add column time_unsupported_paths_json text not null default '[]'`},
-		{"time_checked_at", `alter table server_telemetry add column time_checked_at text`},
 	}
 	for _, column := range serverTelemetryColumns {
 		if err := s.ensureColumn(ctx, "server_telemetry", column.name, column.sql); err != nil {
@@ -1161,12 +1126,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"resource_recorded", `alter table server_metric_samples add column resource_recorded integer not null default 1`},
-		{"disk_used_bytes", `alter table server_metric_samples add column disk_used_bytes integer not null default 0`},
-		{"disk_total_bytes", `alter table server_metric_samples add column disk_total_bytes integer not null default 0`},
-		{"tcp_connection_count", `alter table server_metric_samples add column tcp_connection_count integer not null default 0`},
-		{"udp_connection_count", `alter table server_metric_samples add column udp_connection_count integer not null default 0`},
-		{"process_count", `alter table server_metric_samples add column process_count integer not null default 0`},
 	} {
 		if err := s.ensureColumn(ctx, "server_metric_samples", column.name, column.sql); err != nil {
 			return err
@@ -1176,35 +1135,6 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		name string
 		sql  string
 	}{
-		{"source_country_code", `alter table connection_audit_reports add column source_country_code text not null default ''`},
-		{"source_country", `alter table connection_audit_reports add column source_country text not null default ''`},
-		{"source_province", `alter table connection_audit_reports add column source_province text not null default ''`},
-		{"source_city", `alter table connection_audit_reports add column source_city text not null default ''`},
-		{"source_isp", `alter table connection_audit_reports add column source_isp text not null default ''`},
-		{"geo_database_revision", `alter table connection_audit_reports add column geo_database_revision text not null default ''`},
-		{"closed_count", `alter table connection_audit_reports add column closed_count integer not null default 0`},
-		{"duration_total_ms", `alter table connection_audit_reports add column duration_total_ms integer not null default 0`},
-		{"duration_max_ms", `alter table connection_audit_reports add column duration_max_ms integer not null default 0`},
-		{"device_id_hash", `alter table connection_audit_reports add column device_id_hash text not null default ''`},
-		{"credential_epoch", `alter table connection_audit_reports add column credential_epoch integer not null default 0`},
-		{"client_instance_id_hash", `alter table connection_audit_reports add column client_instance_id_hash text not null default ''`},
-		{"route_id", `alter table connection_audit_reports add column route_id text not null default ''`},
-		{"upload_bytes", `alter table connection_audit_reports add column upload_bytes integer not null default 0`},
-		{"download_bytes", `alter table connection_audit_reports add column download_bytes integer not null default 0`},
-		{"payload_first_at", `alter table connection_audit_reports add column payload_first_at text`},
-		{"payload_last_at", `alter table connection_audit_reports add column payload_last_at text`},
-		{"duration_le_1s_count", `alter table connection_audit_reports add column duration_le_1s_count integer not null default 0`},
-		{"duration_le_5s_count", `alter table connection_audit_reports add column duration_le_5s_count integer not null default 0`},
-		{"duration_le_20s_count", `alter table connection_audit_reports add column duration_le_20s_count integer not null default 0`},
-		{"duration_gt_20s_count", `alter table connection_audit_reports add column duration_gt_20s_count integer not null default 0`},
-		{"probe_state", `alter table connection_audit_reports add column probe_state text not null default ''`},
-		{"internal_probe", `alter table connection_audit_reports add column internal_probe integer not null default 0`},
-		{"presence_sequence", `alter table connection_audit_reports add column presence_sequence integer not null default 0`},
-		{"collection_generation", `alter table connection_audit_reports add column collection_generation integer not null default 0`},
-		{"bucket_capacity", `alter table connection_audit_reports add column bucket_capacity integer not null default 1`},
-		{"dropped_bucket_count", `alter table connection_audit_reports add column dropped_bucket_count integer not null default 0`},
-		{"collection_started_at", `alter table connection_audit_reports add column collection_started_at text not null default '1970-01-01T00:00:00Z'`},
-		{"collection_ended_at", `alter table connection_audit_reports add column collection_ended_at text not null default '1970-01-01T00:00:00Z'`},
 	}
 	for _, column := range connectionAuditGeoColumns {
 		if err := s.ensureColumn(ctx, "connection_audit_reports", column.name, column.sql); err != nil {
@@ -1877,15 +1807,6 @@ func (s *Store) migrateRoutingRuleScopes(ctx context.Context) error {
 		name string
 		sql  string
 	}{
-		{"scope", `alter table routing_rules add column scope text not null default 'server'`},
-		{"proxy_path_id", `alter table routing_rules add column proxy_path_id integer references proxy_paths(id) on delete cascade`},
-		{"stage_step_id", `alter table routing_rules add column stage_step_id integer references proxy_path_steps(id) on delete cascade`},
-		{"sort_position", `alter table routing_rules add column sort_position integer not null default 0`},
-		{"match_source", `alter table routing_rules add column match_source text not null default 'inline'`},
-		{"rule_set_id", `alter table routing_rules add column rule_set_id integer references routing_rule_sets(id) on delete restrict`},
-		{"target_proxy_path_id", `alter table routing_rules add column target_proxy_path_id integer references proxy_paths(id) on delete cascade`},
-		{"family_dns_strategy", `alter table routing_rules add column family_dns_strategy text not null default 'auto'`},
-		{"sync_group_id", `alter table routing_rules add column sync_group_id text not null default ''`},
 		{"dns_resolver", `alter table routing_rules add column dns_resolver text not null default ''`},
 	}
 	for _, column := range columns {

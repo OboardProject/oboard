@@ -286,7 +286,7 @@ func TestConnectionAuditStartedSinceExcludesEarlierStarts(t *testing.T) {
 		ReportID: "started-inside", ServerID: server.ID, UserID: user.ID,
 		SourceIP: "203.0.113.1", Network: "tcp", ConnectionCount: 1,
 		CollectionStartedAt: cutoff, CollectionEndedAt: at,
-		StartedAt:           cutoff.Add(time.Minute), EndedAt: at.Add(-time.Minute),
+		StartedAt: cutoff.Add(time.Minute), EndedAt: at.Add(-time.Minute),
 	}
 	// Ends inside the window but began before it: present in the ended_at
 	// superset, absent from a started_at window.
@@ -294,14 +294,14 @@ func TestConnectionAuditStartedSinceExcludesEarlierStarts(t *testing.T) {
 		ReportID: "started-before", ServerID: server.ID, UserID: user.ID,
 		SourceIP: "203.0.113.2", Network: "tcp", ConnectionCount: 1,
 		CollectionStartedAt: cutoff.Add(-time.Hour), CollectionEndedAt: at,
-		StartedAt:           cutoff.Add(-time.Hour), EndedAt: at.Add(-time.Minute),
+		StartedAt: cutoff.Add(-time.Hour), EndedAt: at.Add(-time.Minute),
 	}
 	// Entirely before the window: absent from both.
 	older := model.ConnectionAuditReport{
 		ReportID: "ended-before", ServerID: server.ID, UserID: user.ID,
 		SourceIP: "203.0.113.3", Network: "tcp", ConnectionCount: 1,
 		CollectionStartedAt: cutoff.Add(-2 * time.Hour), CollectionEndedAt: cutoff.Add(-time.Hour),
-		StartedAt:           cutoff.Add(-2 * time.Hour), EndedAt: cutoff.Add(-time.Hour),
+		StartedAt: cutoff.Add(-2 * time.Hour), EndedAt: cutoff.Add(-time.Hour),
 	}
 	if _, err := s.AddConnectionAuditReports(ctx, []model.ConnectionAuditReport{inside, straddling, older}); err != nil {
 		t.Fatal(err)

@@ -3,9 +3,10 @@ package store
 import (
 	"context"
 	"fmt"
-	"github.com/OboardProject/oboard/internal/model"
 	"path/filepath"
 	"testing"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 func TestSnellRuntimeUpgradePreservesPortsAndConfirmsAtomically(t *testing.T) {

@@ -64,4 +64,3 @@ func TestBootstrapAdminConcurrentRequestsCreateSingleAdmin(t *testing.T) {
 		t.Fatalf("stored admin count=%d", admins)
 	}
 }
-

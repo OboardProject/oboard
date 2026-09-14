@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/OboardProject/oboard/internal/model"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 func BenchmarkLatencyHistory(b *testing.B) {

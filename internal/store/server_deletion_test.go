@@ -148,4 +148,3 @@ func TestDeletedServerLeavesNoOpenIncident(t *testing.T) {
 		t.Fatalf("publication isolations survived the server: %d err=%v", isolations, err)
 	}
 }
-

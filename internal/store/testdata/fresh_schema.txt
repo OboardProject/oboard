@@ -1,0 +1,2654 @@
+index idx_access_change_targets_change on access_change_targets
+index idx_access_changes_status on access_changes
+index idx_agent_tasks_one_active_update on agent_tasks
+index idx_agent_tasks_type_config_version on agent_tasks
+index idx_agent_tasks_update_active on agent_tasks
+index idx_ai_audit_review_evidence_review on ai_audit_review_evidence
+index idx_ai_audit_review_jobs_queue on ai_audit_review_jobs
+index idx_ai_audit_reviews_created on ai_audit_reviews
+index idx_ai_provider_endpoint_capabilities_lookup on ai_provider_endpoint_capabilities
+index idx_ai_provider_endpoints_provider on ai_provider_endpoints
+index idx_ai_provider_endpoints_route on ai_provider_endpoints
+index idx_audit_feature_user_window on audit_feature_snapshots
+index idx_audit_incident_fingerprint on audit_incidents
+index idx_auth_challenges_expiry on auth_challenges
+index idx_authorization_denials_pending on authorization_denials
+index idx_automation_external_actions_one_workflow on automation_external_actions
+index idx_automation_external_actions_workflow on automation_external_actions
+index idx_certificates_google_eab_credential on certificates
+index idx_configuration_sync_intents_oldest on configuration_sync_intents
+index idx_configuration_sync_queue on configuration_sync_states
+index idx_connection_audit_hourly_dimensions_window on connection_audit_hourly_dimensions
+index idx_connection_audit_hourly_dirty_at on connection_audit_hourly_dirty
+index idx_connection_audit_hourly_hour on connection_audit_hourly
+index idx_connection_audit_route_time on connection_audit_reports
+index idx_connection_audit_server_time on connection_audit_reports
+index idx_connection_audit_source_window on connection_audit_reports
+index idx_connection_audit_time on connection_audit_reports
+index idx_connection_audit_user_window on connection_audit_reports
+index idx_connection_presence_events_time on connection_presence_events
+index idx_connection_presence_states_user on connection_presence_states
+index idx_connection_probe_episodes_time on connection_probe_episodes
+index idx_connection_probe_user_time on connection_probe_episodes
+index idx_consumed_step_up_tokens_expiry on consumed_step_up_tokens
+index idx_controller_backups_created on controller_backups
+index idx_controller_update_runs_one_active on controller_update_runs
+index idx_dns_bench_server on dns_benchmark_results
+index idx_dns_credential_zones_credential on dns_credential_zones
+index idx_dns_credential_zones_server on dns_credential_zones
+index idx_dns_lists_kind_enabled on dns_lists
+index idx_dns_runs_server_created on dns_benchmark_runs
+index idx_event_outbox_pending on event_outbox
+index idx_family_split_templates_name on family_split_templates
+index idx_forward_probe_server on port_forward_probe_results
+index idx_imported_nodes_source_fingerprint on imported_nodes
+index idx_imported_nodes_user_group on imported_nodes
+index idx_inbound_probe_inbound on inbound_probe_results
+index idx_latency_legacy_server_time on latency_legacy_archive
+index idx_latency_probe_task_servers_server on latency_probe_task_servers
+index idx_latency_probe_tasks_name on latency_probe_tasks
+index idx_latency_rollup_bucket_time on latency_rollup_buckets
+index idx_latency_rollup_task on latency_rollup_buckets
+index idx_mcp_fast_path_metrics_created on mcp_fast_path_metrics
+index idx_mcp_fast_path_metrics_workflow on mcp_fast_path_metrics
+index idx_mcp_prepared_plans_expiry on mcp_prepared_plans
+index idx_mcp_privileged_grants_client on mcp_privileged_grants
+index idx_mcp_task_continuations_expiry on mcp_task_continuations
+index idx_mtu_detection_server on mtu_detection_results
+index idx_node_groups_system on node_groups
+index idx_node_groups_user_name on node_groups
+index idx_node_incident_actions_pending on node_incident_actions
+index idx_node_incidents_one_open on node_incidents
+index idx_node_incidents_status_time on node_incidents
+index idx_node_order_templates_enabled on node_order_templates
+index idx_node_presets_protocol_kind on node_presets
+index idx_node_publication_incident on node_publication_isolations
+index idx_node_publication_one_hidden on node_publication_isolations
+index idx_node_sources_refresh on node_sources
+index idx_notification_broadcast_targets_due on notification_broadcast_targets
+index idx_notification_delivery_pending on notification_deliveries
+index idx_notification_targets_user on notification_channel_user_targets
+index idx_oauth_access_grant on oauth_access_tokens
+index idx_oauth_grants_live_authorization on oauth_grants
+index idx_oauth_grants_user_client on oauth_grants
+index idx_oauth_refresh_grant on oauth_refresh_tokens
+index idx_operation_confirmations_expiry on operation_confirmations
+index idx_passkey_credentials_user on passkey_credentials
+index idx_plan_revision_node_sort_position on subscription_plan_revision_nodes
+index idx_plan_revision_nodes_node on subscription_plan_revision_nodes
+index idx_plan_revision_nodes_revision on subscription_plan_revision_nodes
+index idx_plan_revision_rules_revision on subscription_plan_revision_rules
+index idx_port_forwards_source on port_forwards
+index idx_proxy_credentials_active_scope on proxy_credentials
+index idx_proxy_path_port_allocations_server on proxy_path_port_allocations
+index idx_proxy_path_steps_position on proxy_path_steps
+index idx_proxy_paths_template_family on proxy_paths
+index idx_remote_access_audit_server on remote_access_audit
+index idx_remote_access_audit_time on remote_access_audit
+index idx_revoked_user_sessions_expiry on revoked_user_sessions
+index idx_routing_rule_sets_refresh on routing_rule_sets
+index idx_routing_rules_family_split_template on routing_rules
+index idx_routing_rules_rule_set on routing_rules
+index idx_routing_rules_stage_order on routing_rules
+index idx_routing_rules_sync_group on routing_rules
+index idx_routing_rules_target_path on routing_rules
+index idx_script_grants_script on script_grants
+index idx_script_revisions_one_draft on script_revisions
+index idx_script_run_actions_operation on script_run_actions
+index idx_script_run_logs_run on script_run_logs
+index idx_script_runs_queue on script_runs
+index idx_script_runs_script on script_runs
+index idx_script_trigger_states_due on script_trigger_states
+index idx_script_triggers_script_name on script_trigger_bindings
+index idx_scripts_owner_name on scripts
+index idx_server_connectivity_events_kind_time on server_connectivity_events
+index idx_server_connectivity_events_server_kind_time on server_connectivity_events
+index idx_server_connectivity_events_server_time on server_connectivity_events
+index idx_server_latency_probe_results_checked on server_latency_probe_results
+index idx_server_latency_probe_results_report_target on server_latency_probe_results
+index idx_server_latency_probe_results_server_checked on server_latency_probe_results
+index idx_server_latency_probe_results_server_kind_checked on server_latency_probe_results
+index idx_server_metric_samples_server_time on server_metric_samples
+index idx_server_metric_samples_time on server_metric_samples
+index idx_servers_agent_update_scan on servers
+index idx_sla_projection_time on sla_projection_buckets
+index idx_sla_projection_work on sla_projection_servers
+index idx_snell_profiles_name on snell_profiles
+index idx_ssh_password_deployments_user on ssh_password_deployments
+index idx_step_up_challenges_expiry on step_up_challenges
+index idx_subscription_audit_route_risk_time on subscription_pull_audits
+index idx_subscription_audit_user_risk_time on subscription_pull_audits
+index idx_subscription_one_time_tokens_user on subscription_one_time_tokens
+index idx_subscription_outputs_default on subscription_outputs
+index idx_subscription_outputs_user_name on subscription_outputs
+index idx_subscription_plan_revision_version_no on subscription_plan_revisions
+index idx_subscription_pull_audits_device_time on subscription_pull_audits
+index idx_subscription_pull_audits_route_time on subscription_pull_audits
+index idx_subscription_pull_audits_source_time on subscription_pull_audits
+index idx_subscription_pull_audits_time on subscription_pull_audits
+index idx_subscription_pull_audits_user_time on subscription_pull_audits
+index idx_subscription_rate_buckets_updated on subscription_rate_buckets
+index idx_tasks_config_version on agent_tasks
+index idx_tasks_server_status_id on agent_tasks
+index idx_tasks_server_type_version on agent_tasks
+index idx_tasks_status_updated on agent_tasks
+index idx_telegram_binding_codes_expiry on telegram_binding_codes
+index idx_telegram_bindings_user on telegram_bindings
+index idx_traffic_counter_streams_lookup on traffic_counter_streams
+index idx_traffic_leases_server on traffic_leases
+index idx_traffic_period_transitions_target on traffic_period_transitions
+index idx_traffic_periods_user on traffic_periods
+index idx_traffic_periods_user_started on traffic_periods
+index idx_traffic_reconciliation_open on traffic_reconciliation_events
+index idx_traffic_reports_range on traffic_reports
+index idx_traffic_reports_user_period on traffic_reports
+index idx_traffic_server on traffic_stats
+index idx_traffic_tail_streams_lookup on traffic_tail_streams
+index idx_tunnels_source on tunnels
+index idx_user_devices_user on user_devices
+index idx_user_group_members_group on user_group_members
+index idx_user_group_members_user on user_group_members
+index idx_user_node_exceptions_node on user_node_exceptions
+index idx_user_node_exceptions_status on user_node_exceptions
+index idx_user_node_exceptions_user on user_node_exceptions
+index idx_user_node_exceptions_user_node on user_node_exceptions
+index idx_user_plan_bindings_active on user_plan_bindings
+index idx_user_plan_bindings_deploy on user_plan_bindings
+index idx_user_plan_bindings_plan on user_plan_bindings
+table access_change_targets
+    access_change_id INTEGER notnull=1 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=2
+    prepare_task_id INTEGER notnull=1 default=0 pk=0
+    finalize_task_id INTEGER notnull=1 default=0 pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    error TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table access_changes
+    id INTEGER notnull=0 default=- pk=1
+    change_type TEXT notnull=1 default=- pk=0
+    source_plan_id INTEGER notnull=0 default=- pk=0
+    candidate_revision_id INTEGER notnull=1 default=0 pk=0
+    expected_active_revision_id INTEGER notnull=1 default=0 pk=0
+    status TEXT notnull=1 default='preparing' pk=0
+    preview_hash TEXT notnull=1 default='' pk=0
+    affected_user_count INTEGER notnull=1 default=0 pk=0
+    activate_at TEXT notnull=0 default=- pk=0
+    payload_json TEXT notnull=1 default='{}' pk=0
+    prepare_projection_json TEXT notnull=1 default='{}' pk=0
+    finalize_projection_json TEXT notnull=1 default='{}' pk=0
+    error TEXT notnull=1 default='' pk=0
+    created_by INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    activated_at TEXT notnull=0 default=- pk=0
+    finalized_at TEXT notnull=0 default=- pk=0
+    failed_at TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    kind TEXT notnull=1 default='' pk=0
+    old_scope_json TEXT notnull=1 default='{}' pk=0
+table agent_fleet_update_state
+    id INTEGER notnull=0 default=- pk=1
+    paused INTEGER notnull=1 default=0 pk=0
+    rolling INTEGER notnull=1 default=0 pk=0
+    target_build TEXT notnull=1 default='' pk=0
+    attempted INTEGER notnull=1 default=0 pk=0
+    succeeded INTEGER notnull=1 default=0 pk=0
+    failed INTEGER notnull=1 default=0 pk=0
+    last_pause_reason TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table agent_tasks
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    type TEXT notnull=1 default=- pk=0
+    payload_json TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    config_version INTEGER notnull=1 default=0 pk=0
+    nonce TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table agent_update_retries
+    server_id INTEGER notnull=0 default=- pk=1
+    target_build TEXT notnull=1 default='' pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    next_retry_at TEXT notnull=0 default=- pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table ai_audit_review_evidence
+    ref TEXT notnull=1 default=- pk=2
+    review_id TEXT notnull=1 default=- pk=1
+    kind TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=0 default=- pk=0
+    server_id INTEGER notnull=0 default=- pk=0
+    payload_json TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table ai_audit_review_jobs
+    id TEXT notnull=0 default=- pk=1
+    review_id TEXT notnull=1 default=- pk=0
+    provider_id TEXT notnull=1 default=- pk=0
+    stage INTEGER notnull=1 default=- pk=0
+    position INTEGER notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    input_json TEXT notnull=1 default=- pk=0
+    output_json TEXT notnull=1 default='{}' pk=0
+    error TEXT notnull=1 default='' pk=0
+    error_detail TEXT notnull=1 default='' pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    input_tokens INTEGER notnull=1 default=0 pk=0
+    output_tokens INTEGER notnull=1 default=0 pk=0
+    lease_owner TEXT notnull=1 default='' pk=0
+    lease_until TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table ai_audit_review_routes
+    job_id TEXT notnull=0 default=- pk=1
+    route_json TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table ai_audit_reviews
+    id TEXT notnull=0 default=- pk=1
+    request_id TEXT notnull=1 default=- pk=0
+    provider_id TEXT notnull=1 default=- pk=0
+    requested_by INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    scope_json TEXT notnull=1 default=- pk=0
+    evidence_types_json TEXT notnull=1 default=- pk=0
+    window_started_at TEXT notnull=1 default=- pk=0
+    window_ended_at TEXT notnull=1 default=- pk=0
+    snapshot_at TEXT notnull=1 default=- pk=0
+    privacy_mode TEXT notnull=1 default=- pk=0
+    resolved_user_ids_json TEXT notnull=1 default='[]' pk=0
+    resolved_server_ids_json TEXT notnull=1 default='[]' pk=0
+    final_output_json TEXT notnull=1 default='{}' pk=0
+    error TEXT notnull=1 default='' pk=0
+    input_tokens INTEGER notnull=1 default=0 pk=0
+    output_tokens INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table ai_provider_endpoint_capabilities
+    id INTEGER notnull=0 default=- pk=1
+    provider_id TEXT notnull=1 default=- pk=0
+    endpoint_id TEXT notnull=1 default=- pk=0
+    model TEXT notnull=1 default=- pk=0
+    config_digest TEXT notnull=1 default=- pk=0
+    capability_json TEXT notnull=1 default=- pk=0
+    tested_at TEXT notnull=1 default=- pk=0
+table ai_provider_endpoints
+    id TEXT notnull=0 default=- pk=1
+    provider_id TEXT notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    base_url TEXT notnull=1 default=- pk=0
+    api_style TEXT notnull=1 default=- pk=0
+    auth_mode TEXT notnull=1 default=- pk=0
+    credential_encrypted TEXT notnull=1 default='' pk=0
+    anthropic_version TEXT notnull=1 default='' pk=0
+    headers_json TEXT notnull=1 default='{}' pk=0
+    models_path TEXT notnull=1 default='' pk=0
+    generate_path TEXT notnull=1 default='' pk=0
+    model_override TEXT notnull=1 default='' pk=0
+    priority INTEGER notnull=1 default=100 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    timeout_ms INTEGER notnull=1 default=60000 pk=0
+    max_retries INTEGER notnull=1 default=2 pk=0
+    allow_private_network INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table ai_providers
+    id TEXT notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    provider_kind TEXT notnull=1 default='openai' pk=0
+    default_model TEXT notnull=1 default='' pk=0
+    routing_strategy TEXT notnull=1 default='ordered_failover' pk=0
+    base_url TEXT notnull=1 default='' pk=0
+    model TEXT notnull=1 default='' pk=0
+    api_format TEXT notnull=1 default='chat_completions' pk=0
+    credential_encrypted TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=0 pk=0
+    allow_raw_audit INTEGER notnull=1 default=0 pk=0
+    daily_token_limit INTEGER notnull=1 default=0 pk=0
+    capability_json TEXT notnull=1 default='' pk=0
+    last_used_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table api_principals
+    id TEXT notnull=0 default=- pk=1
+    owner_user_id INTEGER notnull=0 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    type TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    scopes_json TEXT notnull=1 default='[]' pk=0
+    resource_filter_json TEXT notnull=1 default='{}' pk=0
+    allowed_cidrs_json TEXT notnull=1 default='[]' pk=0
+    rate_limit_per_minute INTEGER notnull=1 default=60 pk=0
+    max_concurrency INTEGER notnull=1 default=4 pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    last_used_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table api_tokens
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    token_hash TEXT notnull=1 default=- pk=0
+    prefix TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    last_used_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table app_settings
+    key TEXT notnull=0 default=- pk=1
+    value TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table approval_policies
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    capability TEXT notnull=1 default=- pk=0
+    resource_filter_json TEXT notnull=1 default='{}' pk=0
+    mode TEXT notnull=1 default=- pk=0
+    allow_risk4 INTEGER notnull=1 default=0 pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table assignable_node_metadata
+    node_type TEXT notnull=1 default=- pk=1
+    node_id INTEGER notnull=1 default=- pk=2
+    display_name_override TEXT notnull=0 default=- pk=0
+    lock_version INTEGER notnull=1 default=1 pk=0
+    created_by INTEGER notnull=0 default=- pk=0
+    updated_by INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table audit_feature_snapshots
+    id TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    window TEXT notnull=1 default=- pk=0
+    window_started_at TEXT notnull=1 default=- pk=0
+    window_ended_at TEXT notnull=1 default=- pk=0
+    feature_version INTEGER notnull=1 default=- pk=0
+    rule_score INTEGER notnull=1 default=- pk=0
+    anomaly_score INTEGER notnull=0 default=- pk=0
+    features_json TEXT notnull=1 default=- pk=0
+    fingerprint TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table audit_incidents
+    id TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    classification TEXT notnull=1 default='' pk=0
+    severity TEXT notnull=1 default=- pk=0
+    rule_score INTEGER notnull=1 default=- pk=0
+    anomaly_score INTEGER notnull=0 default=- pk=0
+    fingerprint TEXT notnull=1 default=- pk=0
+    latest_snapshot_id TEXT notnull=0 default=- pk=0
+    opened_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    resolved_at TEXT notnull=0 default=- pk=0
+table audit_logs
+    id INTEGER notnull=0 default=- pk=1
+    actor_id INTEGER notnull=0 default=- pk=0
+    action TEXT notnull=1 default=- pk=0
+    target TEXT notnull=1 default=- pk=0
+    detail TEXT notnull=1 default=- pk=0
+    ip TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table audit_rollup_state
+    id INTEGER notnull=0 default=- pk=1
+    backfill_cursor TEXT notnull=1 default='' pk=0
+    backfill_complete INTEGER notnull=1 default=0 pk=0
+    read_path TEXT notnull=1 default='raw' pk=0
+    algorithm_version INTEGER notnull=1 default=1 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table auth_challenges
+    token_hash TEXT notnull=0 default=- pk=1
+    kind TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=0 default=- pk=0
+    data_encrypted TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table authorization_denials
+    server_id INTEGER notnull=1 default=- pk=1
+    credential_id TEXT notnull=1 default=- pk=2
+    deny_revision INTEGER notnull=1 default=- pk=0
+    lease_bound_until TEXT notnull=1 default=- pk=0
+    confirmed_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table authorization_states
+    server_id INTEGER notnull=0 default=- pk=1
+    desired_revision INTEGER notnull=1 default=0 pk=0
+    desired_digest TEXT notnull=1 default='' pk=0
+    desired_keys_json TEXT notnull=1 default='[]' pk=0
+    evaluated_routing_revision INTEGER notnull=1 default=0 pk=0
+    issued_sequence INTEGER notnull=1 default=0 pk=0
+    last_issued_expires_at TEXT notnull=0 default=- pk=0
+    delivered_revision INTEGER notnull=1 default=0 pk=0
+    delivered_sequence INTEGER notnull=1 default=0 pk=0
+    delivered_message_id TEXT notnull=1 default='' pk=0
+    delivered_at TEXT notnull=0 default=- pk=0
+    confirmed_revision INTEGER notnull=1 default=0 pk=0
+    confirmed_sequence INTEGER notnull=1 default=0 pk=0
+    confirmed_digest TEXT notnull=1 default='' pk=0
+    confirmed_boot_id TEXT notnull=1 default='' pk=0
+    confirmed_at TEXT notnull=0 default=- pk=0
+    pending_reason TEXT notnull=1 default='' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    retryable INTEGER notnull=1 default=1 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table automation_approvals
+    id TEXT notnull=0 default=- pk=1
+    changeset_id TEXT notnull=1 default=- pk=0
+    approver_id INTEGER notnull=1 default=- pk=0
+    decision TEXT notnull=1 default=- pk=0
+    plan_hash TEXT notnull=1 default=- pk=0
+    comment TEXT notnull=1 default='' pk=0
+    approved_risk INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table automation_changesets
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    actor_user_id INTEGER notnull=0 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    reason TEXT notnull=1 default='' pk=0
+    idempotency_key TEXT notnull=1 default=- pk=0
+    base_revisions_json TEXT notnull=1 default='{}' pk=0
+    plan_hash TEXT notnull=1 default='' pk=0
+    risk_class INTEGER notnull=1 default=0 pk=0
+    auto_apply INTEGER notnull=1 default=0 pk=0
+    validation_json TEXT notnull=1 default='{}' pk=0
+    blast_radius_json TEXT notnull=1 default='{}' pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    validated_at TEXT notnull=0 default=- pk=0
+    approved_at TEXT notnull=0 default=- pk=0
+    applied_at TEXT notnull=0 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table automation_external_actions
+    id TEXT notnull=0 default=- pk=1
+    grant_id TEXT notnull=1 default='' pk=0
+    workflow_id TEXT notnull=1 default='' pk=0
+    kind TEXT notnull=1 default=- pk=0
+    payload_encrypted TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table automation_operations
+    id TEXT notnull=0 default=- pk=1
+    changeset_id TEXT notnull=1 default=- pk=0
+    position INTEGER notnull=1 default=- pk=0
+    capability TEXT notnull=1 default=- pk=0
+    input_json TEXT notnull=1 default=- pk=0
+    secret_refs_json TEXT notnull=1 default='[]' pk=0
+    resource_refs_json TEXT notnull=1 default='{}' pk=0
+    risk_class INTEGER notnull=1 default=0 pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    error_message TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table automation_secret_inputs
+    id TEXT notnull=0 default=- pk=1
+    changeset_id TEXT notnull=1 default=- pk=0
+    purpose TEXT notnull=1 default=- pk=0
+    value_encrypted TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table automation_workflow_steps
+    id TEXT notnull=0 default=- pk=1
+    workflow_id TEXT notnull=1 default=- pk=0
+    position INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    attempt INTEGER notnull=1 default=1 pk=0
+    idempotency_key TEXT notnull=1 default=- pk=0
+    input_digest TEXT notnull=1 default=- pk=0
+    output_digest TEXT notnull=1 default='' pk=0
+    retryable INTEGER notnull=1 default=0 pk=0
+    next_action_json TEXT notnull=1 default='{}' pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    correlation_id TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=0 default=- pk=0
+    finished_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table automation_workflows
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    grant_id TEXT notnull=0 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    reason TEXT notnull=1 default='' pk=0
+    idempotency_key TEXT notnull=1 default=- pk=0
+    changeset_id TEXT notnull=0 default=- pk=0
+    current_step TEXT notnull=1 default='' pk=0
+    correlation_id TEXT notnull=1 default=- pk=0
+    affected_resources_json TEXT notnull=1 default='[]' pk=0
+    next_action_json TEXT notnull=1 default='{}' pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    error_message TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table certificates
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    primary_domain TEXT notnull=1 default=- pk=0
+    domains_json TEXT notnull=1 default='[]' pk=0
+    wildcard INTEGER notnull=1 default=0 pk=0
+    challenge_type TEXT notnull=1 default=- pk=0
+    dns_credential_id INTEGER notnull=0 default=- pk=0
+    issuance_server_id INTEGER notnull=0 default=- pk=0
+    acme_ca TEXT notnull=1 default='letsencrypt' pk=0
+    account_email TEXT notnull=1 default='' pk=0
+    google_eab_credential_id INTEGER notnull=0 default=- pk=0
+    eab_key_id TEXT notnull=1 default='' pk=0
+    eab_hmac_key_encrypted TEXT notnull=1 default='' pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    certificate_pem TEXT notnull=1 default='' pk=0
+    fullchain_pem TEXT notnull=1 default='' pk=0
+    private_key_encrypted TEXT notnull=1 default='' pk=0
+    revision TEXT notnull=1 default='' pk=0
+    not_before TEXT notnull=0 default=- pk=0
+    not_after TEXT notnull=0 default=- pk=0
+    auto_renew INTEGER notnull=1 default=1 pk=0
+    validation_records_json TEXT notnull=1 default='[]' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    last_issued_at TEXT notnull=0 default=- pk=0
+    last_renewal_attempt_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table configuration_revision
+    id INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=0 pk=0
+table configuration_sync_intents
+    source TEXT notnull=1 default=- pk=1
+    scope TEXT notnull=1 default=- pk=2
+    server_id INTEGER notnull=1 default=- pk=3
+    revision INTEGER notnull=1 default=- pk=0
+    processing_revision INTEGER notnull=1 default=0 pk=0
+    last_server_id INTEGER notnull=1 default=0 pk=0
+    first_changed_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table configuration_sync_states
+    server_id INTEGER notnull=0 default=- pk=1
+    wanted_revision INTEGER notnull=1 default=- pk=0
+    wanted_digest TEXT notnull=1 default='' pk=0
+    state TEXT notnull=1 default=- pk=0
+    last_config_version INTEGER notnull=1 default=0 pk=0
+    last_task_id INTEGER notnull=1 default=0 pk=0
+    retry_count INTEGER notnull=1 default=0 pk=0
+    next_retry_at TEXT notnull=0 default=- pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    trigger_reason TEXT notnull=1 default='' pk=0
+    sync_strategy TEXT notnull=1 default='' pk=0
+    changed_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table connection_audit_hourly
+    user_id INTEGER notnull=1 default=- pk=1
+    utc_hour TEXT notnull=1 default=- pk=2
+    connection_count INTEGER notnull=1 default=0 pk=0
+    algorithm_version INTEGER notnull=1 default=1 pk=0
+    source_watermark TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    report_count INTEGER notnull=1 default=0 pk=0
+    active_peak INTEGER notnull=1 default=0 pk=0
+    upload_bytes INTEGER notnull=1 default=0 pk=0
+    download_bytes INTEGER notnull=1 default=0 pk=0
+    last_ended_at TEXT notnull=1 default='' pk=0
+    collection_count INTEGER notnull=1 default=0 pk=0
+    dropped_bucket_count INTEGER notnull=1 default=0 pk=0
+    capacity_total INTEGER notnull=1 default=0 pk=0
+    dimensions_complete INTEGER notnull=1 default=1 pk=0
+    totals_version INTEGER notnull=1 default=0 pk=0
+table connection_audit_hourly_dimensions
+    user_id INTEGER notnull=1 default=- pk=1
+    utc_hour TEXT notnull=1 default=- pk=2
+    dimension TEXT notnull=1 default=- pk=3
+    value TEXT notnull=1 default=- pk=4
+table connection_audit_hourly_dirty
+    user_id INTEGER notnull=1 default=- pk=1
+    utc_hour TEXT notnull=1 default=- pk=2
+    dirty_at TEXT notnull=1 default=- pk=0
+table connection_audit_reports
+    report_id TEXT notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=0 default=- pk=0
+    path_id INTEGER notnull=0 default=- pk=0
+    device_id_hash TEXT notnull=1 default='' pk=0
+    credential_epoch INTEGER notnull=1 default=0 pk=0
+    client_instance_id_hash TEXT notnull=1 default='' pk=0
+    source_ip TEXT notnull=1 default=- pk=0
+    route_id TEXT notnull=1 default='' pk=0
+    source_geo_code TEXT notnull=1 default='' pk=0
+    source_country_code TEXT notnull=1 default='' pk=0
+    source_country TEXT notnull=1 default='' pk=0
+    source_province TEXT notnull=1 default='' pk=0
+    source_city TEXT notnull=1 default='' pk=0
+    source_isp TEXT notnull=1 default='' pk=0
+    geo_database_revision TEXT notnull=1 default='' pk=0
+    network TEXT notnull=1 default=- pk=0
+    destination TEXT notnull=1 default='' pk=0
+    destination_port INTEGER notnull=1 default=0 pk=0
+    outbound_tag TEXT notnull=1 default='' pk=0
+    outbound_type TEXT notnull=1 default='' pk=0
+    connection_count INTEGER notnull=1 default=- pk=0
+    closed_count INTEGER notnull=1 default=0 pk=0
+    duration_total_ms INTEGER notnull=1 default=0 pk=0
+    duration_max_ms INTEGER notnull=1 default=0 pk=0
+    upload_bytes INTEGER notnull=1 default=0 pk=0
+    download_bytes INTEGER notnull=1 default=0 pk=0
+    payload_first_at TEXT notnull=0 default=- pk=0
+    payload_last_at TEXT notnull=0 default=- pk=0
+    duration_le_1s_count INTEGER notnull=1 default=0 pk=0
+    duration_le_5s_count INTEGER notnull=1 default=0 pk=0
+    duration_le_20s_count INTEGER notnull=1 default=0 pk=0
+    duration_gt_20s_count INTEGER notnull=1 default=0 pk=0
+    probe_state TEXT notnull=1 default='' pk=0
+    internal_probe INTEGER notnull=1 default=0 pk=0
+    presence_sequence INTEGER notnull=1 default=0 pk=0
+    active_peak INTEGER notnull=1 default=0 pk=0
+    active_at_end INTEGER notnull=1 default=0 pk=0
+    collection_generation INTEGER notnull=1 default=0 pk=0
+    bucket_capacity INTEGER notnull=1 default=1 pk=0
+    dropped_bucket_count INTEGER notnull=1 default=0 pk=0
+    collection_started_at TEXT notnull=1 default=- pk=0
+    collection_ended_at TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    ended_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table connection_presence_agents
+    agent_id TEXT notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    dropped_count INTEGER notnull=1 default=0 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table connection_presence_events
+    agent_id TEXT notnull=1 default=- pk=1
+    sequence INTEGER notnull=1 default=- pk=2
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=1 default=0 pk=0
+    path_id INTEGER notnull=1 default=0 pk=0
+    device_id_hash TEXT notnull=1 default='' pk=0
+    credential_epoch INTEGER notnull=1 default=0 pk=0
+    source_ip TEXT notnull=1 default=- pk=0
+    route_id TEXT notnull=1 default='' pk=0
+    network TEXT notnull=1 default=- pk=0
+    event TEXT notnull=1 default=- pk=0
+    state TEXT notnull=1 default=- pk=0
+    active_connections INTEGER notnull=1 default=0 pk=0
+    meaningful INTEGER notnull=1 default=0 pk=0
+    payload_last_at TEXT notnull=0 default=- pk=0
+    event_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table connection_presence_states
+    server_id INTEGER notnull=1 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=2
+    inbound_id INTEGER notnull=1 default=0 pk=3
+    path_id INTEGER notnull=1 default=0 pk=4
+    device_id_hash TEXT notnull=1 default='' pk=5
+    credential_epoch INTEGER notnull=1 default=0 pk=6
+    source_ip TEXT notnull=1 default=- pk=7
+    route_id TEXT notnull=1 default='' pk=0
+    network TEXT notnull=1 default=- pk=8
+    active_connections INTEGER notnull=1 default=0 pk=0
+    meaningful INTEGER notnull=1 default=0 pk=0
+    payload_last_at TEXT notnull=0 default=- pk=0
+    last_event_at TEXT notnull=1 default=- pk=0
+    last_sequence INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table connection_probe_episodes
+    id TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    device_id_hash TEXT notnull=1 default='' pk=0
+    state TEXT notnull=1 default=- pk=0
+    score INTEGER notnull=1 default=- pk=0
+    node_count INTEGER notnull=1 default=- pk=0
+    connection_count INTEGER notnull=1 default=- pk=0
+    upload_bytes INTEGER notnull=1 default=0 pk=0
+    download_bytes INTEGER notnull=1 default=0 pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    ended_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table consumed_step_up_tokens
+    token_hash TEXT notnull=0 default=- pk=1
+    expires_at TEXT notnull=1 default=- pk=0
+table controller_backups
+    id TEXT notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    origin TEXT notnull=1 default=- pk=0
+    local_path TEXT notnull=1 default='' pk=0
+    local_status TEXT notnull=1 default='available' pk=0
+    remote_key TEXT notnull=1 default='' pk=0
+    remote_target TEXT notnull=1 default='' pk=0
+    remote_status TEXT notnull=1 default='disabled' pk=0
+    remote_error TEXT notnull=1 default='' pk=0
+    size_bytes INTEGER notnull=1 default=0 pk=0
+    source_version TEXT notnull=1 default='' pk=0
+    format_version INTEGER notnull=1 default=1 pk=0
+    protected INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table controller_update_runs
+    id INTEGER notnull=0 default=- pk=1
+    source TEXT notnull=1 default='manual' pk=0
+    current_version TEXT notnull=1 default='' pk=0
+    current_build TEXT notnull=1 default='' pk=0
+    target_version TEXT notnull=1 default='' pk=0
+    target_build TEXT notnull=1 default='' pk=0
+    phase TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    finished_at TEXT notnull=0 default=- pk=0
+    backup_path TEXT notnull=1 default='' pk=0
+    backup_total_pages INTEGER notnull=1 default=0 pk=0
+    backup_remaining_pages INTEGER notnull=1 default=0 pk=0
+    backup_size_bytes INTEGER notnull=1 default=0 pk=0
+    download_duration_ms INTEGER notnull=1 default=0 pk=0
+    backup_duration_ms INTEGER notnull=1 default=0 pk=0
+    install_duration_ms INTEGER notnull=1 default=0 pk=0
+    restart_duration_ms INTEGER notnull=1 default=0 pk=0
+    total_duration_ms INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+table deployment_failure_dismissals
+    config_version INTEGER notnull=0 default=- pk=1
+    actor_id INTEGER notnull=1 default=- pk=0
+    dismissed_at TEXT notnull=1 default=- pk=0
+table dns_benchmark_results
+    id INTEGER notnull=0 default=- pk=1
+    report_id TEXT notnull=1 default=- pk=0
+    request_id TEXT notnull=1 default='' pk=0
+    server_id INTEGER notnull=1 default=- pk=0
+    policy_revision INTEGER notnull=1 default=- pk=0
+    encrypted_list_id INTEGER notnull=1 default=- pk=0
+    encrypted_list_revision INTEGER notnull=1 default=- pk=0
+    bootstrap_list_id INTEGER notnull=1 default=- pk=0
+    bootstrap_list_revision INTEGER notnull=1 default=- pk=0
+    encrypted_json TEXT notnull=1 default=- pk=0
+    bootstrap_json TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    error TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table dns_benchmark_runs
+    id INTEGER notnull=0 default=- pk=1
+    request_id TEXT notnull=1 default=- pk=0
+    server_id INTEGER notnull=1 default=- pk=0
+    policy_revision INTEGER notnull=1 default=- pk=0
+    encrypted_list_id INTEGER notnull=1 default=- pk=0
+    encrypted_list_revision INTEGER notnull=1 default=- pk=0
+    bootstrap_list_id INTEGER notnull=1 default=- pk=0
+    bootstrap_list_revision INTEGER notnull=1 default=- pk=0
+    trigger TEXT notnull=1 default=- pk=0
+    apply_on_success INTEGER notnull=1 default=0 pk=0
+    requested_by INTEGER notnull=0 default=- pk=0
+    task_id INTEGER notnull=0 default=- pk=0
+    apply_task_id INTEGER notnull=0 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    error TEXT notnull=1 default='' pk=0
+    started_at TEXT notnull=0 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table dns_credential_zones
+    id INTEGER notnull=0 default=- pk=1
+    credential_id INTEGER notnull=1 default=- pk=0
+    zone_name TEXT notnull=1 default=- pk=0
+    provider_zone_id TEXT notnull=1 default='' pk=0
+    server_id INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table dns_credentials
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    provider TEXT notnull=1 default=- pk=0
+    zone_name TEXT notnull=1 default=- pk=0
+    zone_id TEXT notnull=1 default='' pk=0
+    config_encrypted TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    verified_at TEXT notnull=0 default=- pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table dns_lists
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    candidates_json TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    protected INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table dns_record_metadata
+    dns_zone_id INTEGER notnull=1 default=- pk=1
+    provider_record_id TEXT notnull=1 default=- pk=2
+    comment TEXT notnull=1 default='' pk=0
+    server_id INTEGER notnull=0 default=- pk=0
+    inbound_id INTEGER notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table event_outbox
+    id TEXT notnull=0 default=- pk=1
+    topic TEXT notnull=1 default=- pk=0
+    aggregate_id TEXT notnull=1 default=- pk=0
+    payload_json TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    available_at TEXT notnull=1 default=- pk=0
+    lease_owner TEXT notnull=1 default='' pk=0
+    lease_until TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table external_outbounds
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=0 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    protocol TEXT notnull=1 default=- pk=0
+    scope TEXT notnull=1 default='global' pk=0
+    target_address TEXT notnull=1 default='' pk=0
+    target_port INTEGER notnull=1 default=0 pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    region_mode TEXT notnull=1 default='auto' pk=0
+    region_code TEXT notnull=1 default='' pk=0
+    expose_to_users INTEGER notnull=1 default=0 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table family_split_templates
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table google_eab_credentials
+    id INTEGER notnull=0 default=- pk=1
+    key_id TEXT notnull=1 default=- pk=0
+    remark TEXT notnull=1 default='' pk=0
+    hmac_key_encrypted TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table imported_nodes
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    group_id INTEGER notnull=1 default=- pk=0
+    source_id INTEGER notnull=0 default=- pk=0
+    protocol TEXT notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    fingerprint TEXT notnull=1 default=- pk=0
+    config_encrypted TEXT notnull=1 default=- pk=0
+    position INTEGER notnull=1 default=0 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table inbound_certificate_bindings
+    inbound_id INTEGER notnull=0 default=- pk=1
+    certificate_id INTEGER notnull=0 default=- pk=0
+    mode TEXT notnull=1 default='auto' pk=0
+    server_name TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table inbound_probe_results
+    id INTEGER notnull=0 default=- pk=1
+    inbound_id INTEGER notnull=1 default=- pk=0
+    server_id INTEGER notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=0 pk=0
+    mode TEXT notnull=1 default=- pk=0
+    transport TEXT notnull=1 default=- pk=0
+    endpoint TEXT notnull=1 default='' pk=0
+    available INTEGER notnull=1 default=0 pk=0
+    confirmed INTEGER notnull=1 default=0 pk=0
+    latency_ms INTEGER notnull=1 default=0 pk=0
+    min_latency_ms INTEGER notnull=1 default=0 pk=0
+    p95_latency_ms INTEGER notnull=1 default=0 pk=0
+    jitter_ms INTEGER notnull=1 default=0 pk=0
+    sample_count INTEGER notnull=1 default=0 pk=0
+    success_count INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table inbounds
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    protocol TEXT notnull=1 default=- pk=0
+    listen_ip TEXT notnull=1 default=- pk=0
+    port INTEGER notnull=1 default=- pk=0
+    advertise_port INTEGER notnull=1 default=0 pk=0
+    entry_ip_mode TEXT notnull=1 default='auto' pk=0
+    external_ip TEXT notnull=1 default='' pk=0
+    dns_sync_enabled INTEGER notnull=1 default=0 pk=0
+    dns_credential_id INTEGER notnull=0 default=- pk=0
+    dns_domain TEXT notnull=1 default='' pk=0
+    dns_proxy_enabled INTEGER notnull=1 default=0 pk=0
+    dns_record_types TEXT notnull=1 default='auto' pk=0
+    ddns_enabled INTEGER notnull=1 default=0 pk=0
+    ddns_interval_seconds INTEGER notnull=1 default=300 pk=0
+    dns_sync_status TEXT notnull=1 default='' pk=0
+    dns_sync_error TEXT notnull=1 default='' pk=0
+    dns_last_synced_at TEXT notnull=0 default=- pk=0
+    tls INTEGER notnull=1 default=0 pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table latency_legacy_archive
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    source TEXT notnull=1 default=- pk=0
+    available INTEGER notnull=0 default=- pk=0
+    latency_ms INTEGER notnull=1 default=- pk=0
+    effective_at TEXT notnull=1 default=- pk=0
+table latency_legacy_progress
+    id INTEGER notnull=0 default=- pk=1
+    cursor INTEGER notnull=1 default=-1 pk=0
+table latency_probe_task_servers
+    task_id INTEGER notnull=1 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=2
+table latency_probe_tasks
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    province TEXT notnull=1 default=- pk=0
+    carrier TEXT notnull=1 default=- pk=0
+    method TEXT notnull=1 default='tcp' pk=0
+    address TEXT notnull=1 default='' pk=0
+    port INTEGER notnull=1 default=80 pk=0
+    interval_seconds INTEGER notnull=1 default=60 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table latency_rollup_buckets
+    server_id INTEGER notnull=1 default=- pk=1
+    series_key TEXT notnull=1 default=- pk=2
+    measurement_revision TEXT notnull=1 default=- pk=3
+    revision_basis TEXT notnull=1 default='reported_endpoint_v1' pk=0
+    resolution_seconds INTEGER notnull=1 default=- pk=4
+    bucket_start INTEGER notnull=1 default=- pk=5
+    kind TEXT notnull=1 default=- pk=0
+    task_id INTEGER notnull=1 default=- pk=0
+    probe_id TEXT notnull=1 default=- pk=0
+    mode TEXT notnull=1 default=- pk=0
+    task_name TEXT notnull=1 default=- pk=0
+    province TEXT notnull=1 default=- pk=0
+    carrier TEXT notnull=1 default=- pk=0
+    latency_sum INTEGER notnull=1 default=- pk=0
+    latency_value_count INTEGER notnull=1 default=- pk=0
+    latency_min INTEGER notnull=0 default=- pk=0
+    latency_max INTEGER notnull=0 default=- pk=0
+    latency_min_at INTEGER notnull=0 default=- pk=0
+    latency_max_at INTEGER notnull=0 default=- pk=0
+    curve_sum INTEGER notnull=1 default=- pk=0
+    curve_value_count INTEGER notnull=1 default=- pk=0
+    curve_min INTEGER notnull=0 default=- pk=0
+    curve_max INTEGER notnull=0 default=- pk=0
+    curve_min_at INTEGER notnull=0 default=- pk=0
+    curve_max_at INTEGER notnull=0 default=- pk=0
+    attempt_count INTEGER notnull=1 default=- pk=0
+    success_count INTEGER notnull=1 default=- pk=0
+    report_count INTEGER notnull=1 default=- pk=0
+    available_report_count INTEGER notnull=1 default=- pk=0
+    first_sample_at INTEGER notnull=1 default=- pk=0
+    last_sample_at INTEGER notnull=1 default=- pk=0
+    summary_schema_version INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table latency_rollup_state
+    id INTEGER notnull=0 default=- pk=1
+    schema_version INTEGER notnull=1 default=- pk=0
+    generation INTEGER notnull=1 default=1 pk=0
+    live_cursor INTEGER notnull=1 default=-1 pk=0
+    historical_boundary INTEGER notnull=1 default=-1 pk=0
+    backfill_cursor INTEGER notnull=1 default=-1 pk=0
+    expired_unprocessed INTEGER notnull=1 default=0 pk=0
+    retention_floor INTEGER notnull=1 default=0 pk=0
+    initialized_at TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default='' pk=0
+table mcp_fast_path_metrics
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    grant_id TEXT notnull=1 default=- pk=0
+    recipe_id TEXT notnull=1 default='' pk=0
+    recipe_version TEXT notnull=1 default='' pk=0
+    fast_path_used INTEGER notnull=1 default=1 pk=0
+    phase TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    duration_ms INTEGER notnull=1 default=0 pk=0
+    fallback_reason TEXT notnull=1 default='' pk=0
+    needs_input_count INTEGER notnull=1 default=0 pk=0
+    candidate_resolution_count INTEGER notnull=1 default=0 pk=0
+    validation_failure INTEGER notnull=1 default=0 pk=0
+    changeset_id TEXT notnull=1 default='' pk=0
+    workflow_id TEXT notnull=1 default='' pk=0
+    final_workflow_status TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table mcp_prepared_plans
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    grant_id TEXT notnull=1 default=- pk=0
+    recipe_id TEXT notnull=1 default=- pk=0
+    recipe_version TEXT notnull=1 default=- pk=0
+    operations_json TEXT notnull=1 default=- pk=0
+    expected_revisions_json TEXT notnull=1 default=- pk=0
+    plan_hash TEXT notnull=1 default=- pk=0
+    risk_class INTEGER notnull=1 default=0 pk=0
+    approval_mode TEXT notnull=1 default='' pk=0
+    summary_json TEXT notnull=1 default='{}' pk=0
+    verification_json TEXT notnull=1 default='{}' pk=0
+    commit_key TEXT notnull=1 default='' pk=0
+    claimed_at TEXT notnull=0 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    changeset_id TEXT notnull=1 default='' pk=0
+    workflow_id TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+table mcp_privileged_grants
+    id INTEGER notnull=0 default=- pk=1
+    oauth_grant_id TEXT notnull=1 default=- pk=0
+    oauth_client_id TEXT notnull=1 default=- pk=0
+    authorized_user_id INTEGER notnull=1 default=- pk=0
+    capabilities_json TEXT notnull=1 default='[]' pk=0
+    resource_boundary_json TEXT notnull=1 default='{}' pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    created_by_user_id INTEGER notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    last_step_up_at TEXT notnull=0 default=- pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+table mcp_task_continuations
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    grant_id TEXT notnull=1 default=- pk=0
+    recipe_id TEXT notnull=1 default=- pk=0
+    recipe_version TEXT notnull=1 default=- pk=0
+    goal TEXT notnull=1 default='' pk=0
+    params_json TEXT notnull=1 default='{}' pk=0
+    target_refs_json TEXT notnull=1 default='[]' pk=0
+    state_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+table mtu_detection_results
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    mode TEXT notnull=1 default='detect' pk=0
+    target_host TEXT notnull=1 default='' pk=0
+    target_port INTEGER notnull=1 default=0 pk=0
+    interface_name TEXT notnull=1 default='' pk=0
+    current_mtu INTEGER notnull=1 default=0 pk=0
+    path_mtu INTEGER notnull=1 default=0 pk=0
+    recommended_mtu INTEGER notnull=1 default=0 pk=0
+    applied_mtu INTEGER notnull=1 default=0 pk=0
+    confidence TEXT notnull=1 default='' pk=0
+    error TEXT notnull=1 default='' pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table node_groups
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    system_key TEXT notnull=1 default='' pk=0
+    name TEXT notnull=1 default=- pk=0
+    position INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_incident_actions
+    id INTEGER notnull=0 default=- pk=1
+    incident_id INTEGER notnull=1 default=- pk=0
+    actor_user_id INTEGER notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    inbound_ids_json TEXT notnull=1 default=- pk=0
+    changeset_id TEXT notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=0 pk=0
+    task_count INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_incident_telegram_messages
+    id INTEGER notnull=0 default=- pk=1
+    incident_id INTEGER notnull=1 default=- pk=0
+    channel_id INTEGER notnull=0 default=- pk=0
+    chat_id INTEGER notnull=1 default=- pk=0
+    message_id INTEGER notnull=1 default=0 pk=0
+    fallback_message_id INTEGER notnull=1 default=0 pk=0
+    last_event_version INTEGER notnull=1 default=0 pk=0
+    last_edited_at TEXT notnull=0 default=- pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_incidents
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    server_name TEXT notnull=1 default=- pk=0
+    kind TEXT notnull=1 default='server_offline' pk=0
+    status TEXT notnull=1 default=- pk=0
+    version INTEGER notnull=1 default=1 pk=0
+    first_offline_at TEXT notnull=1 default=- pk=0
+    detected_at TEXT notnull=1 default=- pk=0
+    recovery_candidate_at TEXT notnull=0 default=- pk=0
+    recovery_deadline_at TEXT notnull=0 default=- pk=0
+    recovered_at TEXT notnull=0 default=- pk=0
+    resolved_at TEXT notnull=0 default=- pk=0
+    outage_duration_seconds INTEGER notnull=1 default=0 pk=0
+    offline_threshold_seconds INTEGER notnull=1 default=- pk=0
+    recovery_threshold_seconds INTEGER notnull=1 default=- pk=0
+    flap_count INTEGER notnull=1 default=0 pk=0
+    snapshot_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_order_templates
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    description TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    policy_json TEXT notnull=1 default=- pk=0
+    created_by INTEGER notnull=0 default=- pk=0
+    updated_by INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_presets
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    protocol TEXT notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    default_port INTEGER notnull=1 default=443 pk=0
+    remark TEXT notnull=1 default='' pk=0
+    builtin INTEGER notnull=1 default=0 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_publication_isolations
+    id INTEGER notnull=0 default=- pk=1
+    incident_id INTEGER notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=0 default=- pk=0
+    inbound_name TEXT notnull=1 default=- pk=0
+    server_id INTEGER notnull=1 default=- pk=0
+    recovery_policy TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    actor_user_id INTEGER notnull=1 default=- pk=0
+    restored_by INTEGER notnull=0 default=- pk=0
+    restored_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table node_sources
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    group_id INTEGER notnull=1 default=- pk=0
+    url_fingerprint TEXT notnull=1 default=- pk=0
+    url_encrypted TEXT notnull=1 default=- pk=0
+    etag TEXT notnull=1 default='' pk=0
+    last_modified TEXT notnull=1 default='' pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    last_attempt_at TEXT notnull=0 default=- pk=0
+    last_success_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table notification_announcements
+    id INTEGER notnull=0 default=- pk=1
+    actor_user_id INTEGER notnull=1 default=- pk=0
+    actor_name TEXT notnull=1 default=- pk=0
+    title TEXT notnull=1 default=- pk=0
+    body TEXT notnull=1 default=- pk=0
+    user_ids_json TEXT notnull=1 default='[]' pk=0
+    queued_count INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table notification_broadcast_targets
+    id INTEGER notnull=0 default=- pk=1
+    broadcast_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    binding_id INTEGER notnull=0 default=- pk=0
+    channel_id INTEGER notnull=0 default=- pk=0
+    chat_id INTEGER notnull=0 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    next_attempt_at TEXT notnull=1 default=- pk=0
+    sent_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table notification_broadcasts
+    id INTEGER notnull=0 default=- pk=1
+    actor_user_id INTEGER notnull=1 default=- pk=0
+    actor_name TEXT notnull=1 default=- pk=0
+    title TEXT notnull=1 default=- pk=0
+    body TEXT notnull=1 default=- pk=0
+    filter_json TEXT notnull=1 default=- pk=0
+    idempotency_key TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    recipient_count INTEGER notnull=1 default=0 pk=0
+    success_count INTEGER notnull=1 default=0 pk=0
+    failure_count INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    completed_at TEXT notnull=0 default=- pk=0
+table notification_channel_user_targets
+    channel_id INTEGER notnull=1 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=2
+    created_at TEXT notnull=1 default=- pk=0
+table notification_channels
+    id INTEGER notnull=0 default=- pk=1
+    owner_user_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    type TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    events TEXT notnull=1 default='server_offline,server_online' pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    templates_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table notification_deliveries
+    id INTEGER notnull=0 default=- pk=1
+    channel_id INTEGER notnull=1 default=- pk=0
+    event TEXT notnull=1 default=- pk=0
+    event_key TEXT notnull=1 default=- pk=0
+    title TEXT notnull=1 default=- pk=0
+    body TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    next_attempt_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    sent_at TEXT notnull=0 default=- pk=0
+table oauth_access_tokens
+    token_hash TEXT notnull=0 default=- pk=1
+    grant_id TEXT notnull=1 default=- pk=0
+    principal_id TEXT notnull=1 default=- pk=0
+    client_id TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    resource TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table oauth_approval_profiles
+    id TEXT notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    auto_approve_risk INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table oauth_authorization_codes
+    code_hash TEXT notnull=0 default=- pk=1
+    grant_id TEXT notnull=1 default=- pk=0
+    client_id TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    principal_id TEXT notnull=1 default=- pk=0
+    redirect_uri TEXT notnull=1 default=- pk=0
+    resource TEXT notnull=1 default=- pk=0
+    code_challenge TEXT notnull=1 default=- pk=0
+    requested_scopes_json TEXT notnull=1 default='[]' pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table oauth_clients
+    id TEXT notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    redirect_uris_json TEXT notnull=1 default='[]' pk=0
+    identity_type TEXT notnull=1 default='preregistered' pk=0
+    metadata_uri TEXT notnull=1 default='' pk=0
+    metadata_hash TEXT notnull=1 default='' pk=0
+    metadata_etag TEXT notnull=1 default='' pk=0
+    metadata_fetched_at TEXT notnull=0 default=- pk=0
+    client_metadata_json TEXT notnull=1 default='{}' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table oauth_grants
+    id TEXT notnull=0 default=- pk=1
+    client_id TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    principal_id TEXT notnull=1 default=- pk=0
+    access_level TEXT notnull=1 default='read' pk=0
+    resource_boundary_v2_json TEXT notnull=1 default='{}' pk=0
+    approval_profile_id TEXT notnull=1 default=- pk=0
+    offline_access INTEGER notnull=1 default=0 pk=0
+    policy_version INTEGER notnull=1 default=1 pk=0
+    role_version INTEGER notnull=1 default=1 pk=0
+    consent_version INTEGER notnull=1 default=1 pk=0
+    status TEXT notnull=1 default='active' pk=0
+    resource_key TEXT notnull=1 default='mcp' pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    last_used_at TEXT notnull=0 default=- pk=0
+    last_authorized_at TEXT notnull=0 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    revoke_reason TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table oauth_refresh_tokens
+    token_hash TEXT notnull=0 default=- pk=1
+    family_id TEXT notnull=1 default=- pk=0
+    grant_id TEXT notnull=1 default=- pk=0
+    parent_token_hash TEXT notnull=1 default='' pk=0
+    principal_id TEXT notnull=1 default=- pk=0
+    client_id TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    resource TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    reuse_detected_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table operation_confirmations
+    token_hash TEXT notnull=0 default=- pk=1
+    capability TEXT notnull=1 default=- pk=0
+    event_id INTEGER notnull=0 default=- pk=0
+    event_version INTEGER notnull=1 default=0 pk=0
+    actor_user_id INTEGER notnull=1 default=- pk=0
+    payload_json TEXT notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table operator_feedback
+    id TEXT notnull=0 default=- pk=1
+    incident_id TEXT notnull=1 default=- pk=0
+    actor_user_id INTEGER notnull=1 default=- pk=0
+    label TEXT notnull=1 default=- pk=0
+    comment TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table outbounds
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    next_server_id INTEGER notnull=0 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    protocol TEXT notnull=1 default=- pk=0
+    target_address TEXT notnull=1 default=- pk=0
+    target_port INTEGER notnull=1 default=- pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table passkey_credentials
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    credential_id TEXT notnull=1 default=- pk=0
+    credential_json TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    last_used_at TEXT notnull=0 default=- pk=0
+table port_forward_probe_results
+    id INTEGER notnull=0 default=- pk=1
+    port_forward_id INTEGER notnull=1 default=- pk=0
+    server_id INTEGER notnull=1 default=- pk=0
+    mode TEXT notnull=1 default=- pk=0
+    available INTEGER notnull=1 default=0 pk=0
+    latency_ms INTEGER notnull=1 default=0 pk=0
+    sample_count INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table port_forwards
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    source_server_id INTEGER notnull=1 default=- pk=0
+    target_server_id INTEGER notnull=0 default=- pk=0
+    listen_ip TEXT notnull=1 default='' pk=0
+    listen_port INTEGER notnull=1 default=- pk=0
+    target_address TEXT notnull=1 default='' pk=0
+    target_port INTEGER notnull=1 default=- pk=0
+    protocol TEXT notnull=1 default='tcp' pk=0
+    backend TEXT notnull=1 default='realm' pk=0
+    probe_mode TEXT notnull=1 default='apply' pk=0
+    probe_interval_seconds INTEGER notnull=1 default=300 pk=0
+    priority INTEGER notnull=1 default=100 pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table proxy_credentials
+    id TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=1 default=- pk=0
+    path_id INTEGER notnull=1 default=- pk=0
+    device_id_hash TEXT notnull=1 default=- pk=0
+    credential_epoch INTEGER notnull=1 default=- pk=0
+    protocol TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    material_encrypted TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+table proxy_path_egress_results
+    path_id INTEGER notnull=0 default=- pk=1
+    external_outbound_id INTEGER notnull=1 default=- pk=0
+    owner_server_id INTEGER notnull=1 default=- pk=0
+    topology_fingerprint TEXT notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=0 pk=0
+    task_id INTEGER notnull=0 default=- pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    last_exit_ip TEXT notnull=1 default='' pk=0
+    last_region_code TEXT notnull=1 default='' pk=0
+    geo_database_revision TEXT notnull=1 default='' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    last_attempt_at TEXT notnull=0 default=- pk=0
+    last_success_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table proxy_path_port_allocations
+    id INTEGER notnull=0 default=- pk=1
+    kind TEXT notnull=1 default=- pk=0
+    scope_key TEXT notnull=1 default=- pk=0
+    server_id INTEGER notnull=1 default=- pk=0
+    pool TEXT notnull=1 default='public' pk=0
+    listen_ip TEXT notnull=1 default='' pk=0
+    network TEXT notnull=1 default='tcp_udp' pk=0
+    generation INTEGER notnull=1 default=1 pk=0
+    ordinal INTEGER notnull=1 default=0 pk=0
+    port INTEGER notnull=1 default=- pk=0
+    state TEXT notnull=1 default='active' pk=0
+    policy_revision INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table proxy_path_steps
+    id INTEGER notnull=0 default=- pk=1
+    path_id INTEGER notnull=1 default=- pk=0
+    position INTEGER notnull=1 default=- pk=0
+    node_type TEXT notnull=1 default=- pk=0
+    transport_mode TEXT notnull=1 default='singbox' pk=0
+    processing_role INTEGER notnull=1 default=0 pk=0
+    server_id INTEGER notnull=0 default=- pk=0
+    inbound_id INTEGER notnull=0 default=- pk=0
+    external_outbound_id INTEGER notnull=0 default=- pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table proxy_paths
+    id INTEGER notnull=0 default=- pk=1
+    inbound_id INTEGER notnull=0 default=- pk=0
+    kind TEXT notnull=1 default='chain' pk=0
+    branch_source_step_id INTEGER notnull=0 default=- pk=0
+    name_mode TEXT notnull=1 default='auto' pk=0
+    name_template_json TEXT notnull=1 default='[]' pk=0
+    exit_region_mode TEXT notnull=1 default='auto' pk=0
+    exit_region_code TEXT notnull=1 default='' pk=0
+    secret TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    template_id INTEGER notnull=0 default=- pk=0
+    family TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table rate_limits
+    key_hash TEXT notnull=0 default=- pk=1
+    window_start TEXT notnull=1 default=- pk=0
+    count INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table remote_access_audit
+    id INTEGER notnull=0 default=- pk=1
+    event_type TEXT notnull=1 default=- pk=0
+    actor_type TEXT notnull=1 default='' pk=0
+    actor_user_id INTEGER notnull=0 default=- pk=0
+    oauth_client_id TEXT notnull=1 default='' pk=0
+    oauth_grant_id TEXT notnull=1 default='' pk=0
+    server_id INTEGER notnull=0 default=- pk=0
+    session_id TEXT notnull=1 default='' pk=0
+    request_id TEXT notnull=1 default='' pk=0
+    capability TEXT notnull=1 default='' pk=0
+    result TEXT notnull=1 default='' pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    ended_at TEXT notnull=0 default=- pk=0
+    duration_ms INTEGER notnull=1 default=0 pk=0
+    source_ip TEXT notnull=1 default='' pk=0
+    metadata_json TEXT notnull=1 default='{}' pk=0
+table revoked_user_sessions
+    token_hash TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table routing_cache_revision
+    id INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=0 pk=0
+table routing_rule_sets
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    url TEXT notnull=1 default=- pk=0
+    format TEXT notnull=1 default=- pk=0
+    mihomo_behavior TEXT notnull=1 default='' pk=0
+    etag TEXT notnull=1 default='' pk=0
+    last_modified TEXT notnull=1 default='' pk=0
+    content BLOB notnull=1 default=x'' pk=0
+    revision TEXT notnull=1 default='' pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    last_attempt_at TEXT notnull=0 default=- pk=0
+    last_success_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table routing_rules
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    scope TEXT notnull=1 default='server' pk=0
+    proxy_path_id INTEGER notnull=0 default=- pk=0
+    stage_step_id INTEGER notnull=0 default=- pk=0
+    sort_position INTEGER notnull=1 default=0 pk=0
+    match_source TEXT notnull=1 default='inline' pk=0
+    rule_set_id INTEGER notnull=0 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    priority INTEGER notnull=1 default=100 pk=0
+    match_json TEXT notnull=1 default='{}' pk=0
+    action TEXT notnull=1 default=- pk=0
+    outbound_id INTEGER notnull=0 default=- pk=0
+    external_outbound_id INTEGER notnull=0 default=- pk=0
+    target_proxy_path_id INTEGER notnull=0 default=- pk=0
+    family_split_template_id INTEGER notnull=0 default=- pk=0
+    family_dns_strategy TEXT notnull=1 default='auto' pk=0
+    target_server_id INTEGER notnull=0 default=- pk=0
+    outbound_tag TEXT notnull=1 default='' pk=0
+    sync_group_id TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    dns_resolver TEXT notnull=1 default='' pk=0
+table runtime_user_states
+    server_id INTEGER notnull=0 default=- pk=1
+    desired_revision INTEGER notnull=1 default=0 pk=0
+    desired_digest TEXT notnull=1 default='' pk=0
+    evaluated_routing_revision INTEGER notnull=1 default=0 pk=0
+    delivered_revision INTEGER notnull=1 default=0 pk=0
+    delivered_message_id TEXT notnull=1 default='' pk=0
+    delivered_at TEXT notnull=0 default=- pk=0
+    confirmed_revision INTEGER notnull=1 default=0 pk=0
+    confirmed_digest TEXT notnull=1 default='' pk=0
+    confirmed_boot_id TEXT notnull=1 default='' pk=0
+    confirmed_at TEXT notnull=0 default=- pk=0
+    pending_reason TEXT notnull=1 default='' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    retryable INTEGER notnull=1 default=1 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table script_grants
+    id INTEGER notnull=0 default=- pk=1
+    script_id INTEGER notnull=1 default=- pk=0
+    revision_id INTEGER notnull=1 default=- pk=0
+    binding_id INTEGER notnull=0 default=- pk=0
+    grant_revision INTEGER notnull=1 default=1 pk=0
+    capabilities_json TEXT notnull=1 default=- pk=0
+    resource_scope_json TEXT notnull=1 default=- pk=0
+    constraints_json TEXT notnull=1 default='{}' pk=0
+    source_digest TEXT notnull=1 default=- pk=0
+    binding_digest TEXT notnull=1 default='' pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    approved_by_user_id INTEGER notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table script_revisions
+    id INTEGER notnull=0 default=- pk=1
+    script_id INTEGER notnull=1 default=- pk=0
+    revision_number INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    schema_version INTEGER notnull=1 default=- pk=0
+    runtime TEXT notnull=1 default=- pk=0
+    sdk_version TEXT notnull=1 default=- pk=0
+    source TEXT notnull=1 default=- pk=0
+    source_digest TEXT notnull=1 default=- pk=0
+    manifest_json TEXT notnull=1 default=- pk=0
+    author_user_id INTEGER notnull=1 default=- pk=0
+    published_at TEXT notnull=0 default=- pk=0
+    published_by_user_id INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table script_run_actions
+    id INTEGER notnull=0 default=- pk=1
+    run_id INTEGER notnull=1 default=- pk=0
+    action_key TEXT notnull=1 default=- pk=0
+    capability TEXT notnull=1 default=- pk=0
+    target_json TEXT notnull=1 default=- pk=0
+    payload_digest TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    operation_id TEXT notnull=1 default='' pk=0
+    changeset_id TEXT notnull=1 default='' pk=0
+    task_id INTEGER notnull=0 default=- pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    lease_generation INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table script_run_attempts
+    id INTEGER notnull=0 default=- pk=1
+    run_id INTEGER notnull=1 default=- pk=0
+    generation INTEGER notnull=1 default=- pk=0
+    worker_id TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    resource_json TEXT notnull=1 default='{}' pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    finished_at TEXT notnull=0 default=- pk=0
+table script_run_logs
+    id INTEGER notnull=0 default=- pk=1
+    run_id INTEGER notnull=1 default=- pk=0
+    seq INTEGER notnull=1 default=- pk=0
+    level TEXT notnull=1 default=- pk=0
+    message TEXT notnull=1 default=- pk=0
+    fields_json TEXT notnull=1 default='{}' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table script_runs
+    id INTEGER notnull=0 default=- pk=1
+    uuid TEXT notnull=1 default=- pk=0
+    script_id INTEGER notnull=1 default=- pk=0
+    revision_id INTEGER notnull=1 default=- pk=0
+    binding_id INTEGER notnull=0 default=- pk=0
+    grant_id INTEGER notnull=0 default=- pk=0
+    caller_principal TEXT notnull=1 default='' pk=0
+    trigger_kind TEXT notnull=1 default=- pk=0
+    idempotency_key TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    mode TEXT notnull=1 default=- pk=0
+    snapshot_json TEXT notnull=1 default=- pk=0
+    result_json TEXT notnull=1 default='{}' pk=0
+    error_code TEXT notnull=1 default='' pk=0
+    skip_reason TEXT notnull=1 default='' pk=0
+    lease_owner TEXT notnull=1 default='' pk=0
+    lease_generation INTEGER notnull=1 default=0 pk=0
+    lease_until TEXT notnull=0 default=- pk=0
+    recovery_generation INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=0 default=- pk=0
+    finished_at TEXT notnull=0 default=- pk=0
+table script_secrets
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    purpose TEXT notnull=1 default=- pk=0
+    resource_scope_json TEXT notnull=1 default='{}' pk=0
+    value_encrypted TEXT notnull=1 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    created_by_user_id INTEGER notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table script_state
+    script_id INTEGER notnull=1 default=- pk=1
+    key TEXT notnull=1 default=- pk=2
+    value_json TEXT notnull=1 default=- pk=0
+    version INTEGER notnull=1 default=1 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table script_trigger_bindings
+    id INTEGER notnull=0 default=- pk=1
+    script_id INTEGER notnull=1 default=- pk=0
+    revision_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=0 pk=0
+    kind TEXT notnull=1 default=- pk=0
+    spec_json TEXT notnull=1 default=- pk=0
+    params_json TEXT notnull=1 default='{}' pk=0
+    env_json TEXT notnull=1 default='{}' pk=0
+    binding_revision INTEGER notnull=1 default=1 pk=0
+    created_by_user_id INTEGER notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table script_trigger_states
+    binding_id INTEGER notnull=0 default=- pk=1
+    armed INTEGER notnull=1 default=1 pk=0
+    condition_json TEXT notnull=1 default='{}' pk=0
+    current_cycle_key TEXT notnull=1 default='' pk=0
+    last_fired_at TEXT notnull=0 default=- pk=0
+    last_skipped_at TEXT notnull=0 default=- pk=0
+    last_skip_reason TEXT notnull=1 default='' pk=0
+    next_due_at TEXT notnull=0 default=- pk=0
+    hold_until TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table scripts
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    description TEXT notnull=1 default='' pk=0
+    owner_user_id INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default='draft' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_connectivity_events
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    available INTEGER notnull=0 default=- pk=0
+    latency_ms INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    source TEXT notnull=1 default='' pk=0
+    effective_at TEXT notnull=1 default=- pk=0
+    event_key TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table server_deletions
+    server_id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default='' pk=0
+    stage TEXT notnull=1 default=- pk=0
+    payload_json TEXT notnull=1 default='{}' pk=0
+    attempts INTEGER notnull=1 default=0 pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    requested_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_delivery_flags
+    server_id INTEGER notnull=0 default=- pk=1
+    authorization_fast_lane INTEGER notnull=1 default=1 pk=0
+    runtime_users_enabled INTEGER notnull=1 default=1 pk=0
+    revision INTEGER notnull=1 default=0 pk=0
+    applied_revision INTEGER notnull=1 default=0 pk=0
+    processing_revision INTEGER notnull=1 default=0 pk=0
+    processing_config_version INTEGER notnull=1 default=0 pk=0
+table server_dns_policies
+    server_id INTEGER notnull=0 default=- pk=1
+    encrypted_list_id INTEGER notnull=0 default=- pk=0
+    bootstrap_list_id INTEGER notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    strategy TEXT notnull=1 default='auto' pk=0
+    auto_test TEXT notnull=1 default='first_apply' pk=0
+    test_interval_seconds INTEGER notnull=1 default=3600 pk=0
+    encrypted_selected_json TEXT notnull=1 default='[]' pk=0
+    bootstrap_selected_json TEXT notnull=1 default='[]' pk=0
+    encrypted_selection_revision INTEGER notnull=1 default=0 pk=0
+    bootstrap_selection_revision INTEGER notnull=1 default=0 pk=0
+    last_attempt_at TEXT notnull=0 default=- pk=0
+    last_success_at TEXT notnull=0 default=- pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    needs_benchmark INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_latency_probe_results
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    report_id TEXT notnull=1 default='' pk=0
+    resource_version TEXT notnull=1 default=- pk=0
+    probe_id TEXT notnull=1 default=- pk=0
+    kind TEXT notnull=1 default='regional' pk=0
+    mode TEXT notnull=1 default='icmp' pk=0
+    province TEXT notnull=1 default=- pk=0
+    carrier TEXT notnull=1 default=- pk=0
+    host TEXT notnull=1 default='' pk=0
+    ip TEXT notnull=1 default=- pk=0
+    port INTEGER notnull=1 default=0 pk=0
+    available INTEGER notnull=1 default=0 pk=0
+    latency_ms INTEGER notnull=1 default=0 pk=0
+    min_latency_ms INTEGER notnull=1 default=0 pk=0
+    p95_latency_ms INTEGER notnull=1 default=0 pk=0
+    jitter_ms INTEGER notnull=1 default=0 pk=0
+    sample_count INTEGER notnull=1 default=0 pk=0
+    success_count INTEGER notnull=1 default=0 pk=0
+    error TEXT notnull=1 default='' pk=0
+    checked_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    task_id INTEGER notnull=1 default=0 pk=0
+    task_name TEXT notnull=1 default='' pk=0
+    measurement_revision TEXT notnull=1 default='' pk=0
+table server_latency_probe_settings
+    server_id INTEGER notnull=0 default=- pk=1
+    enabled INTEGER notnull=1 default=1 pk=0
+    mode TEXT notnull=1 default='tcp' pk=0
+    public_target TEXT notnull=1 default='auto' pk=0
+    monitoring_target_task_id INTEGER notnull=1 default=0 pk=0
+    interval_seconds INTEGER notnull=1 default=120 pk=0
+    sample_count INTEGER notnull=1 default=3 pk=0
+    regions_json TEXT notnull=1 default='[]' pk=0
+    provinces_json TEXT notnull=1 default='[]' pk=0
+    carriers_json TEXT notnull=1 default='[]' pk=0
+    max_targets INTEGER notnull=1 default=64 pk=0
+    resource_version TEXT notnull=1 default='' pk=0
+    plan_version INTEGER notnull=1 default=0 pk=0
+    plan_digest TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_metric_samples
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    cpu_usage_percent REAL notnull=1 default=0 pk=0
+    memory_used_bytes INTEGER notnull=1 default=0 pk=0
+    memory_total_bytes INTEGER notnull=1 default=0 pk=0
+    disk_used_bytes INTEGER notnull=1 default=0 pk=0
+    disk_total_bytes INTEGER notnull=1 default=0 pk=0
+    tcp_connection_count INTEGER notnull=1 default=0 pk=0
+    udp_connection_count INTEGER notnull=1 default=0 pk=0
+    process_count INTEGER notnull=1 default=0 pk=0
+    resource_recorded INTEGER notnull=1 default=1 pk=0
+    network_upload_bps INTEGER notnull=1 default=0 pk=0
+    network_download_bps INTEGER notnull=1 default=0 pk=0
+    traffic_upload_bytes INTEGER notnull=1 default=0 pk=0
+    traffic_download_bytes INTEGER notnull=1 default=0 pk=0
+    connectivity_available INTEGER notnull=1 default=-1 pk=0
+    connectivity_latency_ms INTEGER notnull=1 default=0 pk=0
+    sampled_at TEXT notnull=1 default=- pk=0
+table server_offline_notices
+    server_id INTEGER notnull=0 default=- pk=1
+    status TEXT notnull=1 default=- pk=0
+    since_at TEXT notnull=1 default=- pk=0
+    notify_at TEXT notnull=1 default=- pk=0
+    group_key TEXT notnull=1 default='' pk=0
+    notified INTEGER notnull=1 default=0 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_remote_access_policies
+    server_id INTEGER notnull=0 default=- pk=1
+    remote_terminal_enabled INTEGER notnull=1 default=1 pk=0
+    mcp_enabled INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_remote_access_status
+    server_id INTEGER notnull=0 default=- pk=1
+    capabilities_json TEXT notnull=1 default='[]' pk=0
+    local_mode TEXT notnull=1 default='standard' pk=0
+    local_allow_json TEXT notnull=1 default='{}' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_script_policies
+    server_id INTEGER notnull=0 default=- pk=1
+    scripts_enabled INTEGER notnull=1 default=0 pk=0
+    scripts_power_enabled INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table server_telemetry
+    server_id INTEGER notnull=0 default=- pk=1
+    monitoring_mode TEXT notnull=1 default='lightweight' pk=0
+    resource_history_enabled INTEGER notnull=1 default=1 pk=0
+    traffic_reset_mode TEXT notnull=1 default='monthly' pk=0
+    traffic_reset_day INTEGER notnull=1 default=1 pk=0
+    traffic_limit_bytes INTEGER notnull=1 default=0 pk=0
+    connectivity_probe_enabled INTEGER notnull=1 default=0 pk=0
+    connectivity_probe_target TEXT notnull=1 default='auto' pk=0
+    time_correction_mode TEXT notnull=1 default='off' pk=0
+    time_check_status TEXT notnull=1 default='unknown' pk=0
+    time_offset_ms INTEGER notnull=1 default=0 pk=0
+    time_effective_offset_ms INTEGER notnull=1 default=0 pk=0
+    time_check_source TEXT notnull=1 default='' pk=0
+    time_check_error TEXT notnull=1 default='' pk=0
+    time_logical_active INTEGER notnull=1 default=0 pk=0
+    time_unsupported_paths_json TEXT notnull=1 default='[]' pk=0
+    time_checked_at TEXT notnull=0 default=- pk=0
+    period_key TEXT notnull=1 default='' pk=0
+    period_start TEXT notnull=1 default='' pk=0
+    period_end TEXT notnull=1 default='' pk=0
+    traffic_upload_bytes INTEGER notnull=1 default=0 pk=0
+    traffic_download_bytes INTEGER notnull=1 default=0 pk=0
+    raw_upload_bytes INTEGER notnull=1 default=0 pk=0
+    raw_download_bytes INTEGER notnull=1 default=0 pk=0
+    network_upload_bps INTEGER notnull=1 default=0 pk=0
+    network_download_bps INTEGER notnull=1 default=0 pk=0
+    last_reported_at TEXT notnull=0 default=- pk=0
+    connectivity_available INTEGER notnull=1 default=-1 pk=0
+    connectivity_latency_ms INTEGER notnull=1 default=0 pk=0
+    connectivity_checked_at TEXT notnull=0 default=- pk=0
+    connectivity_error TEXT notnull=1 default='' pk=0
+    service_start_at TEXT notnull=0 default=- pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    renewal_cycle TEXT notnull=1 default='monthly' pk=0
+    auto_renew_enabled INTEGER notnull=1 default=0 pk=0
+    expiry_notify_enabled INTEGER notnull=1 default=1 pk=0
+    last_auto_renewed_at TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    offline_notify_enabled INTEGER notnull=1 default=1 pk=0
+    offline_after_seconds INTEGER notnull=1 default=0 pk=0
+table servers
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    agent_id TEXT notnull=0 default=- pk=0
+    agent_token_hash TEXT notnull=0 default=- pk=0
+    chain_secret TEXT notnull=1 default=- pk=0
+    enrollment_hash TEXT notnull=0 default=- pk=0
+    enrollment_expires_at TEXT notnull=0 default=- pk=0
+    entry_address TEXT notnull=0 default=- pk=0
+    public_ipv4 TEXT notnull=1 default='' pk=0
+    public_ipv6 TEXT notnull=1 default='' pk=0
+    region_code TEXT notnull=1 default='' pk=0
+    detected_region_code TEXT notnull=1 default='' pk=0
+    region_mode TEXT notnull=1 default='auto' pk=0
+    entry_ip_mode TEXT notnull=1 default='auto' pk=0
+    listen_ip TEXT notnull=0 default=- pk=0
+    ip_stack TEXT notnull=1 default='auto' pk=0
+    udp_inbound_mode TEXT notnull=1 default='allow' pk=0
+    mtu_mode TEXT notnull=1 default='detect' pk=0
+    mtu_value INTEGER notnull=1 default=0 pk=0
+    mtu_probe_host TEXT notnull=1 default='1.1.1.1' pk=0
+    mtu_probe_port INTEGER notnull=1 default=443 pk=0
+    mtu_overhead_bytes INTEGER notnull=1 default=0 pk=0
+    bbr_enabled INTEGER notnull=1 default=0 pk=0
+    port_range_start INTEGER notnull=1 default=10000 pk=0
+    port_range_end INTEGER notnull=1 default=20000 pk=0
+    internal_port_range_start INTEGER notnull=1 default=30000 pk=0
+    internal_port_range_end INTEGER notnull=1 default=59999 pk=0
+    port_policy_revision INTEGER notnull=1 default=1 pk=0
+    status TEXT notnull=1 default=- pk=0
+    os TEXT notnull=0 default=- pk=0
+    distro_id TEXT notnull=1 default='' pk=0
+    distro_version TEXT notnull=1 default='' pk=0
+    distro_name TEXT notnull=1 default='' pk=0
+    libc TEXT notnull=1 default='' pk=0
+    service_manager TEXT notnull=1 default='' pk=0
+    package_manager TEXT notnull=1 default='' pk=0
+    arch TEXT notnull=0 default=- pk=0
+    kernel TEXT notnull=0 default=- pk=0
+    cpu TEXT notnull=0 default=- pk=0
+    cpu_cores INTEGER notnull=1 default=0 pk=0
+    memory_bytes INTEGER notnull=1 default=0 pk=0
+    cpu_usage_percent REAL notnull=1 default=0 pk=0
+    memory_used_bytes INTEGER notnull=1 default=0 pk=0
+    memory_total_bytes INTEGER notnull=1 default=0 pk=0
+    agent_memory_bytes INTEGER notnull=1 default=0 pk=0
+    disk_bytes INTEGER notnull=1 default=0 pk=0
+    disk_total_bytes INTEGER notnull=1 default=0 pk=0
+    tcp_connection_count INTEGER notnull=1 default=0 pk=0
+    udp_connection_count INTEGER notnull=1 default=0 pk=0
+    process_count INTEGER notnull=1 default=0 pk=0
+    agent_version TEXT notnull=1 default='' pk=0
+    agent_build TEXT notnull=1 default='' pk=0
+    sing_box_version TEXT notnull=0 default=- pk=0
+    kernel_capabilities_json TEXT notnull=1 default='[]' pk=0
+    tcp_fastopen_state TEXT notnull=1 default='' pk=0
+    tcp_fastopen_value INTEGER notnull=1 default=0 pk=0
+    connection_audit_enabled INTEGER notnull=1 default=0 pk=0
+    display_tags_json TEXT notnull=1 default='[]' pk=0
+    last_seen_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    listen_mode TEXT notnull=1 default='auto' pk=0
+    interface_ipv6 TEXT notnull=1 default='' pk=0
+    network_inventory_json TEXT notnull=1 default='' pk=0
+    network_inventory_hash TEXT notnull=1 default='' pk=0
+    network_inventory_updated_at TEXT notnull=0 default=- pk=0
+table sla_projection_buckets
+    server_id INTEGER notnull=1 default=- pk=1
+    bucket_start INTEGER notnull=1 default=- pk=2
+    stats_json TEXT notnull=1 default=- pk=0
+    end_checkpoint TEXT notnull=1 default=- pk=0
+    event_cursor INTEGER notnull=1 default=- pk=0
+    algorithm_version INTEGER notnull=1 default=- pk=0
+    outages_json TEXT notnull=1 default='[]' pk=0
+    details_complete INTEGER notnull=1 default=0 pk=0
+table sla_projection_partial
+    server_id INTEGER notnull=0 default=- pk=1
+    bucket_start INTEGER notnull=1 default=- pk=0
+    generation INTEGER notnull=1 default=- pk=0
+    algorithm_version INTEGER notnull=1 default=- pk=0
+    ceiling INTEGER notnull=1 default=- pk=0
+    last_time TEXT notnull=1 default=- pk=0
+    last_priority INTEGER notnull=1 default=- pk=0
+    last_id INTEGER notnull=1 default=- pk=0
+    body TEXT notnull=1 default=- pk=0
+table sla_projection_servers
+    server_id INTEGER notnull=0 default=- pk=1
+    coverage_from INTEGER notnull=1 default=- pk=0
+    frontier INTEGER notnull=1 default=- pk=0
+    seed_json TEXT notnull=1 default='' pk=0
+    dirty_from INTEGER notnull=0 default=- pk=0
+    dirty_until INTEGER notnull=0 default=- pk=0
+    repair_next INTEGER notnull=0 default=- pk=0
+    revision INTEGER notnull=1 default=1 pk=0
+    phase TEXT notnull=1 default='catching_up' pk=0
+    retry_after INTEGER notnull=1 default=0 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    details_version INTEGER notnull=1 default=0 pk=0
+table sla_projection_state
+    id INTEGER notnull=0 default=- pk=1
+    algorithm_version INTEGER notnull=1 default=1 pk=0
+    event_cursor INTEGER notnull=1 default=-1 pk=0
+    start_at INTEGER notnull=1 default=0 pk=0
+    enroll_cursor INTEGER notnull=1 default=0 pk=0
+    generation INTEGER notnull=1 default=1 pk=0
+    retention_floor INTEGER notnull=1 default=0 pk=0
+table snell_listener_runtime
+    inbound_id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    listener_mode TEXT notnull=1 default=- pk=0
+    port INTEGER notnull=1 default=- pk=0
+    protocol_version INTEGER notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table snell_profiles
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    version INTEGER notnull=1 default=4 pk=0
+    psk TEXT notnull=1 default='' pk=0
+    obfs_mode TEXT notnull=1 default='none' pk=0
+    obfs_host TEXT notnull=1 default='' pk=0
+    mode TEXT notnull=1 default='default' pk=0
+    reuse INTEGER notnull=1 default=0 pk=0
+    tcp_fast_open INTEGER notnull=1 default=1 pk=0
+    remark TEXT notnull=1 default='' pk=0
+    builtin INTEGER notnull=1 default=0 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table snell_runtime_confirmations
+    server_id INTEGER notnull=0 default=- pk=1
+    config_version INTEGER notnull=1 default=- pk=0
+    digest TEXT notnull=1 default=- pk=0
+table ssh_deployment_plans
+    server_id INTEGER notnull=0 default=- pk=1
+    plan_digest TEXT notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table ssh_password_deployments
+    server_id INTEGER notnull=1 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=2
+    device_id_hash TEXT notnull=1 default='' pk=3
+    credential_epoch INTEGER notnull=1 default=0 pk=4
+    credential_status TEXT notnull=1 default='active' pk=0
+    password_digest TEXT notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table ssh_server_host_keys
+    server_id INTEGER notnull=0 default=- pk=1
+    public_key TEXT notnull=1 default=- pk=0
+    fingerprint TEXT notnull=1 default=- pk=0
+    config_version INTEGER notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table ssh_user_aliases
+    user_id INTEGER notnull=0 default=- pk=1
+    random_id TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table step_up_challenges
+    id TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    session_id TEXT notnull=1 default=- pk=0
+    session_version INTEGER notnull=1 default=0 pk=0
+    purpose TEXT notnull=1 default=- pk=0
+    resource_type TEXT notnull=1 default='' pk=0
+    resource_id TEXT notnull=1 default='' pk=0
+    nonce TEXT notnull=1 default=- pk=0
+    webauthn_session_json TEXT notnull=1 default='{}' pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table subscription_access_states
+    user_id INTEGER notnull=0 default=- pk=1
+    suspended INTEGER notnull=1 default=0 pk=0
+    suspended_at TEXT notnull=0 default=- pk=0
+    suspension_reason TEXT notnull=1 default='' pk=0
+    trigger_audit_id INTEGER notnull=0 default=- pk=0
+    trigger_snapshot_json TEXT notnull=1 default='' pk=0
+    evaluation_started_at TEXT notnull=1 default=- pk=0
+    resumed_at TEXT notnull=0 default=- pk=0
+    resumed_by INTEGER notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_age_keys
+    user_id INTEGER notnull=0 default=- pk=1
+    enabled INTEGER notnull=1 default=0 pk=0
+    public_key TEXT notnull=1 default='' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_client_templates
+    format TEXT notnull=0 default=- pk=1
+    content TEXT notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=- pk=0
+    base_builtin_digest TEXT notnull=1 default=- pk=0
+    updated_by INTEGER notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_custom_path_group_policies
+    group_id INTEGER notnull=0 default=- pk=1
+    mode TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_custom_path_user_policies
+    user_id INTEGER notnull=0 default=- pk=1
+    mode TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_custom_paths
+    user_id INTEGER notnull=0 default=- pk=1
+    alias TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_one_time_tokens
+    token TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table subscription_output_groups
+    output_id INTEGER notnull=1 default=- pk=1
+    group_id INTEGER notnull=1 default=- pk=2
+    position INTEGER notnull=1 default=- pk=0
+table subscription_outputs
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    is_default INTEGER notnull=1 default=0 pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    filters_json TEXT notnull=1 default='' pk=0
+table subscription_plan_reconcile_states
+    plan_id INTEGER notnull=0 default=- pk=1
+    applying_revision_id INTEGER notnull=0 default=- pk=0
+    status TEXT notnull=1 default='idle' pk=0
+    last_access_change_id INTEGER notnull=0 default=- pk=0
+    blocked_reason TEXT notnull=1 default='' pk=0
+    blocked_json TEXT notnull=1 default='{}' pk=0
+    attempt_count INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_plan_revision_node_exclusions
+    revision_id INTEGER notnull=1 default=- pk=1
+    node_type TEXT notnull=1 default=- pk=2
+    node_id INTEGER notnull=1 default=- pk=3
+    created_at TEXT notnull=1 default=- pk=0
+table subscription_plan_revision_nodes
+    id INTEGER notnull=0 default=- pk=1
+    revision_id INTEGER notnull=1 default=- pk=0
+    node_type TEXT notnull=1 default=- pk=0
+    node_id INTEGER notnull=1 default=- pk=0
+    display_group TEXT notnull=1 default='' pk=0
+    source_type TEXT notnull=1 default='explicit' pk=0
+    source_rule_id INTEGER notnull=1 default=0 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    sort_position INTEGER notnull=0 default=- pk=0
+    display_name_override TEXT notnull=0 default=- pk=0
+table subscription_plan_revision_rules
+    id INTEGER notnull=0 default=- pk=1
+    revision_id INTEGER notnull=1 default=- pk=0
+    rule_id INTEGER notnull=1 default=- pk=0
+    kind TEXT notnull=1 default=- pk=0
+    scope_key TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table subscription_plan_revisions
+    id INTEGER notnull=0 default=- pk=1
+    plan_id INTEGER notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=- pk=0
+    version_no INTEGER notnull=0 default=- pk=0
+    based_on_revision_id INTEGER notnull=0 default=- pk=0
+    change_kind TEXT notnull=1 default='' pk=0
+    change_summary TEXT notnull=1 default='' pk=0
+    activation_change_id INTEGER notnull=0 default=- pk=0
+    status TEXT notnull=1 default='draft' pk=0
+    speed_limit_mbps INTEGER notnull=1 default=0 pk=0
+    traffic_limit_bytes INTEGER notnull=1 default=0 pk=0
+    traffic_reset_mode TEXT notnull=1 default='monthly' pk=0
+    traffic_reset_day INTEGER notnull=1 default=1 pk=0
+    created_by INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    activated_at TEXT notnull=0 default=- pk=0
+    node_order_policy_json TEXT notnull=1 default='{"version":1,"mode":"legacy_group_name","manual_seed":"exit_region","exit_region_order":[],"entry_region_order_mode":"inherit_exit","entry_region_order":[],"entry_order":[]}' pk=0
+    order_template_id INTEGER notnull=0 default=- pk=0
+    order_template_revision INTEGER notnull=1 default=0 pk=0
+    order_source_plan_id INTEGER notnull=0 default=- pk=0
+    order_source_revision_id INTEGER notnull=0 default=- pk=0
+    order_source_mode TEXT notnull=1 default='' pk=0
+table subscription_plan_rule_reconcile_states
+    plan_id INTEGER notnull=0 default=- pk=1
+    catalog_digest TEXT notnull=1 default='' pk=0
+    desired_digest TEXT notnull=1 default='' pk=0
+    status TEXT notnull=1 default='idle' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    last_reconciled_at TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_plans
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    description TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    revision INTEGER notnull=1 default=0 pk=0
+    active_revision_id INTEGER notnull=0 default=- pk=0
+    draft_revision_id INTEGER notnull=0 default=- pk=0
+    lock_version INTEGER notnull=1 default=1 pk=0
+    current_revision_id INTEGER notnull=0 default=- pk=0
+    latest_revision_id INTEGER notnull=0 default=- pk=0
+    pending_revision_id INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_pull_audits
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    device_id_hash TEXT notnull=1 default='' pk=0
+    representation_id TEXT notnull=1 default='' pk=0
+    subscription_revision TEXT notnull=1 default='' pk=0
+    raw_request_weight REAL notnull=1 default=1 pk=0
+    logical_pull_weight REAL notnull=1 default=1 pk=0
+    logical_fetch_id TEXT notnull=1 default='' pk=0
+    route_id TEXT notnull=1 default='' pk=0
+    route_novelty_weight REAL notnull=1 default=0 pk=0
+    dedupe_reason TEXT notnull=1 default='' pk=0
+    conditional_request INTEGER notnull=1 default=0 pk=0
+    source_ip TEXT notnull=1 default=- pk=0
+    source_country_code TEXT notnull=1 default='' pk=0
+    source_country TEXT notnull=1 default='' pk=0
+    source_province TEXT notnull=1 default='' pk=0
+    source_city TEXT notnull=1 default='' pk=0
+    source_isp TEXT notnull=1 default='' pk=0
+    geo_database_revision TEXT notnull=1 default='' pk=0
+    user_agent TEXT notnull=1 default='' pk=0
+    client_name TEXT notnull=1 default='' pk=0
+    format TEXT notnull=1 default='' pk=0
+    requested_format TEXT notnull=1 default='' pk=0
+    auto_detected INTEGER notnull=1 default=0 pk=0
+    profile_id INTEGER notnull=0 default=- pk=0
+    age_encrypted INTEGER notnull=1 default=0 pk=0
+    token_kind TEXT notnull=1 default='' pk=0
+    outcome TEXT notnull=1 default=- pk=0
+    reason TEXT notnull=1 default='' pk=0
+    risk_eligible INTEGER notnull=1 default=0 pk=0
+    requested_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table subscription_rate_buckets
+    bucket_key TEXT notnull=0 default=- pk=1
+    level REAL notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_relays
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    public_url TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    token_hash TEXT notnull=1 default='' pk=0
+    signing_secret_encrypted TEXT notnull=1 default='' pk=0
+    enrollment_hash TEXT notnull=0 default=- pk=0
+    enrollment_expires_at TEXT notnull=0 default=- pk=0
+    version TEXT notnull=1 default='' pk=0
+    build TEXT notnull=1 default='' pk=0
+    commit_hash TEXT notnull=1 default='' pk=0
+    os TEXT notnull=1 default='' pk=0
+    arch TEXT notnull=1 default='' pk=0
+    service_manager TEXT notnull=1 default='' pk=0
+    update_target_version TEXT notnull=1 default='' pk=0
+    update_target_build TEXT notnull=1 default='' pk=0
+    update_requested_at TEXT notnull=0 default=- pk=0
+    last_update_error TEXT notnull=1 default='' pk=0
+    last_seen_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table subscription_token_policies
+    user_id INTEGER notnull=0 default=- pk=1
+    burn_after_read INTEGER notnull=1 default=0 pk=0
+    burned_at TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table telegram_binding_codes
+    code_hash TEXT notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    expires_at TEXT notnull=1 default=- pk=0
+    consumed_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table telegram_bindings
+    id INTEGER notnull=0 default=- pk=1
+    channel_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    chat_id INTEGER notnull=1 default=- pk=0
+    telegram_user_id INTEGER notnull=1 default=- pk=0
+    chat_type TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table telegram_bot_state
+    token_hash TEXT notnull=0 default=- pk=1
+    update_offset INTEGER notnull=1 default=0 pk=0
+    lease_owner TEXT notnull=1 default='' pk=0
+    lease_until TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table tool_call_audits
+    id TEXT notnull=0 default=- pk=1
+    principal_id TEXT notnull=1 default=- pk=0
+    client_name TEXT notnull=1 default='' pk=0
+    model_provider TEXT notnull=1 default='' pk=0
+    capability TEXT notnull=1 default=- pk=0
+    scope TEXT notnull=1 default='' pk=0
+    data_classification TEXT notnull=1 default=- pk=0
+    affected_resources_json TEXT notnull=1 default='{}' pk=0
+    approval_id TEXT notnull=1 default='' pk=0
+    request_id TEXT notnull=1 default=- pk=0
+    arguments_hash TEXT notnull=1 default=- pk=0
+    result TEXT notnull=1 default=- pk=0
+    source_ip TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table traffic_counter_streams
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    counter_source TEXT notnull=1 default=- pk=0
+    stream_id TEXT notnull=1 default=- pk=0
+    counter_epoch TEXT notnull=1 default=- pk=0
+    period_key TEXT notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=1 default=0 pk=0
+    path_id INTEGER notnull=1 default=0 pk=0
+    accepted_upload_bytes INTEGER notnull=1 default=0 pk=0
+    accepted_download_bytes INTEGER notnull=1 default=0 pk=0
+    status TEXT notnull=1 default='healthy' pk=0
+    last_error TEXT notnull=1 default='' pk=0
+    agent_instance_id TEXT notnull=1 default='' pk=0
+    first_seen_at TEXT notnull=1 default=- pk=0
+    last_seen_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table traffic_leases
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    period_key TEXT notnull=1 default=- pk=0
+    lease_bytes INTEGER notnull=1 default=0 pk=0
+    consumed_bytes INTEGER notnull=1 default=0 pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    lease_revision INTEGER notnull=1 default=1 pk=0
+    state TEXT notnull=1 default='active' pk=0
+    issued_at TEXT notnull=1 default='' pk=0
+    last_synced_at TEXT notnull=1 default='' pk=0
+    valid_until TEXT notnull=1 default='' pk=0
+    released_at TEXT notnull=0 default=- pk=0
+table traffic_period_transitions
+    user_id INTEGER notnull=1 default=- pk=1
+    source_period_key TEXT notnull=1 default=- pk=2
+    target_period_key TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table traffic_periods
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    period_key TEXT notnull=1 default=- pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    ends_at TEXT notnull=1 default=- pk=0
+    upload_bytes INTEGER notnull=1 default=0 pk=0
+    download_bytes INTEGER notnull=1 default=0 pk=0
+    traffic_limit_bytes INTEGER notnull=1 default=0 pk=0
+    state TEXT notnull=1 default='active' pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table traffic_policy_revision
+    id INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=0 pk=0
+table traffic_reconciliation_events
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    source TEXT notnull=1 default='' pk=0
+    stream_id TEXT notnull=1 default='' pk=0
+    counter_epoch TEXT notnull=1 default='' pk=0
+    period_key TEXT notnull=1 default='' pk=0
+    kind TEXT notnull=1 default=- pk=0
+    detail TEXT notnull=1 default='' pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    resolved_at TEXT notnull=0 default=- pk=0
+table traffic_reports
+    report_id TEXT notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=0 default=- pk=0
+    path_id INTEGER notnull=0 default=- pk=0
+    period_key TEXT notnull=1 default=- pk=0
+    upload_bytes INTEGER notnull=1 default=- pk=0
+    download_bytes INTEGER notnull=1 default=- pk=0
+    started_at TEXT notnull=1 default=- pk=0
+    ended_at TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    protocol_version INTEGER notnull=1 default=1 pk=0
+    counter_source TEXT notnull=1 default='' pk=0
+    stream_id TEXT notnull=1 default='' pk=0
+    counter_epoch TEXT notnull=1 default='' pk=0
+    from_upload_bytes INTEGER notnull=1 default=0 pk=0
+    to_upload_bytes INTEGER notnull=1 default=0 pk=0
+    from_download_bytes INTEGER notnull=1 default=0 pk=0
+    to_download_bytes INTEGER notnull=1 default=0 pk=0
+    accept_status TEXT notnull=1 default='' pk=0
+table traffic_stats
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=0 default=- pk=0
+    inbound_id INTEGER notnull=0 default=- pk=0
+    upload_bytes INTEGER notnull=1 default=- pk=0
+    download_bytes INTEGER notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table traffic_tail_streams
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    counter_source TEXT notnull=1 default=- pk=0
+    stream_id TEXT notnull=1 default=- pk=0
+    counter_epoch TEXT notnull=1 default=- pk=0
+    period_key TEXT notnull=1 default=- pk=0
+    inbound_id INTEGER notnull=1 default=0 pk=0
+    path_id INTEGER notnull=1 default=0 pk=0
+    accepted_upload_bytes INTEGER notnull=1 default=0 pk=0
+    accepted_download_bytes INTEGER notnull=1 default=0 pk=0
+    captured_at TEXT notnull=1 default=- pk=0
+table tunnels
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    source_server_id INTEGER notnull=1 default=- pk=0
+    target_server_id INTEGER notnull=1 default=- pk=0
+    type TEXT notnull=1 default=- pk=0
+    local_address TEXT notnull=1 default='' pk=0
+    peer_address TEXT notnull=1 default='' pk=0
+    listen_port INTEGER notnull=1 default=0 pk=0
+    target_endpoint TEXT notnull=1 default='' pk=0
+    target_port INTEGER notnull=1 default=0 pk=0
+    priority INTEGER notnull=1 default=100 pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table user_authentication
+    user_id INTEGER notnull=0 default=- pk=1
+    totp_enabled INTEGER notnull=1 default=0 pk=0
+    totp_secret_encrypted TEXT notnull=1 default='' pk=0
+    recovery_code_hashes_json TEXT notnull=1 default='[]' pk=0
+    totp_last_used_step INTEGER notnull=1 default=-1 pk=0
+    webauthn_user_handle TEXT notnull=0 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table user_devices
+    id TEXT notnull=0 default=- pk=1
+    device_id_hash TEXT notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    token_hash TEXT notnull=1 default=- pk=0
+    token_prefix TEXT notnull=1 default=- pk=0
+    credential_epoch INTEGER notnull=1 default=1 pk=0
+    status TEXT notnull=1 default='active' pk=0
+    subscription_suspended INTEGER notnull=1 default=0 pk=0
+    proxy_access_state TEXT notnull=1 default='active' pk=0
+    last_subscription_at TEXT notnull=0 default=- pk=0
+    last_proxy_activity_at TEXT notnull=0 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    subscription_suspended_at TEXT notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table user_group_members
+    id INTEGER notnull=0 default=- pk=1
+    group_id INTEGER notnull=1 default=- pk=0
+    user_id INTEGER notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table user_groups
+    id INTEGER notnull=0 default=- pk=1
+    name TEXT notnull=1 default=- pk=0
+    description TEXT notnull=1 default='' pk=0
+    role TEXT notnull=1 default='viewer' pk=0
+    system_key TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table user_node_exceptions
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    node_type TEXT notnull=1 default=- pk=0
+    node_id INTEGER notnull=1 default=- pk=0
+    effect TEXT notnull=1 default=- pk=0
+    reason TEXT notnull=1 default='' pk=0
+    status TEXT notnull=1 default='active' pk=0
+    starts_at TEXT notnull=0 default=- pk=0
+    expires_at TEXT notnull=1 default='' pk=0
+    created_by INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    expiry_synced_at TEXT notnull=0 default=- pk=0
+    change_id INTEGER notnull=0 default=- pk=0
+table user_plan_bindings
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    plan_id INTEGER notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    status TEXT notnull=1 default='active' pk=0
+    starts_at TEXT notnull=0 default=- pk=0
+    expires_at TEXT notnull=0 default=- pk=0
+    traffic_reset_anchor_at TEXT notnull=0 default=- pk=0
+    assigned_by INTEGER notnull=0 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+    deployed_at TEXT notnull=0 default=- pk=0
+    expiry_synced_at TEXT notnull=0 default=- pk=0
+table users
+    id INTEGER notnull=0 default=- pk=1
+    username TEXT notnull=1 default=- pk=0
+    nickname TEXT notnull=1 default='' pk=0
+    password_hash TEXT notnull=1 default=- pk=0
+    session_version INTEGER notnull=1 default=0 pk=0
+    role TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    proxy_uuid TEXT notnull=1 default=- pk=0
+    proxy_password TEXT notnull=1 default=- pk=0
+    speed_limit_mbps INTEGER notnull=1 default=0 pk=0
+    traffic_limit_bytes INTEGER notnull=1 default=0 pk=0
+    traffic_used_bytes INTEGER notnull=1 default=0 pk=0
+    traffic_reset_mode TEXT notnull=1 default='monthly' pk=0
+    traffic_reset_day INTEGER notnull=1 default=1 pk=0
+    subscription_token TEXT notnull=0 default=- pk=0
+    device_limit INTEGER notnull=1 default=0 pk=0
+    legacy_proxy_enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+table warp_profiles
+    id INTEGER notnull=0 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=0
+    name TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default='needed' pk=0
+    config_json TEXT notnull=1 default='{}' pk=0
+    underlay_json TEXT notnull=1 default='{}' pk=0
+    mtu INTEGER notnull=1 default=0 pk=0
+    dns_strategy TEXT notnull=1 default='' pk=0
+    last_requested_at TEXT notnull=0 default=- pk=0
+    error TEXT notnull=1 default='' pk=0
+    enabled INTEGER notnull=1 default=1 pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    updated_at TEXT notnull=1 default=- pk=0
+trigger config_rev_dns_lists_delete on dns_lists
+trigger config_rev_dns_lists_insert on dns_lists
+trigger config_rev_dns_lists_update on dns_lists
+trigger config_rev_external_outbounds_delete on external_outbounds
+trigger config_rev_external_outbounds_insert on external_outbounds
+trigger config_rev_external_outbounds_update on external_outbounds
+trigger config_rev_inbounds_delete on inbounds
+trigger config_rev_inbounds_insert on inbounds
+trigger config_rev_inbounds_update on inbounds
+trigger config_rev_outbounds_delete on outbounds
+trigger config_rev_outbounds_insert on outbounds
+trigger config_rev_outbounds_update on outbounds
+trigger config_rev_port_forwards_delete on port_forwards
+trigger config_rev_port_forwards_insert on port_forwards
+trigger config_rev_port_forwards_update on port_forwards
+trigger config_rev_proxy_credentials_delete on proxy_credentials
+trigger config_rev_proxy_credentials_insert on proxy_credentials
+trigger config_rev_proxy_credentials_update on proxy_credentials
+trigger config_rev_proxy_path_port_allocations_delete on proxy_path_port_allocations
+trigger config_rev_proxy_path_port_allocations_insert on proxy_path_port_allocations
+trigger config_rev_proxy_path_port_allocations_update on proxy_path_port_allocations
+trigger config_rev_proxy_path_steps_delete on proxy_path_steps
+trigger config_rev_proxy_path_steps_insert on proxy_path_steps
+trigger config_rev_proxy_path_steps_update on proxy_path_steps
+trigger config_rev_proxy_paths_delete on proxy_paths
+trigger config_rev_proxy_paths_insert on proxy_paths
+trigger config_rev_proxy_paths_update on proxy_paths
+trigger config_rev_routing_rule_sets_delete on routing_rule_sets
+trigger config_rev_routing_rule_sets_insert on routing_rule_sets
+trigger config_rev_routing_rule_sets_update on routing_rule_sets
+trigger config_rev_routing_rules_delete on routing_rules
+trigger config_rev_routing_rules_insert on routing_rules
+trigger config_rev_routing_rules_update on routing_rules
+trigger config_rev_server_dns_policies_delete on server_dns_policies
+trigger config_rev_server_dns_policies_insert on server_dns_policies
+trigger config_rev_server_dns_policies_update on server_dns_policies
+trigger config_rev_servers_delete on servers
+trigger config_rev_servers_insert on servers
+trigger config_rev_servers_update on servers
+trigger config_rev_subscription_plan_revision_node_exclusions_delete on subscription_plan_revision_node_exclusions
+trigger config_rev_subscription_plan_revision_node_exclusions_insert on subscription_plan_revision_node_exclusions
+trigger config_rev_subscription_plan_revision_node_exclusions_update on subscription_plan_revision_node_exclusions
+trigger config_rev_subscription_plan_revision_nodes_delete on subscription_plan_revision_nodes
+trigger config_rev_subscription_plan_revision_nodes_insert on subscription_plan_revision_nodes
+trigger config_rev_subscription_plan_revision_nodes_update on subscription_plan_revision_nodes
+trigger config_rev_subscription_plan_revision_rules_delete on subscription_plan_revision_rules
+trigger config_rev_subscription_plan_revision_rules_insert on subscription_plan_revision_rules
+trigger config_rev_subscription_plan_revision_rules_update on subscription_plan_revision_rules
+trigger config_rev_subscription_plan_revisions_delete on subscription_plan_revisions
+trigger config_rev_subscription_plan_revisions_insert on subscription_plan_revisions
+trigger config_rev_subscription_plan_revisions_update on subscription_plan_revisions
+trigger config_rev_subscription_plans_delete on subscription_plans
+trigger config_rev_subscription_plans_insert on subscription_plans
+trigger config_rev_subscription_plans_update on subscription_plans
+trigger config_rev_tunnels_delete on tunnels
+trigger config_rev_tunnels_insert on tunnels
+trigger config_rev_tunnels_update on tunnels
+trigger config_rev_user_devices_delete on user_devices
+trigger config_rev_user_devices_insert on user_devices
+trigger config_rev_user_devices_update on user_devices
+trigger config_rev_user_group_members_delete on user_group_members
+trigger config_rev_user_group_members_insert on user_group_members
+trigger config_rev_user_group_members_update on user_group_members
+trigger config_rev_user_groups_delete on user_groups
+trigger config_rev_user_groups_insert on user_groups
+trigger config_rev_user_groups_update on user_groups
+trigger config_rev_user_node_exceptions_delete on user_node_exceptions
+trigger config_rev_user_node_exceptions_insert on user_node_exceptions
+trigger config_rev_user_node_exceptions_update on user_node_exceptions
+trigger config_rev_user_plan_bindings_delete on user_plan_bindings
+trigger config_rev_user_plan_bindings_insert on user_plan_bindings
+trigger config_rev_user_plan_bindings_update on user_plan_bindings
+trigger config_rev_warp_profiles_delete on warp_profiles
+trigger config_rev_warp_profiles_insert on warp_profiles
+trigger config_rev_warp_profiles_update on warp_profiles
+trigger proxy_credentials_user_delete on users
+trigger proxy_credentials_user_rotation on users
+trigger routing_rev_access_changes_delete on access_changes
+trigger routing_rev_access_changes_insert on access_changes
+trigger routing_rev_access_changes_update on access_changes
+trigger routing_rev_dns_lists_delete on dns_lists
+trigger routing_rev_dns_lists_insert on dns_lists
+trigger routing_rev_dns_lists_update on dns_lists
+trigger routing_rev_external_outbounds_delete on external_outbounds
+trigger routing_rev_external_outbounds_insert on external_outbounds
+trigger routing_rev_external_outbounds_update on external_outbounds
+trigger routing_rev_inbounds_delete on inbounds
+trigger routing_rev_inbounds_insert on inbounds
+trigger routing_rev_inbounds_update on inbounds
+trigger routing_rev_outbounds_delete on outbounds
+trigger routing_rev_outbounds_insert on outbounds
+trigger routing_rev_outbounds_update on outbounds
+trigger routing_rev_port_forwards_delete on port_forwards
+trigger routing_rev_port_forwards_insert on port_forwards
+trigger routing_rev_port_forwards_update on port_forwards
+trigger routing_rev_proxy_credentials_delete on proxy_credentials
+trigger routing_rev_proxy_credentials_insert on proxy_credentials
+trigger routing_rev_proxy_credentials_update on proxy_credentials
+trigger routing_rev_proxy_path_egress_results_delete on proxy_path_egress_results
+trigger routing_rev_proxy_path_egress_results_insert on proxy_path_egress_results
+trigger routing_rev_proxy_path_egress_results_update on proxy_path_egress_results
+trigger routing_rev_proxy_path_port_allocations_delete on proxy_path_port_allocations
+trigger routing_rev_proxy_path_port_allocations_insert on proxy_path_port_allocations
+trigger routing_rev_proxy_path_port_allocations_update on proxy_path_port_allocations
+trigger routing_rev_proxy_path_steps_delete on proxy_path_steps
+trigger routing_rev_proxy_path_steps_insert on proxy_path_steps
+trigger routing_rev_proxy_path_steps_update on proxy_path_steps
+trigger routing_rev_proxy_paths_delete on proxy_paths
+trigger routing_rev_proxy_paths_insert on proxy_paths
+trigger routing_rev_proxy_paths_update on proxy_paths
+trigger routing_rev_routing_rule_sets_delete on routing_rule_sets
+trigger routing_rev_routing_rule_sets_insert on routing_rule_sets
+trigger routing_rev_routing_rule_sets_update on routing_rule_sets
+trigger routing_rev_routing_rules_delete on routing_rules
+trigger routing_rev_routing_rules_insert on routing_rules
+trigger routing_rev_routing_rules_update on routing_rules
+trigger routing_rev_server_dns_policies_delete on server_dns_policies
+trigger routing_rev_server_dns_policies_insert on server_dns_policies
+trigger routing_rev_server_dns_policies_update on server_dns_policies
+trigger routing_rev_servers_delete on servers
+trigger routing_rev_servers_insert on servers
+trigger routing_rev_servers_update on servers
+trigger routing_rev_snell_listener_runtime_delete on snell_listener_runtime
+trigger routing_rev_snell_listener_runtime_insert on snell_listener_runtime
+trigger routing_rev_snell_listener_runtime_update on snell_listener_runtime
+trigger routing_rev_subscription_plan_revision_node_exclusions_delete on subscription_plan_revision_node_exclusions
+trigger routing_rev_subscription_plan_revision_node_exclusions_insert on subscription_plan_revision_node_exclusions
+trigger routing_rev_subscription_plan_revision_node_exclusions_update on subscription_plan_revision_node_exclusions
+trigger routing_rev_subscription_plan_revision_nodes_delete on subscription_plan_revision_nodes
+trigger routing_rev_subscription_plan_revision_nodes_insert on subscription_plan_revision_nodes
+trigger routing_rev_subscription_plan_revision_nodes_update on subscription_plan_revision_nodes
+trigger routing_rev_subscription_plan_revision_rules_delete on subscription_plan_revision_rules
+trigger routing_rev_subscription_plan_revision_rules_insert on subscription_plan_revision_rules
+trigger routing_rev_subscription_plan_revision_rules_update on subscription_plan_revision_rules
+trigger routing_rev_subscription_plan_revisions_delete on subscription_plan_revisions
+trigger routing_rev_subscription_plan_revisions_insert on subscription_plan_revisions
+trigger routing_rev_subscription_plan_revisions_update on subscription_plan_revisions
+trigger routing_rev_subscription_plans_delete on subscription_plans
+trigger routing_rev_subscription_plans_insert on subscription_plans
+trigger routing_rev_subscription_plans_update on subscription_plans
+trigger routing_rev_tunnels_delete on tunnels
+trigger routing_rev_tunnels_insert on tunnels
+trigger routing_rev_tunnels_update on tunnels
+trigger routing_rev_user_devices_delete on user_devices
+trigger routing_rev_user_devices_insert on user_devices
+trigger routing_rev_user_devices_update on user_devices
+trigger routing_rev_user_group_members_delete on user_group_members
+trigger routing_rev_user_group_members_insert on user_group_members
+trigger routing_rev_user_group_members_update on user_group_members
+trigger routing_rev_user_groups_delete on user_groups
+trigger routing_rev_user_groups_insert on user_groups
+trigger routing_rev_user_groups_update on user_groups
+trigger routing_rev_user_node_exceptions_delete on user_node_exceptions
+trigger routing_rev_user_node_exceptions_insert on user_node_exceptions
+trigger routing_rev_user_node_exceptions_update on user_node_exceptions
+trigger routing_rev_user_plan_bindings_delete on user_plan_bindings
+trigger routing_rev_user_plan_bindings_insert on user_plan_bindings
+trigger routing_rev_user_plan_bindings_update on user_plan_bindings
+trigger routing_rev_users_delete on users
+trigger routing_rev_users_insert on users
+trigger routing_rev_users_update on users
+trigger routing_rev_warp_profiles_delete on warp_profiles
+trigger routing_rev_warp_profiles_insert on warp_profiles
+trigger routing_rev_warp_profiles_update on warp_profiles
+trigger traffic_tail_on_user_delete on users

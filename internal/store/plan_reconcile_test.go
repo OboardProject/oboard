@@ -1,9 +1,10 @@
 package store
 
 import (
-	"github.com/OboardProject/oboard/internal/model"
 	"path/filepath"
 	"testing"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 func TestPlanReconcileCandidatesSkipIdlePlans(t *testing.T) {

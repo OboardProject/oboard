@@ -2,9 +2,10 @@ package store
 
 import (
 	"context"
-	"github.com/OboardProject/oboard/internal/model"
 	"testing"
 	"time"
+
+	"github.com/OboardProject/oboard/internal/model"
 )
 
 func TestLatencyHistoryRevisionIsTargetedAndBounded(t *testing.T) {

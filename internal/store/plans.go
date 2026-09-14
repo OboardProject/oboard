@@ -2686,10 +2686,6 @@ func (s *Store) migrateUserNodeExceptionLifecycle(ctx context.Context) error {
 		name string
 		sql  string
 	}{
-		{"status", `alter table user_node_exceptions add column status text not null default 'active'`},
-		{"starts_at", `alter table user_node_exceptions add column starts_at text`},
-		{"expiry_synced_at", `alter table user_node_exceptions add column expiry_synced_at text`},
-		{"change_id", `alter table user_node_exceptions add column change_id integer references access_changes(id) on delete set null`},
 	} {
 		if err := s.ensureColumn(ctx, "user_node_exceptions", column.name, column.sql); err != nil {
 			return err
@@ -2717,10 +2713,6 @@ func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error 
 		name string
 		sql  string
 	}{
-		{"status", `alter table user_plan_bindings add column status text not null default 'active'`},
-		{"deployed_at", `alter table user_plan_bindings add column deployed_at text`},
-		{"expiry_synced_at", `alter table user_plan_bindings add column expiry_synced_at text`},
-		{"traffic_reset_anchor_at", `alter table user_plan_bindings add column traffic_reset_anchor_at text`},
 	} {
 		if err := s.ensureColumn(ctx, "user_plan_bindings", column.name, column.sql); err != nil {
 			return err

@@ -274,4 +274,3 @@ func TestApplyHealthReportPersistsCPUCoresWithoutParsingModel(t *testing.T) {
 		t.Fatalf("stored cpu_cores = %d after omitted report, want 4", stored.CPUCores)
 	}
 }
-
