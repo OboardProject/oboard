@@ -146,9 +146,13 @@ func (s *Session) AcceptAuth(payload []byte) error {
 	return s.conn.SetDeadline(time.Time{})
 }
 
-// RejectAuth replies with an error frame and closes.
+// RejectAuth replies with an error frame and closes. The write is flushed
+// before the close so the client sees the rejection instead of a reset.
 func (s *Session) RejectAuth(reason string) {
 	_ = writeFrame(s.conn, frame{frameType: frameTypeError, payload: []byte(reason)})
+	if flusher, ok := s.conn.(interface{ CloseWrite() error }); ok {
+		_ = flusher.CloseWrite()
+	}
 	_ = s.conn.Close()
 }
 
@@ -190,8 +194,15 @@ func (s *Session) Run(onMessage func(map[string]json.RawMessage) error, onReques
 				return err
 			}
 		case frameTypeRequest:
+			requestPayload := f.payload
+			if f.flags&flagPad != 0 {
+				if requestPayload, err = stripPadding(requestPayload); err != nil {
+					s.shutdown(err)
+					return err
+				}
+			}
 			var req RequestFrame
-			if err := json.Unmarshal(f.payload, &req); err == nil {
+			if err := json.Unmarshal(requestPayload, &req); err == nil {
 				var resp *ResponseFrame
 				if onRequest != nil {
 					resp = onRequest(&req)

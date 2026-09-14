@@ -1885,6 +1885,7 @@ table servers
     mtu_probe_port INTEGER notnull=1 default=443 pk=0
     mtu_overhead_bytes INTEGER notnull=1 default=0 pk=0
     bbr_enabled INTEGER notnull=1 default=0 pk=0
+    stealth_enabled INTEGER notnull=1 default=0 pk=0
     port_range_start INTEGER notnull=1 default=10000 pk=0
     port_range_end INTEGER notnull=1 default=20000 pk=0
     internal_port_range_start INTEGER notnull=1 default=30000 pk=0

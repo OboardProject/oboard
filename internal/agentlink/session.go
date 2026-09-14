@@ -22,6 +22,8 @@ type Session struct {
 	// response for a bootstrapping session) for the caller to read once.
 	acceptPayload []byte
 	msgHandler    func(map[string]json.RawMessage)
+	dataHandlerMu sync.Mutex
+	dataHandler   func(DataHeader, []byte) error
 	closed        chan struct{}
 	closeOnce     sync.Once
 	writeErr      error
@@ -142,6 +144,47 @@ func (s *Session) shutdown(err error) {
 		}
 		s.pendingMu.Unlock()
 	})
+}
+
+// RunData starts a data-frame read loop alongside the message loop. Only one
+// RunData may be active per session.
+func (s *Session) RunData(onData func(DataHeader, []byte) error) error {
+	s.dataHandlerMu.Lock()
+	if s.dataHandler != nil {
+		s.dataHandlerMu.Unlock()
+		return errors.New("agentlink data handler already active")
+	}
+	s.dataHandler = onData
+	s.dataHandlerMu.Unlock()
+	defer func() {
+		s.dataHandlerMu.Lock()
+		s.dataHandler = nil
+		s.dataHandlerMu.Unlock()
+	}()
+	<-s.Closed()
+	return nil
+}
+
+// deliverData routes one data frame to the active handler.
+func (s *Session) deliverData(f frame) error {
+	s.dataHandlerMu.Lock()
+	handler := s.dataHandler
+	s.dataHandlerMu.Unlock()
+	if handler == nil {
+		return nil
+	}
+	if len(f.payload) < 2 {
+		return nil
+	}
+	headerLen := int(f.payload[0])<<8 | int(f.payload[1])
+	if 2+headerLen > len(f.payload) {
+		return nil
+	}
+	var header DataHeader
+	if err := json.Unmarshal(f.payload[2:2+headerLen], &header); err != nil {
+		return err
+	}
+	return handler(header, f.payload[2+headerLen:])
 }
 
 // Close ends the session.

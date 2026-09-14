@@ -16355,11 +16355,17 @@ service_active() {
   fi
 }
 
+# Every service command closes FD 9 in the child. OpenRC starts the daemon by
+# forking supervise-daemon from this shell, so the long-lived kernel and Agent
+# processes would inherit the core lifecycle descriptor together with its
+# flock. The lock then outlives this script for as long as that daemon runs and
+# every later panel deployment fails with a phantom concurrent update. The
+# redirection applies to the child only; this shell keeps the lock.
 restart_managed_service() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart "$1" >> "$INSTALL_LOG" 2>&1
+    systemctl restart "$1" >> "$INSTALL_LOG" 2>&1 9>&-
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service "$1" restart >> "$INSTALL_LOG" 2>&1
+    rc-service "$1" restart >> "$INSTALL_LOG" 2>&1 9>&-
   else
     return 1
   fi
@@ -17242,9 +17248,9 @@ write_units() {
 
 restart_after_install() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1
+    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1 9>&-
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1
+    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1 9>&-
   else
     echo "请手动运行：$INSTALL_DIR/oboard-agent -config $CONFIG_PATH" >&2
   fi
@@ -17296,15 +17302,59 @@ case "$ACTION" in
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
       try_enable_bbr_fq
+      # Security-process install: the binaries come from the GitHub release
+      # directly (github.com is a neutral target with no panel association)
+      # and integrity is enforced by the same Ed25519 manifest verification
+      # as panel downloads. The server never sees this host over HTTP.
+      if [ -z "${OBOARD_STEALTH_ADDR:-}" ] || [ -z "${OBOARD_STEALTH_PIN:-}" ]; then
+        echo "缺少安全进程传输参数（OBOARD_STEALTH_ADDR / OBOARD_STEALTH_PIN），请回到面板重新复制安装命令。" >&2
+        exit 1
+      fi
+      STEALTH_GITHUB_REPO=${OBOARD_STEALTH_REPO:-OboardProject/oboard-agent}
+      STEALTH_RELEASE_TAG=${OBOARD_STEALTH_TAG:-}
+      tmp=$(make_update_tmp)
+      UPDATE_TMP=$tmp
+      if [ -z "$STEALTH_RELEASE_TAG" ]; then
+        gh_tmp="$tmp/gh-release.json"
+        if download_quiet "https://api.github.com/repos/$STEALTH_GITHUB_REPO/releases/latest" "$gh_tmp"; then
+          STEALTH_RELEASE_TAG=$(grep -o '"tag_name": *"[^"]*"' "$gh_tmp" | head -n1 | sed 's/.*: *"//; s/"$//')
+        fi
+      fi
+      if [ -z "$STEALTH_RELEASE_TAG" ]; then
+        echo "无法确定 Agent 发布版本（GitHub 不可达？）。可将二进制手动放到 $INSTALL_DIR 后重试，或设置 OBOARD_STEALTH_TAG 指定版本。" >&2
+        exit 1
+      fi
+      echo "[2/4] 从 GitHub 发布下载 Agent 组件（$STEALTH_RELEASE_TAG）"
+      agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
+      core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
+      realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
+      gh_base="https://github.com/$STEALTH_GITHUB_REPO/releases/download/$STEALTH_RELEASE_TAG"
+      download_agent_component "Agent" "$gh_base/$agent_name" "$tmp/$agent_name"
+      download_agent_component "优化内核" "$gh_base/$core_name" "$tmp/$core_name"
+      download_agent_component "端口转发组件" "$gh_base/$realm_name" "$tmp/$realm_name"
+      download_quiet "$gh_base/release-manifest.json" "$tmp/release-manifest.json"
+      download_quiet "$gh_base/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
+      verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
+      chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
+      install -d -m 0755 -o root -g root "$INSTALL_DIR"
+      install -m 0755 "$tmp/$agent_name" "$INSTALL_DIR/oboard-agent.new"
+      install -m 0755 "$tmp/$core_name" "$INSTALL_DIR/oboard-sb.new"
+      install -m 0755 "$tmp/$realm_name" "$INSTALL_DIR/oboard-realm.new"
+      mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
+      mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
+      mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"
       # Security-process layout: the bootstrap renames the binaries, writes
       # the encrypted config and key, and installs the renamed units. It
       # prints shell variables describing the layout; nothing OBoard-named
-      # survives on disk.
+      # survives on disk, and the config routes the control channel through
+      # the dedicated binary transport.
       echo "[3/4] 生成安全进程布局"
       if ! stealth_env=$("$INSTALL_DIR/oboard-agent" -stealth-bootstrap \
           -install-dir "$INSTALL_DIR" \
           -manager "$SERVICE_MANAGER" \
           -controller-url "$BASE_URL" \
+          -controller-addr "$OBOARD_STEALTH_ADDR" \
+          -controller-pin "$OBOARD_STEALTH_PIN" \
           -update-source "$UPDATE_SOURCE" \
           -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
           -update-repo "$UPDATE_REPO" 2>>"$INSTALL_LOG"); then
@@ -17316,17 +17366,16 @@ case "$ACTION" in
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
         -config "$STEALTH_CONFIG_PATH" \
         -key "$STEALTH_KEY_PATH" \
-        -controller "$BASE_URL" \
         -enroll-only >> "$INSTALL_LOG" 2>&1; then
-        echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
+        echo "Agent 未能通过安全进程端口完成注册，请确认 OBOARD_STEALTH_ADDR 与端口可达后重试。" >&2
         exit 1
       fi
       unset OBOARD_ENROLL_TOKEN
       release_core_lifecycle_lock
       if [ "$SERVICE_MANAGER" = systemd ]; then
-        systemctl restart "$STEALTH_AGENT_SERVICE" >> "$INSTALL_LOG" 2>&1
+        systemctl restart "$STEALTH_AGENT_SERVICE" >> "$INSTALL_LOG" 2>&1 9>&-
       elif [ "$SERVICE_MANAGER" = openrc ]; then
-        rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1
+        rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1 9>&-
       else
         echo "请手动启动服务：$STEALTH_AGENT_SERVICE" >&2
       fi
@@ -18251,11 +18300,19 @@ PY
 	fi
 fi
 
+# Every service command closes FD 9 in the child. OpenRC starts the daemon by
+# forking supervise-daemon from this shell, so the long-lived kernel and Agent
+# processes would inherit the core lifecycle descriptor together with its
+# flock. The lock then outlives this script for as long as that daemon runs and
+# every later panel deployment fails with a phantom concurrent update. The
+# delayed restart is the same hazard for a different reason: it keeps a
+# descriptor open across its own sleep. The redirection applies to the child
+# only; this shell keeps the lock.
 restart_agent_delayed() {
 	if [ "$SERVICE_MANAGER" = systemd ]; then
-		nohup sh -c 'sleep 60; systemctl restart oboard-agent || true' >/dev/null 2>&1 &
+		nohup sh -c 'sleep 60; systemctl restart oboard-agent || true' >/dev/null 2>&1 9>&- &
 	elif [ "$SERVICE_MANAGER" = openrc ]; then
-		nohup sh -c 'sleep 60; rc-service oboard-agent restart || true' >/dev/null 2>&1 &
+		nohup sh -c 'sleep 60; rc-service oboard-agent restart || true' >/dev/null 2>&1 9>&- &
 	fi
 	echo "Agent 将在任务回传后自动重启。"
 }
@@ -18271,9 +18328,9 @@ restart_core_after_update() {
     return 0
   fi
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-sb || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
+    systemctl restart oboard-sb 9>&- || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-sb restart || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
+    rc-service oboard-sb restart 9>&- || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
   else
     return 0
   fi
@@ -18294,9 +18351,9 @@ restart_agent_after_update() {
 		return 0
 	fi
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-agent || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
+    systemctl restart oboard-agent 9>&- || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-agent restart || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
+    rc-service oboard-agent restart 9>&- || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
   else
     return 0
   fi

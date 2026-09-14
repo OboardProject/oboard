@@ -736,17 +736,30 @@ func (s *Server) storeOneTimeExternalAction(ctx context.Context, principal appli
 			installBBR = agentInstallBBRValue(true)
 		}
 		installStealth := agentInstallStealthValue(false)
+		stealthAddr, stealthPin := "", ""
 		if enabled, _ := server["stealth_enabled"].(bool); enabled {
 			installStealth = agentInstallStealthValue(true)
+			addr, pin, err := s.agentStealthInstallEnv()
+			if err != nil {
+				return "", err
+			}
+			stealthAddr, stealthPin = addr, pin
 		}
 		base, err := s.publicBaseURL(ctx)
 		if err != nil {
 			return "", err
 		}
+		command := agentInstallCommand(base, installBBR, installStealth)
+		environment := map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": installBBR, "OBOARD_INSTALL_STEALTH": installStealth}
+		if stealthAddr != "" {
+			command = strings.Replace(command, " sh", " "+stealthAddr+" "+stealthPin+" sh", 1)
+			environment["OBOARD_STEALTH_ADDR"] = strings.TrimPrefix(stealthAddr, "OBOARD_STEALTH_ADDR=")
+			environment["OBOARD_STEALTH_PIN"] = strings.TrimPrefix(stealthPin, "OBOARD_STEALTH_PIN=")
+		}
 		action := map[string]any{
 			"type": "execute_on_target", "title": "安装 OBoard Agent",
-			"command":     agentInstallCommand(base, installBBR, installStealth),
-			"environment": map[string]any{"OBOARD_ENROLL_TOKEN": token, "OBOARD_INSTALL_BBR": installBBR, "OBOARD_INSTALL_STEALTH": installStealth},
+			"command":     command,
+			"environment": environment,
 			"expires_at":  operation["enrollment_expires_at"],
 			"sensitive":   true, "must_not_log": true,
 			"completion_condition": map[string]any{"resource_uri": fmt.Sprintf("oboard://servers/%v/health", server["id"]), "field": "agent_connected", "equals": true},

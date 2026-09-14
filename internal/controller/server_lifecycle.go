@@ -130,6 +130,17 @@ func agentInstallCommand(baseURL, bbrValue, stealthValue string) string {
 		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
+// agentStealthInstallEnv renders the transport parameters appended to the
+// stealth install command: the dedicated listener address and its certificate
+// pin, both from the running Controller configuration.
+func (s *Server) agentStealthInstallEnv() (addrEnv, pinEnv string, err error) {
+	addr, pin, enabled := s.StealthTransportInfo()
+	if !enabled {
+		return "", "", errors.New("安全进程传输端口未启用：请先设置 OBOARD_STEALTH_ADDR 并重启 Controller")
+	}
+	return "OBOARD_STEALTH_ADDR=" + addr, "OBOARD_STEALTH_PIN=" + pin, nil
+}
+
 func (s *Server) registerServerLifecycleOperations() {
 	s.automation.RegisterValidator("servers.enrollment.issue", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		srv, err := s.serverEnrollmentIssueCandidate(ctx, principal, input)
