@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/store"
@@ -1054,5 +1056,97 @@ func TestAgentInstallScriptOpenRCUnitsRestartOnCrash(t *testing.T) {
 	// set makes OpenRC double-fork and lose track of the supervised process.
 	if strings.Contains(block, "command_background=true") {
 		t.Fatal("command_background conflicts with supervise-daemon")
+	}
+}
+
+// OpenRC starts a service by forking supervise-daemon from the calling shell,
+// so the daemon inherits every descriptor the script left open. FD 9 carries
+// the core lifecycle flock: an inherited copy keeps the lock held for as long
+// as the kernel or Agent runs, long after the script exited, and every later
+// panel deployment then fails with a concurrent-update error that no operator
+// can find a cause for.
+func TestInstallerDoesNotLeakTheCoreLockToAServiceDaemon(t *testing.T) {
+	shell := testPOSIXShell(t)
+	if _, err := exec.LookPath("flock"); err != nil {
+		t.Skip("flock(1) is unavailable")
+	}
+	script := testAgentInstallScript(t)
+	lockStart := strings.Index(script, "\nCORE_LOCK_HELD=0")
+	serviceStart := strings.Index(script, "\nservice_active() {")
+	serviceEnd := strings.Index(script, "\nresolve_agent_install_dir\n")
+	if lockStart < 0 || serviceStart <= lockStart || serviceEnd <= serviceStart {
+		t.Fatal("installer lock or service helpers are missing")
+	}
+	helpers := script[lockStart:serviceStart] + script[serviceStart:serviceEnd]
+
+	state := t.TempDir()
+	stub := filepath.Join(state, "bin")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Stands in for OpenRC: a short-lived front end that leaves a supervised
+	// daemon behind, inheriting whatever the calling shell held open.
+	writeExecutable(t, filepath.Join(stub, "rc-service"), `#!/bin/sh
+sleep 30 &
+echo $! > "$STUB_STATE/daemon.pid"
+`)
+
+	driver := "set -eu\nSTATE_DIR=" + state + "\nINSTALL_LOG=" + filepath.Join(state, "install.log") +
+		"\nSERVICE_MANAGER=openrc\n" + helpers +
+		"\nacquire_core_lifecycle_lock\nrestart_managed_service oboard-sb\nrelease_core_lifecycle_lock\necho reached-end\n"
+	cmd := exec.Command(shell, "-c", driver)
+	cmd.Env = append(os.Environ(), "PATH="+stub+":"+os.Getenv("PATH"), "STUB_STATE="+state)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("installer restart helper failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "reached-end") {
+		t.Fatalf("installer restart helper did not return: %s", out)
+	}
+	if raw, readErr := os.ReadFile(filepath.Join(state, "daemon.pid")); readErr == nil {
+		if pid, convErr := strconv.Atoi(strings.TrimSpace(string(raw))); convErr == nil {
+			t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+		}
+	} else {
+		t.Fatalf("the stub service manager left no daemon behind: %v", readErr)
+	}
+
+	// The daemon is still running. The Agent must be able to take the lock
+	// anyway, exactly as it does on its next deployment.
+	lock, err := os.OpenFile(filepath.Join(state, "core-lifecycle.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("the service daemon inherited the core lifecycle lock: %v", err)
+	}
+	_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+}
+
+// The behavioural test above covers one call site. Every other place either
+// script starts a managed service must close the same descriptor, so a new one
+// cannot reintroduce the leak.
+func TestAgentScriptsCloseTheCoreLockOnServiceRestarts(t *testing.T) {
+	for name, script := range map[string]string{
+		"installer":   testAgentInstallScript(t),
+		"self-update": testAgentSelfUpdateScript(t),
+	} {
+		for _, line := range strings.Split(script, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			starts := strings.Contains(trimmed, "systemctl restart") ||
+				strings.Contains(trimmed, "systemctl start") ||
+				(strings.Contains(trimmed, "rc-service") && strings.Contains(trimmed, "restart")) ||
+				(strings.Contains(trimmed, "rc-service") && strings.Contains(trimmed, " start"))
+			if !starts {
+				continue
+			}
+			if !strings.Contains(trimmed, "9>&-") {
+				t.Fatalf("%s starts a service without closing the core lifecycle descriptor: %s", name, trimmed)
+			}
+		}
 	}
 }

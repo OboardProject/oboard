@@ -152,6 +152,49 @@ func (s *Store) LatencyProbePlanVersion(ctx context.Context, serverID int64, dig
 	return next, nil
 }
 
+// LatencyProbePlanBinding is the version a server's current plan content was
+// issued under. It is what an Agent-reported plan identity is compared against.
+type LatencyProbePlanBinding struct {
+	ServerID    int64
+	PlanVersion int64
+	PlanDigest  string
+}
+
+func (s *Store) ListLatencyProbePlanBindings(ctx context.Context) ([]LatencyProbePlanBinding, error) {
+	rows, err := s.db.QueryContext(ctx, `select server_id,plan_version,plan_digest from server_latency_probe_settings where plan_version>0 order by server_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LatencyProbePlanBinding{}
+	for rows.Next() {
+		var item LatencyProbePlanBinding
+		if err := rows.Scan(&item.ServerID, &item.PlanVersion, &item.PlanDigest); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// RebindLatencyProbePlanVersion drops the stored version/content binding for one
+// server, so the next rendered plan is issued a fresh version above wall time.
+//
+// A node that refused the current version - it already holds that version with
+// different content - can never be brought onto it: the version is answered from
+// the stored digest, the digest still matches, and the same refused version is
+// sent again forever. Only a new version can be accepted, and only clearing the
+// binding produces one without inventing a content change.
+func (s *Store) RebindLatencyProbePlanVersion(ctx context.Context, serverID int64) error {
+	if serverID <= 0 {
+		return errors.New("latency probe plan rebind requires a server")
+	}
+	s.latencyPlanVersionMu.Lock()
+	defer s.latencyPlanVersionMu.Unlock()
+	_, err := s.db.ExecContext(ctx, `update server_latency_probe_settings set plan_digest='' where server_id=?`, serverID)
+	return err
+}
+
 func (s *Store) UpdateServerLatencyProbeSettings(ctx context.Context, server *model.Server) error {
 	if server == nil || server.ID <= 0 {
 		return errors.New("latency probe requires a server")

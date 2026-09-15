@@ -113,6 +113,7 @@ func main() {
 	}
 	app.ConfigureControllerUpdates(*dbPath, *addr)
 	app.ConfigureControllerBackups(*dbPath)
+	app.ConfigureStealthTransport(*dbPath)
 	if err := app.ApplyRuntimeSettings(context.Background()); err != nil {
 		log.Printf("apply runtime settings: %v", err)
 	}
@@ -142,6 +143,9 @@ func main() {
 	}
 	go app.StartScriptScheduler(ctx)
 	app.SetControllerBackupRestart(stop)
+	if err := app.StartStealthTransport(ctx); err != nil {
+		log.Printf("stealth agent transport: %v", err)
+	}
 	go app.StartMonitor(ctx)
 	go app.StartDNSDDNS(ctx)
 	go app.StartCertificateRenewal(ctx)

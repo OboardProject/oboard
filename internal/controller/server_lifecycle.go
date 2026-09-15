@@ -102,7 +102,7 @@ func (s *Server) issueServerEnrollmentToken(ctx context.Context, serverID int64)
 
 func enrollmentServerView(srv model.Server) map[string]any {
 	return map[string]any{
-		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled,
+		"id": srv.ID, "name": srv.Name, "bbr_enabled": srv.BBREnabled, "stealth_enabled": srv.StealthEnabled,
 		"agent_connected": srv.AgentID != "", "status": srv.Status,
 	}
 }
@@ -114,9 +114,31 @@ func agentInstallBBRValue(enabled bool) string {
 	return "0"
 }
 
-func agentInstallCommand(baseURL, bbrValue string) string {
+// agentInstallStealthValue renders the security-process switch for install
+// commands. Like BBR, the literal is always explicit (0 or 1) so a stale
+// default can never leak through.
+func agentInstallStealthValue(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return "0"
+}
+
+func agentInstallCommand(baseURL, bbrValue, stealthValue string) string {
 	return "curl -fsSL " + shellSingleQuote(strings.TrimRight(baseURL, "/")+"/install/agent.sh") +
-		` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR=` + shellSingleQuote(bbrValue) + " sh"
+		` | env OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" OBOARD_INSTALL_BBR=` + shellSingleQuote(bbrValue) +
+		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
+}
+
+// agentStealthInstallEnv renders the transport parameters appended to the
+// stealth install command: the dedicated listener address and its certificate
+// pin, both from the running Controller configuration.
+func (s *Server) agentStealthInstallEnv() (addrEnv, pinEnv string, err error) {
+	addr, pin, enabled := s.StealthTransportInfo()
+	if !enabled {
+		return "", "", errors.New("安全进程传输端口未启用：请先设置 OBOARD_STEALTH_ADDR 并重启 Controller")
+	}
+	return "OBOARD_STEALTH_ADDR=" + addr, "OBOARD_STEALTH_PIN=" + pin, nil
 }
 
 func (s *Server) registerServerLifecycleOperations() {

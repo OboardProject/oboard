@@ -16,6 +16,12 @@ const (
 	RuntimeUsersPendingAwaitingConfirm    = "awaiting_confirmation"
 	RuntimeUsersPendingRuntimeUnavailable = "runtime_unavailable"
 	RuntimeUsersPendingCoreConfigFallback = "core_config_fallback"
+	// RuntimeUsersPendingRevisionConflict marks a node that refuses the revision
+	// it is being sent because it already holds that revision with different
+	// content. Redelivery cannot resolve it - only a new revision can - so it is
+	// recorded as its own state instead of hiding inside a retryable runtime
+	// failure that the lane would keep retrying forever.
+	RuntimeUsersPendingRevisionConflict = "revision_conflict"
 )
 
 type RuntimeUserState struct {
@@ -27,13 +33,18 @@ type RuntimeUserState struct {
 	DeliveredMessageID       string
 	DeliveredAt              *time.Time
 	ConfirmedRevision        int64
-	ConfirmedDigest          string
-	ConfirmedBootID          string
-	ConfirmedAt              *time.Time
-	PendingReason            string
-	LastError                string
-	Retryable                bool
-	UpdatedAt                time.Time
+	// ConfirmedDigest is the content identity the node reports for the revision
+	// it holds, so it is directly comparable with DesiredDigest. It is empty for
+	// a node that has not reported one; the delivered snapshot digest is
+	// deliberately not stored here, because it also covers the lease counters
+	// the traffic lane refreshes and therefore never equals DesiredDigest.
+	ConfirmedDigest string
+	ConfirmedBootID string
+	ConfirmedAt     *time.Time
+	PendingReason   string
+	LastError       string
+	Retryable       bool
+	UpdatedAt       time.Time
 }
 
 func (s RuntimeUserState) Confirmed() bool {
@@ -136,7 +147,12 @@ func (s *Store) RecordRuntimeUserConfirmation(ctx context.Context, serverID, rev
 	if _, err := tx.ExecContext(ctx, `insert or ignore into runtime_user_states(server_id,updated_at) values(?,?)`, serverID, ts); err != nil {
 		return false, err
 	}
-	result, err := tx.ExecContext(ctx, `update runtime_user_states set confirmed_revision=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason=case when desired_revision<=? then '' else pending_reason end,last_error=case when desired_revision<=? then '' else last_error end,updated_at=? where server_id=? and confirmed_revision<?`, revision, strings.TrimSpace(digest), strings.TrimSpace(bootID), ts, revision, revision, ts, serverID, revision)
+	// The watermark only moves forward, but a node may re-apply the revision it
+	// already holds - the delivered payload carries lease counters that change
+	// between two deliveries of one revision. Refusing to record that left the
+	// stored identity describing a package the node no longer runs, which is
+	// exactly the divergence the lane has to be able to see.
+	result, err := tx.ExecContext(ctx, `update runtime_user_states set confirmed_revision=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason=case when desired_revision<=? then '' else pending_reason end,last_error=case when desired_revision<=? then '' else last_error end,updated_at=? where server_id=? and (confirmed_revision<? or (confirmed_revision=? and (confirmed_digest<>? or confirmed_boot_id<>?)))`, revision, strings.TrimSpace(digest), strings.TrimSpace(bootID), ts, revision, revision, ts, serverID, revision, revision, strings.TrimSpace(digest), strings.TrimSpace(bootID))
 	if err != nil {
 		return false, err
 	}
@@ -168,6 +184,30 @@ func (s *Store) RestateRuntimeUserConfirmation(ctx context.Context, serverID, re
 		return true, nil
 	}
 	return s.RecordRuntimeUserConfirmation(ctx, serverID, revision, digest, bootID)
+}
+
+// ForceRuntimeUsersResync breaks a node off a revision it disagrees with.
+//
+// It clears the desired identity, so the next evaluation cannot match it and
+// allocates desired_revision+1 for the same content. A higher revision is the
+// one thing the Agent's gate always accepts, which is what makes this an actual
+// way out: a node that refused the current revision can never be argued onto it,
+// because the revision only moves when the content changes and the content is
+// already what the node should be running.
+//
+// The confirmation watermark is cleared with it. Leaving it in place would keep
+// the lane believing the node is current and skip the redelivery this exists to
+// force.
+func (s *Store) ForceRuntimeUsersResync(ctx context.Context, serverID int64) error {
+	if serverID <= 0 {
+		return sql.ErrNoRows
+	}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `insert or ignore into runtime_user_states(server_id,updated_at) values(?,?)`, serverID, ts); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `update runtime_user_states set desired_digest='',evaluated_routing_revision=0,confirmed_revision=0,confirmed_digest='',confirmed_boot_id='',confirmed_at=null,pending_reason=?,last_error='',retryable=1,updated_at=? where server_id=?`, RuntimeUsersPendingDelivering, ts, serverID)
+	return err
 }
 
 func (s *Store) MarkRuntimeUsersPending(ctx context.Context, serverID int64, reason, lastError string, retryable bool) error {

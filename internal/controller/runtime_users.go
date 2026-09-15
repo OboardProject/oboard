@@ -432,20 +432,30 @@ func (s *Server) recordUsersAck(ctx context.Context, server *model.Server, ack m
 			return
 		}
 		reason := store.RuntimeUsersPendingRuntimeUnavailable
-		if strings.Contains(ack.Error, "does not advertise") || strings.Contains(ack.Error, "does not support") {
+		retryable := true
+		switch {
+		case strings.Contains(ack.Error, "does not advertise") || strings.Contains(ack.Error, "does not support"):
 			reason = store.RuntimeUsersPendingCoreConfigFallback
+		case usersRevisionConflictError(ack.Error):
+			// Retrying cannot help: the node refuses this revision, and the
+			// revision only moves when the content changes. Record what the node
+			// actually holds first, so the divergence is visible instead of the
+			// lane reporting a confirmed watermark it no longer describes.
+			reason = store.RuntimeUsersPendingRevisionConflict
+			retryable = false
+			s.recordUsersApplied(ctx, server, ack.Applied)
 		}
 		if strings.TrimSpace(ack.Error) == "" {
 			ack.Error = "agent did not confirm users"
 		}
-		_ = s.store.MarkRuntimeUsersPending(ctx, server.ID, reason, ack.Error, true)
+		_ = s.store.MarkRuntimeUsersPending(ctx, server.ID, reason, ack.Error, retryable)
 		if reason == store.RuntimeUsersPendingCoreConfigFallback {
 			_ = s.queueCoreConfigRefreshForServers(ctx, []int64{server.ID}, "runtime_users_fallback")
 		}
 		log.Printf("runtime users not confirmed server=%d(%s) revision=%d error=%s", server.ID, safeLogField(server.Name), ack.Revision, safeLogField(ack.Error))
 		return
 	}
-	advanced, err := s.store.RecordRuntimeUsersConfirmation(ctx, server.ID, ack.Revision, ack.Digest, ack.BootID)
+	advanced, err := s.store.RecordRuntimeUsersConfirmation(ctx, server.ID, ack.Revision, ackUsersContentDigest(ack), ack.BootID)
 	if err != nil {
 		log.Printf("record runtime users confirmation server=%d: %v", server.ID, err)
 		return
@@ -462,6 +472,26 @@ func (s *Server) recordUsersAck(ctx context.Context, server *model.Server, ack m
 	}
 }
 
+// usersRevisionConflictError recognises the Agent's refusal of a revision it
+// already holds with different content. The lane has to treat that differently
+// from a runtime failure, because no number of retries changes the answer.
+func usersRevisionConflictError(message string) bool {
+	return strings.Contains(message, "already applied with a different")
+}
+
+// ackUsersContentDigest picks the identity the lane stores as confirmed: the
+// node's content digest for the revision it just applied. Only that is
+// comparable with the desired digest the revision was allocated against; the
+// acknowledged snapshot digest also covers the lease counters and therefore
+// never equals it. A node that reports no content identity leaves it empty
+// rather than storing a value that would silently never match.
+func ackUsersContentDigest(ack model.UsersAck) string {
+	if ack.Applied != nil && ack.Applied.Revision == ack.Revision {
+		return ack.Applied.ContentDigest
+	}
+	return ""
+}
+
 func (s *Server) recordUsersApplied(ctx context.Context, server *model.Server, applied *model.UsersAppliedSnapshot) {
 	if applied == nil || applied.Revision <= 0 {
 		return
@@ -470,7 +500,7 @@ func (s *Server) recordUsersApplied(ctx context.Context, server *model.Server, a
 	// incarnation replaces the watermark its predecessor left behind, even when
 	// it is behind, so the lane redelivers instead of believing state that is
 	// no longer on the node.
-	advanced, err := s.store.RestateRuntimeUserConfirmation(ctx, server.ID, applied.Revision, applied.Digest, applied.BootID)
+	advanced, err := s.store.RestateRuntimeUserConfirmation(ctx, server.ID, applied.Revision, applied.ContentDigest, applied.BootID)
 	if err != nil {
 		log.Printf("record runtime users applied server=%d: %v", server.ID, err)
 		return
@@ -479,12 +509,56 @@ func (s *Server) recordUsersApplied(ctx context.Context, server *model.Server, a
 	if err != nil {
 		return
 	}
+	if s.repairDivergedUsersRevision(ctx, server, state, applied) {
+		return
+	}
 	if !state.Confirmed() {
 		s.wakeRuntimeUsersSync()
 	}
 	if advanced {
 		s.publishRealtime("authorization")
 	}
+}
+
+// repairDivergedUsersRevision resolves a node that holds the desired revision
+// with different content than the revision was allocated for.
+//
+// Neither side can leave that state by itself. The node refuses the revision it
+// already holds, and the Controller re-derives the same revision because the
+// content did not change - so the lane reports a confirmed watermark for a
+// payload the node never installed, and the node keeps running credentials whose
+// authorization is no longer being renewed. Allocating a new revision for the
+// same content is the way out: a higher revision is the one thing the node's
+// gate always accepts, and no configuration is lost because the content is
+// already the content the node should be running.
+//
+// It runs from the reporting path rather than the acknowledgement path on
+// purpose: the Agent's periodic snapshot pull applies without acknowledging, so
+// the refusal that this repairs never reaches the Controller as an ack at all.
+func (s *Server) repairDivergedUsersRevision(ctx context.Context, server *model.Server, state store.RuntimeUserState, applied *model.UsersAppliedSnapshot) bool {
+	if state.DesiredRevision <= 0 || applied.Revision != state.DesiredRevision {
+		return false
+	}
+	// Both identities must be known. A node that reports no content identity is
+	// simply older than this contract, not diverged.
+	if applied.ContentDigest == "" || state.DesiredDigest == "" || applied.ContentDigest == state.DesiredDigest {
+		return false
+	}
+	if !s.syncLanes.allowUsersAutoResync(server.ID, time.Now()) {
+		// Already repaired recently. The configuration health report carries the
+		// finding so an operator sees a divergence that repair did not settle,
+		// instead of this path allocating a revision per heartbeat.
+		return false
+	}
+	if err := s.store.ForceRuntimeUsersResync(ctx, server.ID); err != nil {
+		log.Printf("runtime users resync server=%d: %v", server.ID, err)
+		return false
+	}
+	log.Printf("runtime users revision %d diverged on server=%d(%s); allocating a new revision", state.DesiredRevision, server.ID, safeLogField(server.Name))
+	s.bumpRuntimeUserPackageGeneration()
+	s.wakeRuntimeUsersSync()
+	s.publishRealtime("authorization")
+	return true
 }
 
 func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -560,6 +634,9 @@ const (
 	headerUsersAppliedRevision = "X-Oboard-Users-Revision"
 	headerUsersAppliedDigest   = "X-Oboard-Users-Digest"
 	headerUsersBootID          = "X-Oboard-Users-Boot-Id"
+	// The node's content identity for the revision it holds. Absent from a node
+	// that applied its current revision before it recorded one.
+	headerUsersAppliedContent = "X-Oboard-Users-Content-Digest"
 )
 
 // serverDeliveryLaneStates is one request-scoped load of authorization, runtime
@@ -712,7 +789,11 @@ func parseAppliedUsersHeaders(r *http.Request) *model.UsersAppliedSnapshot {
 	if len(digest) > 128 || len(bootID) > 128 {
 		return nil
 	}
-	return &model.UsersAppliedSnapshot{Revision: revision, Digest: digest, BootID: bootID}
+	content := strings.TrimSpace(r.Header.Get(headerUsersAppliedContent))
+	if len(content) > 128 {
+		return nil
+	}
+	return &model.UsersAppliedSnapshot{Revision: revision, Digest: digest, BootID: bootID, ContentDigest: content}
 }
 
 func (s *Server) filterSubscriptionNodesByDelivery(ctx context.Context, user model.User, data store.FullRoutingConfig, snapshot *core.EffectiveAccessSnapshot, effectiveNodes map[string]bool) map[string]bool {

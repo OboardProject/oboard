@@ -5,9 +5,9 @@ import type { Server } from '../../proxy-path/types'
 function formatTableTime(v:string){ const d=new Date(v); if(Number.isNaN(d.getTime())) return v; const pad=(n:number)=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` }
 async function copyText(v:string){ const t=String(v||''); if(!t) return false; try{ if(navigator.clipboard?.writeText && window.isSecureContext){ await navigator.clipboard.writeText(t); return true}}catch{} const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.left='-9999px'; document.body.appendChild(ta); ta.select(); try{return document.execCommand('copy')}catch{return false}finally{document.body.removeChild(ta)} }
 function shellQuote(v:string){ return `'${String(v).replace(/'/g,`'\\''`)}'` }
-function agentScriptCommand(base:string, action:'install'|'update'|'uninstall', token='', server?: Pick<Server,'bbr_enabled'>){
+function agentScriptCommand(base:string, action:'install'|'update'|'uninstall', token='', server?: Pick<Server,'bbr_enabled'|'stealth_enabled'>){
   const b=base.replace(/\/+$/,''); const dl=`curl -fsSL ${shellQuote(`${b}/install/agent.sh`)}`
-  if(action==='install') return `${dl} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled?'1':'0'} sh`
+  if(action==='install') return `${dl} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled?'1':'0'} OBOARD_INSTALL_STEALTH=${server?.stealth_enabled?'1':'0'} sh`
   return `${dl} | sh -s -- ${action}`
 }
 
@@ -31,6 +31,7 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
     return c !== t
   }
   const needUpdate = Boolean(expectedBuild && String(expectedBuild).trim() && String(expectedBuild).trim().toLowerCase() !== 'dev' && buildNeedsUpdate(currentBuild, String(expectedBuild)) )
+  const stealthActive = Boolean(server.kernel_capabilities?.includes?.('stealth_active_v1'))
 
   const handleEnroll=async()=>{
     if(disabled) return
@@ -78,6 +79,7 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
           <div className="server-about-item"><span className="server-about-label">当前版本</span><span className="server-about-value">{server.agent_version||'—'}</span></div>
           <div className="server-about-item"><span className="server-about-label">当前 Build</span><span className="server-about-value">{currentBuild || '—'}</span></div>
           <div className="server-about-item"><span className="server-about-label">Controller 期望</span><span className="server-about-value">{expectedBuild||'—'}</span></div>
+          <div className="server-about-item"><span className="server-about-label">安全进程</span><span className="server-about-value">{stealthActive ? '已启用' : (server.stealth_enabled ? '切换中 / 未生效' : '未启用')}</span></div>
         </dl>
         {needUpdate ? (
           <div className="access-note warning">

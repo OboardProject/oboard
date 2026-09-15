@@ -282,6 +282,7 @@ func defaultDescriptors() []Descriptor {
 		"authorization_pending_reason": stringValue, "users_revision": map[string]any{"type": "integer"},
 		"users_confirmed": boolValue, "users_pending_reason": stringValue, "users_fallback": stringValue,
 		"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
+		"stealth_enabled": boolValue,
 	})
 	user := closedObject(map[string]any{
 		"id": positiveID, "revision": stringValue, "username": stringValue, "nickname": stringValue,
@@ -740,11 +741,12 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"traffic_reset_mode": map[string]any{"type": "string", "enum": []string{"monthly", "month_day"}, "description": "为空且账期日期变更时自动按当前 service_start_at(优先)或 expires_at 的日推导；仅设置 traffic_reset_day 时自动使用 month_day"}, "traffic_reset_day": map[string]any{"type": "integer", "minimum": 1, "maximum": 31, "description": "单独设置时自动将 traffic_reset_mode 切换为 month_day；为空时可按账期日期推导"}, "traffic_limit_bytes": map[string]any{"type": "integer", "minimum": 0}, "traffic_used_bytes": map[string]any{"type": "integer", "minimum": 0},
 			"display_tags":            serverDisplayTagsSchema(),
 			"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
+			"stealth_enabled": map[string]any{"type": "boolean", "description": "安全进程开关：开启后 Agent 以随机进程名、服务名与加密状态文件运行。已注册且在线的服务器会收到 apply_stealth 任务；未注册服务器仅影响后续安装命令"},
 		})
 		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
-			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
+			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),
 			"enrollment_expires_at": stringValue, "enrollment_token": stringValue,
 		}), "server_ids"
 	case "servers.delete":

@@ -77,8 +77,8 @@ func TestServerLifecycleDoesNotWaitForCredentialReconciliation(t *testing.T) {
 }
 
 func TestAgentInstallCommandInlinesBBRLiteral(t *testing.T) {
-	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true))
-	disabled := agentInstallCommand("https://panel.example.com/", agentInstallBBRValue(false))
+	enabled := agentInstallCommand("https://panel.example.com", agentInstallBBRValue(true), "0")
+	disabled := agentInstallCommand("https://panel.example.com/", agentInstallBBRValue(false), "0")
 	for _, command := range []string{enabled, disabled} {
 		if strings.Contains(command, "${OBOARD_INSTALL_BBR") {
 			t.Fatalf("command still interpolates BBR template: %s", command)

@@ -102,6 +102,11 @@ type UsersAppliedSnapshot struct {
 	Revision int64  `json:"revision"`
 	Digest   string `json:"digest,omitempty"`
 	BootID   string `json:"boot_id,omitempty"`
+	// ContentDigest is the content identity of the revision this node holds. The
+	// full digest above covers the lease counters too, so it differs between two
+	// deliveries of the same desired state; only this field can tell a node that
+	// is behind from one that merely received fresher quota numbers.
+	ContentDigest string `json:"content_digest,omitempty"`
 }
 
 // AuthorizationAppliedSnapshot is the opaque confirmation metadata the Agent

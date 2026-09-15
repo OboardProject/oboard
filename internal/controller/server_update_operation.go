@@ -61,6 +61,7 @@ type serverUpdateChanges struct {
 	DisplayTags              *[]model.ServerDisplayTag `json:"display_tags,omitempty"`
 	AuthorizationFastLane    *bool                     `json:"authorization_fast_lane,omitempty"`
 	RuntimeUsersEnabled      *bool                     `json:"runtime_users_enabled,omitempty"`
+	StealthEnabled           *bool                     `json:"stealth_enabled,omitempty"`
 }
 
 type serverUpdateOperation struct {
@@ -249,6 +250,7 @@ func applyServerUpdateChanges(next *model.Server, changes serverUpdateChanges) [
 	set("display_tags", changes.DisplayTags != nil, func() { next.DisplayTags = *changes.DisplayTags })
 	set("authorization_fast_lane", changes.AuthorizationFastLane != nil, func() {})
 	set("runtime_users_enabled", changes.RuntimeUsersEnabled != nil, func() {})
+	set("stealth_enabled", changes.StealthEnabled != nil, func() { next.StealthEnabled = *changes.StealthEnabled })
 	return changed
 }
 
@@ -304,7 +306,15 @@ func (s *Server) registerServerUpdateOperation() {
 				_, _ = s.queueTimeCheck(ctx, *next, true)
 			}
 		}
-		return map[string]any{"server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}, nil
+		stealthQueued := false
+		if _, queued, err := s.maybeQueueStealthSwitch(ctx, *current, *next); err == nil && queued {
+			stealthQueued = true
+		}
+		result := map[string]any{"server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}
+		if stealthQueued {
+			result["stealth_task_queued"] = true
+		}
+		return result, nil
 	})
 }
 

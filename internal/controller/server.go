@@ -141,6 +141,7 @@ type Server struct {
 	hotPath                       hotPathCounters
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
+	stealthTransport              atomic.Pointer[stealthTransport]
 	agentLiveMu                   sync.Mutex
 	agentLive                     map[int64][]chan any
 	agentConnsMu                  sync.Mutex
@@ -259,6 +260,9 @@ type Server struct {
 	// opens the panel pays nothing for it.
 	configHealthCache atomic.Pointer[configHealthSnapshot]
 	configHealthMu    sync.Mutex
+	// syncLanes holds what nodes report about the delivery lanes, which is the
+	// only place a version gate the two sides disagree on becomes visible.
+	syncLanes syncLaneObservations
 	// agentCallbackRate is the process-local budget for authenticated Agent
 	// callbacks. It replaces a SQLite write transaction per callback; durable
 	// budgets (enrollment, certificate issuance) stay on the store.
@@ -3853,6 +3857,7 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			model.Server
 			MTUMode                *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled             *bool                     `json:"bbr_enabled"`
+			StealthEnabled         *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode     *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled *bool                     `json:"resource_history_enabled"`
 			LatencyProbeEnabled    *bool                     `json:"latency_probe_enabled"`
@@ -3888,6 +3893,9 @@ func (s *Server) servers(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = defaultBBR
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.StealthEnabled != nil {
+			v.StealthEnabled = *input.StealthEnabled
 		}
 		if input.TimeCorrectionMode == nil {
 			v.TimeCorrectionMode = defaultTimeMode
@@ -4261,6 +4269,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			model.Server
 			MTUMode                  *model.MTUMode            `json:"mtu_mode"`
 			BBREnabled               *bool                     `json:"bbr_enabled"`
+			StealthEnabled           *bool                     `json:"stealth_enabled"`
 			TimeCorrectionMode       *model.TimeCorrectionMode `json:"time_correction_mode"`
 			ResourceHistoryEnabled   *bool                     `json:"resource_history_enabled"`
 			LatencyProbeEnabled      *bool                     `json:"latency_probe_enabled"`
@@ -4313,6 +4322,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			v.BBREnabled = current.BBREnabled
 		} else {
 			v.BBREnabled = *input.BBREnabled
+		}
+		if input.StealthEnabled == nil {
+			v.StealthEnabled = current.StealthEnabled
+		} else {
+			v.StealthEnabled = *input.StealthEnabled
 		}
 		if input.TimeCorrectionMode == nil {
 			v.TimeCorrectionMode = current.TimeCorrectionMode
@@ -4493,6 +4507,11 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			response["server"] = updated
 		}
 		s.annotateOneServerDeliveryStatus(r.Context(), updated)
+		if stealthTask, queued, stealthErr := s.maybeQueueStealthSwitch(r.Context(), *current, *updated); stealthErr != nil {
+			response["stealth_task_error"] = stealthErr.Error()
+		} else if queued {
+			response["stealth_task"] = stealthTask
+		}
 		if current.TimeCorrectionMode != v.TimeCorrectionMode && strings.TrimSpace(current.AgentID) != "" && current.Status != model.ServerOffline {
 			if task, err := s.queueTimeCheck(r.Context(), *updated, true); err == nil {
 				response["time_check_task"] = task
@@ -14874,10 +14893,6 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 		return conn.WriteJSON(s.withControllerTime(payload))
 	}
 	_ = writeAgentJSON(hello)
-	type agentSocketRead struct {
-		message map[string]json.RawMessage
-		err     error
-	}
 	reads := make(chan agentSocketRead, 8)
 	go func() {
 		for {
@@ -14896,10 +14911,42 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	s.agentSessionLoop(r.Context(), server, connectedAgentID, clientIP(r), controlCh, reads, writeAgentJSON, wsTransport{conn: conn, writeTimeout: writeTimeout}, pingInterval)
+}
+
+type agentSocketRead struct {
+	message map[string]json.RawMessage
+	err     error
+}
+
+// agentTransport abstracts the two control-channel transports (WebSocket and
+// the stealth binary protocol) behind the session loop.
+type agentTransport interface {
+	// ping writes one keepalive; failure proves the connection is gone.
+	ping() error
+}
+
+// wsTransport adapts the WebSocket connection to agentTransport.
+type wsTransport struct {
+	conn        *websocket.Conn
+	writeTimeout time.Duration
+}
+
+func (t wsTransport) ping() error {
+	return t.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(t.writeTimeout))
+}
+
+// agentSessionLoop drives one authenticated agent session after the hello
+// envelope has been sent. It is transport-agnostic: reads arrive on a
+// channel, writes go through writeAgentJSON, and keepalives through
+// transport. ctx is the connection's lifetime context.
+func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, connectedAgentID string, remoteIP string, controlCh chan any, reads chan agentSocketRead, writeAgentJSON func(any) error, transport agentTransport, pingInterval time.Duration) {
 	var inFlightTaskID int64
 	var inFlightTaskType string
 	var inFlightTimer *time.Timer
 	var inFlightTimeout <-chan time.Time
+	mode, _ := serverMonitoringPolicy(server)
+	auditEnabled := s.effectiveConnectionAuditEnabled(ctx, server)
 	defer func() {
 		if inFlightTimer != nil {
 			inFlightTimer.Stop()
@@ -14940,12 +14987,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	notifyCh := s.tasks.channel(server.ID)
 	claimTask := func() {
 		for inFlightTaskID == 0 {
-			latest, loadErr := s.store.GetServer(r.Context(), server.ID)
+			latest, loadErr := s.store.GetServer(ctx, server.ID)
 			if loadErr != nil || latest.AgentID != connectedAgentID {
 				return
 			}
 			server = latest
-			task, err := s.store.NextTask(r.Context(), server.ID)
+			task, err := s.store.NextTask(ctx, server.ID)
 			if err != nil {
 				return
 			}
@@ -14958,7 +15005,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 					"bytes":   len(encoded),
 					"limit":   s.agentSocketMessageLimit(),
 				})
-				if completeErr := s.store.CompleteTask(r.Context(), task.ID, "failed", string(result)); completeErr != nil {
+				if completeErr := s.store.CompleteTask(ctx, task.ID, "failed", string(result)); completeErr != nil {
 					log.Printf("fail oversized task %d: %v", task.ID, completeErr)
 					return
 				}
@@ -14992,13 +15039,10 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	defer pingTimer.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case received := <-reads:
 			if received.err != nil {
-				if websocket.IsUnexpectedCloseError(received.err) {
-					log.Printf("agent ws closed: %v", received.err)
-				}
 				return
 			}
 			var envelope struct {
@@ -15026,12 +15070,12 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 				s.handleInteractiveAgentStatus(server.ID, received.message)
 			}
 			if envelope.Type == model.AgentControlAuthorizationAck {
-				s.handleAuthorizationAck(r.Context(), server, received.message)
+				s.handleAuthorizationAck(ctx, server, received.message)
 			}
 			if envelope.Type == model.AgentControlUsersAck {
-				s.handleUsersAck(r.Context(), server, received.message)
+				s.handleUsersAck(ctx, server, received.message)
 			}
-			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(r.Context(), server, received.message, clientIP(r))
+			acceptedLatencyReportID, acceptedMetricReportID := s.processAgentSocketMessage(ctx, server, received.message, remoteIP)
 			if acceptedLatencyReportID != "" {
 				if err := writeAgentJSON(map[string]any{"type": "latency_probe_ack", "report_id": acceptedLatencyReportID}); err != nil {
 					return
@@ -15053,26 +15097,26 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-pingTimer.C:
-			// A ping is answered by the gorilla client's own pong handler, so
-			// this works against Agents that predate the keepalive. Failing to
-			// write it is itself proof the socket is gone.
-			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeTimeout)); err != nil {
+			// A ping is answered by the peer's own handler, so this works
+			// against Agents that predate the keepalive. Failing to write it
+			// is itself proof the socket is gone.
+			if err := transport.ping(); err != nil {
 				log.Printf("agent ping failed server=%d(%s): %v", server.ID, safeLogField(server.Name), err)
 				return
 			}
 			pingTimer.Reset(pingInterval)
 		case <-heartbeatTimer.C:
-			if latest, loadErr := s.store.GetServer(r.Context(), server.ID); loadErr == nil {
+			if latest, loadErr := s.store.GetServer(ctx, server.ID); loadErr == nil {
 				server = latest
 			}
 			mode, heartbeatInterval = serverMonitoringPolicy(server)
-			auditEnabled = s.effectiveConnectionAuditEnabled(r.Context(), server)
-			s.syncConnectionAuditPresence(r.Context(), server, auditEnabled)
+			auditEnabled = s.effectiveConnectionAuditEnabled(ctx, server)
+			s.syncConnectionAuditPresence(ctx, server, auditEnabled)
 			heartbeat := map[string]any{"type": "heartbeat", "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
-			for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
+			for key, value := range s.configurationHeartbeatFields(ctx, server.ID) {
 				heartbeat[key] = value
 			}
-			if plan, planErr := s.cachedLatencyProbePlanForServer(r.Context(), *server); planErr == nil {
+			if plan, planErr := s.cachedLatencyProbePlanForServer(ctx, *server); planErr == nil {
 				heartbeat["latency_probe_plan"] = plan
 			}
 			if err := writeAgentJSON(heartbeat); err != nil {
@@ -15178,6 +15222,7 @@ func (s *Server) processAgentSocketMessage(ctx context.Context, server *model.Se
 				s.reconcileAgentAppliedState(ctx, server.ID, h)
 				s.recordAuthorizationApplied(ctx, server, h.AppliedAuthorization)
 				s.recordUsersApplied(ctx, server, h.AppliedUsers)
+				s.syncLanes.recordProbe(server.ID, h.AppliedLatencyProbe)
 				s.completeAgentUpdateAfterReconnect(ctx, server.ID, h.AgentBuild)
 				s.publishServerPatch(result)
 			}
@@ -15959,7 +16004,22 @@ func (s *Server) portForwardForAgentReport(ctx context.Context, id int64) (*mode
 // retries on a fixed schedule forever; without this gate every one of those
 // retries still cost a SQLite read, and no per-Agent budget applied because
 // the budget is keyed by an identity the request never established.
+// preAuthoredAgentServerKey types the context value carrying an
+// already-authenticated agent identity for internal bridges (the stealth
+// transport authenticates once per connection, then replays callbacks).
+type preAuthoredAgentServerKey struct{}
+
+// withAuthenticatedAgent returns a request whose authAgent call resolves to
+// the given server without re-reading credentials. Only the stealth
+// transport bridge uses it; the identity was verified at connection auth.
+func withAuthenticatedAgent(r *http.Request, server *model.Server) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), preAuthoredAgentServerKey{}, server))
+}
+
 func (s *Server) authAgent(w http.ResponseWriter, r *http.Request) (*model.Server, bool) {
+	if server, ok := r.Context().Value(preAuthoredAgentServerKey{}).(*model.Server); ok && server != nil {
+		return server, true
+	}
 	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	ip := clientIP(r)
@@ -16107,10 +16167,16 @@ UPDATE_SOURCE=${OBOARD_UPDATE_SOURCE:-panel}
 UPDATE_REPO=${OBOARD_UPDATE_REPO:-OboardProject/oboard-agent}
 OBOARD_PURGE=${OBOARD_PURGE:-1}
 INSTALL_BBR=${OBOARD_INSTALL_BBR:-0}
+STEALTH_MODE=${OBOARD_INSTALL_STEALTH:-0}
 BBR_AVAILABLE_PATH=${OBOARD_BBR_AVAILABLE_PATH:-/proc/sys/net/ipv4/tcp_available_congestion_control}
 BBR_CONGESTION_PATH=${OBOARD_BBR_CONGESTION_PATH:-/proc/sys/net/ipv4/tcp_congestion_control}
 BBR_QDISC_PATH=${OBOARD_BBR_QDISC_PATH:-/proc/sys/net/core/default_qdisc}
 BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-oboard-bbr.conf}
+# The security-process layout must not leave OBoard-named files behind; BBR
+# uses a neutral sysctl file name instead.
+if [ "$STEALTH_MODE" = 1 ]; then
+  BBR_CONFIG_PATH=${OBOARD_BBR_CONFIG_PATH:-/etc/sysctl.d/99-net-tuning.conf}
+fi
 RELEASE_PUBLIC_KEY=__RELEASE_PUBLIC_KEY__
 ACME_SH_VERSION=3.1.4
 ACME_SH_SHA256=fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32
@@ -16289,11 +16355,17 @@ service_active() {
   fi
 }
 
+# Every service command closes FD 9 in the child. OpenRC starts the daemon by
+# forking supervise-daemon from this shell, so the long-lived kernel and Agent
+# processes would inherit the core lifecycle descriptor together with its
+# flock. The lock then outlives this script for as long as that daemon runs and
+# every later panel deployment fails with a phantom concurrent update. The
+# redirection applies to the child only; this shell keeps the lock.
 restart_managed_service() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart "$1" >> "$INSTALL_LOG" 2>&1
+    systemctl restart "$1" >> "$INSTALL_LOG" 2>&1 9>&-
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service "$1" restart >> "$INSTALL_LOG" 2>&1
+    rc-service "$1" restart >> "$INSTALL_LOG" 2>&1 9>&-
   else
     return 1
   fi
@@ -16344,6 +16416,11 @@ verify_core_runtime() {
 }
 
 resolve_agent_install_dir
+
+if [ "$ACTION" = uninstall ] && [ "$STEALTH_MODE" = 1 ]; then
+  echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板卸载 Agent。" >&2
+  exit 1
+fi
 
 if [ "$ACTION" = uninstall ]; then
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
@@ -17171,9 +17248,9 @@ write_units() {
 
 restart_after_install() {
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1
+    systemctl restart oboard-agent >> "$INSTALL_LOG" 2>&1 9>&-
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1
+    rc-service oboard-agent restart >> "$INSTALL_LOG" 2>&1 9>&-
   else
     echo "请手动运行：$INSTALL_DIR/oboard-agent -config $CONFIG_PATH" >&2
   fi
@@ -17222,32 +17299,126 @@ case "$ACTION" in
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
     acquire_core_lifecycle_lock
     download_binaries
-    persist_agent_install_dir
-    write_units
-    echo "[4/4] 注册并启动 Agent 服务"
-    resolve_update_policy
-    try_enable_bbr_fq
-    if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
-      -config "$CONFIG_PATH" \
-      -controller "$BASE_URL" \
-      -state-dir "$STATE_DIR" \
-      -core-binary "$INSTALL_DIR/oboard-sb" \
-      -core-service oboard-sb \
-      -update-source "$UPDATE_SOURCE" \
-      -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
-      -update-repo "$UPDATE_REPO" \
-      -enroll-only >> "$INSTALL_LOG" 2>&1; then
-      echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
-      exit 1
+    if [ "$STEALTH_MODE" = 1 ]; then
+      resolve_update_policy
+      try_enable_bbr_fq
+      # Security-process install: the binaries come from the GitHub release
+      # directly (github.com is a neutral target with no panel association)
+      # and integrity is enforced by the same Ed25519 manifest verification
+      # as panel downloads. The server never sees this host over HTTP.
+      if [ -z "${OBOARD_STEALTH_ADDR:-}" ] || [ -z "${OBOARD_STEALTH_PIN:-}" ]; then
+        echo "缺少安全进程传输参数（OBOARD_STEALTH_ADDR / OBOARD_STEALTH_PIN），请回到面板重新复制安装命令。" >&2
+        exit 1
+      fi
+      STEALTH_GITHUB_REPO=${OBOARD_STEALTH_REPO:-OboardProject/oboard-agent}
+      STEALTH_RELEASE_TAG=${OBOARD_STEALTH_TAG:-}
+      tmp=$(make_update_tmp)
+      UPDATE_TMP=$tmp
+      if [ -z "$STEALTH_RELEASE_TAG" ]; then
+        gh_tmp="$tmp/gh-release.json"
+        if download_quiet "https://api.github.com/repos/$STEALTH_GITHUB_REPO/releases/latest" "$gh_tmp"; then
+          STEALTH_RELEASE_TAG=$(grep -o '"tag_name": *"[^"]*"' "$gh_tmp" | head -n1 | sed 's/.*: *"//; s/"$//')
+        fi
+      fi
+      if [ -z "$STEALTH_RELEASE_TAG" ]; then
+        echo "无法确定 Agent 发布版本（GitHub 不可达？）。可将二进制手动放到 $INSTALL_DIR 后重试，或设置 OBOARD_STEALTH_TAG 指定版本。" >&2
+        exit 1
+      fi
+      echo "[2/4] 从 GitHub 发布下载 Agent 组件（$STEALTH_RELEASE_TAG）"
+      agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
+      core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
+      realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
+      gh_base="https://github.com/$STEALTH_GITHUB_REPO/releases/download/$STEALTH_RELEASE_TAG"
+      download_agent_component "Agent" "$gh_base/$agent_name" "$tmp/$agent_name"
+      download_agent_component "优化内核" "$gh_base/$core_name" "$tmp/$core_name"
+      download_agent_component "端口转发组件" "$gh_base/$realm_name" "$tmp/$realm_name"
+      download_quiet "$gh_base/release-manifest.json" "$tmp/release-manifest.json"
+      download_quiet "$gh_base/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
+      verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
+      chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
+      install -d -m 0755 -o root -g root "$INSTALL_DIR"
+      install -m 0755 "$tmp/$agent_name" "$INSTALL_DIR/oboard-agent.new"
+      install -m 0755 "$tmp/$core_name" "$INSTALL_DIR/oboard-sb.new"
+      install -m 0755 "$tmp/$realm_name" "$INSTALL_DIR/oboard-realm.new"
+      mv -f "$INSTALL_DIR/oboard-agent.new" "$INSTALL_DIR/oboard-agent"
+      mv -f "$INSTALL_DIR/oboard-sb.new" "$INSTALL_DIR/oboard-sb"
+      mv -f "$INSTALL_DIR/oboard-realm.new" "$INSTALL_DIR/oboard-realm"
+      # Security-process layout: the bootstrap renames the binaries, writes
+      # the encrypted config and key, and installs the renamed units. It
+      # prints shell variables describing the layout; nothing OBoard-named
+      # survives on disk, and the config routes the control channel through
+      # the dedicated binary transport.
+      echo "[3/4] 生成安全进程布局"
+      if ! stealth_env=$("$INSTALL_DIR/oboard-agent" -stealth-bootstrap \
+          -install-dir "$INSTALL_DIR" \
+          -manager "$SERVICE_MANAGER" \
+          -controller-url "$BASE_URL" \
+          -controller-addr "$OBOARD_STEALTH_ADDR" \
+          -controller-pin "$OBOARD_STEALTH_PIN" \
+          -update-source "$UPDATE_SOURCE" \
+          -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
+          -update-repo "$UPDATE_REPO" 2>>"$INSTALL_LOG"); then
+        echo "安全进程布局初始化失败，详细信息见 $INSTALL_LOG。" >&2
+        exit 1
+      fi
+      eval "$stealth_env"
+      echo "[4/4] 注册并启动 Agent 服务"
+      if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
+        -config "$STEALTH_CONFIG_PATH" \
+        -key "$STEALTH_KEY_PATH" \
+        -enroll-only >> "$INSTALL_LOG" 2>&1; then
+        echo "Agent 未能通过安全进程端口完成注册，请确认 OBOARD_STEALTH_ADDR 与端口可达后重试。" >&2
+        exit 1
+      fi
+      unset OBOARD_ENROLL_TOKEN
+      release_core_lifecycle_lock
+      if [ "$SERVICE_MANAGER" = systemd ]; then
+        systemctl restart "$STEALTH_AGENT_SERVICE" >> "$INSTALL_LOG" 2>&1 9>&-
+      elif [ "$SERVICE_MANAGER" = openrc ]; then
+        rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1 9>&-
+      else
+        echo "请手动启动服务：$STEALTH_AGENT_SERVICE" >&2
+      fi
+      if [ -n "${TARGET_BUILD:-}" ] && [ -x "$STEALTH_AGENT_BIN" ]; then
+        if ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+          echo "安装的 Agent 二进制 build 与目标 build 不一致，操作未完成。请检查下载缓存或重新执行命令。" >&2
+          exit 1
+        fi
+      fi
+      echo "安装完成：Agent 已以安全进程模式运行，进程、服务与文件名均已随机化。"
+      echo "此服务器后续请通过面板完成 Agent 更新与卸载。"
+    else
+      persist_agent_install_dir
+      write_units
+      echo "[4/4] 注册并启动 Agent 服务"
+      resolve_update_policy
+      try_enable_bbr_fq
+      if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$INSTALL_DIR/oboard-agent" \
+        -config "$CONFIG_PATH" \
+        -controller "$BASE_URL" \
+        -state-dir "$STATE_DIR" \
+        -core-binary "$INSTALL_DIR/oboard-sb" \
+        -core-service oboard-sb \
+        -update-source "$UPDATE_SOURCE" \
+        -allow-panel-update="$ALLOW_PANEL_UPDATE_BOOL" \
+        -update-repo "$UPDATE_REPO" \
+        -enroll-only >> "$INSTALL_LOG" 2>&1; then
+        echo "Agent 未能连接主控完成注册，请确认主控地址和安装令牌后重试。" >&2
+        exit 1
+      fi
+      unset OBOARD_ENROLL_TOKEN
+      release_core_lifecycle_lock
+      restart_after_install
+      verify_installed_versions
+      print_management_help "安装完成"
+      echo "提示：oboard-sb 会在面板首次下发配置后自动启动。"
     fi
-    unset OBOARD_ENROLL_TOKEN
-    release_core_lifecycle_lock
-    restart_after_install
-    verify_installed_versions
-    print_management_help "安装完成"
-    echo "提示：oboard-sb 会在面板首次下发配置后自动启动。"
     ;;
   update)
+    if [ "$STEALTH_MODE" = 1 ]; then
+      echo "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装；请通过面板更新 Agent。" >&2
+      exit 1
+    fi
     need_base_url
     acquire_core_lifecycle_lock
     download_binaries
@@ -18129,11 +18300,19 @@ PY
 	fi
 fi
 
+# Every service command closes FD 9 in the child. OpenRC starts the daemon by
+# forking supervise-daemon from this shell, so the long-lived kernel and Agent
+# processes would inherit the core lifecycle descriptor together with its
+# flock. The lock then outlives this script for as long as that daemon runs and
+# every later panel deployment fails with a phantom concurrent update. The
+# delayed restart is the same hazard for a different reason: it keeps a
+# descriptor open across its own sleep. The redirection applies to the child
+# only; this shell keeps the lock.
 restart_agent_delayed() {
 	if [ "$SERVICE_MANAGER" = systemd ]; then
-		nohup sh -c 'sleep 60; systemctl restart oboard-agent || true' >/dev/null 2>&1 &
+		nohup sh -c 'sleep 60; systemctl restart oboard-agent || true' >/dev/null 2>&1 9>&- &
 	elif [ "$SERVICE_MANAGER" = openrc ]; then
-		nohup sh -c 'sleep 60; rc-service oboard-agent restart || true' >/dev/null 2>&1 &
+		nohup sh -c 'sleep 60; rc-service oboard-agent restart || true' >/dev/null 2>&1 9>&- &
 	fi
 	echo "Agent 将在任务回传后自动重启。"
 }
@@ -18149,9 +18328,9 @@ restart_core_after_update() {
     return 0
   fi
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-sb || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
+    systemctl restart oboard-sb 9>&- || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-sb restart || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
+    rc-service oboard-sb restart 9>&- || { echo "内核 oboard-sb 重启失败，更新未完成。" >&2; return 1; }
   else
     return 0
   fi
@@ -18172,9 +18351,9 @@ restart_agent_after_update() {
 		return 0
 	fi
   if [ "$SERVICE_MANAGER" = systemd ]; then
-    systemctl restart oboard-agent || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
+    systemctl restart oboard-agent 9>&- || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
   elif [ "$SERVICE_MANAGER" = openrc ]; then
-    rc-service oboard-agent restart || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
+    rc-service oboard-agent restart 9>&- || { echo "Agent 重启失败，更新未完成。" >&2; return 1; }
   else
     return 0
   fi

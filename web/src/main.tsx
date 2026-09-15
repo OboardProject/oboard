@@ -1453,7 +1453,7 @@ const fieldLabels: Record<string, string> = {
   entry_address: '入口地址', public_ipv4: '检测 IPv4', public_ipv6: '检测 IPv6', interface_ipv6: '网卡 IPv6', entry_ip_mode: '入口地址策略', external_ip: '自定义入口地址', listen_ip: '监听 IP', listen_mode: '监听模式', listen_port: '监听端口', port: '端口', port_range: '端口范围', port_range_start: '端口范围起点', port_range_end: '端口范围终点', target_address: '目标地址', target_port: '目标端口', target_endpoint: '目标端点',
   dns_sync_enabled: '域名解析', dns_credential_id: '域名服务账号', dns_domain: '解析域名', dns_proxy_enabled: '代理访问', dns_record_types: '解析记录', ddns_enabled: '自动更新地址', ddns_interval_seconds: '更新间隔', dns_sync_status: '同步状态', dns_sync_error: '同步错误', dns_last_synced_at: '同步时间',
   subject_type: '授权类型', scope_type: '授权范围',
-  ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ',
+  ip_stack: 'IP 栈', udp_inbound_mode: 'UDP 入站', mtu_mode: 'MTU 模式', mtu_value: 'MTU 值', mtu_probe_host: 'MTU 探测主机', mtu_probe_port: 'MTU 探测端口', mtu_overhead_bytes: 'MTU 额外开销', bbr_enabled: 'BBR + FQ', stealth_enabled: '安全进程',
   os: '系统', system: '系统', distro_id: '发行版 ID', distro_version: '发行版版本', distro_name: '发行版', libc: 'libc', service_manager: '服务管理器', package_manager: '包管理器', arch: '架构', cpu: 'CPU', cpu_cores: 'CPU 核心', cpu_usage: 'CPU', cpu_usage_percent: 'CPU 使用率', memory: '内存', memory_used_bytes: '已用内存', memory_total_bytes: '总内存', agent_memory: 'Agent 内存', agent_memory_bytes: 'Agent 内存', agent_version: 'Agent 版本', agent_build: 'Agent 构建', sing_box_version: 'sing-box 版本', download_rate: '下载速率', upload_rate: '上传速率', period_traffic: '周期流量', monitoring_mode: '回报模式',
   tls: 'TLS', certificate_mode: '证书模式', certificate_id: '证书', certificate_domain: '证书域名', config_json: 'JSON 配置', match_json: '匹配规则 JSON', result_json: '结果 JSON', events: '事件',
   proxy_uuid: '代理 UUID', proxy_password: '代理密码', speed_limit_mbps: '限速 Mbps', traffic_limit_bytes: '流量额度', traffic_used_bytes: '已用流量', subscription_token: '订阅令牌',
@@ -7442,7 +7442,7 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
 }
 
 function defaultServerDraft(defaults?: { mtu_mode?: string; bbr_enabled?: boolean; time_correction_mode?: TimeCorrectionMode; public_port_range_start?: number; public_port_range_end?: number; internal_port_range_start?: number; internal_port_range_end?: number; latency_probe_interval_seconds?: number }): any {
-  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',  expiry_notify_enabled: true, display_tags: [] }
+  return { name: 'server-1', entry_address: '', public_ipv4: '', public_ipv6: '', interface_ipv6: '', region_code: '', detected_region_code: '', region_mode: 'auto' as RegionMode, entry_ip_mode: 'auto' as EntryIPMode, listen_ip: '0.0.0.0', listen_mode: 'auto', ip_stack: 'auto', udp_inbound_mode: 'allow', mtu_mode: defaults?.mtu_mode || 'detect', mtu_value: 0, mtu_probe_host: '1.1.1.1', mtu_probe_port: 443, mtu_overhead_bytes: 0, bbr_enabled: defaults?.bbr_enabled !== undefined ? Boolean(defaults.bbr_enabled) : true, stealth_enabled: false, time_correction_mode: defaults?.time_correction_mode || 'auto' as TimeCorrectionMode, port_range_start: defaults?.public_port_range_start || 10000, port_range_end: defaults?.public_port_range_end || 20000, internal_port_range_start: defaults?.internal_port_range_start || 30000, internal_port_range_end: defaults?.internal_port_range_end || 59999, status: 'unknown', monitoring_mode: 'lightweight' as 'lightweight' | 'standard', resource_history_enabled: true, traffic_reset_mode: 'monthly', traffic_reset_day: 1, traffic_limit_bytes: 0, traffic_used_bytes: 0, latency_probe_enabled: true, latency_probe_mode: 'tcp' as LatencyProbeMode, latency_probe_public_target: 'auto' as ConnectivityProbeTarget, latency_probe_interval_seconds: defaults?.latency_probe_interval_seconds || 120, latency_probe_sample_count: 3, latency_probe_max_targets: 64, connection_audit_enabled: true, offline_notify_enabled: true, offline_after_seconds: 0, service_start_at: '', expires_at: '', auto_renew_enabled: false, renewal_cycle: 'monthly' as 'monthly' | 'quarterly',  expiry_notify_enabled: true, display_tags: [] }
 }
 
 const serverSettingTabs = [
@@ -8606,10 +8606,10 @@ function shellQuote(value: string) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
-function agentScriptCommand(controllerURL: string, action: 'install' | 'update' | 'uninstall', token = '', server?: Pick<Server, 'bbr_enabled'>) {
+function agentScriptCommand(controllerURL: string, action: 'install' | 'update' | 'uninstall', token = '', server?: Pick<Server, 'bbr_enabled' | 'stealth_enabled'>) {
   const base = controllerURL.replace(/\/+$/, '')
   const download = `curl -fsSL ${shellQuote(`${base}/install/agent.sh`)}`
-  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled ? '1' : '0'} sh`
+  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled ? '1' : '0'} OBOARD_INSTALL_STEALTH=${server?.stealth_enabled ? '1' : '0'} sh`
   return `${download} | sh -s -- ${action}`
 }
 
@@ -9023,6 +9023,10 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
 
+          <FormField label="安全进程" hint="安装命令将以安全进程模式初始化：进程、服务与文件名随机化，配置加密存储。">
+            <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
+          </FormField>
+
           <FormField label="时间校准" hint="开启后，Agent 接入时会立即检测。" full>
             <TimeCorrectionSelector value={draft.time_correction_mode} onChange={value => update({ time_correction_mode: value })} />
           </FormField>
@@ -9197,6 +9201,10 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
           <div className="form-section-title">主机设置</div>
           <FormField label="BBR + FQ" hint="下次重新安装 Agent 时尝试启用，失败不影响安装。">
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
+          </FormField>
+
+          <FormField label="安全进程" hint="隐藏 Agent 进程名与服务名，配置文件加密存储。已注册的服务器会立即切换，未注册的服务器影响后续安装命令。">
+            <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
           </FormField>
 
           <FormField label="时间校准" hint="切换模式后会立即检测时间偏差。" full><TimeCorrectionSelector value={draft.time_correction_mode || 'auto'} onChange={value => update({ time_correction_mode: value })} /></FormField>
