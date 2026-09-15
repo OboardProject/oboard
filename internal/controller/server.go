@@ -16914,6 +16914,30 @@ load_target_version() {
   fi
 }
 
+# Mirrors the Controller resourceReleaseTag rule so a stealth install pulls
+# the exact GitHub release the panel resolved. GitHub's releases/latest
+# endpoint excludes prereleases, so a dev-only repository answers 404 there
+# and cannot be the primary tag source.
+stealth_target_release_tag() {
+  release_version=${1:-}
+  release_build=${2:-}
+  case "$release_version" in
+    dev-????????????)
+      case "$release_build" in
+        ??????????????) printf '%s-%s\n' "$release_version" "$release_build" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    v*.*.*|*.*.*)
+      case "$release_version" in
+        v*) printf '%s\n' "$release_version" ;;
+        *) printf 'v%s\n' "$release_version" ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_update_policy() {
   if [ -z "$ALLOW_PANEL_UPDATE" ]; then
     case "${TARGET_DEV:-false}" in
@@ -17388,13 +17412,21 @@ case "$ACTION" in
       tmp=$(make_update_tmp)
       UPDATE_TMP=$tmp
       if [ -z "$STEALTH_RELEASE_TAG" ]; then
-        gh_tmp="$tmp/gh-release.json"
-        if download_quiet "https://api.github.com/repos/$STEALTH_GITHUB_REPO/releases/latest" "$gh_tmp"; then
-          STEALTH_RELEASE_TAG=$(grep -o '"tag_name": *"[^"]*"' "$gh_tmp" | head -n1 | sed 's/.*: *"//; s/"$//')
-        fi
+        STEALTH_RELEASE_TAG=$(stealth_target_release_tag "${TARGET_VERSION:-}" "${TARGET_BUILD:-}") || STEALTH_RELEASE_TAG=
       fi
       if [ -z "$STEALTH_RELEASE_TAG" ]; then
-        echo "无法确定 Agent 发布版本（GitHub 不可达？）。可将二进制手动放到 $INSTALL_DIR 后重试，或设置 OBOARD_STEALTH_TAG 指定版本。" >&2
+        gh_tmp="$tmp/gh-release.json"
+        # releases/latest excludes prereleases and 404s on a dev-only
+        # repository, so also try the mutable dev tag directly.
+        for gh_endpoint in latest tags/dev; do
+          if download_quiet "https://api.github.com/repos/$STEALTH_GITHUB_REPO/releases/$gh_endpoint" "$gh_tmp"; then
+            STEALTH_RELEASE_TAG=$(grep -o '"tag_name": *"[^"]*"' "$gh_tmp" | head -n1 | sed 's/.*: *"//; s/"$//')
+            [ -n "$STEALTH_RELEASE_TAG" ] && break
+          fi
+        done
+      fi
+      if [ -z "$STEALTH_RELEASE_TAG" ]; then
+        echo "无法确定 Agent 发布版本（GitHub 发布不可达或无匹配版本）。可将二进制手动放到 $INSTALL_DIR 后重试，或设置 OBOARD_STEALTH_TAG 指定版本。" >&2
         exit 1
       fi
       echo "[2/4] 从 GitHub 发布下载 Agent 组件（$STEALTH_RELEASE_TAG）"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -185,6 +186,48 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	}
 	if !strings.Contains(script, "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装") {
 		t.Fatal("uninstall must refuse stealth installs with guidance")
+	}
+}
+
+// GitHub's releases/latest endpoint excludes prereleases, so a dev-only
+// repository answers 404 there. The stealth branch must derive the release
+// tag from the panel-resolved target version first and keep a prerelease
+// API fallback.
+func TestStealthInstallResolvesReleaseTagFromTargetVersion(t *testing.T) {
+	script := testAgentInstallScript(t)
+	shell := testPOSIXShell(t)
+	harness := strings.Join([]string{
+		"set -eu",
+		extractShellFunction(t, script, "stealth_target_release_tag"),
+		`tag=$(stealth_target_release_tag "dev-82e772e0b212" "20260915045410")`,
+		`[ "$tag" = "dev-82e772e0b212-20260915045410" ]`,
+		`tag=$(stealth_target_release_tag "1.2.3" "20260915045410")`,
+		`[ "$tag" = "v1.2.3" ]`,
+		`tag=$(stealth_target_release_tag "v1.2.3" "20260915045410")`,
+		`[ "$tag" = "v1.2.3" ]`,
+		`if stealth_target_release_tag "dev-82e772e0b21" "20260915045410"; then exit 9; fi`,
+		`if stealth_target_release_tag "dev-82e772e0b212" "202609150454"; then exit 9; fi`,
+		`if stealth_target_release_tag "" ""; then exit 9; fi`,
+		`if stealth_target_release_tag "garbage" ""; then exit 9; fi`,
+		"echo tag-ok",
+	}, "\n")
+	if output, err := exec.Command(shell, "-c", harness).CombinedOutput(); err != nil {
+		t.Fatalf("stealth tag derivation failed: %v\n%s", err, output)
+	}
+
+	installBranch := shellCaseBranch(t, script, "install)", "update)")
+	stealthStart := strings.Index(installBranch, `if [ "$STEALTH_MODE" = 1 ]; then`)
+	if stealthStart < 0 {
+		t.Fatal("install branch must gate the stealth bootstrap on STEALTH_MODE")
+	}
+	stealthBranch := installBranch[stealthStart:]
+	derived := strings.Index(stealthBranch, `stealth_target_release_tag "${TARGET_VERSION:-}" "${TARGET_BUILD:-}"`)
+	apiFallback := strings.Index(stealthBranch, "api.github.com")
+	if derived < 0 || apiFallback < 0 || derived > apiFallback {
+		t.Fatal("stealth branch must derive the release tag from the panel-resolved target version before any GitHub API lookup")
+	}
+	if !strings.Contains(stealthBranch, "tags/dev") {
+		t.Fatal("stealth branch must fall back to the mutable dev prerelease tag because releases/latest excludes prereleases")
 	}
 }
 
