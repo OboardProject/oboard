@@ -6126,6 +6126,12 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, err, 404)
 		return
 	}
+	// The deletion claim outranks command-building errors: a server being
+	// deleted must answer 409 even when the panel has no controller_url yet.
+	if _, err := s.store.GetServerDeletion(r.Context(), id); err == nil {
+		fail(w, store.ErrServerDeleting, http.StatusConflict)
+		return
+	}
 	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.BBREnabled, srv.StealthEnabled)
 	if err != nil {
 		fail(w, err, http.StatusBadRequest)
