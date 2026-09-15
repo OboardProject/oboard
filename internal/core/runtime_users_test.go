@@ -238,6 +238,74 @@ func TestProjectServerRuntimeUsersMatchesFullGeneration(t *testing.T) {
 	}
 }
 
+// A path stage rule is emitted before the path's default fallback, and
+// sing-box stops at the first matching rule. The runtime user lane folds both
+// into one user-selector entry, so it must read the same first match.
+func TestRuntimeUserRoutesKeepFirstMatchingRule(t *testing.T) {
+	config := &SingBoxConfig{Route: map[string]any{"rules": []map[string]any{
+		{"action": "route", "inbound": []string{"in-1"}, "auth_user": []string{"alice"}, "outbound": "source-prefix-b0438a58bf47"},
+		{"action": "route", "inbound": []string{"in-1"}, "auth_user": []string{"alice"}, "outbound": "direct"},
+	}}}
+	routes := collectRuntimeUserRoutes(config, map[string]struct{}{"in-1": {}})
+	if got := routes["in-1\x00alice"]; got != "source-prefix-b0438a58bf47" {
+		t.Fatalf("route = %q, want the stage rule that sing-box would match first", got)
+	}
+}
+
+// Regression: a runtime-managed inbound whose direct path carries a
+// source-prefix stage rule must install that exit, not the path's `direct`
+// fallback. Folding used to keep the last rule, which is always the fallback,
+// so every identity silently egressed through the default outbound.
+func TestRuntimeUsersInstallPathStageExitNotPathFallback(t *testing.T) {
+	server := capableRuntimeUserServer(model.AgentCapabilityRuntimeUsersShadowsocks)
+	server.PublicIPv4 = "203.0.113.1"
+	server.ListenIP = "0.0.0.0"
+	server.IPStack = model.IPStackDualStack
+	server.PortRangeStart, server.PortRangeEnd = 30000, 30100
+	root := model.Inbound{ID: 11, ServerID: server.ID, Name: "entry", Protocol: model.ProtocolSS, ListenIP: "0.0.0.0", Port: 51353, ConfigJSON: `{"method":"2022-blake3-aes-256-gcm"}`, Enabled: true}
+	path := model.ProxyPath{ID: 50, Kind: model.ProxyPathKindDirect, Name: "v6 exit", InboundID: root.ID, Secret: "path-secret", Enabled: true}
+	pathID := path.ID
+	rule := model.RoutingRule{
+		ID: 7, ServerID: server.ID, Scope: model.RoutingRuleScopePathStage, ProxyPathID: &pathID,
+		SortPosition: 0, MatchSource: model.RoutingMatchSourceInline, Name: "v6-only", MatchJSON: `{}`,
+		Action: model.RouteActionSourcePrefix, SourcePrefix: "2001:db8:42::/64", Enabled: true,
+	}
+	users := []model.User{{ID: 1, Username: "alice", Status: "active", ProxyPassword: "pass-a", AuthorizationKey: "auth-alice"}}
+	opts := ConfigOptions{
+		Servers: []model.Server{server}, Inbounds: []model.Inbound{root},
+		ProxyPaths: []model.ProxyPath{path}, RoutingRules: []model.RoutingRule{rule},
+		InboundUsers: []model.InboundUser{{InboundID: root.ID, UserID: 1, Enabled: true}},
+	}
+	wantTag := sourcePrefixOutboundTag("2001:db8:42::/64")
+
+	var fromFull *RuntimeUserPackage
+	fullOpts := opts
+	fullOpts.RuntimeUsersOut = &fromFull
+	config, err := generateFixtureConfig(server, []model.Inbound{root}, nil, testDNSState(server.ID), users, fullOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromFull == nil || len(fromFull.Entries) != 1 {
+		t.Fatalf("runtime user package = %+v", fromFull)
+	}
+	if got := fromFull.Entries[0].RouteOutbound; got != wantTag {
+		t.Fatalf("installed route = %q, want %q; config=%s", got, wantTag, config)
+	}
+	// The selected outbound must exist in the config the kernel loads, or the
+	// whole snapshot is rejected and every connection on the inbound drops.
+	if len(findOutbound(config, wantTag)) == 0 {
+		t.Fatalf("source-prefix outbound %q missing from config=%s", wantTag, config)
+	}
+
+	projected, err := ProjectServerRuntimeUsers(server, []model.Inbound{root}, nil, testDNSState(server.ID), fixtureCredentials(users, []model.Inbound{root}, opts.ProxyPaths), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projected.Entries) != 1 || projected.Entries[0].RouteOutbound != wantTag {
+		t.Fatalf("projected route = %+v, want %q", projected.Entries, wantTag)
+	}
+}
+
 func BenchmarkUsersDigest(b *testing.B) {
 	entries := make([]model.UsersInstallEntry, 128)
 	scope := make([]string, 8)

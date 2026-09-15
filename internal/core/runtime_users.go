@@ -422,7 +422,17 @@ func collectRuntimeUserRoutes(config *SingBoxConfig, managed map[string]struct{}
 				continue
 			}
 			for _, user := range users {
-				out[inboundTag+"\x00"+user] = outbound
+				// sing-box stops at the first matching route rule, so the
+				// first rule naming an identity is the one that decides its
+				// outbound. The path default fallback is always appended
+				// after the stage rules, so overwriting here would collapse
+				// every identity onto that fallback and silently discard the
+				// stage rule the operator configured.
+				key := inboundTag + "\x00" + user
+				if _, ok := out[key]; ok {
+					continue
+				}
+				out[key] = outbound
 			}
 		}
 	}
