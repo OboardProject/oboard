@@ -24,7 +24,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
 
   const handleEnroll=async()=>{
     const res = await client.request(`/servers/${server.id}/enroll-token`, { method:'POST', body:'{}' })
-    return res.enrollment_token as string
+    return res.install_command as string
   }
   const handleUpdateAgent=async()=>{
     try{
@@ -53,7 +53,7 @@ export function ServerSystemDialog({ server, initialTab='overview', data, client
   return (
     <ServerWorkspaceDialog server={server} title="Agent 维护与日志" tabs={tabs as any} activeTab={tab} onTabChange={(id)=> setTab(id as Tab)} onClose={onClose}>
       {tab==='overview' && <SystemOverviewTab server={server} />}
-      {tab==='agent' && <SystemAgentTab server={server} controllerURL={controllerURL} expectedBuild={expectedBuild} onEnroll={handleEnroll} onUpdateAgent={handleUpdateAgent} notify={notify} />}
+      {tab==='agent' && <SystemAgentTab server={server} expectedBuild={expectedBuild} onEnroll={handleEnroll} onUpdateAgent={handleUpdateAgent} notify={notify} />}
       {tab==='settings' && <SystemSettingsTab server={server} onSave={handleSaveSystem} onCheckTime={handleCheckTime} />}
       {tab==='logs' && <SystemLogsTab server={server} data={data} client={client} disabled={offline||!enrolled} disabledReason={!enrolled? '未接入 Agent，无法获取日志' : 'Agent 当前离线'} />}
     </ServerWorkspaceDialog>

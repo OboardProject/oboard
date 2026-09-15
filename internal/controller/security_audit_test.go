@@ -405,6 +405,10 @@ func TestEnrollmentTokenCannotBindAnotherServer(t *testing.T) {
 	serverB := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "enroll-b", "listen_ip": "0.0.0.0", "port_range_start": 20000, "port_range_end": 20010}, http.StatusCreated)
 	serverAID := int64(serverA["server"].(map[string]any)["id"].(float64))
 	serverBID := int64(serverB["server"].(map[string]any)["id"].(float64))
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
 	enroll := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverAID)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
 	claimed := request(t, h, http.MethodPost, "/api/v1/agent/enroll", "", map[string]any{
 		"enrollment_token": enroll["enrollment_token"],
@@ -433,6 +437,10 @@ func TestEnrollmentConcurrentRequestsConsumeTokenOnce(t *testing.T) {
 	adminToken := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "race-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
 	enroll := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
 	token := enroll["enrollment_token"].(string)
 	statuses := make([]int, 8)

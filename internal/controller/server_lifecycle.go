@@ -130,6 +130,27 @@ func agentInstallCommand(baseURL, bbrValue, stealthValue string) string {
 		` OBOARD_INSTALL_STEALTH=` + shellSingleQuote(stealthValue) + " sh"
 }
 
+func (s *Server) agentEnrollmentCommand(ctx context.Context, bbr, stealth bool) (string, map[string]any, error) {
+	base, err := s.publicBaseURL(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	bbrValue, stealthValue := agentInstallBBRValue(bbr), agentInstallStealthValue(stealth)
+	command := agentInstallCommand(base, bbrValue, stealthValue)
+	env := map[string]any{"OBOARD_INSTALL_BBR": bbrValue, "OBOARD_INSTALL_STEALTH": stealthValue}
+	if stealth {
+		addr, pin, err := s.agentStealthInstallEnv()
+		if err != nil {
+			return "", nil, err
+		}
+		addr = strings.TrimPrefix(addr, "OBOARD_STEALTH_ADDR=")
+		pin = strings.TrimPrefix(pin, "OBOARD_STEALTH_PIN=")
+		command = strings.TrimSuffix(command, " sh") + " OBOARD_STEALTH_ADDR=" + shellSingleQuote(addr) + " OBOARD_STEALTH_PIN=" + shellSingleQuote(pin) + " sh"
+		env["OBOARD_STEALTH_ADDR"], env["OBOARD_STEALTH_PIN"] = addr, pin
+	}
+	return command, env, nil
+}
+
 // agentStealthInstallEnv renders the transport parameters appended to the
 // stealth install command: the dedicated listener address and its certificate
 // pin, both from the running Controller configuration.

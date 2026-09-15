@@ -6116,8 +6116,14 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, errors.New("admin role required for Agent enrollment"), 403)
 		return
 	}
-	if _, err := s.store.GetServer(r.Context(), id); err != nil {
+	srv, err := s.store.GetServer(r.Context(), id)
+	if err != nil {
 		fail(w, err, 404)
+		return
+	}
+	command, _, err := s.agentEnrollmentCommand(r.Context(), srv.BBREnabled, srv.StealthEnabled)
+	if err != nil {
+		fail(w, err, http.StatusBadRequest)
 		return
 	}
 	token, expiresAt, _, err := s.issueServerEnrollmentToken(r.Context(), id)
@@ -6129,8 +6135,9 @@ func (s *Server) enrollToken(w http.ResponseWriter, r *http.Request, id int64) {
 		fail(w, err, status)
 		return
 	}
+	command = strings.Replace(command, `"$OBOARD_ENROLL_TOKEN"`, shellSingleQuote(token), 1)
 	auditReq(s, r, "create", "enroll-token", fmt.Sprint(id))
-	write(w, 200, map[string]any{"enrollment_token": token, "expires_at": expiresAt, "expires_in_seconds": int(enrollmentTokenTTL.Seconds())})
+	write(w, 200, map[string]any{"enrollment_token": token, "install_command": command, "expires_at": expiresAt, "expires_in_seconds": int(enrollmentTokenTTL.Seconds())})
 }
 
 func (s *Server) inbounds(w http.ResponseWriter, r *http.Request) {
@@ -14928,7 +14935,7 @@ type agentTransport interface {
 
 // wsTransport adapts the WebSocket connection to agentTransport.
 type wsTransport struct {
-	conn        *websocket.Conn
+	conn         *websocket.Conn
 	writeTimeout time.Duration
 }
 

@@ -7754,7 +7754,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   const [editServer, setEditServer] = useState<Server | null>(null)
   const [extendServer, setExtendServer] = useState<Server | null>(null)
   const [agentConfigServer, setAgentConfigServer] = useState<Server | null>(null)
-  const [installTarget, setInstallTarget] = useState<{ server: Server; token: string } | null>(null)
+  const [installTarget, setInstallTarget] = useState<{ server: Server; command: string } | null>(null)
   const [logServer, setLogServer] = useState<Server | null>(null)
   const [networkServer, setNetworkServer] = useState<{ server: Server; tab: 'overview' | 'traffic' | 'settings' | 'dns' | 'mtu' | 'diagnostics' } | null>(null)
   const [detailServer, setDetailServer] = useState<Server | null>(null)
@@ -7989,7 +7989,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
   }
   const enroll = async (s: Server) => {
     const res = await client.request(`/servers/${s.id}/enroll-token`, { method: 'POST', body: '{}' })
-    setInstallTarget({ server: s, token: res.enrollment_token })
+    setInstallTarget({ server: s, command: res.install_command })
   }
   const tasks = async (s: Server) => {
     notify?.(`已打开任务中心，可查看 ${s.name || '服务器'} 相关任务`, 'info')
@@ -8522,7 +8522,7 @@ function Servers({ data, client, load, loading, notify, realtimeStatus }: any) {
     {monitoringServer && <ServerMonitoringTargetDialog key={monitoringServer.id} server={monitoringServer} client={client} onClose={() => setMonitoringServer(null)} onSaved={updated => { setServers(current => current.map(server => server.id === updated.id ? updated : server)); notify?.('默认监控目标已保存', 'success') }} />}
     <AnimatePresence>{connectivityServer && <ServerConnectivityDialog server={connectivityServer.server} client={client} onClose={() => setConnectivityServer(null)} onUpdated={() => { void refreshServers() }} />}</AnimatePresence>
     <AnimatePresence>{agentConfigServer && <AgentConfigDialog server={agentConfigServer} controllerURL={effectiveControllerURL(data)} onCancel={() => setAgentConfigServer(null)} onSubmit={cfg => syncAgentConfig(agentConfigServer, cfg)} />}</AnimatePresence>
-    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} token={installTarget.token} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
+    <AnimatePresence>{installTarget && <AgentInstallDialog server={installTarget.server} installCommand={installTarget.command} controllerURL={effectiveControllerURL(data)} onClose={() => setInstallTarget(null)} />}</AnimatePresence>
     <AnimatePresence>{deleteServerDraft && <DeleteServerDialog server={deleteServerDraft} busy={deleteServerBusy} onCancel={() => { if (!deleteServerBusy) setDeleteServerDraft(null) }} onSubmit={uninstall => void deleteServer(deleteServerDraft, uninstall)} />}</AnimatePresence>
     <AnimatePresence>{logServer && <AgentLogsDialog server={logServer} data={data} client={client} onClose={() => setLogServer(null)} />}</AnimatePresence>
     </div>
@@ -8606,10 +8606,9 @@ function shellQuote(value: string) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
-function agentScriptCommand(controllerURL: string, action: 'install' | 'update' | 'uninstall', token = '', server?: Pick<Server, 'bbr_enabled' | 'stealth_enabled'>) {
+function agentScriptCommand(controllerURL: string, action: 'update' | 'uninstall') {
   const base = controllerURL.replace(/\/+$/, '')
   const download = `curl -fsSL ${shellQuote(`${base}/install/agent.sh`)}`
-  if (action === 'install') return `${download} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled ? '1' : '0'} OBOARD_INSTALL_STEALTH=${server?.stealth_enabled ? '1' : '0'} sh`
   return `${download} | sh -s -- ${action}`
 }
 
@@ -8647,7 +8646,7 @@ function DeleteServerDialog({ server, busy, onCancel, onSubmit }: { server: Serv
   </MotionDialogPanel>
 }
 
-function AgentInstallDialog({ server, token, controllerURL, onClose }: { server: Server; token: string; controllerURL: string; onClose: () => void }) {
+function AgentInstallDialog({ server, installCommand, controllerURL, onClose }: { server: Server; installCommand: string; controllerURL: string; onClose: () => void }) {
   const isOnline = String(server.status || '').toLowerCase() === 'online'
   const [action, setAction] = useState<'install' | 'update' | 'uninstall'>(isOnline ? 'update' : 'install')
   const actionTitle = action === 'install' ? '安装' : action === 'update' ? '更新' : '卸载'
@@ -8656,7 +8655,7 @@ function AgentInstallDialog({ server, token, controllerURL, onClose }: { server:
     : action === 'update'
       ? '从当前面板更新 Agent 和内核，保留配置。'
       : '移除 Agent、内核和本机配置。'
-  const command = agentScriptCommand(controllerURL, action, token, server)
+  const command = action === 'install' ? installCommand : agentScriptCommand(controllerURL, action)
   return <MotionDialogPanel onCancel={onClose} className="install-dialog">
       <header className="dialog-head">
         <div><h2 id="agent-install-title">Agent 和内核</h2><p className="muted">{server.name || '这台服务器'} · {isOnline ? '在线' : '离线'}</p></div>

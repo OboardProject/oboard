@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -183,5 +185,48 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	}
 	if !strings.Contains(script, "此服务器已启用安全进程布局，命令行脚本无法定位随机化的安装") {
 		t.Fatal("uninstall must refuse stealth installs with guidance")
+	}
+}
+
+func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
+	ctx := context.Background()
+	db := openControllerAutomationTestStore(t)
+	srv := newTestServer(db, "test-secret", "")
+	if err := db.SetSetting(ctx, "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	h := srv.Handler()
+	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
+	login := request(t, h, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)
+	token := login["token"].(string)
+	node := &model.Server{Name: "enrollment-stealth", StealthEnabled: true, BBREnabled: true}
+	if err := db.CreateServer(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/api/v1/ui/servers/%d/enroll-token", node.ID)
+	request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusBadRequest)
+	stored, err := db.GetServer(ctx, node.ID)
+	if err != nil || stored.EnrollmentHash != "" {
+		t.Fatalf("failed command issued token: %v", err)
+	}
+	srv.stealthTransport.Store(&stealthTransport{addr: "transport.example.com:443", pin: "test-pin"})
+	result := request(t, h, http.MethodPost, path, token, map[string]any{}, http.StatusOK)
+	command := result["install_command"].(string)
+	for _, want := range []string{
+		"https://panel.example.com/install/agent.sh",
+		"OBOARD_ENROLL_TOKEN=" + shellSingleQuote(result["enrollment_token"].(string)),
+		"OBOARD_INSTALL_BBR='1'", "OBOARD_INSTALL_STEALTH='1'",
+		"OBOARD_STEALTH_ADDR='transport.example.com:443'", "OBOARD_STEALTH_PIN='test-pin'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("command missing %s", want)
+		}
+	}
+	plain, env, err := srv.agentEnrollmentCommand(ctx, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "OBOARD_STEALTH_ADDR") || env["OBOARD_STEALTH_PIN"] != nil || !strings.Contains(plain, "OBOARD_INSTALL_STEALTH='0'") {
+		t.Fatal("plain command includes stealth transport")
 	}
 }

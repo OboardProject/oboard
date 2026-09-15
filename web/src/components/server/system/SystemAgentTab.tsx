@@ -4,22 +4,16 @@ import type { Server } from '../../proxy-path/types'
 
 function formatTableTime(v:string){ const d=new Date(v); if(Number.isNaN(d.getTime())) return v; const pad=(n:number)=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` }
 async function copyText(v:string){ const t=String(v||''); if(!t) return false; try{ if(navigator.clipboard?.writeText && window.isSecureContext){ await navigator.clipboard.writeText(t); return true}}catch{} const ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.left='-9999px'; document.body.appendChild(ta); ta.select(); try{return document.execCommand('copy')}catch{return false}finally{document.body.removeChild(ta)} }
-function shellQuote(v:string){ return `'${String(v).replace(/'/g,`'\\''`)}'` }
-function agentScriptCommand(base:string, action:'install'|'update'|'uninstall', token='', server?: Pick<Server,'bbr_enabled'|'stealth_enabled'>){
-  const b=base.replace(/\/+$/,''); const dl=`curl -fsSL ${shellQuote(`${b}/install/agent.sh`)}`
-  if(action==='install') return `${dl} | OBOARD_ENROLL_TOKEN=${shellQuote(token)} OBOARD_INSTALL_BBR=${server?.bbr_enabled?'1':'0'} OBOARD_INSTALL_STEALTH=${server?.stealth_enabled?'1':'0'} sh`
-  return `${dl} | sh -s -- ${action}`
-}
 
 function CopyButton({ value, label }:{ value:string; label?:string }){
   const [copied,setCopied]=useState(false)
   return <button type="button" className="ghost" onClick={async()=>{ const ok=await copyText(value); if(ok){setCopied(true); setTimeout(()=>setCopied(false),1500)}}}>{copied ? <Check size={14}/>: <Copy size={14}/>} {copied? '已复制': label||'复制'}</button>
 }
 
-export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll, onUpdateAgent, disabled, disabledReason, notify }: { server: Server; controllerURL:string; expectedBuild?: string; onEnroll: ()=>Promise<string>; onUpdateAgent: ()=>Promise<void>; disabled?: boolean; disabledReason?:string; notify?:(m:string,t?:string)=>void }) {
+export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent, disabled, disabledReason, notify }: { server: Server; expectedBuild?: string; onEnroll: ()=>Promise<string>; onUpdateAgent: ()=>Promise<void>; disabled?: boolean; disabledReason?:string; notify?:(m:string,t?:string)=>void }) {
   const isOnline = String(server.status||'').toLowerCase()==='online'
   const enrolled = Boolean(String(server.agent_id||'').trim())
-  const [token, setToken]=useState('')
+  const [command, setCommand]=useState('')
   const [loading, setLoading]=useState(false)
   const [updating, setUpdating]=useState(false)
   const currentBuild = String(server.agent_build||'').trim()
@@ -38,7 +32,7 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
     setLoading(true)
     try{
       const t = await onEnroll()
-      setToken(t)
+      setCommand(t)
     } catch(e:any){ notify?.(e?.message||String(e),'error') } finally{ setLoading(false) }
   }
   const handleUpdate=async()=>{
@@ -55,11 +49,11 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
           <p className="muted">需要在目标服务器执行接入命令以完成注册。</p>
           <div className="server-operation-card" style={{flexDirection:'column', alignItems:'stretch'}}>
             <button type="button" onClick={()=>void handleEnroll()} disabled={loading || disabled}>{loading? '生成中...':'生成接入命令'}</button>
-            {token ? (
+            {command ? (
               <div style={{marginTop:12}}>
-                <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{agentScriptCommand(controllerURL,'install', token, server)}</pre>
+                <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{command}</pre>
                 <div style={{marginTop:8, display:'flex', gap:8}}>
-                  <CopyButton value={agentScriptCommand(controllerURL,'install', token, server)} label="复制接入命令" />
+                  <CopyButton value={command} label="复制接入命令" />
                 </div>
               </div>
             ) : null}
@@ -107,10 +101,10 @@ export function SystemAgentTab({ server, controllerURL, expectedBuild, onEnroll,
         <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
           <button type="button" className="ghost" onClick={()=>void handleEnroll()} disabled={loading || disabled}><Terminal size={14}/> {loading? '生成中...':'重新生成接入 Token'}</button>
         </div>
-        {token ? (
+        {command ? (
           <div style={{marginTop:12}}>
-            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{agentScriptCommand(controllerURL,'install', token, server)}</pre>
-            <CopyButton value={agentScriptCommand(controllerURL,'install', token, server)} label="复制接入命令" />
+            <pre style={{whiteSpace:'pre-wrap', wordBreak:'break-all', background:'var(--surface-2)', padding:12, borderRadius:'var(--radius-sm)'}}>{command}</pre>
+            <CopyButton value={command} label="复制接入命令" />
           </div>
         ) : null}
       </section>

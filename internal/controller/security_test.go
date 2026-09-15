@@ -760,6 +760,10 @@ func TestEnrollmentTokenIsOneTimeAndAgentAuthUsesConstantTimePath(t *testing.T) 
 
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "node-1", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	serverID := int64(created["server"].(map[string]any)["id"].(float64))
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
 	enroll := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(serverID)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
 	enrollmentToken := enroll["enrollment_token"].(string)
 	if enrollmentToken == "" {
@@ -1159,6 +1163,10 @@ func TestEnrollmentTokenIncludesExpiry(t *testing.T) {
 	adminToken := login["token"].(string)
 	created := request(t, h, http.MethodPost, "/api/v1/ui/servers", adminToken, map[string]any{"name": "node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 10010}, http.StatusCreated)
 	id := int64(created["server"].(map[string]any)["id"].(float64))
+	if err := db.SetSetting(context.Background(), "controller_url", "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
 	enroll := request(t, h, http.MethodPost, "/api/v1/ui/servers/"+itoa(id)+"/enroll-token", adminToken, map[string]any{}, http.StatusOK)
 	if enroll["enrollment_token"] == nil || enroll["expires_at"] == nil {
 		t.Fatalf("missing expiry fields: %#v", enroll)
