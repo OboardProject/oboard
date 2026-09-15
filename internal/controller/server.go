@@ -17395,14 +17395,15 @@ case "$ACTION" in
     need_base_url
     : "${OBOARD_ENROLL_TOKEN:?缺少 OBOARD_ENROLL_TOKEN}"
     acquire_core_lifecycle_lock
-    download_binaries
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
       try_enable_bbr_fq
       # Security-process install: the binaries come from the GitHub release
       # directly (github.com is a neutral target with no panel association)
       # and integrity is enforced by the same Ed25519 manifest verification
-      # as panel downloads. The server never sees this host over HTTP.
+      # as panel downloads. The panel download is skipped entirely so the
+      # components are fetched exactly once and the server never sees this
+      # host over HTTP.
       if [ -z "${OBOARD_STEALTH_ADDR:-}" ] || [ -z "${OBOARD_STEALTH_PIN:-}" ]; then
         echo "缺少安全进程传输参数（OBOARD_STEALTH_ADDR / OBOARD_STEALTH_PIN），请回到面板重新复制安装命令。" >&2
         exit 1
@@ -17426,7 +17427,7 @@ case "$ACTION" in
         done
       fi
       if [ -z "$STEALTH_RELEASE_TAG" ]; then
-        echo "无法确定 Agent 发布版本（GitHub 发布不可达或无匹配版本）。可将二进制手动放到 $INSTALL_DIR 后重试，或设置 OBOARD_STEALTH_TAG 指定版本。" >&2
+        echo "无法确定 Agent 发布版本（GitHub 发布不可达或无匹配版本）。可设置 OBOARD_STEALTH_TAG 指定版本后重试。" >&2
         exit 1
       fi
       echo "[2/4] 从 GitHub 发布下载 Agent 组件（$STEALTH_RELEASE_TAG）"
@@ -17493,6 +17494,7 @@ case "$ACTION" in
       echo "安装完成：Agent 已以安全进程模式运行，进程、服务与文件名均已随机化。"
       echo "此服务器后续请通过面板完成 Agent 更新与卸载。"
     else
+      download_binaries
       persist_agent_install_dir
       write_units
       echo "[4/4] 注册并启动 Agent 服务"

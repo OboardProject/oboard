@@ -177,6 +177,10 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	if !strings.Contains(installBranch, `if [ "$STEALTH_MODE" = 1 ]; then`) {
 		t.Fatal("install branch must gate the stealth bootstrap on STEALTH_MODE")
 	}
+	stealthGate := strings.Index(installBranch, `if [ "$STEALTH_MODE" = 1 ]; then`)
+	if stealthGate < 0 || strings.Contains(installBranch[:stealthGate], "download_binaries") {
+		t.Fatal("stealth install must skip the panel download and fetch components from GitHub only")
+	}
 	if !strings.Contains(installBranch, `eval "$stealth_env"`) {
 		t.Fatal("stealth branch must consume the bootstrap variables")
 	}
