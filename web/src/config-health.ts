@@ -42,7 +42,7 @@ export interface ConfigHealthReport {
 }
 
 export interface ConfigHealthDashboard {
-  revision: number
+  fingerprint: string
   summary: ConfigHealthSummary
   blocking_by_server?: Record<string, number>
 }
@@ -159,7 +159,7 @@ export interface ConfigHealthCleanupResult {
 }
 
 export interface ConfigHealthCleanupResponse {
-  revision: number
+  fingerprint: string
   dry_run: boolean
   applied: number
   skipped: number

@@ -30,10 +30,10 @@ export interface ConfigHealthDialogProps {
 // Controller derives the change, and a destructive pick needs a second confirm.
 export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: ConfigHealthDialogProps) {
   const [report, setReport] = useState<ConfigHealthReport | null>(null)
-  const [revision, setRevision] = useState(0)
+  const [fingerprint, setFingerprint] = useState('')
   const [reload, setReload] = useState(0)
   const [loading, setLoading] = useState(true)
-  // Load and action errors are separate state on purpose. A revision conflict
+  // Load and action errors are separate state on purpose. A changed report
   // triggers a reload, and a single error slot would clear the conflict message
   // before the operator could read why their cleanup did not run.
   const [loadError, setLoadError] = useState('')
@@ -51,7 +51,7 @@ export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: C
     void client.request('/config-health', { signal: controller.signal }).then((result: any) => {
       if (controller.signal.aborted) return
       setReport(result?.report || null)
-      setRevision(Number(result?.revision) || 0)
+      setFingerprint(String(result?.fingerprint || ''))
       // A refreshed report invalidates any preview and any selection that no
       // longer corresponds to a live finding.
       setPreview(null)
@@ -102,7 +102,7 @@ export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: C
     try {
       const response = await client.request('/config-health/cleanup', {
         method: 'POST',
-        body: JSON.stringify({ revision, confirm, actions: cleanupActionsFor(findings, selected) }),
+        body: JSON.stringify({ fingerprint, confirm, actions: cleanupActionsFor(findings, selected) }),
       }) as ConfigHealthCleanupResponse
       if (!confirm) {
         setPreview(response)
@@ -116,7 +116,7 @@ export function ConfigHealthDialog({ client, canCleanup, onClose, onCleaned }: C
       setReload(value => value + 1)
     } catch (err: any) {
       setActionError(err?.message || '清理失败')
-      // A revision conflict means the topology moved; reload so the operator
+      // A changed report means the finding set moved; reload so the operator
       // acts on what is actually there now.
       if (String(err?.message || '').includes('发生了变化')) setReload(value => value + 1)
     } finally { setBusy(false) }

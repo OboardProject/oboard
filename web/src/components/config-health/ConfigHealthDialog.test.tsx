@@ -57,14 +57,14 @@ function makeClient(findings: ConfigHealthFinding[], cleanup?: (body: any) => an
     calls.push({ path, body })
     if (path === '/config-health') {
       return {
-        revision: 42,
+        fingerprint: 'fp-42',
         report: { summary: { blocking: findings.length, warning: 0, notice: 0, total: findings.length }, findings },
       }
     }
     if (path === '/config-health/cleanup') {
       if (cleanup) return cleanup(body)
       return {
-        revision: 42,
+        fingerprint: 'fp-42',
         dry_run: !body.confirm,
         applied: body.actions.length,
         skipped: 0,
@@ -161,8 +161,9 @@ describe('ConfigHealthDialog', () => {
     const cleanupCalls = calls.filter(call => call.path === '/config-health/cleanup')
     expect(cleanupCalls).toHaveLength(1)
     expect(cleanupCalls[0].body.confirm).toBe(false)
-    // The report revision rides along so the server can refuse a stale view.
-    expect(cleanupCalls[0].body.revision).toBe(42)
+    // The report fingerprint rides along so the server can refuse a view whose
+    // findings have changed.
+    expect(cleanupCalls[0].body.fingerprint).toBe('fp-42')
   })
 
   it('requires a second confirmation before a destructive cleanup', async () => {
@@ -203,7 +204,7 @@ describe('ConfigHealthDialog', () => {
     expect(buttonNamed('仅管理员可清理')?.disabled).toBe(true)
   })
 
-  it('surfaces a revision conflict and re-reads the report instead of retrying', async () => {
+  it('surfaces a changed-report conflict and re-reads the report instead of retrying', async () => {
     let attempts = 0
     const { client, calls } = makeClient([normalizeFinding], () => {
       attempts += 1

@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,9 +34,16 @@ const configHealthTTL = 60 * time.Second
 // result that cannot have changed.
 type configHealthSnapshot struct {
 	revision uint64
-	builtAt  time.Time
-	report   confighealth.Report
-	encoded  json.RawMessage
+	// fingerprint identifies what the operator was shown. It is derived from
+	// the encoded report, not from the routing revision: the revision is bumped
+	// by every device row, egress probe result and access-change write, so a
+	// live fleet moves it every few seconds and a guard bound to it would
+	// refuse every cleanup forever, including for findings - the delivery lanes
+	// - that are not routing state at all.
+	fingerprint string
+	builtAt     time.Time
+	report      confighealth.Report
+	encoded     json.RawMessage
 }
 
 // configHealthReport returns the cached report, rebuilding only when the
@@ -102,7 +111,22 @@ func (s *Server) buildConfigHealthSnapshot(ctx context.Context, revision uint64)
 	if err != nil {
 		return nil, err
 	}
-	return &configHealthSnapshot{revision: revision, builtAt: time.Now(), report: report, encoded: encoded}, nil
+	return &configHealthSnapshot{
+		revision:    revision,
+		fingerprint: configHealthFingerprint(encoded),
+		builtAt:     time.Now(),
+		report:      report,
+		encoded:     encoded,
+	}, nil
+}
+
+// configHealthFingerprint hashes the encoded report. Finding order is already
+// deterministic and the encoder sorts map keys, so two evaluations that found
+// the same problems produce the same value no matter what unrelated rows moved
+// in between.
+func configHealthFingerprint(encoded []byte) string {
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }
 
 // configHealthInput reads the reference tables the routing snapshot does not
@@ -235,7 +259,7 @@ func (s *Server) dashboardConfigHealth(ctx context.Context) (any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"revision":           entry.revision,
+		"fingerprint":        entry.fingerprint,
 		"summary":            entry.report.Summary,
 		"blocking_by_server": entry.report.BlockingByServer,
 	}, nil
@@ -257,7 +281,7 @@ func (s *Server) configHealthHandler(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(mergeConfigHealthRevision(entry))
+		_, _ = w.Write(mergeConfigHealthFingerprint(entry))
 		return
 	}
 	filtered := confighealth.Report{Findings: []confighealth.Finding{}, BlockingByServer: entry.report.BlockingByServer}
@@ -267,14 +291,17 @@ func (s *Server) configHealthHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	filtered.Summary = entry.report.Summary
-	write(w, http.StatusOK, map[string]any{"revision": entry.revision, "report": filtered})
+	// The fingerprint covers the whole report even when the response is scoped,
+	// because the cleanup guard is about the evaluation the operator acted on,
+	// not about the slice they were shown.
+	write(w, http.StatusOK, map[string]any{"fingerprint": entry.fingerprint, "report": filtered})
 }
 
-// mergeConfigHealthRevision wraps the pre-encoded report without decoding it,
-// so a cache hit copies bytes instead of re-marshalling the findings.
-func mergeConfigHealthRevision(entry *configHealthSnapshot) []byte {
-	out := make([]byte, 0, len(entry.encoded)+48)
-	out = append(out, []byte(fmt.Sprintf(`{"revision":%d,"report":`, entry.revision))...)
+// mergeConfigHealthFingerprint wraps the pre-encoded report without decoding
+// it, so a cache hit copies bytes instead of re-marshalling the findings.
+func mergeConfigHealthFingerprint(entry *configHealthSnapshot) []byte {
+	out := make([]byte, 0, len(entry.encoded)+96)
+	out = append(out, []byte(fmt.Sprintf(`{"fingerprint":%q,"report":`, entry.fingerprint))...)
 	out = append(out, entry.encoded...)
 	out = append(out, '}')
 	return out
@@ -289,12 +316,13 @@ type configHealthCleanupAction struct {
 }
 
 type configHealthCleanupRequest struct {
-	// Revision is the report the operator acted on. A mismatch is refused
-	// rather than reinterpreted: something the operator could not see changed
-	// between looking and clicking.
-	Revision uint64                      `json:"revision"`
-	Confirm  bool                        `json:"confirm"`
-	Actions  []configHealthCleanupAction `json:"actions"`
+	// Fingerprint identifies the report the operator acted on. A mismatch is
+	// refused rather than reinterpreted: the set of problems changed between
+	// looking and clicking. An empty value skips the check, which is what an
+	// automation caller that never rendered a report sends.
+	Fingerprint string                      `json:"fingerprint"`
+	Confirm     bool                        `json:"confirm"`
+	Actions     []configHealthCleanupAction `json:"actions"`
 }
 
 type configHealthCleanupResult struct {
@@ -335,11 +363,11 @@ func (s *Server) configHealthCleanupHandler(w http.ResponseWriter, r *http.Reque
 	}
 	response, err := s.runConfigHealthCleanup(r.Context(), r, request)
 	if err != nil {
-		if revision, ok := staleConfigHealthRevision(err); ok {
+		if fingerprint, ok := staleConfigHealthReport(err); ok {
 			write(w, http.StatusConflict, map[string]any{
-				"error":    errConfigHealthRevisionConflict.Error(),
-				"code":     "revision_conflict",
-				"revision": revision,
+				"error":       errConfigHealthRevisionConflict.Error(),
+				"code":        "report_changed",
+				"fingerprint": fingerprint,
 			})
 			return
 		}
@@ -349,18 +377,19 @@ func (s *Server) configHealthCleanupHandler(w http.ResponseWriter, r *http.Reque
 	write(w, http.StatusOK, response)
 }
 
-// configHealthRevisionConflict carries the revision the caller should re-read.
-type configHealthRevisionConflict struct{ revision uint64 }
+// configHealthRevisionConflict carries the fingerprint the caller should
+// re-read.
+type configHealthRevisionConflict struct{ fingerprint string }
 
 func (e configHealthRevisionConflict) Error() string { return errConfigHealthRevisionConflict.Error() }
 func (e configHealthRevisionConflict) Unwrap() error { return errConfigHealthRevisionConflict }
 
-func staleConfigHealthRevision(err error) (uint64, bool) {
+func staleConfigHealthReport(err error) (string, bool) {
 	var conflict configHealthRevisionConflict
 	if errors.As(err, &conflict) {
-		return conflict.revision, true
+		return conflict.fingerprint, true
 	}
-	return 0, false
+	return "", false
 }
 
 // runConfigHealthCleanup is the single implementation behind both the REST
@@ -374,8 +403,8 @@ func (s *Server) runConfigHealthCleanup(ctx context.Context, r *http.Request, re
 	if err != nil {
 		return nil, err
 	}
-	if request.Revision != 0 && request.Revision != entry.revision {
-		return nil, configHealthRevisionConflict{revision: entry.revision}
+	if request.Fingerprint != "" && request.Fingerprint != entry.fingerprint {
+		return nil, configHealthRevisionConflict{fingerprint: entry.fingerprint}
 	}
 
 	index := map[configHealthCleanupAction]confighealth.Finding{}
@@ -413,9 +442,11 @@ func (s *Server) runConfigHealthCleanup(ctx context.Context, r *http.Request, re
 	}
 
 	response := map[string]any{
-		"revision": entry.revision,
-		"dry_run":  !request.Confirm,
-		"results":  results,
+		// The fingerprint of the evaluation the actions were resolved against.
+		// A preview returns it so a following apply can keep the same guard.
+		"fingerprint": entry.fingerprint,
+		"dry_run":     !request.Confirm,
+		"results":     results,
 	}
 	applied, skipped, failed := 0, 0, 0
 	for _, result := range results {

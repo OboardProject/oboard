@@ -42,6 +42,20 @@ func writeLegacyInboundDocument(t *testing.T, path string, inboundID int64, conf
 	}
 }
 
+// bumpRoutingCacheRevision moves the routing revision without touching any row
+// the evaluator reads, which is what an ordinary runtime write does.
+func bumpRoutingCacheRevision(t *testing.T, path string) {
+	t.Helper()
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`update routing_cache_revision set revision=revision+1 where id=1`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // seedBrokenInbound stores an inbound whose document the current model rejects.
 // It goes in through the repair-free path on purpose: the whole point of the
 // feature is a row the normal validating write would never have let in, which
@@ -221,19 +235,19 @@ func TestConfigHealthCleanupNormalizesInvalidInbound(t *testing.T) {
 	}
 }
 
-func TestConfigHealthCleanupRejectsStaleRevision(t *testing.T) {
+func TestConfigHealthCleanupRejectsStaleReport(t *testing.T) {
 	server, db, path := newConfigHealthServer(t)
 	_, inbound := seedBrokenInbound(t, db, path)
 
 	rec, body := cleanupRequest(t, server, configHealthCleanupRequest{
-		Revision: 1, // certainly not the current revision after seeding
-		Confirm:  true,
-		Actions:  []configHealthCleanupAction{{Code: "inbound.config.invalid", Scope: confighealth.ScopeInbound, ResourceID: inbound.ID}},
+		Fingerprint: "0000000000000000000000000000000000000000000000000000000000000000",
+		Confirm:     true,
+		Actions:     []configHealthCleanupAction{{Code: "inbound.config.invalid", Scope: confighealth.ScopeInbound, ResourceID: inbound.ID}},
 	})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if body["code"] != "revision_conflict" {
+	if body["code"] != "report_changed" {
 		t.Fatalf("unexpected body %v", body)
 	}
 	stored, err := db.GetInbound(context.Background(), inbound.ID)
@@ -242,6 +256,50 @@ func TestConfigHealthCleanupRejectsStaleRevision(t *testing.T) {
 	}
 	if stored.ConfigJSON != inbound.ConfigJSON {
 		t.Fatal("a refused cleanup must not write anything")
+	}
+}
+
+// The guard exists to catch a changed finding set, not a changed database. A
+// live fleet writes device rows, probe results and access-change records
+// constantly, and every one of them bumps the routing revision; binding the
+// guard to that revision made cleanup permanently impossible.
+func TestConfigHealthCleanupSurvivesUnrelatedRoutingRevisionBump(t *testing.T) {
+	server, db, path := newConfigHealthServer(t)
+	_, inbound := seedBrokenInbound(t, db, path)
+	ctx := context.Background()
+
+	entry, err := server.configHealthReport(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := entry.fingerprint
+
+	before, err := db.RoutingCacheRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stand in for the runtime writes a busy controller performs between the
+	// report and the click: a device row, an egress probe result, an access
+	// change. None of them changes a finding, all of them move this counter.
+	bumpRoutingCacheRevision(t, path)
+	after, err := db.RoutingCacheRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatal("the routing revision did not move")
+	}
+
+	rec, body := cleanupRequest(t, server, configHealthCleanupRequest{
+		Fingerprint: fingerprint,
+		Confirm:     true,
+		Actions:     []configHealthCleanupAction{{Code: "inbound.config.invalid", Scope: confighealth.ScopeInbound, ResourceID: inbound.ID}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an unrelated routing write refused the cleanup: %d %s", rec.Code, rec.Body.String())
+	}
+	if applied, _ := body["applied"].(float64); applied != 1 {
+		t.Fatalf("expected one applied action: %s", rec.Body.String())
 	}
 }
 

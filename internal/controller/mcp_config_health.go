@@ -42,9 +42,9 @@ func (s *Server) readConfigHealthCapability(ctx context.Context, input json.RawM
 		findings = filtered
 	}
 	return map[string]any{
-		"revision": entry.revision,
-		"summary":  entry.report.Summary,
-		"findings": findings,
+		"fingerprint": entry.fingerprint,
+		"summary":     entry.report.Summary,
+		"findings":    findings,
 	}, nil
 }
 
@@ -72,14 +72,16 @@ func (s *Server) registerConfigHealthOperations() {
 		return s.runConfigHealthCleanup(ctx, nil, request)
 	})
 	s.automation.RegisterRevisionResolver(name, func(ctx context.Context, _ application.Principal, _ json.RawMessage) (map[string]string, error) {
-		revision, err := s.store.RoutingCacheRevision(ctx)
+		entry, err := s.configHealthReport(ctx)
 		if err != nil {
 			return nil, err
 		}
-		// Binding the Changeset to the routing revision means a commit whose
-		// topology moved after validation is rejected by the same mechanism the
-		// REST endpoint uses, instead of acting on a stale finding set.
-		return map[string]string{"routing_topology": fmt.Sprintf("%d", revision)}, nil
+		// Binding the Changeset to the report fingerprint means a commit whose
+		// finding set moved after validation is rejected by the same mechanism
+		// the REST endpoint uses. The routing revision cannot serve here: it is
+		// bumped by ordinary runtime writes that change no finding, so a
+		// Changeset bound to it could never be committed on a live fleet.
+		return map[string]string{"config_health_report": entry.fingerprint}, nil
 	})
 	s.automation.Register(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		request, err := decodeConfigHealthCleanupOperation(input)
