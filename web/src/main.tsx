@@ -4190,6 +4190,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   const [working, setWorking] = useState(false)
   const [skipBackup, setSkipBackup] = useState(true)
   const targetBuildRef = useRef('')
+  const ownsInstallRef = useRef(false)
   const installRequestPendingRef = useRef(false)
   const statusRequestGuardRef = useRef(createControllerUpdateRequestGuard())
   const statusRefreshInFlightRef = useRef(false)
@@ -4197,15 +4198,19 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
   useEffect(() => {
     if (tab === 'settings') {
       setDismissed(true)
+      ownsInstallRef.current = false
+      setDialogOpen(false)
+      setWorking(false)
+      setPhase('confirm')
     }
   }, [tab])
 
   const applyStatus = (result: ControllerUpdateStatus) => {
     setSnapshot(result)
-    const updateExpected = ['starting', 'downloading', 'ready', 'installing', 'cancelling'].includes(phase)
-    if (!working && !updateExpected && !isControllerUpdateInProgressStatus(result.status)) return
+    if (!ownsInstallRef.current) return
     const targetReached = Boolean(targetBuildRef.current) && result.current?.build === targetBuildRef.current
     if (result.status === 'installed' || (result.status === 'current' && !result.update_available) || (targetReached && !result.update_available)) {
+      ownsInstallRef.current = false
       setWorking(false)
       setConnectionInterrupted(false)
       setPhase('complete')
@@ -4214,6 +4219,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       return
     }
     if (isControllerUpdateFailedStatus(result.status, result.last_error)) {
+      ownsInstallRef.current = false
       setWorking(false)
       setFailure(localizeErrorMessage(result.last_error || '主控更新未能完成，请检查更新状态。'))
       setPhase('failed')
@@ -4270,6 +4276,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
 
   const install = async (skipBackup = true) => {
     if (working || !snapshot?.update_available) return
+    ownsInstallRef.current = true
     statusRequestGuardRef.current.invalidate()
     targetBuildRef.current = snapshot.available?.build || ''
     setFailure('')
@@ -4285,12 +4292,14 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
       applyStatus(result)
       notify?.('更新已开始，主控将自动重启', 'success')
     } catch (error: any) {
+      if (!ownsInstallRef.current) return
       statusRequestGuardRef.current.invalidate()
       if (isExpectedControllerUpdateDisconnect(error)) {
         setConnectionInterrupted(true)
         setPhase('installing')
         onControllerUpdateInProgressChange?.(true, 'installing')
       } else {
+        ownsInstallRef.current = false
         setWorking(false)
         setFailure(localizeErrorMessage(error?.message || error))
         setPhase('failed')
@@ -4336,7 +4345,7 @@ function ControllerUpdatePrompt({ client, tab, notify, realtimeStatus, realtimeR
         <button type="button" onClick={() => { setSkipBackup(true); setPhase('confirm'); setDialogOpen(true) }}><Download size={14} />确认更新</button>
       </m.aside>}
     </AnimatePresence>
-    <AnimatePresence>{dialogOpen && snapshot && <ControllerUpdateInstallDialog
+    <AnimatePresence>{tab !== 'settings' && dialogOpen && snapshot && <ControllerUpdateInstallDialog
       phase={phase}
       targetVersion={snapshot.available?.version || ''}
       connectionInterrupted={connectionInterrupted}
