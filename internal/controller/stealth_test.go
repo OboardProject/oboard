@@ -233,6 +233,17 @@ func TestStealthInstallResolvesReleaseTagFromTargetVersion(t *testing.T) {
 	if !strings.Contains(stealthBranch, "tags/dev") {
 		t.Fatal("stealth branch must fall back to the mutable dev prerelease tag because releases/latest excludes prereleases")
 	}
+	ghDownload := strings.Index(stealthBranch, `download_component "Agent" "$gh_base/$agent_name"`)
+	panelFallback := strings.Index(stealthBranch, `download_agent_component "Agent" "${BASE_URL}/downloads/$agent_name"`)
+	if ghDownload < 0 || panelFallback < 0 || ghDownload > panelFallback {
+		t.Fatal("stealth branch must download from GitHub first and fall back to the panel download only after GitHub transfers fail")
+	}
+	if !strings.Contains(stealthBranch, "GitHub 发布下载未完成，回落到主控下载") {
+		t.Fatal("stealth branch must announce the panel fallback")
+	}
+	if !strings.Contains(stealthBranch, `rm -f "$tmp/$agent_name"`) {
+		t.Fatal("stealth panel fallback must discard partial GitHub transfers before downloading from the panel")
+	}
 }
 
 func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {

@@ -17398,12 +17398,12 @@ case "$ACTION" in
     if [ "$STEALTH_MODE" = 1 ]; then
       resolve_update_policy
       try_enable_bbr_fq
-      # Security-process install: the binaries come from the GitHub release
-      # directly (github.com is a neutral target with no panel association)
-      # and integrity is enforced by the same Ed25519 manifest verification
-      # as panel downloads. The panel download is skipped entirely so the
-      # components are fetched exactly once and the server never sees this
-      # host over HTTP.
+      # Security-process install: the binaries prefer the GitHub release
+      # (github.com is a neutral target with no panel association) and
+      # integrity is enforced by the same Ed25519 manifest verification
+      # as panel downloads. Only when a GitHub transfer actually fails does
+      # the install fall back to the panel download, so the components are
+      # normally fetched exactly once without a panel association.
       if [ -z "${OBOARD_STEALTH_ADDR:-}" ] || [ -z "${OBOARD_STEALTH_PIN:-}" ]; then
         echo "缺少安全进程传输参数（OBOARD_STEALTH_ADDR / OBOARD_STEALTH_PIN），请回到面板重新复制安装命令。" >&2
         exit 1
@@ -17412,6 +17412,9 @@ case "$ACTION" in
       STEALTH_RELEASE_TAG=${OBOARD_STEALTH_TAG:-}
       tmp=$(make_update_tmp)
       UPDATE_TMP=$tmp
+      agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
+      core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
+      realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
       if [ -z "$STEALTH_RELEASE_TAG" ]; then
         STEALTH_RELEASE_TAG=$(stealth_target_release_tag "${TARGET_VERSION:-}" "${TARGET_BUILD:-}") || STEALTH_RELEASE_TAG=
       fi
@@ -17426,20 +17429,38 @@ case "$ACTION" in
           fi
         done
       fi
-      if [ -z "$STEALTH_RELEASE_TAG" ]; then
-        echo "无法确定 Agent 发布版本（GitHub 发布不可达或无匹配版本）。可设置 OBOARD_STEALTH_TAG 指定版本后重试。" >&2
-        exit 1
+      STEALTH_COMPONENTS_READY=0
+      if [ -n "$STEALTH_RELEASE_TAG" ]; then
+        echo "[2/4] 从 GitHub 发布下载 Agent 组件（$STEALTH_RELEASE_TAG）"
+        gh_base="https://github.com/$STEALTH_GITHUB_REPO/releases/download/$STEALTH_RELEASE_TAG"
+        # download_component is used directly: download_agent_component
+        # would append the panel-only ?source=controller retry to a
+        # github.com URL. The panel fallback below handles that leg.
+        if download_component "Agent" "$gh_base/$agent_name" "$tmp/$agent_name" &&
+          download_component "优化内核" "$gh_base/$core_name" "$tmp/$core_name" &&
+          download_component "端口转发组件" "$gh_base/$realm_name" "$tmp/$realm_name" &&
+          download_quiet "$gh_base/release-manifest.json" "$tmp/release-manifest.json" &&
+          download_quiet "$gh_base/release-manifest.json.sig" "$tmp/release-manifest.json.sig"; then
+          STEALTH_COMPONENTS_READY=1
+        fi
       fi
-      echo "[2/4] 从 GitHub 发布下载 Agent 组件（$STEALTH_RELEASE_TAG）"
-      agent_name="oboard-agent-${OS_VALUE}-${ARCH_VALUE}"
-      core_name="oboard-sb-${OS_VALUE}-${ARCH_VALUE}"
-      realm_name="oboard-realm-${OS_VALUE}-${ARCH_VALUE}"
-      gh_base="https://github.com/$STEALTH_GITHUB_REPO/releases/download/$STEALTH_RELEASE_TAG"
-      download_agent_component "Agent" "$gh_base/$agent_name" "$tmp/$agent_name"
-      download_agent_component "优化内核" "$gh_base/$core_name" "$tmp/$core_name"
-      download_agent_component "端口转发组件" "$gh_base/$realm_name" "$tmp/$realm_name"
-      download_quiet "$gh_base/release-manifest.json" "$tmp/release-manifest.json"
-      download_quiet "$gh_base/release-manifest.json.sig" "$tmp/release-manifest.json.sig"
+      if [ "$STEALTH_COMPONENTS_READY" != 1 ]; then
+        if [ -n "$STEALTH_RELEASE_TAG" ]; then
+          echo "  GitHub 发布下载未完成，回落到主控下载..." >&2
+        else
+          echo "  未能确定 GitHub 发布版本，直接从主控下载..." >&2
+        fi
+        rm -f "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name" "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig"
+        echo "[2/4] 从主控下载 Agent 组件"
+        if ! download_agent_component "Agent" "${BASE_URL}/downloads/$agent_name" "$tmp/$agent_name" ||
+          ! download_agent_component "优化内核" "${BASE_URL}/downloads/$core_name" "$tmp/$core_name" ||
+          ! download_agent_component "端口转发组件" "${BASE_URL}/downloads/$realm_name" "$tmp/$realm_name" ||
+          ! download_quiet "${BASE_URL}/downloads/release-manifest.json" "$tmp/release-manifest.json" ||
+          ! download_quiet "${BASE_URL}/downloads/release-manifest.json.sig" "$tmp/release-manifest.json.sig"; then
+          echo "Agent 组件下载未完成（GitHub 与主控均失败）。请检查网络后重试，或设置 OBOARD_STEALTH_TAG 指定版本。" >&2
+          exit 1
+        fi
+      fi
       verify_downloaded_release "$tmp/release-manifest.json" "$tmp/release-manifest.json.sig" "$tmp" "$OS_VALUE" "$ARCH_VALUE" "$agent_name" "$core_name" "$realm_name" >> "$INSTALL_LOG" 2>&1
       chmod 0755 "$tmp/$agent_name" "$tmp/$core_name" "$tmp/$realm_name"
       install -d -m 0755 -o root -g root "$INSTALL_DIR"
