@@ -171,7 +171,7 @@ describe('AgentSettingsPanel', () => {
   })
 
   it('confirms before refreshing all node runtime configs', async () => {
-    const mockClient = { request: vi.fn(async () => ({ delivery_retried: 3 })) }
+    const mockClient = { request: vi.fn(async () => ({ reissued_servers: 3, delivery_retried: 3 })) }
     const mockLoad = vi.fn(async () => undefined)
     const mockNotify = vi.fn()
     const mockConfirm = vi.fn(async () => true)
@@ -190,7 +190,7 @@ describe('AgentSettingsPanel', () => {
       method: 'POST',
       body: JSON.stringify({ confirm: true }),
     })
-    expect(mockNotify).toHaveBeenCalledWith('已向 3 台已接入服务器重新下发配置与授权', 'success')
+    expect(mockNotify).toHaveBeenCalledWith('已向 3 台已接入服务器重新下发全部配置、授权、用户与探测计划', 'success')
     expect(mockLoad).toHaveBeenCalled()
   })
 

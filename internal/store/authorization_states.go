@@ -352,6 +352,29 @@ func (s *Store) RecordAuthorizationConfirmation(ctx context.Context, serverID, r
 	return true, tx.Commit()
 }
 
+// ForceAuthorizationResync issues the current grant set under a new revision.
+//
+// It clears only the desired identity, not the desired keys: the next
+// evaluation then cannot match the stored digest and allocates
+// desired_revision+1 for exactly the same grants, while the retained key list
+// keeps the denial computation correct (no key left the set, so nothing is
+// denied). The confirmation watermark is cleared with it so the lane cannot
+// conclude the node is already current and skip the redelivery.
+//
+// This is not a configuration edit: what the node runs is unchanged, only the
+// version it is offered under moves.
+func (s *Store) ForceAuthorizationResync(ctx context.Context, serverID int64) error {
+	if serverID <= 0 {
+		return fmt.Errorf("server id must be positive")
+	}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `insert or ignore into authorization_states(server_id,updated_at) values(?,?)`, serverID, ts); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `update authorization_states set desired_digest='',evaluated_routing_revision=0,confirmed_revision=0,confirmed_sequence=0,confirmed_digest='',confirmed_boot_id='',confirmed_at=null,pending_reason=?,last_error='',retryable=1,updated_at=? where server_id=?`, AuthorizationPendingDelivering, ts, serverID)
+	return err
+}
+
 // MarkAuthorizationPending records why a desired revision is not confirmed yet.
 func (s *Store) MarkAuthorizationPending(ctx context.Context, serverID int64, reason, lastError string, retryable bool) error {
 	if serverID <= 0 {

@@ -180,3 +180,33 @@ func (s *Server) retryServerDelivery(ctx context.Context, serverID int64) error 
 	s.wakeRuntimeUsersSync()
 	return nil
 }
+
+// reissueServerDelivery moves one server's version-gated lanes onto a new
+// version without changing what those lanes describe.
+//
+// retryServerDelivery only re-sends the version the node already holds, which a
+// healthy node correctly answers as "nothing to do". The admin runtime refresh
+// exists precisely for the case where that answer is not trusted, so it clears
+// each lane's stored version binding instead: the next evaluation allocates the
+// next authorization revision, the next runtime-users revision and a fresh
+// latency probe plan version for identical content, and the node's gate accepts
+// a higher version unconditionally.
+//
+// The caller wakes the lanes and bumps the shared caches once for the whole
+// fleet after every server has been rebound.
+func (s *Server) reissueServerDelivery(ctx context.Context, serverID int64) error {
+	if serverID <= 0 {
+		return nil
+	}
+	if err := s.store.ForceAuthorizationResync(ctx, serverID); err != nil {
+		return err
+	}
+	// The cached lease is keyed by the projection it was issued from, not by the
+	// ledger, so without this the next sync would reuse the lease that still
+	// carries the old revision and never allocate the new one.
+	s.invalidateAuthorizationLease(serverID)
+	if err := s.store.ForceRuntimeUsersResync(ctx, serverID); err != nil {
+		return err
+	}
+	return s.store.RebindLatencyProbePlanVersion(ctx, serverID)
+}

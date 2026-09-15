@@ -142,6 +142,10 @@ type Server struct {
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
 	stealthTransport              atomic.Pointer[stealthTransport]
+	stealthMu sync.Mutex
+	stealthContext context.Context
+	stealthCertPath string
+	stealthError string
 	agentLiveMu                   sync.Mutex
 	agentLive                     map[int64][]chan any
 	agentConnsMu                  sync.Mutex
@@ -387,6 +391,7 @@ func (s *Server) RefreshGeoIPHistory(ctx context.Context) {
 }
 
 func (s *Server) Close() {
+	s.closeStealthTransport()
 	if s.realtime != nil {
 		s.realtime.close()
 	}
@@ -12752,8 +12757,15 @@ func (s *Server) refreshAllServerRuntime(ctx context.Context, allowServer func(i
 	if err != nil {
 		return nil, err
 	}
+	// Redelivering the current version is not enough here: every lane gates on
+	// its own version, so a node that already holds it legitimately answers
+	// "unchanged" and nothing is rebuilt. The refresh therefore reissues each
+	// lane's content under a new version - authorization, runtime users, the
+	// latency probe plan and the traffic policy - so the whole desired state is
+	// pushed again instead of only the deployment.
 	deliveryRetried := 0
 	skippedUnenrolled := 0
+	refreshedServerIDs := make([]int64, 0, len(servers))
 	for _, server := range servers {
 		if allowServer != nil && !allowServer(server.ID) {
 			continue
@@ -12762,10 +12774,27 @@ func (s *Server) refreshAllServerRuntime(ctx context.Context, allowServer func(i
 			skippedUnenrolled++
 			continue
 		}
-		if err := s.retryServerDelivery(ctx, server.ID); err != nil {
+		if err := s.reissueServerDelivery(ctx, server.ID); err != nil {
 			return nil, err
 		}
+		refreshedServerIDs = append(refreshedServerIDs, server.ID)
 		deliveryRetried++
+	}
+	if len(refreshedServerIDs) > 0 {
+		// One generation bump covers the whole fleet: the per-server package
+		// cache is keyed by it, and bumping it per server would rebuild the
+		// same packages repeatedly.
+		s.bumpRuntimeUserPackageGeneration()
+		s.invalidateLatencyProbePlans(refreshedServerIDs...)
+		s.wakeAuthorizationSyncFor("runtime_refresh", refreshedServerIDs...)
+		s.wakeRuntimeUsersSyncFor("runtime_refresh", refreshedServerIDs...)
+		if err := s.queueApplyTrafficPolicy(ctx, refreshedServerIDs, "runtime_refresh", nil); err != nil {
+			return nil, err
+		}
+	}
+	trafficPolicyRevision, err := s.store.TrafficPolicyRevision(ctx)
+	if err != nil {
+		return nil, err
 	}
 	queued := 0
 	failedImmediate := 0
@@ -12780,13 +12809,15 @@ func (s *Server) refreshAllServerRuntime(ctx context.Context, allowServer func(i
 	}
 	s.publishRealtime("configuration", "deployments", "tasks", "servers")
 	return map[string]any{
-		"config_version":     version,
-		"queued_tasks":       len(tasks),
-		"queued_servers":     queued,
-		"failed_immediate":   failedImmediate,
-		"delivery_retried":   deliveryRetried,
-		"skipped_unenrolled": skippedUnenrolled,
-		"server_ids":         serverIDs,
+		"config_version":          version,
+		"queued_tasks":            len(tasks),
+		"queued_servers":          queued,
+		"failed_immediate":        failedImmediate,
+		"delivery_retried":        deliveryRetried,
+		"reissued_servers":        deliveryRetried,
+		"traffic_policy_revision": int64(trafficPolicyRevision),
+		"skipped_unenrolled":      skippedUnenrolled,
+		"server_ids":              serverIDs,
 	}, nil
 }
 

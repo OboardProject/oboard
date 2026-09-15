@@ -161,7 +161,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
     } catch { healthNotice = '' }
     const ok = await confirm?.({
       title: '刷新全部节点配置？',
-      message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证也会重新从主控下发。' + (healthNotice ? `\n\n${healthNotice}` : ''),
+      message: '会重建每台已接入 Agent 的运行配置并重启内核，现有连接会短暂中断。授权凭证、运行时用户、延迟探测计划和流量策略都会提升版本号后重新下发。' + (healthNotice ? `\n\n${healthNotice}` : ''),
       confirmText: '刷新全部节点',
       tone: 'danger',
     })
@@ -172,8 +172,8 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         method: 'POST',
         body: JSON.stringify({ confirm: true }),
       })
-      const count = Number(result?.delivery_retried ?? 0)
-      notify(`已向 ${count} 台已接入服务器重新下发配置与授权`, 'success')
+      const count = Number(result?.reissued_servers ?? result?.delivery_retried ?? 0)
+      notify(`已向 ${count} 台已接入服务器重新下发全部配置、授权、用户与探测计划`, 'success')
       await load()
     } catch (error: any) {
       notify(error?.message || String(error), 'error')
@@ -245,7 +245,7 @@ export function AgentSettingsPanel({ data, client, load, notify, confirm }: Agen
         </SettingsRow>
       </SettingsGroup>
       <SettingsGroup collapsible title="维护操作" description="节点异常时，可重新下发配置。">
-        <SettingsRow label="刷新全部节点" description="重新下发全部已接入节点的配置，现有连接会短暂中断。">
+        <SettingsRow label="刷新全部节点" description="全部配置提升版本号后重新下发，包括节点配置、授权、运行时用户与探测计划，现有连接会短暂中断。">
           <div className="settings-actions">
             <button type="button" className="danger-ghost" onClick={() => void refreshAllRuntime()} disabled={Boolean(savingKey)}>
               {savingKey === 'refresh-runtime' ? '下发中...' : '刷新全部节点配置'}
