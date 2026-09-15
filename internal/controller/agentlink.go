@@ -36,6 +36,8 @@ import (
 type stealthTransport struct {
 	server   *agentlink.Server
 	listener net.Listener
+	listenAddr string
+	done chan struct{}
 	pin      string
 	addr     string
 }
@@ -74,55 +76,6 @@ func (s *Server) allowRateRaw(key string, limit int, window time.Duration) bool 
 	keyHash := security.HashSecret(key)
 	allowed, err := s.store.AllowRate(context.Background(), keyHash, limit, window, 10_000)
 	return err == nil && allowed
-}
-
-// ConfigureStealthTransport prepares the dedicated listener from the
-// OBOARD_STEALTH_ADDR environment variable. An empty value leaves the
-// transport off. The certificate is generated on first start and persisted
-// beside the database so the pin survives restarts.
-func (s *Server) ConfigureStealthTransport(dbPath string) {
-	addr := strings.TrimSpace(os.Getenv("OBOARD_STEALTH_ADDR"))
-	if addr == "" {
-		return
-	}
-	certPath := envOrDefault("OBOARD_STEALTH_CERT", filepath.Join(filepath.Dir(dbPath), "stealth-agent-cert.pem"))
-	keyPath := certPath + ".key"
-	pair, pin, err := loadOrCreateStealthCert(certPath, keyPath)
-	if err != nil {
-		log.Printf("stealth transport disabled: certificate: %v", err)
-		return
-	}
-	s.stealthTransport.Store(&stealthTransport{
-		server: agentlink.NewServer(agentlink.ServerConfig{Addr: addr, Certificate: pair}),
-		pin:    pin,
-		addr:   addr,
-	})
-}
-
-// StartStealthTransport begins accepting agent connections. It returns nil
-// when the transport is not configured.
-func (s *Server) StartStealthTransport(ctx context.Context) error {
-	current := s.stealthTransport.Load()
-	if current == nil {
-		return nil
-	}
-	ln, err := current.server.Listen()
-	if err != nil {
-		return err
-	}
-	current.listener = ln
-	log.Printf("stealth agent transport listening on %s pin=%s", current.addr, current.pin)
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
-		current.server.Close()
-	}()
-	go func() {
-		if err := current.server.Serve(ln, s.handleStealthConnection); err != nil {
-			log.Printf("stealth agent transport stopped: %v", err)
-		}
-	}()
-	return nil
 }
 
 // StealthTransportInfo reports the listener state for settings and the panel.

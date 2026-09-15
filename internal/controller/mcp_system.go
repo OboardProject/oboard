@@ -274,6 +274,7 @@ func (s *Server) validateSubscriptionRelayIDOperation(ctx context.Context, princ
 // ---- settings ----
 
 var settingsAutomationFields = map[string]bool{
+	settingStealthTransport:             true,
 	resourceDownloadSourceSetting:       true,
 	resourceDownloadCNControllerSetting: true,
 	"audit_enabled":                     true, "subscription_audit_enabled": true, "connection_audit_enabled": true,
@@ -453,6 +454,19 @@ func (s *Server) settingsUpdateCandidate(ctx context.Context, input json.RawMess
 	}
 	if len(fields) == 0 {
 		return nil, errors.New("changes must contain at least one setting")
+	}
+	if raw, ok := fields[settingStealthTransport]; ok {
+		if len(fields) != 1 {
+			return nil, errors.New("安全传输设置必须单独保存")
+		}
+		cfg, err := decodeStealthConfig(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.updateStealthConfig(ctx, cfg, apply); err != nil {
+			return nil, err
+		}
+		return []string{settingStealthTransport}, nil
 	}
 	changed := make([]string, 0, len(fields))
 	for field := range fields {

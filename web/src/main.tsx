@@ -145,6 +145,7 @@ import { TerminalWorkspace } from './components/remote-access/TerminalWorkspace'
 import { AboutSettingsPanel } from './components/AboutSettingsPanel'
 import { NodePresetsPanel, type NodePreset } from './components/NodePresetsPanel'
 import { SubscriptionTemplatesPanel } from './components/SubscriptionTemplatesPanel'
+import { StealthTransportSettings } from './components/settings/StealthTransportSettings'
 import { SettingsDisclosure, SettingsGroup, SettingsRow, SettingsSwitchRow } from './components/settings/SettingsLayout'
 import { DNSRecordDialog, dnsRecordDraftFromRecord, dnsRecordPayload, emptyDNSRecordDraft } from './components/DNSRecordDialog'
 import { ServerAboutDialog } from './components/server/ServerAboutDialog'
@@ -4001,6 +4002,10 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
           </div>
         </div>
         </SettingsGroup>
+        <StealthTransportSettings value={data.settings?.stealth_transport} onSave={async config => {
+          await client.request('/settings', { method: 'POST', body: JSON.stringify({ stealth_transport: config }) })
+          await load('settings', { background: true })
+        }} />
         <SettingsGroup collapsible defaultOpen={migration.active} key={migration.active ? 'migrating' : 'idle'} title="面板路径" description={`当前路径：${currentBasePath || '/'}`} actions={<span className={`status-pill ${migration.active ? 'warning' : 'ok'}`}>{migration.active ? (migration.direction === 'rollback' ? '撤销中' : '迁移中') : '已生效'}</span>}>
           <div className="base-path-settings">
             <div className="form settings-form single-field">

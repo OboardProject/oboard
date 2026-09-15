@@ -1080,9 +1080,38 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 			StepUpToken                               string             `json:"step_up_token"`
 			RemoteTerminalPasswordConfirmationEnabled *bool              `json:"remote_terminal_password_confirmation_enabled"`
 			MCPEnabled                                *bool              `json:"mcp_enabled"`
+			StealthTransport                          json.RawMessage    `json:"stealth_transport"`
 		}
-		if !decode(w, r, &req) {
+		body, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		if readErr != nil {
+			fail(w, readErr, 400)
 			return
+		}
+		var rawFields map[string]json.RawMessage
+		if err := json.Unmarshal(body, &rawFields); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			fail(w, err, 400)
+			return
+		}
+		changed := []string{}
+		if len(req.StealthTransport) > 0 {
+			if len(rawFields) != 1 {
+				fail(w, errors.New("安全传输设置必须单独保存"), http.StatusBadRequest)
+				return
+			}
+			stealthCfg, err := decodeStealthConfig(req.StealthTransport)
+			if err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			if err := s.updateStealthConfig(r.Context(), stealthCfg, true); err != nil {
+				fail(w, err, http.StatusBadRequest)
+				return
+			}
+			changed = append(changed, settingStealthTransport)
 		}
 		if req.RemoteTerminalPasswordConfirmationEnabled != nil {
 			resourceID := settingRemoteTerminalPasswordConfirmationEnabled + ":" + strconv.FormatBool(*req.RemoteTerminalPasswordConfirmationEnabled)
@@ -1134,7 +1163,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 				autoIssueSettings[settingCertificateAutoIssueGoogleEABCredential] = strconv.FormatInt(eabCredentialID, 10)
 			}
 		}
-		changed := []string{}
 		redirectPath := ""
 		if req.BasePath != nil {
 			path, migrated, err := s.startBasePathMigration(r.Context(), r, *req.BasePath)
@@ -1674,11 +1702,12 @@ func (s *Server) publicSettingsValues(ctx context.Context, items map[string]stri
 	out[updateWindowStartHourSetting] = updateWindowDefaultStartHour
 	out[updateWindowEndHourSetting] = updateWindowDefaultEndHour
 	for key, value := range items {
-		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting {
+		if key == "traffic_enforcement_mode" || strings.HasPrefix(key, "controller_base_path") || key == controllerBackupSetting || key == controllerBackupTargetBuildSetting || key == controllerUpdateErrorSetting || key == controllerAutoUpdateSetting || key == controllerAutoUpdateIntervalSetting || key == settingAuditPolicy || key == settingTrustedProxyCIDRs || key == settingRegistrationEnabled || key == settingRegistrationDefaultGroupID || key == store.DatabaseLastMaintenanceAtSetting || key == store.DatabaseLastMaintenanceSummarySetting || key == settingStealthTransport {
 			continue
 		}
 		out[key] = value
 	}
+	out[settingStealthTransport] = s.publicStealthSettings(items)
 	out[controllerAutoUpdateSetting] = settingBool(items, controllerAutoUpdateSetting, false)
 	out[controllerAutoUpdateIntervalSetting] = controllerUpdateIntervalHours(items)
 	out[resourceDownloadCNControllerSetting] = settingBool(items, resourceDownloadCNControllerSetting, true)

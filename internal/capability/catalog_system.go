@@ -32,6 +32,15 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 			RBACPermission: "admin.settings", ResolveResourceRefs: noRefs,
 		}
 	}
+	stealthConfig := closedObject(map[string]any{
+		"enabled":        boolValue,
+		"listen_address": map[string]any{"type": "string", "description": "本机监听 IP:端口，支持通配 IP；如 0.0.0.0:24443"},
+		"public_address": map[string]any{"type": "string", "description": "Agent 可达的 IP 或域名:端口；不能使用通配 IP；IPv6 使用 [地址]:端口"},
+	}, "enabled", "listen_address", "public_address")
+	stealthStatus := closedObject(map[string]any{
+		"enabled": boolValue, "listen_address": stringValue, "public_address": stringValue,
+		"active": boolValue, "error": stringValue, "source": stringValue,
+	})
 	basePathMigrationAgent := closedObject(map[string]any{
 		"server_id": positiveID, "server_name": stringValue, "task_id": map[string]any{"type": "integer"},
 		"status": stringValue, "error": stringValue,
@@ -153,7 +162,7 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		"created_at":            stringValue, "updated_at": stringValue,
 	})
 	descriptors := []Descriptor{
-		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "settings")),
+		adminRead("settings.get", "读取主控全局设置（审计、订阅、通知、Agent 设置等，不含秘密）", schemaObject(nil), schemaObject(map[string]any{"settings": map[string]any{"type": "object", "properties": map[string]any{"stealth_transport": stealthStatus}, "additionalProperties": map[string]any{"type": []string{"string", "number", "integer", "boolean", "array", "object", "null"}}}}, "settings")),
 		adminRead("telegram_bot.get", "读取统一 Telegram Bot 状态（不返回 Bot Token）", schemaObject(nil), schemaObject(map[string]any{"telegram_bot": telegramBot}, "telegram_bot")),
 		adminRead("controller_update.status", "读取主控更新通道、当前版本、异步更新状态及下载字节、速度、尝试次数和真实耗时", schemaObject(nil), rawSchema(controllerUpdate)),
 		adminRead("controller_update.diagnostics", "读取主控更新诊断报告：更新器状态、最近一次更新任务的阶段与耗时，以及主控日志中与更新相关的记录，用于排查更新失败或卡住", schemaObject(nil), schemaObject(map[string]any{
@@ -170,8 +179,9 @@ func systemDescriptors(positiveID map[string]any, stringValue, boolValue map[str
 		adminRead("tool_audits.list", "列出自动化工具调用审计", schemaObject(map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 500}}), schemaObject(map[string]any{"audits": arrayOf(toolAudit), "count": map[string]any{"type": "integer"}}, "audits")),
 		{Name: "certificates.list", Description: "列出全部 TLS 证书及其状态", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(certificate)), RequiredScopes: []string{"certificates:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
 		{Name: "notification_channels.list", Description: "列出通知频道（不含频道密钥）", InputSchema: schemaObject(nil), OutputSchema: rawSchema(arrayOf(notificationChannel)), RequiredScopes: []string{"notifications:read"}, ReadOnly: true, Idempotent: true, DataClassification: DataInternal, MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs},
-		adminWrite("settings.update", "修改主控全局设置；WebSSH 密码确认开关仅允许管理员在 Web 面板重新验证身份后修改；subscription_relay_url 仅能设为已接入中继的公开地址或空字符串；subscription_always_use_domain_host 控制订阅 Host 是否始终使用解析域名", schemaObject(map[string]any{"changes": closedObject(map[string]any{
-			"audit_enabled": boolValue, "subscription_audit_enabled": boolValue, "connection_audit_enabled": boolValue,
+		adminWrite("settings.update", "修改主控全局设置；stealth_transport 必须单独保存，校验端口后立即生效，已有安全进程 Agent 时禁止改址或关闭；WebSSH 密码确认开关仅允许管理员在 Web 面板重新验证身份后修改；subscription_relay_url 仅能设为已接入中继的公开地址或空字符串；subscription_always_use_domain_host 控制订阅 Host 是否始终使用解析域名", schemaObject(map[string]any{"changes": closedObject(map[string]any{
+			"stealth_transport": stealthConfig,
+			"audit_enabled":     boolValue, "subscription_audit_enabled": boolValue, "connection_audit_enabled": boolValue,
 			"audit_action":                           map[string]any{"type": "string", "enum": []string{"restrict", "warn"}},
 			"traffic_timezone":                       stringValue,
 			"subscription_age_policy":                map[string]any{"type": "string", "enum": []string{"optional", "required"}},

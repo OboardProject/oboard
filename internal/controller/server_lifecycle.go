@@ -157,7 +157,7 @@ func (s *Server) agentEnrollmentCommand(ctx context.Context, bbr, stealth bool) 
 func (s *Server) agentStealthInstallEnv() (addrEnv, pinEnv string, err error) {
 	addr, pin, enabled := s.StealthTransportInfo()
 	if !enabled {
-		return "", "", errors.New("安全进程传输端口未启用：请先设置 OBOARD_STEALTH_ADDR 并重启 Controller")
+		return "", "", errors.New("安全进程传输端口未启用：请先在系统设置 → 面板访问中启用安全进程传输")
 	}
 	return "OBOARD_STEALTH_ADDR=" + addr, "OBOARD_STEALTH_PIN=" + pin, nil
 }
