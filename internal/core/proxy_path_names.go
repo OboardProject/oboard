@@ -81,6 +81,7 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 		})
 	}
 
+	resolveProxyPathMiddleNames(states)
 	recomputeProxyPathNames(states)
 	conflicts := proxyPathNameConflicts(states, reserved)
 	changed := false
@@ -279,16 +280,82 @@ func automaticProxyPathName(route []string) string {
 	if len(route) == 0 {
 		return "代理拓扑"
 	}
-	return strings.Join(route, proxyPathNameSeparator)
+	if len(route) == 1 {
+		return route[0]
+	}
+	return strings.Join([]string{route[0], route[len(route)-1]}, proxyPathNameSeparator)
+}
+
+func resolveProxyPathMiddleNames(states []proxyPathNameState) {
+	groups := map[[2]string][]int{}
+	for index, state := range states {
+		if state.active && state.path.NameMode != model.ProxyPathNameCustom && len(state.route) >= 2 {
+			key := [2]string{state.route[0], state.route[len(state.route)-1]}
+			groups[key] = append(groups[key], index)
+		}
+	}
+	for _, indexes := range groups {
+		if len(indexes) < 2 {
+			continue
+		}
+		sort.Slice(indexes, func(i, j int) bool { return states[indexes[i]].path.ID < states[indexes[j]].path.ID })
+		first := states[indexes[0]].route
+		common := first[1 : len(first)-1]
+		for _, index := range indexes[1:] {
+			route := states[index].route
+			common = commonProxyPathMiddle(common, route[1:len(route)-1])
+		}
+		for _, index := range indexes {
+			state := &states[index]
+			labels := []string{state.route[0]}
+			matched := 0
+			for _, label := range state.route[1 : len(state.route)-1] {
+				if matched < len(common) && label == common[matched] {
+					matched++
+					continue
+				}
+				labels = append(labels, label)
+			}
+			labels = append(labels, state.route[len(state.route)-1])
+			state.base = strings.Join(labels, proxyPathNameSeparator)
+		}
+	}
+}
+
+// Keep shared intermediate nodes hidden even when paths have different lengths.
+func commonProxyPathMiddle(a, b []string) []string {
+	lengths := make([][]int, len(a)+1)
+	for i := range lengths {
+		lengths[i] = make([]int, len(b)+1)
+	}
+	for i := len(a) - 1; i >= 0; i-- {
+		for j := len(b) - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				lengths[i][j] = 1 + lengths[i+1][j+1]
+			} else {
+				lengths[i][j] = max(lengths[i+1][j], lengths[i][j+1])
+			}
+		}
+	}
+	var common []string
+	for i, j := 0, 0; i < len(a) && j < len(b); {
+		if a[i] == b[j] {
+			common = append(common, a[i])
+			i++
+			j++
+		} else if lengths[i+1][j] >= lengths[i][j+1] {
+			i++
+		} else {
+			j++
+		}
+	}
+	return common
 }
 
 func recomputeProxyPathNames(states []proxyPathNameState) {
 	for index := range states {
 		state := &states[index]
 		name := state.base
-		if state.path.NameMode != model.ProxyPathNameCustom {
-			name = automaticProxyPathName(state.route)
-		}
 		if state.directSuffix {
 			name += proxyPathNameSeparator + "直出"
 		}
