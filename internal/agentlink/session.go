@@ -116,7 +116,11 @@ func (s *Session) writePadded(f frame, payload []byte) error {
 	}
 	padLen := MinPaddedFrameBytes - frameHeaderLen - len(payload)
 	f.flags |= flagPad
-	f.payload = buildPadding(payload, padLen)
+	padded, err := buildPadding(payload, padLen)
+	if err != nil {
+		return err
+	}
+	f.payload = padded
 	return s.WriteFrame(f)
 }
 

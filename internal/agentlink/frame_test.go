@@ -47,7 +47,10 @@ func TestFrameHeaderVector(t *testing.T) {
 
 func TestPaddingRoundTrip(t *testing.T) {
 	payload := []byte(`{"a":1}`)
-	wrapped := buildPadding(payload, 37)
+	wrapped, err := buildPadding(payload, 37)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stripped, err := stripPadding(wrapped)
 	if err != nil {
 		t.Fatal(err)

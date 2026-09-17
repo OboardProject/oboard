@@ -42,6 +42,9 @@ const (
 	// Small control messages are padded to this size so frame lengths do not
 	// disclose message types.
 	MinPaddedFrameBytes = 128
+	// maxPadLen is the largest pad length the uint16 pad header can express;
+	// buildPadding refuses anything beyond it.
+	maxPadLen = 1<<16 - 1
 	// helloTimeout bounds how long the server waits for the client's first
 	// frame after the TLS handshake before dropping the connection. A probe
 	// that connects and waits sees nothing but a closed connection.
@@ -129,14 +132,19 @@ func stripPadding(payload []byte) ([]byte, error) {
 	return payload[2+padLen:], nil
 }
 
-// buildPadding wraps payload in the flagPad layout with the given pad length.
-func buildPadding(payload []byte, padLen int) []byte {
+// buildPadding wraps payload in the flagPad layout with the given pad
+// length. Both sizes are validated against the wire format's own limits so
+// the allocation cannot overflow.
+func buildPadding(payload []byte, padLen int) ([]byte, error) {
+	if padLen < 0 || padLen > maxPadLen || len(payload) > maxFramePayload {
+		return nil, ErrFrameTooLarge
+	}
 	out := make([]byte, 0, 2+padLen+len(payload))
 	var padHeader [2]byte
 	binary.BigEndian.PutUint16(padHeader[:], uint16(padLen))
 	out = append(out, padHeader[:]...)
 	out = append(out, make([]byte, padLen)...)
-	return append(out, payload...)
+	return append(out, payload...), nil
 }
 
 // AuthRequest is the frameTypeAuth payload.
