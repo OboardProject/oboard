@@ -111,7 +111,7 @@ func planSnellUserListeners(inbounds []model.Inbound, servers []model.Server, us
 		}
 		if inbound.AdvertisePort > 0 && len(listenerUsers) > 1 {
 			return nil, nil, markInvalidDesiredState(fmt.Errorf(
-				"snell 入站 %s 配置了对外端口 %d，但当前有 %d 个逐用户或逐分支运行实例；一个对外端口只能映射一个客户端运行端口",
+				"Snell 入站 %s 当前使用独立端口模式，%d 这个对外端口无法映射 %d 个用户或分支的运行端口；请编辑入站，将「监听方式」切换为「共享端口」，预览并确认切换后重新部署，即可通过独立 PSK 在单端口上区分用户和分支",
 				inbound.Name, inbound.AdvertisePort, len(listenerUsers)))
 		}
 		listenIP := EffectiveListenIP(host, inbound.ListenIP)
@@ -322,7 +322,7 @@ func SnellRuntimeProbePorts(ledger *ProxyPathPortLedger, inbound model.Inbound, 
 func SnellSubscriptionNode(ledger *ProxyPathPortLedger, user model.User, inbound model.Inbound, server model.Server, pathID int64) (map[string]any, bool, error) {
 	if !SnellSharedPort(inbound) && inbound.AdvertisePort > 0 && activeSnellClientListenerCount(ledger, inbound) > 1 {
 		return nil, false, markInvalidDesiredState(fmt.Errorf(
-			"snell 入站 %s 的对外端口 %d 对应多个客户端运行端口，请先收敛为单个用户或分支并重新部署",
+			"Snell 入站 %s 当前使用独立端口模式，对外端口 %d 对应多个运行端口；请编辑入站，将「监听方式」切换为「共享端口」，预览并确认切换后重新部署，再刷新订阅",
 			inbound.Name, inbound.AdvertisePort))
 	}
 	return snellUserNode(ledger, user, inbound, server, pathID)

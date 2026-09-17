@@ -486,7 +486,7 @@ func TestSnellAdvertisePortRejectsMultipleClientListeners(t *testing.T) {
 	if err == nil || !errors.Is(err, ErrInvalidDesiredState) {
 		t.Fatalf("multiple advertised snell listeners error = %v, want invalid desired state", err)
 	}
-	if !containsSubstring(err.Error(), "一个对外端口只能映射一个客户端运行端口") {
+	if !containsSubstring(err.Error(), "将「监听方式」切换为「共享端口」") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -135,3 +135,69 @@ func TestSnellSharedDuplicatePSKRejectedAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSnellSharedAdvertisePortRoutesMultipleUsersAndBranches(t *testing.T) {
+	for _, version := range []int{4, 6} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			server, inbound := sharedSnellFixture()
+			inbound.AdvertisePort = 20803
+			inbound.ConfigJSON = fmt.Sprintf(`{"version":%d,"psk":"unused-legacy-seed","listener_mode":"shared_port"}`, version)
+			exitB := model.Server{ID: 2, Name: "exit-b", PublicIPv4: "203.0.113.20", PortRangeStart: 41000, PortRangeEnd: 41100}
+			exitC := model.Server{ID: 3, Name: "exit-c", PublicIPv4: "203.0.113.30", PortRangeStart: 42000, PortRangeEnd: 42100}
+			paths := []model.ProxyPath{
+				{ID: 50, Name: "branch-a", InboundID: inbound.ID, Secret: "secret-a", Enabled: true},
+				{ID: 51, Name: "branch-b", InboundID: inbound.ID, Secret: "secret-b", Enabled: true},
+			}
+			steps := []model.ProxyPathStep{
+				{ID: 101, PathID: 50, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitB.ID},
+				{ID: 102, PathID: 51, Position: 1, NodeType: model.ProxyPathStepServerInbound, ServerID: &exitC.ID},
+			}
+			users := fixtureCredentials(snellTestUsers(2), []model.Inbound{inbound}, paths)
+			var pkg *RuntimeUserPackage
+			ledger := NewProxyPathPortLedger(nil)
+			opts := ConfigOptions{Servers: []model.Server{server, exitB, exitC}, Inbounds: []model.Inbound{inbound}, ProxyPaths: paths, ProxyPathSteps: steps, PortLedger: ledger, RuntimeUsersOut: &pkg}
+			old := inbound
+			old.ConfigJSON = fmt.Sprintf(`{"version":%d,"psk":"unused-legacy-seed"}`, version)
+			preview, err := PreviewSnellListener(old, server, SnellListenerShared, users, opts)
+			if err != nil || preview.CredentialCount != 4 || len(preview.TargetPorts) != 1 || preview.TargetPorts[0] != inbound.Port || !preview.RequiresRestart || !preview.CapabilityReady {
+				t.Fatalf("shared switch preview = %+v, err = %v", preview, err)
+			}
+			config, err := GenerateServerConfigWithOptions(server, []model.Inbound{inbound}, nil, testDNSState(1), users, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			listeners := snellListenersFromConfig(t, config)
+			if len(listeners) != 1 || listeners["in-2"]["listen_port"] != float64(inbound.Port) {
+				t.Fatalf("want one shared listener: %v", listeners)
+			}
+			if pkg == nil || len(pkg.Entries) != 4 {
+				t.Fatalf("want four user/branch identities: %+v", pkg)
+			}
+			entries := map[string]model.UsersInstallEntry{}
+			for _, entry := range pkg.Entries {
+				wantRoute := fmt.Sprintf("path-%d-step-1", entry.Identity.PathID)
+				if entry.InboundTag != "in-2" || entry.RouteOutbound != wantRoute || len(findOutbound(config, wantRoute)) == 0 {
+					t.Fatalf("wrong branch route: %+v", entry)
+				}
+				if _, exists := entries[entry.Credential.PSK]; exists {
+					t.Fatal("users or branches share a PSK")
+				}
+				entries[entry.Credential.PSK] = entry
+			}
+			inbound.SnellActiveMode, inbound.SnellActivePort, inbound.SnellActiveVersion = SnellListenerShared, inbound.Port, version
+			for _, user := range users {
+				for _, path := range paths {
+					identity := UserCredentialForRoute(user, inbound.ID, path.ID, inbound.Protocol)
+					node, ok, err := SnellSubscriptionNode(ledger, identity, inbound, server, path.ID)
+					if err != nil || !ok || node["server_port"] != 20803 {
+						t.Fatalf("shared public endpoint = %v, ok = %v, err = %v", node, ok, err)
+					}
+					entry := entries[node["psk"].(string)]
+					if entry.Identity.UserID != user.ID || entry.Identity.PathID != path.ID {
+						t.Fatalf("subscription authenticates wrong user/branch: %+v", entry.Identity)
+					}
+				}
+			}
+		})
+	}
+}
