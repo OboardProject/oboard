@@ -133,13 +133,18 @@ func stripPadding(payload []byte) ([]byte, error) {
 }
 
 // buildPadding wraps payload in the flagPad layout with the given pad
-// length. Both sizes are validated against the wire format's own limits so
-// the allocation cannot overflow.
+// length. The pad length must fit the uint16 wire header and the padded
+// result must stay inside the frame limit, so the allocation cannot
+// overflow.
 func buildPadding(payload []byte, padLen int) ([]byte, error) {
-	if padLen < 0 || padLen > maxPadLen || len(payload) > maxFramePayload {
+	if padLen < 0 || padLen > maxPadLen {
 		return nil, ErrFrameTooLarge
 	}
-	out := make([]byte, 0, 2+padLen+len(payload))
+	total := 2 + padLen + len(payload)
+	if total > maxFramePayload {
+		return nil, ErrFrameTooLarge
+	}
+	out := make([]byte, 0, total)
 	var padHeader [2]byte
 	binary.BigEndian.PutUint16(padHeader[:], uint16(padLen))
 	out = append(out, padHeader[:]...)
