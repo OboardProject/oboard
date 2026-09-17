@@ -15285,7 +15285,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
   const presetProtocol = selectedPreset.protocol
   const presetOptions = inboundPresetsForProtocol(presetProtocol, presetID)
   const cfg = parseConfig(draft.config_json) || {}
-  const snellMode = cfg.listener_mode || 'per_identity_port'
+  const snellMode = cfg.listener_mode || (mode === 'create' ? 'shared_port' : 'per_identity_port')
   const [snellTargetMode, setSnellTargetMode] = useState(snellMode)
   const [snellPreview, setSnellPreview] = useState<any>(null)
   const [snellBusy, setSnellBusy] = useState(false)
@@ -15363,7 +15363,7 @@ function EntryDraftDialog({ mode = 'create', draft, setDraft, data, servers, cli
       const shouldRename = !old.name || old.name === oldAutoName || /^.+-(vless|hy2|anytls|shadowsocks|mieru|socks|ssh)-\d+$/.test(String(old.name))
       const previous = parseConfig(old.config_json) || {}
       let nextConfig = buildInboundPresetConfig(preset.id, data.node_presets)
-      if (old.protocol === 'snell' && preset.protocol === 'snell') { const next = parseConfig(nextConfig) || {}; next.listener_mode = previous.listener_mode || 'per_identity_port'; nextConfig = JSON.stringify(next, null, 2) }
+      if (old.protocol === 'snell' && preset.protocol === 'snell') { const next = parseConfig(nextConfig) || {}; next.listener_mode = previous.listener_mode || (mode === 'create' ? 'shared_port' : 'per_identity_port'); nextConfig = JSON.stringify(next, null, 2) }
       if (old.protocol === 'hy2' && preset.protocol === 'hy2') {
         const next = parseConfig(nextConfig) || {}
         if (previous.up_mbps != null) next.up_mbps = previous.up_mbps
@@ -22151,6 +22151,7 @@ function buildInboundPresetConfig(id: string, presets: NodePreset[] = []) {
     cfg.multiplexing = 'MULTIPLEXING_DEFAULT'
     cfg.user_hint_is_mandatory = true
   }
+  if (preset.protocol === 'snell') cfg.listener_mode = 'shared_port'
   if (preset.id === 'snell-v4') {
     cfg.version = 4
     cfg.obfs_mode = 'none'

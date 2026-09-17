@@ -87,3 +87,36 @@ func TestSnellModeSwitchUsesValidatedChangesetAndConfirmsLater(t *testing.T) {
 		t.Fatalf("stale preview replay accepted: %v", err)
 	}
 }
+
+func TestSnellCreationDefaultsToSharedPort(t *testing.T) {
+	for _, kind := range []string{"", "snell-v4", "snell-v6"} {
+		for _, mode := range []string{"", core.SnellListenerShared, core.SnellListenerPerIdentity} {
+			t.Run(kind+"/"+mode, func(t *testing.T) {
+				cfg := map[string]any{}
+				if mode != "" {
+					cfg["listener_mode"] = mode
+				}
+				raw, _ := json.Marshal(cfg)
+				in := model.Inbound{Protocol: model.ProtocolSnell, Kind: kind, ConfigJSON: string(raw)}
+				want := mode
+				if want == "" {
+					want = core.SnellListenerShared
+				}
+				// REST calls kind defaults directly; automation normalizes the same candidate.
+				rest := in
+				if err := applyInboundKindDefaults(&rest, nil); err != nil || core.SnellListenerMode(rest) != want {
+					t.Fatalf("REST default = %s, err = %v", rest.ConfigJSON, err)
+				}
+				automation, err := normalizeInboundAutomationCandidate(in, nil)
+				if err != nil || core.SnellListenerMode(automation) != want {
+					t.Fatalf("automation default = %s, err = %v", automation.ConfigJSON, err)
+				}
+				current := in
+				updated, err := normalizeInboundAutomationCandidate(in, &current)
+				if err != nil || core.SnellListenerMode(updated) != core.SnellListenerMode(current) {
+					t.Fatalf("edit changed existing mode = %s, err = %v", updated.ConfigJSON, err)
+				}
+			})
+		}
+	}
+}

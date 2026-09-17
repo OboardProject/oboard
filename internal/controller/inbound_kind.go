@@ -40,7 +40,7 @@ func applyInboundKindDefaults(v *model.Inbound, current *model.Inbound) error {
 		if v.Reality != nil || v.RotateRealityKey {
 			return &core.ConfigFieldError{Path: "kind", Problem: "must be vless-reality when reality settings are provided"}
 		}
-		return nil
+		return applyNewSnellListenerDefault(v, current)
 	}
 	protocol, ok := inboundKindProtocols[v.Kind]
 	if !ok {
@@ -58,9 +58,30 @@ func applyInboundKindDefaults(v *model.Inbound, current *model.Inbound) error {
 		if v.RotateRealityKey {
 			return &core.ConfigFieldError{Path: "rotate_reality_key", Problem: "is only valid for kind vless-reality"}
 		}
-		return applyNonRealityInboundKindDefaults(v)
+		if err := applyNonRealityInboundKindDefaults(v); err != nil {
+			return err
+		}
+		return applyNewSnellListenerDefault(v, current)
 	}
 	return applyControlledRealityDefaults(v, current)
+}
+
+func applyNewSnellListenerDefault(v *model.Inbound, current *model.Inbound) error {
+	if v.Protocol != model.ProtocolSnell || (current != nil && current.Protocol == model.ProtocolSnell) {
+		return nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(v.ConfigJSON), &cfg); err != nil {
+		return err
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	if _, exists := cfg["listener_mode"]; !exists {
+		cfg["listener_mode"] = core.SnellListenerShared
+	}
+	v.ConfigJSON = encodeInboundJSON(cfg)
+	return nil
 }
 
 func applyNonRealityInboundKindDefaults(v *model.Inbound) error {
