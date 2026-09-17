@@ -3837,8 +3837,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
     try {
       const result = await client.request('/settings', { method: 'POST', body: JSON.stringify({ base_path: normalizedBasePathDraft }) }) as { redirect_path?: string }
       notify?.('面板路径迁移已开始', 'success')
-      const redirectTarget = result.redirect_path || `${normalizedBasePathDraft}/settings` || '/settings'
-      window.location.assign(redirectTarget.startsWith('/') && !redirectTarget.startsWith('//') ? redirectTarget : '/settings')
+      window.location.assign(result.redirect_path || '/settings')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
       setSaving('')
