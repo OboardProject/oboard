@@ -16300,6 +16300,12 @@ choose_install_dir() {
 }
 
 resolve_agent_install_dir() {
+  if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then
+    mkdir -p /opt
+    INSTALL_DIR=$(mktemp -d /opt/.install.XXXXXX) || return 1
+    export INSTALL_DIR
+    return 0
+  fi
   persisted=$(configured_agent_install_dir)
   if [ -n "$persisted" ]; then
     raw_persisted=$persisted
@@ -16352,6 +16358,12 @@ persist_agent_install_dir() {
 finish_install() {
   status=$?
   [ -z "$UPDATE_TMP" ] || rm -rf "$UPDATE_TMP"
+  if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then
+    rm -rf "$INSTALL_DIR"
+    if [ "$status" -eq 0 ] && [ -z "${OBOARD_AGENT_INSTALL_LOG:-}" ]; then
+      rm -f "$INSTALL_LOG"
+    fi
+  fi
   if [ "$status" -ne 0 ] && [ -n "$INSTALL_LOG" ] && [ -f "$INSTALL_LOG" ]; then
     echo "" >&2
     echo "OBoard Agent 操作未完成。" >&2
@@ -16363,6 +16375,11 @@ finish_install() {
 
 prepare_install_log() {
   local log_dir log_tmp
+  if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then
+    INSTALL_LOG=${OBOARD_AGENT_INSTALL_LOG:-$(mktemp /var/tmp/.install-log.XXXXXX)}
+    chmod 0600 "$INSTALL_LOG"
+    return
+  fi
   INSTALL_LOG=${OBOARD_AGENT_INSTALL_LOG:-$STATE_DIR/install.log}
   case "$INSTALL_LOG" in
     */*) log_dir=${INSTALL_LOG%/*}; [ -n "$log_dir" ] || log_dir=/ ;;
@@ -17039,7 +17056,11 @@ trap finish_install EXIT
 echo "OBoard Agent"
 echo "------------"
 echo "主控地址：$BASE_URL"
-echo "安装目录：$INSTALL_DIR"
+if [ "$STEALTH_MODE" = 1 ]; then
+  echo "安装目录：自动生成随机目录（强制重新安装）"
+else
+  echo "安装目录：$INSTALL_DIR"
+fi
 echo ""
 echo "[1/4] 检查运行环境"
 printf '环境：linux/%s 服务管理器=%s 虚拟化=%s\n' "$ARCH_VALUE" "$SERVICE_MANAGER" "$VIRT_HINT" >> "$INSTALL_LOG"
@@ -17489,6 +17510,12 @@ case "$ACTION" in
         exit 1
       fi
       eval "$stealth_env"
+      if [ -n "${TARGET_BUILD:-}" ] && [ -x "$STEALTH_AGENT_BIN" ]; then
+        if ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
+          echo "安装的 Agent 二进制 build 与目标 build 不一致，操作未完成。请检查下载缓存或重新执行命令。" >&2
+          exit 1
+        fi
+      fi
       echo "[4/4] 注册并启动 Agent 服务"
       if ! OBOARD_ENROLL_TOKEN="$OBOARD_ENROLL_TOKEN" "$STEALTH_AGENT_BIN" \
         -config "$STEALTH_CONFIG_PATH" \
@@ -17504,15 +17531,19 @@ case "$ACTION" in
       elif [ "$SERVICE_MANAGER" = openrc ]; then
         rc-service "$STEALTH_AGENT_SERVICE" restart >> "$INSTALL_LOG" 2>&1 9>&-
       else
-        echo "请手动启动服务：$STEALTH_AGENT_SERVICE" >&2
+        echo "无法启动安全进程服务：未识别服务管理器。" >&2
+        exit 1
       fi
-      if [ -n "${TARGET_BUILD:-}" ] && [ -x "$STEALTH_AGENT_BIN" ]; then
-        if ! "$STEALTH_AGENT_BIN" -version 2>/dev/null | grep -q "build $TARGET_BUILD"; then
-          echo "安装的 Agent 二进制 build 与目标 build 不一致，操作未完成。请检查下载缓存或重新执行命令。" >&2
-          exit 1
-        fi
+      if ! wait_service_stable "$STEALTH_AGENT_SERVICE" 15; then
+        echo "安全进程 Agent 未能保持运行，安装未完成，旧安装保留。" >&2
+        exit 1
       fi
-      echo "安装完成：Agent 已以安全进程模式运行，进程、服务与文件名均已随机化。"
+      if ! "$STEALTH_AGENT_BIN" -stealth-bootstrap -cleanup-existing \
+        -keep-config "$STEALTH_CONFIG_PATH" -manager "$SERVICE_MANAGER" >> "$INSTALL_LOG" 2>&1; then
+        echo "新 Agent 已启动，但旧 Agent 清理失败，请检查日志：$INSTALL_LOG。" >&2
+        exit 1
+      fi
+      echo "安装完成：Agent 已重新安装并以安全进程模式运行，安装目录、进程、服务与文件名均已随机化，旧 Agent 已清理。"
       echo "此服务器后续请通过面板完成 Agent 更新与卸载。"
     else
       download_binaries

@@ -49,12 +49,10 @@ func serverSupportsCapability(server model.Server, capability string) bool {
 	return false
 }
 
-// maybeQueueStealthSwitch queues the apply_stealth task after a server update
-// when the switch changed on an enrolled, online server. The switch itself is
-// saved either way: for an unenrolled server it only shapes the install
-// command the panel will generate.
+// Enabling requires a fresh installation. Disabling an online installation
+// can still restore its standard layout through the signed task lane.
 func (s *Server) maybeQueueStealthSwitch(ctx context.Context, before, after model.Server) (model.AgentTask, bool, error) {
-	if before.StealthEnabled == after.StealthEnabled {
+	if before.StealthEnabled == after.StealthEnabled || after.StealthEnabled {
 		return model.AgentTask{}, false, nil
 	}
 	if strings.TrimSpace(after.AgentID) == "" || after.Status == model.ServerOffline {

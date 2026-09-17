@@ -20,6 +20,7 @@ it.each(['', 'agent-1'])('copies the complete issued command for agent %s', asyn
       onEnroll={async () => command}
       onUpdateAgent={async () => {}}
     />))
+    if (agentID) expect(host.textContent).toContain('待重新安装')
     const generate = [...host.querySelectorAll('button')].find(button => button.textContent?.includes(agentID ? '重新生成接入 Token' : '生成接入命令'))!
     await act(async () => generate.click())
     expect(host.querySelector('pre')?.textContent).toBe(command)

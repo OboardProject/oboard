@@ -73,7 +73,7 @@ export function SystemAgentTab({ server, expectedBuild, onEnroll, onUpdateAgent,
           <div className="server-about-item"><span className="server-about-label">当前版本</span><span className="server-about-value">{server.agent_version||'—'}</span></div>
           <div className="server-about-item"><span className="server-about-label">当前 Build</span><span className="server-about-value">{currentBuild || '—'}</span></div>
           <div className="server-about-item"><span className="server-about-label">Controller 期望</span><span className="server-about-value">{expectedBuild||'—'}</span></div>
-          <div className="server-about-item"><span className="server-about-label">安全进程</span><span className="server-about-value">{stealthActive ? '已启用' : (server.stealth_enabled ? '切换中 / 未生效' : '未启用')}</span></div>
+          <div className="server-about-item"><span className="server-about-label">安全进程</span><span className="server-about-value">{stealthActive ? '已启用' : (server.stealth_enabled ? '待重新安装' : '未启用')}</span></div>
         </dl>
         {needUpdate ? (
           <div className="access-note warning">

@@ -9036,7 +9036,7 @@ function ServerCreateDialog({ draft, setDraft, onCancel, onSubmit, servers, conn
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
 
-          <FormField label="安全进程" hint="安装命令将以安全进程模式初始化：进程、服务与文件名随机化，配置加密存储。">
+          <FormField label="安全进程" hint="安装命令自动使用随机目录并启动 Agent，配置加密存储；若已有 Agent，重装成功后自动清理旧安装。">
             <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
           </FormField>
 
@@ -9216,7 +9216,7 @@ function ServerEditDialog({ server, client, notify, role = 'viewer', onCancel, o
             <Switch checked={Boolean(draft.bbr_enabled)} onChange={checked => update({ bbr_enabled: checked })} ariaLabel="BBR + FQ" />
           </FormField>
 
-          <FormField label="安全进程" hint="隐藏 Agent 进程名与服务名，配置文件加密存储。已注册的服务器会立即切换，未注册的服务器影响后续安装命令。">
+          <FormField label="安全进程" hint="开启后必须重新生成接入命令并在服务器执行。安装命令将重新安装并启动随机目录的 Agent，成功后自动清理旧安装；关闭时在线 Agent 自动切回普通模式。">
             <Switch checked={Boolean(draft.stealth_enabled)} onChange={checked => update({ stealth_enabled: checked })} ariaLabel="安全进程" />
           </FormField>
 

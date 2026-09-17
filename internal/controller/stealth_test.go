@@ -37,18 +37,8 @@ func TestStealthSwitchToggleQueuesApplyStealthTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queue apply_stealth: %v", err)
 	}
-	if !queued {
-		t.Fatal("switch change must queue the task")
-	}
-	if task.Type != model.AgentTaskTypeApplyStealth {
-		t.Fatalf("task type = %q", task.Type)
-	}
-	var payload model.ApplyStealthTaskPayload
-	if err := json.Unmarshal([]byte(task.PayloadJSON), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if !payload.Enable {
-		t.Fatalf("payload = %+v", payload)
+	if queued || task.ID != 0 {
+		t.Fatal("enabling must require reinstall instead of an in-place task")
 	}
 	// A same-direction toggle while the task is pending dedups to it.
 	sameAgain := updated
@@ -60,8 +50,7 @@ func TestStealthSwitchToggleQueuesApplyStealthTask(t *testing.T) {
 		t.Fatal("unchanged switch must not queue a task")
 	}
 	_ = again
-	// An opposite toggle queues behind the pending task instead of being
-	// swallowed: the Agent serializes and applies the newest state last.
+	// Disabling still uses the signed task lane.
 	reverted := updated
 	reverted.StealthEnabled = false
 	opposite, queuedOpposite, err := srv.maybeQueueStealthSwitch(ctx, updated, reverted)
@@ -106,7 +95,8 @@ func TestStealthSwitchRequiresAgentCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated := *server
-	updated.StealthEnabled = true
+	server.StealthEnabled = true
+	updated.StealthEnabled = false
 	if _, _, err := srv.maybeQueueStealthSwitch(ctx, *server, updated); err == nil || !strings.Contains(err.Error(), "stealth_v1") {
 		t.Fatalf("old agent must be rejected with an upgrade hint: %v", err)
 	}
@@ -179,7 +169,7 @@ func TestAgentInstallScriptStealthBranch(t *testing.T) {
 	}
 	stealthGate := strings.Index(installBranch, `if [ "$STEALTH_MODE" = 1 ]; then`)
 	if stealthGate < 0 || strings.Contains(installBranch[:stealthGate], "download_binaries") {
-		t.Fatal("stealth install must skip the panel download and fetch components from GitHub only")
+		t.Fatal("stealth install must skip the initial standard download and prefer GitHub")
 	}
 	if !strings.Contains(installBranch, `eval "$stealth_env"`) {
 		t.Fatal("stealth branch must consume the bootstrap variables")
@@ -286,5 +276,45 @@ func TestPanelEnrollmentCommandIncludesStealthTransport(t *testing.T) {
 	}
 	if strings.Contains(plain, "OBOARD_STEALTH_ADDR") || env["OBOARD_STEALTH_PIN"] != nil || !strings.Contains(plain, "OBOARD_INSTALL_STEALTH='0'") {
 		t.Fatal("plain command includes stealth transport")
+	}
+}
+
+func TestStealthInstallerSkipsDirectoryPromptAndChecksStartup(t *testing.T) {
+	script := testAgentInstallScript(t)
+	start := strings.Index(script, "resolve_agent_install_dir() {")
+	end := strings.Index(script[start:], "\npersist_agent_install_dir()") + start
+	body := script[start:end]
+	gate := strings.Index(body, `if [ "$ACTION" = install ] && [ "$STEALTH_MODE" = 1 ]; then`)
+	prompt := strings.Index(body, "choose_install_dir")
+	if gate < 0 || prompt < gate || !strings.Contains(body[gate:prompt], "return 0") {
+		t.Fatal("stealth installation must bypass persisted paths and directory prompt")
+	}
+	branch := shellCaseBranch(t, script, "install)", "update)")
+	enrolled := strings.Index(branch, "unset OBOARD_ENROLL_TOKEN")
+	stable := strings.Index(branch, `wait_service_stable "$STEALTH_AGENT_SERVICE" 15`)
+	cleanup := strings.Index(branch, "-cleanup-existing")
+	success := strings.Index(branch, "安装完成：Agent 已重新安装")
+	if enrolled < 0 || stable < enrolled || cleanup < stable || success < cleanup {
+		t.Fatal("cleanup and success must follow enrollment and verified startup")
+	}
+}
+
+func TestStealthInstallerDirectoryResolutionIgnoresOldInstallation(t *testing.T) {
+	script := testAgentInstallScript(t)
+	start := strings.Index(script, "resolve_agent_install_dir() {")
+	end := strings.Index(script[start:], "\npersist_agent_install_dir()") + start
+	command := script[start:end] + `
+mkdir() { :; }
+mktemp() { printf '/opt/.install.random\n'; }
+configured_agent_install_dir() { echo 'unexpected old install lookup' >&2; exit 1; }
+choose_install_dir() { echo 'unexpected prompt' >&2; exit 1; }
+ACTION=install
+STEALTH_MODE=1
+INSTALL_DIR_INPUT=/old/install
+resolve_agent_install_dir
+[ "$INSTALL_DIR" = /opt/.install.random ]
+`
+	if out, err := exec.Command(testPOSIXShell(t), "-eu", "-c", command).CombinedOutput(); err != nil {
+		t.Fatalf("stealth directory resolution: %v\n%s", err, out)
 	}
 }
