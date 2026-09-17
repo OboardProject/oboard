@@ -22,14 +22,15 @@ func (s *Server) GetServer(ctx context.Context, principal application.Principal,
 }
 
 func (s *Server) ListServers(ctx context.Context, principal application.Principal, limit int) ([]map[string]any, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 50
+	maxServers := 50
+	if limit <= 0 || limit > maxServers {
+		limit = maxServers
 	}
 	items, err := s.store.ListServers(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]map[string]any, 0, limit)
+	out := make([]map[string]any, 0, maxServers)
 	for _, item := range items {
 		if !principal.AllowsInt64("server_ids", item.ID) {
 			continue

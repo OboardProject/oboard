@@ -368,7 +368,7 @@ func rewriteRuntimeUserStructure(config *SingBoxConfig, managed map[string]struc
 		}
 	}
 	sort.Strings(needed)
-	remaining := make([]map[string]any, 0, len(rules)+len(needed))
+	remaining := make([]map[string]any, 0, len(rules))
 	for _, rule := range rules {
 		if isPureAuthRoute(rule) {
 			hit := false

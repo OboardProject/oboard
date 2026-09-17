@@ -399,7 +399,7 @@ func hoppingPorts(proxy subscriptionProxy) string {
 	if len(proxy.ServerPorts) == 0 {
 		return ""
 	}
-	values := make([]string, 0, len(proxy.ServerPorts)+1)
+	values := make([]string, 0, len(proxy.ServerPorts))
 	values = append(values, strconv.Itoa(proxy.Port))
 	values = append(values, proxy.ServerPorts...)
 	return strings.Join(values, ",")

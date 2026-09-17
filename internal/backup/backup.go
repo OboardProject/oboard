@@ -601,14 +601,18 @@ func extractArchive(archivePath, password, stage string) (Manifest, string, erro
 			return Manifest{}, "", nextErr
 		}
 		name := path.Clean(strings.TrimPrefix(header.Name, "./"))
-		if name == "." || strings.HasPrefix(name, "../") || path.IsAbs(name) || header.Size < 0 || header.Size > maxPayloadBytes {
+		if name == "." || name == ".." || strings.HasPrefix(name, "../") || path.IsAbs(name) || header.Size < 0 || header.Size > maxPayloadBytes {
+			return Manifest{}, "", errors.New("备份包含不安全路径")
+		}
+		target := filepath.Join(stage, filepath.FromSlash(name))
+		if !strings.HasPrefix(target, stage+string(filepath.Separator)) {
 			return Manifest{}, "", errors.New("备份包含不安全路径")
 		}
 		if header.Typeflag == tar.TypeDir {
 			if name != "acme" && !strings.HasPrefix(name, "acme/") {
 				return Manifest{}, "", errors.New("备份包含未知目录")
 			}
-			if err := os.MkdirAll(filepath.Join(stage, filepath.FromSlash(name)), 0o700); err != nil {
+			if err := os.MkdirAll(target, 0o700); err != nil {
 				return Manifest{}, "", err
 			}
 			continue
@@ -639,7 +643,7 @@ func extractArchive(archivePath, password, stage string) (Manifest, string, erro
 			}
 			gotSecrets = true
 		case strings.HasPrefix(name, "acme/"):
-			if err := writeTarFile(reader, filepath.Join(stage, filepath.FromSlash(name)), header.Size); err != nil {
+			if err := writeTarFile(reader, target, header.Size); err != nil {
 				return Manifest{}, "", err
 			}
 		default:

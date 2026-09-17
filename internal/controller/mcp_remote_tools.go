@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -176,7 +177,13 @@ func remoteOperationKind(name string) string {
 	}
 }
 
-func intFromAny(value any) int { return int(int64FromAny(value)) }
+func intFromAny(value any) int {
+	v := int64FromAny(value)
+	if v < math.MinInt || v > math.MaxInt {
+		return 0
+	}
+	return int(v)
+}
 
 func stringSlice(value any) []string {
 	switch typed := value.(type) {

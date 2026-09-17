@@ -173,7 +173,7 @@ func (s *Server) callMCPServerTerminalCommand(ctx context.Context, req *mcp.Call
 	if serverID <= 0 || strings.TrimSpace(command) == "" {
 		return mcpPlainFailureResult("invalid_input", "server_id and command are required"), nil
 	}
-	timeoutMS := int(int64FromAny(args["timeout_ms"]))
+	timeoutMS := intFromAny(args["timeout_ms"])
 	if timeoutMS == 0 {
 		timeoutMS = 5000
 	}
@@ -282,8 +282,8 @@ func (s *Server) callMCPServerTerminalOpen(ctx context.Context, req *mcp.CallToo
 	if mode == "" {
 		mode = "login"
 	}
-	cols := int(int64FromAny(args["cols"]))
-	rows := int(int64FromAny(args["rows"]))
+	cols := intFromAny(args["cols"])
+	rows := intFromAny(args["rows"])
 	privilegedID := authz.grant.PrivilegedGrant.ID
 	session, err := s.prepareInteractiveSession(ctx, InteractiveOwnerMCP, authz.server, authz.grant.UserID, authz.grant.Grant.GrantID, authz.grant.ClientID, privilegedID, cols, rows, mode)
 	if err != nil {
@@ -399,14 +399,14 @@ func (s *Server) callMCPServerTerminalIO(ctx context.Context, req *mcp.CallToolR
 	}
 	input, _ := args["input"].(string)
 	afterCursor := int64(int64FromAny(args["after_cursor"]))
-	waitMS := int(int64FromAny(args["wait_ms"]))
+	waitMS := intFromAny(args["wait_ms"])
 	if waitMS < 0 {
 		waitMS = 0
 	}
 	if waitMS > terminalMCPMaxWaitMS {
 		waitMS = terminalMCPMaxWaitMS
 	}
-	maxBytes := int(int64FromAny(args["max_bytes"]))
+	maxBytes := intFromAny(args["max_bytes"])
 	if maxBytes <= 0 {
 		maxBytes = 32768
 	}
@@ -557,8 +557,8 @@ func (s *Server) callMCPServerTerminalResize(ctx context.Context, req *mcp.CallT
 		return mcpPlainFailureResult("invalid_input", err.Error()), nil
 	}
 	sessionID := strings.TrimSpace(fmt.Sprint(args["session_id"]))
-	cols := int(int64FromAny(args["cols"]))
-	rows := int(int64FromAny(args["rows"]))
+	cols := intFromAny(args["cols"])
+	rows := intFromAny(args["rows"])
 	s.terminalHub.mu.Lock()
 	session := s.terminalHub.sessions[sessionID]
 	s.terminalHub.mu.Unlock()

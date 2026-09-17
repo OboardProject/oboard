@@ -300,7 +300,7 @@ func (s *Server) configHealthHandler(w http.ResponseWriter, r *http.Request) {
 // mergeConfigHealthFingerprint wraps the pre-encoded report without decoding
 // it, so a cache hit copies bytes instead of re-marshalling the findings.
 func mergeConfigHealthFingerprint(entry *configHealthSnapshot) []byte {
-	out := make([]byte, 0, len(entry.encoded)+96)
+	out := make([]byte, 0, len(entry.encoded))
 	out = append(out, []byte(fmt.Sprintf(`{"fingerprint":%q,"report":`, entry.fingerprint))...)
 	out = append(out, entry.encoded...)
 	out = append(out, '}')

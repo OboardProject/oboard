@@ -348,7 +348,7 @@ func surgeMacMergedConfig(state surgeMacMergedState, corePort int) map[string]an
 }
 
 func renameSubscriptionProxyMap(proxy map[string]any, name string) map[string]any {
-	out := make(map[string]any, len(proxy)+1)
+	out := make(map[string]any, len(proxy))
 	for key, value := range proxy {
 		out[key] = value
 	}
@@ -388,7 +388,7 @@ func surgeMacAddresses(proxy subscriptionProxy) []string {
 
 func appendUniqueIPs(values []string, extras ...string) []string {
 	seen := map[string]bool{}
-	out := make([]string, 0, len(values)+len(extras))
+	out := make([]string, 0, len(values))
 	for _, value := range values {
 		if value == "" || seen[value] {
 			continue
