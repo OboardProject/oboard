@@ -285,3 +285,106 @@ func TestRuntimeUsersPullSkipsEmptyScope(t *testing.T) {
 		t.Fatalf("empty scope left the users lane pending: %+v", state)
 	}
 }
+
+// A node that reports holding the desired revision while the lane carries a
+// revision conflict refuses exactly the redelivery a pull would ship. While the
+// repair rate limiter holds the real fix back, the pull must answer with an
+// empty envelope the Agent skips, keep the refusal marker visible for the
+// health report, and leave the binding untouched instead of describing the
+// lane as merely awaiting confirmation.
+func TestRuntimeUsersPullSkipsRedeliveryDuringRevisionConflict(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newTestServer(db, "users-test-secret", "")
+	server := &model.Server{
+		Name: "conflict-node", PublicIPv4: "203.0.113.22", AgentID: "conflict-agent",
+		AgentTokenHash: security.HashSecret("conflict-token"), Status: model.ServerOnline,
+		KernelCapabilities: []string{model.AgentCapabilityRuntimeUsers, model.KernelCapabilityRuntimeUsers, model.AgentCapabilityRuntimeUsersVLESS},
+	}
+	if err := db.CreateServer(ctx, server); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "account", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111112", ProxyPassword: "password"}
+	if err := db.CreateUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	inbound := &model.Inbound{ServerID: server.ID, Name: "vless", Protocol: model.ProtocolVLESS, Port: 443, Enabled: true, ConfigJSON: "{}"}
+	if err := db.CreateInbound(ctx, inbound); err != nil {
+		t.Fatal(err)
+	}
+	grantTestPlanInboundNode(t, db, user.ID, inbound.ID)
+	if err := srv.InitializeProxyCredentials(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	pull := func(revision int64) model.UsersEnvelope {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/users-snapshot", nil)
+		req.Header.Set("X-Agent-ID", server.AgentID)
+		req.Header.Set("Authorization", "Bearer conflict-token")
+		req.Header.Set(headerUsersAppliedRevision, strconv.FormatInt(revision, 10))
+		req.Header.Set(headerUsersAppliedDigest, "snapshot")
+		req.Header.Set(headerUsersBootID, "boot-1")
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("pull status %d: %s", rec.Code, rec.Body.String())
+		}
+		var envelope model.UsersEnvelope
+		if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope
+	}
+
+	// The first pull allocates the desired revision and delivers it.
+	first := pull(0)
+	if first.UsersJSON == "" {
+		t.Fatal("first pull delivered no package")
+	}
+	state, err := db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredDigest := state.DesiredDigest
+
+	// A divergent report repairs immediately, which also spends the repair
+	// rate limiter for this server.
+	srv.recordUsersApplied(ctx, server, &model.UsersAppliedSnapshot{
+		Revision: state.DesiredRevision, ContentDigest: "divergent-content", BootID: "boot-1",
+	})
+	// The next pull allocates the repaired revision and delivers it.
+	second := pull(state.DesiredRevision)
+	if second.UsersJSON == "" {
+		t.Fatal("repaired pull delivered no package")
+	}
+	state, err = db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DesiredRevision != 2 || state.DesiredDigest != desiredDigest {
+		t.Fatalf("repair did not rebind the same content: %+v", state)
+	}
+
+	// The node reports holding that revision while the lane carries a recorded
+	// refusal of it. The repair is rate-limited, so the pull must not ship the
+	// package the node will refuse.
+	if err := db.MarkRuntimeUsersPending(ctx, server.ID, store.RuntimeUsersPendingRevisionConflict, "users revision 2 already applied with a different digest", false); err != nil {
+		t.Fatal(err)
+	}
+	conflicted := pull(2)
+	if conflicted.UsersJSON != "" {
+		t.Fatal("pull shipped a package the node is known to refuse")
+	}
+	state, err = db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingReason != store.RuntimeUsersPendingRevisionConflict || state.DesiredRevision != 2 || state.DesiredDigest != desiredDigest {
+		t.Fatalf("conflict pull disturbed the lane: %+v", state)
+	}
+}

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -124,5 +125,142 @@ func TestUsersRevisionConflictAckIsNotRetryable(t *testing.T) {
 	}
 	if state.PendingReason != store.RuntimeUsersPendingRevisionConflict || state.Retryable {
 		t.Fatalf("conflict recorded as an ordinary runtime failure: %+v", state)
+	}
+}
+
+// A node older than the content-identity contract refuses a revision it holds
+// and reports no content digest to compare. The refusal itself is the evidence:
+// the acknowledgement that carries it must repair the divergence immediately,
+// instead of parking the lane in a conflict only the health-report cleanup can
+// resolve.
+func TestRefusedRevisionWithoutContentIdentityIsRepaired(t *testing.T) {
+	ctx := context.Background()
+	db, srv, server, _, _ := hotPathFixture(t)
+
+	pkg, routingRevision, err := srv.currentRuntimeUserPackage(ctx, *server, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest, err := core.UsersContentDigest(pkg.Scope, pkg.Entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := db.EvaluateRuntimeUsersDesired(ctx, server.ID, routingRevision, contentDigest, time.Now().UTC())
+	if err != nil || !desired.Changed {
+		t.Fatalf("no desired revision to refuse: %v %+v", err, desired)
+	}
+
+	// The node holds that revision and refuses it, reporting no content identity.
+	srv.recordUsersAck(ctx, server, model.UsersAck{
+		Revision: desired.State.DesiredRevision,
+		Digest:   "snapshot",
+		Error:    fmt.Sprintf("users revision %d already applied with a different digest", desired.State.DesiredRevision),
+		Applied:  &model.UsersAppliedSnapshot{Revision: desired.State.DesiredRevision, Digest: "snapshot", BootID: "boot-1"},
+	})
+	state, err := db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DesiredDigest != "" || state.ConfirmedRevision != 0 {
+		t.Fatalf("refusal without content identity did not release the binding: %+v", state)
+	}
+	repaired, err := db.EvaluateRuntimeUsersDesired(ctx, server.ID, routingRevision, contentDigest, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repaired.Changed || repaired.State.DesiredRevision != desired.State.DesiredRevision+1 {
+		t.Fatalf("refused revision was not repaired by a new one: %+v", repaired)
+	}
+}
+
+// The refusal marker is the evidence later reports repair on, so a node
+// describing the state it holds must not erase it: the report path would then
+// see a confirmed lane while the node keeps refusing the revision.
+func TestRevisionConflictMarkerSurvivesNodeReports(t *testing.T) {
+	ctx := context.Background()
+	db, srv, server, _, _ := hotPathFixture(t)
+
+	pkg, routingRevision, err := srv.currentRuntimeUserPackage(ctx, *server, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest, err := core.UsersContentDigest(pkg.Scope, pkg.Entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := db.EvaluateRuntimeUsersDesired(ctx, server.ID, routingRevision, contentDigest, time.Now().UTC())
+	if err != nil || !desired.Changed {
+		t.Fatalf("no desired revision to refuse: %v %+v", err, desired)
+	}
+	if err := db.MarkRuntimeUsersPending(ctx, server.ID, store.RuntimeUsersPendingRevisionConflict, "users revision refused", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RestateRuntimeUserConfirmation(ctx, server.ID, desired.State.DesiredRevision, "", "boot-1"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingReason != store.RuntimeUsersPendingRevisionConflict {
+		t.Fatalf("node report erased the refusal marker: %+v", state)
+	}
+	if err := db.RecordRuntimeUserDelivery(ctx, server.ID, desired.State.DesiredRevision, "message-1"); err != nil {
+		t.Fatal(err)
+	}
+	state, err = db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingReason != store.RuntimeUsersPendingRevisionConflict {
+		t.Fatalf("delivery record erased the refusal marker: %+v", state)
+	}
+
+	// The report path repairs on that evidence even without a content identity.
+	srv.recordUsersApplied(ctx, server, &model.UsersAppliedSnapshot{Revision: desired.State.DesiredRevision, Digest: "snapshot", BootID: "boot-1"})
+	state, err = db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DesiredDigest != "" || state.ConfirmedRevision != 0 {
+		t.Fatalf("report did not repair a recorded refusal: %+v", state)
+	}
+}
+
+// A marker left behind by a refusal the content has since moved past is stale,
+// not live: a node reporting the desired revision with the desired content must
+// clear it instead of allocating a revision the node has nothing to gain from.
+func TestStaleRevisionConflictMarkerIsClearedByConvergedReport(t *testing.T) {
+	ctx := context.Background()
+	db, srv, server, _, _ := hotPathFixture(t)
+
+	pkg, routingRevision, err := srv.currentRuntimeUserPackage(ctx, *server, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentDigest, err := core.UsersContentDigest(pkg.Scope, pkg.Entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := db.EvaluateRuntimeUsersDesired(ctx, server.ID, routingRevision, contentDigest, time.Now().UTC())
+	if err != nil || !desired.Changed {
+		t.Fatalf("no desired revision to report against: %v %+v", err, desired)
+	}
+	if err := db.MarkRuntimeUsersPending(ctx, server.ID, store.RuntimeUsersPendingRevisionConflict, "refused earlier", false); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.recordUsersApplied(ctx, server, &model.UsersAppliedSnapshot{
+		Revision: desired.State.DesiredRevision, ContentDigest: contentDigest, BootID: "boot-1",
+	})
+	state, err := db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.PendingReason == store.RuntimeUsersPendingRevisionConflict {
+		t.Fatalf("converged report left a stale refusal marker: %+v", state)
+	}
+	if state.DesiredRevision != desired.State.DesiredRevision || state.DesiredDigest != contentDigest {
+		t.Fatalf("converged report released the binding: %+v", state)
 	}
 }

@@ -126,7 +126,10 @@ func (s *Store) RecordRuntimeUsersDelivery(ctx context.Context, serverID, revisi
 
 func (s *Store) RecordRuntimeUserDelivery(ctx context.Context, serverID, revision int64, messageID string) error {
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `update runtime_user_states set delivered_revision=?,delivered_message_id=?,delivered_at=?,pending_reason=case when confirmed_revision>=desired_revision then '' else ? end,last_error='',retryable=1,updated_at=? where server_id=?`, revision, strings.TrimSpace(messageID), ts, RuntimeUsersPendingAwaitingConfirm, ts, serverID)
+	// A delivery record is not an acknowledgement: while the lane carries a
+	// revision conflict, the node refuses exactly this revision, so the marker
+	// survives the delivery instead of the record erasing it.
+	_, err := s.db.ExecContext(ctx, `update runtime_user_states set delivered_revision=?,delivered_message_id=?,delivered_at=?,pending_reason=case when pending_reason=? then ? when confirmed_revision>=desired_revision then '' else ? end,last_error='',retryable=1,updated_at=? where server_id=?`, revision, strings.TrimSpace(messageID), ts, RuntimeUsersPendingRevisionConflict, RuntimeUsersPendingRevisionConflict, RuntimeUsersPendingAwaitingConfirm, ts, serverID)
 	return err
 }
 
@@ -170,20 +173,54 @@ func (s *Store) RecordRuntimeUserConfirmation(ctx context.Context, serverID, rev
 // replaces the watermark even if it is behind. The recorded one belongs to an
 // Agent that no longer exists, and leaving it in place would keep the lane from
 // ever redelivering to the node that replaced it.
+//
+// A restate is not an acknowledgement of a delivery either, so a recorded
+// revision conflict survives it: a node reporting the desired revision while
+// the lane carries that marker is describing the divergence, not resolving it.
+// Only an acknowledgement of a delivery - or the repair that allocates a new
+// revision - clears it.
 func (s *Store) RestateRuntimeUserConfirmation(ctx context.Context, serverID, revision int64, digest, bootID string) (bool, error) {
 	boot := strings.TrimSpace(bootID)
 	if serverID <= 0 || revision <= 0 || boot == "" {
 		return s.RecordRuntimeUserConfirmation(ctx, serverID, revision, digest, bootID)
 	}
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	result, err := s.db.ExecContext(ctx, `update runtime_user_states set confirmed_revision=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason='',last_error='',updated_at=? where server_id=? and confirmed_boot_id<>'' and confirmed_boot_id<>? and confirmed_revision>?`, revision, strings.TrimSpace(digest), boot, ts, ts, serverID, boot, revision)
+	result, err := s.db.ExecContext(ctx, `update runtime_user_states set confirmed_revision=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason=case when desired_revision<=? and pending_reason<>? then '' else pending_reason end,last_error=case when desired_revision<=? and pending_reason<>? then '' else last_error end,updated_at=? where server_id=? and confirmed_boot_id<>'' and confirmed_boot_id<>? and confirmed_revision>?`, revision, strings.TrimSpace(digest), boot, ts, revision, RuntimeUsersPendingRevisionConflict, revision, RuntimeUsersPendingRevisionConflict, ts, serverID, boot, revision)
 	if err != nil {
 		return false, err
 	}
 	if affected, _ := result.RowsAffected(); affected > 0 {
 		return true, nil
 	}
-	return s.RecordRuntimeUserConfirmation(ctx, serverID, revision, digest, bootID)
+	return s.recordRuntimeUserConfirmationPreservingConflict(ctx, serverID, revision, digest, bootID)
+}
+
+// recordRuntimeUserConfirmationPreservingConflict is the same-boot watermark
+// update the restate falls back to, with the revision-conflict marker kept for
+// the same reason as above: the node is describing the state it holds, not
+// acknowledging that a delivery landed.
+func (s *Store) recordRuntimeUserConfirmationPreservingConflict(ctx context.Context, serverID, revision int64, digest, bootID string) (bool, error) {
+	if serverID <= 0 || revision <= 0 {
+		return false, nil
+	}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `insert or ignore into runtime_user_states(server_id,updated_at) values(?,?)`, serverID, ts); err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `update runtime_user_states set confirmed_revision=?,confirmed_digest=?,confirmed_boot_id=?,confirmed_at=?,pending_reason=case when desired_revision<=? and pending_reason<>? then '' else pending_reason end,last_error=case when desired_revision<=? and pending_reason<>? then '' else last_error end,updated_at=? where server_id=? and (confirmed_revision<? or (confirmed_revision=? and (confirmed_digest<>? or confirmed_boot_id<>?)))`, revision, strings.TrimSpace(digest), strings.TrimSpace(bootID), ts, revision, RuntimeUsersPendingRevisionConflict, revision, RuntimeUsersPendingRevisionConflict, ts, serverID, revision, revision, strings.TrimSpace(digest), strings.TrimSpace(bootID))
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	affected, _ := result.RowsAffected()
+	return affected > 0, nil
 }
 
 // ForceRuntimeUsersResync breaks a node off a revision it disagrees with.

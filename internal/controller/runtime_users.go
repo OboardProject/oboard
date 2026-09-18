@@ -433,22 +433,31 @@ func (s *Server) recordUsersAck(ctx context.Context, server *model.Server, ack m
 		}
 		reason := store.RuntimeUsersPendingRuntimeUnavailable
 		retryable := true
+		refused := false
 		switch {
 		case strings.Contains(ack.Error, "does not advertise") || strings.Contains(ack.Error, "does not support"):
 			reason = store.RuntimeUsersPendingCoreConfigFallback
 		case usersRevisionConflictError(ack.Error):
 			// Retrying cannot help: the node refuses this revision, and the
-			// revision only moves when the content changes. Record what the node
-			// actually holds first, so the divergence is visible instead of the
-			// lane reporting a confirmed watermark it no longer describes.
+			// revision only moves when the content changes.
 			reason = store.RuntimeUsersPendingRevisionConflict
 			retryable = false
-			s.recordUsersApplied(ctx, server, ack.Applied)
+			refused = true
 		}
 		if strings.TrimSpace(ack.Error) == "" {
 			ack.Error = "agent did not confirm users"
 		}
+		// Record the refusal before restating the node's snapshot: the report
+		// path reads the marker as the divergence evidence a node without a
+		// content identity can otherwise never offer, and it repairs the
+		// divergence by allocating a new revision for the same content.
 		_ = s.store.MarkRuntimeUsersPending(ctx, server.ID, reason, ack.Error, retryable)
+		if refused {
+			// Record what the node actually holds, so the divergence is visible
+			// instead of the lane reporting a confirmed watermark it no longer
+			// describes.
+			s.recordUsersApplied(ctx, server, ack.Applied)
+		}
 		if reason == store.RuntimeUsersPendingCoreConfigFallback {
 			_ = s.queueCoreConfigRefreshForServers(ctx, []int64{server.ID}, "runtime_users_fallback")
 		}
@@ -532,6 +541,13 @@ func (s *Server) recordUsersApplied(ctx context.Context, server *model.Server, a
 // gate always accepts, and no configuration is lost because the content is
 // already the content the node should be running.
 //
+// Divergence is established either by both content identities being known and
+// differing, or by the lane carrying a recorded refusal of this revision: a
+// refusal is definitive on its own, and it is the only evidence a node older
+// than the content-identity contract - which reports no content digest to
+// compare - can ever offer. Without it, such a node could only be repaired by
+// an operator clicking through the health report.
+//
 // It runs from the reporting path rather than the acknowledgement path on
 // purpose: the Agent's periodic snapshot pull applies without acknowledging, so
 // the refusal that this repairs never reaches the Controller as an ack at all.
@@ -539,9 +555,22 @@ func (s *Server) repairDivergedUsersRevision(ctx context.Context, server *model.
 	if state.DesiredRevision <= 0 || applied.Revision != state.DesiredRevision {
 		return false
 	}
-	// Both identities must be known. A node that reports no content identity is
-	// simply older than this contract, not diverged.
-	if applied.ContentDigest == "" || state.DesiredDigest == "" || applied.ContentDigest == state.DesiredDigest {
+	if applied.ContentDigest != "" && state.DesiredDigest != "" {
+		if applied.ContentDigest == state.DesiredDigest {
+			// The node reports the desired revision with the desired content. A
+			// carried refusal marker predates this binding - the content moved
+			// past the refused revision and the node applied the new one - so it
+			// is stale rather than live, and clearing it beats allocating a
+			// revision the node has nothing to gain from.
+			if state.PendingReason == store.RuntimeUsersPendingRevisionConflict {
+				_ = s.store.MarkRuntimeUsersPending(ctx, server.ID, "", "", true)
+			}
+			return false
+		}
+	} else if state.PendingReason != store.RuntimeUsersPendingRevisionConflict {
+		// No refusal on record and at least one identity missing: a node that
+		// reports no content identity is simply older than this contract, not
+		// diverged.
 		return false
 	}
 	if !s.syncLanes.allowUsersAutoResync(server.ID, time.Now()) {
@@ -573,7 +602,8 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !s.allowAgentRate(w, "agent-users:"+server.AgentID, 30, time.Minute) {
 		return
 	}
-	if applied := parseAppliedUsersHeaders(r); applied != nil {
+	applied := parseAppliedUsersHeaders(r)
+	if applied != nil {
 		s.recordUsersApplied(r.Context(), server, applied)
 	}
 	state, err := s.store.RuntimeUserState(r.Context(), server.ID)
@@ -609,6 +639,20 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pkg.Mode = "full"
+	// A node that reported holding this revision while the lane carries a
+	// revision conflict refuses exactly this redelivery: the revision only
+	// moves when the content changes, so the package below is the one it
+	// already refused. The report path above repairs the divergence by
+	// allocating a new revision; while the repair rate limiter holds that back,
+	// answer with an empty envelope the Agent skips instead of shipping a
+	// package the node will refuse and re-recording a delivery that would
+	// describe the lane as merely awaiting confirmation.
+	if applied != nil && applied.Revision == evaluation.State.DesiredRevision &&
+		evaluation.State.PendingReason == store.RuntimeUsersPendingRevisionConflict {
+		w.Header().Set("Cache-Control", "no-store")
+		write(w, http.StatusOK, model.UsersEnvelope{ServerID: server.ID})
+		return
+	}
 	// An empty scope means this server has no runtime-managed inbound, and the
 	// kernel rejects an install without one. Answer with an empty envelope the
 	// Agent skips instead of signing a package it can only fail to apply.
