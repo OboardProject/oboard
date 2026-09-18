@@ -15984,7 +15984,7 @@ function SnellPresetFields({ config, updateConfig, version, snellProfiles }: { c
   </div>
   return <div className={`preset-fields${snellPresetActive ? ' is-preset' : ''}`}>
     <div className="form-section-title"><Key size={14} aria-hidden="true" />Snell v6 设置</div>
-    <div className="access-note compact"><strong>测试版协议</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
+    <div className="access-note compact"><strong>v6 说明</strong><span>v6 不支持混淆；订阅输出仅 Surge / sing-box 支持，mihomo 等客户端暂不支持 v6。</span></div>
     {profiles.length > 0 && <FormField label="套用参数预设" hint="多个服务器入口可共享同一套参数；修改预设后需重新部署"><Select value={currentID || ''} onChange={event => applyProfile(Number(event.target.value))}><option value="">不使用预设</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}{p.usage_count > 0 ? `（${p.usage_count} 个入口）` : ''}</option>)}</Select></FormField>}
     <FormField label="传输模式" className={snellFieldClass} hint={snellHint || undefined}><Select value={String(config.mode || 'default')} onChange={event => updateConfig({ mode: event.target.value })}><option value="default">默认</option><option value="unshaped">无整形</option><option value="unsafe-raw">unsafe-raw</option></Select></FormField>
     <div className={`switch-form-row${snellFieldClass}`} style={snellPresetActive ? { opacity: 0.56 } : undefined}><span className="switch-form-label">连接复用（reuse）</span><Switch checked={Boolean(config.reuse)} onChange={checked => updateConfig({ reuse: checked || undefined })} ariaLabel="Snell 连接复用" /></div>
@@ -21919,7 +21919,7 @@ const inboundPresets: InboundPreset[] = [
   { id: 'ss-2022-256', protocol: 'shadowsocks', label: 'SS 2022-256', description: 'AES-256-GCM，多用户', defaultPort: 8388 },
   { id: 'mieru-basic', protocol: 'mieru', label: 'Mieru', description: 'Mieru 多用户入口', defaultPort: 25250 },
   { id: 'snell-v4', protocol: 'snell', label: 'Snell v4', description: 'v4 基础参数，可选 HTTP 混淆', defaultPort: 6160 },
-  { id: 'snell-v6', protocol: 'snell', label: 'Snell v6', description: 'v6 测试版协议（Surge iOS 5.20+/Mac 6.7+ 可用）', defaultPort: 7177 },
+  { id: 'snell-v6', protocol: 'snell', label: 'Snell v6', description: 'v6 协议（Surge iOS 5.20+/Mac 6.7+ 可用）', defaultPort: 7177 },
   { id: 'socks5-auth', protocol: 'socks', label: 'SOCKS5', description: '用户名密码认证，支持 TCP 与 UDP', defaultPort: 1080 },
   { id: 'ssh-restricted', protocol: 'ssh', label: 'SSH 受限代理', description: '密码认证，仅支持本地/动态转发', defaultPort: 2222 },
 ]

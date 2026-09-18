@@ -64,11 +64,58 @@ func TestSnellV6HardenedPresetSeeds(t *testing.T) {
 		t.Fatalf("hardened-high PSK drifted from the density-verified value; re-verify against sing-snell v6 before changing")
 	}
 
-	standard, ok := byName["Snell v6 标准（测试）"]
+	standard, ok := byName["Snell v6 标准"]
 	if !ok {
 		t.Fatalf("standard v6 preset missing")
 	}
 	if standard.PSK != "" {
 		t.Fatalf("standard v6 preset must keep an empty PSK (random generation)")
+	}
+}
+
+// TestSnellV6LegacyTestTagRename verifies that databases seeded with the
+// legacy "（测试）"-suffixed v6 preset names are renamed to the current names
+// without duplicating rows.
+func TestSnellV6LegacyTestTagRename(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	// Simulate a legacy database by renaming the current rows back.
+	for _, rename := range [][2]string{
+		{"Snell v6 标准", "Snell v6 标准（测试）"},
+		{"Snell v6 unshaped", "Snell v6 unshaped（测试）"},
+		{"Snell v6 unsafe-raw", "Snell v6 unsafe-raw（测试）"},
+	} {
+		if _, err := db.db.ExecContext(ctx, `update snell_profiles set name=? where builtin=1 and name=?`, rename[1], rename[0]); err != nil {
+			t.Fatalf("seed legacy name: %v", err)
+		}
+	}
+
+	// Re-run the migration by calling the store migration path directly.
+	if err := db.migrateSnellV6StandardRemark(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	profiles, err := db.ListSnellProfiles(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byName := make(map[string]model.SnellProfile, len(profiles))
+	for _, p := range profiles {
+		byName[p.Name] = p
+	}
+	for _, name := range []string{"Snell v6 标准", "Snell v6 unshaped", "Snell v6 unsafe-raw"} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("renamed preset %q missing after migration", name)
+		}
+	}
+	for _, legacy := range []string{"Snell v6 标准（测试）", "Snell v6 unshaped（测试）", "Snell v6 unsafe-raw（测试）"} {
+		if _, ok := byName[legacy]; ok {
+			t.Fatalf("legacy preset %q still present after migration", legacy)
+		}
 	}
 }

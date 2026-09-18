@@ -81,7 +81,7 @@ export function SnellProfileEditor({ title, draft, setDraft, onSave, onCancel, s
       <SettingsRow label="预设名称" description="用于在入口表单中识别该套参数。">
         <input autoFocus value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="例如 机房 A 通用 v4" />
       </SettingsRow>
-      <SettingsRow label="Snell 版本" description="v4 参数简单；v6 为测试版协议，仅部分客户端支持。">
+      <SettingsRow label="Snell 版本" description="v4 参数简单；v6 仅部分客户端支持。">
         <Select value={String(draft.version)} onChange={event => setDraft({ ...draft, version: Number(event.target.value), obfs_mode: Number(event.target.value) === 6 ? 'none' : draft.obfs_mode, mode: Number(event.target.value) === 4 ? 'default' : draft.mode })} aria-label="Snell 版本">
           {versions.map(version => <option key={version} value={String(version)}>v{version}</option>)}
         </Select>
