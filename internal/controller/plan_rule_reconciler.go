@@ -105,7 +105,7 @@ func (s *Server) reconcileOnePlanRules(ctx context.Context, plan *model.Subscrip
 	if err != nil {
 		return
 	}
-	result, err := s.store.CreatePlanVersion(ctx, plan.ID, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(ctx, plan.ID, store.PlanVersionMutation{
 		BaseRevisionID: plan.LatestRevisionID, ExpectedLockVersion: plan.LockVersion,
 		MembershipPolicy: &store.PlanMembershipPolicyMutation{Rules: rules, Exclusions: exclusions, Nodes: resolution.Nodes}, Ordering: ordering,
 		ChangeKind: model.PlanChangeKindNodes, ChangeSummary: fmt.Sprintf("自动规则同步：新增 %d，移除 %d", len(resolution.AddedKeys), len(resolution.RemovedKeys)),

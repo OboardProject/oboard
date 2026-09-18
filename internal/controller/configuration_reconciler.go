@@ -108,6 +108,9 @@ func (s *Server) configurationChangesetApplied(ctx context.Context, item *model.
 	if item == nil || afterRevision <= beforeRevision {
 		return
 	}
+	// Changeset apply must not wait for the credential worker; the background
+	// reconciler prepares subscription credentials and the pull path re-checks
+	// staleness on every read.
 	s.signalConfigurationReconcile()
 }
 

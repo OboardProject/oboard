@@ -67,6 +67,12 @@ func (s *Server) applyChangePlanOn(ctx context.Context, userID int64, serverIDs 
 	if !plan.Authorization && !plan.RuntimeUsers && !plan.TrafficPolicy && !plan.CoreConfig {
 		return
 	}
+	if plan.Authorization || plan.RuntimeUsers || plan.CoreConfig {
+		if err := s.reconcileProxyCredentials(ctx); err != nil {
+			logConfigurationError("prepare user credentials", err)
+			return
+		}
+	}
 	ids := serverIDs
 	if ids == nil && (plan.Authorization || plan.RuntimeUsers || plan.TrafficPolicy) {
 		var err error

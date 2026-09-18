@@ -7597,6 +7597,8 @@ type FullRoutingConfig struct {
 	ActivePlanNodes          []model.SubscriptionPlanNode    `json:"active_plan_nodes,omitempty"`
 	PlanBindings             []model.UserPlanBinding         `json:"plan_bindings,omitempty"`
 	UserNodeExceptions       []model.UserNodeException       `json:"user_node_exceptions,omitempty"`
+	SubscriptionPlanNodes    []model.SubscriptionPlanNode    `json:"-"`
+	SubscriptionPlanBindings []model.UserPlanBinding         `json:"-"`
 }
 
 func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, error) {
@@ -7684,7 +7686,15 @@ func (s *Store) FullRoutingConfigData(ctx context.Context) (FullRoutingConfig, e
 	if err != nil {
 		return FullRoutingConfig{}, err
 	}
-	return FullRoutingConfig{Servers: servers, Inbounds: in, UserGroups: groups, UserGroupMembers: members, Outbounds: out, RoutingRules: rules, RoutingRuleSets: ruleSets, ExternalOutbounds: external, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations, SubscriptionPlans: plans, ActivePlanNodes: activePlanNodes, PlanBindings: planBindings, UserNodeExceptions: planExceptions}, nil
+	subscriptionNodes, err := s.ListSubscriptionPlanNodes(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	subscriptionBindings, err := s.ListSubscriptionPlanBindings(ctx)
+	if err != nil {
+		return FullRoutingConfig{}, err
+	}
+	return FullRoutingConfig{SubscriptionPlanNodes: subscriptionNodes, SubscriptionPlanBindings: subscriptionBindings, Servers: servers, Inbounds: in, UserGroups: groups, UserGroupMembers: members, Outbounds: out, RoutingRules: rules, RoutingRuleSets: ruleSets, ExternalOutbounds: external, ProxyPaths: proxyPaths, ProxyPathSteps: proxyPathSteps, ProxyPathEgressResults: proxyPathEgressResults, WARPProfiles: warp, DNSLists: dnsLists, ServerDNSPolicies: dnsPolicies, Users: users, UserDevices: userDevices, ProxyPathPortAllocations: portAllocations, SubscriptionPlans: plans, ActivePlanNodes: activePlanNodes, PlanBindings: planBindings, UserNodeExceptions: planExceptions}, nil
 }
 
 func nullEmpty(v string) any {

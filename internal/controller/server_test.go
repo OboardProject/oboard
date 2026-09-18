@@ -936,7 +936,7 @@ func TestApplyDeploymentSSHStatePersistsOnlyValidatedTaskCredentials(t *testing.
 	}
 }
 
-func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
+func TestSSHSubscriptionSurvivesPendingDeployment(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -1040,8 +1040,8 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, ConfigVersion: 23}, staleDeployments, 0); err != nil {
 		t.Fatal(err)
 	}
-	if nodes := readSubscription(); len(nodes) != 0 {
-		t.Fatalf("SSH subscription appeared for stale deployed password: %#v", nodes)
+	if nodes := readSubscription(); len(nodes) != 1 {
+		t.Fatal("SSH subscription disappeared while password deployment was pending")
 	}
 	if err := db.ApplySSHDeploymentState(ctx, model.SSHServerHostKey{ServerID: server.ID, PublicKey: hostIdentity.PublicKey, Fingerprint: hostIdentity.Fingerprint, PlanDigest: planDigest, ConfigVersion: 24}, expectedDeployments, 0); err != nil {
 		t.Fatal(err)
@@ -1054,8 +1054,8 @@ func TestSSHSubscriptionAppearsOnlyAfterMatchingDeployment(t *testing.T) {
 	if err := db.CreateTask(ctx, baseline); err != nil {
 		t.Fatal(err)
 	}
-	if nodes := readSubscription(); len(nodes) != 0 {
-		t.Fatal("legacy success without SSH authentication evidence exposed credentials")
+	if nodes := readSubscription(); len(nodes) != 1 {
+		t.Fatal("SSH subscription disappeared while authentication confirmation was pending")
 	}
 	server.UsersConfirmed = true
 	srv.annotateSSHUserDelivery(ctx, server)

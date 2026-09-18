@@ -107,7 +107,7 @@ func (s *Server) reconcileOnePlan(ctx context.Context, plan model.SubscriptionPl
 	targetRevisionID := fresh.LatestRevisionID
 	// Dependency check: for MVP we treat all nodes as ready; allow saving
 	// any node even if its ingress not yet deployed. The prepare phase will
-	// still succeed; the subscription will filter only after activation.
+	// still succeed; runtime authorization changes only after activation.
 	// We optionally check configuration sync readiness here and set waiting.
 	if blocked, reason, details := s.planReconcileBlockedReason(ctx, fresh, targetRevisionID); blocked {
 		blockedJSON, _ := json.Marshal(details)

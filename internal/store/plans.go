@@ -593,6 +593,27 @@ func (s *Store) ListAllPlanNodes(ctx context.Context) ([]model.SubscriptionPlanN
 	return scanPlanRevisionNodes(rows)
 }
 
+// ListSubscriptionPlanNodes reads the saved desired revision independently of runtime activation.
+func (s *Store) ListSubscriptionPlanNodes(ctx context.Context) ([]model.SubscriptionPlanNode, error) {
+	rows, err := s.db.QueryContext(ctx, `select r.plan_id,n.id,n.revision_id,n.node_type,n.node_id,n.display_group,n.source_type,n.source_rule_id,n.sort_position,n.display_name_override,n.created_at from subscription_plan_revision_nodes n join subscription_plan_revisions r on r.id=n.revision_id join subscription_plans p on p.latest_revision_id=r.id where p.enabled=1 order by p.id,n.node_type,n.node_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPlanRevisionNodes(rows)
+}
+
+// ListSubscriptionPlanBindings includes saved pending assignments. The access
+// snapshot applies start/expiry windows; later IDs supersede earlier bindings.
+func (s *Store) ListSubscriptionPlanBindings(ctx context.Context) ([]model.UserPlanBinding, error) {
+	rows, err := s.db.QueryContext(ctx, userPlanBindingSelect+` where enabled=1 and status in ('active','pending') order by id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanUserPlanBindings(rows)
+}
+
 // ListPlansForNode returns current-revision plan-node rows referencing a node.
 func (s *Store) ListPlansForNode(ctx context.Context, nodeType string, nodeID int64) ([]model.SubscriptionPlanNode, error) {
 	rows, err := s.db.QueryContext(ctx, `select r.plan_id,n.id,n.revision_id,n.node_type,n.node_id,n.display_group,n.source_type,n.source_rule_id,n.sort_position,n.display_name_override,n.created_at from subscription_plan_revision_nodes n join subscription_plan_revisions r on r.id=n.revision_id join subscription_plans p on p.current_revision_id=r.id where n.node_type=? and n.node_id=? order by p.id`, nodeType, nodeID)
@@ -2679,8 +2700,7 @@ func (s *Store) migrateUserNodeExceptionLifecycle(ctx context.Context) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "user_node_exceptions", column.name, column.sql); err != nil {
 			return err
 		}
@@ -2706,8 +2726,7 @@ func (s *Store) migrateUserPlanBindingDeployTracking(ctx context.Context) error 
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "user_plan_bindings", column.name, column.sql); err != nil {
 			return err
 		}

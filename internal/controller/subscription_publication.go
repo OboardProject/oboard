@@ -67,27 +67,9 @@ type subscriptionPublicationInputs struct {
 	OrderPositions   map[string]int    `json:"order_positions"`
 	OrderPolicy      string            `json:"order_policy"`
 	SSHHostKeys      map[int64]string  `json:"ssh_host_keys"`
-	DeliveryStates   map[int64][2]bool `json:"delivery_states"`
 	Credentials      map[string]string `json:"credentials"`
 	AgeRecipient     string            `json:"age_recipient"`
 	AgeEncrypted     bool              `json:"age_encrypted"`
-}
-
-// subscriptionDeliveryStates captures the per-server delivery confirmation the
-// Snell shared-port annotation writes into the rendered servers. It changes on
-// Agent confirmations, so it has to be part of the key - but only for the
-// servers this user's nodes sit on, otherwise an unrelated node confirming
-// would republish everyone.
-func subscriptionDeliveryStates(servers []model.Server, nodes map[string]bool, data store.FullRoutingConfig) map[int64][2]bool {
-	wanted := subscriptionNodeServerIDs(nodes, data)
-	states := make(map[int64][2]bool, len(wanted))
-	for _, server := range servers {
-		if !wanted[server.ID] {
-			continue
-		}
-		states[server.ID] = [2]bool{server.UsersConfirmed, server.AuthorizationConfirmed}
-	}
-	return states
 }
 
 // subscriptionNodeServerIDs is every server that renders part of these nodes.
@@ -136,7 +118,12 @@ func subscriptionNodeServerIDs(nodes map[string]bool, data store.FullRoutingConf
 // rotation has to produce a different key.
 func subscriptionCredentialFingerprint(sessionSecret string, user model.User) map[string]string {
 	sum := sha256.Sum256([]byte("oboard-subscription-credentials-v1\x00" + sessionSecret + "\x00" + user.ProxyUUID + "\x00" + user.ProxyPassword + "\x00" + user.SubscriptionToken))
-	return map[string]string{"proxy": hex.EncodeToString(sum[:])}
+	out := map[string]string{"proxy": hex.EncodeToString(sum[:])}
+	for _, credential := range user.ProxyCredentials {
+		material := sha256.Sum256([]byte(credential.Username + "\x00" + credential.Password + "\x00" + credential.UUID))
+		out[credential.ID] = hex.EncodeToString(material[:])
+	}
+	return out
 }
 
 func (i subscriptionPublicationInputs) key() string {

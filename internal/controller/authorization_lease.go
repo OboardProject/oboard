@@ -54,6 +54,20 @@ func (s *Server) InitializeProxyCredentials(ctx context.Context) error {
 	return s.reconcileProxyCredentials(ctx)
 }
 
+// ensureSubscriptionCredentialsPrepared guarantees a subscription pull answers
+// with the full saved assignment even when the mutation that just created it
+// has not been picked up by the background reconciler yet. The revision
+// compare keeps the steady state at one query.
+func (s *Server) ensureSubscriptionCredentialsPrepared(ctx context.Context) {
+	if revision, err := s.store.RoutingCacheRevision(ctx); err != nil {
+		logConfigurationError("read credential revision", err)
+	} else if revision != s.proxyCredentialRevision.Load() {
+		if err := s.reconcileProxyCredentials(ctx); err != nil {
+			logConfigurationError("prepare subscription credentials", err)
+		}
+	}
+}
+
 // Allocation belongs to approved authorization workflows, never reporting or rendering.
 func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 	s.proxyCredentialMu.Lock()
@@ -61,6 +75,12 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 	revision, err := s.store.RoutingCacheRevision(ctx)
 	if err != nil {
 		return err
+	}
+	// Concurrent readers that all saw the same stale revision must not each
+	// redo the full pass: the first one stores it and the rest become no-ops.
+	// Zero stays a forced pass so startup initialization always runs.
+	if current := s.proxyCredentialRevision.Load(); current != 0 && current == revision {
+		return nil
 	}
 	data, err := s.store.FullRoutingConfigData(ctx)
 	if err != nil {
@@ -71,6 +91,12 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 		return err
 	}
 	desired := core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, snap))
+	publication, err := s.buildSubscriptionAccessSnapshot(ctx, data)
+	if err != nil {
+		return err
+	}
+	desired = append(desired, core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, publication))...)
+	portProjection := core.MergeProjections(snap.Projection(), publication.Projection())
 	changes, err := s.store.ListAccessChangesByStatus(ctx, model.AccessChangePreparing, model.AccessChangeActivating, model.AccessChangeFinalizing)
 	if err != nil {
 		return err
@@ -80,10 +106,33 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 		if err := json.Unmarshal([]byte(change.PrepareProjectionJSON), &projection); err != nil {
 			return err
 		}
+		portProjection = core.MergeProjections(portProjection, projection)
 		prepared := core.ProjectionSnapshot(projection, data.Users)
 		desired = append(desired, core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, prepared))...)
 	}
 	if err := s.store.ReconcileProxyCredentials(ctx, s.sessionSecret, desired); err != nil {
+		return err
+	}
+	data, err = s.loadProxyCredentialData(ctx, data)
+	if err != nil {
+		return err
+	}
+	s.deploymentMu.Lock()
+	err = func() error {
+		allocations, err := s.store.ListProxyPathPortAllocations(ctx)
+		if err != nil {
+			return err
+		}
+		ledger := core.NewProxyPathPortLedger(allocations)
+		opts := credentialOptions(data, core.ProjectionSnapshot(portProjection, data.Users))
+		opts.PortLedger = ledger
+		if err := core.ReserveSnellSubscriptionPorts(data.Inbounds, data.Servers, data.Users, opts); err != nil {
+			return err
+		}
+		return s.store.SaveProxyPathPortAllocations(ctx, ledger.Pending(), nil)
+	}()
+	s.deploymentMu.Unlock()
+	if err != nil {
 		return err
 	}
 	s.proxyCredentialRevision.Store(revision)

@@ -789,6 +789,9 @@ func (s *Server) realtimeInvalidation(next http.Handler) http.Handler {
 							affectedServerIDs = responseServerIDs
 						}
 					}
+					// Server lifecycle mutations must not wait for the credential
+					// worker; the background reconciler prepares subscription
+					// credentials and the pull path re-checks staleness on read.
 					s.signalConfigurationReconcile()
 					responseBody = s.configurationMutationResponse(r.Context(), responseBody, afterRevision, affectedServerIDs)
 				}

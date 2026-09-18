@@ -105,6 +105,12 @@ type ConfigOptions struct {
 	// generated port is derived fresh, which keeps pure-Core callers and fixtures
 	// working without a database.
 	PortLedger *ProxyPathPortLedger
+	// SkipPlaceholderListeners suppresses the keep-alive placeholder listener an
+	// inbound with no authorized user normally gets. The subscription port
+	// reservation pass sets it: a placeholder owns no subscription node, so its
+	// runtime port stays a deployment-time concern and a focused refresh never
+	// persists ports for servers outside its scope.
+	SkipPlaceholderListeners bool
 	// RuntimeUsersOut, when non-nil, receives the runtime-user package collected
 	// from this generation. Managed identities use the separate users lane.
 	RuntimeUsersOut     **RuntimeUserPackage
@@ -3258,7 +3264,7 @@ func resolveInboundUsers(inbound model.Inbound, users []model.User, opts ConfigO
 	}
 	accounted = credentialUsersForInbound(accounted, inbound)
 	listeners := append(append([]model.User{}, accounted...), pathLinkUsersForInbound(inbound, opts.ProxyPaths, opts.ProxyPathSteps)...)
-	if len(listeners) == 0 {
+	if len(listeners) == 0 && !opts.SkipPlaceholderListeners {
 		placeholderUsers, err := placeholderUsersForInbound(inbound, serverSecret)
 		if err != nil {
 			return nil, nil, err

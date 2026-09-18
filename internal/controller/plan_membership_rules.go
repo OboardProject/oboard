@@ -236,7 +236,7 @@ func (s *Server) planMembershipRulesVersionCreate(w http.ResponseWriter, r *http
 		fail(w, err, 500)
 		return
 	}
-	result, err := s.store.CreatePlanVersion(r.Context(), planID, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), planID, store.PlanVersionMutation{
 		BaseRevisionID: req.BaseRevisionID, ExpectedLockVersion: req.ExpectedLockVersion,
 		MembershipPolicy: &store.PlanMembershipPolicyMutation{Rules: rules, Exclusions: exclusions, Nodes: resolution.Nodes},
 		Ordering:         ordering,

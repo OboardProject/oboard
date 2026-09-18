@@ -259,7 +259,7 @@ func (s *Server) applySubscriptionPlanNodesUpdate(ctx context.Context, principal
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.store.CreatePlanVersion(ctx, prepared.plan.ID, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(ctx, prepared.plan.ID, store.PlanVersionMutation{
 		BaseRevisionID: prepared.request.BaseRevisionID, ExpectedLockVersion: prepared.request.ExpectedLockVersion,
 		Nodes: func() *store.PlanNodesMutation {
 			if prepared.membershipMutation != nil {

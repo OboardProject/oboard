@@ -869,7 +869,7 @@ func (s *Server) subscriptionPlanPatch(w http.ResponseWriter, r *http.Request, i
 		changeKind = model.PlanChangeKindSettings
 		changeSummary = "更新方案信息"
 	}
-	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), id, store.PlanVersionMutation{
 		BaseRevisionID:      plan.LatestRevisionID,
 		ExpectedLockVersion: expected,
 		Meta:                meta,
@@ -1239,7 +1239,7 @@ func (s *Server) planRevisions(w http.ResponseWriter, r *http.Request, id int64,
 		}
 		speed, traffic := historical.SpeedLimitMbps, historical.TrafficLimitBytes
 		mode, day := historical.TrafficResetMode, historical.TrafficResetDay
-		result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+		result, err := s.createPlanVersion(r.Context(), id, store.PlanVersionMutation{
 			ExpectedLockVersion: expected,
 			Settings: &store.PlanSettingsMutation{
 				SpeedLimitMbps:    &speed,
@@ -1471,7 +1471,7 @@ func (s *Server) planNodesApply(w http.ResponseWriter, r *http.Request, id int64
 		fail(w, err, 400)
 		return
 	}
-	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), id, store.PlanVersionMutation{
 		BaseRevisionID:      baseID,
 		ExpectedLockVersion: expected,
 		Nodes: func() *store.PlanNodesMutation {

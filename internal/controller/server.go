@@ -142,10 +142,10 @@ type Server struct {
 	agentConnectionMu             sync.Mutex
 	agentConnectionCount          map[int64]int
 	stealthTransport              atomic.Pointer[stealthTransport]
-	stealthMu sync.Mutex
-	stealthContext context.Context
-	stealthCertPath string
-	stealthError string
+	stealthMu                     sync.Mutex
+	stealthContext                context.Context
+	stealthCertPath               string
+	stealthError                  string
 	agentLiveMu                   sync.Mutex
 	agentLive                     map[int64][]chan any
 	agentConnsMu                  sync.Mutex
@@ -13648,48 +13648,20 @@ func matchingSSHIdentityRoutePlan(current, deployed model.SSHInboundPlan, identi
 	return currentOK && deployedOK && currentDigest == deployedDigest
 }
 
-func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, user model.User, data store.FullRoutingConfig, inboundUsers []model.InboundUser, pathUsers []model.ProxyPathUser) (map[int64]string, error) {
-	// Both subscription and preview callers supply this account's resolved credentials.
-	data.Users = []model.User{user}
-	sshServers := map[int64]bool{}
-	for _, inbound := range data.Inbounds {
-		if inbound.Enabled && inbound.Protocol == model.ProtocolSSH {
-			sshServers[inbound.ServerID] = true
-		}
-	}
-	if len(sshServers) == 0 {
-		return map[int64]string{}, nil
-	}
-	deployments, err := s.store.ListSSHPasswordDeploymentsForUser(ctx, user.ID)
-	if err != nil {
-		return nil, err
-	}
-	identity := sshPasswordDeploymentIdentityForUser(user)
+func (s *Server) subscriptionSSHServerHostKeys(ctx context.Context, data store.FullRoutingConfig) (map[int64]string, error) {
 	hostKeys := map[int64]string{}
-	for _, server := range data.Servers {
-		if !sshServers[server.ID] {
+	for _, inbound := range data.Inbounds {
+		if !inbound.Enabled || inbound.Protocol != model.ProtocolSSH || hostKeys[inbound.ServerID] != "" {
 			continue
 		}
-		plan, err := buildSSHInboundPlan(0, server, data, inboundUsers, pathUsers, nil)
-		if err != nil {
-			return nil, err
-		}
-		expectedDeployments, err := s.sshPasswordDeploymentsFromPlan(server.ID, plan)
-		if err != nil {
-			return nil, err
-		}
-		expected, expectedOK := sshPasswordDeploymentForIdentity(expectedDeployments, server.ID, identity)
-		persisted, persistedOK := sshPasswordDeploymentForIdentity(deployments, server.ID, identity)
-		if !expectedOK || !persistedOK || !matchingSSHPasswordDeployment(persisted, expected) {
+		key, err := s.store.GetSSHServerHostKey(ctx, inbound.ServerID)
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
-		hostKey, deployedPlan, ready, err := s.matchingDeployedSSHPlan(ctx, server.ID, plan)
 		if err != nil {
 			return nil, err
 		}
-		if ready && matchingSSHIdentityRoutePlan(plan, deployedPlan, identity) {
-			hostKeys[server.ID] = hostKey.PublicKey
-		}
+		hostKeys[inbound.ServerID] = key.PublicKey
 	}
 	return hostKeys, nil
 }
@@ -14511,6 +14483,10 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	requestedProfileID = &subscriptionOutput.ID
+	// A pull must answer with the full saved assignment even when the mutation
+	// that created it has not reached the background credential reconciler yet;
+	// the check is one revision compare on the steady path.
+	s.ensureSubscriptionCredentialsPrepared(r.Context())
 	// A pull reads the revision-keyed routing snapshot instead of re-reading the
 	// whole routing configuration and rebuilding the effective access snapshot
 	// per request, so a client refresh is not charged for work a configuration
@@ -14524,10 +14500,14 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	data, snapshot := routing.data, routing.snapshot
+	data := routing.data
+	snapshot, err := s.buildSubscriptionAccessSnapshot(r.Context(), data)
+	if err != nil {
+		fail(w, err, 500)
+		return
+	}
 	servers, in := append([]model.Server(nil), data.Servers...), data.Inbounds
-	s.annotateSnellSubscriptionDelivery(r.Context(), servers, in)
-	effectiveNodes := s.filterSubscriptionNodesByDelivery(r.Context(), *user, data, snapshot, snapshot.EffectiveNodeKeys(user.ID))
+	effectiveNodes := snapshot.EffectiveNodeKeys(user.ID)
 	effectiveGroups := snapshot.EffectiveNodeGroups(user.ID)
 	hiddenInbounds, err := s.store.ListHiddenInboundIDs(r.Context())
 	if err != nil {
@@ -14558,8 +14538,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 			globalNodeNames[key] = metadata.DisplayNameOverride
 		}
 	}
-	pullPathUsers := snapshot.ProxyPathUserBindings()
-	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(r.Context(), subscriptionUser, data, snapshot.InboundUserBindings(), pullPathUsers)
+	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(r.Context(), data)
 	if err != nil {
 		fail(w, err, 500)
 		return
@@ -14633,7 +14612,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		OrderPositions:   orderPositions,
 		OrderPolicy:      fmt.Sprint(orderPolicy),
 		SSHHostKeys:      sshServerHostKeys,
-		DeliveryStates:   subscriptionDeliveryStates(servers, effectiveNodes, data),
 		Credentials:      subscriptionCredentialFingerprint(s.sessionSecret, subscriptionUser),
 		AgeRecipient:     fmt.Sprint(ageRecipient),
 		AgeEncrypted:     ageEncrypted,

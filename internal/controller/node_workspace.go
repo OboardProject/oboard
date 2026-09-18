@@ -768,6 +768,7 @@ func (s *Server) workspaceSubscriptionNodes(ctx context.Context, user model.User
 }
 
 func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user model.User, output *model.SubscriptionOutput) ([]core.SubscriptionNode, []model.NodeGroup, int, core.SubscriptionFilterStats, error) {
+	s.ensureSubscriptionCredentialsPrepared(ctx)
 	credentials, err := s.store.LoadProxyCredentials(ctx, s.sessionSecret, []model.User{user})
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
@@ -787,11 +788,11 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
-	snapshot, err := s.buildAccessSnapshot(ctx, data)
+	snapshot, err := s.buildSubscriptionAccessSnapshot(ctx, data)
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
-	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(ctx, user, data, snapshot.InboundUserBindings(), snapshot.ProxyPathUserBindings())
+	sshServerHostKeys, err := s.subscriptionSSHServerHostKeys(ctx, data)
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err
 	}
@@ -812,8 +813,6 @@ func (s *Server) workspaceSubscriptionNodesWithStats(ctx context.Context, user m
 		opts.NodeOrderPolicy = *orderPolicy
 	}
 	servers := append([]model.Server(nil), data.Servers...)
-	s.annotateSnellSubscriptionDelivery(ctx, servers, data.Inbounds)
-	opts.EffectiveNodes = s.filterSubscriptionNodesByDelivery(ctx, user, data, snapshot, opts.EffectiveNodes)
 	oboardCandidates, err := core.BuildSubscriptionCandidates(user, servers, data.Inbounds, opts)
 	if err != nil {
 		return nil, nil, 0, core.SubscriptionFilterStats{}, err

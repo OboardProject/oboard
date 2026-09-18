@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
@@ -210,30 +209,6 @@ func TestRuntimeUsersLaneMarksAgentUpgradeWithoutCaps(t *testing.T) {
 	}
 }
 
-func TestSubscriptionDeliveryHidesUnconfirmedNewGrant(t *testing.T) {
-	now := time.Now().UTC()
-	old := now.Add(-time.Hour)
-	auth := store.AuthorizationState{DesiredRevision: 2, ConfirmedRevision: 1, ConfirmedAt: &old}
-	users := store.RuntimeUserState{DesiredRevision: 2, ConfirmedRevision: 1, ConfirmedAt: &old}
-	if !subscriptionDeliveryAllowsNode(auth, users, old.Add(-time.Minute)) {
-		t.Fatal("existing grant should stay advertised")
-	}
-	if subscriptionDeliveryAllowsNode(auth, users, now) {
-		t.Fatal("new grant advertised before confirmation")
-	}
-	never := store.AuthorizationState{DesiredRevision: 1}
-	if subscriptionDeliveryAllowsNode(never, store.RuntimeUserState{}, now) {
-		t.Fatal("never-confirmed server advertised a node")
-	}
-	confirmed := store.AuthorizationState{DesiredRevision: 1, ConfirmedRevision: 1}
-	if !subscriptionDeliveryAllowsNode(confirmed, store.RuntimeUserState{DesiredRevision: 1, ConfirmedRevision: 1}, now) {
-		t.Fatal("confirmed delivery hid a node")
-	}
-}
-
-// A server whose inbounds are all outside the runtime lane has an empty scope,
-// and the kernel rejects an install without one. The pull endpoint used to sign
-// such a package anyway, so the Agent retried a 400 every 30 seconds forever.
 func TestRuntimeUsersPullSkipsEmptyScope(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))

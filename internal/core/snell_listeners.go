@@ -56,6 +56,17 @@ func snellUserPSK(inboundSecret string, inbound model.Inbound, user model.User, 
 		inboundSecret, inbound.ID, user.ID, pathID, user.ProxyPassword))
 }
 
+// ReserveSnellSubscriptionPorts fixes independent listener ports when credentials
+// are prepared, before a server is online or has received its configuration.
+// It skips placeholder listeners: a placeholder owns no subscription node, so
+// its runtime port stays a deployment-time concern and this pass never
+// persists ports for servers outside a focused refresh's scope.
+func ReserveSnellSubscriptionPorts(inbounds []model.Inbound, servers []model.Server, users []model.User, opts ConfigOptions) error {
+	opts.SkipPlaceholderListeners = true
+	_, _, err := planSnellUserListeners(inbounds, servers, users, opts)
+	return err
+}
+
 // planSnellUserListeners projects the generated listeners of every Snell
 // inbound on every known server, not just the server whose config is being
 // generated. Port ownership must not depend on deployment scope: a focused
@@ -366,15 +377,7 @@ func snellUserNode(ledger *ProxyPathPortLedger, user model.User, inbound model.I
 		return nil, false, nil
 	}
 	runtimePort, ok := inbound.Port, true
-	if SnellSharedPort(inbound) {
-		version, _ := snellPanelVersion(parseExtra(inbound.ConfigJSON))
-		if inbound.SnellActiveMode != SnellListenerShared || inbound.SnellActivePort != inbound.Port || inbound.SnellActiveVersion != version || !ServerSupportsSnellShared(server, inbound) || !server.UsersConfirmed || !server.AuthorizationConfirmed {
-			return nil, false, nil
-		}
-	} else {
-		if inbound.SnellActiveMode == SnellListenerShared {
-			return nil, false, nil
-		}
+	if !SnellSharedPort(inbound) {
 		runtimePort, ok = ledger.LookupActive(model.ProxyPathPortKindSnellUser, snellCredentialPortScopeKey(inbound.ID, user, pathID), inbound.ServerID)
 	}
 	if !ok {

@@ -324,7 +324,7 @@ func (s *Server) planOrderingVersionCreate(w http.ResponseWriter, r *http.Reques
 			seen[key] = true
 		}
 	}
-	result, err := s.store.CreatePlanVersion(r.Context(), id, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), id, store.PlanVersionMutation{
 		BaseRevisionID:      req.BaseRevisionID,
 		ExpectedLockVersion: req.ExpectedLockVersion,
 		Ordering:            &store.PlanOrderingMutation{Policy: policy, ManualOrder: manualOrder},
@@ -459,7 +459,7 @@ func (s *Server) planOrderingApplyTemplate(w http.ResponseWriter, r *http.Reques
 		summary = fmt.Sprintf("应用模板「%s」r%d", template.Name, template.Revision)
 	}
 	templateID := template.ID
-	result, err := s.store.CreatePlanVersion(r.Context(), planID, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), planID, store.PlanVersionMutation{
 		BaseRevisionID: baseID, ExpectedLockVersion: req.ExpectedLockVersion,
 		Ordering: &store.PlanOrderingMutation{
 			Policy: policy, ManualOrder: manualOrder, ClearManualPositions: req.ApplyMode == "rebuild",
@@ -536,7 +536,7 @@ func (s *Server) planNodePresentationVersionCreate(w http.ResponseWriter, r *htt
 	if summary == "" {
 		summary = fmt.Sprintf("修改 %d 个方案内节点名称", len(overrides))
 	}
-	result, err := s.store.CreatePlanVersion(r.Context(), planID, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), planID, store.PlanVersionMutation{
 		BaseRevisionID: req.BaseRevisionID, ExpectedLockVersion: req.ExpectedLockVersion,
 		NodePresentation: &store.PlanNodePresentationMutation{DisplayNameOverrides: overrides},
 		ChangeKind:       model.PlanChangeKindPresentation, ChangeSummary: summary, CreatedBy: requestActorID(r),

@@ -27,6 +27,25 @@ func (s *Server) buildAccessSnapshot(ctx context.Context, data store.FullRouting
 	}), nil
 }
 
+// Subscription publication follows saved assignments; runtime authorization
+// continues to use the activated snapshot and its prepare/activate gates.
+func (s *Server) buildSubscriptionAccessSnapshot(ctx context.Context, data store.FullRoutingConfig) (*core.EffectiveAccessSnapshot, error) {
+	data.ActivePlanNodes = data.SubscriptionPlanNodes
+	data.PlanBindings = data.SubscriptionPlanBindings
+	return s.buildAccessSnapshot(ctx, data)
+}
+
+func (s *Server) createPlanVersion(ctx context.Context, planID int64, mutation store.PlanVersionMutation) (*store.CreatePlanVersionResult, error) {
+	result, err := s.store.CreatePlanVersion(ctx, planID, mutation)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reconcileProxyCredentials(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // authorizationMode reports the runtime authorization source. The legacy
 // authorization tables are removed, so runtime is always plan-based.
 func (s *Server) authorizationMode(ctx context.Context) string {

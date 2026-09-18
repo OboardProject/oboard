@@ -95,13 +95,13 @@ func TestSnellSharedActivationRequiresEveryCapability(t *testing.T) {
 		}
 	}
 }
-func TestSnellSharedSubscriptionsUseConfirmedEndpointAndOwnPSK(t *testing.T) {
+func TestSnellSharedSubscriptionsUseDesiredEndpointAndOwnPSK(t *testing.T) {
 	s, in := sharedSnellFixture()
 	users := fixtureCredentials(snellTestUsers(2), []model.Inbound{in}, nil)
 	for _, u := range users {
 		identity := UserCredentialForRoute(u, in.ID, 0, in.Protocol)
-		if _, ok, err := SnellSubscriptionNode(nil, identity, in, s, 0); err != nil || ok {
-			t.Fatalf("unconfirmed endpoint advertised %v", err)
+		if _, ok, err := SnellSubscriptionNode(nil, identity, in, s, 0); err != nil || !ok {
+			t.Fatalf("desired endpoint missing before deployment: %v", err)
 		}
 	}
 	in.SnellActiveMode = SnellListenerShared

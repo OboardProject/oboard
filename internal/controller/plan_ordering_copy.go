@@ -208,7 +208,7 @@ func (s *Server) planOrderingCopyFromPlan(w http.ResponseWriter, r *http.Request
 	}
 	sourcePlanID := req.SourcePlanID
 	sourceRevisionID := computed.SourceRevision.ID
-	result, err := s.store.CreatePlanVersion(r.Context(), targetPlanID, store.PlanVersionMutation{
+	result, err := s.createPlanVersion(r.Context(), targetPlanID, store.PlanVersionMutation{
 		BaseRevisionID: req.BaseRevisionID, ExpectedLockVersion: req.ExpectedLockVersion,
 		Ordering: &store.PlanOrderingMutation{Policy: computed.Policy, ManualOrder: computed.ManualOrder, ClearManualPositions: req.Mode == orderCopyRulesRebuild,
 			SetSourceProvenance: true, OrderSourcePlanID: &sourcePlanID, OrderSourceRevisionID: &sourceRevisionID, OrderSourceMode: req.Mode,
