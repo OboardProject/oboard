@@ -558,11 +558,11 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		`create index if not exists idx_snell_profiles_name on snell_profiles(name)`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 标准',4,'','none','','default',0,'Snell v4 参数模板。Server PSK 由入口独立持有；未指定时创建入口时自动生成并持久化。每个用户的 UserKey 来自其代理凭据。',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v4 HTTP 混淆',4,'','http','','default',0,'v4 搭配 HTTP 型混淆，需填写混淆 Host',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
-		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 标准',6,'','none','','default',0,'v6 标准模式（低，未加固）：PSK 随机生成，适合无按位密度 DPI 的线路；有 DPI 的线路选加固-中/加固-高。客户端需 Surge iOS 5.20+/Mac 6.7+',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) select 'Snell v6 标准',6,'','none','','default',0,'v6 标准模式（低，未加固）：PSK 随机生成，适合无按位密度 DPI 的线路；有 DPI 的线路选加固-中/加固-高。客户端需 Surge iOS 5.20+/Mac 6.7+',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' where not exists (select 1 from snell_profiles where builtin=1 and name='Snell v6 标准（测试）')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 加固-中（抗 DPI）',6,'DnkcNIVi2DdZSJ7T93njADhLHrnLlBmR','none','','default',0,'v6 default 模式搭配密度验证 PSK（首包位密度 0.68，在运营商按位密度 DPI 丢弃区 0.425–0.573 之外）。预设 PSK 为公开模板值，替换时需保持首包位密度在丢弃区外。客户端需 Surge iOS 5.20+/Mac 6.7+',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 加固-高（抗 DPI）',6,'zezjz37_ZOtdOvNcb9zpyK3jg4E-y12_','none','','default',0,'v6 default 模式搭配密度验证 PSK（首包位密度 0.74，对客户端合并发送请求的稀释余量最大）。适合重度按位密度 DPI 线路（如移动专线实测丢弃区 0.425–0.573）。预设 PSK 为公开模板值，替换时需保持首包位密度在丢弃区外。客户端需 Surge iOS 5.20+/Mac 6.7+',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
-		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 unshaped',6,'','none','','unshaped',0,'v6 无整形模式；首包位密度不可控，运营商 DPI 线路不可用',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
-		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) values('Snell v6 unsafe-raw',6,'','none','','unsafe-raw',0,'v6 不安全原始模式；明文首包，任何 DPI 线路均不可用',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) select 'Snell v6 unshaped',6,'','none','','unshaped',0,'v6 无整形模式；首包位密度不可控，运营商 DPI 线路不可用',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' where not exists (select 1 from snell_profiles where builtin=1 and name='Snell v6 unshaped（测试）')`,
+		`insert or ignore into snell_profiles(name,version,psk,obfs_mode,obfs_host,mode,reuse,remark,builtin,enabled,created_at,updated_at) select 'Snell v6 unsafe-raw',6,'','none','','unsafe-raw',0,'v6 不安全原始模式；明文首包，任何 DPI 线路均不可用',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z' where not exists (select 1 from snell_profiles where builtin=1 and name='Snell v6 unsafe-raw（测试）')`,
 		`create table if not exists node_presets (id integer primary key autoincrement, name text not null unique, protocol text not null, kind text not null, config_json text not null default '{}', default_port integer not null default 443, remark text not null default '', builtin integer not null default 0, enabled integer not null default 1, created_at text not null, updated_at text not null)`,
 		`create index if not exists idx_node_presets_protocol_kind on node_presets(protocol,kind)`,
 		`create table if not exists server_dns_policies (server_id integer primary key references servers(id) on delete cascade, encrypted_list_id integer references dns_lists(id) on delete restrict, bootstrap_list_id integer not null references dns_lists(id) on delete restrict, revision integer not null default 1, strategy text not null default 'auto', auto_test text not null default 'first_apply', test_interval_seconds integer not null default 3600, encrypted_selected_json text not null default '[]', bootstrap_selected_json text not null default '[]', encrypted_selection_revision integer not null default 0, bootstrap_selection_revision integer not null default 0, last_attempt_at text, last_success_at text, last_error text not null default '', needs_benchmark integer not null default 1, created_at text not null, updated_at text not null)`,
@@ -1395,14 +1395,14 @@ func (s *Store) migrateSnellV6StandardRemark(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `update snell_profiles set remark=?, updated_at=? where builtin=1 and name='Snell v6 标准（测试）' and remark=?`, newRemark, time.Now().UTC().Format(time.RFC3339Nano), oldRemark); err != nil {
 		return err
 	}
-	// Rename legacy "（测试）"-suffixed built-in rows to their current names so
-	// the insert-or-ignore seeds with the new names do not duplicate them.
+	// Seeds skip legacy aliases. If a failed upgrade or custom profile already
+	// occupies the new name, preserve both IDs and their inbound references.
 	for _, rename := range [][2]string{
 		{"Snell v6 标准（测试）", "Snell v6 标准"},
 		{"Snell v6 unshaped（测试）", "Snell v6 unshaped"},
 		{"Snell v6 unsafe-raw（测试）", "Snell v6 unsafe-raw"},
 	} {
-		if _, err := s.db.ExecContext(ctx, `update snell_profiles set name=?, updated_at=? where builtin=1 and name=?`, rename[1], time.Now().UTC().Format(time.RFC3339Nano), rename[0]); err != nil {
+		if _, err := s.db.ExecContext(ctx, `update snell_profiles set name=?, updated_at=? where builtin=1 and name=? and not exists (select 1 from snell_profiles where name=?)`, rename[1], time.Now().UTC().Format(time.RFC3339Nano), rename[0], rename[1]); err != nil {
 			return err
 		}
 	}
