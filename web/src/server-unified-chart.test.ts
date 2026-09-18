@@ -101,30 +101,82 @@ describe('server-unified-chart helper', () => {
     expect(nonEmp?.values['reg_北京 · 联通']).toBe(48)
   })
 
-  it('splits a series wherever a bucket has no value', () => {
-    const segments = splitSeriesSegments([
-      { timestamp: 1, timeLabel: 't1', values: { public_latency: 20 } },
-      { timestamp: 2, timeLabel: 't2', values: { public_latency: null } },
-      { timestamp: 3, timeLabel: 't3', values: { public_latency: 30 } },
-    ], 'public_latency')
+  it('renders offline gap bridges with a distinct muted dashed style', () => {
+    expect(monitorSource).toContain('komari-chart-offline-bridge')
+    expect(monitorSource).toContain('gradientPrefix}-offline`')
+    expect(monitorSource).toContain('bridgeFrom')
+    expect(monitorStyles).toContain('.komari-chart-offline-bridge')
+  })
 
-    expect(segments).toEqual([
-      [{ index: 0, value: 20 }],
-      [{ index: 2, value: 30 }],
+  it('keeps normal sampling jitter connected even when gap connection is off', () => {
+    const buckets = [20, 20, null, 20, 20].map((value, index) => ({ timestamp: index, timeLabel: `t${index}`, values: { public_latency: value } }))
+
+    expect(splitSeriesSegments(buckets, 'public_latency', false)).toEqual([
+      {
+        points: [
+          { index: 0, value: 20 },
+          { index: 1, value: 20 },
+          { index: 3, value: 20 },
+          { index: 4, value: 20 },
+        ],
+      },
     ])
   })
 
-  it('connects finite points across empty buckets when requested', () => {
+  it('splits offline gaps when off and bridges them with the last online point when on', () => {
+    const buckets = [20, 20, 20, null, null, null, null, null, null, 30, 30, 30].map((value, index) => ({ timestamp: index, timeLabel: `t${index}`, values: { public_latency: value } }))
+
+    expect(splitSeriesSegments(buckets, 'public_latency', false)).toEqual([
+      {
+        points: [
+          { index: 0, value: 20 },
+          { index: 1, value: 20 },
+          { index: 2, value: 20 },
+        ],
+      },
+      {
+        points: [
+          { index: 9, value: 30 },
+          { index: 10, value: 30 },
+          { index: 11, value: 30 },
+        ],
+      },
+    ])
+
+    expect(splitSeriesSegments(buckets, 'public_latency', true)).toEqual([
+      {
+        points: [
+          { index: 0, value: 20 },
+          { index: 1, value: 20 },
+          { index: 2, value: 20 },
+        ],
+      },
+      {
+        points: [
+          { index: 9, value: 30 },
+          { index: 10, value: 30 },
+          { index: 11, value: 30 },
+        ],
+        bridgeFrom: { index: 2, value: 20 },
+      },
+    ])
+  })
+
+  it('connects finite points across empty buckets without marking sampling jitter as offline', () => {
     const buckets = [
       { timestamp: 1, timeLabel: 't1', values: { public_latency: 20 } },
       { timestamp: 2, timeLabel: 't2', values: { public_latency: null } },
       { timestamp: 3, timeLabel: 't3', values: { public_latency: 30 } },
     ]
 
-    expect(splitSeriesSegments(buckets, 'public_latency', true)).toEqual([[
-      { index: 0, value: 20 },
-      { index: 2, value: 30 },
-    ]])
+    expect(splitSeriesSegments(buckets, 'public_latency', true)).toEqual([
+      {
+        points: [
+          { index: 0, value: 20 },
+          { index: 2, value: 30 },
+        ],
+      },
+    ])
   })
 
   it('uses linear paths by default and only emits curves when smoothing is enabled', () => {

@@ -27227,6 +27227,16 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
   transition: stroke-dashoffset 0.3s ease;
 }
 
+.komari-chart-offline-bridge {
+  stroke: var(--muted, #94a3b8);
+  stroke-width: 2.2;
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.8;
+  filter: drop-shadow(0 0 1px color-mix(in srgb, var(--muted, #94a3b8) 45%, transparent));
+}
+
 .komari-loss-marker {
   stroke: var(--danger, #ef4444);
   stroke-linecap: square;

@@ -4,6 +4,7 @@ import {
   alignFailedProbePoints,
   alignUnifiedMetrics,
   buildAreaPath,
+  buildLinearPath,
   buildLinePath,
   computeMaxLatency,
   DEFAULT_CONNECT_GAPS,
@@ -162,17 +163,29 @@ export function ServerUnifiedTelemetryChart({
       return (
         <g key={series.id}>
           {segments.map((segment, segmentIndex) => {
-            const points = segment.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
+            const points = segment.points.map(point => ({ x: getX(point.index), y: getY(point.value, series) }))
             const linePath = buildLinePath(points, DEFAULT_SMOOTH_LINES)
             const areaPath = buildAreaPath(points, padB, DEFAULT_SMOOTH_LINES)
             const singlePoint = points.length === 1 ? points[0] : null
+            const bridgePoints = segment.bridgeFrom && points.length > 0
+              ? [
+                  { x: getX(segment.bridgeFrom.index), y: getY(segment.bridgeFrom.value, series) },
+                  points[0],
+                ]
+              : null
             return (
               <React.Fragment key={segmentIndex}>
+                {bridgePoints && (
+                  <>
+                    <path d={buildAreaPath(bridgePoints, padB, false)} fill={`url(#${gradientPrefix}-offline)`} className="komari-chart-area" />
+                    <path d={buildLinearPath(bridgePoints)} className="komari-chart-offline-bridge" fill="none" vectorEffect="non-scaling-stroke" />
+                  </>
+                )}
                 {singlePoint ? (
                   <rect
-                    x={getBucketStartX(segment[0].index)}
+                    x={getBucketStartX(segment.points[0].index)}
                     y={singlePoint.y}
-                    width={Math.max(1, getBucketEndX(segment[0].index) - getBucketStartX(segment[0].index))}
+                    width={Math.max(1, getBucketEndX(segment.points[0].index) - getBucketStartX(segment.points[0].index))}
                     height={Math.max(0, padB - singlePoint.y)}
                     fill={`url(#${gradientPrefix}-${seriesIndex})`}
                     className="komari-chart-area"
@@ -260,7 +273,7 @@ export function ServerUnifiedTelemetryChart({
           onPointerLeave={() => setHoveredIdx(null)}
         >
           <title id={chartTitleID}>服务器监控趋势</title>
-          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色异常区块表示该时间桶发生实际公网探测丢包，普通缺报不会标记为丢包。</desc>
+          <desc id={chartDescriptionID}>显示已选择的负载与延迟时间序列；红色异常区块表示该时间桶发生实际公网探测丢包，普通缺报不会标记为丢包；灰色虚线为跨离线时段的断点连接。</desc>
           <defs>
             {activeSeries.map((series, index) => (
               <linearGradient key={series.id} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
@@ -269,6 +282,11 @@ export function ServerUnifiedTelemetryChart({
                 <stop offset="100%" stopColor={series.color} stopOpacity="0" />
               </linearGradient>
             ))}
+            <linearGradient id={`${gradientPrefix}-offline`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--muted, #94a3b8)" stopOpacity="0.18" />
+              <stop offset="88%" stopColor="var(--muted, #94a3b8)" stopOpacity="0.03" />
+              <stop offset="100%" stopColor="var(--muted, #94a3b8)" stopOpacity="0" />
+            </linearGradient>
           </defs>
           {[0, 0.25, 0.5, 0.75, 1].map((pct, index) => {
             const y = padB - pct * plotH
@@ -397,7 +415,7 @@ function ChartDrawOptions({
         type="button"
         className={`komari-chart-option${connectGaps ? ' active' : ''}`}
         aria-pressed={connectGaps}
-        title="连接缺失时间桶两侧的有效延迟点；阴影始终保留"
+        title="跨离线时段连接相邻采样点，并以灰色虚线与阴影标示离线；正常采样间隔始终相连"
         onClick={() => onConnectGaps(value => !value)}
       >断点连接</button>
       <button

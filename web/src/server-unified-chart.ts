@@ -85,6 +85,29 @@ export interface SeriesSegmentPoint {
   value: number
 }
 
+// One maximal run of points whose spacing stays within normal reporting
+// jitter. `bridgeFrom` is set only when the connect-gaps switch bridges the
+// offline gap in front of this segment; it carries the last point before the
+// gap so the chart can draw the bridge with distinct offline styling.
+export interface SeriesSegment {
+  points: SeriesSegmentPoint[]
+  bridgeFrom?: SeriesSegmentPoint
+}
+
+// Reports arrive at a fixed cadence, so a spacing within twice the observed
+// median interval is sampling jitter, not downtime.
+function medianReportingInterval(points: SeriesSegmentPoint[]): number {
+  if (points.length < 2) return 1
+  const intervals: number[] = []
+  for (let index = 1; index < points.length; index += 1) {
+    intervals.push(points[index].index - points[index - 1].index)
+  }
+  intervals.sort((a, b) => a - b)
+  const middle = Math.floor(intervals.length / 2)
+  const median = intervals.length % 2 === 1 ? intervals[middle] : (intervals[middle - 1] + intervals[middle]) / 2
+  return Math.max(1, median)
+}
+
 export interface FailedProbePoint {
   at: string
   count: number
@@ -115,29 +138,23 @@ export function formatBucketTime(ts: number): string {
   return `${month}-${day} ${hours}:${mins}`
 }
 
-export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string, connectGaps = false): SeriesSegmentPoint[][] {
-  if (connectGaps) {
-    const connected = buckets.flatMap((bucket, index) => {
-      const value = bucket.values[seriesID]
-      return value == null || !Number.isFinite(value) ? [] : [{ index, value }]
-    })
-    return connected.length > 0 ? [connected] : []
-  }
-
-  const segments: SeriesSegmentPoint[][] = []
-  let current: SeriesSegmentPoint[] = []
-
+export function splitSeriesSegments(buckets: UnifiedBucketPoint[], seriesID: string, connectGaps = false): SeriesSegment[] {
+  const points: SeriesSegmentPoint[] = []
   buckets.forEach((bucket, index) => {
     const value = bucket.values[seriesID]
-    if (value == null || !Number.isFinite(value)) {
-      if (current.length > 0) segments.push(current)
-      current = []
-      return
-    }
-    current.push({ index, value })
+    if (value != null && Number.isFinite(value)) points.push({ index, value })
   })
+  if (points.length === 0) return []
 
-  if (current.length > 0) segments.push(current)
+  const jitterTolerance = Math.ceil(medianReportingInterval(points) * 2)
+  const segments: SeriesSegment[] = [{ points: [points[0]] }]
+  for (let index = 1; index < points.length; index += 1) {
+    const gap = points[index].index - points[index - 1].index
+    if (gap > jitterTolerance) {
+      segments.push({ points: [], bridgeFrom: connectGaps ? points[index - 1] : undefined })
+    }
+    segments[segments.length - 1].points.push(points[index])
+  }
   return segments
 }
 
