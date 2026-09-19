@@ -259,6 +259,34 @@ func TestRuntimeUsersPullSkipsEmptyScope(t *testing.T) {
 	if !state.Confirmed() {
 		t.Fatalf("empty scope left the users lane pending: %+v", state)
 	}
+	// The confirmed digest must be the content identity the revision was
+	// allocated against. The snapshot digest also covers the revision, so
+	// storing it made the lane disagree with itself and the health report
+	// read a revision conflict that every pull wrote back.
+	if state.ConfirmedDigest == "" || state.ConfirmedDigest != state.DesiredDigest {
+		t.Fatalf("empty scope confirmed digest %q does not match the desired binding %q", state.ConfirmedDigest, state.DesiredDigest)
+	}
+	if state.DesiredRevision != 1 {
+		t.Fatalf("empty scope allocated more than one revision: %+v", state)
+	}
+
+	// The sync worker's empty-scope branch records the same identity. A
+	// resync releases the binding so the recovery scan actually runs the
+	// server instead of skipping it as settled.
+	controlCh := make(chan any, 2)
+	srv.registerAgentLive(server.ID, controlCh)
+	defer srv.unregisterAgentLive(server.ID, controlCh)
+	if err := db.ForceRuntimeUsersResync(ctx, server.ID); err != nil {
+		t.Fatal(err)
+	}
+	srv.reconcileRuntimeUsersSync(ctx, true)
+	state, err = db.RuntimeUserState(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Confirmed() || state.ConfirmedDigest != state.DesiredDigest {
+		t.Fatalf("sync path empty-scope confirmation diverged from the binding: %+v", state)
+	}
 }
 
 // A node that reports holding the desired revision while the lane carries a

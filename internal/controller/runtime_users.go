@@ -317,7 +317,13 @@ func (s *Server) syncServerRuntimeUsers(ctx context.Context, serverID int64, for
 		return
 	}
 	if len(pkg.Scope) == 0 {
-		_, _ = s.store.RecordRuntimeUsersConfirmation(ctx, serverID, pkg.UsersRevision, pkg.UsersDigest, "")
+		// The confirmed digest is the content identity the revision was
+		// allocated against, so it must be the content digest: the snapshot
+		// digest also covers the revision, and storing it here made the lane
+		// disagree with itself on every empty-scope server - the health report
+		// read a conflict that no cleanup could clear, because each pull wrote
+		// the mismatch back.
+		_, _ = s.store.RecordRuntimeUsersConfirmation(ctx, serverID, pkg.UsersRevision, contentDigest, "")
 		return
 	}
 	if state.Confirmed() {
@@ -657,7 +663,10 @@ func (s *Server) agentUsersSnapshot(w http.ResponseWriter, r *http.Request) {
 	// kernel rejects an install without one. Answer with an empty envelope the
 	// Agent skips instead of signing a package it can only fail to apply.
 	if len(pkg.Scope) == 0 {
-		_, _ = s.store.RecordRuntimeUsersConfirmation(r.Context(), server.ID, pkg.UsersRevision, pkg.UsersDigest, "")
+		// Same identity rule as the sync path: the confirmed digest must be the
+		// content digest the revision was allocated against, never the
+		// revision-bearing snapshot digest.
+		_, _ = s.store.RecordRuntimeUsersConfirmation(r.Context(), server.ID, pkg.UsersRevision, contentDigest, "")
 		w.Header().Set("Cache-Control", "no-store")
 		write(w, http.StatusOK, model.UsersEnvelope{ServerID: server.ID})
 		return
