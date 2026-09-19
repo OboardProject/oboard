@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID } from './graph-sources'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphConnectionSourceIntent, graphServerEntrySourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID } from './graph-sources'
 
 describe('server graph sources', () => {
-  it('keeps the batch source handle stable', () => {
+  it('reserves the shared source handle for server cards', () => {
     expect(SERVER_GRAPH_SOURCE_HANDLE).toBe('server-source')
     expect(isGenericServerSourceHandle(SERVER_GRAPH_SOURCE_HANDLE)).toBe(true)
-    expect(isGenericServerSourceHandle('source-bottom')).toBe(true)
+    expect(isGenericServerSourceHandle('source-bottom')).toBe(false)
     expect(isGenericServerSourceHandle('server-entry-12')).toBe(false)
   })
 
@@ -16,19 +16,28 @@ describe('server graph sources', () => {
     expect(inboundIDFromServerHandle(SERVER_GRAPH_SOURCE_HANDLE)).toBe(0)
   })
 
-  it('offers both local inbounds and paths that can continue from the server', () => {
-    expect(graphServerSourceOptions(
-      [
-        { id: 11, label: 'VLESS:443', title: '主入口' },
-        { id: 12, label: 'SSH:22', title: 'SSH 入口' },
-      ],
-      [
-        { step_id: 31, label: '继续 · 路径 7', title: '香港中转 / 第 2 跳后继续连接' },
-      ],
-    )).toEqual([
+  it('offers only local inbounds when a server connection needs a choice', () => {
+    const options = graphServerEntrySourceOptions([
+      { id: 11, label: 'VLESS:443', title: '主入口' },
+      { id: 12, label: 'SSH:22', title: 'SSH 入口' },
+    ])
+
+    expect(options).toEqual([
       { key: 'inbound:11', label: '主入口', detail: 'VLESS:443', source: { inbound_id: 11 } },
       { key: 'inbound:12', label: 'SSH 入口', detail: 'SSH:22', source: { inbound_id: 12 } },
-      { key: 'step:31', label: '香港中转', detail: '继续 · 路径 7', source: { step_id: 31 } },
     ])
+    expect(graphConnectionSourceIntent('server', 5, options)).toEqual({ kind: 'choose-entry', options })
+  })
+
+  it('branches directly from the displayed shared path step instead of asking which downstream path to use', () => {
+    const downstreamOptions = [
+      { key: 'step:31', label: 'G → SGL', detail: '继续 · 路径 7', source: { step_id: 31 } },
+      { key: 'step:32', label: 'G → Softbank', detail: '继续 · 路径 8', source: { step_id: 32 } },
+    ]
+
+    expect(graphConnectionSourceIntent('proxy-path-step', 20, downstreamOptions)).toEqual({
+      kind: 'resolved',
+      sources: [{ step_id: 20 }],
+    })
   })
 })

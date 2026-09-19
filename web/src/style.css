@@ -19963,25 +19963,34 @@ button[aria-busy="true"] {
 
 .graph-source-dialog { width: min(520px, calc(100vw - 28px)); }
 .graph-source-options { display: grid; gap: 8px; max-height: min(420px, 55vh); overflow: auto; padding: 2px; }
-.graph-source-options > div[role="checkbox"],
-.graph-source-options > div[role="radio"] {
+.graph-source-options > button[role="radio"] {
 	box-sizing: border-box;
 	display: grid;
-	grid-template-columns: 32px minmax(0, 1fr);
+	grid-template-columns: 24px minmax(0, 1fr);
 	align-items: center;
-	gap: 10px;
+	gap: 12px;
+	width: 100%;
 	padding: 11px 12px;
 	border: 1px solid var(--border-color);
 	border-radius: var(--radius-sm);
 	background: var(--bg-card);
+	color: inherit;
+	font: inherit;
+	text-align: left;
 	cursor: pointer;
 }
-.graph-source-options > div[role="checkbox"].is-selected,
-.graph-source-options > div[role="radio"].is-selected { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-card)); }
-.graph-source-options > div[role="checkbox"] > span,
-.graph-source-options > div[role="radio"] > span { min-width: 0; display: grid; gap: 2px; }
-.graph-source-options > div[role="checkbox"]:focus-visible,
-.graph-source-options > div[role="radio"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent); outline-offset: 2px; }
+.graph-source-options > button[role="radio"].is-selected { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 7%, var(--bg-card)); }
+.graph-source-options > button[role="radio"] > span { min-width: 0; display: grid; gap: 2px; }
+.graph-source-options > button[role="radio"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent); outline-offset: 2px; }
+.graph-source-choice-indicator {
+	place-items: center;
+	width: 20px;
+	height: 20px;
+	border: 1px solid var(--border-color);
+	border-radius: 999px;
+	color: var(--surface-solid);
+}
+.graph-source-options > button[role="radio"].is-selected .graph-source-choice-indicator { border-color: var(--color-primary); background: var(--color-primary); }
 .graph-source-options strong, .graph-source-options small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .graph-source-options small { color: var(--text-secondary); }
 

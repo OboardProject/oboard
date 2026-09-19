@@ -75,7 +75,8 @@ import {
 } from './components/proxy-path/layout'
 import type { GraphDirectExitInstance, GraphPosition } from './components/proxy-path/layout'
 import type { ProxyPathReusePreview, ProxyPathReuseSource, ProxyPathReuseTargetOption, TransportDialogTarget, TransportMode as PathTransportMode, TransportSelection } from './components/proxy-path/TransportDialog'
-import { SERVER_GRAPH_SOURCE_HANDLE, graphServerSourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
+import { SERVER_GRAPH_SOURCE_HANDLE, graphConnectionSourceIntent, graphServerEntrySourceOptions, inboundIDFromServerHandle, isGenericServerSourceHandle, serverEntryHandleID, serverEntryTargetHandleID, type GraphEntrySource, type GraphPathSource, type GraphSourceOption } from './components/proxy-path/graph-sources'
+import { GraphSourceSelectionDialog, type GraphSourceSelectionRequest } from './components/proxy-path/GraphSourceSelectionDialog'
 import { buildSharedProxyPathTopology, canonicalProxyPathStep, graphExpandedPathIDsByStep, graphFocusState, graphPathEdgeLabels, mergeGraphPathIDs } from './components/proxy-path/graph-topology'
 import type { GraphFocusScope, GraphPathFocusState } from './components/proxy-path/graph-topology'
 import { GRAPH_EDGE_ARROW_GAP, GRAPH_EDGE_ARROW_LENGTH, curvedGraphPath, pointToPolylineDistance, roundedOrthogonalPath, routeEndArrowPath, routeEndArrowPoints, trimRouteEnd, type GraphPoint, type GraphRect } from './components/proxy-path/graph-geometry'
@@ -10850,8 +10851,6 @@ type TransportDialogRequest = {
 	currentMode?: PathTransportMode
   resolve: (value: TransportSelection | null) => void
 }
-type GraphSourceSelectionRequest = { title: string; options: GraphSourceOption[]; multiple: boolean; resolve: (value: ProxyPathReuseSource[] | null) => void }
-
 function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, topbarTarget, onServerSnapshot, patchPageData, focusRequest }: any) {
   const dialogs = useDialogs()
   const servers: Server[] = data.servers || []
@@ -11632,14 +11631,17 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	// before committing, instead of walking an unrevisable chain of prompts.
 	const openTransportDialog = (request: Omit<TransportDialogRequest, 'resolve'>) =>
 	  new Promise<TransportSelection | null>(resolve => setTransportRequest({ ...request, resolve }))
-	const chooseServerSources = (nodeID: string, title: string, multiple = true) => {
+	const chooseGraphConnectionSources = (nodeID: string, entity: GraphEntity | undefined, title: string) => {
 	  const options = (nodes.find(node => node.id === nodeID)?.data?.sourceOptions || []) as GraphSourceOption[]
-	  if (!options.length) {
-	    void dialogs.alert({ title: '没有可用来源', message: '这台服务器没有可作为链路起点的入口或可继续路径。' })
+	  const intent = graphConnectionSourceIntent(entity?.type, entity?.id || 0, options)
+	  if (intent.kind === 'resolved') return Promise.resolve(intent.sources)
+	  if (intent.kind === 'unsupported') return Promise.resolve(null)
+	  if (!intent.options.length) {
+	    void dialogs.alert({ title: '没有可用入口', message: '这台服务器没有可作为链路起点的入口。' })
 	    return Promise.resolve(null)
 	  }
-	  if (options.length === 1) return Promise.resolve(options.map(option => option.source))
-	  return new Promise<ProxyPathReuseSource[] | null>(resolve => setSourceSelectionRequest({ title, options, multiple, resolve }))
+	  if (intent.options.length === 1) return Promise.resolve(intent.options.map(option => option.source))
+	  return new Promise<ProxyPathReuseSource[] | null>(resolve => setSourceSelectionRequest({ title, options: intent.options, resolve }))
 	}
 	const graphSourceLabel = (source: ProxyPathReuseSource) => {
 	  if (source.step_id) {
@@ -11648,6 +11650,12 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 	  }
 	  const entry = entries.find(item => item.id === source.inbound_id)
 	  return entry?.name || `入口 ${source.inbound_id || ''}`.trim()
+	}
+	const graphConnectionSourceTitle = (entity: GraphEntity) => {
+	  if (entity.type !== 'proxy-path-step') return entity.label || '服务器'
+	  const step = ((data.proxy_path_steps || []) as ProxyPathStep[]).find(item => item.id === entity.id)
+	  const serverID = step?.server_id || entries.find(entry => entry.id === step?.inbound_id)?.server_id
+	  return servers.find(server => server.id === serverID)?.name || entity.label || '服务器'
 	}
 	const chooseTransportForTarget = async (target: { node_type: 'imported' | 'server_inbound'; server_id?: number; inbound_id?: number }, current?: ProxyPathStep, sourceLabel?: string, sources?: ProxyPathReuseSource[]): Promise<TransportSelection | null> => {
 	  const targetInbound = target.inbound_id ? entries.find(item => item.id === target.inbound_id) : null
@@ -12032,12 +12040,13 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    reconcileTopology()
 			    return
 			  }
-				  if (isGenericServerSourceHandle(conn.sourceHandle)) {
+				  if ((sourceEntity?.type === 'server' || sourceEntity?.type === 'proxy-path-step') && isGenericServerSourceHandle(conn.sourceHandle)) {
 			    if (targetEntity?.type === 'routing') {
 			      openRoutingForServerNode(conn.source, conn.target)
 			      return
 			    }
-			    const sources = await chooseServerSources(conn.source, sourceEntity?.label || '服务器', targetEntity?.type !== 'detached-step')
+			    const sourceTitle = graphConnectionSourceTitle(sourceEntity)
+			    const sources = await chooseGraphConnectionSources(conn.source, sourceEntity, sourceTitle)
 			    if (!sources?.length) return
 			    if (targetEntity?.type === 'detached-step') {
 			      await reconnectDetachedChain(sources[0], conn.target)
@@ -12078,11 +12087,11 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 			    const target = await targetStepForGraphTarget(conn.target)
 			    if (!target) return
 			    if (target.node_type === 'server_inbound') {
-			      const created = await reuseControlledTarget(sources, target, sourceEntity?.label)
+			      const created = await reuseControlledTarget(sources, target, sourceTitle)
 			      consumeCanvasServerTarget(conn.target, created)
 			      return
 			    }
-			    const transport = await chooseTransportForTarget(target, undefined, sourceEntity?.label)
+			    const transport = await chooseTransportForTarget(target, undefined, sourceTitle)
 			    if (!transport) return
 			    await runSharedAppends(sources, graphSourceLabel, source => {
 			      if (source.step_id) return appendPathAfterStep(source.step_id, { ...target, ...transport })
@@ -13294,48 +13303,6 @@ function ProxyOverview({ data, client, load, selectedServer, setSelectedServer, 
 		  onSubmit={sources => { sourceSelectionRequest.resolve(sources); setSourceSelectionRequest(null) }}
 		/>}</AnimatePresence>
 	  </div>
-}
-
-function GraphSourceSelectionDialog({ request, onCancel, onSubmit }: { request: GraphSourceSelectionRequest; onCancel: () => void; onSubmit: (sources: ProxyPathReuseSource[]) => void }) {
-	const [selected, setSelected] = useState<string[]>([])
-	const toggle = (key: string) => setSelected(current => request.multiple
-	  ? current.includes(key) ? current.filter(item => item !== key) : [...current, key]
-	  : current.includes(key) ? [] : [key])
-	const submitSelection = (keys: string[]) => {
-	  const sources = request.options.filter(option => keys.includes(option.key)).map(option => option.source)
-	  if (sources.length) onSubmit(sources)
-	}
-	return <MotionDialogPanel onCancel={onCancel} className="graph-source-dialog" aria-labelledby="graph-source-dialog-title">
-	  <header className="dialog-head"><div><h2 id="graph-source-dialog-title">选择来源</h2><p className="muted">{request.title}{request.multiple ? '' : ' · 选择一个分流位置'}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onCancel} aria-label="关闭" title="关闭"><X size={16} /></button></header>
-	  <div className="dialog-body">
-	    <div className="graph-source-options">
-	      {request.options.map(option => {
-	        const active = selected.includes(option.key)
-	        return <div
-	          key={option.key}
-	          role={request.multiple ? 'checkbox' : 'radio'}
-	          aria-checked={active}
-	          tabIndex={0}
-	          className={active ? 'is-selected' : ''}
-	          onClick={() => {
-	            if (request.multiple) toggle(option.key)
-	            else submitSelection([option.key])
-	          }}
-	          onKeyDown={event => {
-	            if (event.key !== 'Enter' && event.key !== ' ') return
-	            event.preventDefault()
-	            if (request.multiple) toggle(option.key)
-	            else submitSelection([option.key])
-	          }}
-	        >
-	          <span onClick={event => event.stopPropagation()}><Switch size="sm" checked={active} onChange={() => { if (request.multiple) toggle(option.key); else submitSelection([option.key]) }} ariaLabel={option.label} /></span>
-	          <span><strong>{option.label}</strong><small>{option.detail}</small></span>
-	        </div>
-	      })}
-	    </div>
-	  </div>
-	  <footer className="dialog-actions"><button type="button" className="ghost" onClick={onCancel}>取消</button><button type="button" disabled={!selected.length} onClick={() => submitSelection(selected)}>继续</button></footer>
-	</MotionDialogPanel>
 }
 
 type ProxyPathNameReference = { key: string; label: string; part: ProxyPathNamePart }
@@ -16906,7 +16873,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     serverSlotCounts.set(s.id, slotCount)
     serverWidths.set(s.id, serverWidth)
 	    const entrySources = sortServerEntriesForGraph(serverEntries, positions, position, serverWidth).map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
-	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], entryHandles: entrySources, pathHandles: pathSources, sourceOptions: graphServerSourceOptions(entrySources, pathSources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
+	    nodes.push({ id, className: 'graph-node server-graph-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: s.id, label: s.name || `服务器 ${s.id}` } as GraphEntity, pathIDs: pathIDsByServer.get(s.id) || [], entryHandles: entrySources, pathHandles: pathSources, sourceOptions: graphServerEntrySourceOptions(entrySources), label: <GraphNode kind={s.id === rootID ? '一级服务器' : '服务器'} title={s.name} meta={`${labelValue(s.status || 'unknown')} · ${serverDefaultEntryAddress(s) || '无公网 IP'}`} entryHandles={entrySources} pathHandles={pathSources} role={displayRole(s.id, s.id === rootID)} status={s.status} ipv4={s.public_ipv4 || '未检测'} cpu={Math.round(s.cpu_usage_percent || 0)} memory={s.memory_total_bytes ? Math.round((s.memory_used_bytes / s.memory_total_bytes) * 100) : 0} /> } })
   })
   canvasServerInstances.forEach((instance, index) => {
     const server = (data.servers || []).find((item: Server) => item.id === instance.server_id) as Server | undefined
@@ -16916,7 +16883,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
     const serverWidth = graphServerNodeWidth(1)
     const position = positions[id] || defaultServerGraphPosition(visibleServers.length + index)
 	    const entrySources = sortServerEntriesForGraph(serverEntries, positions, position, serverWidth).map(x => ({ id: x.id, label: `${labelProtocol(x.protocol)}:${x.port}`, title: x.name || `入口 ${x.id}` }))
-	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, entryHandles: entrySources, pathHandles: [], sourceOptions: graphServerSourceOptions(entrySources, []), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
+	    nodes.push({ id, className: 'graph-node server-graph-node canvas-server-node', position, style: { width: serverWidth }, data: { entity: { type: 'server', id: server.id, label: server.name || `服务器 ${server.id}`, node_id: id } as GraphEntity, entryHandles: entrySources, pathHandles: [], sourceOptions: graphServerEntrySourceOptions(entrySources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${serverDefaultEntryAddress(server) || '无公网 IP'}`} entryHandles={entrySources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} /> } })
   })
   const entryIndexesByServer = new Map<number, number>()
   visibleEntries.forEach((x: Inbound, i: number) => {
@@ -17058,7 +17025,7 @@ function editableProxyFlow(data: any, positions: Record<string, { x: number; y: 
       // many further hops continue from this step.
       const pathSources = continuationByNode.get(id) || []
       const stepWidth = graphServerNodeWidth(Math.max(1, pathSources.length))
-	      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: stepWidth }, data: { entity, pathIDs: sharedPathIDs, sourceOptions: graphServerSourceOptions([], pathSources), label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
+	      nodes.push({ id, className: 'graph-node server-graph-node proxy-path-instance-node', position, style: { width: stepWidth }, data: { entity, pathIDs: sharedPathIDs, label: <GraphNode kind="服务器" title={server.name} meta={`${labelValue(server.status || 'unknown')} · ${sharedCount > 1 ? `${sharedCount} 条路径共享` : pathDisplayName(canonicalPath.id)}`} pathHandles={pathSources} role={displayRole(server.id)} status={server.status} ipv4={server.public_ipv4 || '未检测'} cpu={Math.round(server.cpu_usage_percent || 0)} memory={server.memory_total_bytes ? Math.round((server.memory_used_bytes / server.memory_total_bytes) * 100) : 0} exitRegion={sharedTerminal ? { code: canonicalPath.effective_exit_region_code, status: canonicalPath.exit_region_status } : undefined} /> } })
 	    })
 	  })
 	  const routingStageSourceNodeID = (stage: GraphRoutingStage) => {
