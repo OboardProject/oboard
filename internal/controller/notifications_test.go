@@ -580,6 +580,7 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	srv := newTestServer(db, "test-secret", "")
 	h := srv.Handler()
 	request(t, h, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)

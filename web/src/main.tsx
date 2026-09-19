@@ -6393,6 +6393,7 @@ function ControllerLogsPanel({ client, dialogs, notify, maxMB, backups, setMaxMB
 }
 
 function AuditSettingsPanel({ data, client, load, notify }: any) {
+  const dialogs = useDialogs()
   const [auditEnabled, setAuditEnabled] = useState(settingEnabled(data.settings?.audit_enabled))
   const [subscriptionAuditEnabled, setSubscriptionAuditEnabled] = useState(settingEnabled(data.settings?.subscription_audit_enabled))
   const [connectionAuditEnabled, setConnectionAuditEnabled] = useState(settingEnabled(data.settings?.connection_audit_enabled))
@@ -6404,6 +6405,18 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
     setConnectionAuditEnabled(settingEnabled(data.settings?.connection_audit_enabled))
     setAuditAction(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
   }, [data.settings?.audit_enabled, data.settings?.subscription_audit_enabled, data.settings?.connection_audit_enabled, data.settings?.audit_action])
+  const changeAuditEnabled = async (enabled: boolean) => {
+    if (!enabled) {
+      setAuditEnabled(false)
+      return
+    }
+    const confirmed = await dialogs.confirm({
+      title: '启用总审计？',
+      message: '启用后会持续处理订阅与连接审计数据，提高主控的 CPU、内存和数据库 I/O 压力；服务器和流量越多，额外压力越明显。',
+      confirmText: '确认启用',
+    })
+    if (confirmed) setAuditEnabled(true)
+  }
   const saveAuditSettings = async () => {
     if (saving) return
     setSaving(true)
@@ -6425,9 +6438,9 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
   return <section className="settings-card">
     <div className="settings-card-head"><div><h3>审计设置</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
     <div className="form settings-form single-field">
-      <FormField label="总审计开关" hint="关闭后订阅审计与连接审计全部停止：Agent 立即停止采集与上报并清除本地审计状态，风险通知不再发送，历史数据保留可查。">
+      <FormField label="总审计开关" hint="默认关闭。开启会增加主控 CPU、内存和数据库 I/O 压力；关闭后订阅审计与连接审计全部停止，历史数据保留可查。">
         <div className="switch-setting-row">
-          <Switch checked={auditEnabled} onChange={setAuditEnabled} ariaLabel="启用总审计" />
+          <Switch checked={auditEnabled} onChange={enabled => void changeAuditEnabled(enabled)} ariaLabel="启用总审计" />
         </div>
       </FormField>
       <FormField label="订阅审计" hint="关闭后订阅拉取不再记录、评分或触发暂停；已有暂停状态仍保持，需管理员手动恢复。">

@@ -30,6 +30,7 @@ func newAuditReportFixture(t *testing.T) auditReportFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	enableTestAudit(t, db)
 	ctx := context.Background()
 	server := &model.Server{
 		Name: "audit-node", AgentID: "audit-agent", AgentTokenHash: security.HashSecret("audit-token"),

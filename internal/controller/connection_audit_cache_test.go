@@ -49,6 +49,7 @@ func TestDashboardConnectionAuditColdStartIsNonBlocking(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	seedAuditReportingServer(t, db)
 	srv := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
@@ -85,6 +86,7 @@ func TestDashboardConnectionAuditStaleServesPreviousValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	seedAuditReportingServer(t, db)
 	srv := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
@@ -111,6 +113,7 @@ func TestDashboardConnectionAuditRefreshIsSingleFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	seedAuditReportingServer(t, db)
 	srv := newTestServer(db, "test-secret", "")
 	ctx := context.Background()
@@ -169,6 +172,7 @@ func TestDashboardConnectionAuditPageData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	seedAuditReportingServer(t, db)
 	srv := newTestServer(db, "test-secret", "")
 	defer waitDashboardConnectionAuditIdle(t, srv)

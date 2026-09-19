@@ -81,6 +81,7 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	ctx := context.Background()
 	server := &model.Server{
 		Name: "audit-node", AgentID: "audit-agent", AgentTokenHash: security.HashSecret("audit-token"),
@@ -176,6 +177,7 @@ func TestControllerConnectionPresenceIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	ctx := context.Background()
 	server := &model.Server{Name: "presence-node", AgentID: "presence-agent", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -218,6 +220,7 @@ func TestLongLivedQuietConnectionKeepsReportingPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	ctx := context.Background()
 	server := &model.Server{Name: "presence-node", AgentID: "presence-agent", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := db.CreateServer(ctx, server); err != nil {
@@ -320,6 +323,7 @@ func TestAgentConnectionReportsRejectCrossServerInbound(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	enableTestAudit(t, db)
 	ctx := context.Background()
 	serverA := &model.Server{Name: "audit-a", AgentID: "audit-a", AgentTokenHash: security.HashSecret("token-a"), ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	serverB := &model.Server{Name: "audit-b", AgentID: "audit-b", AgentTokenHash: security.HashSecret("token-b"), ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}

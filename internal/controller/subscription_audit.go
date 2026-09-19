@@ -29,9 +29,9 @@ type auditSettingsState struct {
 }
 
 func (s *Server) auditSettingsState(ctx context.Context) auditSettingsState {
-	state := auditSettingsState{Enabled: true, Subscription: true, Connection: true, Action: model.AuditActionRestrict}
+	state := auditSettingsState{Enabled: false, Subscription: true, Connection: true, Action: model.AuditActionRestrict}
 	settings := s.runtimeSettings(ctx)
-	state.Enabled = settingBool(settings, settingAuditEnabled, true)
+	state.Enabled = settingBool(settings, settingAuditEnabled, false)
 	state.Subscription = settingBool(settings, settingSubscriptionAuditEnabled, true)
 	state.Connection = settingBool(settings, settingConnectionAuditEnabled, true)
 	switch strings.ToLower(strings.TrimSpace(settings[settingAuditAction])) {

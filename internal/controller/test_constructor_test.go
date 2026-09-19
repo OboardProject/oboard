@@ -34,6 +34,13 @@ func newTestServer(store *store.Store, sessionSecret, staticDir string) *Server 
 	return New(store, sessionSecret, staticDir, "", nil)
 }
 
+func enableTestAudit(t testing.TB, db *store.Store) {
+	t.Helper()
+	if err := db.SetSetting(context.Background(), settingAuditEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func bindTestTelegramChannel(t *testing.T, server *Server, db *store.Store, channelID, chatID int64) {
 	t.Helper()
 	ctx := context.Background()
