@@ -48,6 +48,45 @@ it('keeps chart height and readable coordinates when the container resizes to mo
   expect(disconnect).toHaveBeenCalledOnce()
 })
 
+it('shows the complete selected range in each target thumbnail', () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 900, left: 0 } as DOMRect)
+  const buckets = Array.from({ length: 64 }, (_, index) => ({
+    timestamp: index,
+    timeLabel: String(index),
+    values: { public_latency: index === 1 ? 900 : 20 },
+  }))
+  vi.mocked(metrics.alignUnifiedMetrics).mockReturnValueOnce({
+    seriesList: [{ id: 'public_latency', label: '公网探测', color: '#f59e0b', unit: 'ms', yAxis: 'right' }],
+    buckets,
+  })
+  const response = {
+    window: { key: '24h', from: '2026-09-08T00:00:00Z', to: '2026-09-09T00:00:00Z', bucket_seconds: 240 },
+    latency_points: [],
+    probe_target_stats: [{
+      key: 'public', kind: 'public', task_name: '公网探测', avg_ms: 34, min_ms: 20, max_ms: 900,
+      jitter_ms: 880, sample_count: 64, success_count: 64, report_count: 64, available_count: 64,
+      loss_percent: 0, success_percent: 100,
+    }],
+    regional_latency_points: [], failed_probe_points: [],
+  } as unknown as ConnectivityResponse
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  try {
+    act(() => root.render(<LatencyDashboard response={response} windowKey="24h" windowHours={24} windowLabels={{ '24h': '24 小时' } as Record<any, string>} latencyWindowOptions={['24h']} onWindowChange={() => {}} onWindowKeyDown={() => {}} />))
+    expect(container.querySelector('.latency-target-spark-label')?.textContent).toBe('24h')
+    const path = container.querySelector('.latency-target-spark path[stroke="#f59e0b"]')?.getAttribute('d') || ''
+    expect(path).toContain(',2')
+    expect(path).toContain('23.511')
+  } finally {
+    act(() => root.unmount())
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = false
+  }
+})
+
 it('aligns dashboard data once and reuses paths throughout pointer interaction', () => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })

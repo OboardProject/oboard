@@ -8,6 +8,7 @@ import {
   readIncludePublicStats,
   seriesIDForTarget,
   shouldIncludePublicInOverview,
+  sparklineValues,
   writeIncludePublicStats,
 } from './latency-dashboard'
 
@@ -100,6 +101,16 @@ describe('latency dashboard overview', () => {
 })
 
 
+it('keeps the complete selected window in target sparklines', () => {
+  const buckets = Array.from({ length: 64 }, (_, index) => ({
+    timestamp: index,
+    timeLabel: String(index),
+    values: { target: index === 1 ? 900 : 20 },
+  }))
+  expect(sparklineValues(buckets, 'target')).toHaveLength(64)
+  expect(sparklineValues(buckets, 'target')[1]).toBe(900)
+})
+
 it('connects normal sparkline sampling gaps without fabricating zero latency', async () => {
   const { sparklinePath } = await import('./latency-dashboard')
   expect(sparklinePath([10, null, 20, 10], 72, 22)).toBe('M 0,12 L 48,2 L 72,12')
@@ -111,5 +122,15 @@ it('draws a long offline sparkline gap as a separate muted bridge', async () => 
   expect(sparklinePaths([10, 10, 10, null, null, null, null, null, null, 20, 20, 20], 110, 22)).toEqual({
     line: 'M 0,12 L 10,12 L 20,12 M 90,2 L 100,2 L 110,2',
     offlineBridge: 'M 20,12 L 90,2',
+    endsOffline: false,
+  })
+})
+
+it('extends the muted bridge through an outage at the end of the selected window', async () => {
+  const { sparklinePaths } = await import('./latency-dashboard')
+  expect(sparklinePaths([10, 10, 10, null, null, null, null, null], 70, 22)).toEqual({
+    line: 'M 0,2 L 10,2 L 20,2',
+    offlineBridge: 'M 20,2 L 70,2',
+    endsOffline: true,
   })
 })

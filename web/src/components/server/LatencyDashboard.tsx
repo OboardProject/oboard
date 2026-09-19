@@ -43,15 +43,40 @@ function formatAnomalyTime(value: string | null | undefined) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-function TargetSparkline({ values, color }: { values: Array<number | null>; color: string }) {
-  const width = 72
-  const height = 22
-  const paths = useMemo(() => sparklinePaths(values, width, height), [values])
+function TargetSparkline({ values, color, rangeLabel }: { values: Array<number | null>; color: string; rangeLabel: string }) {
+  const width = 82
+  const height = 24
+  const { paths, latest } = useMemo(() => {
+    const nextPaths = sparklinePaths(values, width, height)
+    let maximum = 1
+    let latestIndex = -1
+    let latestValue = 0
+    values.forEach((value, index) => {
+      if (value == null || !Number.isFinite(value)) return
+      maximum = Math.max(maximum, value)
+      latestIndex = index
+      latestValue = value
+    })
+    const step = values.length > 1 ? width / (values.length - 1) : width
+    return {
+      paths: nextPaths,
+      latest: latestIndex >= 0 && !nextPaths.endsOffline ? {
+        x: latestIndex * step,
+        y: height - (latestValue / maximum) * (height - 2),
+      } : null,
+    }
+  }, [values])
   return (
-    <svg className="latency-target-spark" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      {paths.offlineBridge && <path d={paths.offlineBridge} className="latency-target-spark-offline-bridge" fill="none" />}
-      <path d={paths.line} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <span className="latency-target-spark-wrap" title={`${rangeLabel} 完整趋势`}>
+      <span className="latency-target-spark-label">{rangeLabel}</span>
+      <svg className="latency-target-spark" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+        <line className="latency-target-spark-guide" x1={width / 2} x2={width / 2} y1="1" y2={height} />
+        <line className="latency-target-spark-baseline" x1="0" x2={width} y1={height - 1} y2={height - 1} />
+        {paths.offlineBridge && <path d={paths.offlineBridge} className="latency-target-spark-offline-bridge" fill="none" />}
+        <path d={paths.line} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {latest && <circle cx={latest.x} cy={latest.y} r="2" fill={color} />}
+      </svg>
+    </span>
   )
 }
 
@@ -224,7 +249,7 @@ export function LatencyDashboard({
                       <span>丢包 {formatPercent(stat.loss_percent)}</span>
                       <span>抖动 {formatMS(stat.jitter_ms)}</span>
                     </span>
-                    <TargetSparkline values={targetSparklines.get(seriesID)!} color={color} />
+                    <TargetSparkline values={targetSparklines.get(seriesID)!} color={color} rangeLabel={windowKey} />
                   </button>
                 </li>
               )

@@ -172,17 +172,21 @@ export function pickAnomalies(stats: LatencyProbeTargetStat[], includePublic: bo
   return anomalies
 }
 
-export function sparklineValues(buckets: UnifiedBucketPoint[], seriesID: string, limit = 16): Array<number | null> {
-  const values = buckets.map(bucket => {
+export function sparklineValues(buckets: UnifiedBucketPoint[], seriesID: string): Array<number | null> {
+  return buckets.map(bucket => {
     const value = bucket.values[seriesID]
     return value != null && Number.isFinite(value) ? value : null
   })
-  return values.slice(Math.max(0, values.length - limit))
 }
 
-export function sparklinePaths(values: Array<number | null>, width: number, height: number): { line: string; offlineBridge: string } {
+export function sparklinePaths(values: Array<number | null>, width: number, height: number): { line: string; offlineBridge: string; endsOffline: boolean } {
   let maximum = 1
-  for (const value of values) if (value != null && Number.isFinite(value)) maximum = Math.max(maximum, value)
+  const finitePoints: Array<{ index: number; value: number }> = []
+  values.forEach((value, index) => {
+    if (value == null || !Number.isFinite(value)) return
+    maximum = Math.max(maximum, value)
+    finitePoints.push({ index, value })
+  })
   const step = values.length > 1 ? width / (values.length - 1) : width
   const project = (point: { index: number; value: number }) => ({
     x: point.index * step,
@@ -191,6 +195,17 @@ export function sparklinePaths(values: Array<number | null>, width: number, heig
   const pathFor = (points: Array<{ x: number; y: number }>) => points
     .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x},${point.y}`)
     .join(' ')
+  if (finitePoints.length === 0) {
+    return { line: '', offlineBridge: `M 0,${height / 2} L ${width},${height / 2}`, endsOffline: values.length > 0 }
+  }
+  const intervals = finitePoints.slice(1).map((point, index) => point.index - finitePoints[index].index).sort((left, right) => left - right)
+  const middle = Math.floor(intervals.length / 2)
+  const medianInterval = intervals.length === 0
+    ? 1
+    : intervals.length % 2 === 1
+      ? intervals[middle]
+      : (intervals[middle - 1] + intervals[middle]) / 2
+  const gapTolerance = Math.ceil(Math.max(1, medianInterval) * 2)
   const buckets = values.map((value, index) => ({
     timestamp: index,
     timeLabel: String(index),
@@ -198,11 +213,16 @@ export function sparklinePaths(values: Array<number | null>, width: number, heig
   }))
   const segments = splitSeriesSegments(buckets, 'sparkline', true)
   const line = segments.map(segment => pathFor(segment.points.map(project))).filter(Boolean).join(' ')
-  const offlineBridge = segments.map(segment => {
+  const offlinePaths = segments.map(segment => {
     if (!segment.bridgeFrom || segment.points.length === 0) return ''
     return pathFor([project(segment.bridgeFrom), project(segment.points[0])])
-  }).filter(Boolean).join(' ')
-  return { line, offlineBridge }
+  }).filter(Boolean)
+  const first = finitePoints[0]
+  const last = finitePoints[finitePoints.length - 1]
+  if (first.index > gapTolerance) offlinePaths.unshift(pathFor([{ x: 0, y: project(first).y }, project(first)]))
+  const endsOffline = values.length - 1 - last.index > gapTolerance
+  if (endsOffline) offlinePaths.push(pathFor([project(last), { x: width, y: project(last).y }]))
+  return { line, offlineBridge: offlinePaths.join(' '), endsOffline }
 }
 
 export function sparklinePath(values: Array<number | null>, width: number, height: number): string {
