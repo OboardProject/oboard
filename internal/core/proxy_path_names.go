@@ -17,6 +17,8 @@ type proxyPathNameState struct {
 	directSuffix bool
 	features     []string
 	featureDepth int
+	middles      []string
+	middleDepth  int
 	base         string
 	active       bool
 }
@@ -98,11 +100,22 @@ func ResolveProxyPathNames(paths []model.ProxyPath, steps []model.ProxyPathStep,
 	for {
 		conflicts := proxyPathNameConflicts(states, reserved)
 		changed := false
+		// Reveal one more differing intermediate node at a time, and only fall back
+		// to transport features once no conflicting name can grow that way.
 		for index := range states {
 			state := &states[index]
-			if conflicts[state.path.ID] && state.featureDepth < len(state.features) {
-				state.featureDepth++
+			if conflicts[state.path.ID] && state.middleDepth > 0 && state.middleDepth < len(state.middles) {
+				state.middleDepth++
 				changed = true
+			}
+		}
+		if !changed {
+			for index := range states {
+				state := &states[index]
+				if conflicts[state.path.ID] && state.featureDepth < len(state.features) {
+					state.featureDepth++
+					changed = true
+				}
 			}
 		}
 		if !changed {
@@ -307,17 +320,18 @@ func resolveProxyPathMiddleNames(states []proxyPathNameState) {
 		}
 		for _, index := range indexes {
 			state := &states[index]
-			labels := []string{state.route[0]}
 			matched := 0
+			state.middles = nil
 			for _, label := range state.route[1 : len(state.route)-1] {
 				if matched < len(common) && label == common[matched] {
 					matched++
 					continue
 				}
-				labels = append(labels, label)
+				state.middles = append(state.middles, label)
 			}
-			labels = append(labels, state.route[len(state.route)-1])
-			state.base = strings.Join(labels, proxyPathNameSeparator)
+			if len(state.middles) > 0 {
+				state.middleDepth = 1
+			}
 		}
 	}
 }
@@ -356,6 +370,11 @@ func recomputeProxyPathNames(states []proxyPathNameState) {
 	for index := range states {
 		state := &states[index]
 		name := state.base
+		if state.middleDepth > 0 {
+			labels := append([]string{state.route[0]}, state.middles[:state.middleDepth]...)
+			labels = append(labels, state.route[len(state.route)-1])
+			name = strings.Join(labels, proxyPathNameSeparator)
+		}
 		if state.directSuffix {
 			name += proxyPathNameSeparator + "直出"
 		}
