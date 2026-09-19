@@ -1,5 +1,5 @@
 import type { LatencyProbeTargetStat } from './connectivity-sla'
-import type { UnifiedBucketPoint } from './server-unified-chart'
+import { splitSeriesSegments, type UnifiedBucketPoint } from './server-unified-chart'
 
 export const INCLUDE_PUBLIC_STATS_KEY = 'oboard.latency-overview.include-public'
 
@@ -180,18 +180,31 @@ export function sparklineValues(buckets: UnifiedBucketPoint[], seriesID: string,
   return values.slice(Math.max(0, values.length - limit))
 }
 
-export function sparklinePath(values: Array<number | null>, width: number, height: number): string {
+export function sparklinePaths(values: Array<number | null>, width: number, height: number): { line: string; offlineBridge: string } {
   let maximum = 1
   for (const value of values) if (value != null && Number.isFinite(value)) maximum = Math.max(maximum, value)
   const step = values.length > 1 ? width / (values.length - 1) : width
-  let connected = false
-  const commands: string[] = []
-  values.forEach((value, index) => {
-    if (value == null || !Number.isFinite(value)) { connected = false; return }
-    const x = index * step
-    const y = height - (value / maximum) * (height - 2)
-    commands.push(`${connected ? 'L' : 'M'} ${x},${y}`)
-    connected = true
+  const project = (point: { index: number; value: number }) => ({
+    x: point.index * step,
+    y: height - (point.value / maximum) * (height - 2),
   })
-  return commands.join(' ')
+  const pathFor = (points: Array<{ x: number; y: number }>) => points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x},${point.y}`)
+    .join(' ')
+  const buckets = values.map((value, index) => ({
+    timestamp: index,
+    timeLabel: String(index),
+    values: { sparkline: value != null && Number.isFinite(value) ? value : null },
+  }))
+  const segments = splitSeriesSegments(buckets, 'sparkline', true)
+  const line = segments.map(segment => pathFor(segment.points.map(project))).filter(Boolean).join(' ')
+  const offlineBridge = segments.map(segment => {
+    if (!segment.bridgeFrom || segment.points.length === 0) return ''
+    return pathFor([project(segment.bridgeFrom), project(segment.points[0])])
+  }).filter(Boolean).join(' ')
+  return { line, offlineBridge }
+}
+
+export function sparklinePath(values: Array<number | null>, width: number, height: number): string {
+  return sparklinePaths(values, width, height).line
 }

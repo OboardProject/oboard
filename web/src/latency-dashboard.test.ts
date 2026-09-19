@@ -100,8 +100,16 @@ describe('latency dashboard overview', () => {
 })
 
 
-it('keeps missing sparkline samples disconnected without fabricating zero latency', async () => {
+it('connects normal sparkline sampling gaps without fabricating zero latency', async () => {
   const { sparklinePath } = await import('./latency-dashboard')
-  expect(sparklinePath([10, null, 20, 10], 72, 22)).toBe('M 0,12 M 48,2 L 72,12')
+  expect(sparklinePath([10, null, 20, 10], 72, 22)).toBe('M 0,12 L 48,2 L 72,12')
   expect(sparklinePath([null, Number.NaN], 72, 22)).toBe('')
+})
+
+it('draws a long offline sparkline gap as a separate muted bridge', async () => {
+  const { sparklinePaths } = await import('./latency-dashboard')
+  expect(sparklinePaths([10, 10, 10, null, null, null, null, null, null, 20, 20, 20], 110, 22)).toEqual({
+    line: 'M 0,12 L 10,12 L 20,12 M 90,2 L 100,2 L 110,2',
+    offlineBridge: 'M 20,12 L 90,2',
+  })
 })

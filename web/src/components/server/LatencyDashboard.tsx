@@ -15,7 +15,7 @@ import {
   seriesIDForTarget,
   shouldIncludePublicInOverview,
   sparklineValues,
-  sparklinePath,
+  sparklinePaths,
   writeIncludePublicStats,
 } from '../../latency-dashboard'
 import { alignUnifiedMetrics, REGIONAL_SERIES_COLORS, type ServerLatencyPoint } from '../../server-unified-chart'
@@ -46,10 +46,11 @@ function formatAnomalyTime(value: string | null | undefined) {
 function TargetSparkline({ values, color }: { values: Array<number | null>; color: string }) {
   const width = 72
   const height = 22
-  const path = useMemo(() => sparklinePath(values, width, height), [values])
+  const paths = useMemo(() => sparklinePaths(values, width, height), [values])
   return (
     <svg className="latency-target-spark" viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      <path d={path} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      {paths.offlineBridge && <path d={paths.offlineBridge} className="latency-target-spark-offline-bridge" fill="none" />}
+      <path d={paths.line} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
