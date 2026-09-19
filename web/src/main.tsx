@@ -1551,6 +1551,8 @@ const errorMessages: Record<string, string> = {
 }
 
 const systemErrorMarkers: Array<[string, string]> = [
+  ['failed to fetch', '网络不可达或服务异常'],
+  ['load failed', '网络不可达或服务异常'],
   ['no space left on device', '磁盘空间不足'],
   ['not enough space', '磁盘空间不足'],
   ['disk quota exceeded', '磁盘配额已用完'],
