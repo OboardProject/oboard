@@ -113,7 +113,7 @@ export interface FailedProbePoint {
   count: number
 }
 
-export const DEFAULT_CONNECT_GAPS = true
+export const DEFAULT_CONNECT_GAPS = false
 export const DEFAULT_SMOOTH_LINES = true
 export const DEFAULT_CLIP_SPIKES = false
 

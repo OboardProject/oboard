@@ -6,8 +6,8 @@ const monitorSource = readFileSync(new URL('./components/server/ServerUnifiedTel
 const monitorStyles = readFileSync(new URL('./style.css', import.meta.url), 'utf8')
 
 describe('server-unified-chart helper', () => {
-  it('uses smooth curves and gap connection by default with optional spike suppression', () => {
-    expect(DEFAULT_CONNECT_GAPS).toBe(true)
+  it('uses smooth curves by default while leaving offline gaps disconnected', () => {
+    expect(DEFAULT_CONNECT_GAPS).toBe(false)
     expect(DEFAULT_SMOOTH_LINES).toBe(true)
     expect(DEFAULT_CLIP_SPIKES).toBe(false)
   })
