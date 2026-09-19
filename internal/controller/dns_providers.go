@@ -35,7 +35,6 @@ type dnsProviderEndpoints struct {
 	aliDNS     string
 	tencentDNS string
 	tencentESA string
-	huaweiIAM  string
 	huaweiDNS  string
 }
 
@@ -45,7 +44,6 @@ func defaultDNSProviderEndpoints() dnsProviderEndpoints {
 		aliDNS:     "https://alidns.aliyuncs.com/",
 		tencentDNS: "https://dnspod.tencentcloudapi.com",
 		tencentESA: "https://teo.tencentcloudapi.com",
-		huaweiIAM:  "https://iam.myhuaweicloud.com/v3/auth/tokens",
 	}
 }
 
@@ -76,7 +74,7 @@ func (s *Server) dnsProviderClient(credential model.DNSCredential) (dnsProviderC
 	case model.DNSProviderTencentESA:
 		return &tencentESAProvider{dnsProviderBase: base, secretID: config["secret_id"], secretKey: config["secret_key"], endpoint: s.dnsEndpoints.tencentESA}, nil
 	case model.DNSProviderHuaweiCloud:
-		return &huaweiDNSProvider{dnsProviderBase: base, username: config["username"], password: config["password"], domainName: config["domain_name"], region: config["region"], iamEndpoint: s.dnsEndpoints.huaweiIAM, dnsEndpoint: s.dnsEndpoints.huaweiDNS}, nil
+		return &huaweiDNSProvider{dnsProviderBase: base, accessKeyID: config["access_key_id"], secretAccessKey: config["secret_access_key"], dnsEndpoint: s.dnsEndpoints.huaweiDNS}, nil
 	default:
 		return nil, fmt.Errorf("unsupported DNS provider %q", credential.Provider)
 	}
@@ -88,7 +86,7 @@ func validateDNSProviderConfig(provider model.DNSProvider, config map[string]str
 		model.DNSProviderAliDNS:      {"access_key_id", "access_key_secret"},
 		model.DNSProviderTencentDNS:  {"secret_id", "secret_key"},
 		model.DNSProviderTencentESA:  {"secret_id", "secret_key"},
-		model.DNSProviderHuaweiCloud: {"username", "password", "domain_name", "region"},
+		model.DNSProviderHuaweiCloud: {"access_key_id", "secret_access_key"},
 	}[provider]
 	if len(required) == 0 {
 		return fmt.Errorf("unsupported DNS provider %q", provider)
@@ -546,70 +544,33 @@ func sha256HexBytes(value []byte) string {
 
 type huaweiDNSProvider struct {
 	dnsProviderBase
-	username    string
-	password    string
-	domainName  string
-	region      string
-	token       string
-	iamEndpoint string
-	dnsEndpoint string
-}
-
-func (p *huaweiDNSProvider) authenticate(ctx context.Context) error {
-	if !validCloudRegion(p.region) {
-		return errors.New("invalid Huawei Cloud region")
-	}
-	body := map[string]any{"auth": map[string]any{"identity": map[string]any{"methods": []string{"password"}, "password": map[string]any{"user": map[string]any{"name": p.username, "password": p.password, "domain": map[string]any{"name": p.domainName}}}}, "scope": map[string]any{"project": map[string]any{"name": p.region}}}}
-	data, _ := json.Marshal(body)
-	iamEndpoint := strings.TrimSpace(p.iamEndpoint)
-	if iamEndpoint == "" {
-		iamEndpoint = "https://iam.myhuaweicloud.com/v3/auth/tokens"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, iamEndpoint, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("huawei cloud IAM returned HTTP %d", resp.StatusCode)
-	}
-	p.token = strings.TrimSpace(resp.Header.Get("X-Subject-Token"))
-	if p.token == "" {
-		return errors.New("huawei cloud IAM did not return a token")
-	}
-	return nil
+	accessKeyID     string
+	secretAccessKey string
+	region          string
+	resolvedZoneID  string
+	dnsEndpoint     string
 }
 
 func (p *huaweiDNSProvider) dnsRequest(ctx context.Context, method, path string, body any, out any) error {
-	if p.token == "" {
-		if err := p.authenticate(ctx); err != nil {
-			return err
-		}
-	}
-	var reader io.Reader
+	var payload []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(data)
+		payload = data
 	}
 	dnsEndpoint := strings.TrimRight(strings.TrimSpace(p.dnsEndpoint), "/")
 	if dnsEndpoint == "" {
 		dnsEndpoint = "https://dns." + p.region + ".myhuaweicloud.com"
 	}
 	endpoint := dnsEndpoint + path
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Auth-Token", p.token)
 	req.Header.Set("Content-Type", "application/json")
+	signHuaweiDNSRequest(req, payload, p.accessKeyID, p.secretAccessKey, time.Now())
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return err
@@ -626,25 +587,47 @@ func (p *huaweiDNSProvider) dnsRequest(ctx context.Context, method, path string,
 }
 
 func (p *huaweiDNSProvider) zoneID(ctx context.Context) (string, error) {
-	if p.credential.ZoneID != "" {
-		return p.credential.ZoneID, nil
+	if p.resolvedZoneID != "" {
+		return p.resolvedZoneID, nil
 	}
-	var response struct {
-		Zones []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"zones"`
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	regions := huaweiDNSRegions
+	if p.dnsEndpoint != "" {
+		regions = regions[:1]
 	}
-	query := url.Values{"name": []string{strings.TrimSuffix(p.credential.ZoneName, ".") + "."}}
-	if err := p.dnsRequest(ctx, http.MethodGet, "/v2/zones?"+query.Encode(), nil, &response); err != nil {
-		return "", err
-	}
-	for _, zone := range response.Zones {
-		if strings.EqualFold(strings.TrimSuffix(zone.Name, "."), strings.TrimSuffix(p.credential.ZoneName, ".")) {
-			return zone.ID, nil
+	var lastErr error
+	for _, region := range regions {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		p.region = region.id
+		probeCtx, probeCancel := context.WithTimeout(ctx, 2*time.Second)
+		var response struct {
+			Zones []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"zones"`
+		}
+		query := url.Values{"name": {strings.TrimSuffix(p.credential.ZoneName, ".") + "."}, "type": {"public"}, "search_mode": {"equal"}}
+		err := p.dnsRequest(probeCtx, http.MethodGet, "/v2/zones?"+query.Encode(), nil, &response)
+		probeCancel()
+		if err != nil {
+			lastErr = fmt.Errorf("%s (%s): %w", region.name, region.id, err)
+			continue
+		}
+		for _, zone := range response.Zones {
+			if strings.EqualFold(strings.TrimSuffix(zone.Name, "."), strings.TrimSuffix(p.credential.ZoneName, ".")) && (p.credential.ZoneID == "" || p.credential.ZoneID == zone.ID) && zone.ID != "" {
+				p.resolvedZoneID = zone.ID
+				return zone.ID, nil
+			}
 		}
 	}
-	return "", fmt.Errorf("huawei cloud DNS zone %s not found", p.credential.ZoneName)
+	p.region = ""
+	if lastErr != nil {
+		return "", fmt.Errorf("Huawei Cloud public zone %s could not be located; check AK/SK, DNS permissions and connectivity: %w", p.credential.ZoneName, lastErr)
+	}
+	return "", fmt.Errorf("Huawei Cloud public zone %s not found; check the domain and Zone ID", p.credential.ZoneName)
 }
 
 func (p *huaweiDNSProvider) Verify(ctx context.Context) error {
@@ -771,18 +754,6 @@ func (p *huaweiDNSProvider) DeleteRecord(ctx context.Context, id string) error {
 		return err
 	}
 	return p.dnsRequest(ctx, http.MethodDelete, "/v2/zones/"+url.PathEscape(zoneID)+"/recordsets/"+url.PathEscape(id), nil, nil)
-}
-
-func validCloudRegion(value string) bool {
-	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, r := range value {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
-			return false
-		}
-	}
-	return true
 }
 
 func normalizeHuaweiRecordValue(recordType, value string) string {

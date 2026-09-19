@@ -97,12 +97,9 @@ func TestHuaweiDNSProviderRequests(t *testing.T) {
 	var description string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/v3/auth/tokens":
-			w.Header().Set("X-Subject-Token", "iam-token")
-			w.WriteHeader(http.StatusCreated)
 		case r.URL.Path == "/v2/zones":
-			if r.Header.Get("X-Auth-Token") != "iam-token" {
-				http.Error(w, "missing token", http.StatusUnauthorized)
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "SDK-HMAC-SHA256 Access=test-ak,") || r.Header.Get("X-Sdk-Date") == "" {
+				http.Error(w, "missing signature", http.StatusUnauthorized)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"zones": []map[string]any{{"id": "zone-1", "name": "example.com."}}})
@@ -122,7 +119,7 @@ func TestHuaweiDNSProviderRequests(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	provider := &huaweiDNSProvider{dnsProviderBase: dnsProviderBase{credential: model.DNSCredential{ID: 3, ZoneName: "example.com"}, httpClient: server.Client()}, username: "user", password: "password", domainName: "account", region: "cn-north-4", iamEndpoint: server.URL + "/v3/auth/tokens", dnsEndpoint: server.URL}
+	provider := &huaweiDNSProvider{dnsProviderBase: dnsProviderBase{credential: model.DNSCredential{ID: 3, ZoneName: "example.com"}, httpClient: server.Client()}, accessKeyID: "test-ak", secretAccessKey: "test-sk", dnsEndpoint: server.URL}
 	if err := provider.Verify(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +144,7 @@ func TestHuaweiACMETXTValueRestoresExistingRecordset(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{})
 	}))
 	defer server.Close()
-	provider := &huaweiDNSProvider{dnsProviderBase: dnsProviderBase{credential: model.DNSCredential{ID: 3, ZoneName: "example.com", ZoneID: "zone-1"}, httpClient: server.Client()}, region: "cn-north-4", token: "token", dnsEndpoint: server.URL}
+	provider := &huaweiDNSProvider{dnsProviderBase: dnsProviderBase{credential: model.DNSCredential{ID: 3, ZoneName: "example.com", ZoneID: "zone-1"}, httpClient: server.Client()}, region: "cn-north-4", resolvedZoneID: "zone-1", accessKeyID: "test-ak", secretAccessKey: "test-sk", dnsEndpoint: server.URL}
 	record := model.DNSRecord{Type: "TXT", Name: "_acme-challenge.example.com", Content: "acme-token", TTL: 60}
 	existing := []model.DNSRecord{{ID: "record-1", Type: "TXT", Name: record.Name, Content: "user-value", TTL: 300}}
 	cleanup, err := provider.addTXTValue(context.Background(), record, existing)

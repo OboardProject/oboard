@@ -5636,6 +5636,14 @@ const dnsProviderLabels: Record<DNSProvider, string> = {
   huawei_cloud: '华为云 DNS',
 }
 
+const dnsProviderCredentialURLs: Record<DNSProvider, string> = {
+  cloudflare: 'https://dash.cloudflare.com/profile/api-tokens',
+  alidns: 'https://ram.console.aliyun.com/profile/access-keys',
+  tencent_dns: 'https://console.cloud.tencent.com/cam/capi',
+  tencent_esa: 'https://console.cloud.tencent.com/cam/capi',
+  huawei_cloud: 'https://console.huaweicloud.com/iam/?region=cn-north-4#/mine/accessKey',
+}
+
 const certificateValueLabels: Record<string, string> = {
   issuing: '签发中',
   awaiting_dns: '等待 DNS 解析',
@@ -5654,7 +5662,7 @@ const dnsProviderFields: Record<DNSProvider, Array<{ key: string; label: string;
   alidns: [{ key: 'access_key_id', label: 'AccessKey ID' }, { key: 'access_key_secret', label: 'AccessKey Secret' }],
   tencent_dns: [{ key: 'secret_id', label: 'SecretId' }, { key: 'secret_key', label: 'SecretKey' }],
   tencent_esa: [{ key: 'secret_id', label: 'SecretId' }, { key: 'secret_key', label: 'SecretKey' }],
-  huawei_cloud: [{ key: 'username', label: 'IAM 用户名' }, { key: 'password', label: 'IAM 密码' }, { key: 'domain_name', label: '账号名' }, { key: 'region', label: '区域' }],
+  huawei_cloud: [{ key: 'access_key_id', label: 'Access Key Id（AK）' }, { key: 'secret_access_key', label: 'Secret Access Key（SK）' }],
 }
 
 function emptyDNSCredentialDraft() {
@@ -5934,7 +5942,9 @@ function DNSCredentialDialog({ draft, setDraft, editing, saving, onCancel, onSub
       <FormField label="账号名称" required hint="用于在面板中识别。"><input value={draft.name} onChange={e => update({ name: e.target.value })} placeholder="例如：生产域名" /></FormField>
       <FormField label="域名服务商" required><Select value={provider} onChange={e => update({ provider: e.target.value as DNSProvider, config: {} })}>{(Object.keys(dnsProviderLabels) as DNSProvider[]).map(item => <option key={item} value={item}>{dnsProviderLabels[item]}</option>)}</Select></FormField>
       <div className="form-section-title">授权信息</div>
-      {dnsProviderFields[provider].map(field => <FormField key={field.key} label={field.label} required={!editing && !field.optional} hint={editing ? '留空则不修改已有信息。' : field.optional ? '可选。' : undefined}><input type={field.key === 'region' || field.key.endsWith('_id') || field.key === 'username' || field.key === 'domain_name' ? 'text' : 'password'} autoComplete="off" value={draft.config?.[field.key] || ''} onChange={e => update({ config: { ...draft.config, [field.key]: e.target.value } })} /></FormField>)}
+      <p className="muted"><a href={dnsProviderCredentialURLs[provider]} target="_blank" rel="noopener noreferrer">前往{dnsProviderLabels[provider]}密钥管理页面（新窗口）</a></p>
+      {provider === 'huawei_cloud' && <p className="muted">对应下载文件中的 Access Key Id 和 Secret Access Key；User Name 为用户名，无需填写。区域与接口自动检测，无需选择。已有 IAM 密码授权请重新填写 AK/SK。</p>}
+      {dnsProviderFields[provider].map(field => <FormField key={field.key} label={field.label} required={!editing && !field.optional} hint={editing ? provider === 'huawei_cloud' ? '修改时请同时填写 AK 和 SK；全部留空则保留已有信息。' : '留空则不修改已有信息。' : field.optional ? '可选。' : undefined}><input type={field.key.endsWith('_id') ? 'text' : 'password'} autoComplete="off" value={draft.config?.[field.key] || ''} onChange={e => update({ config: { ...draft.config, [field.key]: e.target.value } })} /></FormField>)}
       <section className={`dns-zone-editor${needsZoneID ? '' : ' dns-zone-editor-simple'}`} aria-labelledby="dns-zone-editor-title">
         <div className="dns-zone-editor-head">
           <div><h3 id="dns-zone-editor-title">域名绑定</h3><span>{draft.zones.length} 个域名</span></div>
