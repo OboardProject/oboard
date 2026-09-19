@@ -21,15 +21,16 @@ import (
 // entry for user-node relations; the legacy authorization tables stay inputs to
 // shadow comparison and to legacy runtime mode only.
 type planAssignmentData struct {
-	users        []model.User
-	bindings     []model.UserPlanBinding
-	plans        []model.SubscriptionPlan
-	planNodes    []model.SubscriptionPlanNode
-	exceptions   []model.UserNodeException
-	config       store.FullRoutingConfig
-	serverOnline map[int64]bool
-	nodeMetadata map[string]model.AssignableNodeMetadata
-	snapshot     *core.EffectiveAccessSnapshot
+	users            []model.User
+	bindings         []model.UserPlanBinding
+	plans            []model.SubscriptionPlan
+	planNodes        []model.SubscriptionPlanNode
+	desiredPlanNodes []model.SubscriptionPlanNode
+	exceptions       []model.UserNodeException
+	config           store.FullRoutingConfig
+	serverOnline     map[int64]bool
+	nodeMetadata     map[string]model.AssignableNodeMetadata
+	snapshot         *core.EffectiveAccessSnapshot
 }
 
 func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentData, error) {
@@ -66,14 +67,15 @@ func (s *Server) loadPlanAssignmentData(ctx context.Context) (*planAssignmentDat
 		serverOnline[server.ID] = server.Status == model.ServerOnline
 	}
 	data := &planAssignmentData{
-		users:        users,
-		bindings:     bindings,
-		plans:        plans,
-		planNodes:    planNodes,
-		exceptions:   exceptions,
-		config:       config,
-		serverOnline: serverOnline,
-		nodeMetadata: nodeMetadata,
+		users:            users,
+		bindings:         bindings,
+		plans:            plans,
+		planNodes:        planNodes,
+		desiredPlanNodes: config.SubscriptionPlanNodes,
+		exceptions:       exceptions,
+		config:           config,
+		serverOnline:     serverOnline,
+		nodeMetadata:     nodeMetadata,
 	}
 	data.snapshot = core.BuildEffectiveAccessSnapshot(core.EffectiveAccessInput{
 		Users:             users,
@@ -101,10 +103,12 @@ func (d *planAssignmentData) planByID(id int64) *model.SubscriptionPlan {
 	return nil
 }
 
-// planMembership maps a node key to the active plans that directly contain it.
+// planMembership maps a node key to the saved desired plans that directly
+// contain it. Management views should acknowledge a successful save
+// immediately; effective users continue to resolve from the active snapshot.
 func (d *planAssignmentData) planMembership() map[string][]model.SubscriptionPlanNode {
 	out := map[string][]model.SubscriptionPlanNode{}
-	for _, pn := range d.planNodes {
+	for _, pn := range d.desiredPlanNodes {
 		key := core.NodeKeyOf(pn.NodeType, pn.NodeID)
 		out[key] = append(out[key], pn)
 	}
@@ -611,7 +615,7 @@ func (s *Server) subscriptionPlanList(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	allNodes, err := s.store.ListAllPlanNodes(r.Context())
+	allNodes, err := s.store.ListSubscriptionPlanNodes(r.Context())
 	if err != nil {
 		fail(w, err, 500)
 		return

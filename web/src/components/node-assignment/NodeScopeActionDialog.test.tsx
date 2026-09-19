@@ -33,6 +33,12 @@ async function flushEffects() {
   })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+
 describe('NodeScopeActionDialog', () => {
   let container: HTMLDivElement
   let root: Root
@@ -50,6 +56,125 @@ describe('NodeScopeActionDialog', () => {
     container.remove()
     document.body.style.overflow = ''
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false
+  })
+
+  it('removes a plan immediately, deduplicates fast clicks, and reports queued apply', async () => {
+    const preview = deferred<{ preview: Record<string, never>; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>()
+    let detailRequests = 0
+    const client = {
+      request: vi.fn(async (path: string) => {
+        if (path === '/assignable-node-scopes/preview') {
+          return {
+            scope: { kind: 'node' }, count: 1,
+            node_refs: [{ node_type: 'inbound', node_id: 1 }],
+            sample_nodes: [{ key: 'node:inbound:1', name: '🇭🇰 香港 01' }],
+            warnings: [], selection_hash: 'hash-1',
+          }
+        }
+        if (path === '/assignable-nodes/inbound/1') {
+          detailRequests++
+          return detailRequests === 1
+            ? { plans: [{ plan_id: 1, name: '基础套餐', display_group: '香港' }], authorizations: [] }
+            : { plans: [], authorizations: [] }
+        }
+        if (path === '/subscription-plans/1/nodes/preview') return preview.promise
+        if (path === '/subscription-plans/1/nodes/apply') return { reconcile_queued: true }
+        return {}
+      }),
+    }
+    const notify = vi.fn()
+    const onDone = vi.fn()
+
+    act(() => {
+      root.render(
+        <NodeScopeActionDialog
+          open={true}
+          node={mockNode}
+          scope={mockScope}
+          plans={mockPlans}
+          users={mockUsers}
+          client={client}
+          notify={notify}
+          onClose={vi.fn()}
+          onDone={onDone}
+        />
+      )
+    })
+    await flushEffects()
+
+    const removeButton = document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]') as HTMLButtonElement
+    expect(removeButton).toBeTruthy()
+    act(() => {
+      removeButton.click()
+      removeButton.click()
+    })
+
+    expect(document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]')).toBeNull()
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('正在从套餐【基础套餐】移出')
+    await flushEffects()
+    expect(client.request.mock.calls.filter(([path]) => path === '/subscription-plans/1/nodes/preview')).toHaveLength(1)
+
+    preview.resolve({ preview: {}, expected_revision: 2, expected_lock_version: 2, base_revision_id: 1, node_count: 1 })
+    await flushEffects()
+
+    expect(client.request.mock.calls.filter(([path]) => path === '/subscription-plans/1/nodes/apply')).toHaveLength(1)
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('移出操作已保存，正在应用')
+    expect(notify).toHaveBeenCalledWith('已保存从套餐【基础套餐】移出节点的操作，正在应用', 'success')
+    expect(onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('reconciles desired state when an apply response is lost after save', async () => {
+    let detailRequests = 0
+    const client = {
+      request: vi.fn(async (path: string) => {
+        if (path === '/assignable-node-scopes/preview') {
+          return {
+            scope: { kind: 'node' }, count: 1,
+            node_refs: [{ node_type: 'inbound', node_id: 1 }],
+            sample_nodes: [{ key: 'node:inbound:1', name: '🇭🇰 香港 01' }],
+            warnings: [], selection_hash: 'hash-1',
+          }
+        }
+        if (path === '/assignable-nodes/inbound/1') {
+          detailRequests++
+          return detailRequests === 1
+            ? { plans: [{ plan_id: 1, name: '基础套餐' }], authorizations: [] }
+            : { plans: [], authorizations: [] }
+        }
+        if (path === '/subscription-plans/1/nodes/preview') {
+          return { preview: {}, expected_revision: 2, expected_lock_version: 2, base_revision_id: 1, node_count: 1 }
+        }
+        if (path === '/subscription-plans/1/nodes/apply') throw new Error('网络连接中断')
+        if (path === '/subscription-plans/1') return { latest_nodes: [] }
+        return {}
+      }),
+    }
+    const notify = vi.fn()
+
+    act(() => {
+      root.render(
+        <NodeScopeActionDialog
+          open={true}
+          node={mockNode}
+          scope={mockScope}
+          plans={mockPlans}
+          users={mockUsers}
+          client={client}
+          notify={notify}
+          onClose={vi.fn()}
+          onDone={vi.fn()}
+        />
+      )
+    })
+    await flushEffects()
+
+    const removeButton = document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]') as HTMLButtonElement
+    act(() => removeButton.click())
+    await flushEffects()
+
+    expect(document.querySelector('button[aria-label="从套餐【基础套餐】移出此节点"]')).toBeNull()
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('已同步套餐【基础套餐】的最新状态')
+    expect(notify).toHaveBeenCalledWith('节点已从套餐【基础套餐】移出', 'success')
   })
 
   it('renders plans list, union explanation, and opens user authorization dialog', async () => {

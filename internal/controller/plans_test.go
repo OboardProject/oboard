@@ -315,16 +315,30 @@ func TestPlanNodeSavesCoalesceBeforePreparingConfiguration(t *testing.T) {
 	h, srv, token := setupPlansAPITestServer(t)
 	node := request(t, h, http.MethodPost, "/api/v1/ui/servers", token, map[string]any{"name": "queued-node", "listen_ip": "0.0.0.0", "port_range_start": 10000, "port_range_end": 20000}, http.StatusCreated)["server"].(map[string]any)
 	inbound := request(t, h, http.MethodPost, "/api/v1/ui/inbounds", token, map[string]any{"server_id": node["id"], "name": "queued-entry", "protocol": "vless", "port": 10443, "config_json": "{}", "enabled": true}, http.StatusCreated)["inbound"].(map[string]any)
+	inboundID := int64(inbound["id"].(float64))
 	plan := request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans", token, map[string]any{"name": "queued-plan", "enabled": true}, http.StatusCreated)["subscription_plan"].(map[string]any)
 	id := int64(plan["id"].(float64))
 	var last map[string]any
 	for _, op := range []string{"add", "remove", "add"} {
-		last = request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(id)+"/nodes/apply", token, map[string]any{"op": op, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inbound["id"]}}}, http.StatusOK)
+		last = request(t, h, http.MethodPost, "/api/v1/ui/subscription-plans/"+itoa(id)+"/nodes/apply", token, map[string]any{"op": op, "nodes": []map[string]any{{"node_type": "inbound", "node_id": inboundID}}}, http.StatusOK)
 		if last["reconcile_queued"] != (op == "add") {
 			t.Fatalf("missing async state: %#v", last)
 		}
 		if op == "remove" && last["pending_revision_id"].(float64) != 0 {
 			t.Fatalf("unsent reversal left a stale pending revision: %#v", last)
+		}
+		detail := request(t, h, http.MethodGet, "/api/v1/ui/assignable-nodes/inbound/"+itoa(inboundID), token, nil, http.StatusOK)
+		wantPlanCount := 1
+		if op == "remove" {
+			wantPlanCount = 0
+		}
+		if got := len(detail["plans"].([]any)); got != wantPlanCount {
+			t.Fatalf("detail plans after saved %s = %d, want %d: %#v", op, got, wantPlanCount, detail["plans"])
+		}
+		list := request(t, h, http.MethodGet, "/api/v1/ui/subscription-plans", token, nil, http.StatusOK)
+		listedPlan := list["subscription_plans"].([]any)[0].(map[string]any)
+		if got := int(listedPlan["node_count"].(float64)); got != wantPlanCount {
+			t.Fatalf("list node_count after saved %s = %d, want %d", op, got, wantPlanCount)
 		}
 	}
 	changes, err := srv.store.ListAccessChanges(t.Context(), 10)

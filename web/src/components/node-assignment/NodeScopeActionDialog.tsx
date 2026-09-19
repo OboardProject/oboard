@@ -101,7 +101,14 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
   const [addDisplayGroup, setAddDisplayGroup] = React.useState('')
   const [planActionBusyId, setPlanActionBusyId] = React.useState<number | null>(null)
   const [addingPlan, setAddingPlan] = React.useState(false)
-  const [planMessage, setPlanMessage] = React.useState<{ text: string; tone: 'success' | 'error' } | null>(null)
+  const [planMessage, setPlanMessage] = React.useState<{ text: string; tone: 'success' | 'error' | 'pending' } | null>(null)
+  const pendingPlanMutationsRef = React.useRef(new Map<string, { id: number; action: 'add' | 'remove'; planID: number; planName: string }>())
+  const planMutationQueuesRef = React.useRef(new Map<number, Promise<void>>())
+  const planMutationSequenceRef = React.useRef(0)
+  const detailRequestRef = React.useRef(0)
+  const scopeRequestRef = React.useRef(0)
+  const activeNodeKeyRef = React.useRef(node?.key || '')
+  activeNodeKeyRef.current = node?.key || ''
 
   // Direct user authorization state
   const [assignedAuthorizations, setAssignedAuthorizations] = React.useState<AssignedAuthorization[]>([])
@@ -124,6 +131,9 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
 
   const loadScope = React.useCallback(async () => {
     if (!node || !scope) return
+    const requestID = ++scopeRequestRef.current
+    const nodeKey = node.key
+    setPreview(null)
     setScopeBusy(true)
     setScopeError('')
     try {
@@ -131,35 +141,43 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
         method: 'POST',
         body: JSON.stringify({ anchor_node_key: node.key, scope, include_disabled: includeDisabled }),
       })
+      if (requestID !== scopeRequestRef.current || activeNodeKeyRef.current !== nodeKey) return
       setPreview(res)
     } catch (e: any) {
+      if (requestID !== scopeRequestRef.current || activeNodeKeyRef.current !== nodeKey) return
       setScopeError(e?.message || String(e))
       setPreview(null)
     } finally {
-      setScopeBusy(false)
+      if (requestID === scopeRequestRef.current && activeNodeKeyRef.current === nodeKey) setScopeBusy(false)
     }
   }, [node, scope, includeDisabled, client])
 
-  const loadNodeDetail = React.useCallback(async () => {
-    if (!node) return
-    setLoadingPlans(true)
-    setLoadingAuthorizations(true)
+  const loadNodeDetail = React.useCallback(async (silent = false): Promise<AssignedPlan[] | null> => {
+    if (!node) return null
+    const requestID = ++detailRequestRef.current
+    const nodeKey = node.key
+    if (!silent) {
+      setLoadingPlans(true)
+      setLoadingAuthorizations(true)
+    }
     try {
       const res = await client.request<{ plans?: AssignedPlan[]; authorizations?: AssignedAuthorization[] }>(`/assignable-nodes/${node.type}/${node.id}`)
-      if (res?.plans) {
-        setAssignedPlans(res.plans)
-      } else if ((node as any).plans) {
-        setAssignedPlans((node as any).plans)
-      }
+      if (requestID !== detailRequestRef.current || activeNodeKeyRef.current !== nodeKey) return null
+      const nextPlans = res?.plans || ((node as any).plans as AssignedPlan[] | undefined) || []
+      setAssignedPlans(nextPlans)
       setAssignedAuthorizations(res?.authorizations || [])
+      return nextPlans
     } catch {
-      if ((node as any).plans) {
-        setAssignedPlans((node as any).plans)
-      }
+      if (requestID !== detailRequestRef.current || activeNodeKeyRef.current !== nodeKey || silent) return null
+      const fallbackPlans = ((node as any).plans as AssignedPlan[] | undefined) || []
+      setAssignedPlans(fallbackPlans)
       setAssignedAuthorizations([])
+      return fallbackPlans
     } finally {
-      setLoadingPlans(false)
-      setLoadingAuthorizations(false)
+      if (!silent && requestID === detailRequestRef.current && activeNodeKeyRef.current === nodeKey) {
+        setLoadingPlans(false)
+        setLoadingAuthorizations(false)
+      }
     }
   }, [node, client])
 
@@ -173,6 +191,12 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
       setRevokingAuthorizationIDs(new Set())
       setSelectedAddPlanID(0)
       setAddDisplayGroup('')
+      const pendingMutation = pendingPlanMutationsRef.current.get(node.key)
+      setPlanActionBusyId(pendingMutation?.action === 'remove' ? pendingMutation.planID : null)
+      setAddingPlan(pendingMutation?.action === 'add')
+      if (pendingMutation) {
+        setPlanMessage({ text: pendingMutation.action === 'add' ? `正在加入套餐【${pendingMutation.planName}】...` : `正在从套餐【${pendingMutation.planName}】移出...`, tone: 'pending' })
+      }
       setUserAuthOpen(false)
       setUserIDs(new Set())
       setReason('')
@@ -185,88 +209,184 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
     }
   }, [open, node, loadScope, loadNodeDetail])
 
-  // Add node to a plan
+  const enqueuePlanMutation = React.useCallback(<T,>(planID: number, mutate: () => Promise<T>): Promise<T> => {
+    const previous = planMutationQueuesRef.current.get(planID) || Promise.resolve()
+    const result = previous.catch(() => undefined).then(mutate)
+    const tail = result.then(() => undefined, () => undefined)
+    planMutationQueuesRef.current.set(planID, tail)
+    void tail.finally(() => {
+      if (planMutationQueuesRef.current.get(planID) === tail) planMutationQueuesRef.current.delete(planID)
+    })
+    return result
+  }, [])
+
+  const confirmDesiredPlanNodes = React.useCallback(async (planID: number, nodeRefs: ScopePreview['node_refs'], shouldContain: boolean): Promise<boolean | null> => {
+    try {
+      const detail = await client.request<{ latest_nodes?: { node_type: string; node_id: number }[] }>(`/subscription-plans/${planID}`)
+      const latestKeys = new Set((detail.latest_nodes || []).map(item => `${item.node_type}:${item.node_id}`))
+      return nodeRefs.every(item => latestKeys.has(`${item.node_type}:${item.node_id}`) === shouldContain)
+    } catch {
+      return null
+    }
+  }, [client])
+
+  const refreshParent = React.useCallback(() => {
+    try {
+      void Promise.resolve(onDone()).catch(() => undefined)
+    } catch {
+      // The save already succeeded; a background list refresh must not turn it into an operation failure.
+    }
+  }, [onDone])
+
+  const refreshAfterPlanMutation = React.useCallback((expectedNodeKey: string) => {
+    if (activeNodeKeyRef.current === expectedNodeKey) void loadNodeDetail(true)
+    refreshParent()
+  }, [loadNodeDetail, refreshParent])
+
+  // Add node to a plan. Update the row before the network round-trip so the
+  // interaction stays responsive, then reconcile from the saved desired state.
   const handleAddPlan = async () => {
     if (!preview || !selectedAddPlanID) {
       setPlanMessage({ text: '请先选择要加入的套餐', tone: 'error' })
       return
     }
-    const targetPlan = plans.find(p => p.id === selectedAddPlanID)
-    const planName = targetPlan?.name || `套餐 #${selectedAddPlanID}`
+    const mutationNodeKey = node?.key || ''
+    if (pendingPlanMutationsRef.current.has(mutationNodeKey)) return
+    const targetPlanID = selectedAddPlanID
+    const targetPlan = plans.find(p => p.id === targetPlanID)
+    const planName = targetPlan?.name || `套餐 #${targetPlanID}`
+    const displayGroup = addDisplayGroup.trim()
+    const mutationID = ++planMutationSequenceRef.current
+    pendingPlanMutationsRef.current.set(mutationNodeKey, { id: mutationID, action: 'add', planID: targetPlanID, planName })
+    detailRequestRef.current++
     setAddingPlan(true)
-    setPlanMessage(null)
+    setPlanMessage({ text: `正在加入套餐【${planName}】...`, tone: 'pending' })
+    setAssignedPlans(current => current.some(p => p.plan_id === targetPlanID)
+      ? current
+      : [...current, { plan_id: targetPlanID, name: planName, display_group: displayGroup }].sort((a, b) => a.plan_id - b.plan_id))
+    setSelectedAddPlanID(0)
+    setAddDisplayGroup('')
     try {
-      // 1. Preview
-      const prevRes = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${selectedAddPlanID}/nodes/preview`, {
-        method: 'POST',
-        body: JSON.stringify({ op: 'add', nodes: preview.node_refs, display_group: addDisplayGroup.trim() }),
+      const applyRes = await enqueuePlanMutation(targetPlanID, async () => {
+        const prevRes = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${targetPlanID}/nodes/preview`, {
+          method: 'POST',
+          body: JSON.stringify({ op: 'add', nodes: preview.node_refs, display_group: displayGroup }),
+        })
+        return client.request<{ access_change_id?: number; no_change?: boolean; reconcile_queued?: boolean }>(`/subscription-plans/${targetPlanID}/nodes/apply`, {
+          method: 'POST',
+          body: JSON.stringify({
+            op: 'add',
+            nodes: preview.node_refs,
+            display_group: displayGroup,
+            base_revision_id: prevRes.base_revision_id || 0,
+            expected_lock_version: prevRes.expected_lock_version || prevRes.expected_revision || 0,
+          }),
+        })
       })
 
-      // 2. Apply
-      const applyRes = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${selectedAddPlanID}/nodes/apply`, {
-        method: 'POST',
-        body: JSON.stringify({
-          op: 'add',
-          nodes: preview.node_refs,
-          display_group: addDisplayGroup.trim(),
-          base_revision_id: prevRes.base_revision_id || 0,
-          expected_lock_version: prevRes.expected_lock_version || prevRes.expected_revision || 0,
-        }),
-      })
-
-      if (applyRes.no_change) {
-        notify?.(`节点已存在于套餐【${planName}】中`, 'warning')
-      } else {
-        notify?.(`已成功将节点加入套餐【${planName}】`, 'success')
+      if (activeNodeKeyRef.current === mutationNodeKey) {
+        if (applyRes.no_change) {
+          setPlanMessage({ text: `节点已在套餐【${planName}】中`, tone: 'success' })
+          notify?.(`节点已存在于套餐【${planName}】中`, 'warning')
+        } else if (applyRes.reconcile_queued) {
+          setPlanMessage({ text: `已保存到套餐【${planName}】，正在应用`, tone: 'success' })
+          notify?.(`已保存到套餐【${planName}】，正在应用`, 'success')
+        } else {
+          setPlanMessage({ text: `已加入套餐【${planName}】`, tone: 'success' })
+          notify?.(`已成功将节点加入套餐【${planName}】`, 'success')
+        }
       }
-      setSelectedAddPlanID(0)
-      setAddDisplayGroup('')
-      await loadNodeDetail()
-      await onDone()
+      refreshAfterPlanMutation(mutationNodeKey)
     } catch (e: any) {
-      const msg = e?.message || String(e)
-      setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '加入失败：' + msg, tone: 'error' })
+      const [confirmed, latestPlans] = activeNodeKeyRef.current === mutationNodeKey
+        ? await Promise.all([confirmDesiredPlanNodes(targetPlanID, preview.node_refs, true), loadNodeDetail(true)])
+        : [null, null]
+      if (activeNodeKeyRef.current === mutationNodeKey) {
+        if (confirmed === true) {
+          setPlanMessage({ text: `已同步套餐【${planName}】的最新状态`, tone: 'success' })
+          notify?.(`节点已保存到套餐【${planName}】`, 'success')
+          refreshParent()
+        } else {
+          if (latestPlans === null) setAssignedPlans(current => current.filter(p => p.plan_id !== targetPlanID))
+          setSelectedAddPlanID(targetPlanID)
+          setAddDisplayGroup(displayGroup)
+          const msg = e?.message || String(e)
+          const uncertain = confirmed === null ? '，最新状态核对失败，请刷新确认' : ''
+          setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '加入失败：' + msg + uncertain, tone: 'error' })
+        }
+      }
     } finally {
-      setAddingPlan(false)
+      if (pendingPlanMutationsRef.current.get(mutationNodeKey)?.id === mutationID) pendingPlanMutationsRef.current.delete(mutationNodeKey)
+      if (activeNodeKeyRef.current === mutationNodeKey) setAddingPlan(false)
     }
   }
 
-  // Remove node from a plan
-  const handleRemovePlan = async (targetPlanId: number, planName: string) => {
+  // Remove node from a plan with the same optimistic feedback and synchronous
+  // guard, preventing a fast double click from submitting the operation twice.
+  const handleRemovePlan = async (targetPlan: AssignedPlan) => {
     if (!preview) return
-    setPlanActionBusyId(targetPlanId)
-    setPlanMessage(null)
+    const mutationNodeKey = node?.key || ''
+    if (pendingPlanMutationsRef.current.has(mutationNodeKey)) return
+    const mutationID = ++planMutationSequenceRef.current
+    pendingPlanMutationsRef.current.set(mutationNodeKey, { id: mutationID, action: 'remove', planID: targetPlan.plan_id, planName: targetPlan.name })
+    detailRequestRef.current++
+    setPlanActionBusyId(targetPlan.plan_id)
+    setPlanMessage({ text: `正在从套餐【${targetPlan.name}】移出...`, tone: 'pending' })
+    setAssignedPlans(current => current.filter(p => p.plan_id !== targetPlan.plan_id))
     try {
-      // 1. Preview
-      const prevRes = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${targetPlanId}/nodes/preview`, {
-        method: 'POST',
-        body: JSON.stringify({ op: 'remove', nodes: preview.node_refs, display_group: '' }),
+      const applyRes = await enqueuePlanMutation(targetPlan.plan_id, async () => {
+        const prevRes = await client.request<{ preview: PlanChangePreview; expected_revision: number; expected_lock_version: number; base_revision_id: number; node_count: number }>(`/subscription-plans/${targetPlan.plan_id}/nodes/preview`, {
+          method: 'POST',
+          body: JSON.stringify({ op: 'remove', nodes: preview.node_refs, display_group: '' }),
+        })
+        return client.request<{ access_change_id?: number; no_change?: boolean; reconcile_queued?: boolean }>(`/subscription-plans/${targetPlan.plan_id}/nodes/apply`, {
+          method: 'POST',
+          body: JSON.stringify({
+            op: 'remove',
+            nodes: preview.node_refs,
+            display_group: '',
+            base_revision_id: prevRes.base_revision_id || 0,
+            expected_lock_version: prevRes.expected_lock_version || prevRes.expected_revision || 0,
+          }),
+        })
       })
 
-      // 2. Apply
-      const applyRes = await client.request<{ access_change_id?: number; no_change?: boolean }>(`/subscription-plans/${targetPlanId}/nodes/apply`, {
-        method: 'POST',
-        body: JSON.stringify({
-          op: 'remove',
-          nodes: preview.node_refs,
-          display_group: '',
-          base_revision_id: prevRes.base_revision_id || 0,
-          expected_lock_version: prevRes.expected_lock_version || prevRes.expected_revision || 0,
-        }),
-      })
-
-      if (applyRes.no_change) {
-        notify?.(`套餐【${planName}】未包含此节点`, 'warning')
-      } else {
-        notify?.(`已从套餐【${planName}】移出该节点`, 'success')
+      if (activeNodeKeyRef.current === mutationNodeKey) {
+        if (applyRes.no_change) {
+          setPlanMessage({ text: `套餐【${targetPlan.name}】已不包含此节点`, tone: 'success' })
+          notify?.(`套餐【${targetPlan.name}】未包含此节点`, 'warning')
+        } else if (applyRes.reconcile_queued) {
+          setPlanMessage({ text: `移出操作已保存，正在应用`, tone: 'success' })
+          notify?.(`已保存从套餐【${targetPlan.name}】移出节点的操作，正在应用`, 'success')
+        } else {
+          setPlanMessage({ text: `已从套餐【${targetPlan.name}】移出`, tone: 'success' })
+          notify?.(`已从套餐【${targetPlan.name}】移出该节点`, 'success')
+        }
       }
-      await loadNodeDetail()
-      await onDone()
+      refreshAfterPlanMutation(mutationNodeKey)
     } catch (e: any) {
-      const msg = e?.message || String(e)
-      setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '移出失败：' + msg, tone: 'error' })
+      const [confirmed, latestPlans] = activeNodeKeyRef.current === mutationNodeKey
+        ? await Promise.all([confirmDesiredPlanNodes(targetPlan.plan_id, preview.node_refs, false), loadNodeDetail(true)])
+        : [null, null]
+      if (activeNodeKeyRef.current === mutationNodeKey) {
+        if (confirmed === true) {
+          setPlanMessage({ text: `已同步套餐【${targetPlan.name}】的最新状态`, tone: 'success' })
+          notify?.(`节点已从套餐【${targetPlan.name}】移出`, 'success')
+          refreshParent()
+        } else {
+          if (latestPlans === null) {
+            setAssignedPlans(current => current.some(p => p.plan_id === targetPlan.plan_id)
+              ? current
+              : [...current, targetPlan].sort((a, b) => a.plan_id - b.plan_id))
+          }
+          const msg = e?.message || String(e)
+          const uncertain = confirmed === null ? '，最新状态核对失败，请刷新确认' : ''
+          setPlanMessage({ text: msg.includes('conflict') || msg.includes('409') ? '套餐版本冲突，请重试' : '移出失败：' + msg + uncertain, tone: 'error' })
+        }
+      }
     } finally {
-      setPlanActionBusyId(null)
+      if (pendingPlanMutationsRef.current.get(mutationNodeKey)?.id === mutationID) pendingPlanMutationsRef.current.delete(mutationNodeKey)
+      if (activeNodeKeyRef.current === mutationNodeKey) setPlanActionBusyId(null)
     }
   }
 
@@ -424,7 +544,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                         <button
                           type="button"
                           disabled={addingPlan || planActionBusyId !== null}
-                          onClick={() => void handleRemovePlan(p.plan_id, p.name)}
+                          onClick={() => void handleRemovePlan(p)}
                           className="plan-remove-icon-btn"
                           title={`从套餐【${p.name}】移出此节点`}
                           aria-label={`从套餐【${p.name}】移出此节点`}
@@ -441,6 +561,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                   <Select
                     value={selectedAddPlanID}
                     onChange={e => setSelectedAddPlanID(Number(e.target.value))}
+                    disabled={loadingPlans || addingPlan || planActionBusyId !== null}
                     aria-label="选择要加入的套餐"
                   >
                     <option value={0}>选择要加入的套餐...</option>
@@ -449,6 +570,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                   <Input
                     value={addDisplayGroup}
                     onChange={e => setAddDisplayGroup(e.target.value)}
+                    disabled={loadingPlans || addingPlan || planActionBusyId !== null}
                     placeholder="展示分组（可选）"
                     aria-label="展示分组"
                   />
@@ -456,7 +578,7 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                     size="sm"
                     variant="secondary"
                     busy={addingPlan}
-                    disabled={!selectedAddPlanID || planActionBusyId !== null}
+                    disabled={loadingPlans || !selectedAddPlanID || planActionBusyId !== null}
                     onClick={() => void handleAddPlan()}
                   >
                     <Plus size={14} />
@@ -464,7 +586,10 @@ export function NodeScopeActionDialog({ open, node, scope, plans, users, client,
                   </Button>
                 </div>
                 {planMessage && (
-                  <p style={{ margin: 0, fontSize: 12, color: planMessage.tone === 'error' ? 'var(--color-danger)' : 'var(--color-success, #16a34a)' }}>
+                  <p
+                    role="status"
+                    style={{ margin: 0, fontSize: 12, color: planMessage.tone === 'error' ? 'var(--color-danger)' : planMessage.tone === 'pending' ? 'var(--muted)' : 'var(--color-success, #16a34a)' }}
+                  >
                     {planMessage.text}
                   </p>
                 )}
