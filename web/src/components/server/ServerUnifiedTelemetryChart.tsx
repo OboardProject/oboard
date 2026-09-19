@@ -48,6 +48,7 @@ export function ServerUnifiedTelemetryChart({
   hideLegend = false,
   bucketCount = 60,
   chartHeight = 160,
+  compactOptions = false,
   aligned,
 }: {
   resourcePoints?: ServerResourcePoint[]
@@ -62,6 +63,7 @@ export function ServerUnifiedTelemetryChart({
   hideLegend?: boolean
   bucketCount?: number
   chartHeight?: number
+  compactOptions?: boolean
   aligned?: ReturnType<typeof alignUnifiedMetrics>
 }) {
   const fallbackEnd = useMemo(() => Date.now(), [resourcePoints, latencyPoints, regionalProbes, failedProbePoints, windowHours, windowEndAt])
@@ -251,13 +253,13 @@ export function ServerUnifiedTelemetryChart({
               <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(true)}>全选</button>
               <button type="button" className="komari-legend-action-btn" onClick={() => toggleAll(false)}>清空</button>
             </div>
-            <ChartDrawOptions connectGaps={connectGaps} clipSpikes={clipSpikes} onConnectGaps={setConnectGaps} onClipSpikes={setClipSpikes} />
+            <ChartDrawOptions connectGaps={connectGaps} clipSpikes={clipSpikes} compact={compactOptions} onConnectGaps={setConnectGaps} onClipSpikes={setClipSpikes} />
           </div>
         </div>
       )}
       {hideLegend && (
         <div className="komari-chart-header">
-          <ChartDrawOptions connectGaps={connectGaps} clipSpikes={clipSpikes} onConnectGaps={setConnectGaps} onClipSpikes={setClipSpikes} />
+          <ChartDrawOptions connectGaps={connectGaps} clipSpikes={clipSpikes} compact={compactOptions} onConnectGaps={setConnectGaps} onClipSpikes={setClipSpikes} />
         </div>
       )}
       <div ref={canvasRef} className="komari-chart-canvas-wrap">
@@ -401,30 +403,35 @@ export function ServerUnifiedTelemetryChart({
 function ChartDrawOptions({
   connectGaps,
   clipSpikes,
+  compact,
   onConnectGaps,
   onClipSpikes,
 }: {
   connectGaps: boolean
   clipSpikes: boolean
+  compact: boolean
   onConnectGaps: (value: boolean | ((current: boolean) => boolean)) => void
   onClipSpikes: (value: boolean | ((current: boolean) => boolean)) => void
 }) {
-  return (
-    <div className="komari-chart-options" aria-label="延迟图绘制选项">
-      <button
-        type="button"
-        className={`komari-chart-option${connectGaps ? ' active' : ''}`}
-        aria-pressed={connectGaps}
-        title="跨离线时段连接相邻采样点，并以灰色虚线与阴影标示离线；正常采样间隔始终相连"
-        onClick={() => onConnectGaps(value => !value)}
-      >断点连接</button>
-      <button
-        type="button"
-        className={`komari-chart-option${clipSpikes ? ' active' : ''}`}
-        aria-pressed={clipSpikes}
-        title="削除短暂延迟毛刺；保留持续高延迟、丢包和原始统计"
-        onClick={() => onClipSpikes(value => !value)}
-      >削峰</button>
-    </div>
-  )
+  const options = <div className="komari-chart-options" aria-label="延迟图绘制选项">
+    <button
+      type="button"
+      className={`komari-chart-option${connectGaps ? ' active' : ''}`}
+      aria-pressed={connectGaps}
+      title="跨离线时段连接相邻采样点，并以灰色虚线与阴影标示离线；正常采样间隔始终相连"
+      onClick={() => onConnectGaps(value => !value)}
+    >断点连接</button>
+    <button
+      type="button"
+      className={`komari-chart-option${clipSpikes ? ' active' : ''}`}
+      aria-pressed={clipSpikes}
+      title="削除短暂延迟毛刺；保留持续高延迟、丢包和原始统计"
+      onClick={() => onClipSpikes(value => !value)}
+    >削峰</button>
+  </div>
+  if (!compact) return options
+  return <details className="komari-chart-settings">
+    <summary>图表设置</summary>
+    <div className="komari-chart-settings-panel">{options}</div>
+  </details>
 }

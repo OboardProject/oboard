@@ -10408,6 +10408,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
   const resourceError = resources.error ? localizeErrorMessage((resources.error as any)?.message || resources.error) : ''
   const [probeRunning, setProbeRunning] = useState(false)
   const [probeError, setProbeError] = useState('')
+  const [connectivityDetailsRevision, setConnectivityDetailsRevision] = useState(0)
   const mounted = useRef(true)
 
   const windowHoursMap: Record<ConnectivityWindowKey, number> = { '1h': 1, '6h': 6, '12h': 12, '24h': 24, '7d': 168, '30d': 720 }
@@ -10431,6 +10432,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
       }
       if (!mounted.current) return
       connectivity.refresh()
+      setConnectivityDetailsRevision(value => value + 1)
       if (!['succeeded', 'failed', 'rollback_failed'].includes(terminalStatus)) setProbeError('测试任务仍在执行，可稍后刷新结果')
       else if (terminalStatus !== 'succeeded') setProbeError('测试已完成，但有目标未响应；已保留本轮结果')
     } catch (error: any) {
@@ -10479,6 +10481,7 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
       resources.refresh()
     } else {
       connectivity.refresh()
+      setConnectivityDetailsRevision(value => value + 1)
     }
   }
 
@@ -10524,12 +10527,17 @@ function ServerConnectivityDialog({ server, client, onClose, onUpdated, initialV
             onWindowChange={setWindowKey}
             onWindowKeyDown={handleLatencyWindowKeyDown}
             publicMode={server.latency_probe_mode}
+            serverID={server.id}
+            detailsClient={client}
+            detailsRevision={connectivityDetailsRevision}
+            statusLabel={currentStatus === 'disabled' ? '未启用' : connectivityStatusLabel(currentStatus)}
+            statusTone={currentTone}
           /> : null}
-        <ConnectivityDetails key={`${server.id}:${windowKey}`} serverID={server.id} windowKey={windowKey} client={client} />
+        {!response ? <ConnectivityDetails serverID={server.id} windowKey={windowKey} client={client} refreshRevision={connectivityDetailsRevision} /> : null}
       </div>}
     </div>
     <span className="sr-only" role="status" aria-live="polite">{probeRunning ? '延迟测试正在执行' : ''}</span>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={activeView === 'load' ? () => resources.refresh() : () => connectivity.refresh()} disabled={activeView === 'load' ? resourceLoading : loading || probeRunning} aria-label="刷新数据"><RefreshCw size={14} className={(activeView === 'load' ? resourceLoading : loading) ? 'spin' : ''} />刷新</button>{activeView === 'latency' ? <button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button> : null}<button type="button" className="ghost" onClick={onClose}>关闭</button></footer>
+    {activeView === 'latency' ? <footer className="dialog-actions connectivity-primary-actions"><button type="button" onClick={() => void runProbe()} disabled={probeRunning || !server.latency_probe_enabled} aria-busy={probeRunning}>{probeRunning ? '测试中...' : '立即测试'}</button></footer> : null}
   </MotionDialogPanel>
 }
 
