@@ -1,3 +1,4 @@
+import './signal-scripts.css'
 import React, { useEffect, useMemo, useState } from 'react'
 import { Button } from '../../components/ui/button'
 import { Dialog } from '../../components/ui/dialog'
@@ -60,9 +61,11 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
       const scriptItems = listed.scripts || []
       setScripts(scriptItems)
       setTriggers(trig.triggers || [])
-      const pages = await Promise.all(scriptItems.slice(0, 8).map(item => requestV2(`/scripts/${item.id}/runs?limit=8`)))
-      const recent = pages.flatMap(page => page.runs || [])
-      setRuns(recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))))
+      if (tab === 'script-runs') {
+        const pages = await Promise.all(scriptItems.slice(0, 8).map(item => requestV2(`/scripts/${item.id}/runs?limit=8`)))
+        const recent = pages.flatMap(page => page.runs || [])
+        setRuns(recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))))
+      }
     } catch (error: any) {
       notify(error.message || '加载脚本失败', 'error')
     } finally {
@@ -184,12 +187,12 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
           )}
         </div>
         <TabsContent value="library">
-          <div className="rounded-2xl border border-border/70 bg-card/70">
-            {scripts.length === 0 ? <p className="p-6 text-sm text-muted-foreground">还没有脚本。先创建草稿，再发布并授权。</p> : scripts.map(item => (
+          <div className="script-record-list">
+            {loading && !scripts.length ? <p className="p-6 text-sm text-muted-foreground" role="status">正在加载脚本…</p> : scripts.length === 0 ? <p className="p-6 text-sm text-muted-foreground">还没有脚本。先创建草稿，再发布并授权。</p> : scripts.map(item => (
               <button key={item.id} className="script-library-row" onClick={() => void openEditor(item)}>
                 <div>
                   <strong>{item.name}</strong>
-                  <div className="text-xs text-muted-foreground">{item.status} · {item.description || '无说明'}</div>
+                  <div className="text-xs text-muted-foreground">{item.status}{item.description ? ' · ' + item.description : ''}</div>
                 </div>
                 <span className="text-xs text-muted-foreground">#{item.id}</span>
               </button>
@@ -197,8 +200,8 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
           </div>
         </TabsContent>
         <TabsContent value="triggers">
-          <div className="rounded-2xl border border-border/70 bg-card/70">
-            {triggers.length === 0 ? <p className="p-6 text-sm text-muted-foreground">没有触发器。触发器绑定固定版本，不会自动追随最新发布。</p> : triggers.map(item => (
+          <div className="script-record-list">
+            {loading && !triggers.length ? <p className="p-6 text-sm text-muted-foreground" role="status">正在加载触发器…</p> : triggers.length === 0 ? <p className="p-6 text-sm text-muted-foreground">没有触发器。触发器绑定固定版本，不会自动追随最新发布。</p> : triggers.map(item => (
               <div key={item.id} className="flex items-center justify-between border-b border-border/50 px-4 py-3 last:border-0">
                 <div>
                   <strong>{item.name}</strong>
@@ -218,8 +221,8 @@ export function ScriptsWorkspace({ tab, data, client, notify, onNavigate }: Scri
           </div>
         </TabsContent>
         <TabsContent value="runs">
-          <div className="rounded-2xl border border-border/70 bg-card/70">
-            {runs.length === 0 ? <p className="p-6 text-sm text-muted-foreground">还没有执行记录。</p> : runs.map(item => (
+          <div className="script-record-list">
+            {loading && !runs.length ? <p className="p-6 text-sm text-muted-foreground" role="status">正在加载执行记录…</p> : runs.length === 0 ? <p className="p-6 text-sm text-muted-foreground">还没有执行记录。</p> : runs.map(item => (
               <div key={item.id} className="border-b border-border/50 px-4 py-3 last:border-0">
                 <div className="flex items-center justify-between">
                   <strong>{item.uuid}</strong>

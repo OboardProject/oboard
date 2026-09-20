@@ -1,5 +1,6 @@
 import { ExternalLink, GitCommitHorizontal, Scale } from 'lucide-react'
 import logo from '../assets/logo.png'
+import './settings/signal-settings.css'
 
 export type OBoardVersionInfo = {
   name?: string
@@ -24,7 +25,7 @@ function present(value?: string) {
 
 function versionLabel(value?: string) {
   const normalized = String(value || '').trim()
-  if (!normalized) return '未提供'
+  if (!normalized || normalized === 'unknown') return '未提供'
   return normalized.startsWith('v') ? normalized : `v${normalized}`
 }
 
@@ -52,7 +53,7 @@ export function AboutSettingsPanel({ version = {} }: { version?: OBoardVersionIn
   return (
     <section
       id="settings-panel-about"
-      className="settings-card about-settings"
+      className="settings-card about-settings signal-settings"
     >
       <header className="about-product">
         <img className="about-product-logo" src={logo} alt="" />
@@ -62,7 +63,6 @@ export function AboutSettingsPanel({ version = {} }: { version?: OBoardVersionIn
             <span className="about-version-badge">{versionLabel(version.version)}</span>
             {version.dev && <span className="about-dev-badge">开发构建</span>}
           </div>
-          <p className="muted">开源的多服务器代理控制、部署与订阅管理项目。</p>
         </div>
       </header>
 

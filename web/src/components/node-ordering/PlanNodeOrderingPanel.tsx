@@ -141,12 +141,14 @@ function isolateSortableAction(event: React.SyntheticEvent) {
   event.stopPropagation()
 }
 
-export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
+export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved, onDirtyChange, onBusyChange }: {
   plan: OrderingPlan
   data: any
   client: AnyClient
   notify?: (message: string, tone?: 'success' | 'error' | 'warning') => void
   onSaved?: () => void
+  onDirtyChange?: (dirty: boolean) => void
+  onBusyChange?: (busy: boolean) => void
 }) {
   const [state, setState] = React.useState<OrderingState | null>(null)
   const [loading, setLoading] = React.useState(false)
@@ -187,6 +189,11 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
   }, [plan.id, client])
 
   React.useEffect(() => { void loadOrdering() }, [loadOrdering])
+  React.useEffect(() => {
+    const originalOrder = (state?.nodes || []).filter(node => node.manual_position !== undefined).sort((a, b) => (a.manual_position ?? 0) - (b.manual_position ?? 0)).map(node => node.key)
+    onDirtyChange?.(Boolean(state && workingPolicy && (JSON.stringify(normalizeOrderingPolicy(state.policy)) !== JSON.stringify(workingPolicy) || JSON.stringify(originalOrder) !== JSON.stringify(manualOrder))))
+  }, [state, workingPolicy, manualOrder, onDirtyChange])
+  React.useEffect(() => { onBusyChange?.(busy || previewing) }, [busy, previewing, onBusyChange])
 
   const setMode = (mode: string) => {
     if (!workingPolicy) return
@@ -357,7 +364,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
       if (res.no_change) {
         notify?.('排序没有变化，未创建新版本', 'warning')
       } else {
-        notify?.(`已保存版本 ${formatPlanVersion(res.revision?.created_at)}，订阅立即生效`, 'success')
+        notify?.(`已保存版本 ${formatPlanVersion(res.revision?.created_at)}${res.effective_immediately ? '，订阅立即生效' : '，等待生效'}`, 'success')
       }
       await loadOrdering()
       onSaved?.()
@@ -458,7 +465,7 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
                 <Badge variant="secondary">当前为兼容排序</Badge>
               )}
               {MODES.map(mode => (
-                <Button key={mode} variant={workingPolicy.mode === mode ? 'default' : 'outline'} size="sm" onClick={() => setMode(mode)}>
+                <Button key={mode} aria-pressed={workingPolicy.mode === mode} variant={workingPolicy.mode === mode ? 'default' : 'outline'} size="sm" onClick={() => setMode(mode)}>
                   {MODE_LABELS[mode]}
                 </Button>
               ))}
@@ -648,7 +655,8 @@ export function PlanNodeOrderingPanel({ plan, data, client, notify, onSaved }: {
         </div>
       )}
 
-      <Dialog isOpen={copyOpen} onClose={() => setCopyOpen(false)} title="从其他方案复制排序" size="lg">
+      <Dialog isOpen={copyOpen} onClose={() => { if (!busy) setCopyOpen(false) }} title="从其他方案复制排序" size="lg" className="signal-order-dialog">
+        {error && <p role="alert" className="danger-text">{error}</p>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span>来源方案</span><Select value={copySourcePlanID} onChange={event => { setCopySourcePlanID(Number(event.target.value)); setCopyPreview(null) }}><option value={0}>选择方案</option>{(data.subscription_plans || []).filter((item: any) => item.id !== plan.id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>
           <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 }}><legend style={{ fontWeight: 600, marginBottom: 6 }}>复制方式</legend>

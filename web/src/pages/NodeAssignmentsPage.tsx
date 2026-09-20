@@ -1,4 +1,5 @@
 import * as React from 'react'
+import './node-signal.css'
 import { Badge } from '../components/ui/badge'
 import { AuthorizationStatusBadge } from '../components/authorization/AuthorizationStatusBadge'
 import { Button } from '../components/ui/button'
@@ -62,7 +63,7 @@ function NodeRenameDialog({ node, client, onClose, onSaved }: { node: RenameNode
       setSaving(false)
     }
   }
-  return <Dialog isOpen={node !== null} onClose={onClose} title="全局节点名称" size="default">
+  return <Dialog isOpen={node !== null} onClose={onClose} title="全局节点名称" size="default" className="node-signal-dialog">
     <div className="form">
       <p className="muted">留空将恢复来源名称“{node?.source_name || node?.name}”。</p>
       <label><span>节点名称</span><Input value={name} onChange={event => setName(event.target.value)} maxLength={100} autoFocus aria-label="全局节点名称" /></label>
@@ -300,10 +301,12 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
               type="button"
               className={`ghost icon-button node-filter-toggle-btn ${filtersOpen || Boolean(entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') ? 'is-active' : ''}`}
               onClick={() => setFiltersOpen(v => !v)}
+              aria-expanded={filtersOpen}
+              aria-controls="node-catalog-filters"
               aria-label={filtersOpen ? '收起筛选' : '展开筛选'}
               title={filtersOpen ? '收起筛选' : '展开筛选'}
             >
-              <SlidersHorizontal size={14} />
+              <SlidersHorizontal size={14} /><span>筛选</span>
               {Boolean(entryServerID || entryRegion || exitRegion || protocol || status || planID || unassigned || groupBy || sort !== 'name') && (
                 <span className="node-filter-badge" />
               )}
@@ -337,47 +340,47 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
         </div>
 
         {filtersOpen && (
-          <div className="node-filter-drawer">
-            <Select value={entryServerID} onChange={e => setEntryServerID(Number(e.target.value))}>
+          <div className="node-filter-drawer signal-node-filters" id="node-catalog-filters" role="group" aria-label="筛选与显示">
+            <Select aria-label="入口服务器" value={entryServerID} onChange={e => setEntryServerID(Number(e.target.value))}>
               <option value={0}>入口服务器：全部</option>
               {servers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
-            <Select value={entryRegion} onChange={e => setEntryRegion(e.target.value)}>
+            <Select aria-label="入口地区" value={entryRegion} onChange={e => setEntryRegion(e.target.value)}>
               <option value="">入口地区：全部</option>
               {regionCodes.map((r: string) => <option key={r} value={r}>{r}</option>)}
             </Select>
-            <Select value={exitRegion} onChange={e => setExitRegion(e.target.value)}>
+            <Select aria-label="出口地区" value={exitRegion} onChange={e => setExitRegion(e.target.value)}>
               <option value="">出口地区：全部</option>
               {regionCodes.map((r: string) => <option key={r} value={r}>{r}</option>)}
             </Select>
-            <Select value={protocol} onChange={e => setProtocol(e.target.value)}>
+            <Select aria-label="节点协议" value={protocol} onChange={e => setProtocol(e.target.value)}>
               <option value="">协议：全部</option>
               {protocolOptions.map(p => <option key={p} value={p}>{p}</option>)}
             </Select>
-            <Select value={status} onChange={e => setStatus(e.target.value)}>
+            <Select aria-label="节点状态" value={status} onChange={e => setStatus(e.target.value)}>
               <option value="">状态：全部</option>
               {Object.entries(statusLabels).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
-            <Select value={planID} onChange={e => setPlanID(Number(e.target.value))}>
+            <Select aria-label="所属套餐" value={planID} onChange={e => setPlanID(Number(e.target.value))}>
               <option value={0}>套餐：全部</option>
               {plans.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
               <Switch size="sm" checked={unassigned} onChange={setUnassigned} ariaLabel="仅看未分配节点" /> 仅看未分配节点
             </label>
-            <Select value={groupBy} onChange={e => setGroupBy(e.target.value)}>
+            <Select aria-label="分组方式" value={groupBy} onChange={e => setGroupBy(e.target.value)}>
               <option value="">分组：不分组</option>
               <option value="entry_server">按入口服务器</option>
               <option value="exit_region">按出口地区</option>
             </Select>
-            <Select value={sort} onChange={e => setSort(e.target.value)}>
+            <Select aria-label="排序方式" value={sort} onChange={e => setSort(e.target.value)}>
               <option value="name">排序：名称</option>
               <option value="entry_server">排序：入口服务器</option>
               <option value="exit_region">排序：出口地区</option>
               <option value="users">排序：用户数</option>
               <option value="status">排序：状态</option>
             </Select>
-            <Select value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+            <Select aria-label="每页节点数" value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
               <option value={25}>每页 25</option>
               <option value={50}>每页 50</option>
               <option value={100}>每页 100</option>
@@ -491,6 +494,7 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
 
         {/* Mobile Card View */}
         <div className="node-mobile-cards">
+          <label className="signal-mobile-select"><input type="checkbox" checked={nodes.length > 0 && selectedCount === nodes.length} onChange={e => toggleAll(e.target.checked)} />全选本页<span>{selectedCount} 个已选</span></label>
           {nodes.map(n => (
             <div key={n.key} className="card-custom node-mobile-card">
               <div className="node-mobile-card-head">
@@ -594,7 +598,7 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
       </>
     </div>
 
-      <Dialog isOpen={detail !== null} onClose={() => setDetail(null)} title={detail ? detail.node?.name || '节点详情' : ''} size="lg">
+      <Dialog isOpen={detail !== null} onClose={() => setDetail(null)} title={detail ? detail.node?.name || '节点详情' : ''} size="xl" className="node-signal-dialog signal-node-detail">
         {detail && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div className="form" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
@@ -627,7 +631,7 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
               ))}
             </div>
             <div>
-              <h3 style={{ marginTop: 0 }}>有效用户（{detail.users?.length || 0}）</h3>
+              <h3 style={{ marginTop: 0 }}>用户授权名单（{detail.users?.length || 0}）</h3>
               <div className="card-custom" style={{ maxHeight: 260, overflow: 'auto' }}>
                 <table className="user-data-table">
                   <thead><tr><th>用户</th><th>来源</th><th>原因</th><th>到期</th></tr></thead>
@@ -680,9 +684,9 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
 
       <NodeRenameDialog node={renameNode as RenameNode | null} client={client} onClose={() => setRenameNode(null)} onSaved={async () => { await refresh(); notify?.('全局节点名称已更新', 'success') }} />
 
-      <Dialog isOpen={batchDialogOpen} onClose={() => setBatchDialogOpen(false)} title={`批量设置节点套餐（已选 ${selectedCount} 个节点）`} size="default">
+      <Dialog isOpen={batchDialogOpen} onClose={() => setBatchDialogOpen(false)} title={`批量设置节点套餐（已选 ${selectedCount} 个节点）`} size="lg" className="node-signal-dialog">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <p className="muted" style={{ margin: 0 }}>为当前已选中的 {selectedCount} 个节点批量分配或调整套餐。</p>
+          <h4 className="signal-section-title">选中名单 · {selectedCount} 个节点</h4>
           {selectedCount > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', maxHeight: 120, overflow: 'auto', padding: 8, background: 'var(--bg-subtle)', borderRadius: 'var(--radius-md)' }}>
               {nodes.filter(n => selected[n.key]).map(n => (
@@ -707,7 +711,8 @@ export function NodeAssignmentsPage({ data, client, load, notify }: {
               </Select>
             </label>
           </div>
-          {syncMessage && <p style={{ margin: 0, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', fontSize: 13 }}>{syncMessage}</p>}
+          {syncOp === 'replace' && <p className="signal-scope-warning" role="note">将用这 {selectedCount} 个节点替换目标套餐的全部节点，不在名单中的节点会从套餐移除。</p>}
+          {syncMessage && <p role="status" style={{ margin: 0, color: syncMessage.startsWith('操作失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', fontSize: 13 }}>{syncMessage}</p>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
             <Button variant="outline" onClick={() => setBatchDialogOpen(false)}>取消</Button>
             <Button disabled={!syncPlanID || syncBusy} busy={syncBusy} onClick={() => void runSync()}>{syncBusy ? '保存中...' : '保存到套餐'}</Button>

@@ -170,6 +170,31 @@ describe('AgentSettingsPanel', () => {
     expect(mockNotify).toHaveBeenCalledWith('BBR + FQ 设置已保存', 'success')
   })
 
+  it('restores the persisted BBR value and shows an error when auto-save fails', async () => {
+    const client = { request: vi.fn(async () => { throw new Error('保存失败，请重试') }) }
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={vi.fn()} />))
+    const toggle = container.querySelector<HTMLInputElement>('input[role="switch"][aria-label="新服务器默认启用 BBR + FQ"]')!
+    await act(async () => toggle.click())
+    expect(toggle.checked).toBe(true)
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('保存失败，请重试')
+    expect(toggle.disabled).toBe(false)
+  })
+
+  it('keeps NTP drafts after failure and disables saving an empty time source', async () => {
+    const client = { request: vi.fn(async () => { throw new Error('NTP 保存失败') }) }
+    act(() => root.render(<AgentSettingsPanel data={mockData} client={client} load={vi.fn()} notify={vi.fn()} />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="NTP 时间源 1"]')!
+    const save = [...container.querySelectorAll('button')].find(button => button.textContent === '保存 NTP 时间源')!
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    act(() => { setValue.call(input, ''); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    expect(save.disabled).toBe(true)
+    act(() => { setValue.call(input, 'pool.ntp.org'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+    await act(async () => save.click())
+    expect(input.value).toBe('pool.ntp.org')
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('NTP 保存失败')
+    expect(save.disabled).toBe(false)
+  })
+
   it('confirms before refreshing all node runtime configs', async () => {
     const mockClient = { request: vi.fn(async () => ({ reissued_servers: 3, delivery_retried: 3 })) }
     const mockLoad = vi.fn(async () => undefined)

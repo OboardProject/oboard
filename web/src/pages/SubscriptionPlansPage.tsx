@@ -1,4 +1,5 @@
 import * as React from 'react'
+import './subscription-signal.css'
 import { Badge } from '../components/ui/badge'
 import { AuthorizationStatusBadge, deriveAccessChangeStatus } from '../components/authorization/AuthorizationStatusBadge'
 import { Button } from '../components/ui/button'
@@ -257,7 +258,7 @@ function regionFlagEmoji(code?: string) {
 
 function PlanDetailShell({ inline, open, onClose, title, children }: { inline?: boolean; open: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
   if (inline) return open ? <section className="plan-detail-inline" aria-label={title}>{children}</section> : null
-  return <Dialog isOpen={open} onClose={onClose} title={title} size="xl">{children}</Dialog>
+  return <Dialog isOpen={open} onClose={onClose} title={title} placement="right" drawerSize="wide" className="signal-plan-detail">{children}</Dialog>
 }
 
 export function SubscriptionPlansPage({ data, client, load, notify, embedded = false, selectedPlanID = 0 }: { data: any; client: AnyClient; load: () => Promise<void>; notify?: (message: string, tone?: any) => void; embedded?: boolean; selectedPlanID?: number }) {
@@ -269,6 +270,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
   const [detailError, setDetailError] = React.useState('')
   const [retryingChangeID, setRetryingChangeID] = React.useState<number | null>(null)
   const [orderingOpen, setOrderingOpen] = React.useState(false)
+  const [orderingDirty, setOrderingDirty] = React.useState(false)
+  const [orderingBusy, setOrderingBusy] = React.useState(false)
+  const [discardDetailOpen, setDiscardDetailOpen] = React.useState(false)
+  const [createBusy, setCreateBusy] = React.useState(false)
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const [createOpen, setCreateOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
@@ -461,6 +466,9 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
   const closeDetail = () => {
     setDetailOpen(false)
+    setOrderingOpen(false)
+    setOrderingDirty(false)
+    setNodeSaveStatus('idle')
     setSelectedID(0)
     setDetail(null)
     setMessage('')
@@ -591,6 +599,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
 
   const createPlan = async () => {
     if (!createDraft.name.trim()) { setMessage('请输入套餐名称'); return }
+    if (createBusy) return
+    setCreateBusy(true)
     setMessage('')
     try {
       await client.request('/subscription-plans', { method: 'POST', body: JSON.stringify({ ...createDraft, nodes: createNodes.map(n => ({ node_type: n.node_type, node_id: n.node_id })) }) })
@@ -600,6 +610,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
       notify?.('套餐已创建', 'success')
     } catch (e: any) {
       setMessage('创建失败：' + (e?.message || String(e)))
+    } finally {
+      setCreateBusy(false)
     }
   }
 
@@ -900,121 +912,38 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
     : undefined
 
   return (
-    <div className={embedded ? 'subscription-plans-embedded' : 'panel subscription-plans-panel'}>
+    <div className={`signal-plans ${embedded ? 'subscription-plans-embedded' : 'panel subscription-plans-panel'}`}>
       <div className="panel-body">
 
         {!embedded && <div className="section-toolbar">
-          <div><h3>套餐列表</h3><p className="muted">共 {plans.length} 个套餐。</p></div>
+          <span className="muted">{plans.length} 个套餐</span>
           <Button onClick={openCreate}><Plus size={14} /> 新建套餐</Button>
         </div>}
 
-        {!embedded && (
-          <>
-            {/* Desktop Table View */}
-            <div className="card-custom plan-table-card plan-desktop-table" style={{ padding: 0, overflow: 'auto', marginBottom: 16 }}>
-              <table className="plan-list-table" style={{ width: '100%', minWidth: 700, borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left', padding: '12px 16px' }}>名称</th>
-                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>状态</th>
-                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>版本</th>
-                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>节点</th>
-                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>限速</th>
-                    <th style={{ textAlign: 'left', padding: '12px 12px' }}>流量</th>
-                    <th style={{ textAlign: 'right', padding: '12px 16px', minWidth: 90 }}>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {plans.map(p => (
-                    <tr
-                      key={p.id}
-                      className="table-row-hover plan-table-row"
-                      style={{
-                        backgroundColor: p.id === selectedID && detailOpen ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'transparent',
-                        borderTop: '1px solid var(--border)',
-                      }}
-                    >
-                      <td style={{ fontWeight: 600, padding: '12px 16px' }}>{p.name}</td>
-                      <td style={{ padding: '12px 12px' }}>
-                        <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
-                        {pendingFailureForPlan(p)
-                          ? <Badge variant="destructive" style={{ marginLeft: 4 }}>应用失败</Badge>
-                          : p.pending_revision_id ? <Badge variant="warning" style={{ marginLeft: 4 }}>正在应用</Badge> : null}
-                      </td>
-                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontVariantNumeric: 'tabular-nums', padding: '12px 12px' }}>
-                        {formatPlanVersion(p.latest_version_created_at)}
-                      </td>
-                      <td style={{ padding: '12px 12px' }}>{p.node_count ?? '—'}</td>
-                      <td style={{ padding: '12px 12px' }}>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</td>
-                      <td style={{ padding: '12px 12px' }}>{fmtBytes(p.traffic_limit_bytes)}</td>
-                      <td style={{ textAlign: 'right', padding: '12px 16px', whiteSpace: 'nowrap' }}>
-                        <Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>编辑</Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {plans.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 28 }}>
-                        还没有套餐，点击“新建套餐”开始。
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile Card View */}
-            <div className="plan-mobile-cards">
-              {plans.map(p => (
-                <div
-                  key={p.id}
-                  className="card-custom plan-mobile-card"
-                  style={{
-                    backgroundColor: p.id === selectedID && detailOpen ? 'var(--bg-hover, rgba(0,0,0,0.03))' : 'var(--surface-solid)',
-                    padding: '14px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                  }}
-                  onClick={() => selectPlan(p.id)}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text-strong)' }}>{p.name}</span>
-                      <Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>
-                      {pendingFailureForPlan(p)
-                        ? <Badge variant="destructive">应用失败</Badge>
-                        : p.pending_revision_id ? <Badge variant="warning">正在应用</Badge> : null}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => { e.stopPropagation(); selectPlan(p.id) }}
-                      style={{ flexShrink: 0 }}
-                    >
-                      编辑
-                    </Button>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 12px', fontSize: 12.5, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 12px', borderRadius: 'var(--radius-md)' }}>
-                    <div>版本：<span style={{ color: 'var(--text-strong)', fontFamily: 'var(--font-mono)' }}>{formatPlanVersion(p.latest_version_created_at)}</span></div>
-                    <div>节点：<span style={{ color: 'var(--text-strong)', fontWeight: 600 }}>{p.node_count ?? '—'}</span></div>
-                    <div>限速：<span style={{ color: 'var(--text-strong)' }}>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限'}</span></div>
-                    <div>流量：<span style={{ color: 'var(--text-strong)' }}>{fmtBytes(p.traffic_limit_bytes)}</span></div>
-                  </div>
-                </div>
-              ))}
-              {plans.length === 0 && (
-                <div className="card-custom" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: 13 }}>
-                  还没有套餐，点击“新建套餐”开始。
-                </div>
-              )}
-            </div>
-          </>
-        )}
+        {!embedded && <div className="signal-plan-list">
+          <table aria-label="套餐列表">
+            <thead><tr><th>套餐</th><th>状态</th><th>最新保存版本</th><th>节点 / 用户</th><th>速度 / 流量额度</th><th>操作</th></tr></thead>
+            <tbody>{plans.map(p => <tr key={p.id}>
+              <td data-label="套餐"><strong>{p.name}</strong>{p.description && <small>{p.description}</small>}</td>
+              <td data-label="状态"><Badge variant={p.enabled ? 'success' : 'secondary'}>{p.enabled ? '启用' : '已停用'}</Badge>{pendingFailureForPlan(p)
+                ? <Badge variant="destructive">应用失败</Badge>
+                : p.pending_revision_id ? <Badge variant="warning">正在应用</Badge> : null}</td>
+              <td data-label="最新保存版本">{formatPlanVersion(p.latest_version_created_at)}</td>
+              <td data-label="节点 / 用户">{p.node_count ?? '—'} 节点 / {p.member_count ?? '—'} 用户</td>
+              <td data-label="速度 / 流量额度"><span>{p.speed_limit_mbps > 0 ? `${p.speed_limit_mbps} Mbps` : '不限速'}</span><small>{fmtBytes(p.traffic_limit_bytes)}</small></td>
+              <td className="signal-plan-list-action"><Button variant="outline" size="sm" onClick={() => selectPlan(p.id)}>编辑</Button></td>
+            </tr>)}</tbody>
+          </table>
+          {plans.length === 0 && <p className="signal-plan-empty">还没有套餐，点击“新建套餐”开始。</p>}
+        </div>}
       </div>
 
-      <PlanDetailShell inline={embedded} open={detailOpen && selectedID > 0} onClose={closeDetail} title={plan ? `方案详情：${plan.name}` : '方案详情'}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 'calc(85vh - 80px)', overflow: 'auto', paddingRight: 4 }}>
+      <PlanDetailShell inline={embedded} open={detailOpen && selectedID > 0} onClose={() => {
+        if (nodeSaveStatus === 'saving' || orderBusy || orderingBusy) return
+        if (membershipChanged || nodeSaveStatus === 'error' || orderingDirty) { setDiscardDetailOpen(true); return }
+        closeDetail()
+      }} title={plan ? `方案详情：${plan.name}` : '方案详情'}>
+        <div className="signal-plan-detail-body">
           {detailError && <p style={{ color: 'var(--color-danger)', margin: 0 }}>{detailError}</p>}
           {message && <p style={{ color: message.includes('失败') ? 'var(--color-danger)' : 'var(--color-success, #16a34a)', margin: 0 }}>{message}</p>}
 
@@ -1049,7 +978,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           )}
 
           {!detailLoading && plan && detail && (
-            <div className="animate-plan-detail-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="signal-plan-content">
               <div className="section-toolbar" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1057,28 +986,26 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                     <Badge variant={plan.enabled ? 'success' : 'secondary'}>{plan.enabled ? '启用' : '已停用'}</Badge>
                     {failedPendingChange ? <Badge variant="destructive">应用失败</Badge> : applying ? <Badge variant="warning">正在应用</Badge> : null}
                   </div>
-                  <div className="muted" style={{ margin: '4px 0 0', fontSize: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span>{detail.member_count} 个绑定用户</span>
-                    <span>·</span>
-                    <span>{workingNodes.length} 个节点</span>
-                    <span>·</span>
-                    <span>限速: {plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</span>
-                    <span>·</span>
-                    <span>流量: {fmtBytes(plan.traffic_limit_bytes)}</span>
-                    <span>·</span>
-                    <span>重置: {resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}</span>
-                    <span>·</span>
-                    <span>最新版本: <span style={{ fontFamily: 'var(--font-mono)' }}>{formatPlanVersion(latestVersionCreatedAt)}</span></span>
-                  </div>
+                  <dl className="signal-plan-facts">
+                    <div><dt>绑定用户</dt><dd>{detail.member_count ?? '—'}</dd></div>
+                    <div><dt>节点</dt><dd>{workingNodes.length}</dd></div>
+                    <div><dt>速度上限</dt><dd>{plan.speed_limit_mbps > 0 ? `${plan.speed_limit_mbps} Mbps` : '不限速'}</dd></div>
+                    <div><dt>流量额度</dt><dd>{fmtBytes(plan.traffic_limit_bytes)}</dd></div>
+                    <div><dt>重置周期</dt><dd>{resetModeLabel(plan.traffic_reset_mode, plan.traffic_reset_day)}</dd></div>
+                    <div><dt>最新保存</dt><dd>{formatPlanVersion(latestVersionCreatedAt)}</dd></div>
+                    <div><dt>当前生效版本</dt><dd>{formatPlanVersion((detail.revisions || []).find((r: Revision) => r.id === plan.current_revision_id)?.created_at)}</dd></div>
+                  </dl>
                 </div>
                 <div className="plan-detail-actions" style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
                   {embedded && <Button size="sm" onClick={openCreate}><Plus size={14} /> 新建方案</Button>}
                   <Button variant="outline" size="sm" busy={userLoadBusy} onClick={() => void openUserAssignment()}><Users size={14} /> 分配用户</Button>
                   <Button variant="outline" size="sm" onClick={openEdit}><Edit3 size={14} /> 修改套餐</Button>
                   <Button variant="outline" size="sm" onClick={() => setHistoryOpen(true)}><History size={14} /> 版本历史</Button>
+                  <details className="signal-plan-more"><summary>更多操作</summary><div>
                   <Button variant="outline" size="sm" onClick={() => void clonePlan()}><Copy size={14} /> 复制</Button>
                   {plan.enabled && <Button variant="outline" size="sm" onClick={() => void disablePlan()}><Ban size={14} /> 停用</Button>}
                   <Button variant="destructive" size="sm" disabled={applying} onClick={() => setDeleteOpen(true)}><Trash2 size={14} /> 删除</Button>
+                  </div></details>
                 </div>
               </div>
 
@@ -1099,14 +1026,17 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                 <div className="section-toolbar">
                   <div>
                     <h3 style={{ margin: 0 }}>节点集合（{workingNodes.length}）</h3>
-                    <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>基于最新保存版本编辑；保存后创建不可变新版本，节点变化走两阶段下发。</p>
+                    <p className="muted" style={{ margin: '2px 0 0', fontSize: 12 }}>基于最新保存版本编辑，保存不代表节点已生效。</p>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {orderingPlan && (
                       <Button
                         variant={orderingOpen ? 'default' : 'outline'}
                         size="sm"
-                        onClick={() => setOrderingOpen(open => !open)}
+                        onClick={() => { if (!orderingDirty && !orderingBusy) setOrderingOpen(open => !open) }}
+                        aria-expanded={orderingOpen}
+                        disabled={orderingOpen && (orderingDirty || orderingBusy)}
+                        title={orderingDirty ? '请先保存排序更改，再收起' : undefined}
                       >
                         <SlidersHorizontal size={14} /> {orderingOpen ? '收起排序规则' : '排序规则'}
                       </Button>
@@ -1117,9 +1047,10 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                   </div>
                 </div>
 
-                {orderingOpen && orderingPlan && (
-                  <div className="card-custom" style={{ padding: 12, marginBottom: 8, background: 'var(--bg-control, rgba(0,0,0,0.02))' }}>
-                    <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
+                {orderingDirty && <p className="muted" role="status">排序有未保存的更改，请保存后再收起。</p>}
+                {orderingPlan && orderingOpen && (
+                  <div className="signal-ordering-section">
+                    <PlanNodeOrderingPanel plan={orderingPlan} data={data} client={client} notify={notify} onDirtyChange={setOrderingDirty} onBusyChange={setOrderingBusy} onSaved={() => { void loadDetail(selectedID); void refreshPlans() }} />
                   </div>
                 )}
 
@@ -1189,6 +1120,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
                             </td>
                             <td>
                               <Input
+                                aria-label={`${effectiveName} 的展示分组`}
                                 value={n.display_group || ''}
                                 onChange={e => {
                                   setWorkingNodes(list => list.map(x => nodeKey(x) === key ? { ...x, display_group: e.target.value } : x))
@@ -1274,22 +1206,26 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         </div>
       </PlanDetailShell>
 
+      <Dialog isOpen={discardDetailOpen} onClose={() => setDiscardDetailOpen(false)} title="放弃未保存的更改？" size="sm" footer={<>
+        <Button variant="outline" onClick={() => setDiscardDetailOpen(false)}>继续编辑</Button>
+        <Button variant="destructive" onClick={() => { setDiscardDetailOpen(false); closeDetail() }}>放弃更改</Button>
+      </>}><p>未保存的节点或排序更改将丢失，已保存的版本不受影响。</p></Dialog>
+
       <Dialog
         isOpen={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { if (!createBusy) setCreateOpen(false) }}
         title="新建套餐"
         size="lg"
         className="plan-form-dialog"
         footer={(
           <>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>取消</Button>
-            <Button disabled={!createDraft.name.trim()} type="submit" form="create-plan-form">创建套餐</Button>
+            <Button variant="outline" disabled={createBusy} onClick={() => setCreateOpen(false)}>取消</Button>
+            <Button busy={createBusy} disabled={!createDraft.name.trim()} type="submit" form="create-plan-form">创建套餐</Button>
           </>
         )}
       >
         <div className="plan-form-dialog-stack">
           <div className="plan-form-dialog-fields">
-            <p className="muted" style={{ margin: 0 }}>套餐定义可分配节点与速度/流量限额；创建后会生成首个时间戳版本。</p>
             <form id="create-plan-form" className="form plan-form-dialog-form" onSubmit={e => { e.preventDefault(); void createPlan() }}>
               <FormField label="名称" required><Input value={createDraft.name} onChange={e => setCreateDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" /></FormField>
               <FormField label="描述"><Input value={createDraft.description} onChange={e => setCreateDraft(d => ({ ...d, description: e.target.value }))} placeholder="可选" /></FormField>
@@ -1387,9 +1323,8 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
         </div>
       </Dialog>
 
-      <Dialog isOpen={editOpen} onClose={() => setEditOpen(false)} title={`修改套餐：${plan?.name || ''}`} size="lg">
+      <Dialog isOpen={editOpen} onClose={() => { if (!saveBusy) setEditOpen(false) }} title={`修改套餐：${plan?.name || ''}`} size="lg" className="signal-plan-form">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <p className="muted" style={{ margin: 0 }}>修改套餐的基础配置信息。保存后会更新套餐配置。</p>
           <form id="edit-plan-form" className="form" onSubmit={e => { e.preventDefault(); void saveSettings() }}>
             <FormField label="名称" required>
               <Input value={editDraft.name} onChange={e => setEditDraft(d => ({ ...d, name: e.target.value }))} placeholder="例如：标准套餐" />
@@ -1448,7 +1383,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           </form>
           {message && <p style={{ color: 'var(--color-danger)' }}>{message}</p>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>取消</Button>
+            <Button variant="outline" disabled={saveBusy} onClick={() => setEditOpen(false)}>取消</Button>
             <Button disabled={!editDraft.name.trim()} busy={saveBusy} type="submit" form="edit-plan-form">保存修改</Button>
           </div>
         </div>
@@ -1577,7 +1512,7 @@ export function SubscriptionPlansPage({ data, client, load, notify, embedded = f
           <div>
             <div className="section-toolbar">
               <div><h4 style={{ margin: 0 }}>部署变更</h4><p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>套餐相关的两阶段下发记录。</p></div>
-              <Button variant="ghost" size="sm" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
+              <Button variant="ghost" size="sm" aria-label="刷新部署变更" onClick={() => void loadChanges()}><RefreshCw size={14} /></Button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 260, overflow: 'auto', marginTop: 8 }}>
               {planChanges.length === 0 && <p className="muted" style={{ padding: 12, margin: 0 }}>暂无变更记录</p>}

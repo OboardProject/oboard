@@ -1,0 +1,69 @@
+.dialog-layer[data-modal-placement="right"] {
+  --dialog-available-height: var(--dialog-viewport-height, 100dvh);
+  --drawer-content-padding: 1.25rem;
+  padding: 0;
+  place-items: stretch end;
+  overflow: hidden;
+}
+
+:root .dialog-layer[data-modal-placement="right"] > .dialog-panel[data-drawer-size] {
+  --drawer-width: 36rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: min(var(--drawer-width), 100%);
+  max-width: 100%;
+  height: var(--dialog-available-height);
+  max-height: var(--dialog-available-height);
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  overflow: hidden;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  border-radius: 0;
+  background: var(--surface-solid);
+  color: var(--text);
+}
+
+:root .dialog-layer[data-modal-placement="right"] > .dialog-panel[data-drawer-size="wide"] {
+  --drawer-width: 52rem;
+}
+
+.dialog-layer[data-modal-placement="right"] > .dialog-panel > :is(.dialog-head, .dialog-chrome-head, .dialog-actions, .dialog-chrome-foot) {
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.dialog-layer[data-modal-placement="right"] > .dialog-panel > :is(.dialog-chrome-head, .dialog-chrome-body, .dialog-chrome-foot) {
+  padding: var(--drawer-content-padding);
+}
+
+:root .dialog-layer[data-modal-placement="right"] > .dialog-panel > :is(.dialog-body, .dialog-chrome-body) {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+}
+
+/* Keep drawer chrome fixed when the shared viewport tracker detects a keyboard. */
+:root[data-dialog-compact-viewport] .dialog-layer[data-modal-placement="right"] > .dialog-panel[data-drawer-size] {
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .dialog-layer[data-modal-placement="right"] {
+    --drawer-content-padding: 1rem;
+  }
+
+  :root .dialog-layer[data-modal-placement="right"] > .dialog-panel[data-drawer-size] {
+    width: 100%;
+    border-left: 0;
+  }
+}

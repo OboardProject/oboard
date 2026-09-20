@@ -42,10 +42,17 @@ describe('AboutSettingsPanel', () => {
     expect(container.textContent).toContain('20260814093000')
     expect(container.textContent).toContain('abcdef123456')
     expect(container.textContent).toContain('GPL-3.0')
+    expect(container.textContent).not.toContain('开源的多服务器')
 
     const projectLink = container.querySelector<HTMLAnchorElement>('a[href="https://github.com/OboardProject/oboard"]')
     expect(projectLink?.target).toBe('_blank')
     expect(projectLink?.rel).toContain('noreferrer')
+  })
+
+  it('does not label unknown versions as an actual release', () => {
+    act(() => root.render(<AboutSettingsPanel version={{ version: 'unknown', kernel_version: 'unknown' }} />))
+    expect(container.textContent).not.toContain('vunknown')
+    expect(container.querySelector('.about-version-badge')?.textContent).toBe('未提供')
   })
 
   it('renders development and missing build states without fake values', () => {

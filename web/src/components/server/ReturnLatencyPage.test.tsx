@@ -151,6 +151,7 @@ describe('return latency probe tasks', () => {
     const patch = request.mock.calls.find(([path, init]) => path === '/latency-probe-tasks/7' && (init as RequestInit)?.method === 'PATCH')!
     expect(JSON.parse((patch[1] as RequestInit).body as string)).toEqual({ enabled: false })
     await click(buttonIn(Array.from(container.querySelectorAll('.probe-task-card'))[1], '删除')!)
+    await click(buttonIn(document.body, '确认删除')!)
     expect(request.mock.calls.some(([path, init]) => path === '/latency-probe-tasks/8' && (init as RequestInit)?.method === 'DELETE')).toBe(true)
   })
 

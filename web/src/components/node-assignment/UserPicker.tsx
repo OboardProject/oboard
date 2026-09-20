@@ -42,13 +42,13 @@ export function UserPicker({ users, selected, onChange, maxHeight = 220 }: {
           aria-label="搜索用户"
         />
         <button type="button" className="ghost" onClick={selectAllVisible}>
-          全选
+          全选结果
         </button>
         <button type="button" className="ghost" onClick={clearVisible}>
-          清空
+          清除结果
         </button>
       </div>
-      <div className="card-custom" style={{ maxHeight, overflow: 'auto', padding: 6 }}>
+      <div className="signal-user-picker-list" style={{ maxHeight, overflow: 'auto' }}>
         {visible.length === 0 && <p className="muted" style={{ padding: 8, margin: 0, textAlign: 'center', fontSize: 12 }}>没有匹配的用户</p>}
         {visible.map(u => (
           <label key={u.id} className="user-picker-row">
@@ -59,7 +59,7 @@ export function UserPicker({ users, selected, onChange, maxHeight = 220 }: {
           </label>
         ))}
       </div>
-      <p className="muted" style={{ margin: 0, fontSize: 12 }}>已选 {selected.size} 个用户（共 {users.length} 个用户）</p>
+      <p className="muted" role="status" style={{ margin: 0, fontSize: 13 }}>已选 {selected.size} 个用户 · 当前结果 {visible.length} / {users.length}</p>
     </div>
   )
 }

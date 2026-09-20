@@ -1,0 +1,7 @@
+.form.signal-resource-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 1rem; padding-block: 1rem 1.5rem; }
+.form.signal-resource-form > * { min-width: 0; }
+.form.signal-resource-form [role="alert"] { grid-column: 1 / -1; margin: 0; }
+@media (max-width: 900px) { .form.signal-resource-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .form.signal-resource-form { grid-template-columns: minmax(0, 1fr); } }
+
+.resource-form-wide { grid-column: 1 / -1; min-width: 0; }

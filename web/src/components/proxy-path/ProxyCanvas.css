@@ -144,11 +144,11 @@
 .proxy-flow .proxy-graph-legend {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--canvas-glass, var(--surface-solid));
+  background: var(--surface-solid);
   color: var(--text);
   box-shadow: var(--canvas-shadow, 0 8px 24px rgb(15 23 42 / 10%));
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 .graph-toolbox-section { border-top-color: color-mix(in srgb, var(--border) 75%, transparent); }
 .graph-toolbox :is(.graph-tool, .graph-server-tile) { box-shadow: none; }

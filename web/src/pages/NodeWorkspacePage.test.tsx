@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DialogContext, type DialogApi } from '../components/ui/dialog-context'
 import { NodeWorkspacePage } from './NodeWorkspacePage'
 
+vi.mock('motion/react', async importOriginal => ({
+  ...await importOriginal<typeof import('motion/react')>(),
+  AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
 async function flushEffects() {
   await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 0)) })
 }
@@ -59,21 +64,23 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    const tabs = Array.from(container.querySelectorAll('[role="tab"]'))
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'))
     expect(tabs.map(tab => tab.textContent)).toEqual(['节点库', '节点组', '组合订阅'])
     expect(tabs[0].getAttribute('aria-selected')).toBe('true')
-    expect(container.textContent).toContain('香港 01')
+    expect(document.body.textContent).toContain('香港 01')
 
     act(() => (tabs[1] as HTMLButtonElement).click())
     expect(tabs[1].getAttribute('aria-selected')).toBe('true')
-    expect(container.textContent).toContain('系统组')
+    expect(document.body.textContent).toContain('系统组')
 
     act(() => (tabs[2] as HTMLButtonElement).click())
-    expect(container.textContent).toContain('默认组合')
-    expect(container.textContent).toContain('复制订阅')
-    expect(Array.from(container.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 机场 B', '3. 自建 C'])
-    act(() => (container.querySelector('[aria-label="上移 自建 C"]') as HTMLButtonElement).click())
-    expect(Array.from(container.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 自建 C', '3. 机场 B'])
+    expect(document.body.textContent).toContain('默认组合')
+    expect(document.body.textContent).toContain('复制订阅')
+    expect(document.querySelector('.output-group-row')).toBeNull()
+    act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('编辑组合')) as HTMLButtonElement).click())
+    expect(Array.from(document.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 机场 B', '3. 自建 C'])
+    act(() => (document.querySelector('[aria-label="上移 自建 C"]') as HTMLButtonElement).click())
+    expect(Array.from(document.querySelectorAll('.output-group-row > span')).map(item => item.textContent)).toEqual(['1. OBoard', '2. 自建 C', '3. 机场 B'])
   })
 
   it('edits subscription output filters and shows preview filter stats', async () => {
@@ -111,34 +118,35 @@ describe('NodeWorkspacePage', () => {
       renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
-    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
 
-    expect(container.textContent).toContain('过滤规则')
-    expect(container.querySelectorAll('.output-filter-row').length).toBe(1)
-    expect(container.querySelector('.output-filter-row input')?.getAttribute('value')).toBe('广告')
+    act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('编辑组合')) as HTMLButtonElement).click())
+    expect(document.body.textContent).toContain('过滤规则')
+    expect(document.querySelectorAll('.output-filter-row').length).toBe(1)
+    expect(document.querySelector('.output-filter-row input')?.getAttribute('value')).toBe('广告')
 
-    const valueInput = () => container.querySelector('.output-filter-row input') as HTMLInputElement
+    const valueInput = () => document.querySelector('.output-filter-row input') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(valueInput(), '广告|测试')
       valueInput().dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    act(() => (Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('添加规则')) as HTMLButtonElement).click())
-    expect(container.querySelectorAll('.output-filter-row').length).toBe(2)
-    act(() => (container.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).value = 'drop_protocol')
-    act(() => (container.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
-    act(() => (container.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).value = 'trojan')
-    act(() => (container.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
-    act(() => (Array.from(container.querySelectorAll('.output-actions button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('添加规则')) as HTMLButtonElement).click())
+    expect(document.querySelectorAll('.output-filter-row').length).toBe(2)
+    act(() => (document.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).value = 'drop_protocol')
+    act(() => (document.querySelectorAll('.output-filter-row select')[1] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
+    act(() => (document.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).value = 'trojan')
+    act(() => (document.querySelectorAll('.output-filter-row select')[2] as HTMLSelectElement).dispatchEvent(new window.Event('change', { bubbles: true })))
+    act(() => (Array.from(document.querySelectorAll('.dialog-chrome-foot button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
     await flushEffects()
 
     expect(patched.length).toBe(1)
     expect(patched[0].filters).toEqual([{ type: 'drop_name', value: '广告|测试' }, { type: 'drop_protocol', value: 'trojan' }])
     expect(patched[0].group_ids).toEqual([1, 2])
 
-    act(() => (Array.from(container.querySelectorAll('.output-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('.output-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
     await flushEffects()
-    expect(container.textContent).toContain('规则过滤 1 个')
-    expect(container.querySelector('.filter-stat')?.textContent).toContain('名字正则排除')
+    expect(document.body.textContent).toContain('规则过滤 1 个')
+    expect(document.querySelector('.filter-stat')?.textContent).toContain('名字正则排除')
   })
 
   it('edits a manual node and previews a remote subscription URL', async () => {
@@ -165,26 +173,28 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    act(() => (container.querySelector('[aria-label="编辑 香港 01"]') as HTMLButtonElement).click())
-    const nameInput = container.querySelector('.node-edit-form input') as HTMLInputElement
+    act(() => (document.querySelector('[aria-label="编辑 香港 01"]') as HTMLButtonElement).click())
+    const nameInput = document.querySelector('.node-edit-form input') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(nameInput, '香港 02')
       nameInput.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    act(() => (Array.from(container.querySelectorAll('.node-edit-form button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('.node-edit-form button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
     await flushEffects()
     expect(requests).toContainEqual({ path: '/node-library/private:1', body: JSON.stringify({ name: '香港 02', content: '' }), method: 'PATCH' })
 
-    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
-    const urlInput = container.querySelector('.node-group-create input[type="url"]') as HTMLInputElement
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+    expect(document.querySelector('.node-group-create')).toBeNull()
+    act(() => (Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('添加节点组')) as HTMLButtonElement).click())
+    const urlInput = document.querySelector('.node-group-create input[type="url"]') as HTMLInputElement
     act(() => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(urlInput, 'https://example.com/sub')
       urlInput.dispatchEvent(new window.Event('input', { bubbles: true }))
     })
-    act(() => (Array.from(container.querySelectorAll('.node-import-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('.node-import-actions button')).find(button => button.textContent?.includes('预览')) as HTMLButtonElement).click())
     await flushEffects()
     expect(requests).toContainEqual({ path: '/node-import-preview', body: JSON.stringify({ url: 'https://example.com/sub' }), method: 'POST' })
-    expect(container.textContent).toContain('可导入 1 个节点')
+    expect(document.body.textContent).toContain('可导入 1 个节点')
   })
 
   it('switches to the administrator global view when the session role arrives after mount', async () => {
@@ -210,8 +220,8 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(container.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
-    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
+    expect(document.querySelector('[role="tablist"]')).toBeNull()
   })
 
   it('never shows the platform-user layout before the administrator page data arrives', async () => {
@@ -225,7 +235,7 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.querySelector('[role="tablist"]')).toBeNull()
     expect(request.mock.calls.every(([path]) => !String(path).startsWith('/node-workspace') && !String(path).startsWith('/node-library'))).toBe(true)
 
     await act(async () => {
@@ -233,8 +243,8 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(container.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
-    expect(container.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.querySelector('[aria-label="节点管理模式"] [aria-pressed="true"]')?.textContent).toBe('全部节点')
+    expect(document.querySelector('[role="tablist"]')).toBeNull()
   })
 
   it('waits for the role instead of rendering the platform-user layout when it is unknown', async () => {
@@ -244,8 +254,8 @@ describe('NodeWorkspacePage', () => {
     })
     await flushEffects()
 
-    expect(container.querySelector('[role="tablist"]')).toBeNull()
-    expect(container.textContent).toContain('正在加载节点')
+    expect(document.querySelector('[role="tablist"]')).toBeNull()
+    expect(document.body.textContent).toContain('正在加载节点')
     expect(request).not.toHaveBeenCalled()
   })
 
@@ -275,11 +285,11 @@ describe('NodeWorkspacePage', () => {
       renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
-    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
 
-    expect(container.textContent).toContain('DDG')
-    act(() => (container.querySelector('[aria-label="编辑 DDG"]') as HTMLButtonElement).click())
-    const remoteForm = container.querySelector('.node-group-edit') as HTMLFormElement
+    expect(document.body.textContent).toContain('DDG')
+    act(() => (document.querySelector('[aria-label="编辑 DDG"]') as HTMLButtonElement).click())
+    const remoteForm = document.querySelector('.node-group-edit') as HTMLFormElement
     expect(remoteForm).not.toBeNull()
     expect(remoteForm.textContent).toContain('HTTPS 订阅 URL')
     expect(remoteForm.textContent).toContain('当前 https://mweujowynb.rini.ma/...')
@@ -291,10 +301,10 @@ describe('NodeWorkspacePage', () => {
     act(() => (Array.from(remoteForm.querySelectorAll('button')).find(button => button.textContent?.includes('保存')) as HTMLButtonElement).click())
     await flushEffects()
     expect(patched).toContainEqual({ path: '/node-groups/3', name: 'DDG', url: 'https://new.example.com/sub' })
-    expect(container.querySelector('.node-group-edit')).toBeNull()
+    expect(document.querySelector('.node-group-edit')).toBeNull()
 
-    act(() => (container.querySelector('[aria-label="编辑 机场 B"]') as HTMLButtonElement).click())
-    const manualForm = container.querySelector('.node-group-edit') as HTMLFormElement
+    act(() => (document.querySelector('[aria-label="编辑 机场 B"]') as HTMLButtonElement).click())
+    const manualForm = document.querySelector('.node-group-edit') as HTMLFormElement
     expect(manualForm.textContent).toContain('新增节点链接')
     expect(manualForm.querySelector('input[type="url"]')).toBeNull()
     const textarea = manualForm.querySelector('textarea') as HTMLTextAreaElement
@@ -306,13 +316,14 @@ describe('NodeWorkspacePage', () => {
     await flushEffects()
     expect(patched).toContainEqual({ path: '/node-groups/2', name: '机场 B', content: 'ss://YWVzLTEyOC1nY206cGFzcw@1.1.1.1:443#Extra-One' })
 
-    act(() => (container.querySelector('[aria-label="编辑 OBoard"]') as HTMLButtonElement).click())
-    const systemForm = container.querySelector('.node-group-edit') as HTMLFormElement
+    act(() => (document.querySelector('[aria-label="编辑 OBoard"]') as HTMLButtonElement).click())
+    const systemForm = document.querySelector('.node-group-edit') as HTMLFormElement
     expect(systemForm.querySelector('input[type="url"]')).toBeNull()
     expect(systemForm.querySelector('textarea')).toBeNull()
     act(() => (Array.from(systemForm.querySelectorAll('button')).find(button => button.textContent?.includes('取消')) as HTMLButtonElement).click())
-    expect(container.querySelector('.node-group-edit')).toBeNull()
-    expect(container.querySelectorAll('[aria-label^="编辑 "]').length).toBe(3)
+    await flushEffects()
+    expect(document.querySelector('.node-group-edit')).toBeNull()
+    expect(document.querySelectorAll('[aria-label^="编辑 "]').length).toBe(3)
   })
 
   it('waits for shared confirmation before deleting a node group', async () => {
@@ -337,8 +348,8 @@ describe('NodeWorkspacePage', () => {
       renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
-    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
-    act(() => (container.querySelector('[aria-label="删除 机场 B"]') as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[1] as HTMLButtonElement).click())
+    act(() => (document.querySelector('[aria-label="删除 机场 B"]') as HTMLButtonElement).click())
 
     expect(dialogs.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: '删除节点组“机场 B”？', tone: 'danger' }))
     expect(request.mock.calls.some(([path, init]) => path === '/node-groups/2' && init?.method === 'DELETE')).toBe(false)
@@ -373,8 +384,8 @@ describe('NodeWorkspacePage', () => {
       renderWithDialogs(root, <NodeWorkspacePage data={{ session: { role: 'none' }, current_user: { id: 7 } }} client={{ request }} load={vi.fn().mockResolvedValue(undefined)} />, dialogs)
     })
     await flushEffects()
-    act(() => (Array.from(container.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
-    act(() => (container.querySelector('[aria-label="新建组合"]') as HTMLButtonElement).click())
+    act(() => (Array.from(document.querySelectorAll('[role="tab"]'))[2] as HTMLButtonElement).click())
+    act(() => (document.querySelector('[aria-label="新建组合"]') as HTMLButtonElement).click())
     await flushEffects()
 
     expect(dialogs.prompt).toHaveBeenCalledWith(expect.objectContaining({ title: '新建组合订阅', confirmText: '创建' }))

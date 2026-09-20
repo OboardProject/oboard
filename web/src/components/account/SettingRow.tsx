@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 export interface SettingRowProps {
   id?: string
@@ -12,41 +12,16 @@ export interface SettingRowProps {
   className?: string
 }
 
-export function SettingRow({
-  id,
-  icon,
-  title,
-  description,
-  status,
-  action,
-  expanded = false,
-  children,
-  className = '',
-}: SettingRowProps) {
-  return (
-    <div
-      id={id}
-      tabIndex={id ? -1 : undefined}
-      className={`setting-row ${expanded ? 'is-expanded' : ''} ${className}`}
-    >
-      <div className="setting-row__main">
-        {icon && <div className="setting-row__icon">{icon}</div>}
-
-        <div className="setting-row__content">
-          <div className="setting-row__title">{title}</div>
-          {description && <div className="setting-row__description">{description}</div>}
-        </div>
-
-        {status && <div className="setting-row__status">{status}</div>}
-
-        {action && <div className="setting-row__action">{action}</div>}
+export function SettingRow({ id, icon, title, description, status, action, expanded = false, children, className = '' }: SettingRowProps) {
+  return <div id={id} tabIndex={id ? -1 : undefined} className={`signal-account-row ${className}`}>
+    <div className="signal-account-row-main">
+      {icon && <span className="signal-account-row-icon" aria-hidden="true">{icon}</span>}
+      <div className="signal-account-row-copy">
+        <div className="signal-account-row-title"><h3 id={id ? `${id}-title` : undefined}>{title}</h3>{status}</div>
+        {description && <p>{description}</p>}
       </div>
-
-      {expanded && children && (
-        <div className="setting-row__expanded" aria-expanded={expanded}>
-          {children}
-        </div>
-      )}
+      {action && <div className="signal-account-row-actions">{action}</div>}
     </div>
-  )
+    {expanded && children && <div id={id ? `${id}-content` : undefined} role="region" aria-labelledby={id ? `${id}-title` : undefined} className="signal-account-row-content">{children}</div>}
+  </div>
 }

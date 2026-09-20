@@ -1,0 +1,57 @@
+.signal-plans, .signal-plan-detail, .signal-plan-form, .user-plan-dialog, .signal-exception-dialog { min-width: 0; font-variant-numeric: tabular-nums; }
+.signal-plan-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.signal-plan-list table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.signal-plan-list th { color: var(--muted); background: var(--bg-control); font-weight: 500; text-align: left; }
+.signal-plan-list :is(th, td) { padding: 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.signal-plan-list tbody tr:last-child td { border-bottom: 0; }
+.signal-plan-list td:first-child { max-width: 240px; overflow-wrap: anywhere; }
+.signal-plan-list small { display: block; margin-top: 4px; color: var(--muted); }
+.signal-plan-list td:nth-child(2) .badge { margin: 2px; }
+.signal-plan-list-action { text-align: right; }
+.signal-plan-empty { padding: 24px; color: var(--muted); text-align: center; }
+.signal-plan-detail-body, .signal-plan-content { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.signal-plan-content > .section-toolbar { display: block; }
+.signal-plan-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin: 20px 0; padding: 18px 0; border-block: 1px solid var(--border); }
+.signal-plan-facts dt { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.signal-plan-facts dd { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.signal-plan-content .plan-detail-actions { margin: 0; align-items: start; }
+.signal-plan-more { margin-left: auto; }
+.signal-plan-more summary { cursor: pointer; color: var(--muted); padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+.signal-plan-more summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.signal-plan-more > div { display: flex; gap: 8px; padding-top: 8px; flex-wrap: wrap; }
+.signal-plan-content .plan-node-table-wrap { border: 1px solid var(--border); box-shadow: none; border-radius: 10px; background: var(--surface); overflow-x: auto; }
+.signal-plan-content .plan-node-table { min-width: 650px; }
+.signal-plan-content .plan-node-table :is(th, td) { padding: 12px 8px; }
+.signal-plan-content .plan-node-save-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-block: 12px; }
+.signal-ordering-section { border-block: 1px solid var(--border); padding: 20px 0; }
+.signal-plan-form .form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.signal-plan-form .form > :nth-child(-n+2) { grid-column: 1 / -1; }
+.user-plan-dialog .user-plan-dialog-layout { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 1.5fr); gap: 28px; }
+.user-plan-dialog .user-plan-dialog-col { min-width: 0; }
+.user-plan-dialog .user-plan-dialog-card { background: transparent; border: 0; box-shadow: none; padding: 0 0 20px; border-bottom: 1px solid var(--border); border-radius: 0; }
+.user-plan-dialog .user-plan-dialog-card h3 { margin: 0 0 16px; font-size: 15px; }
+.user-plan-dialog .user-plan-dialog-assign { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.user-plan-dialog-assign > label, .signal-exception-dialog label { display: grid; gap: 8px; font-size: 13px; min-width: 0; }
+.user-plan-dialog .user-plan-dialog-nodes { max-height: 220px; border: 0; background: var(--bg-control); border-radius: 8px; }
+.user-plan-dialog .user-plan-dialog-node { border-bottom: 1px solid var(--border); padding: 12px; }
+.signal-exception-dialog .user-plan-dialog-exception-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.signal-exception-dialog .user-plan-dialog-search-results { max-height: 260px; overflow-y: auto; margin-top: 16px; }
+.signal-exception-dialog .user-plan-dialog-search-results label { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid var(--border); }
+@media (max-width: 800px) {
+  .signal-plan-list :is(table, tbody, tr, td) { display: block; }
+  .signal-plan-list thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+  .signal-plan-list tr { padding: 16px; border-bottom: 1px solid var(--border); }
+  .signal-plan-list tr:last-child { border-bottom: 0; }
+  .signal-plan-list td { padding: 6px 0; border: 0; }
+  .signal-plan-list td[data-label]:not(:first-child) { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .signal-plan-list td[data-label]:not(:first-child)::before { content: attr(data-label); color: var(--muted); min-width: 104px; font-size: 12px; }
+  .signal-plan-list td:first-child { max-width: none; font-size: 16px; }
+  .signal-plan-list-action button { width: 100%; margin-top: 8px; min-height: 42px; }
+  .signal-plan-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .signal-plan-content .plan-detail-actions { gap: 8px; }
+  .signal-plan-content .plan-detail-actions > button { flex: 1 1 auto; min-height: 42px; }
+  .signal-plan-more { margin-left: 0; flex: 1 1 100%; }
+  .signal-plan-form .form, .user-plan-dialog .user-plan-dialog-layout { grid-template-columns: minmax(0, 1fr); }
+  .signal-plan-content .plan-node-table .table-actions { position: sticky; right: 0; background: var(--surface); }
+  .signal-plan-content .plan-node-table button { min-width: 40px; min-height: 40px; }
+}

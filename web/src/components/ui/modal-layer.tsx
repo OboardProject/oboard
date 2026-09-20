@@ -2,6 +2,7 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import { m, usePresence, useReducedMotion } from "motion/react"
 import { trackModalViewport } from "./modal-viewport"
+import "./drawer.css"
 import { useSurfaceResize, type SurfaceMotion } from "./surface-motion"
 
 const APPICA_SPRING = [0.175, 0.885, 0.32, 1.5] as const
@@ -190,6 +191,9 @@ function focusFirst(panel: HTMLElement) {
   target.focus()
 }
 
+export type ModalPlacement = "center" | "right"
+export type DrawerSize = "compact" | "wide"
+
 export interface ModalSurfaceProps {
   onClose: () => void
   children: React.ReactNode
@@ -200,6 +204,8 @@ export interface ModalSurfaceProps {
   restoreFocus?: HTMLElement | null
   portal?: boolean
   surfaceMotion?: SurfaceMotion
+  placement?: ModalPlacement
+  drawerSize?: DrawerSize
 }
 
 export function ModalSurface({
@@ -212,6 +218,8 @@ export function ModalSurface({
   restoreFocus,
   portal = true,
   surfaceMotion = "form",
+  placement = "center",
+  drawerSize = "compact",
 }: ModalSurfaceProps) {
   const shouldReduceMotion = useReducedMotion()
   const [isPresent, safeToRemove] = usePresence()
@@ -221,7 +229,7 @@ export function ModalSurface({
     : null
   const previousFocusRef = React.useRef<HTMLElement | null>(restoreFocus || focusBeforeRender)
   const { id, index, isTopmost, count } = useModalLayer(previousFocusRef.current)
-  useSurfaceResize(panelRef, !shouldReduceMotion && isPresent && isTopmost, surfaceMotion)
+  useSurfaceResize(panelRef, placement === "center" && !shouldReduceMotion && isPresent && isTopmost, surfaceMotion)
   const capturedFocusRef = React.useRef(Boolean(restoreFocus || focusBeforeRender))
   const onCloseRef = React.useRef(onClose)
   const isTopmostRef = React.useRef(isTopmost)
@@ -325,15 +333,17 @@ export function ModalSurface({
   }, [])
 
   const reducedPanelState = { opacity: 1 }
-  const panelInitial = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.985 }
-  const panelAnimate = shouldReduceMotion ? reducedPanelState : { opacity: 1, y: 0, scale: 1 }
-  const panelExit = shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 5, scale: 0.99 }
+  const isDrawer = placement === "right"
+  const panelInitial = shouldReduceMotion ? { opacity: 0 } : isDrawer ? { opacity: 0, x: 24 } : { opacity: 0, y: 8, scale: 0.985 }
+  const panelAnimate = shouldReduceMotion ? reducedPanelState : { opacity: 1, x: 0, y: 0, scale: 1 }
+  const panelExit = shouldReduceMotion ? { opacity: 0 } : isDrawer ? { opacity: 0, x: 24 } : { opacity: 0, y: 5, scale: 0.99 }
   const panelTarget = isPresent ? panelAnimate : panelExit
   const layerStyle = { "--dialog-layer-index": index } as React.CSSProperties
 
   const content = (
     <m.div
       className={["dialog-layer", rootClassName].filter(Boolean).join(" ")}
+      data-modal-placement={placement}
       data-modal-index={index}
       data-modal-top={isTopmost ? "true" : "false"}
       data-modal-closing={isPresent ? "false" : "true"}
@@ -354,6 +364,7 @@ export function ModalSurface({
       <m.section
         ref={panelRef}
         className={["dialog-panel", panelClassName].filter(Boolean).join(" ")}
+        data-drawer-size={isDrawer ? drawerSize : undefined}
         role="dialog"
         aria-modal={isInteractive ? "true" : undefined}
         aria-hidden={isInteractive ? undefined : "true"}
@@ -363,7 +374,7 @@ export function ModalSurface({
         initial={panelInitial}
         animate={panelTarget}
         exit={panelExit}
-        transition={{ duration: shouldReduceMotion ? 0.01 : 0.28, ease: APPICA_SPRING as any }}
+        transition={{ duration: shouldReduceMotion ? 0.01 : isDrawer ? 0.22 : 0.28, ease: APPICA_SPRING as any }}
       >
         <ModalOwnerContext.Provider value={id}>{children}</ModalOwnerContext.Provider>
       </m.section>

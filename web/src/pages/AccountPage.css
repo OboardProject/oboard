@@ -1,0 +1,72 @@
+.signal-account {
+  color: var(--text);
+  min-width: 0;
+  max-width: 1200px;
+  margin-inline: auto;
+}
+.signal-account-identity { padding: 4px 0 24px; }
+.signal-account-name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; overflow-wrap: anywhere; }
+.signal-account-name > strong { color: var(--text-strong); font-size: 1.125rem; font-weight: 650; }
+.signal-account-name > span { font-size: 0.8125rem; color: var(--muted); }
+.signal-account-shortcuts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.signal-account-shortcuts > button { font-size: 0.8125rem; min-height: 40px; }
+.signal-account-section { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 24px; border-top: 1px solid var(--border); padding: 28px 0; }
+.signal-account-section > header h2 { margin: 0; font-size: 0.9375rem; font-weight: 650; line-height: 1.6; color: var(--text-strong); }
+.signal-account-section-body { min-width: 0; }
+.signal-account-profile-row { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.signal-account-profile-row dl { display: grid; gap: 16px; margin: 0; flex: 1; min-width: 0; }
+.signal-account-profile-row dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; font-size: 0.875rem; }
+.signal-account-profile-row dt { color: var(--muted); }
+.signal-account-profile-row dd { margin: 0; color: var(--text-strong); overflow-wrap: anywhere; }
+.signal-account-profile-row > button { flex-shrink: 0; }
+.signal-account-row { scroll-margin-top: var(--app-sticky-header-clearance); }
+.signal-account-row + .signal-account-row { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px; }
+.signal-account-row-main { display: flex; align-items: start; gap: 12px; }
+.signal-account-row-icon { color: var(--muted); display: flex; padding-top: 3px; }
+.signal-account-row-copy { flex: 1; min-width: 0; }
+.signal-account-row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.signal-account-row-title h3 { margin: 0; color: var(--text-strong); font-size: 0.875rem; font-weight: 600; line-height: 1.5; }
+.signal-account-status { color: var(--muted); background: var(--surface-2); border-radius: var(--radius-sm); padding: 3px 7px; font-size: 0.75rem; font-weight: 500; }
+.signal-account-row-copy p { margin: 6px 0 0; font-size: 0.8125rem; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.signal-account-row-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.signal-account button { min-height: 40px; }
+.signal-account-row-content { margin: 16px 0 0 30px; padding-top: 16px; border-top: 1px solid var(--border); }
+.signal-account-credential-list { list-style: none; margin: 0 0 16px; padding: 0; }
+.signal-account-credential-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; }
+.signal-account-credential-list li + li { border-top: 1px solid var(--border); }
+.signal-account-credential-list li > div { min-width: 0; }
+.signal-account-credential-list strong { font-size: 0.875rem; font-weight: 600; color: var(--text-strong); overflow-wrap: anywhere; }
+.signal-account-credential-list small { display: block; margin-top: 4px; color: var(--muted); font-size: 0.75rem; line-height: 1.5; overflow-wrap: anywhere; }
+.signal-account-credential-list button { flex-shrink: 0; }
+.signal-account-note { color: var(--muted); font-size: 0.8125rem; line-height: 1.65; margin: 0 0 12px; }
+.signal-account-error { color: var(--danger); font-size: 0.8125rem; line-height: 1.6; margin: 0; }
+.signal-account-form { display: grid; gap: 16px; padding: 2px; }
+.signal-account-form > label { display: grid; gap: 8px; font-size: 0.875rem; font-weight: 500; color: var(--text-strong); }
+.signal-account-form input,
+.signal-account-form textarea { width: 100%; min-width: 0; font-weight: 400; }
+.signal-account-form input[readonly] { background: var(--surface-2); color: var(--muted); }
+.signal-account-form [aria-invalid="true"] { border-color: var(--danger); }
+.signal-account-form .signal-account-note { margin: -8px 0 0; }
+.signal-account-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 0.875rem; }
+.signal-account-dialog .dialog-chrome-head { align-items: center; }
+.signal-account-dialog .dialog-chrome-head h3 { font-size: 1rem; }
+.signal-account-dialog .dialog-chrome-foot button { min-height: 44px; }
+.signal-account :focus-visible,
+.signal-account-dialog :focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+
+@media (max-width: 900px) {
+  .signal-account-section { grid-template-columns: 140px minmax(0, 1fr); gap: 20px; }
+  .signal-account-row-main { flex-wrap: wrap; }
+  .signal-account-row-actions { width: 100%; padding-left: 30px; justify-content: flex-start; }
+}
+@media (max-width: 600px) {
+  .signal-account-section { grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 24px 0; }
+  .signal-account-profile-row { flex-wrap: wrap; }
+  .signal-account-profile-row dl { flex-basis: 100%; }
+  .signal-account-shortcuts { gap: 4px; }
+  .signal-account-shortcuts > button { min-height: 44px; }
+  .signal-account-row-content { margin-left: 0; }
+  .signal-account button { min-height: 44px; }
+  .signal-account-credential-list li { flex-wrap: wrap; }
+  .signal-account-credential-list li > div { flex: 1 1 180px; }
+}

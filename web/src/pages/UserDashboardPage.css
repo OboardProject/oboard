@@ -1,0 +1,66 @@
+.signal-overview {
+  display: grid;
+  gap: 28px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.signal-overview h2,
+.signal-overview h3,
+.signal-overview p,
+.signal-overview dl { margin: 0; }
+.signal-overview h2 { font-size: 1rem; color: var(--text-strong); font-weight: 650; }
+.signal-overview h3 { font-size: 0.9375rem; color: var(--text-strong); }
+.signal-overview-usage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.signal-overview-traffic { padding: 24px; min-width: 0; }
+.signal-overview-traffic > header,
+.signal-overview-period,
+.signal-overview-nodes,
+.signal-overview-status > div,
+.signal-overview-announcement-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.signal-overview-plan { background: var(--surface-2); border-radius: var(--radius-sm); padding: 4px 8px; font-size: 0.75rem; }
+.signal-overview .signal-overview-meter { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 32px 0 20px; }
+.signal-overview-meter dt { color: var(--muted); font-size: 0.8125rem; margin-bottom: 8px; }
+.signal-overview-meter dd { font-size: 1.5rem; font-weight: 650; color: var(--text-strong); margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.signal-overview-progress { height: 6px; background: var(--surface-2); border-radius: var(--radius-full); overflow: hidden; }
+.signal-overview-progress > span { display: block; height: 100%; background: var(--primary); border-radius: inherit; }
+.signal-overview-progress > span[data-tone="warning"] { background: var(--warning); }
+.signal-overview-progress > span[data-tone="danger"] { background: var(--danger); }
+.signal-overview-period { margin-top: 20px; color: var(--muted); font-size: 0.8125rem; }
+.signal-overview-access { border-left: 1px solid var(--border); padding: 24px; min-width: 0; display: grid; align-content: start; gap: 16px; }
+.signal-overview-nodes strong { color: var(--text-strong); font-size: 1.125rem; }
+.signal-overview-access > button { justify-content: center; min-height: 44px; }
+.signal-overview-status { padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.8125rem; }
+.signal-overview-status strong { display: inline-flex; align-items: center; gap: 6px; color: var(--text-strong); }
+.signal-overview-status[data-attention="true"] strong { color: var(--warning); }
+.signal-overview-status p { margin-top: 8px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.signal-overview-announcement-head { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.signal-overview-announcement-head > span { color: var(--muted); font-size: 0.8125rem; }
+.signal-overview-announcement-list { list-style: none; padding: 0; margin: 0; }
+.signal-overview-announcement-list > li + li { border-top: 1px solid var(--border); }
+.signal-overview-announcement-item { padding: 20px 0; overflow-wrap: anywhere; }
+.signal-overview-announcement-item > header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px 24px; }
+.signal-overview-announcement-item header span,
+.signal-overview-announcement-item time { color: var(--muted); font-size: 0.75rem; }
+.signal-overview-announcement-item header span { display: block; margin-top: 4px; }
+.signal-overview-announcement-item time { flex-shrink: 0; }
+.signal-overview-announcement-item p { white-space: pre-wrap; line-height: 1.75; max-width: 72ch; margin-top: 12px; font-size: 0.875rem; }
+.signal-overview-announcement-empty { padding: 28px 0; display: grid; gap: 8px; font-size: 0.875rem; }
+.signal-overview-announcement-empty span,
+.signal-overview-empty { color: var(--muted); }
+
+@media (max-width: 700px) {
+  .signal-overview-usage { grid-template-columns: minmax(0, 1fr); }
+  .signal-overview-traffic,
+  .signal-overview-access { padding: 20px 16px; }
+  .signal-overview-access { border-left: 0; border-top: 1px solid var(--border); }
+  .signal-overview .signal-overview-meter { gap: 16px; margin-top: 24px; }
+  .signal-overview-meter dd { font-size: 1.25rem; }
+  .signal-overview-announcement-item > header { flex-direction: column; gap: 8px; }
+}

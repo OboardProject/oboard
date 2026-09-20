@@ -127,8 +127,8 @@ describe('ScriptsWorkspace', () => {
   })
 
   it('keeps script tabs off the global primary button fill', () => {
-    expect(stylesheet).toMatch(/\.ui-tabs-list button[^}]*background:\s*transparent\s*!important/s)
-    expect(stylesheet).toMatch(/\.ui-tabs-list button\.active[^}]*background:\s*var\(--primary\)\s*!important/s)
+    expect(stylesheet).toMatch(/\.ui-tabs-list button[^}]*background:\s*transparent\s*;/s)
+    expect(stylesheet).toMatch(/\.ui-tabs-list button\.active[^}]*background:\s*var\(--surface-solid\)\s*;/s)
     expect(stylesheet).toMatch(/\.script-runtime-status\s*\{[^}]*background:\s*var\(--surface-solid\)/s)
   })
 })
