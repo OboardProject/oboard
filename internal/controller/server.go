@@ -39,6 +39,7 @@ import (
 	"github.com/OboardProject/oboard/internal/backup"
 	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/controllerupdate"
+	"github.com/OboardProject/oboard/internal/auditactivity"
 	"github.com/OboardProject/oboard/internal/core"
 	oboardgeoip "github.com/OboardProject/oboard/internal/geoip"
 	oboardlog "github.com/OboardProject/oboard/internal/logging"
@@ -162,7 +163,6 @@ type Server struct {
 	controllerNTPState            controllerNTPState
 	controllerNTPQuery            controllerNTPQueryFunc
 	connectionAuditNotificationMu sync.Mutex
-	connectionAuditActionMu       sync.Mutex
 	connectionAuditCacheMu        sync.Mutex
 	connectionAuditCacheAt        time.Time
 	connectionAuditCacheCount     int
@@ -259,6 +259,7 @@ type Server struct {
 	// settingsCache is the revision-keyed ListSettings snapshot used by hot
 	// paths (health reports, audit gates).
 	settingsCache atomic.Pointer[settingsSnapshot]
+	accountSourceCache atomic.Pointer[accountAuditSourceSnapshot]
 	// configHealthCache is the revision-keyed configuration health report.
 	// It is derived only when a console asks for it, so an operator who never
 	// opens the panel pays nothing for it.
@@ -362,6 +363,7 @@ func New(store *store.Store, sessionSecret, staticDir, basePath string, logs *ob
 	s.recoverControllerUpdateRun(context.Background())
 	s.initializeTrustedProxies()
 	s.registerAutomationHandlers()
+	s.registerDeviceRetirementOperations()
 	s.restoreBasePathState(context.Background(), basePath)
 	s.upgrader = websocket.Upgrader{CheckOrigin: s.checkOrigin, ReadBufferSize: 4096, WriteBufferSize: 4096}
 	return s
@@ -556,6 +558,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/subscription-templates", s.auth(s.subscriptionTemplates, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/subscription-templates/", s.auth(s.subscriptionTemplates, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/dns-benchmarks", s.auth(s.dnsBenchmarks, model.RoleOperator))
+	mux.HandleFunc("/api/v1/dns-test-batch", s.auth(s.dnsTestBatch, model.RoleOperator))
+	mux.HandleFunc("/api/v1/task-operations", s.auth(s.taskOperations, model.RoleOperator))
+	mux.HandleFunc("/api/v1/task-operations/", s.auth(s.taskOperations, model.RoleOperator))
 	mux.HandleFunc("/api/v1/mtu-detections", s.auth(s.mtuDetections, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards", s.auth(s.portForwards, model.RoleOperator))
 	mux.HandleFunc("/api/v1/port-forwards/", s.auth(s.portForwards, model.RoleOperator))
@@ -573,6 +578,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/latency-probe-tasks/", s.auth(s.latencyProbeTask, model.RoleOperator))
 	mux.HandleFunc("/api/v1/configuration-sync", s.auth(s.configurationSync, model.RoleOperator))
 	mux.HandleFunc("/api/v1/configuration-sync/retry", s.auth(s.configurationSyncRetry, model.RoleOperator))
+	mux.HandleFunc("/api/v1/device-retirement", s.auth(s.deviceRetirementRead, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/deployments/apply", s.auth(s.applyDeployment, model.RoleOperator))
 	mux.HandleFunc("/api/v1/deployments/refresh-runtime", s.auth(s.refreshRuntime, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/deployments/", s.auth(s.deployment, model.RoleOperator))
@@ -583,9 +589,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/s", notFound)
 	mux.HandleFunc("/s/", s.subscriptionCustomPath)
 	mux.HandleFunc("/api/v1/audit-logs", s.auth(s.auditLogs, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/status", s.auth(s.accountAuditStatusUI, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/overview", s.auth(s.connectionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/users/", s.auth(s.connectionAuditUser, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/risk-overview", s.auth(s.combinedAuditOverview, model.RoleOperator))
+	for _, view := range []string{"accounts", "events", "executions"} {
+		mux.HandleFunc("/api/v1/audit/"+view, s.auth(s.accountAuditUI, model.RoleOperator))
+	}
+	mux.HandleFunc("/api/v1/audit/evidence", s.auth(s.accountAuditEvidenceUI, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/collection", s.auth(s.accountAuditCollectionUI, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/policy", s.auth(s.accountAuditPolicyUI, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/audit/subscriptions/overview", s.auth(s.subscriptionAuditOverview, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/subscriptions/users/", s.auth(s.subscriptionAuditUser, model.RoleOperator))
 	mux.HandleFunc("/api/v1/audit/ai-reviews", s.auth(s.auditAIReviews, model.RoleAdmin))
@@ -616,6 +629,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent/authorization", s.agentAuthorization)
 	mux.HandleFunc("/api/v1/agent/users-snapshot", s.agentUsersSnapshot)
 	mux.HandleFunc("/api/v1/agent/connection-reports", s.agentConnectionReports)
+	mux.HandleFunc("/api/v1/agent/account-activity", s.agentAccountActivity)
 	mux.HandleFunc("/api/v1/agent/dns-benchmarks", s.agentDNSBenchmarks)
 	mux.HandleFunc("/api/v1/agent/mtu-detections", s.agentMTUDetections)
 	mux.HandleFunc("/api/v1/agent/port-forward-probes", s.agentPortForwardProbes)
@@ -2817,23 +2831,14 @@ func (s *Server) pageData(w http.ResponseWriter, r *http.Request) {
 			var tasks []model.AgentTask
 			tasks, err = s.store.ListTaskTimeline(ctx, intQuery(r, "limit", 300))
 			if err == nil {
+				err = s.store.AttachTaskOperations(ctx, tasks, nil, true)
+			}
+			if err == nil {
 				out["agent_tasks"] = sanitizeTasksForRole(tasks, role)
 			}
 		}
 	case "audit":
-		if err = require(model.RoleOperator); err == nil {
-			var logs []model.AuditLog
-			logs, err = s.store.ListAuditPage(ctx, intQuery(r, "limit", 100), intQuery(r, "offset", 0), r.URL.Query().Get("action"))
-			if err == nil {
-				out["audit_logs"] = logs
-			}
-		}
-		if err == nil {
-			err = addServers()
-		}
-		if err == nil && roleAllows(role, model.RoleAdmin) {
-			err = addUsers()
-		}
+		err = require(model.RoleOperator)
 
 	case "account":
 		if user := currentUser(r); user != nil {
@@ -4522,7 +4527,13 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 			fail(w, err, 400)
 			return
 		}
-		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled); err != nil {
+		actor := currentUser(r)
+		if actor == nil {
+			fail(w, errors.New("authenticated user required"), http.StatusUnauthorized)
+			return
+		}
+		intent := &store.ServerConfigurationIntent{ActorPrincipal: "user:" + strconv.FormatInt(actor.ID, 10), ActorUserID: &actor.ID, Source: "web", Fields: serverIntentFields(input)}
+		if err := s.saveServerUpdate(r.Context(), &v, input.TrafficUsedBytes, input.AuthorizationFastLane, input.RuntimeUsersEnabled, intent); err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, store.ErrServerRevisionConflict) || errors.Is(err, store.ErrServerDeleting) {
 				status = http.StatusConflict
@@ -4532,7 +4543,7 @@ func (s *Server) serverSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		auditReq(s, r, "update", "server", fmt.Sprint(id))
 		updated := &v
-		response := map[string]any{"server": updated}
+		response := map[string]any{"server": updated, "operation_id": intent.OperationID}
 		items := []model.Server{v}
 		if err := s.store.AttachServerMonitoringDisplays(r.Context(), items); err != nil {
 			response["warning"] = "服务器已保存，展示信息暂未刷新"
@@ -11418,17 +11429,19 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			model.User
-			Password           string `json:"password"`
-			LegacyProxyEnabled *bool  `json:"legacy_proxy_enabled"`
+			Password           string          `json:"password"`
+			DeviceLimit        json.RawMessage `json:"device_limit"`
+			LegacyProxyEnabled json.RawMessage `json:"legacy_proxy_enabled"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
+		if len(req.DeviceLimit) != 0 || len(req.LegacyProxyEnabled) != 0 {
+			fail(w, errors.New("device_limit and legacy_proxy_enabled are no longer writable"), http.StatusBadRequest)
+			return
+		}
 		u := req.User
 		u.LegacyProxyEnabled = true
-		if req.LegacyProxyEnabled != nil {
-			u.LegacyProxyEnabled = *req.LegacyProxyEnabled
-		}
 		u.LegacyProxyEnabledSet = true
 		if u.Username == "" {
 			fail(w, errors.New("username required"), 400)
@@ -11529,10 +11542,16 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 		}
 		var req struct {
 			model.User
-			Password string `json:"password"`
+			Password           string          `json:"password"`
+			DeviceLimit        json.RawMessage `json:"device_limit"`
+			LegacyProxyEnabled json.RawMessage `json:"legacy_proxy_enabled"`
 		}
 		req.User = *current
 		if !decode(w, r, &req) {
+			return
+		}
+		if len(req.DeviceLimit) != 0 || len(req.LegacyProxyEnabled) != 0 {
+			fail(w, errors.New("device_limit and legacy_proxy_enabled are no longer writable"), http.StatusBadRequest)
 			return
 		}
 		u := req.User
@@ -13959,6 +13978,10 @@ func (s *Server) agentTasks(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
+	if err := s.store.AttachTaskOperations(r.Context(), items, nil, true); err != nil {
+		fail(w, err, 500)
+		return
+	}
 	write(w, 200, map[string]any{"tasks": sanitizeTasksForRole(items, currentRole(r))})
 }
 
@@ -14399,7 +14422,9 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	if !s.allowRate(w, r, "subscription-ip:"+clientIP(r), 120, time.Minute) {
+	if allowed, retry := s.store.AllowSubscriptionIngress(clientIP(r), time.Now().UTC()); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(retry.Seconds())))))
+		fail(w, errors.New("subscription request rate limit exceeded"), http.StatusTooManyRequests)
 		return
 	}
 	token := strings.TrimPrefix(r.URL.Path, "/api/v1/subscriptions/")
@@ -14408,13 +14433,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	customCredential, custom := isSubscriptionCustomCredential(r)
-	rateKind := "subscription-token:"
-	if custom {
-		rateKind = "subscription-custom-path:"
-	}
-	if !s.allowRate(w, r, rateKind+token, 60, time.Minute) {
-		return
-	}
 	var user *model.User
 	var err error
 	if custom {
@@ -14427,6 +14445,11 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil || user == nil || user.Status != "active" {
 		fail(w, errors.New("invalid subscription link"), 404)
+		return
+	}
+	if allowed, retry := s.store.ChargeAuthenticatedSubscriptionRequest(user.ID, s.auditPolicy(r.Context()).RawRequestsPer60Seconds.Hard, time.Now().UTC()); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(retry.Seconds())))))
+		fail(w, errors.New("subscription request rate limit exceeded"), http.StatusTooManyRequests)
 		return
 	}
 	credentials, err := s.store.LoadProxyCredentials(r.Context(), s.sessionSecret, []model.User{*user})
@@ -14644,6 +14667,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	auditState := s.auditSettingsState(r.Context())
 	auditOptions := store.SubscriptionAuditOptions{
 		AuditEnabled: auditState.Enabled && auditState.Subscription,
+		IngressAccountCharged: true,
 		Action:       auditState.Action,
 	}
 	var decision store.SubscriptionPullDecision
@@ -14660,14 +14684,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, err, 500)
 		return
 	}
-	if auditState.Enabled && auditState.Subscription {
-		s.notifySubscriptionAuditRisk(r.Context(), *user, decision)
-		s.publishRealtime("audit", "subscriptions", "users", "user_overview")
-	}
 	if decision.RateLimited {
-		if auditState.Enabled && auditState.Subscription {
-			s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
-		}
 		retrySeconds := int(math.Ceil(decision.RetryAfter.Seconds()))
 		if retrySeconds < 1 {
 			retrySeconds = 1
@@ -14677,9 +14694,6 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !decision.Allowed {
-		if auditState.Enabled && auditState.Subscription {
-			s.maybeNotifySubscriptionAbnormal(r.Context(), user.ID)
-		}
 		fail(w, errors.New("subscription access is suspended for this credential"), http.StatusForbidden)
 		return
 	}
@@ -14700,8 +14714,26 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	// be delivered. Honouring If-None-Match here would consume the one-time or
 	// burn-after-read token and answer 304 with no body, leaving the client
 	// without content and no way to ask again.
+	recordSuccess := func() {
+		if !auditOptions.AuditEnabled { return }
+		key, sourcePolicy, policyErr := s.accountAuditSourcePolicy(r.Context())
+		if policyErr != nil { return }
+		source, sourceErr := auditactivity.SourceGroup(key, user.ID, event.SourceIP, true, sourcePolicy)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+		defer cancel()
+		err := s.store.RecordAccountSubscriptionActivity(ctx, user.ID, auditactivity.SubscriptionObservation{
+			At: time.Now().UTC(), Source: source, Representation: string(format), ConfigurationRevision: etag,
+			TokenVersion: credentialGeneration, SourceVersion: sourcePolicy.ID(),
+			Success: true, IdentityTrusted: true, SourceUsable: sourceErr == nil,
+		})
+		if err != nil {
+			_ = s.store.SetAccountSubscriptionCoverage(ctx, false, time.Now().UTC())
+			log.Printf("account subscription activity not persisted account=%d", user.ID)
+		}
+	}
 	if event.ConditionalRequest && !decision.Burned {
 		w.WriteHeader(http.StatusNotModified)
+		recordSuccess()
 		return
 	}
 	body := []byte(sub)
@@ -14721,7 +14753,9 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", core.SubscriptionContentType(format))
 	}
 	// #nosec G705 -- subscription formats are JSON, YAML, or plain text; Content-Type and nosniff are set above.
-	_, _ = w.Write(body)
+	if n, writeErr := w.Write(body); writeErr == nil && n == len(body) {
+		recordSuccess()
+	}
 }
 
 func (s *Server) auditLogs(w http.ResponseWriter, r *http.Request) {
@@ -14927,7 +14961,7 @@ func (s *Server) agentConnect(w http.ResponseWriter, r *http.Request) {
 	mode, _ := serverMonitoringPolicy(server)
 	auditEnabled := s.effectiveConnectionAuditEnabled(r.Context(), server)
 	s.syncConnectionAuditPresence(r.Context(), server, auditEnabled)
-	hello := map[string]any{"type": "hello", "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+	hello := map[string]any{"type": "hello", "server_id": server.ID, "monitoring_mode": mode, "connection_audit_enabled": auditEnabled, "audit_collection": s.effectiveAuditCollection(r.Context(), server.ID)}
 	for key, value := range s.configurationHeartbeatFields(r.Context(), server.ID) {
 		hello[key] = value
 	}
@@ -15163,7 +15197,7 @@ func (s *Server) agentSessionLoop(ctx context.Context, server *model.Server, con
 			mode, heartbeatInterval = serverMonitoringPolicy(server)
 			auditEnabled = s.effectiveConnectionAuditEnabled(ctx, server)
 			s.syncConnectionAuditPresence(ctx, server, auditEnabled)
-			heartbeat := map[string]any{"type": "heartbeat", "monitoring_mode": mode, "connection_audit_enabled": auditEnabled}
+			heartbeat := map[string]any{"type": "heartbeat", "monitoring_mode": mode, "connection_audit_enabled": auditEnabled, "audit_collection": s.effectiveAuditCollection(ctx, server.ID)}
 			for key, value := range s.configurationHeartbeatFields(ctx, server.ID) {
 				heartbeat[key] = value
 			}

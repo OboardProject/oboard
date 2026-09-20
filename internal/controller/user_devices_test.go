@@ -21,11 +21,10 @@ func TestUserDeviceLifecycleAndLimit(t *testing.T) {
 	request(t, handler, http.MethodPost, "/api/v1/ui/auth/bootstrap", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusCreated)
 	adminToken := request(t, handler, http.MethodPost, "/api/v1/ui/auth/login", "", map[string]any{"username": "admin", "password": "very-secure-password"}, http.StatusOK)["token"].(string)
 	createdUser := request(t, handler, http.MethodPost, "/api/v1/ui/users", adminToken, map[string]any{
-		"username":     "device-user",
-		"password":     "long-user-password",
-		"role":         "viewer",
-		"status":       "active",
-		"device_limit": 1,
+		"username": "device-user",
+		"password": "long-user-password",
+		"role":     "viewer",
+		"status":   "active",
 	}, http.StatusCreated)
 	userID := int64(createdUser["user"].(map[string]any)["id"].(float64))
 	devicesPath := "/api/v1/ui/users/" + itoa(userID) + "/devices"
@@ -48,10 +47,11 @@ func TestUserDeviceLifecycleAndLimit(t *testing.T) {
 	request(t, handler, http.MethodPost, devicePath+"/suspend-subscription", adminToken, map[string]any{}, http.StatusGone)
 	request(t, handler, http.MethodPost, devicePath+"/resume-subscription", adminToken, map[string]any{}, http.StatusGone)
 	request(t, handler, http.MethodPost, devicePath+"/rotate", adminToken, map[string]any{}, http.StatusGone)
-	request(t, handler, http.MethodDelete, devicePath, adminToken, nil, http.StatusOK)
+	request(t, handler, http.MethodPatch, devicePath, adminToken, map[string]any{"name": "renamed"}, http.StatusGone)
+	request(t, handler, http.MethodDelete, devicePath, adminToken, nil, http.StatusGone)
 	listed = request(t, handler, http.MethodGet, devicesPath, adminToken, nil, http.StatusOK)
-	if status, _ := listed["devices"].([]any)[0].(map[string]any)["status"].(string); status != "revoked" {
-		t.Fatalf("device was not revoked: %#v", listed)
+	if status, _ := listed["devices"].([]any)[0].(map[string]any)["status"].(string); status != "active" {
+		t.Fatalf("retired management route changed historical state: %#v", listed)
 	}
 }
 

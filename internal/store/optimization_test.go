@@ -339,6 +339,7 @@ func TestConnectionAuditOverviewForUsersMatchesFullOverview(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
+	enableHistoricalAuditDetails(t, s)
 	server := &model.Server{Name: "audit-server", AgentID: "audit-agent", ListenIP: "0.0.0.0", PortRangeStart: 10000, PortRangeEnd: 10010, Status: model.ServerOnline}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)

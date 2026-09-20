@@ -11,9 +11,7 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-// auditRiskEvaluationFixture is one enrolled server with one reporting user
-// whose device carries concurrent multi-network traffic: the exact shape the
-// coalesced audit risk queue evaluates after every accepted report batch.
+// auditRiskEvaluationFixture retains historical multi-network device reports.
 func auditRiskEvaluationFixture(t testing.TB) (*store.Store, *Server, int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -49,15 +47,11 @@ func auditRiskEvaluationFixture(t testing.TB) (*store.Store, *Server, int64) {
 	return db, srv, user.ID
 }
 
-// One coalesced evaluation used to run the shared-route scan three times and
-// the risk-window report load twice (device action, notification, incident
-// detail). The evaluation must now load that evidence once.
-func TestConnectionAuditRiskEvaluationSharesEvidence(t *testing.T) {
+func TestHistoricalConnectionAuditOnlyMarksAccountDirty(t *testing.T) {
 	db, srv, userID := auditRiskEvaluationFixture(t)
 	ctx := context.Background()
 
-	// Warm every revision-keyed cache the pipeline consults so the measured
-	// statements are the evaluation itself, not first-use cache builds.
+	enableTestAudit(t, db)
 	if err := srv.evaluateConnectionAuditRisks(ctx, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -67,12 +61,12 @@ func TestConnectionAuditRiskEvaluationSharesEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	cost := db.SQLStatementCount() - before
-	// The evaluation still pays: probe episode rebuild, 24h overview batch,
-	// subscription risk, incident detail, snapshot writes, notification
-	// settings. The bound keeps the shared evidence from silently regressing
-	// back to per-call full scans (the old path cost ~3x more statements).
-	if cost > 60 {
-		t.Fatalf("risk evaluation cost %d statements, want <= 60", cost)
+	if cost > 6 {
+		t.Fatalf("dirty marking cost %d statements, want <= 6 without history scans", cost)
+	}
+	work, err := db.ListAccountAuditWork(ctx, 0, 10)
+	if err != nil || len(work) != 1 || work[0].UserID != userID {
+		t.Fatalf("durable account work = %#v, %v", work, err)
 	}
 }
 

@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import ts from 'typescript'
-import { resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
-const source = readFileSync(resolve(__dirname, 'main.tsx'), 'utf8')
-const clientSource = source.slice(source.indexOf('function api(token:'), source.indexOf('\nfunction PortalLoader'))
-const compiled = ts.transpileModule(clientSource, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
-const createClient = new Function('appPath', `${compiled}; return api`)((path: string) => path)
+import { createAPIClientFactory } from './api-client'
+
+const createClient = createAPIClientFactory(path => path, (data, res) => {
+  const error = new Error(data?.error || res.statusText) as Error & { status?: number }
+  error.status = res.status
+  return error
+})
 
 afterEach(() => {
   sessionStorage.clear()

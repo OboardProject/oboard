@@ -10,6 +10,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/automation"
+	"github.com/OboardProject/oboard/internal/capability"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -87,7 +88,7 @@ func TestUserCreateUpdateDeleteThroughChangeset(t *testing.T) {
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
 
-	createInput := json.RawMessage(`{"user":{"username":"mcp_user","nickname":"MCP 用户","role":"viewer","speed_limit_mbps":10,"traffic_limit_bytes":10485760,"device_limit":2}}`)
+	createInput := json.RawMessage(`{"user":{"username":"mcp_user","nickname":"MCP 用户","role":"viewer","speed_limit_mbps":10,"traffic_limit_bytes":10485760}}`)
 	draft, err := server.automation.ValidateDraft(ctx, principal, automation.DraftValidationRequest{Operations: []automation.OperationRequest{{Capability: "users.create", Input: createInput}}})
 	if err != nil {
 		t.Fatalf("validate users.create: %v", err)
@@ -110,7 +111,7 @@ func TestUserCreateUpdateDeleteThroughChangeset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("created user not found: %v", err)
 	}
-	if created.Role != model.RoleViewer || created.SpeedLimitMbps != 10 || created.DeviceLimit != 2 {
+	if created.Role != model.RoleViewer || created.SpeedLimitMbps != 10 || created.DeviceLimit != 0 {
 		t.Fatalf("unexpected created user: %#v", created)
 	}
 
@@ -235,30 +236,12 @@ func TestUserGroupAndMemberCapabilities(t *testing.T) {
 	}
 }
 
-func TestUserDeviceRevokeAndRename(t *testing.T) {
-	db := openControllerAutomationTestStore(t)
-	server := newTestServer(db, "test-secret", "")
-	ctx := context.Background()
-	admin := &model.User{Username: "admin", PasswordHash: "unused", Role: model.RoleAdmin, Status: "active", ProxyUUID: "11111111-1111-4111-8111-111111111111", ProxyPassword: "unused"}
-	if err := db.CreateUser(ctx, admin); err != nil {
-		t.Fatal(err)
-	}
-	principal := userAutomationPrincipal(t, db, admin.ID)
-	device := &model.UserDevice{ID: "dev_test", DeviceIDHash: "hash", UserID: admin.ID, Name: "原名称", TokenHash: "tok", TokenPrefix: "obd_abc", CredentialEpoch: 1}
-	if err := db.CreateUserDevice(ctx, device); err != nil {
-		t.Fatal(err)
-	}
-	renameInput, _ := json.Marshal(map[string]any{"user_id": admin.ID, "device_id": device.ID, "name": "新名称"})
-	applyAutomationChangeset(t, server, principal, "device-rename", automation.OperationRequest{Capability: "user_devices.update", Input: renameInput})
-	renamed, err := db.GetUserDevice(ctx, admin.ID, device.ID)
-	if err != nil || renamed.Name != "新名称" {
-		t.Fatalf("device not renamed: %#v err=%v", renamed, err)
-	}
-	revokeInput, _ := json.Marshal(map[string]any{"user_id": admin.ID, "device_id": device.ID, "revoked": true})
-	applyAutomationChangeset(t, server, principal, "device-revoke", automation.OperationRequest{Capability: "user_devices.revoke", Input: revokeInput})
-	revoked, err := db.GetUserDevice(ctx, admin.ID, device.ID)
-	if err != nil || revoked.Status != "revoked" || !revoked.SubscriptionSuspended || revoked.ProxyAccessState != "reject_new" {
-		t.Fatalf("device not revoked: %#v err=%v", revoked, err)
+func TestUserDeviceWriteCapabilitiesRemoved(t *testing.T) {
+	catalog := capability.NewCatalog()
+	for _, name := range []string{"user_devices.update", "user_devices.revoke"} {
+		if _, ok := catalog.Get(name); ok {
+			t.Fatalf("retired device write still advertised: %s", name)
+		}
 	}
 }
 

@@ -69,8 +69,8 @@ func TestMaintenancePrunesConnectionAudits(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "boundary", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour))
-	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "new", at.Add(-time.Duration(DefaultConnectionAuditRetentionDays)*24*time.Hour+time.Second))
+	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "boundary", at.Add(-24*time.Hour))
+	insertMaintenanceConnectionAudit(t, s, server.ID, user.ID, "new", at.Add(-24*time.Hour+time.Second))
 	result, err := s.RunMaintenance(context.Background(), at)
 	if err != nil {
 		t.Fatal(err)

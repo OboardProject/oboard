@@ -22,6 +22,21 @@ type controllerUpdateAutomationInput struct {
 
 func (s *Server) queryManagementCapability(ctx context.Context, principal application.Principal, capabilityName string, input json.RawMessage) (any, error) {
 	switch capabilityName {
+	case "device_retirement.read":
+		return s.queryDeviceRetirement(ctx, principal, input)
+	case "audit.policy.get":
+		if err := strictAutomationInput(input, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return s.queryAccountAuditPolicy(ctx, principal)
+	case "audit.status.read":
+		return s.queryAccountAuditStatus(ctx, principal, input)
+	case "audit.collection.get":
+		return s.queryAuditCollection(ctx, principal)
+	case "audit.evidence.read":
+		return s.queryAccountAuditEvidence(ctx, principal, input)
+	case "audit.accounts.list", "audit.events.list", "audit.executions.list":
+		return s.queryAccountAudit(ctx, principal, capabilityName, input)
 	case "inbounds.listener_mode.preview":
 		var req snellModeRequest
 		if err := strictAutomationInput(input, &req); err != nil {
@@ -240,6 +255,8 @@ func (s *Server) queryManagementCapability(ctx context.Context, principal applic
 }
 
 func (s *Server) registerControllerUpdateOperations() {
+	s.registerAccountAuditReviewOperation()
+	s.registerAccountAuditAssistanceOperation()
 	for _, capabilityName := range []string{"controller_update.check", "controller_update.set_channel", "controller_update.install", "controller_update.cancel", "controller_update.force_finish"} {
 		name := capabilityName
 		s.automation.RegisterValidator(name, func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {

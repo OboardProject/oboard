@@ -34,12 +34,12 @@ import (
 
 // stealthTransport is the Controller-side listener state.
 type stealthTransport struct {
-	server   *agentlink.Server
-	listener net.Listener
+	server     *agentlink.Server
+	listener   net.Listener
 	listenAddr string
-	done chan struct{}
-	pin      string
-	addr     string
+	done       chan struct{}
+	pin        string
+	addr       string
 }
 
 // loadOrCreateStealthCert loads the dedicated listener certificate or
@@ -304,17 +304,18 @@ const stealthKeepalivePingInterval = 30 * time.Second
 // shapes cannot drift between the two surfaces.
 func (s *Server) stealthAgentRoutes() map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
-		"/api/v1/agent/assets":             s.agentManagedAssets,
-		"/api/v1/agent/authorization":      s.agentAuthorization,
-		"/api/v1/agent/users-snapshot":     s.agentUsersSnapshot,
-		"/api/v1/agent/task-results":       s.agentTaskResults,
-		"/api/v1/agent/traffic-reports":    s.agentTrafficReports,
-		"/api/v1/agent/connection-reports": s.agentConnectionReports,
-		"/api/v1/agent/inbound-probes":     s.agentInboundProbes,
+		"/api/v1/agent/assets":              s.agentManagedAssets,
+		"/api/v1/agent/authorization":       s.agentAuthorization,
+		"/api/v1/agent/users-snapshot":      s.agentUsersSnapshot,
+		"/api/v1/agent/task-results":        s.agentTaskResults,
+		"/api/v1/agent/traffic-reports":     s.agentTrafficReports,
+		"/api/v1/agent/connection-reports":  s.agentConnectionReports,
+		"/api/v1/agent/account-activity":    s.agentAccountActivity,
+		"/api/v1/agent/inbound-probes":      s.agentInboundProbes,
 		"/api/v1/agent/port-forward-probes": s.agentPortForwardProbes,
-		"/api/v1/agent/dns-benchmarks":     s.agentDNSBenchmarks,
-		"/api/v1/agent/mtu-detections":     s.agentMTUDetections,
-		"/api/v1/agent/certificate-issues": s.agentCertificateIssues,
+		"/api/v1/agent/dns-benchmarks":      s.agentDNSBenchmarks,
+		"/api/v1/agent/mtu-detections":      s.agentMTUDetections,
+		"/api/v1/agent/certificate-issues":  s.agentCertificateIssues,
 	}
 }
 
@@ -407,18 +408,18 @@ func (s *Server) handleStealthRequest(server *model.Server, req *agentlink.Reque
 
 // stealthRecorder is a minimal ResponseWriter capturing status and body.
 type stealthRecorder struct {
-	status int
-	body   bytes.Buffer
+	status  int
+	body    bytes.Buffer
 	errText string
-	header http.Header
+	header  http.Header
 }
 
 func newStealthRecorder() *stealthRecorder {
 	return &stealthRecorder{status: 200, header: http.Header{}}
 }
 
-func (r *stealthRecorder) Header() http.Header { return r.header }
-func (r *stealthRecorder) WriteHeader(status int) { r.status = status }
+func (r *stealthRecorder) Header() http.Header         { return r.header }
+func (r *stealthRecorder) WriteHeader(status int)      { r.status = status }
 func (r *stealthRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
 
 func stealthJSONResponse(id int64, status int, body any) *agentlink.ResponseFrame {

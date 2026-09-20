@@ -17,6 +17,7 @@ func TestConnectionAuditHourlyMatchesRawRobustZ(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	enableHistoricalAuditDetails(t, s)
 	user := &model.User{Username: "hourly-user", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
@@ -76,6 +77,7 @@ func TestConnectionAuditHourlyDirtySurvivesConcurrentRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	enableHistoricalAuditDetails(t, s)
 	user := &model.User{Username: "dirty-user", PasswordHash: "h", Role: model.RoleViewer, Status: "active"}
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)

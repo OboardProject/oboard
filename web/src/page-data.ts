@@ -95,11 +95,9 @@ export class PageDataRequestCoordinator<T> {
     return request
   }
 
-  // cancel aborts a page request without invalidating its epoch, for
-  // low-priority preloads the user no longer needs.
+  // Fence cancelled loaders even when they ignore the abort signal.
   cancel(page: string) {
-    this.abort(page)
-    this.requests.delete(page)
+    if (this.requests.has(page)) this.invalidate(page)
   }
 
   // cancelPrefetch aborts a non-foreground request only; a page the user is
@@ -107,8 +105,7 @@ export class PageDataRequestCoordinator<T> {
   cancelPrefetch(page: string) {
     const pending = this.requests.get(page)
     if (!pending || pending.priority === 'foreground') return
-    pending.controller.abort()
-    this.requests.delete(page)
+    this.cancel(page)
   }
 
   // cancelPrefetches aborts warm-up requests that would compete with a
@@ -117,8 +114,7 @@ export class PageDataRequestCoordinator<T> {
   cancelPrefetches(exceptPage?: string) {
     Array.from(this.requests.entries()).forEach(([page, pending]) => {
       if (pending.priority !== 'prefetch' || page === exceptPage) return
-      pending.controller.abort()
-      this.requests.delete(page)
+      this.cancel(page)
     })
   }
 

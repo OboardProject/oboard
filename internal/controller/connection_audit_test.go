@@ -83,6 +83,9 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 	defer db.Close()
 	enableTestAudit(t, db)
 	ctx := context.Background()
+	if _, err := db.SetAuditCollection(ctx, model.AuditCollectionConfig{Mode: "standard"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	server := &model.Server{
 		Name: "audit-node", AgentID: "audit-agent", AgentTokenHash: security.HashSecret("audit-token"),
 		ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true,
@@ -147,8 +150,7 @@ func TestAgentConnectionReportsAcknowledgeStaleItemsWithoutBlockingValidReports(
 	if overview.ReportingUserCount != 1 || len(overview.Users) != 1 || overview.Users[0].UserID != activeUser.ID {
 		t.Fatalf("stale report was stored or valid report was lost: %#v", overview)
 	}
-	// A retry remains acknowledged but must not enqueue another historical
-	// risk scan for the already stored report.
+	// Historical detail retries remain acknowledged without scheduling scoring.
 	sut.auditRisk.stop()
 	sut.auditRisk = newAuditRiskQueue(func(context.Context, int64) error {
 		t.Fatal("duplicate report triggered risk evaluation")
@@ -267,7 +269,7 @@ func TestLongLivedQuietConnectionKeepsReportingPresence(t *testing.T) {
 	}
 }
 
-func TestConnectionAuditAutomaticActionTargetsOnlyBoundDevice(t *testing.T) {
+func TestConnectionAuditLegacyRestrictDoesNotChangeDeviceAccess(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -285,9 +287,22 @@ func TestConnectionAuditAutomaticActionTargetsOnlyBoundDevice(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	summary := model.ConnectionAuditUserSummary{UserID: user.ID, RiskScore: 95, Confidence: 0.95, EvidenceCategories: []string{"device_clone", "historical_anomaly"}, IdentityMode: "device_bound", CoverageComplete: true, CloneConfidence: 0.8, RiskDeviceIDHash: first.DeviceIDHash}
+	if err := db.SetSetting(ctx, settingAuditAction, string(model.AuditActionRestrict)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SetUserDeviceSubscriptionSuspended(ctx, user.ID, first.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.SetUserDeviceProxyAccessState(ctx, user.ID, first.ID, "reject_new"); err != nil {
+		t.Fatal(err)
+	}
 	sut := newTestServer(db, "test-secret", "")
-	sut.applyConnectionAuditDeviceAction(ctx, summary, model.SubscriptionAuditRisk{})
+	if sut.auditSettingsState(ctx).Action != model.AuditActionWarn {
+		t.Fatal("legacy restrict setting must resolve to warning only")
+	}
+	if err := sut.evaluateConnectionAuditRisks(ctx, user.ID); err != nil {
+		t.Fatal(err)
+	}
 	storedFirst, err := db.GetUserDevice(ctx, user.ID, first.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -297,24 +312,12 @@ func TestConnectionAuditAutomaticActionTargetsOnlyBoundDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !storedFirst.SubscriptionSuspended || storedFirst.ProxyAccessState != "reject_new" {
-		t.Fatalf("target device was not restricted: %#v", storedFirst)
+		t.Fatalf("existing restriction was changed: %#v", storedFirst)
 	}
 	if storedSecond.SubscriptionSuspended || storedSecond.ProxyAccessState != "active" {
 		t.Fatalf("unrelated device was changed: %#v", storedSecond)
 	}
 
-	if err := db.SetSetting(ctx, settingAuditAction, string(model.AuditActionWarn)); err != nil {
-		t.Fatal(err)
-	}
-	summary.RiskDeviceIDHash = second.DeviceIDHash
-	sut.applyConnectionAuditDeviceAction(ctx, summary, model.SubscriptionAuditRisk{})
-	storedSecond, err = db.GetUserDevice(ctx, user.ID, second.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if storedSecond.SubscriptionSuspended || storedSecond.ProxyAccessState != "active" {
-		t.Fatalf("warn mode changed device: %#v", storedSecond)
-	}
 }
 
 func TestAgentConnectionReportsRejectCrossServerInbound(t *testing.T) {

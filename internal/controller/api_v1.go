@@ -27,6 +27,9 @@ import (
 type apiPrincipalContextKey struct{}
 
 func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
+	for _, view := range []string{"accounts", "events", "executions"} {
+		mux.HandleFunc("/api/v1/audit/"+view, s.apiAuth(s.apiV1AccountAudit, model.RoleOperator))
+	}
 	mux.HandleFunc("/api/v1/openapi.json", s.apiAuth(s.apiV1OpenAPI, model.RoleViewer))
 	mux.HandleFunc("/api/v1/capabilities", s.apiAuth(s.apiV1Capabilities, model.RoleViewer))
 	mux.HandleFunc("/api/v1/query", s.apiAuth(s.apiV1Query, model.RoleViewer))
@@ -44,6 +47,11 @@ func (s *Server) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/telegram/bindings/", s.apiAuth(s.apiV1TelegramBindings, model.RoleNone))
 	mux.HandleFunc("/api/v1/notification-broadcasts", s.apiAuth(s.apiV1NotificationBroadcasts, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/notification-broadcasts/", s.apiAuth(s.apiV1NotificationBroadcasts, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/device-retirement", s.apiAuth(s.deviceRetirementRead, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/status", s.apiAuth(s.apiV1AccountAuditStatus, model.RoleOperator))
+	mux.HandleFunc("/api/v1/audit/collection", s.apiAuth(s.apiV1AuditCollection, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/evidence", s.apiAuth(s.apiV1AccountAuditEvidence, model.RoleAdmin))
+	mux.HandleFunc("/api/v1/audit/policy", s.apiAuth(s.apiV1AccountAuditPolicy, model.RoleAdmin))
 	mux.HandleFunc("/api/v1/changesets", s.apiAuth(s.apiV1Changesets, model.RoleViewer))
 	mux.HandleFunc("/api/v1/changesets/", s.apiAuth(s.apiV1Changeset, model.RoleViewer))
 	mux.HandleFunc("/api/v1/api-principals", s.auth(s.apiPrincipals, model.RoleAdmin))
@@ -796,6 +804,8 @@ func (s *Server) registerAutomationHandlers() {
 	s.registerNetworkAutomationOperations()
 	s.registerOpsAutomationOperations()
 	s.registerAuditAutomationOperations()
+	s.registerAuditCollectionOperations()
+	s.registerAccountAuditPolicyOperations()
 	s.registerSystemAutomationOperations()
 	s.registerNodeIncidentAutomationOperations()
 	s.registerNodeWorkspaceAutomationOperations()

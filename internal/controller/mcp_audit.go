@@ -248,24 +248,14 @@ func (s *Server) auditReviewDeleteCandidate(ctx context.Context, input json.RawM
 // ---- MCP audit resource queries ----
 
 func (s *Server) mcpAuditConnectionOverview(ctx context.Context, principal application.Principal, windowHours int) (any, error) {
-	overview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
-	if err != nil {
-		return nil, err
-	}
-	overview.GeoDatabase = s.geoIPStatus
-	overview.Users = filterAuditUsers(overview.Users, principal)
-	return overview, nil
+	return nil, errors.New("legacy audit scoring retired; use persisted account audit snapshots")
 }
 
 func (s *Server) mcpAuditConnectionUser(ctx context.Context, principal application.Principal, userID, windowHours int64) (any, error) {
 	if !principal.AllowsInt64("user_ids", userID) {
 		return nil, errors.New("not authorized")
 	}
-	detail, err := s.store.ConnectionAuditUserDetail(ctx, userID, int(windowHours), s.auditPolicy(ctx))
-	if err != nil {
-		return nil, err
-	}
-	return detail, nil
+	return nil, errors.New("legacy audit scoring retired; use persisted account audit snapshots")
 }
 
 func (s *Server) mcpAuditSubscriptionOverview(ctx context.Context, principal application.Principal, windowHours int) (any, error) {
@@ -281,7 +271,7 @@ func (s *Server) mcpAuditSubscriptionUser(ctx context.Context, principal applica
 	if !principal.AllowsInt64("user_ids", userID) {
 		return nil, errors.New("not authorized")
 	}
-	return s.store.SubscriptionAuditUserDetail(ctx, userID, int(windowHours), s.auditPolicy(ctx))
+	return nil, errors.New("legacy audit scoring retired; use persisted account audit snapshots")
 }
 
 func (s *Server) mcpAuditRiskOverview(ctx context.Context, principal application.Principal, windowHours int) (any, error) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -60,32 +59,8 @@ func (s *Server) userDevices(w http.ResponseWriter, r *http.Request, userID int6
 		return
 	}
 	switch r.Method {
-	case http.MethodPatch:
-		var request struct {
-			Name string `json:"name"`
-		}
-		if !decode(w, r, &request) {
-			return
-		}
-		device, err := s.store.RenameUserDevice(r.Context(), userID, deviceID, request.Name)
-		if err != nil {
-			s.writeUserDeviceError(w, err)
-			return
-		}
-		auditReq(s, r, "update", "user-device", fmt.Sprintf("%d:%s", userID, deviceID))
-		write(w, http.StatusOK, map[string]any{"device": device})
-	case http.MethodDelete:
-		device, err := s.store.RevokeUserDevice(r.Context(), userID, deviceID)
-		if err != nil {
-			s.writeUserDeviceError(w, err)
-			return
-		}
-		if err := s.queueUserDeviceCredentialDeployment(r.Context(), userID); err != nil {
-			fail(w, err, http.StatusInternalServerError)
-			return
-		}
-		auditReq(s, r, "revoke", "user-device", fmt.Sprintf("%d:%s", userID, deviceID))
-		write(w, http.StatusOK, map[string]any{"device": device})
+	case http.MethodPatch, http.MethodDelete:
+		fail(w, errors.New("device-specific subscriptions are no longer supported"), http.StatusGone)
 	default:
 		method(w)
 	}

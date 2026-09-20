@@ -138,7 +138,8 @@ func networkDescriptors(positiveID map[string]any, stringValue, boolValue map[st
 		{"dns_lists.delete", "删除未被引用且非默认的 DNS 解析列表", schemaObject(map[string]any{"dns_list_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "dns_list_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "dns_list_id": positiveID}, "deleted"), 3, true, true},
 		{"dns_lists.set_default", "将指定 DNS 解析列表设为全局默认", schemaObject(map[string]any{"dns_list_id": positiveID}, "dns_list_id"), schemaObject(map[string]any{"dns_list": dnsList}, "dns_list"), 2, false, true},
 		{"servers.dns_policy.set", "设置指定服务器的 DNS 解析策略", schemaObject(map[string]any{"server_id": positiveID, "changes": dnsPolicyFields}, "server_id", "changes"), schemaObject(map[string]any{"dns_policy": dnsPolicy, "changed_fields": stringArray(1, 32)}, "dns_policy"), 2, false, false},
-		{"servers.dns_test", "对指定服务器发起一次 DNS 解析基准检查任务", schemaObject(map[string]any{"server_id": positiveID, "action": map[string]any{"type": "string", "enum": []string{"test", "test_and_apply"}}, "apply_on_success": boolValue}, "server_id"), schemaObject(map[string]any{"task": closedObject(map[string]any{"id": positiveID, "type": stringValue, "status": stringValue})}, "task"), 2, false, false},
+		{"servers.dns_test_batch", "对选定服务器发起一次可追踪的 DNS 测试（不应用配置）", schemaObject(map[string]any{"server_ids": map[string]any{"type": "array", "items": positiveID, "minItems": 1, "maxItems": 1000, "uniqueItems": true}}, "server_ids"), schemaObject(map[string]any{"operation": map[string]any{"type": "object"}, "task_ids": arrayOf(map[string]any{"type": "integer", "minimum": 0})}, "operation", "task_ids"), 2, false, false},
+		{"servers.dns_test", "对指定服务器发起一次 DNS 解析基准检查任务", schemaObject(map[string]any{"server_id": positiveID, "action": map[string]any{"type": "string", "enum": []string{"test", "test_and_apply"}}, "apply_on_success": boolValue}, "server_id"), schemaObject(map[string]any{"task": closedObject(map[string]any{"id": positiveID, "type": stringValue, "status": stringValue}), "operation": map[string]any{"type": "object"}, "run": closedObject(map[string]any{"request_id": stringValue, "status": stringValue})}, "task"), 2, false, false},
 		{"servers.mtu_detect", "对指定服务器发起一次路径 MTU 检测任务", schemaObject(map[string]any{"server_id": positiveID, "target_host": map[string]any{"type": "string", "maxLength": 255}, "target_port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535}, "interface_name": map[string]any{"type": "string", "maxLength": 64}, "overhead_bytes": map[string]any{"type": "integer", "minimum": 0}, "desired_mtu": map[string]any{"type": "integer", "minimum": 1280, "maximum": 9000}}, "server_id"), schemaObject(map[string]any{"task": closedObject(map[string]any{"id": positiveID, "type": stringValue, "status": stringValue})}, "task"), 2, false, false},
 		{"dns_records.create", "在指定 DNS 区域创建解析记录（实时写入服务商）", schemaObject(map[string]any{"record": dnsRecordFields}, "record"), schemaObject(map[string]any{"dns_record": dnsRecord}, "dns_record"), 2, false, false},
 		{"dns_records.update", "更新指定 DNS 区域中的解析记录", schemaObject(map[string]any{"dns_zone_id": positiveID, "record_id": stringValue, "changes": dnsRecordFields}, "dns_zone_id", "record_id", "changes"), schemaObject(map[string]any{"dns_record": dnsRecord, "changed_fields": stringArray(1, 32)}, "dns_record"), 2, false, false},
@@ -190,6 +191,13 @@ func networkWriteResolver(name string) func(context.Context, any) ([]mcpauth.Res
 			}
 		}
 		switch name {
+		case "servers.dns_test_batch":
+			ids, _ := object["server_ids"].([]any)
+			for _, value := range ids {
+				if id, ok := int64Value(value); ok && id > 0 {
+					refs = append(refs, mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(id, 10)})
+				}
+			}
 		case "servers.dns_policy.set", "servers.dns_test", "servers.mtu_detect":
 			if id, ok := int64Value(object["server_id"]); ok && id > 0 {
 				refs = append(refs, mcpauth.ResourceRef{Type: "server", ID: strconv.FormatInt(id, 10)})

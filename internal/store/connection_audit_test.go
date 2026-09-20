@@ -10,6 +10,13 @@ import (
 	"github.com/OboardProject/oboard/internal/model"
 )
 
+func enableHistoricalAuditDetails(t *testing.T, s *Store) {
+	t.Helper()
+	if _, err := s.SetAuditCollection(context.Background(), model.AuditCollectionConfig{Mode: "standard"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConnectionAuditDefaultsToDisabledForNewServer(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
@@ -121,6 +128,7 @@ func TestConnectionAuditReportsAreIdempotentAndRiskIsAggregated(t *testing.T) {
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
 	}
+	enableHistoricalAuditDetails(t, s)
 	user := &model.User{Username: "shared-user", Nickname: "Shared", PasswordHash: "hash", Role: model.RoleViewer, Status: "active", ProxyUUID: "uuid-audit", ProxyPassword: "secret"}
 	if err := s.CreateUser(ctx, user); err != nil {
 		t.Fatal(err)
@@ -237,6 +245,7 @@ func TestConnectionAuditOverviewKeepsHistoricalCloneEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	enableHistoricalAuditDetails(t, s)
 	server := &model.Server{Name: "geo-risk-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -276,6 +285,7 @@ func TestConnectionAuditDetectsSharedSourceIPsAcrossUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	enableHistoricalAuditDetails(t, s)
 	server := &model.Server{Name: "shared-ip-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -331,6 +341,7 @@ func TestConnectionAuditProbeEpisodeExcludesAllNodeFanout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	enableHistoricalAuditDetails(t, s)
 	server := &model.Server{Name: "probe-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -369,6 +380,7 @@ func TestConnectionAuditProbeBudgetOverflowBackfillsFanout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	enableHistoricalAuditDetails(t, s)
 	server := &model.Server{Name: "probe-abuse-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -433,6 +445,7 @@ func TestConnectionAuditMaintenancePrunesReportsOutsideRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	enableHistoricalAuditDetails(t, s)
 	server := &model.Server{Name: "retention-node", ListenIP: "0.0.0.0", Status: model.ServerOnline, ConnectionAuditEnabled: true}
 	if err := s.CreateServer(ctx, server); err != nil {
 		t.Fatal(err)
@@ -443,7 +456,7 @@ func TestConnectionAuditMaintenancePrunesReportsOutsideRetention(t *testing.T) {
 	}
 	nowTime := time.Now().UTC()
 	reports := []model.ConnectionAuditReport{
-		{ReportID: "expired-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.40", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-31*24*time.Hour - time.Minute), EndedAt: nowTime.Add(-31 * 24 * time.Hour)},
+		{ReportID: "expired-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.40", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-25*time.Hour - time.Minute), EndedAt: nowTime.Add(-25 * time.Hour)},
 		{ReportID: "current-audit", ServerID: server.ID, UserID: user.ID, SourceIP: "198.51.100.41", Network: "tcp", ConnectionCount: 1, ActivePeak: 1, StartedAt: nowTime.Add(-time.Minute), EndedAt: nowTime},
 	}
 	if _, err := s.AddConnectionAuditReports(ctx, reports); err != nil {

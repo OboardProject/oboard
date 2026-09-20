@@ -330,63 +330,6 @@ func (s *Server) registerUserAutomationOperations() {
 		return map[string]any{"user_group_member": automationUserGroupMemberView(member)}, nil
 	})
 
-	// ---- user_devices.update ----
-	s.automation.RegisterValidator("user_devices.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		device, err := s.userDeviceRenameCandidate(ctx, principal, input)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"device": automationUserDeviceView(device)}, nil
-	})
-	s.automation.RegisterRevisionResolver("user_devices.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
-		device, err := s.userDeviceRenameCandidate(ctx, principal, input)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]string{"user:" + strconv.FormatInt(device.UserID, 10): device.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
-	})
-	s.automation.Register("user_devices.update", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		request, device, err := s.userDeviceRenameInput(ctx, principal, input)
-		if err != nil {
-			return nil, err
-		}
-		updated, err := s.store.RenameUserDevice(ctx, request.UserID, request.DeviceID, request.Name)
-		if err != nil {
-			return nil, err
-		}
-		_ = device
-		return map[string]any{"device": automationUserDeviceView(*updated)}, nil
-	})
-
-	// ---- user_devices.revoke ----
-	s.automation.RegisterValidator("user_devices.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		_, device, err := s.userDeviceRevokeInput(ctx, principal, input)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"device": automationUserDeviceView(device), "revoked": true}, nil
-	})
-	s.automation.RegisterRevisionResolver("user_devices.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (map[string]string, error) {
-		_, device, err := s.userDeviceRevokeInput(ctx, principal, input)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]string{"user:" + strconv.FormatInt(device.UserID, 10): device.UpdatedAt.UTC().Format(time.RFC3339Nano)}, nil
-	})
-	s.automation.Register("user_devices.revoke", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
-		request, _, err := s.userDeviceRevokeInput(ctx, principal, input)
-		if err != nil {
-			return nil, err
-		}
-		device, err := s.store.RevokeUserDevice(ctx, request.UserID, request.DeviceID)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.queueUserDeviceCredentialDeployment(ctx, request.UserID); err != nil {
-			return nil, err
-		}
-		return s.attachDeliveryCompletion(ctx, map[string]any{"device": automationUserDeviceView(*device), "revoked": true}, request.UserID, 0), nil
-	})
 }
 
 type userCreateAutomationInput struct {
@@ -400,8 +343,6 @@ type userCreateAutomationInput struct {
 		TrafficLimitBytes         int64  `json:"traffic_limit_bytes"`
 		TrafficResetMode          string `json:"traffic_reset_mode"`
 		TrafficResetDay           int    `json:"traffic_reset_day"`
-		DeviceLimit               int    `json:"device_limit"`
-		LegacyProxyEnabled        bool   `json:"legacy_proxy_enabled"`
 		SubscriptionBurnAfterRead bool   `json:"subscription_burn_after_read"`
 	} `json:"user"`
 }
@@ -420,7 +361,6 @@ func (s *Server) userCreateAutomationCandidate(ctx context.Context, principal ap
 		TrafficLimitBytes:         request.User.TrafficLimitBytes,
 		TrafficResetMode:          request.User.TrafficResetMode,
 		TrafficResetDay:           request.User.TrafficResetDay,
-		DeviceLimit:               request.User.DeviceLimit,
 		LegacyProxyEnabled:        true,
 		LegacyProxyEnabledSet:     true,
 		SubscriptionBurnAfterRead: request.User.SubscriptionBurnAfterRead,
@@ -495,7 +435,7 @@ func (s *Server) userAutomationRevision(ctx context.Context, input json.RawMessa
 var userAutomationChangeFields = map[string]bool{
 	"nickname": true, "role": true, "status": true, "password": true,
 	"speed_limit_mbps": true, "traffic_limit_bytes": true, "traffic_reset_mode": true,
-	"traffic_reset_day": true, "device_limit": true, "legacy_proxy_enabled": true,
+	"traffic_reset_day":            true,
 	"subscription_burn_after_read": true, "subscription_age_enabled": true,
 	"subscription_age_public_key": true,
 }
@@ -603,23 +543,6 @@ func (s *Server) userUpdateAutomationCandidate(ctx context.Context, principal ap
 		}
 		u.TrafficResetDay = v
 		changed = append(changed, "traffic_reset_day")
-	}
-	if value, ok := fields["device_limit"]; ok {
-		var v int
-		if err := json.Unmarshal(value, &v); err != nil {
-			return model.User{}, nil, fmt.Errorf("device_limit: %w", err)
-		}
-		u.DeviceLimit = v
-		changed = append(changed, "device_limit")
-	}
-	if value, ok := fields["legacy_proxy_enabled"]; ok {
-		var v bool
-		if err := json.Unmarshal(value, &v); err != nil {
-			return model.User{}, nil, fmt.Errorf("legacy_proxy_enabled: %w", err)
-		}
-		u.LegacyProxyEnabled = v
-		u.LegacyProxyEnabledSet = true
-		changed = append(changed, "legacy_proxy_enabled")
 	}
 	if value, ok := fields["subscription_burn_after_read"]; ok {
 		var v bool

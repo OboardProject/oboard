@@ -110,7 +110,13 @@ func (s *Server) reconcileProxyCredentials(ctx context.Context) error {
 		prepared := core.ProjectionSnapshot(projection, data.Users)
 		desired = append(desired, core.ProxyCredentialScopes(data.Users, data.Inbounds, credentialOptions(data, prepared))...)
 	}
-	if err := s.store.ReconcileProxyCredentials(ctx, s.sessionSecret, desired); err != nil {
+	accountScopes := desired[:0]
+	for _, scope := range desired {
+		if scope.DeviceIDHash == "" {
+			accountScopes = append(accountScopes, scope)
+		}
+	}
+	if err := s.store.ReconcileProxyCredentials(ctx, s.sessionSecret, accountScopes); err != nil {
 		return err
 	}
 	data, err = s.loadProxyCredentialData(ctx, data)
@@ -378,6 +384,10 @@ func buildAuthorizationProjection(revision uint64, at time.Time, data store.Full
 	}
 	projection := &authorizationProjection{routingRevision: revision, builtAt: at}
 	serversByRoute := map[[2]int64]map[int64]bool{}
+	transitionEnds := map[int64]time.Time{}
+	for _, user := range data.Users {
+		transitionEnds[user.ID] = user.DeviceTransitionUntil
+	}
 	for _, c := range credentials {
 		if c.Status != "active" || c.ID == "" {
 			continue
@@ -385,6 +395,26 @@ func buildAuthorizationProjection(revision uint64, at time.Time, data store.Full
 		intervals, ok := intervalsByScope[proxyScopeKey(c)]
 		if !ok || len(intervals) == 0 {
 			continue
+		}
+		if c.DeviceIDHash != "" {
+			end := transitionEnds[c.UserID]
+			if !end.After(at) {
+				continue
+			}
+			bounded := make([]authorizationInterval, 0, len(intervals))
+			for _, interval := range intervals {
+				if !interval.from.Before(end) {
+					continue
+				}
+				if interval.to.IsZero() || interval.to.After(end) {
+					interval.to = end
+				}
+				bounded = append(bounded, interval)
+			}
+			intervals = bounded
+			if len(intervals) == 0 {
+				continue
+			}
 		}
 		route := [2]int64{c.InboundID, c.PathID}
 		servers, resolved := serversByRoute[route]

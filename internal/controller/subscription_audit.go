@@ -29,17 +29,11 @@ type auditSettingsState struct {
 }
 
 func (s *Server) auditSettingsState(ctx context.Context) auditSettingsState {
-	state := auditSettingsState{Enabled: false, Subscription: true, Connection: true, Action: model.AuditActionRestrict}
+	state := auditSettingsState{Enabled: false, Subscription: true, Connection: true, Action: model.AuditActionWarn}
 	settings := s.runtimeSettings(ctx)
 	state.Enabled = settingBool(settings, settingAuditEnabled, false)
 	state.Subscription = settingBool(settings, settingSubscriptionAuditEnabled, true)
 	state.Connection = settingBool(settings, settingConnectionAuditEnabled, true)
-	switch strings.ToLower(strings.TrimSpace(settings[settingAuditAction])) {
-	case string(model.AuditActionWarn):
-		state.Action = model.AuditActionWarn
-	default:
-		state.Action = model.AuditActionRestrict
-	}
 	return state
 }
 
@@ -194,20 +188,11 @@ func (s *Server) subscriptionAuditOverview(w http.ResponseWriter, r *http.Reques
 		method(w)
 		return
 	}
-	_, overview, _, err := s.auditOverviewData(r.Context(), s.auditWindowHours(r.Context(), r, 24))
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	write(w, http.StatusOK, map[string]any{"subscription_audit": overview})
+	retiredAuditRiskEndpoint(w)
 }
 
 func (s *Server) subscriptionAuditOverviewData(ctx context.Context, windowHours int) (model.SubscriptionAuditOverview, error) {
-	overview, err := s.store.SubscriptionAuditOverview(ctx, windowHours, s.auditPolicy(ctx))
-	if err == nil {
-		overview.GeoDatabase = s.geoIPStatus
-	}
-	return overview, err
+	return model.SubscriptionAuditOverview{}, errors.New("legacy subscription scoring retired; use persisted account audit snapshots")
 }
 
 func (s *Server) subscriptionAuditUser(w http.ResponseWriter, r *http.Request) {
@@ -221,16 +206,7 @@ func (s *Server) subscriptionAuditUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid subscription audit user id"), http.StatusBadRequest)
 		return
 	}
-	detail, err := s.store.SubscriptionAuditUserDetail(r.Context(), userID, s.auditWindowHours(r.Context(), r, 24), s.auditPolicy(r.Context()))
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, sql.ErrNoRows) {
-			status = http.StatusNotFound
-		}
-		fail(w, err, status)
-		return
-	}
-	write(w, http.StatusOK, map[string]any{"subscription_audit_user": detail})
+	retiredAuditRiskEndpoint(w)
 }
 
 func (s *Server) combinedAuditOverview(w http.ResponseWriter, r *http.Request) {
@@ -238,29 +214,11 @@ func (s *Server) combinedAuditOverview(w http.ResponseWriter, r *http.Request) {
 		method(w)
 		return
 	}
-	connectionOverview, subscriptionOverview, combinedOverview, err := s.auditOverviewData(r.Context(), s.auditWindowHours(r.Context(), r, 24))
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	write(w, http.StatusOK, map[string]any{
-		"connection_audit":   connectionOverview,
-		"subscription_audit": subscriptionOverview,
-		"audit_risk":         combinedOverview,
-	})
+	retiredAuditRiskEndpoint(w)
 }
 
 func (s *Server) buildAuditOverviewData(ctx context.Context, windowHours int) (model.ConnectionAuditOverview, model.SubscriptionAuditOverview, model.CombinedAuditOverview, error) {
-	connectionOverview, err := s.store.ConnectionAuditOverview(ctx, windowHours, s.connectionAuditEnabled(ctx), s.auditPolicy(ctx))
-	if err != nil {
-		return model.ConnectionAuditOverview{}, model.SubscriptionAuditOverview{}, model.CombinedAuditOverview{}, err
-	}
-	connectionOverview.GeoDatabase = s.geoIPStatus
-	subscriptionOverview, err := s.subscriptionAuditOverviewData(ctx, windowHours)
-	if err != nil {
-		return model.ConnectionAuditOverview{}, model.SubscriptionAuditOverview{}, model.CombinedAuditOverview{}, err
-	}
-	return connectionOverview, subscriptionOverview, combineAuditOverviews(connectionOverview, subscriptionOverview), nil
+	return model.ConnectionAuditOverview{}, model.SubscriptionAuditOverview{}, model.CombinedAuditOverview{}, errors.New("legacy audit scoring retired; use persisted account audit snapshots")
 }
 
 func combineAuditOverviews(connectionOverview model.ConnectionAuditOverview, subscriptionOverview model.SubscriptionAuditOverview) model.CombinedAuditOverview {
@@ -445,10 +403,9 @@ const dashboardAuditRefreshTimeout = 12 * time.Second
 // through connectionAuditComputing, keeps the previous value on failure, and
 // publishes a realtime audit invalidation only when the count actually moved.
 func (s *Server) refreshDashboardConnectionAudit() {
-	const windowHours = 24
 	ctx, cancel := context.WithTimeout(context.Background(), dashboardAuditRefreshTimeout)
 	defer cancel()
-	overview, err := s.store.ConnectionAuditOverview(ctx, windowHours, true, s.auditPolicy(ctx))
+	count, err := s.pendingAccountAuditEventCount(ctx)
 	if err != nil {
 		s.connectionAuditCacheMu.Lock()
 		s.connectionAuditComputing = false
@@ -457,9 +414,9 @@ func (s *Server) refreshDashboardConnectionAudit() {
 		return
 	}
 	s.connectionAuditCacheMu.Lock()
-	changed := !s.connectionAuditCacheValid || s.connectionAuditCacheCount != overview.ElevatedRiskCount
+	changed := !s.connectionAuditCacheValid || s.connectionAuditCacheCount != count
 	s.connectionAuditCacheAt = time.Now()
-	s.connectionAuditCacheCount = overview.ElevatedRiskCount
+	s.connectionAuditCacheCount = count
 	s.connectionAuditCacheValid = true
 	s.connectionAuditComputing = false
 	s.connectionAuditCacheMu.Unlock()

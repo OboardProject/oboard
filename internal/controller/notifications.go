@@ -72,8 +72,8 @@ var notificationEventDefinitions = []notificationEventDefinition{
 	{notificationServerOffline, "服务器失联", "服务器超过设置的离线判断时间未连接时提醒", []string{"ServerName", "ServerID", "LastSeen", "Time"}},
 	{notificationServerOnline, "服务器恢复", "失联服务器恢复在线并保持一段时间后提醒", []string{"ServerName", "ServerID", "Time"}},
 	{notificationTrafficQuota, "流量达到上限", "所选用户的周期流量达到上限时提醒", []string{"UserName", "UserID", "Used", "Limit", "ResetAt", "Time"}},
-	{notificationUserRisk, "异常使用", "已开启连接审计的服务器发现所选用户大量来源 IP、跨网段或异常并发时提醒", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "ActivePeak", "Time"}},
-	{notificationSubscriptionRisk, "订阅共享风险", "订阅拉取达到风险阈值或被自动暂停时提醒管理员", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "RegionCount", "PullCount", "Suspended", "Time"}},
+	{notificationUserRisk, "账号行为线索", "账号风险快照形成待核实事件时提醒，仅告警，不代表已确认共享或泄露", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "ActivePeak", "Time"}},
+	{notificationSubscriptionRisk, "订阅扩散线索", "订阅活动产生需要核实的线索，不因评分自动暂停账号", []string{"UserName", "UserID", "RiskLevel", "RiskScore", "Signals", "SourceIPCount", "RegionCount", "PullCount", "Suspended", "Time"}},
 	{notificationSubscriptionAbnormal, "订阅异常", "用户订阅在短时间内多次拉取失败或被暂停后仍反复尝试时提醒管理员", []string{"UserName", "UserID", "Count", "Window", "Time"}},
 	{notificationTaskFailed, "任务失败", "配置下发、更新或检测任务失败时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
 	{notificationTaskTimeout, "任务超时", "任务等待或执行超过五分钟时提醒", []string{"TaskType", "TaskID", "ServerName", "Error", "Time"}},
@@ -101,7 +101,7 @@ var defaultNotificationTemplates = map[string]model.NotificationTemplate{
 	},
 	notificationUserRisk: {
 		Title: "异常使用提醒 · {{.UserName}}",
-		Body:  "{{.UserName}} 的连接行为达到{{.RiskLevel}}\n风险分：{{.RiskScore}}\n异常表现：{{.Signals}}\n来源 IP：{{.SourceIPCount}} 个\n并发峰值：{{.ActivePeak}}\n时间：{{.Time}}",
+		Body:  "{{.UserName}}：{{.RiskLevel}}\n规则强度下界：{{.RiskScore}}\n依据与边界：{{.Signals}}\n时间：{{.Time}}",
 	},
 	notificationSubscriptionRisk: {
 		Title: "订阅风险提醒 · {{.UserName}}",
@@ -1250,6 +1250,9 @@ func (s *Server) deliverPendingNotifications(ctx context.Context) {
 		return
 	}
 	for _, delivery := range deliveries {
+		if (delivery.Event == notificationUserRisk || delivery.Event == notificationSubscriptionRisk) && !s.auditSettingsState(ctx).Enabled {
+			continue
+		}
 		var sendErr error
 		if delivery.Channel.Type == "telegram" {
 			sendErr = s.sendTelegramChannelNotification(ctx, delivery.Channel, delivery.Title, delivery.Body)
@@ -1576,151 +1579,21 @@ func notificationCertificateIssuer(value string) string {
 	}
 }
 
-func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64, evidence *store.ConnectionAuditSharedEvidence) {
-	if len(userIDs) == 0 {
-		return
-	}
+func (s *Server) notifyConnectionAuditRisks(ctx context.Context, userIDs []int64, _ *store.ConnectionAuditSharedEvidence) {
 	if !s.connectionAuditEnabled(ctx) {
 		return
 	}
-	s.connectionAuditNotificationMu.Lock()
-	defer s.connectionAuditNotificationMu.Unlock()
-	settings := s.runtimeSettings(ctx)
-	nowTime := time.Now().UTC()
-	// The caller already loaded the shared-route map and risk-window reports;
-	// fall back to loading them here only for other call sites.
-	riskEvents := map[int64]*model.ConnectionAuditRiskEvent{}
-	if evidence == nil {
-		loaded, err := s.store.ConnectionAuditCurrentRiskForUsers(ctx, userIDs, nowTime, s.auditPolicy(ctx))
-		if err != nil {
-			log.Printf("connection audit notification: %v", err)
-			return
-		}
-		riskEvents = loaded
-	}
-	seen := map[int64]bool{}
 	for _, userID := range userIDs {
-		if userID <= 0 || seen[userID] {
-			continue
-		}
-		seen[userID] = true
-		var event *model.ConnectionAuditRiskEvent
-		if evidence != nil {
-			event = store.CurrentRiskEventFromReports(evidence.ReportsByUser[userID], s.auditPolicy(ctx), evidence.SharedRoutes, nowTime)
-		} else {
-			event = riskEvents[userID]
-		}
-		if event == nil {
-			continue
-		}
-		settingKey := fmt.Sprintf("connection_audit.notification.%d", userID)
-		state := connectionAuditNotificationState{}
-		_ = json.Unmarshal([]byte(settings[settingKey]), &state)
-		sameEvent := !state.ActiveEndedAt.IsZero() && !event.StartedAt.After(state.ActiveEndedAt.Add(15*time.Minute))
-		if !sameEvent {
-			state.ActiveStartedAt = event.StartedAt
-			state.NotifiedLevel = ""
-			state.Pending = true
-		}
-		state.ActiveEndedAt = event.EndedAt
-		if auditRiskRank(event.Level) > auditRiskRank(state.NotifiedLevel) {
-			state.Pending = true
-		}
-		if !state.Pending || (!state.LastNotifiedAt.IsZero() && nowTime.Sub(state.LastNotifiedAt) < time.Hour) {
-			if encoded, marshalErr := json.Marshal(state); marshalErr == nil {
-				_ = s.store.SetSetting(ctx, settingKey, string(encoded))
-			}
-			continue
-		}
-		user, err := s.store.GetUser(ctx, userID)
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(user.Nickname)
-		if name == "" {
-			name = user.Username
-		}
-		riskLevel := "告警"
-		switch event.Level {
-		case "confirmed":
-			riskLevel = "已确认"
-		case "critical":
-			riskLevel = "严重风险"
-		case "high":
-			riskLevel = "高风险"
-		}
-		signals := fmt.Sprintf("同一设备凭证在 %d 条独立网络上重叠有效业务 %d 秒", event.RouteCount, event.OverlapSecs)
-		queued := s.enqueueNotificationEvent(ctx, notificationEvent{
-			Name:         notificationUserRisk,
-			Key:          fmt.Sprintf("user:%d:device-clone:%s:%s", userID, event.Level, nowTime.Format("2006010215")),
-			TargetUserID: userID,
-			Data: map[string]string{
-				"UserName":      name,
-				"UserID":        fmt.Sprint(userID),
-				"RiskLevel":     riskLevel,
-				"RiskScore":     fmt.Sprint(event.Score),
-				"Signals":       signals,
-				"SourceIPCount": fmt.Sprint(event.SourceIPCount),
-				"ActivePeak":    "0",
-				"Time":          s.notificationNow(ctx),
-			},
-		})
-		if queued > 0 {
-			state.LastNotifiedAt = nowTime
-			state.NotifiedLevel = event.Level
-			state.Pending = false
-		}
-		if encoded, marshalErr := json.Marshal(state); marshalErr == nil {
-			_ = s.store.SetSetting(ctx, settingKey, string(encoded))
+		if userID > 0 {
+			_, _ = s.store.MarkAccountAuditDirty(ctx, userID)
 		}
 	}
 }
 
-func (s *Server) notifySubscriptionAuditRisk(ctx context.Context, user model.User, decision store.SubscriptionPullDecision) {
-	if !s.subscriptionAuditEnabled(ctx) {
-		return
+func (s *Server) notifySubscriptionAuditRisk(ctx context.Context, user model.User, _ store.SubscriptionPullDecision) {
+	if s.subscriptionAuditEnabled(ctx) && user.ID > 0 {
+		_, _ = s.store.MarkAccountAuditDirty(ctx, user.ID)
 	}
-	if !decision.Allowed && !decision.JustSuspended {
-		return
-	}
-	if decision.Risk.Score < 25 && !decision.JustSuspended {
-		return
-	}
-	name := strings.TrimSpace(user.Nickname)
-	if name == "" {
-		name = user.Username
-	}
-	key := fmt.Sprintf("subscription-risk:%d:%s", user.ID, time.Now().UTC().Format("2006010215"))
-	if decision.JustSuspended {
-		key = fmt.Sprintf("subscription-suspended:%d:%d", user.ID, decision.AuditID)
-	}
-	riskLevel := map[string]string{"medium": "中风险", "high": "高风险", "critical": "严重风险"}[decision.Risk.Level]
-	if riskLevel == "" {
-		riskLevel = "低风险"
-	}
-	status := "继续允许拉取"
-	if decision.Access.Suspended || decision.JustSuspended {
-		status = "已暂停，等待管理员恢复"
-	} else if decision.Warned {
-		status = "仅警告，未自动暂停"
-	}
-	s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name:         notificationSubscriptionRisk,
-		Key:          key,
-		TargetUserID: user.ID,
-		Data: map[string]string{
-			"UserName":      name,
-			"UserID":        strconv.FormatInt(user.ID, 10),
-			"RiskLevel":     riskLevel,
-			"RiskScore":     strconv.Itoa(decision.Risk.Score),
-			"Signals":       strings.Join(decision.Risk.Signals, "；"),
-			"SourceIPCount": strconv.Itoa(max(decision.Risk.Short.SourceIPCount, decision.Risk.Long.SourceIPCount)),
-			"RegionCount":   strconv.Itoa(max(decision.Risk.Short.RegionCount, decision.Risk.Long.RegionCount)),
-			"PullCount":     strconv.Itoa(max(decision.Risk.Short.PullCount, decision.Risk.Long.PullCount)),
-			"Suspended":     status,
-			"Time":          s.notificationNow(ctx),
-		},
-	})
 }
 
 const (
@@ -1735,34 +1608,7 @@ func (s *Server) maybeNotifySubscriptionAbnormal(ctx context.Context, userID int
 	if userID <= 0 {
 		return
 	}
-	count, err := s.store.CountRecentSubscriptionPullAbnormal(ctx, userID, time.Now().UTC().Add(-subscriptionAbnormalWindow))
-	if err != nil {
-		log.Printf("count abnormal subscription pulls: %v", err)
-		return
-	}
-	if count < subscriptionAbnormalThreshold {
-		return
-	}
-	user, err := s.store.GetUser(ctx, userID)
-	if err != nil {
-		return
-	}
-	name := strings.TrimSpace(user.Nickname)
-	if name == "" {
-		name = user.Username
-	}
-	s.enqueueNotificationEvent(ctx, notificationEvent{
-		Name:         notificationSubscriptionAbnormal,
-		Key:          fmt.Sprintf("subscription-abnormal:%d:%s", userID, time.Now().UTC().Format("2006010215")),
-		TargetUserID: userID,
-		Data: map[string]string{
-			"UserName": name,
-			"UserID":   strconv.FormatInt(userID, 10),
-			"Count":    strconv.Itoa(count),
-			"Window":   "最近 1 小时",
-			"Time":     s.notificationNow(ctx),
-		},
-	})
+	_, _ = s.store.MarkAccountAuditDirty(ctx, userID)
 }
 
 type connectionAuditNotificationState struct {

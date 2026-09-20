@@ -26,6 +26,7 @@ export type DNSPolicyUpdatePayload = {
 
 export type DNSBulkResult = {
   serverID: number
+  operationID?: string
   status: 'succeeded' | 'failed' | 'skipped'
   message: string
 }
@@ -146,6 +147,20 @@ export async function runDNSBulkAction(
   request: DNSBulkRequest,
   checkAvailability: DNSBulkCheckAvailability = () => '',
 ) {
+  if (action === 'test' && !hasDNSBulkPatch(patch) && policies.length > 1) {
+    if (policies.length > 1000) return policies.map((policy): DNSBulkResult => ({ serverID: policy.server_id, status: 'failed', message: '未发送：一次最多测试 1000 台服务器，请缩小选择范围' }))
+    try {
+      const response = await request('/dns-test-batch', { method: 'POST', body: JSON.stringify({ server_ids: policies.map(policy => policy.server_id) }) })
+      const operation = response?.operation as { id?: string; targets?: { target_type: string; target_id: string; state: string }[] } | undefined
+      return policies.map((policy): DNSBulkResult => {
+        const target = operation?.targets?.find(target => target.target_type === 'server' && target.target_id === String(policy.server_id))
+        const accepted = target && ['pending', 'running', 'succeeded'].includes(target.state)
+        return { serverID: policy.server_id, operationID: operation?.id, status: accepted ? 'succeeded' : 'failed', message: accepted ? '' : '测试未能入队，请查看任务记录' }
+      })
+    } catch (error) {
+      return policies.map((policy): DNSBulkResult => ({ serverID: policy.server_id, status: 'failed', message: `测试状态未知：${errorText(error, 'test')}` }))
+    }
+  }
   const results: DNSBulkResult[] = []
   for (const policy of policies) {
     results.push(await runForPolicy(policy, patch, action, request, checkAvailability))

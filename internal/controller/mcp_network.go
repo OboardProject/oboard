@@ -412,6 +412,7 @@ func automationDNSPolicyView(policy model.ServerDNSPolicy) map[string]any {
 // ---- DNS and MTU task triggers ----
 
 func (s *Server) registerDNSTaskOperations() {
+	s.registerDNSBatchOperation()
 	s.automation.RegisterValidator("servers.dns_test", func(ctx context.Context, principal application.Principal, input json.RawMessage) (any, error) {
 		return s.dnsTestAutomationValidate(ctx, principal, input)
 	})
@@ -477,6 +478,25 @@ func (s *Server) applyDNSTestOperation(ctx context.Context, principal applicatio
 		return nil, errors.New("server_id must be a positive integer")
 	}
 	action := firstNonEmptyString(request.Action, "test")
+	if action == "test" {
+		input, _ := json.Marshal(dnsBatchInput{ServerIDs: []int64{request.ServerID}})
+		result, err := s.applyDNSBatch(ctx, principal, input)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.TaskIDs) == 0 || result.TaskIDs[0] == 0 {
+			return nil, errors.New("DNS diagnostic preparation failed; operation " + result.Operation.ID)
+		}
+		task, err := s.store.GetTask(ctx, result.TaskIDs[0])
+		if err != nil {
+			return nil, err
+		}
+		var plan struct {
+			RequestID string `json:"request_id"`
+		}
+		_ = json.Unmarshal([]byte(task.PayloadJSON), &plan)
+		return map[string]any{"operation": result.Operation, "task": map[string]any{"id": task.ID, "type": task.Type, "status": task.Status}, "run": map[string]any{"request_id": plan.RequestID, "status": task.Status}}, nil
+	}
 	if action != "test" && action != "test_and_apply" {
 		return nil, errors.New("action must be test or test_and_apply")
 	}

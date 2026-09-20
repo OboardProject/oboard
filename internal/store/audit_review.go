@@ -372,6 +372,9 @@ func (s *Store) CancelAuditReview(ctx context.Context, reviewID string) error {
 }
 
 func (s *Store) DeleteAuditReview(ctx context.Context, reviewID string) error {
+	if strings.HasPrefix(reviewID, "aae_") {
+		return errors.New("事件辅助分析随事件保留，不能单独删除幂等记录")
+	}
 	result, err := s.db.ExecContext(ctx, `delete from ai_audit_reviews where id=? and status not in ('queued','running') and not exists(select 1 from ai_audit_review_jobs where review_id=? and status='running')`, reviewID, reviewID)
 	if err != nil {
 		return err

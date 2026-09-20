@@ -57,21 +57,23 @@ describe('DNS bulk settings', () => {
     expect(failedDNSBulkServerIDs(results)).toEqual([1, 2])
   })
 
-  it('runs server operations serially and preserves result order', async () => {
+  it('persists one intent for all selected targets and preserves result order', async () => {
     let active = 0
     let maximum = 0
     const policies = Array.from({ length: 7 }, (_, index) => policy(index + 1))
-    const results = await runDNSBulkAction(policies, {}, 'test', async () => {
+    const results = await runDNSBulkAction(policies, {}, 'test', async (path, init) => {
+      expect(path).toBe('/dns-test-batch')
+      expect(JSON.parse(String(init?.body))).toEqual({ server_ids: [1, 2, 3, 4, 5, 6, 7] })
       active++
       maximum = Math.max(maximum, active)
       await new Promise(resolve => setTimeout(resolve, 1))
       active--
-      return {}
+      return { operation: { id: 'one-intent', targets: policies.map(p => ({ target_type: 'server', target_id: String(p.server_id), state: 'pending' })) } }
     })
 
     expect(maximum).toBe(1)
     expect(results.map(result => result.serverID)).toEqual([1, 2, 3, 4, 5, 6, 7])
-    expect(results.every(result => result.status === 'succeeded')).toBe(true)
+    expect(results.every(result => result.status === 'succeeded' && result.operationID === 'one-intent')).toBe(true)
   })
 
   it('does not save when no selected field changes the policy', async () => {

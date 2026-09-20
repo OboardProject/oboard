@@ -32,6 +32,7 @@ func TestSubscriptionAuditGeographyNeverSuspendsLegacyToken(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	user := createSubscriptionAuditUser(t, s, "audit-user", "persistent-token", model.RoleViewer)
+	s.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-2*time.Minute))
 	policy := DefaultSubscriptionAuditPolicy()
 	base := time.Now().UTC().Add(-time.Minute)
 	for index, item := range []struct{ ip, province string }{{"1.1.1.1", "广东"}, {"8.8.8.8", "北京"}, {"9.9.9.9", "上海"}} {
@@ -51,15 +52,15 @@ func TestSubscriptionAuditGeographyNeverSuspendsLegacyToken(t *testing.T) {
 		t.Fatalf("geography changed subscription state: %#v", stored)
 	}
 	detail, err := s.SubscriptionAuditUserDetail(ctx, user.ID, 24, policy)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal(err)
 	}
-	if len(detail.Recent) != 3 || detail.Summary.RegionCount != 3 || detail.Summary.IdentityMode != "legacy_unbound" {
-		t.Fatalf("unexpected geographic evidence: %#v", detail)
+	if len(detail.Recent) != 0 {
+		t.Fatalf("authorization wrote retired geography history: %#v", detail)
 	}
 }
 
-func TestSubscriptionAuditLogicalPullDedupeAndRouteNovelty(t *testing.T) {
+func TestHistoricalSubscriptionAuditLogicalPullDedupeAndRouteNovelty(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -74,12 +75,23 @@ func TestSubscriptionAuditLogicalPullDedupeAndRouteNovelty(t *testing.T) {
 		event.RouteID = item.route
 		event.RepresentationID = "same-representation"
 		event.SubscriptionRevision = "revision-1"
-		decision, err := s.AuthorizeSubscriptionPull(ctx, user.ID, user.SubscriptionToken, event, policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
+		// Recreate prior-state history directly; ingress no longer writes this model.
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !decision.Allowed || decision.Risk.HardBlock {
-			t.Fatalf("route change was restricted: %#v", decision)
+		event.Outcome = "served"
+		event.RiskEligible = true
+		if err := prepareSubscriptionAuditEvent(ctx, tx, &event); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if _, err := insertSubscriptionPullAudit(ctx, tx, event); err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
 		}
 	}
 	detail, err := s.SubscriptionAuditUserDetail(ctx, user.ID, 24, policy)
@@ -91,7 +103,7 @@ func TestSubscriptionAuditLogicalPullDedupeAndRouteNovelty(t *testing.T) {
 	}
 }
 
-func TestSubscriptionAuditRiskBlockDoesNotConsumeOneTimeToken(t *testing.T) {
+func TestSubscriptionAuditRateLimitDoesNotConsumeOneTimeToken(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +111,7 @@ func TestSubscriptionAuditRiskBlockDoesNotConsumeOneTimeToken(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	user := createSubscriptionAuditUser(t, s, "one-time-risk", "persistent-risk-token", model.RoleViewer)
-	admin := createSubscriptionAuditUser(t, s, "one-time-admin", "one-time-admin-token", model.RoleAdmin)
+	s.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-2*time.Minute))
 	policy := DefaultSubscriptionAuditPolicy()
 	policy.Mode = "custom"
 	policy.RawRequestsPer60Seconds = model.AuditThreshold{Soft: 1, Hard: 2}
@@ -121,7 +133,6 @@ func TestSubscriptionAuditRiskBlockDoesNotConsumeOneTimeToken(t *testing.T) {
 	if _, err := s.GetUserBySubscriptionToken(ctx, oneTimeToken); err != nil {
 		t.Fatalf("blocked one-time token is unavailable: %v", err)
 	}
-	_ = admin
 	allowed, err := s.AuthorizeSubscriptionPull(ctx, user.ID, oneTimeToken, subscriptionAuditEvent(user.ID, "9.9.9.10", "上海", base.Add(62*time.Second)), policy, SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionRestrict})
 	if err != nil || !allowed.Allowed || !allowed.Burned {
 		t.Fatalf("resumed one-time token was not consumed: %#v, err=%v", allowed, err)
@@ -139,6 +150,7 @@ func TestSubscriptionAuditLegacyModeNeverAutoSuspends(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	user := createSubscriptionAuditUser(t, s, "warn-mode", "warn-token", model.RoleViewer)
+	s.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-2*time.Minute))
 	policy := DefaultSubscriptionAuditPolicy()
 	options := SubscriptionAuditOptions{AuditEnabled: true, Action: model.AuditActionWarn}
 	base := time.Now().UTC().Add(-time.Minute)
@@ -167,11 +179,11 @@ func TestSubscriptionAuditLegacyModeNeverAutoSuspends(t *testing.T) {
 		t.Fatalf("warn mode suspended the stored user: %#v", stored)
 	}
 	detail, err := s.SubscriptionAuditUserDetail(ctx, user.ID, 24, policy)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal(err)
 	}
-	if len(detail.Recent) != 3 || detail.Recent[0].Outcome != "served" {
-		t.Fatalf("legacy outcomes were not recorded: %#v", detail.Recent)
+	if len(detail.Recent) != 0 {
+		t.Fatalf("authorization wrote retired outcome history: %#v", detail.Recent)
 	}
 }
 
@@ -183,6 +195,7 @@ func TestSubscriptionAuditDisabledSkipsRecordingAndEvaluation(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	user := createSubscriptionAuditUser(t, s, "audit-off", "audit-off-token", model.RoleViewer)
+	s.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-2*time.Minute))
 	policy := DefaultSubscriptionAuditPolicy()
 	options := SubscriptionAuditOptions{AuditEnabled: false}
 	base := time.Now().UTC().Add(-time.Minute)
@@ -236,7 +249,7 @@ func TestValidateSubscriptionAuditPolicy(t *testing.T) {
 	}
 }
 
-func TestRejectedSubscriptionPullAuditPreservesUnknownProfileID(t *testing.T) {
+func TestRejectedSubscriptionPullAuditDoesNotWriteRetiredHistory(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -253,10 +266,10 @@ func TestRejectedSubscriptionPullAuditPreservesUnknownProfileID(t *testing.T) {
 		t.Fatal(err)
 	}
 	detail, err := s.SubscriptionAuditUserDetail(ctx, user.ID, 24, DefaultSubscriptionAuditPolicy())
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal(err)
 	}
-	if len(detail.Recent) != 1 || detail.Recent[0].ProfileID == nil || *detail.Recent[0].ProfileID != profileID {
-		t.Fatalf("requested profile ID was not retained: %#v", detail.Recent)
+	if len(detail.Recent) != 0 {
+		t.Fatalf("rejected request wrote retired history: %#v", detail.Recent)
 	}
 }

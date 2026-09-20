@@ -122,17 +122,6 @@ func (s *Server) acceptConnectionPresenceDelta(ctx context.Context, server *mode
 	if !written {
 		return nil, nil
 	}
-	deviceActivity := make(map[string]time.Time, len(accepted))
-	for _, event := range accepted {
-		if event.DeviceIDHash != "" && event.Meaningful && !event.PayloadLastAt.IsZero() {
-			if latest, ok := deviceActivity[event.DeviceIDHash]; !ok || event.PayloadLastAt.After(latest) {
-				deviceActivity[event.DeviceIDHash] = event.PayloadLastAt
-			}
-		}
-	}
-	if err := s.store.MarkUserDevicesProxyActivity(ctx, deviceActivity); err != nil {
-		log.Printf("mark device proxy activity: %v", err)
-	}
 	return accepted, nil
 }
 

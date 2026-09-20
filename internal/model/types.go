@@ -200,6 +200,7 @@ type User struct {
 	ProxyUsername                 string                       `json:"-"`
 	AuthorizationKey              string                       `json:"-"`
 	ProxyCredentials              []ProxyCredential            `json:"-"`
+	DeviceTransitionUntil         time.Time                    `json:"-"`
 	SSHRandomID                   string                       `json:"-"`
 	SpeedLimitMbps                int                          `json:"speed_limit_mbps"`
 	TrafficLimitBytes             int64                        `json:"traffic_limit_bytes"`
@@ -234,6 +235,7 @@ type User struct {
 }
 
 type ProxyCredential struct {
+	DeviceTransitionAllowed bool `json:"-"`
 	ID              string   `json:"id"`
 	UserID          int64    `json:"user_id"`
 	InboundID       int64    `json:"inbound_id"`
@@ -2056,17 +2058,18 @@ type PortForwardPlan struct {
 }
 
 type AgentTask struct {
-	ID            int64      `json:"id"`
-	ServerID      int64      `json:"server_id"`
-	Type          string     `json:"type"`
-	PayloadJSON   string     `json:"payload_json"`
-	Status        string     `json:"status"`
-	ResultJSON    string     `json:"result_json"`
-	ConfigVersion int64      `json:"config_version"`
-	Nonce         string     `json:"nonce"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	Operations    []TaskOperationSummary `json:"operations,omitempty"`
+	ID            int64                  `json:"id"`
+	ServerID      int64                  `json:"server_id"`
+	Type          string                 `json:"type"`
+	PayloadJSON   string                 `json:"payload_json"`
+	Status        string                 `json:"status"`
+	ResultJSON    string                 `json:"result_json"`
+	ConfigVersion int64                  `json:"config_version"`
+	Nonce         string                 `json:"nonce"`
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+	CompletedAt   *time.Time             `json:"completed_at,omitempty"`
 }
 
 const (

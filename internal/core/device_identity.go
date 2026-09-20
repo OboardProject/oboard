@@ -3,21 +3,45 @@ package core
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
 )
 
 // DataPlaneIdentities selects the accounts that may carry proxy credentials.
-// Device rows are not additional identities: device-specific subscriptions are
-// not issued, so an account is the whole identity and only an active one is
-// eligible.
+// Only a frozen upgrade grace or reviewed, bounded retirement transition may
+// project an existing device credential. It never creates scopes or material.
 func DataPlaneIdentities(users []model.User) []model.User {
+	return DataPlaneIdentitiesAt(users, time.Now())
+}
+
+func DataPlaneIdentitiesAt(users []model.User, at time.Time) []model.User {
 	out := make([]model.User, 0, len(users))
 	for _, user := range users {
 		if user.Status != "active" {
 			continue
 		}
 		out = append(out, user)
+		if user.DeviceIDHash != "" || !user.DeviceTransitionUntil.After(at) {
+			continue
+		}
+		seen := map[string]map[int64]bool{}
+		for _, c := range user.ProxyCredentials {
+			if !c.DeviceTransitionAllowed || c.Status != "active" || c.DeviceIDHash == "" || c.CredentialEpoch <= 0 {
+				continue
+			}
+			if seen[c.DeviceIDHash] == nil {
+				seen[c.DeviceIDHash] = map[int64]bool{}
+			}
+			if seen[c.DeviceIDHash][c.CredentialEpoch] {
+				continue
+			}
+			seen[c.DeviceIDHash][c.CredentialEpoch] = true
+			legacy := user
+			legacy.DeviceIDHash, legacy.CredentialEpoch = c.DeviceIDHash, c.CredentialEpoch
+			legacy.Username = user.Username + "-d" + c.DeviceIDHash
+			out = append(out, legacy)
+		}
 	}
 	return out
 }
@@ -38,6 +62,10 @@ func ConsistentDeviceCredentialIdentity(deviceIDHash string, credentialEpoch int
 // UserCredentialForRoute selects persisted secret material. An account without
 // an exact active scope never falls back to account or derived credentials.
 func UserCredentialForRoute(user model.User, inboundID, pathID int64, protocol model.Protocol) model.User {
+	return UserCredentialForRouteAt(user, inboundID, pathID, protocol, time.Now())
+}
+
+func UserCredentialForRouteAt(user model.User, inboundID, pathID int64, protocol model.Protocol, at time.Time) model.User {
 	if user.ID <= 0 {
 		return user
 	} // Controller-owned managed hop/placeholder.
@@ -50,11 +78,11 @@ func UserCredentialForRoute(user model.User, inboundID, pathID int64, protocol m
 	// identity as credential-less here too: the account drops out of this route
 	// exactly like one that owns no credential, instead of projecting secrets
 	// the Agent contract rejects.
-	if !ConsistentDeviceCredentialIdentity(user.DeviceIDHash, user.CredentialEpoch) {
+	if !ConsistentDeviceCredentialIdentity(user.DeviceIDHash, user.CredentialEpoch) || (user.DeviceIDHash != "" && !user.DeviceTransitionUntil.After(at)) {
 		return user
 	}
 	for _, c := range user.ProxyCredentials {
-		if c.Status == "active" && c.UserID == user.ID && c.InboundID == inboundID && c.PathID == pathID && c.Protocol == protocol && c.DeviceIDHash == user.DeviceIDHash && c.CredentialEpoch == user.CredentialEpoch && c.ID != "" && c.Username != "" && c.Password != "" && c.UUID != "" {
+		if (user.DeviceIDHash == "" || c.DeviceTransitionAllowed) && c.Status == "active" && c.UserID == user.ID && c.InboundID == inboundID && c.PathID == pathID && c.Protocol == protocol && c.DeviceIDHash == user.DeviceIDHash && c.CredentialEpoch == user.CredentialEpoch && c.ID != "" && c.Username != "" && c.Password != "" && c.UUID != "" {
 			user.ProxyUsername, user.ProxyPassword, user.ProxyUUID, user.AuthorizationKey = c.Username, c.Password, c.UUID, c.ID
 			return user
 		}
@@ -99,6 +127,9 @@ func ProxyCredentialScopes(users []model.User, inbounds []model.Inbound, opts Co
 			return
 		}
 		if !ConsistentDeviceCredentialIdentity(user.DeviceIDHash, user.CredentialEpoch) {
+			return
+		}
+		if user.DeviceIDHash != "" && UserCredentialForRoute(user, inbound.ID, pathID, inbound.Protocol).AuthorizationKey == "" {
 			return
 		}
 		c := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, DeviceIDHash: user.DeviceIDHash, CredentialEpoch: user.CredentialEpoch, Protocol: inbound.Protocol}

@@ -9,6 +9,7 @@ export type TaskGroup = {
   batchType?: string
   tasks: any[]
   updated_at: string
+  operation?: { id: string; total: number; pending: number; running: number; succeeded: number; failed: number; unknown: number }
 }
 
 const BATCHABLE_TASK_TYPES = new Set([
@@ -45,7 +46,16 @@ export function groupTasksForTimeline(rows: any[], labelTaskType: (type: string)
   })
 
   const batches = new Map<string, any[]>()
+  const operations = new Map<string, TaskGroup['operation']>()
   leftover.forEach(task => {
+    if (Array.isArray(task.operations) && task.operations.length) {
+      task.operations.forEach((operation: NonNullable<TaskGroup['operation']>) => {
+        const key = `operation:${operation.id}`
+        operations.set(key, operation)
+        batches.set(key, [...(batches.get(key) || []), task])
+      })
+      return
+    }
     const type = String(task.type || 'task')
     const key = BATCHABLE_TASK_TYPES.has(type)
       ? `${type}:${taskBatchBucket(task)}`
@@ -66,8 +76,10 @@ export function groupTasksForTimeline(rows: any[], labelTaskType: (type: string)
       return
     }
     const serverCount = new Set(tasks.map(t => t.server_id)).size
+    const operation = operations.get(key)
     groups.push({
-      kind: tasks.length > 1 || serverCount > 1 ? 'batch' : 'single',
+      operation,
+      kind: operation || tasks.length > 1 || serverCount > 1 ? 'batch' : 'single',
       id: `batch-${key}`,
       title: batchTitleForType(type, labelTaskType),
       batchType: type,

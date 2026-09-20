@@ -1,0 +1,25 @@
+{
+  "report": {"collector_boot_id":"0123456789abcdef0123456789abcdef","collector_started_at":1790000000123456789,"stream_type":"kernel","sequence":1,"minute_unix":1790000040,"clock_state":"unknown","complete":false,"dropped_updates":0,"unknown_source_updates":0,"items":[{"user_id":1,"inbound_id":2,"path_id":0,"source_prefix":"8.8.8.0/24","activity_bits":1,"upload_bytes":9007199254740993,"download_bytes":7}]},
+  "invalid": [
+    {"name":"missing collector start","field":"collector_started_at","value":null,"agent_decode":true},
+    {"name":"negative collector start","field":"collector_started_at","value":-1,"agent_decode":true},
+    {"name":"collector start signed overflow","field":"collector_started_at","value":9223372036854775808,"agent_decode":false},
+    {"name":"zero sequence","field":"sequence","value":0,"agent_decode":true},
+    {"name":"negative sequence","field":"sequence","value":-1,"agent_decode":false},
+    {"name":"sequence signed overflow","field":"sequence","value":9223372036854775808,"agent_decode":true},
+    {"name":"missing clock is not aligned","field":"clock_state","value":null,"agent_decode":true}
+  ],
+  "acks": [
+    {"name":"accepted","body":{"sequence":1,"accepted":true,"duplicate":false,"terminal":false},"remove":true},
+    {"name":"duplicate","body":{"sequence":1,"accepted":true,"duplicate":true,"terminal":false},"remove":true},
+    {"name":"disabled","body":{"sequence":1,"accepted":false,"terminal":true,"reason":"disabled"},"remove":true},
+    {"name":"expired","body":{"sequence":1,"accepted":false,"terminal":true,"reason":"expired"},"remove":true},
+    {"name":"removed","body":{"sequence":1,"accepted":false,"terminal":true,"reason":"subject_removed"},"remove":true},
+    {"name":"zero sequence does not acknowledge one","body":{"sequence":0,"accepted":false,"terminal":true,"reason":"disabled"},"remove":false},
+    {"name":"disabled zero sequence pending","report_sequence":0,"body":{"sequence":0,"accepted":false,"terminal":true,"reason":"disabled"},"remove":true},
+    {"name":"wrong sequence","body":{"sequence":2,"accepted":true},"remove":false},
+    {"name":"not accepted","body":{"sequence":1,"accepted":false},"remove":false},
+    {"name":"unknown terminal reason","body":{"sequence":1,"accepted":false,"terminal":true,"reason":"unknown"},"remove":false},
+    {"name":"missing sequence","body":{"accepted":true},"remove":false}
+  ]
+}

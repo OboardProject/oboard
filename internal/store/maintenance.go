@@ -90,6 +90,7 @@ type MaintenanceResult struct {
 	LatencySummaryBucketsDeleted  int64
 	ConnectivityProbesDeleted     int64
 	AgentTasksDeleted             int64
+	TaskOperationsDeleted         int64
 	FreePagesReclaimed            int64
 	DNSBenchmarkRunsDeleted       int64
 	DNSBenchmarkResultsDeleted    int64
@@ -125,7 +126,7 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 		{
 			name:   "connection audit retention",
 			query:  `delete from connection_audit_reports where rowid in (select rowid from connection_audit_reports where ended_at < ? order by ended_at limit ?)`,
-			cutoff: at.Add(-auditRetention),
+			cutoff: at.Add(-24 * time.Hour),
 			count:  &result.ConnectionAuditsDeleted,
 		},
 		{
@@ -173,6 +174,15 @@ func (s *Store) RunMaintenance(ctx context.Context, at time.Time) (MaintenanceRe
 			query:  `delete from agent_tasks where id in (select id from agent_tasks where status in ('succeeded','failed','rollback_failed') and completed_at < ? order by completed_at limit ?)`,
 			cutoff: at.Add(-historicalTaskRetention),
 			count:  &result.AgentTasksDeleted,
+		},
+		{
+			name: "task operation retention",
+			custom: func(ctx context.Context, cutoff time.Time) (int64, bool, error) {
+				n, err := s.PruneTaskOperations(ctx, cutoff, 500)
+				return n, n == 500, err
+			},
+			cutoff: at.Add(-historicalTaskRetention),
+			count:  &result.TaskOperationsDeleted,
 		},
 		{
 			name:   "dns benchmark run retention",

@@ -26,6 +26,9 @@ import (
 )
 
 type Store struct {
+	subscriptionLimiter subscriptionMemoryLimiter
+	subscriptionActivitySchemaOnce sync.Once
+	subscriptionActivitySchemaErr error
 	db                     *countingDB
 	path                   string
 	metricSamples          metricSampleAdmission
@@ -176,6 +179,30 @@ func open(path string, opts SQLiteOptions, restore bool) (*Store, error) {
 	}
 	s.metricSampleMinInterval = opts.MetricSampleMinInterval
 	if err := s.migrate(ctx, restore); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, deviceRetirementSchema); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.InitTaskOperations(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.initConfigurationOperations(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.InitAccountAuditSchema(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.InitAccountActivityPipelineSchema(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.EnsureAccountSubscriptionActivitySchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -819,6 +846,9 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
+	if err := s.ensureColumn(ctx, "configuration_sync_states", "problems_json", `alter table configuration_sync_states add column problems_json text not null default '[]'`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "server_telemetry", "connectivity_probe_target", `alter table server_telemetry add column connectivity_probe_target text not null default 'auto'`); err != nil {
 		return err
 	}
@@ -931,8 +961,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		table  string
 		column string
 		sql    string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.sql); err != nil {
 			return err
 		}
@@ -1007,8 +1036,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "users", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1016,8 +1044,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "subscription_pull_audits", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1082,8 +1109,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "servers", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1091,8 +1117,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "proxy_path_port_allocations", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1115,8 +1140,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "server_metric_samples", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1124,8 +1148,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	connectionAuditGeoColumns := []struct {
 		name string
 		sql  string
-	}{
-	}
+	}{}
 	for _, column := range connectionAuditGeoColumns {
 		if err := s.ensureColumn(ctx, "connection_audit_reports", column.name, column.sql); err != nil {
 			return err
@@ -2775,6 +2798,7 @@ func (s *Store) UpdateServerWithTraffic(ctx context.Context, v *model.Server, us
 var ErrServerRevisionConflict = errors.New("server revision conflict: reload the server before saving")
 
 type ServerUpdateOptions struct {
+	ConfigurationIntent *ServerConfigurationIntent
 	// RejectWhenDeleting makes a management save fail once the server's
 	// deletion has been claimed. Agent-driven health updates deliberately do
 	// not set it: they only refresh state that is about to be removed anyway,
@@ -2829,6 +2853,13 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 		}
 	}
 
+	var previousConfiguration *model.Server
+	if options.ConfigurationIntent != nil {
+		previousConfiguration = &model.Server{}
+		if err := tx.QueryRowContext(ctx, `select ip_stack,listen_mode,listen_ip,udp_inbound_mode from servers where id=?`, v.ID).Scan(&previousConfiguration.IPStack, &previousConfiguration.ListenMode, &previousConfiguration.ListenIP, &previousConfiguration.UDPInboundMode); err != nil {
+			return err
+		}
+	}
 	row, err := tx.ExecContext(ctx, `update servers set name=?, agent_id=coalesce(nullif(?,''),agent_id), agent_token_hash=coalesce(nullif(?,''),agent_token_hash), chain_secret=coalesce(nullif(?,''),chain_secret), enrollment_hash=coalesce(nullif(?,''),enrollment_hash), entry_address=?, public_ipv4=?, public_ipv6=?, interface_ipv6=?, region_code=?, detected_region_code=?, region_mode=?, entry_ip_mode=?, listen_ip=?, listen_mode=?, ip_stack=?, udp_inbound_mode=?, mtu_mode=?, mtu_value=?, mtu_probe_host=?, mtu_probe_port=?, mtu_overhead_bytes=?, bbr_enabled=?, stealth_enabled=?, port_range_start=?, port_range_end=?, internal_port_range_start=?, internal_port_range_end=?, port_policy_revision=case when ?<=0 then port_policy_revision else ? end, status=?, os=?, distro_id=?, distro_version=?, distro_name=?, libc=?, service_manager=?, package_manager=?, arch=?, kernel=?, cpu=?, cpu_cores=?, memory_bytes=?, cpu_usage_percent=?, memory_used_bytes=?, memory_total_bytes=?, agent_memory_bytes=?, disk_bytes=?, disk_total_bytes=?, tcp_connection_count=?, udp_connection_count=?, process_count=?, agent_version=?, agent_build=?, sing_box_version=?, kernel_capabilities_json=?, connection_audit_enabled=?, last_seen_at=?, updated_at=? where id=?`, v.Name, v.AgentID, v.AgentTokenHash, v.ChainSecret, v.EnrollmentHash, v.EntryAddress, v.PublicIPv4, v.PublicIPv6, v.InterfaceIPv6, v.RegionCode, v.DetectedRegionCode, v.RegionMode, v.EntryIPMode, v.ListenIP, v.ListenMode, v.IPStack, v.UDPInboundMode, v.MTUMode, v.MTUValue, v.MTUProbeHost, v.MTUProbePort, v.MTUOverheadBytes, boolInt(v.BBREnabled), boolInt(v.StealthEnabled), v.PortRangeStart, v.PortRangeEnd, v.InternalPortRangeStart, v.InternalPortRangeEnd, v.PortPolicyRevision, v.PortPolicyRevision, v.Status, v.OS, v.DistroID, v.DistroVersion, v.DistroName, v.Libc, v.ServiceManager, v.PackageManager, v.Arch, v.Kernel, v.CPU, v.CPUCores, v.MemoryBytes, v.CPUUsagePercent, v.MemoryUsedBytes, v.MemoryTotalBytes, v.AgentMemoryBytes, v.DiskBytes, v.DiskTotalBytes, v.TCPConnectionCount, v.UDPConnectionCount, v.ProcessCount, v.AgentVersion, v.AgentBuild, v.SingBoxVersion, stringSliceJSON(v.KernelCapabilities), boolInt(v.ConnectionAuditEnabled), nilTime(v.LastSeenAt), v.UpdatedAt.Format(time.RFC3339Nano), v.ID)
 	if err != nil {
 		return err
@@ -2870,9 +2901,15 @@ func (s *Store) UpdateServerSettings(ctx context.Context, v *model.Server, optio
 		}
 		v.AuthorizationFastLane, v.RuntimeUsersEnabled = flags.AuthorizationFastLane, flags.RuntimeUsersEnabled
 	}
-
+	operationID, err := recordServerConfigurationIntent(ctx, tx, v, previousConfiguration, options.ConfigurationIntent)
+	if err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
+	}
+	if options.ConfigurationIntent != nil {
+		options.ConfigurationIntent.OperationID = operationID
 	}
 	*result = *v
 	return nil

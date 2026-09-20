@@ -650,6 +650,20 @@ func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Pr
 			}
 		}
 	}
+	var filter application.ResourceFilter
+	_ = json.Unmarshal(principal.ResourceFilter, &filter)
+	var allowed []int64
+	if filter.Servers != nil {
+		allowed = filter.Servers.IDs
+	} else {
+		var legacy map[string]json.RawMessage
+		_ = json.Unmarshal(principal.ResourceFilter, &legacy)
+		_ = json.Unmarshal(legacy["server_ids"], &allowed)
+	}
+	// A negative probe cannot match a valid selected server ID.
+	if err := s.store.AttachTaskOperations(ctx, items, allowed, principal.AllowsInt64("server_ids", -1)); err != nil {
+		return nil, err
+	}
 	views := make([]map[string]any, 0, len(items))
 	for _, task := range items {
 		scrubbed := task
@@ -659,6 +673,7 @@ func (s *Server) listAgentTasksMCP(ctx context.Context, principal application.Pr
 			"id": task.ID, "server_id": task.ServerID, "type": task.Type, "status": task.Status,
 			"config_version": task.ConfigVersion, "created_at": task.CreatedAt, "completed_at": task.CompletedAt,
 			"result_summary": taskResultMessage(scrubbed), "nonce_redacted": scrubbed.Nonce != "",
+			"operations":       task.Operations,
 			"payload_redacted": scrubbed.PayloadJSON, "result_redacted": scrubbed.ResultJSON,
 		})
 	}

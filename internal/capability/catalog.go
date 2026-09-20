@@ -438,6 +438,28 @@ func defaultDescriptors() []Descriptor {
 			descriptors[len(descriptors)-1].RBACPermission = "admin.settings"
 		}
 	}
+	descriptors = append(descriptors, Descriptor{Name: "device_retirement.read", Description: "读取设备凭证退出批次及无秘密预检", InputSchema: schemaObject(map[string]any{"batch_id": positiveID, "offset": map[string]any{"type": "integer", "minimum": 0}}), OutputSchema: schemaObject(map[string]any{"batch": map[string]any{"type": "object"}, "preflight": map[string]any{"type": "object"}, "accounts": map[string]any{"type": "array"}, "nodes": map[string]any{"type": "array"}}), RequiredScopes: []string{"subscriptions:manage"}, ReadOnly: true, AdminOnly: true, RBACPermission: "admin.settings", MCPEnabled: true, MinimumAccess: mcpauth.AccessRead, ResolveResourceRefs: noRefs})
+	for _, action := range []string{"start", "review", "advance", "finalize", "contract"} {
+		properties := map[string]any{"confirm": map[string]any{"type": "boolean", "const": true}, "batch_id": positiveID}
+		required := []string{"confirm", "batch_id"}
+		if action == "start" {
+			delete(properties, "batch_id")
+			properties["deadline"] = stringValue
+			properties["reason"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 500}
+			required = []string{"confirm", "deadline", "reason"}
+		}
+		if action == "advance" {
+			properties["phase"] = map[string]any{"type": "string", "enum": []string{"transition", "revoke"}}
+			required = append(required, "phase")
+		}
+		if action == "review" {
+			properties["user_id"] = positiveID
+			properties["decision"] = map[string]any{"type": "string", "enum": []string{"account_authorized", "retain_restriction"}}
+			properties["reason"] = map[string]any{"type": "string", "minLength": 1, "maxLength": 500}
+			required = append(required, "user_id", "decision", "reason")
+		}
+		descriptors = append(descriptors, Descriptor{Name: "device_retirement." + action, Description: "管理员受控退出设备凭证；订阅下载已停用，节点确认前不宣称撤销完成", InputSchema: schemaObject(properties, required...), OutputSchema: schemaObject(map[string]any{"batch": map[string]any{"type": "object"}}, "batch"), RequiredScopes: []string{"subscriptions:manage"}, RiskClass: 3, ApprovalPolicy: "required", AdminOnly: true, RBACPermission: "admin.settings", Executable: true, MCPEnabled: true, MinimumAccess: mcpauth.AccessOperate, ResolveResourceRefs: noRefs})
+	}
 	enrollmentInput, enrollmentOutput, _ := executableSchemas("servers.enrollment.issue")
 	descriptors = append(descriptors, Descriptor{
 		Name: "servers.enrollment.issue", Description: "为已存在服务器重新签发一次性 Agent 接入令牌，不创建新服务器记录",
@@ -492,6 +514,9 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, forwardsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, opsDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, auditDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, auditCollectionDescriptors()...)
+	descriptors = append(descriptors, accountAuditStatusDescriptors()...)
+	descriptors = append(descriptors, accountAuditPolicyDescriptors()...)
 	descriptors = append(descriptors, systemDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
 	descriptors = append(descriptors, nodeOperationsDescriptors(positiveID, stringValue, boolValue, nullableString)...)
 	descriptors = append(descriptors, nodeWorkspaceDescriptors(positiveID, stringValue, boolValue)...)
@@ -548,8 +573,6 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		"traffic_limit_bytes":          map[string]any{"type": "integer", "minimum": -1},
 		"traffic_reset_mode":           map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
 		"traffic_reset_day":            map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
-		"device_limit":                 map[string]any{"type": "integer", "minimum": 0},
-		"legacy_proxy_enabled":         boolValue,
 		"subscription_burn_after_read": boolValue,
 		"subscription_age_enabled":     boolValue,
 		"subscription_age_public_key":  map[string]any{"type": "string", "maxLength": 4096},
@@ -564,8 +587,6 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		"traffic_limit_bytes":          map[string]any{"type": "integer", "minimum": -1},
 		"traffic_reset_mode":           map[string]any{"type": "string", "enum": []string{"monthly", "month_day", "anniversary_month", "never"}},
 		"traffic_reset_day":            map[string]any{"type": "integer", "minimum": 0, "maximum": 31},
-		"device_limit":                 map[string]any{"type": "integer", "minimum": 0},
-		"legacy_proxy_enabled":         boolValue,
 		"subscription_burn_after_read": boolValue,
 	}, "username")
 	groupChanges := closedObject(map[string]any{
@@ -596,8 +617,6 @@ func usersAccessDescriptors(user, userGroup, userDevice, userGroupMember, positi
 		adminWrite("user_groups.update", "修改用户分组的角色、启用状态与订阅策略", schemaObject(map[string]any{"group_id": positiveID, "changes": groupChanges}, "group_id", "changes"), schemaObject(map[string]any{"user_group": userGroup, "changed_fields": stringArray(1, 32)}, "user_group"), 2, false),
 		adminWrite("user_groups.delete", "删除用户分组及其全部成员关系", schemaObject(map[string]any{"group_id": positiveID, "confirm": map[string]any{"type": "boolean", "const": true}}, "group_id", "confirm"), schemaObject(map[string]any{"deleted": boolValue, "group_id": positiveID}, "deleted"), 3, true),
 		adminWrite("user_group_members.set", "新增或更新用户与分组的成员关系", schemaObject(map[string]any{"group_id": positiveID, "user_id": positiveID, "enabled": boolValue}, "group_id", "user_id"), schemaObject(map[string]any{"user_group_member": userGroupMember}, "user_group_member"), 2, false),
-		adminWrite("user_devices.update", "重命名用户已登记设备", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "name": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}}, "user_id", "device_id", "name"), schemaObject(map[string]any{"device": userDevice}, "device"), 2, false),
-		adminWrite("user_devices.revoke", "吊销用户设备凭据并撤销其代理与订阅访问", schemaObject(map[string]any{"user_id": positiveID, "device_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64}, "revoked": map[string]any{"type": "boolean", "enum": []any{true}}}, "user_id", "device_id", "revoked"), schemaObject(map[string]any{"device": userDevice, "revoked": boolValue, "change_id": map[string]any{"type": "integer", "minimum": 0}, "pending_servers": map[string]any{"type": "array", "items": positiveID}, "completion": stringValue}, "device"), 2, false),
 	}
 }
 
@@ -743,7 +762,7 @@ func executableSchemas(name string) (json.RawMessage, json.RawMessage, string) {
 			"authorization_fast_lane": boolValue, "runtime_users_enabled": boolValue,
 			"stealth_enabled": map[string]any{"type": "boolean", "description": "安全进程开关：开启后必须通过 servers.enrollment.issue 获取安装命令并在服务器重新安装 Agent；安装命令自动启动随机目录、进程名和服务名的新 Agent，成功后清理旧安装。关闭时已注册且在线的服务器会收到 apply_stealth 任务"},
 		})
-		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
+		return schemaObject(map[string]any{"server_id": positiveID, "changes": changes}, "server_id", "changes"), simpleOutput(map[string]any{"operation_id": stringValue, "server_id": positiveID, "revision": stringValue, "changed_fields": stringArray(1, 32)}), "server_ids"
 	case "servers.enrollment.issue":
 		return schemaObject(map[string]any{"server_id": positiveID}, "server_id"), simpleOutput(map[string]any{
 			"server":                closedObject(map[string]any{"id": positiveID, "name": stringValue, "bbr_enabled": boolValue, "stealth_enabled": boolValue, "agent_connected": boolValue, "status": stringValue}),

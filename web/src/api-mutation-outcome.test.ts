@@ -1,23 +1,15 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import ts from 'typescript'
-import { resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { markIndeterminateMutation } from './mutation-outcome'
 
-const source = readFileSync(resolve(__dirname, 'main.tsx'), 'utf8')
-const clientSource = source.slice(source.indexOf('function api(token:'), source.indexOf('\nfunction PortalLoader'))
-const compiled = ts.transpileModule(clientSource, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText
-// apiRequestError lives outside the extracted slice. These tests are about how
-// a failed write is classified, not about message localization, so a stand-in
-// that carries the same fields is enough.
-function apiRequestError(data: any, res: Response) {
+
+import { createAPIClientFactory } from './api-client'
+
+const createClient = createAPIClientFactory(path => path, (data, res) => {
   const error = new Error(data?.error || res.statusText) as Error & { status?: number }
   error.status = res.status
   return error
-}
-const createClient = new Function('appPath', 'markIndeterminateMutation', 'apiRequestError', `${compiled}; return api`)((path: string) => path, markIndeterminateMutation, apiRequestError)
+})
 
 afterEach(() => {
   sessionStorage.clear()

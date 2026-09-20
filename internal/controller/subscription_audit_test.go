@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -56,6 +58,7 @@ func TestSubscriptionPullAuditKeepsGeographyAdvisory(t *testing.T) {
 		h.ServeHTTP(rr, req)
 		return rr
 	}
+	db.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-time.Minute))
 	for index, ip := range []string{"1.1.1.1", "8.8.8.8"} {
 		if got := fetch(subscriptionToken, ip, "Mihomo/1.19.0"); got.Code != http.StatusOK || got.Body.Len() == 0 {
 			t.Fatalf("seed pull %d status=%d body=%s", index, got.Code, got.Body.String())
@@ -73,21 +76,8 @@ func TestSubscriptionPullAuditKeepsGeographyAdvisory(t *testing.T) {
 		t.Fatalf("geography changed subscription state: %#v", stored)
 	}
 
-	detail := request(t, h, http.MethodGet, "/api/v1/ui/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
-	recent := detail["recent"].([]any)
-	if len(recent) != 3 {
-		t.Fatalf("recent pulls=%d, want 3", len(recent))
-	}
-	latest := recent[0].(map[string]any)
-	if latest["outcome"] != "served" || latest["client_name"] != "shadowrocket" || latest["user_agent"] != "Shadowrocket/2.2.0ignored" {
-		t.Fatalf("unexpected latest audit: %#v", latest)
-	}
-	overviews := request(t, h, http.MethodGet, "/api/v1/ui/audit/risk-overview?window_hours=24", adminToken, nil, http.StatusOK)
-	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk"} {
-		if overviews[key] == nil {
-			t.Fatalf("combined audit response missing %q: %#v", key, overviews)
-		}
-	}
+	request(t, h, http.MethodGet, "/api/v1/ui/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusGone)
+	request(t, h, http.MethodGet, "/api/v1/ui/audit/risk-overview?window_hours=24", adminToken, nil, http.StatusGone)
 
 	operatorHash, err := security.HashPassword("long-operator-password")
 	if err != nil {
@@ -110,9 +100,12 @@ func TestSubscriptionPullAuditKeepsGeographyAdvisory(t *testing.T) {
 	if got := fetch("invalid-token", "1.0.0.1", "attacker"); got.Code != http.StatusNotFound {
 		t.Fatalf("invalid token status=%d", got.Code)
 	}
-	detail = request(t, h, http.MethodGet, "/api/v1/ui/audit/subscriptions/users/"+itoa(userID), adminToken, nil, http.StatusOK)["subscription_audit_user"].(map[string]any)
-	if len(detail["recent"].([]any)) != 4 {
-		t.Fatal("invalid token request entered a user audit")
+	detail, err := db.SubscriptionAuditUserDetail(context.Background(), userID, 24, store.DefaultAuditPolicy())
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
+	}
+	if len(detail.Recent) != 0 {
+		t.Fatal("subscription ingress wrote retired per-request history")
 	}
 }
 
@@ -195,6 +188,7 @@ func TestSubscriptionPullAuditDisabledServesWithoutRecordingOrSuspending(t *test
 		h.ServeHTTP(rr, req)
 		return rr
 	}
+	db.AllowSubscriptionIngress("1.1.1.1", time.Now().Add(-time.Minute))
 	for _, ip := range []string{"1.1.1.1", "8.8.8.8", "9.9.9.9"} {
 		if got := fetch(ip); got.Code != http.StatusOK || got.Body.Len() == 0 {
 			t.Fatalf("pull from %s status=%d body=%s", ip, got.Code, got.Body.String())
@@ -207,8 +201,23 @@ func TestSubscriptionPullAuditDisabledServesWithoutRecordingOrSuspending(t *test
 	if stored.SubscriptionSuspended {
 		t.Fatalf("disabled audit suspended the user: %#v", stored)
 	}
-	overview := request(t, h, http.MethodGet, "/api/v1/ui/audit/subscriptions/overview?window_hours=24", adminToken, nil, http.StatusOK)["subscription_audit"].(map[string]any)
-	if overview["reporting_user_count"].(float64) != 0 || overview["total_pulls"].(float64) != 0 {
-		t.Fatalf("disabled audit recorded pulls: %#v", overview)
+	request(t, h, http.MethodGet, "/api/v1/ui/audit/subscriptions/overview?window_hours=24", adminToken, nil, http.StatusGone)
+	detail, err := db.SubscriptionAuditUserDetail(context.Background(), userID, 24, store.DefaultAuditPolicy())
+	if (err != nil && !errors.Is(err, sql.ErrNoRows)) || len(detail.Recent) != 0 {
+		t.Fatalf("disabled audit recorded pulls: %#v, %v", detail, err)
+	}
+	limited := false
+	for i := 0; i < 2*store.DefaultAuditPolicy().RawRequestsPer60Seconds.Hard; i++ {
+		got := fetch("1.1.1.1")
+		if got.Code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+		if got.Code != http.StatusOK {
+			t.Fatalf("unexpected subscription response: %d", got.Code)
+		}
+	}
+	if !limited {
+		t.Fatal("disabled behavior audit bypassed raw request rate limiting")
 	}
 }

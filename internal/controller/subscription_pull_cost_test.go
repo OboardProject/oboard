@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/OboardProject/oboard/internal/store"
 )
@@ -36,6 +37,7 @@ func TestSubscriptionPullReusesRoutingSnapshot(t *testing.T) {
 		}
 	}
 
+	db.AllowSubscriptionIngress("192.0.2.1", time.Now().Add(-time.Minute))
 	pull()
 	before := db.SQLStatementCount()
 	pull()

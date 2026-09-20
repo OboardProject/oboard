@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const main = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+const main = ['./main.tsx', './features/backups/Backups.tsx', './features/backups/use-backups.ts'].map(path => readFileSync(new URL(path, import.meta.url), 'utf8')).join('\n')
 
 describe('backup and update localization', () => {
   it('maps common filesystem errors to Chinese before rendering', () => {

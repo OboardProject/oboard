@@ -9,6 +9,20 @@ function deferred<T>() {
 }
 
 describe('PageDataRequestCoordinator', () => {
+  for (const cancel of ['cancel', 'cancelPrefetch', 'cancelPrefetches'] as const) {
+    it(`${cancel} fences a loader that ignores abort from its replacement`, async () => {
+      const requests = new PageDataRequestCoordinator<string>()
+      const old = deferred<string>()
+      const pending = requests.request('servers', () => old.promise, { priority: 'prefetch' })
+      if (cancel === 'cancelPrefetches') requests.cancelPrefetches()
+      else requests[cancel]('servers')
+      const fresh = await requests.request('servers', async () => 'fresh', { priority: 'foreground' })
+      old.resolve('stale')
+      expect(requests.isCurrent('servers', await pending)).toBe(false)
+      expect(requests.isCurrent('servers', fresh)).toBe(true)
+    })
+  }
+
   it('deduplicates a page without coupling unrelated page epochs', async () => {
     const requests = new PageDataRequestCoordinator<string>()
     const dashboard = deferred<string>()

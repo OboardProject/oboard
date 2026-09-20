@@ -15,6 +15,7 @@ import (
 
 	"github.com/OboardProject/oboard/internal/application"
 	"github.com/OboardProject/oboard/internal/capability"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 // registerMCPCapabilityTools exposes every MCPEnabled capability as a stable
@@ -324,6 +325,29 @@ func (s *Server) queryMCPCapabilityFallback(ctx context.Context, principal appli
 	descriptor, known := s.capabilities.Get(capabilityName)
 	if !known || !descriptor.MCPEnabled || !descriptor.ReadOnly {
 		return nil, errors.New("unsupported query capability")
+	}
+	if capabilityName == "task_operations.list" || capabilityName == "task_operations.get" {
+		return s.queryTaskOperations(ctx, principal, capabilityName, arguments)
+	}
+	if capabilityName == "configuration_sync.get" {
+		var input struct {
+			ServerID int64 `json:"server_id"`
+		}
+		if json.Unmarshal(arguments, &input) != nil || input.ServerID <= 0 {
+			return nil, errors.New("server_id is required")
+		}
+		if !principal.AllowsInt64("server_ids", input.ServerID) {
+			return nil, errors.New("configuration sync server is outside the authorized boundary")
+		}
+		state, err := s.store.ConfigurationSyncState(ctx, input.ServerID)
+		if err != nil {
+			return nil, err
+		}
+		view := configurationSyncViews([]store.ConfigurationSyncState{state}, nil)[0]
+		if state.LastError != "" {
+			view["error"] = "配置同步未完成，请查看受控任务诊断"
+		}
+		return view, nil
 	}
 	if def, ok := s.mcpExistingResourceDef(capabilityName, false); ok {
 		if !strings.Contains(def.uri, "{id}") {

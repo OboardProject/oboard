@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -36,8 +35,9 @@ type SubscriptionPullDecision struct {
 }
 
 type SubscriptionAuditOptions struct {
-	AuditEnabled bool
-	Action       model.AuditAction
+	AuditEnabled          bool
+	IngressAccountCharged bool
+	Action                model.AuditAction
 }
 
 func DefaultAuditPolicy() model.AuditPolicy {
@@ -108,7 +108,7 @@ func (s *Store) AuthorizeDeviceSubscriptionPull(ctx context.Context, userID int6
 }
 
 func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, credential string, custom bool, deviceID, deviceTokenHash string, event model.SubscriptionPullAudit, policy model.AuditPolicy, options SubscriptionAuditOptions) (SubscriptionPullDecision, error) {
-	decision := SubscriptionPullDecision{}
+	decision := SubscriptionPullDecision{Risk: model.SubscriptionAuditRisk{Level: "pending", Reason: "account_snapshot_required"}}
 	if err := ValidateAuditPolicy(policy); err != nil {
 		return decision, err
 	}
@@ -137,16 +137,6 @@ func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, cre
 		event.DeviceIDHash = deviceHash
 		decision.DeviceID = deviceID
 		if suspended != 0 {
-			if options.AuditEnabled {
-				event.TokenKind = tokenKind
-				event.Outcome = "denied_device_suspended"
-				event.Reason = "设备订阅凭证已暂停"
-				event.RiskEligible = false
-				decision.AuditID, err = insertSubscriptionPullAudit(ctx, tx, event)
-				if err != nil {
-					return decision, err
-				}
-			}
 			return decision, tx.Commit()
 		}
 	} else {
@@ -164,116 +154,25 @@ func (s *Store) authorizeSubscriptionPull(ctx context.Context, userID int64, cre
 		state = model.SubscriptionAccessState{UserID: userID}
 	}
 	if state.Suspended {
-		if options.AuditEnabled {
-			event.Outcome = "denied_suspended"
-			event.Reason = state.Reason
-			event.RiskEligible = false
-			decision.AuditID, err = insertSubscriptionPullAudit(ctx, tx, event)
-			if err != nil {
-				return decision, err
-			}
-		}
-		decision.Access = state
-		if state.TriggerRisk != nil {
-			decision.Risk = *state.TriggerRisk
-		}
-		return decision, tx.Commit()
-	}
-	if !options.AuditEnabled {
-		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
-		if err != nil {
-			return decision, err
-		}
-		if deviceID != "" {
-			_, err = tx.ExecContext(ctx, `update user_devices set last_subscription_at=?,updated_at=? where id=? and user_id=?`, event.RequestedAt.Format(time.RFC3339Nano), now(), deviceID, userID)
-			if err != nil {
-				return decision, err
-			}
-		}
-		decision.Allowed = true
 		decision.Access = state
 		return decision, tx.Commit()
 	}
-	event.Outcome = "pending"
-	event.RiskEligible = true
-	if err := prepareSubscriptionAuditEvent(ctx, tx, &event); err != nil {
-		return decision, err
+	rateLimited, retryAfter := false, time.Duration(0)
+	if !options.IngressAccountCharged {
+		rateLimited, retryAfter = s.consumeAccountSubscriptionLimit(userID, policy.RawRequestsPer60Seconds.Hard, event.RequestedAt)
 	}
-	rateLimited, retryAfter, err := consumeSubscriptionRateBuckets(ctx, tx, event, policy)
-	if err != nil {
-		return decision, err
-	}
-	if rateLimited {
-		event.Outcome = "rate_limited"
-		event.Reason = "原始订阅请求频率超过资源保护上限"
-	}
-	decision.AuditID, err = insertSubscriptionPullAudit(ctx, tx, event)
-	if err != nil {
-		return decision, err
-	}
-	risk, err := evaluateSubscriptionAuditRisk(ctx, tx, userID, event.RequestedAt, policy, state.EvaluationStartedAt)
-	if err != nil {
-		return decision, err
-	}
-	decision.Risk = risk
 	if rateLimited {
 		decision.RateLimited = true
 		decision.RetryAfter = retryAfter
 		decision.Access = state
 		return decision, tx.Commit()
 	}
-	if risk.HardBlock {
-		if options.Action == model.AuditActionWarn {
-			if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served_risk_warn',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
-				return decision, err
-			}
-			decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
-			if err != nil {
-				return decision, err
-			}
-			decision.Allowed = true
-			decision.Warned = true
-			decision.Access = state
-		} else if deviceID != "" {
-			if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='denied_risk',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
-				return decision, err
-			}
-			ts := event.RequestedAt.Format(time.RFC3339Nano)
-			if _, err := tx.ExecContext(ctx, `update user_devices set subscription_suspended=1,subscription_suspended_at=?,updated_at=? where id=? and user_id=? and status='active'`, ts, ts, deviceID, userID); err != nil {
-				return decision, err
-			}
-			decision.Access = state
-			decision.JustSuspended = true
-		} else {
-			// Legacy tokens do not carry enough identity evidence for an automatic
-			// suspension. Keep serving and surface the risk for operator review.
-			if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served_risk_warn',reason=? where id=?`, risk.Reason, decision.AuditID); err != nil {
-				return decision, err
-			}
-			decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
-			if err != nil {
-				return decision, err
-			}
-			decision.Allowed = true
-			decision.Warned = true
-			decision.Access = state
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx, `update subscription_pull_audits set outcome='served' where id=?`, decision.AuditID); err != nil {
-			return decision, err
-		}
-		decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
-		if err != nil {
-			return decision, err
-		}
-		decision.Allowed = true
-		decision.Access = state
+	decision.Burned, err = consumeSubscriptionTokenTx(ctx, tx, userID, credential, tokenKind, event.RequestedAt)
+	if err != nil {
+		return decision, err
 	}
-	if decision.Allowed && deviceID != "" {
-		if _, err := tx.ExecContext(ctx, `update user_devices set last_subscription_at=?,updated_at=? where id=? and user_id=?`, event.RequestedAt.Format(time.RFC3339Nano), now(), deviceID, userID); err != nil {
-			return decision, err
-		}
-	}
+	decision.Allowed = true
+	decision.Access = state
 	return decision, tx.Commit()
 }
 
@@ -539,65 +438,6 @@ func subscriptionRouteNovelty(ctx context.Context, tx *sql.Tx, event model.Subsc
 	return novelty * discount, nil
 }
 
-func consumeSubscriptionRateBuckets(ctx context.Context, tx *sql.Tx, event model.SubscriptionPullAudit, policy model.AuditPolicy) (bool, time.Duration, error) {
-	keys := []string{"user:" + strconv.FormatInt(event.UserID, 10)}
-	if event.DeviceIDHash != "" {
-		keys = append(keys, "device:"+event.DeviceIDHash)
-	}
-	if event.RouteID != "" {
-		keys = append(keys, "route:"+event.RouteID)
-	}
-	limited := false
-	retryAfter := time.Duration(0)
-	for _, key := range keys {
-		hit, retry, err := consumeSubscriptionRateBucket(ctx, tx, key, policy.RawRequestsPer60Seconds.Hard, event.RequestedAt)
-		if err != nil {
-			return false, 0, err
-		}
-		limited = limited || hit
-		if retry > retryAfter {
-			retryAfter = retry
-		}
-	}
-	return limited, retryAfter, nil
-}
-
-func consumeSubscriptionRateBucket(ctx context.Context, tx *sql.Tx, key string, capacity int, at time.Time) (bool, time.Duration, error) {
-	if capacity <= 0 {
-		return false, 0, nil
-	}
-	level := 0.0
-	updatedAt := at
-	var rawUpdated string
-	err := tx.QueryRowContext(ctx, `select level,updated_at from subscription_rate_buckets where bucket_key=?`, key).Scan(&level, &rawUpdated)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, 0, err
-	}
-	if err == nil {
-		updatedAt = parseTime(rawUpdated)
-		elapsed := at.Sub(updatedAt).Seconds()
-		if elapsed > 0 {
-			level = math.Max(0, level-elapsed*(float64(capacity)/60))
-		}
-	}
-	next := level + 1
-	limited := next > float64(capacity)
-	stored := math.Min(next, float64(capacity))
-	ts := at.Format(time.RFC3339Nano)
-	_, err = tx.ExecContext(ctx, `insert into subscription_rate_buckets(bucket_key,level,updated_at) values(?,?,?) on conflict(bucket_key) do update set level=excluded.level,updated_at=excluded.updated_at`, key, stored, ts)
-	if err != nil {
-		return false, 0, err
-	}
-	if !limited {
-		return false, 0, nil
-	}
-	seconds := math.Ceil((next - float64(capacity)) / (float64(capacity) / 60))
-	if seconds < 1 {
-		seconds = 1
-	}
-	return true, time.Duration(seconds) * time.Second, nil
-}
-
 func (s *Store) AddRejectedSubscriptionPullAudit(ctx context.Context, token string, event model.SubscriptionPullAudit) error {
 	return s.addRejectedSubscriptionPullAudit(ctx, token, false, event)
 }
@@ -607,30 +447,9 @@ func (s *Store) AddRejectedCustomSubscriptionPullAudit(ctx context.Context, alia
 }
 
 func (s *Store) addRejectedSubscriptionPullAudit(ctx context.Context, credential string, custom bool, event model.SubscriptionPullAudit) error {
-	if event.UserID <= 0 {
-		return sql.ErrNoRows
-	}
-	if event.RequestedAt.IsZero() {
-		event.RequestedAt = time.Now().UTC()
-	}
-	event.RiskEligible = false
-	if event.Outcome == "" {
-		event.Outcome = "rejected_invalid_request"
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	tokenKind, err := subscriptionCredentialKind(ctx, tx, event.UserID, credential, custom)
-	if err != nil {
-		return err
-	}
-	event.TokenKind = tokenKind
-	if _, err := insertSubscriptionPullAudit(ctx, tx, event); err != nil {
-		return err
-	}
-	return tx.Commit()
+	// Raw ingress is charged before authentication. Failed render/download
+	// requests are never successful account activity or a per-request SQL log.
+	return nil
 }
 
 func insertSubscriptionPullAudit(ctx context.Context, tx *sql.Tx, event model.SubscriptionPullAudit) (int64, error) {
@@ -963,17 +782,11 @@ func (s *Store) SubscriptionAuditCurrentRisk(ctx context.Context, userID int64, 
 	if err != nil {
 		return model.SubscriptionAuditRisk{}, state, err
 	}
-	if state.Suspended && state.TriggerRisk != nil {
-		return *state.TriggerRisk, state, nil
-	}
-	risk, err := evaluateSubscriptionAuditRisk(ctx, s.db, userID, at.UTC(), policy, state.EvaluationStartedAt)
-	return risk, state, err
+	return model.SubscriptionAuditRisk{Level: "pending", Reason: "account_snapshot_required"}, state, nil
 }
 
-// SubscriptionAuditCurrentRiskForUsers evaluates the subscription risk for a
-// bounded user set, skipping suspended users whose stored trigger risk already
-// answers. It batches the per-user device-count query the single-user path
-// issues per call.
+// SubscriptionAuditCurrentRiskForUsers never runs the retired history scorer.
+// Current behavior evidence is available only from persisted account snapshots.
 func (s *Store) SubscriptionAuditCurrentRiskForUsers(ctx context.Context, userIDs []int64, at time.Time, policy model.AuditPolicy) (map[int64]*model.SubscriptionAuditRisk, error) {
 	out := map[int64]*model.SubscriptionAuditRisk{}
 	seen := make([]int64, 0, len(userIDs))
@@ -991,20 +804,7 @@ func (s *Store) SubscriptionAuditCurrentRiskForUsers(ctx context.Context, userID
 		at = time.Now().UTC()
 	}
 	for _, userID := range seen {
-		state, err := s.GetSubscriptionAccessState(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		if state.Suspended && state.TriggerRisk != nil {
-			risk := *state.TriggerRisk
-			out[userID] = &risk
-			continue
-		}
-		risk, err := evaluateSubscriptionAuditRisk(ctx, s.db, userID, at.UTC(), policy, state.EvaluationStartedAt)
-		if err != nil {
-			return nil, err
-		}
-		out[userID] = &risk
+		out[userID] = &model.SubscriptionAuditRisk{Level: "pending", Reason: "account_snapshot_required"}
 	}
 	return out, nil
 }

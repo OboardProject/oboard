@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,25 +24,16 @@ func TestAuditReadSurfaces(t *testing.T) {
 	}
 	principal := userAutomationPrincipal(t, db, admin.ID)
 	connection, err := server.mcpAuditConnectionOverview(ctx, principal, 24)
-	if err != nil {
-		t.Fatalf("connection audit overview: %v", err)
-	}
-	if _, ok := connection.(model.ConnectionAuditOverview); !ok {
-		t.Fatalf("unexpected connection audit payload: %#v", connection)
+	if err == nil || !strings.Contains(err.Error(), "retired") || connection != nil {
+		t.Fatalf("retired connection overview returned %#v, %v", connection, err)
 	}
 	subscription, err := server.mcpAuditSubscriptionOverview(ctx, principal, 24)
-	if err != nil {
-		t.Fatalf("subscription audit overview: %v", err)
-	}
-	if _, ok := subscription.(model.SubscriptionAuditOverview); !ok {
-		t.Fatalf("unexpected subscription audit payload: %#v", subscription)
+	if err == nil || !strings.Contains(err.Error(), "retired") || subscription != nil {
+		t.Fatalf("retired subscription overview returned %#v, %v", subscription, err)
 	}
 	risk, err := server.mcpAuditRiskOverview(ctx, principal, 24)
-	if err != nil {
-		t.Fatalf("risk overview: %v", err)
-	}
-	if _, ok := risk.(model.CombinedAuditOverview); !ok {
-		t.Fatalf("unexpected risk payload: %#v", risk)
+	if err == nil || !strings.Contains(err.Error(), "retired") || risk != nil {
+		t.Fatalf("retired risk overview returned %#v, %v", risk, err)
 	}
 	for index := 0; index < 3; index++ {
 		if err := db.AddAudit(ctx, model.AuditLog{ActorID: &admin.ID, Action: "pagination-test", Target: "audit-log", Detail: "test", IP: "192.0.2.1"}); err != nil {

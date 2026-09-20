@@ -1,3 +1,8 @@
+import { ControllerBackupPanel } from './features/backups/Backups'
+import { Tasks, taskServerLabel } from './features/tasks/Tasks'
+import { Panel } from './shared/Panel'
+import { cell, formatTableTime, labelValue, formatBytes, formatDate, timeCorrectionModeLabel } from './shared/presentation'
+import { parseJSONLoose } from './shared/parse-json'
 import { MatrixLogoLoader } from './components/MatrixLogoLoader'
 import { userAccountDisplay, userPlanDisplay, userUsageDisplay } from './components/users/user-display'
 import { useUserAction } from './components/users/useUserAction'
@@ -175,10 +180,14 @@ import { idlePrefetchPages, PageDataRequestCoordinator, shouldRevalidatePageData
 import { createPageRefreshRegistry, pageRefreshIncludesLiveServers } from './page-refresh'
 import { PageRefreshProvider, useRefreshResources, useRegisterPageRefresh } from './page-refresh-context'
 import { describeMutationOutcome } from './mutation-coordinator'
-import { markIndeterminateMutation } from './mutation-outcome'
+import { createAPIClientFactory, SupersededAuthRequestError } from './api-client'
+import { useSessionBoundary } from './session-boundary'
 import { useMutationCoordinator } from './use-mutation-coordinator'
 import { PagePrefetchScheduler, type PrefetchPriority } from './page-prefetch'
-import { useCoalescedReadRequest } from './request-coalesce'
+import { AuditCenter } from './audit-center'
+import { AuditCollectionSettings } from './audit-collection-settings'
+import { AuditRetirement } from './audit-retirement'
+import { AuditPolicySettings } from './audit-policy-settings'
 import { useServerMonitorQuery } from './use-server-monitor-query'
 import { clearLatencyWindowCache } from './latency-window-cache'
 import { usePollingEvents, useServerTelemetry, type RealtimeEvent, type RealtimeStatus, type ServerTelemetrySnapshot } from './realtime'
@@ -385,11 +394,6 @@ type AgentFleetUpdateStatus = {
   auto_update_enabled: boolean
   message: string
 }
-type BackupDestination = { provider: 's3' | 'webdav' | ''; endpoint: string; bucket?: string; prefix?: string; region?: string; force_path_style?: boolean; enabled: boolean }
-type ControllerBackup = { id: string; name: string; origin: 'manual' | 'automatic' | 'uploaded' | 'pre_restore' | string; local_status: string; remote_status: string; remote_error?: string; remote_retrievable: boolean; size_bytes: number; source_version: string; format_version: number; protected: boolean; created_at: string }
-type ControllerUpdateBackup = { name: string; path: string; size_bytes: number; mod_time: string; created_at: string; is_latest: boolean; target_build?: string }
-type ControllerBackupSettings = { enabled: boolean; schedule: 'daily' | 'weekly'; time: string; weekday: number; local_retention: number; remote_retention: number; update_retention: number; destination: BackupDestination; password_configured: boolean; destination_configured: boolean; last_success_at?: string; last_error?: string }
-type ControllerBackupSnapshot = { settings: ControllerBackupSettings; backups: ControllerBackup[]; update_backups?: ControllerUpdateBackup[]; update_retention?: number }
 type ServerMetricSample = { id: number; server_id: number; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; resource_recorded: boolean; network_upload_bps: number; network_download_bps: number; traffic_upload_bytes: number; traffic_download_bytes: number; connectivity_available?: boolean; connectivity_latency_ms: number; sampled_at: string }
 type ServerResourceMetricPoint = { sampled_at: string; cpu_usage_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_used_bytes: number; disk_total_bytes: number; tcp_connection_count: number; udp_connection_count: number; process_count: number; network_upload_bps: number; network_download_bps: number }
 type ServerResourceMetricsResponse = {
@@ -454,49 +458,6 @@ type RoutingRuleCatalogItem = { name: string; path: string; url: string; format:
 type WARPProfile = { id: number; server_id: number; name: string; status: 'needed' | 'requested' | 'ready' | 'failed'; config_json: string; mtu: number; dns_strategy: string; error: string; enabled: boolean }
 type SubscriptionFormat = 'auto' | 'stash' | 'mihomo' | 'surfboard' | 'surge' | 'surge-mac' | 'loon' | 'egern' | 'shadowrocket' | 'qx' | 'sing-box' | 'v2ray' | 'v2ray-uri'
 type AuditLog = { id: number; actor_id?: number; action: string; target: string; detail: string; ip: string; created_at: string }
-type AuditRiskLevel = 'normal' | 'watch' | 'alert' | 'high' | 'critical' | 'confirmed'
-type GeoDatabaseStatus = { available: boolean; provider: string; version?: string; revision?: string; error?: string }
-type AuditThreshold = { soft: number; hard: number }
-type AuditPolicy = {
-  mode: 'loose' | 'balanced' | 'strict' | 'custom'
-  raw_requests_per_60_seconds: AuditThreshold
-  logical_pulls_per_10_minutes: AuditThreshold
-  logical_pulls_per_24_hours: AuditThreshold
-  routes_per_15_minutes: AuditThreshold
-  client_families_per_24_hours: AuditThreshold
-  concurrent_routes_90_seconds: AuditThreshold
-  node_fanout_10_seconds: AuditThreshold
-  probe_episodes_10_minutes: AuditThreshold
-  active_connections: AuditThreshold
-  legacy_device_excess: AuditThreshold
-  clone_overlap_seconds: number
-  auto_action_confidence: number
-}
-type ConnectionAuditRiskEvent = { kind: string; level: AuditRiskLevel; score: number; source_ip_count: number; region_count: number; regions: string[]; device_id_hash?: string; route_count: number; overlap_seconds: number; clone_confidence: number; started_at: string; ended_at: string }
-type ConnectionProbeEpisode = { id: string; user_id: number; device_id_hash?: string; state: string; score: number; node_count: number; connection_count: number; upload_bytes: number; download_bytes: number; started_at: string; ended_at: string; updated_at: string }
-type ConnectionPresenceEvent = { seq: number; server_id: number; user_id: number; inbound_id?: number; path_id?: number; device_id_hash?: string; credential_epoch?: number; source_ip: string; route_id?: string; network: string; event: string; state: string; active_connections: number; meaningful: boolean; payload_last_at?: string; at: string }
-type ConnectionAuditUser = {
-  user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]
-  confidence: number; evidence_categories: string[]; counter_evidence: string[]; recommended_action: string; identity_mode: string
-  device_limit: number; registered_device_count: number; online_device_count: number; online_device_lower: number; online_device_estimate: number; online_device_upper: number
-  coverage_quality: number; coverage_complete: boolean; clone_confidence: number; risk_device_id_hash?: string; concurrent_route_count: number; node_fanout: number; robust_z: number; resource_pressure: number; auto_action_eligible: boolean; probe_episode_count: number
-  source_ip_count: number; source_subnet_count: number; shared_source_ip_count: number; source_region_count: number; risk_source_ip_count: number; risk_region_count: number; risk_regions: string[]; risk_window_started_at?: string; risk_window_ended_at?: string
-  server_count: number; connection_count: number; active_peak: number; active_connection_count: number; report_count: number; last_seen_at: string
-}
-type ConnectionAuditOverview = { window_hours: number; evidence_window_hours?: number; totals_from_rollup?: boolean; totals_window_hours?: number; risk_window_minutes: number; generated_at: string; geo_database: GeoDatabaseStatus; policy: AuditPolicy; enabled_server_count: number; reporting_user_count: number; elevated_risk_count: number; total_connections: number; unique_source_ips: number; users: ConnectionAuditUser[] }
-type ConnectionAuditDimension = { key: string; label: string; secondary?: string; connection_count: number; active_peak: number; last_seen_at: string }
-type ConnectionAuditReport = { report_id: string; server_id: number; user_id: number; inbound_id?: number; path_id?: number; device_id_hash?: string; credential_epoch?: number; client_instance_id_hash?: string; source_ip: string; route_id?: string; source_geo_code?: string; source_country_code?: string; source_country?: string; source_province?: string; source_city?: string; source_isp?: string; network: string; destination?: string; destination_port?: number; outbound_tag?: string; outbound_type?: string; connection_count: number; closed_count: number; duration_total_ms: number; duration_max_ms: number; upload_bytes: number; download_bytes: number; payload_first_at?: string; payload_last_at?: string; duration_le_1s_count: number; duration_le_5s_count: number; duration_le_20s_count: number; duration_gt_20s_count: number; probe_state?: string; internal_probe: boolean; presence_sequence?: number; active_peak: number; active_at_end: number; dropped_bucket_count: number; started_at: string; ended_at: string }
-type ConnectionAuditUserDetail = { summary: ConnectionAuditUser; sources: ConnectionAuditDimension[]; destinations: ConnectionAuditDimension[]; outbounds: ConnectionAuditDimension[]; servers: ConnectionAuditDimension[]; recent: ConnectionAuditReport[]; risk_events: ConnectionAuditRiskEvent[]; probe_episodes: ConnectionProbeEpisode[]; presence: ConnectionPresenceEvent[] }
-type SubscriptionAuditWindow = { window_minutes: number; pull_count: number; raw_request_count: number; logical_pull_weight: number; route_count: number; route_novelty_weight: number; client_family_count: number; format_family_count: number; source_ip_count: number; region_count: number; client_format_count: number; regions: string[] }
-type SubscriptionAuditRisk = { level: AuditRiskLevel; score: number; signals: string[]; confidence: number; evidence_categories: string[]; counter_evidence: string[]; recommended_action: string; identity_mode: string; hard_block: boolean; reason?: string; short: SubscriptionAuditWindow; long: SubscriptionAuditWindow }
-type SubscriptionAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; confidence: number; evidence_categories: string[]; counter_evidence: string[]; recommended_action: string; identity_mode: string; device_count: number; raw_request_count: number; logical_pull_weight: number; route_count: number; suspended: boolean; suspended_at?: string; suspension_reason?: string; pull_count: number; successful_count: number; denied_count: number; source_ip_count: number; region_count: number; client_format_count: number; last_seen_at: string; current_risk: SubscriptionAuditRisk }
-type SubscriptionAuditOverview = { window_hours: number; generated_at: string; geo_database: GeoDatabaseStatus; policy: AuditPolicy; reporting_user_count: number; elevated_risk_count: number; suspended_count: number; total_pulls: number; unique_source_ips: number; users: SubscriptionAuditUser[] }
-type SubscriptionAuditDimension = { key: string; label: string; secondary?: string; pull_count: number; last_seen_at: string }
-type SubscriptionPullAudit = { id: number; user_id: number; device_id_hash?: string; representation_id?: string; subscription_revision?: string; raw_request_weight: number; logical_pull_weight: number; logical_fetch_id?: string; route_id?: string; route_novelty_weight: number; dedupe_reason?: string; conditional_request: boolean; source_ip: string; source_country_code?: string; source_country?: string; source_province?: string; source_city?: string; source_isp?: string; user_agent?: string; client_name: string; format: string; profile_id?: number; age_encrypted: boolean; token_kind: string; outcome: string; reason?: string; requested_at: string }
-type SubscriptionAccessState = { user_id: number; suspended: boolean; suspended_at?: string; reason?: string; evaluation_started_at: string; resumed_at?: string; resumed_by?: number }
-type SubscriptionAuditUserDetail = { summary: SubscriptionAuditUser; sources: SubscriptionAuditDimension[]; regions: SubscriptionAuditDimension[]; clients: SubscriptionAuditDimension[]; formats: SubscriptionAuditDimension[]; recent: SubscriptionPullAudit[]; access: SubscriptionAccessState }
-type CombinedAuditUser = { user_id: number; username: string; nickname: string; risk_level: AuditRiskLevel; risk_score: number; risk_signals: string[]; confidence: number; evidence_categories: string[]; counter_evidence: string[]; recommended_action: string; connection_risk_level: AuditRiskLevel; connection_risk_score: number; connection_observed: boolean; subscription_risk_level: AuditRiskLevel; subscription_risk_score: number; subscription_observed: boolean; subscription_suspended: boolean; last_seen_at: string }
-type CombinedAuditOverview = { window_hours: number; generated_at: string; elevated_risk_count: number; suspended_count: number; users: CombinedAuditUser[] }
 type AuditReviewSelector = { mode: 'all' | 'selected'; ids: number[] }
 type AuditReviewScope = { users: AuditReviewSelector; servers: AuditReviewSelector }
 type AuditReviewRiskLevel = 'low' | 'medium' | 'high' | 'critical' | 'unknown'
@@ -1319,7 +1280,7 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   tunnels: { label: '隧道', desc: '配置 WireGuard / SSH 服务器间隧道。', group: '拓扑' },
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
-  audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
+  audit: { label: '审计中心', desc: '汇总订阅更新、连接活动和管理操作，识别异常并提供可追溯的处理依据。', group: '运维' },
   automation: { label: '自动化', desc: '管理脚本、MCP、审批策略、变更集与内置 AI。', group: '系统' },
   scripts: { label: '脚本', desc: '管理受限 JavaScript 脚本、触发器和执行记录。', group: '系统' },
   'script-triggers': { label: '脚本触发器', desc: '查看脚本定时与状态触发器。', group: '系统' },
@@ -1473,22 +1434,6 @@ const fieldLabels: Record<string, string> = {
   format: '格式', group_name: '分组名', description: '描述', subscription_format: '订阅格式', subscription_url: '订阅链接', outbound_tag: '出口标签', family_split_template_id: '双栈模板', family_dns_strategy: '域名家族优先级',
   created_at: '创建时间', updated_at: '更新时间', completed_at: '完成时间', last_success_at: '最近成功时间', last_attempt_at: '最近检查时间', config_version: '配置版本', task_id: '任务 ID', payload_json: '任务内容 JSON', nonce: '随机数', result: '结果',
   total: '总数', pending: '等待中', running: '执行中', succeeded: '成功', failed: '失败', partial_failed: '部分失败', timeout: '超时', latency_ms: '平均延迟', min_latency_ms: '最低延迟', p95_latency_ms: 'P95 延迟', jitter_ms: '抖动', success_count: '成功次数', sample_count: '样本数', endpoint: '探测端点', probe_status: '端口状态', probe_detail: '探测明细', checked_at: '检测时间', message: '消息'
-}
-
-const valueLabels: Record<string, string> = {
-  admin: '管理员', operator: '操作员', viewer: '只读', active: '活跃', online: '在线', offline: '离线', unknown: '未知', healthy: '健康', unhealthy: '异常',
-  enabled: '已启用', disabled: '已禁用', true: '启用', false: '禁用', succeeded: '成功', success: '成功', skipped: '已跳过', stale: '已过期', warning: '需关注', failed: '失败', partial_failed: '部分失败', timeout: '超时', error: '错误', pending: '等待中', running: '执行中', requested: '已请求', needed: '需要申请', ready: '就绪',
-  rollback_failed: '回滚失败', direct: '直连', block: '阻断', outbound: '出口', external: '导入节点', proxy_path: '代理链路', family_split: 'IPv4 / IPv6 分离合并', chain: '链式代理', warp: 'WARP', interface: '指定网卡', source_prefix: '地址前缀', socks: 'SOCKS',
-  singbox_source: 'sing-box JSON', singbox_binary: 'sing-box SRS', mihomo_domain: 'Mihomo domain', mihomo_ipcidr: 'Mihomo IP-CIDR', mihomo_classical: 'Mihomo classical', blackmatrix_classical: 'Blackmatrix7 规则',
-  global: '全局', server: '服务器', auto: '自动（IPv4 优先）', ipv4: 'IPv4', ipv6: 'IPv6', custom: '自定义', ipv4_only: '仅 IPv4', ipv6_only: '仅 IPv6', dual_stack: '双栈', prefer_ipv4: '优先 IPv4', prefer_ipv6: '优先 IPv6',
-  a: 'A', aaaa: 'AAAA', both: 'A + AAAA',
-  allow: '允许', uot: 'UoT', never: '从不', first_apply: '首次下发', periodic: '定期', always: '每次', sampled: '实际连接采样', periodic_sampled: '定期+采样',
-  detect: '仅检测', apply: '检测并应用', tcp_udp: 'TCP+UDP', builtin: '内置', wireguard: 'WireGuard', ssh: 'SSH', doh: 'DoH', dot: 'DoT', udp: 'UDP', tcp: 'TCP',
-  cloudflare: 'Cloudflare', google: 'Google', quad9: 'Quad9', alidns: '阿里 DNS', dnspod: 'DNSPod', remote: '远程', local: '本地',
-  apply_deployment: '应用部署', apply_core_config: '下发核心配置', probe_inbounds: '检查入口监听', probe_inbounds_external: '检查公网端口', probe_port_forwards: '探测端口转发', probe_external_egress: '探测第三方出口',
-  benchmark_dns: '解析服务检查', detect_mtu: 'MTU 检测', check_time: '时间检测', update_agent_config: '同步 Agent 配置', diagnose_network: '网络诊断', list_network_interfaces: '读取网卡',
-  collect_logs: '拉取日志', manage_logs: '管理日志',
-  install_agent: '安装 Agent', update_agent: '更新 Agent', uninstall_agent: '卸载 Agent',
 }
 
 type ToastKind = 'error' | 'success' | 'warning' | 'info'
@@ -1901,109 +1846,7 @@ function sleep(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
-class SupersededAuthRequestError extends Error {
-  constructor() {
-    super('superseded authentication request')
-    this.name = 'SupersededAuthRequestError'
-  }
-}
-
-type MutationResponseObserver = (path: string, data: any, method: string) => void
-
-function api(token: string, onUnauthorized?: (failedToken: string) => boolean, onMutationResponse?: MutationResponseObserver) {
-  const authHeaders: Record<string, string> = token && token !== 'cookie' ? { authorization: `Bearer ${token}` } : {}
-  const csrfHeaders = (): Record<string, string> => {
-    const csrf = token === 'cookie' ? sessionStorage.getItem('oboard.csrf') || '' : ''
-    return csrf ? { 'x-oboard-csrf': csrf } : {}
-  }
-  async function request<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-    const method = String(init.method || 'GET').toUpperCase()
-    const mutation = method !== 'GET' && method !== 'HEAD'
-    if (mutation) onMutationResponse?.(path, { mutation_pending: true }, method)
-    let res: Response
-    try {
-      res = await fetch(appPath('/api/v1/ui' + path), {
-        ...init,
-        credentials: 'same-origin',
-        headers: {
-          'content-type': 'application/json',
-          ...authHeaders,
-          ...csrfHeaders(),
-          ...(init.headers || {})
-        }
-      })
-    } catch (error) {
-      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
-      // The request never reached an answer. For a write that is not a
-      // failure, so it is reported as an outcome to be confirmed rather than
-      // one to be repeated.
-      throw mutation ? markIndeterminateMutation(error) : error
-    }
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
-      if (res.status === 401 && token && onUnauthorized) {
-        if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
-        throw apiRequestError({ error: '登录已过期，请重新登录' }, res)
-      }
-      const failure = apiRequestError(data, res)
-      throw mutation ? markIndeterminateMutation(failure) : failure
-    }
-    if (mutation) onMutationResponse?.(path, { ...data, mutation_pending: false }, method)
-    return data
-  }
-  async function requestV2<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-    const method = String(init.method || 'GET').toUpperCase()
-    const mutation = method !== 'GET' && method !== 'HEAD'
-    if (mutation) onMutationResponse?.(path, { mutation_pending: true }, method)
-    let res: Response
-    try {
-      res = await fetch(appPath('/api/v1' + path), {
-        ...init,
-        credentials: 'same-origin',
-        headers: {
-          'content-type': 'application/json',
-          ...authHeaders,
-          ...csrfHeaders(),
-          ...(init.headers || {})
-        }
-      })
-    } catch (error) {
-      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
-      throw mutation ? markIndeterminateMutation(error) : error
-    }
-    const payload = await res.json().catch(() => ({})) as any
-    if (!res.ok) {
-      if (mutation) onMutationResponse?.(path, { mutation_pending: false }, method)
-      if (res.status === 401 && token && onUnauthorized) {
-        if (!onUnauthorized(token)) throw new SupersededAuthRequestError()
-        throw new Error('登录已过期，请重新登录')
-      }
-      const v2Error = payload?.error && typeof payload.error === 'object' ? payload.error : null
-      const failure = apiRequestError({ error: v2Error?.message || payload?.error, message: payload?.message }, res)
-      throw mutation ? markIndeterminateMutation(failure) : failure
-    }
-    if (mutation) onMutationResponse?.(path, { ...(payload.data || {}), mutation_pending: false }, method)
-    return payload.data as T
-  }
-  async function download(path: string): Promise<{ blob: Blob; filename: string }> {
-    const res = await fetch(appPath('/api/v1/ui' + path), { credentials: 'same-origin', headers: authHeaders })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw apiRequestError(data, res)
-    }
-    const disposition = res.headers.get('content-disposition') || ''
-    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'oboard-logs.zip'
-    return { blob: await res.blob(), filename }
-  }
-  async function upload<T = any>(path: string, body: FormData): Promise<T> {
-    const res = await fetch(appPath('/api/v1/ui' + path), { method: 'POST', body, credentials: 'same-origin', headers: { ...authHeaders, ...csrfHeaders() } })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw apiRequestError(data, res)
-    return data
-  }
-  return { request, requestV2, download, upload }
-}
+const api = createAPIClientFactory(appPath, apiRequestError)
 
 function PortalLoader({ loading }: { loading: boolean }) {
   return <MatrixLogoLoader loading={loading} />
@@ -2011,6 +1854,7 @@ function PortalLoader({ loading }: { loading: boolean }) {
 
 export function App() {
   const [token, setToken] = useState(sessionStorage.getItem('oboard.token') || '')
+  const { advance: advanceSessionBoundary, isCurrentSession } = useSessionBoundary()
   const activeTokenRef = useRef(token)
   activeTokenRef.current = token
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => storedSessionUser())
@@ -2068,25 +1912,33 @@ export function App() {
     })
     setData((current: any) => mergeConfigurationMutationResponse(current, result, path))
   }, [])
-  const client = useMemo(() => api(token, failedToken => {
-    if (failedToken !== activeTokenRef.current) return false
-    clearLatencyWindowCache()
-    activeTokenRef.current = ''
-    loadSeq.current++
-    sessionStorage.removeItem('oboard.token')
-    sessionStorage.removeItem('oboard.user')
-    sessionStorage.removeItem('oboard.csrf')
-    setToken('')
-    setSessionUser(null)
-    setData({})
-    pageCacheRef.current = {}
-    latestTelemetryRef.current = []
-    pageRequestsRef.current.reset()
-    dirtyPagesRef.current.clear()
-    prefetchSchedulerRef.current?.clear()
-    showToast(setToast, '登录已过期，请重新登录')
-    return true
-  }, mergeMutationResponse), [token, mergeMutationResponse])
+  const advanceSession = React.useCallback(() => {
+    advanceSessionBoundary()
+    mutationActivityRef.current = new MutationActivityTracker()
+    setMutationSaving(false)
+  }, [advanceSessionBoundary])
+  const client = useMemo(() => {
+    return api(token, failedToken => {
+      if (failedToken !== activeTokenRef.current) return false
+      clearLatencyWindowCache()
+      advanceSession()
+      activeTokenRef.current = ''
+      loadSeq.current++
+      sessionStorage.removeItem('oboard.token')
+      sessionStorage.removeItem('oboard.user')
+      sessionStorage.removeItem('oboard.csrf')
+      setToken('')
+      setSessionUser(null)
+      setData({})
+      pageCacheRef.current = {}
+      latestTelemetryRef.current = []
+      pageRequestsRef.current.reset()
+      dirtyPagesRef.current.clear()
+      prefetchSchedulerRef.current?.clear()
+      showToast(setToast, '登录已过期，请重新登录')
+      return true
+    }, mergeMutationResponse, isCurrentSession)
+  }, [token, mergeMutationResponse, advanceSession, isCurrentSession])
 
   useEffect(() => {
     if (!token) return
@@ -2126,6 +1978,7 @@ export function App() {
         }
         if (!response.ok) throw new Error(localizeErrorMessage(result.error || response.statusText))
         if (!result.user || !result.csrf_token) throw new Error('登录恢复响应无效')
+        advanceSession()
         activeTokenRef.current = 'cookie'
         sessionStorage.setItem('oboard.token', 'cookie')
         sessionStorage.setItem('oboard.user', JSON.stringify(result.user))
@@ -2639,6 +2492,7 @@ export function App() {
       }
       document.body.style.overflow = ""
       clearLatencyWindowCache()
+      advanceSession()
       activeTokenRef.current = ''
       loadSeq.current++
       sessionStorage.removeItem('oboard.token')
@@ -2660,6 +2514,7 @@ export function App() {
 
   if (!token) return <Login theme={theme} onThemeChange={changeTheme} initialError={restoreError} onToken={(v, user, csrfToken) => {
     clearLatencyWindowCache()
+    advanceSession()
     activeTokenRef.current = v
     loadSeq.current++
     sessionStorage.setItem('oboard.token', v)
@@ -2689,7 +2544,7 @@ export function App() {
     nodes: '节点',
     notifications: '通知中心',
     tasks: '任务部署中心',
-    audit: '审计台',
+    audit: '审计中心',
     settings: '面板系统设置',
     account: '我的账户',
   }
@@ -3227,8 +3082,8 @@ function renderTab(tab: string, data: any, client: ReturnType<typeof api>, load:
   if (tab === 'port-forwards') return <PortForwards data={data} client={client} load={load} notify={notify} />
   if (tab === 'tunnels') return <Tunnels data={data} client={client} load={load} />
   if (tab === 'notifications') return <Notifications data={data} client={client} load={load} notify={notify} sessionUser={sessionUser} />
-  if (tab === 'tasks') return <Tasks data={data} client={client} loading={loading} />
-  if (tab === 'audit') return <AuditConsole data={data} client={client} loading={loading} notify={notify} />
+  if (tab === 'tasks') return <Tasks tasks={data.agent_tasks} servers={data.servers} client={client} loading={loading} />
+  if (tab === 'audit') return <AuditConsole data={data} client={client} load={load} notify={notify} />
   if (isAutomationNavTab(tab)) return <AutomationWorkspace tab={tab} data={data} client={client} notify={notify} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} />
   if (tab === 'settings') return <SettingsPage data={data} client={client} load={load} notify={notify} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
   return null
@@ -3287,47 +3142,8 @@ function timeCheckNTPServerSettings(value: unknown) {
   return value.map(item => String(item || ''))
 }
 
-const auditPolicyPresets: Record<'loose' | 'balanced' | 'strict', AuditPolicy> = {
-  loose: auditPolicyPreset('loose', [[60, 180], [20, 60], [180, 480], [6, 12], [8, 14], [3, 5], [20, 40], [20, 60], [192, 768], [3, 5]], 120),
-  balanced: auditPolicyPreset('balanced', [[30, 120], [12, 36], [96, 288], [4, 8], [6, 10], [2, 4], [12, 24], [12, 30], [128, 512], [2, 3]], 60),
-  strict: auditPolicyPreset('strict', [[20, 60], [8, 24], [48, 144], [3, 6], [4, 7], [2, 3], [8, 16], [8, 20], [96, 320], [1, 2]], 30),
-}
-
-function auditPolicyPreset(mode: 'loose' | 'balanced' | 'strict', values: [number, number][], cloneOverlapSeconds: number): AuditPolicy {
-  const threshold = (index: number): AuditThreshold => ({ soft: values[index][0], hard: values[index][1] })
-  return {
-    mode,
-    raw_requests_per_60_seconds: threshold(0),
-    logical_pulls_per_10_minutes: threshold(1),
-    logical_pulls_per_24_hours: threshold(2),
-    routes_per_15_minutes: threshold(3),
-    client_families_per_24_hours: threshold(4),
-    concurrent_routes_90_seconds: threshold(5),
-    node_fanout_10_seconds: threshold(6),
-    probe_episodes_10_minutes: threshold(7),
-    active_connections: threshold(8),
-    legacy_device_excess: threshold(9),
-    clone_overlap_seconds: cloneOverlapSeconds,
-    auto_action_confidence: 0.8,
-  }
-}
-
-function cloneAuditPolicy(value: AuditPolicy): AuditPolicy {
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item && typeof item === 'object' ? { ...item } : item])) as AuditPolicy
-}
-
-function auditPolicyValue(value: any): AuditPolicy {
-  if (!value?.raw_requests_per_60_seconds || !value?.concurrent_routes_90_seconds) return cloneAuditPolicy(auditPolicyPresets.balanced)
-  return cloneAuditPolicy(value as AuditPolicy)
-}
-
 function settingEnabled(value: any, fallback = true): boolean {
   return String(value ?? fallback) !== 'false'
-}
-
-function auditPolicyMode(value: AuditPolicy): AuditPolicy['mode'] {
-  if (value.mode === 'loose' || value.mode === 'balanced' || value.mode === 'strict') return value.mode
-  return 'custom'
 }
 
 function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, realtimeResources }: any) {
@@ -4171,7 +3987,7 @@ function SettingsPage({ data, client, load, notify, realtimeStatus, realtimeRevi
       {activeSection === 'updates' && <>
         <ControllerUpdatePanel data={data} client={client} load={load} notify={notify} dialogs={dialogs} realtimeStatus={realtimeStatus} realtimeRevision={realtimeRevision} realtimeResources={realtimeResources} onControllerUpdateInProgressChange={onControllerUpdateInProgressChange} />
         <StorageDiagnosticsCard settings={data.settings} />
-        <ControllerBackupPanel client={client} notify={notify} dialogs={dialogs} />
+        <ControllerBackupPanel localizeErrorMessage={localizeErrorMessage} client={client} notify={notify} dialogs={dialogs} />
       </>}
       {activeSection === 'logs' && <ControllerLogsPanel
         client={client}
@@ -5055,547 +4871,6 @@ function StorageDiagnosticsCard({ settings }: { settings?: any }) {
   </section>
 }
 
-function ControllerBackupPanel({ client, notify, dialogs }: any) {
-  const emptySettings: ControllerBackupSettings = {
-    enabled: false, schedule: 'daily', time: '03:00', weekday: 0, local_retention: 7, remote_retention: 30, update_retention: 2,
-    destination: { provider: '', endpoint: '', bucket: '', prefix: '', region: 'us-east-1', force_path_style: false, enabled: false },
-    password_configured: false, destination_configured: true,
-  }
-  const [snapshot, setSnapshot] = useState<ControllerBackupSnapshot>({ settings: emptySettings, backups: [], update_backups: [] })
-  const [draft, setDraft] = useState<ControllerBackupSettings>(emptySettings)
-  const [updateBackupDetail, setUpdateBackupDetail] = useState<ControllerUpdateBackup | null>(null)
-  const [recoveryPassword, setRecoveryPassword] = useState('')
-  const [recoveryPasswordConfirm, setRecoveryPasswordConfirm] = useState('')
-  const [s3AccessKey, setS3AccessKey] = useState('')
-  const [s3SecretKey, setS3SecretKey] = useState('')
-  const [webdavUsername, setWebdavUsername] = useState('')
-  const [webdavPassword, setWebdavPassword] = useState('')
-  const [uploadPassword, setUploadPassword] = useState('')
-  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
-  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
-  const [uploadDragActive, setUploadDragActive] = useState(false)
-  const [uploadValidationError, setUploadValidationError] = useState<'file' | 'password' | ''>('')
-  const [passwordValidationError, setPasswordValidationError] = useState('')
-  const [working, setWorking] = useState('')
-  const uploadRef = useRef<HTMLInputElement>(null)
-  const uploadDropRef = useRef<HTMLButtonElement>(null)
-  const uploadPasswordRef = useRef<HTMLInputElement>(null)
-  const refresh = async (quiet = false) => {
-    if (!quiet) setWorking('load')
-    try {
-      const result = await client.request('/backups') as ControllerBackupSnapshot
-      setSnapshot(result)
-      setDraft(result.settings || emptySettings)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      if (!quiet) setWorking('')
-    }
-  }
-  useEffect(() => { void refresh() }, [])
-  const saveSettings = async () => {
-    if (working) return
-    if (draft.destination?.enabled && !draft.destination.provider) {
-      notify?.('请选择第三方备份的存储类型', 'error')
-      return
-    }
-    if (!snapshot.settings?.password_configured) {
-      notify?.('请先在备份密码中设置恢复密码', 'error')
-      return
-    }
-    setWorking('save')
-    try {
-      const result = await client.request('/backups/settings', {
-        method: 'PUT',
-        body: JSON.stringify({
-          enabled: draft.enabled,
-          schedule: draft.schedule,
-          time: draft.time,
-          weekday: draft.weekday,
-          local_retention: draft.local_retention,
-          remote_retention: draft.remote_retention,
-          update_retention: draft.update_retention,
-          destination: draft.destination,
-          s3_access_key: s3AccessKey,
-          s3_secret_key: s3SecretKey,
-          webdav_username: webdavUsername,
-          webdav_password: webdavPassword,
-        }),
-      }) as { settings: ControllerBackupSettings }
-      setSnapshot(previous => ({ ...previous, settings: result.settings }))
-      setDraft(result.settings)
-      // Refresh update backups after retention change may have triggered auto-delete.
-      void refresh(true)
-      setS3AccessKey('')
-      setS3SecretKey('')
-      setWebdavUsername('')
-      setWebdavPassword('')
-      notify?.('备份设置已保存', 'success')
-      setSettingsDialogOpen(false)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const saveRecoveryPassword = async () => {
-    if (working) return
-    if (recoveryPassword.length < 6) {
-      setPasswordValidationError('恢复密码至少需要 6 个字符。')
-      return
-    }
-    if (recoveryPassword !== recoveryPasswordConfirm) {
-      setPasswordValidationError('两次输入的恢复密码不一致。')
-      return
-    }
-    setPasswordValidationError('')
-    setWorking('password')
-    try {
-      const settings = snapshot.settings || emptySettings
-      const result = await client.request('/backups/settings', {
-        method: 'PUT',
-        body: JSON.stringify({
-          enabled: settings.enabled,
-          schedule: settings.schedule,
-          time: settings.time,
-          weekday: settings.weekday,
-          local_retention: settings.local_retention,
-          remote_retention: settings.remote_retention,
-          update_retention: settings.update_retention,
-          destination: settings.destination,
-          recovery_password: recoveryPassword,
-        }),
-      }) as { settings: ControllerBackupSettings }
-      setSnapshot(previous => ({ ...previous, settings: result.settings }))
-      setDraft(current => ({ ...current, password_configured: result.settings.password_configured }))
-      setRecoveryPassword('')
-      setRecoveryPasswordConfirm('')
-      setPasswordDialogOpen(false)
-      notify?.(settings.password_configured ? '备份恢复密码已更换' : '备份恢复密码已设置', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const testDestination = async () => {
-    setWorking('test')
-    try {
-      await client.request('/backups/settings/test', {
-        method: 'POST',
-        body: JSON.stringify({
-          destination: draft.destination,
-          s3_access_key: s3AccessKey,
-          s3_secret_key: s3SecretKey,
-          webdav_username: webdavUsername,
-          webdav_password: webdavPassword,
-        }),
-      })
-      notify?.('第三方备份目标连接成功', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const createBackup = async () => {
-    if (working) return
-    if (!snapshot.settings?.password_configured && !draft.password_configured) {
-      notify?.('请先设置备份恢复密码', 'error')
-      setPasswordValidationError('')
-      setPasswordDialogOpen(true)
-      return
-    }
-    setWorking('create')
-    try {
-      const result = await client.request('/backups', { method: 'POST', body: JSON.stringify({ upload_remote: true }) }) as { backup: ControllerBackup }
-      notify?.('备份已开始，正在后台创建', 'info')
-      for (let attempt = 0; attempt < 150; attempt++) {
-        await new Promise(resolve => window.setTimeout(resolve, 2000))
-        const next = await client.request('/backups') as ControllerBackupSnapshot
-        setSnapshot(next)
-        setDraft(next.settings || emptySettings)
-        const item = next.backups?.find((entry: ControllerBackup) => entry.id === result.backup?.id)
-        if (item?.local_status === 'failed') {
-          throw new Error(next.settings?.last_error || '备份创建失败，请稍后重试')
-        }
-        if (item && item.local_status !== 'pending') {
-          notify?.(item.remote_status === 'failed' ? '本地备份已创建，但第三方上传失败' : '备份已创建', item.remote_status === 'failed' ? 'error' : 'success')
-          return
-        }
-      }
-      throw new Error('备份仍在后台执行，请稍后在备份记录中查看')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const downloadBackup = async (item: ControllerBackup) => {
-    setWorking(`download-${item.id}`)
-    try {
-      const file = await client.download(`/backups/${item.id}/download`)
-      const url = URL.createObjectURL(file.blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = file.filename
-      anchor.click()
-      URL.revokeObjectURL(url)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const restoreBackup = async (item: ControllerBackup, password = '', alreadyConfirmed = false) => {
-    const recoveryPasswordForRestore = password || await dialogs.prompt({
-      title: item.local_status === 'available' ? '恢复备份' : '取回并恢复备份',
-      message: '请输入创建这份备份时使用的恢复密码。密码验证通过后才会开始恢复。',
-      placeholder: '该备份的恢复密码',
-      inputType: 'password',
-      confirmText: '继续',
-    })
-    if (!recoveryPasswordForRestore) return
-    if (!alreadyConfirmed) {
-      const confirmed = await dialogs.confirm({
-        title: '恢复主控数据？',
-        message: '恢复前会创建保护备份。主控将重启，当前登录会话失效，并重新下发恢复后的节点配置。',
-        confirmText: '备份并恢复',
-        tone: 'danger',
-      })
-      if (!confirmed) return
-    }
-    setWorking(`restore-${item.id}`)
-    try {
-      await client.request(`/backups/${item.id}/restore`, { method: 'POST', body: JSON.stringify({ recovery_password: recoveryPasswordForRestore }) })
-      notify?.('备份已验证，主控正在重启恢复数据', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-      setWorking('')
-    }
-  }
-  const removeBackup = async (item: ControllerBackup) => {
-    const remoteDeleteMessage = item.remote_status === 'available' && !item.remote_retrievable
-      ? '当前第三方目标与这条记录不一致。这里只会删除本地记录，远端文件需要到旧存储中手动删除。'
-      : item.remote_status === 'available' ? '本地副本和第三方副本都会删除。' : '本地副本和备份记录都会删除。'
-    const deleteMessage = item.protected ? `这是恢复前创建的保护备份。${remoteDeleteMessage}` : remoteDeleteMessage
-    const confirmed = await dialogs.confirm({ title: '删除备份？', message: deleteMessage, confirmText: '删除', tone: 'danger' })
-    if (!confirmed) return
-    setWorking(`delete-${item.id}`)
-    try {
-      const result = await client.request(`/backups/${item.id}`, { method: 'DELETE' }) as { message?: string }
-      notify?.(result.message || '备份已删除', 'success')
-      await refresh(true)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const viewUpdateBackup = async (item: ControllerUpdateBackup) => {
-    setUpdateBackupDetail(item)
-  }
-  const downloadUpdateBackup = async (item: ControllerUpdateBackup) => {
-    setWorking(`download-update-${item.name}`)
-    try {
-      const file = await client.download(`/controller-update/backups/${encodeURIComponent(item.name)}/download`)
-      const url = URL.createObjectURL(file.blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = file.filename || item.name
-      anchor.click()
-      URL.revokeObjectURL(url)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const removeUpdateBackup = async (item: ControllerUpdateBackup) => {
-    const confirmed = await dialogs.confirm({
-      title: '删除更新前备份？',
-      message: `将删除文件 ${item.name}（${formatBytes(Number(item.size_bytes || 0))}）。${item.is_latest ? '这是最近一次更新前的备份，删除后将无法通过该文件回滚。' : ''}`,
-      confirmText: '删除',
-      tone: 'danger',
-    })
-    if (!confirmed) return
-    setWorking(`delete-update-${item.name}`)
-    try {
-      const result = await client.request(`/controller-update/backups/${encodeURIComponent(item.name)}`, { method: 'DELETE' }) as { message?: string }
-      notify?.(result.message || '更新前备份已删除', 'success')
-      await refresh(true)
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setWorking('')
-    }
-  }
-  const uploadBackup = async () => {
-    const file = uploadFile
-    if (!file) {
-      setUploadValidationError('file')
-      uploadDropRef.current?.focus()
-      return
-    }
-    if (!uploadPassword) {
-      setUploadValidationError('password')
-      uploadPasswordRef.current?.focus()
-      return
-    }
-    setUploadValidationError('')
-    setWorking('upload')
-    let restoreStarted = false
-    try {
-      const form = new FormData()
-      form.set('backup', file)
-      form.set('recovery_password', uploadPassword)
-      const result = await client.upload('/backups/upload', form) as { backup: ControllerBackup; inspection: { manifest: { source_version: string; created_at: string } } }
-      await refresh(true)
-      setUploadDialogOpen(false)
-      setUploadFile(null)
-      setUploadPassword('')
-      const confirmed = await dialogs.confirm({
-        title: '立即恢复上传的备份？',
-        message: `该备份来自 ${result.inspection?.manifest?.source_version || '未知版本'}。选择稍后恢复会保留文件，之后可从备份列表恢复。`,
-        confirmText: '立即恢复',
-        cancelText: '只保存',
-        tone: 'danger',
-      })
-      if (confirmed) {
-        restoreStarted = true
-        await restoreBackup(result.backup, form.get('recovery_password') as string, true)
-      } else {
-        notify?.('备份已保存，尚未恢复', 'success')
-      }
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      if (!restoreStarted) setWorking('')
-    }
-  }
-  const clearSettingsSecrets = () => {
-    setS3AccessKey('')
-    setS3SecretKey('')
-    setWebdavUsername('')
-    setWebdavPassword('')
-  }
-  const openSettingsDialog = () => {
-    const settings = snapshot.settings || emptySettings
-    setDraft({ ...settings, destination: { ...(settings.destination || emptySettings.destination) } })
-    clearSettingsSecrets()
-    setSettingsDialogOpen(true)
-  }
-  const closeSettingsDialog = () => {
-    if (working) return
-    const settings = snapshot.settings || emptySettings
-    setDraft({ ...settings, destination: { ...(settings.destination || emptySettings.destination) } })
-    clearSettingsSecrets()
-    setSettingsDialogOpen(false)
-  }
-  const openPasswordDialog = () => {
-    setRecoveryPassword('')
-    setRecoveryPasswordConfirm('')
-    setPasswordValidationError('')
-    setPasswordDialogOpen(true)
-  }
-  const closePasswordDialog = () => {
-    if (working) return
-    setRecoveryPassword('')
-    setRecoveryPasswordConfirm('')
-    setPasswordValidationError('')
-    setPasswordDialogOpen(false)
-  }
-  const chooseUploadFile = (file?: File) => {
-    if (!file) return
-    setUploadFile(file)
-    setUploadValidationError(current => current === 'file' ? '' : current)
-  }
-  const openUploadDialog = () => {
-    setUploadFile(null)
-    setUploadPassword('')
-    setUploadDragActive(false)
-    setUploadValidationError('')
-    setUploadDialogOpen(true)
-  }
-  const closeUploadDialog = () => {
-    if (working) return
-    setUploadFile(null)
-    setUploadPassword('')
-    setUploadDragActive(false)
-    setUploadValidationError('')
-    setUploadDialogOpen(false)
-  }
-  const updateDestination = (patch: Partial<BackupDestination>) => setDraft(current => ({ ...current, destination: { ...current.destination, ...patch } }))
-  const destination = draft.destination || emptySettings.destination
-  const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-  const savedSettings = snapshot.settings || emptySettings
-  const savedDestination = savedSettings.destination || emptySettings.destination
-  const savedDestinationName = savedDestination.provider === 's3' ? 'S3 兼容存储' : savedDestination.provider === 'webdav' ? 'WebDAV' : '第三方存储'
-  const scheduleDescription = savedSettings.enabled
-    ? `${savedSettings.schedule === 'weekly' ? `每${weekdayNames[savedSettings.weekday] || '周日'}` : '每天'} ${savedSettings.time || '03:00'} 自动创建，本地保留 ${savedSettings.local_retention || 1} 份。`
-    : '当前只会在您点击“创建备份”时备份。'
-  const backupStatus = (item: ControllerBackup) => item.local_status === 'pending'
-    ? '备份创建中'
-    : item.remote_status === 'failed'
-      ? (item.local_status === 'available' ? '本地可用，远端失败' : '副本不可用')
-      : item.local_status === 'available' && item.remote_status === 'available' ? '本地和远端可用'
-        : item.local_status === 'available' ? '本地可用'
-          : item.remote_retrievable ? '可从第三方取回'
-            : item.remote_status === 'available' ? '保留在旧目标' : '副本不可用'
-  return <>
-  <section className="settings-card controller-backup-card">
-    <div className="settings-card-head">
-      <div className="settings-heading"><h3>主控数据备份</h3><FieldHelp label="主控数据备份" hint="备份用户数据、证书和配置，不包含日志和程序文件。" placement="bottom" /></div>
-      <div className="backup-card-head-actions"><span className={`status-pill ${snapshot.settings?.last_error ? 'danger' : 'ok'}`}>{working === 'load' ? '正在读取' : snapshot.settings?.last_error ? '需要处理' : '已就绪'}</span><button type="button" className="ghost" onClick={openSettingsDialog} disabled={Boolean(working)}><Settings2 size={15} />自动备份设置</button></div>
-    </div>
-    {snapshot.settings?.last_error && <div className="controller-update-error" role="alert">{localizeErrorMessage(snapshot.settings.last_error)}</div>}
-    <div className="backup-settings-summary">
-      <span className={`backup-settings-summary-icon${savedSettings.enabled ? ' active' : ''}`}><CalendarSync size={18} /></span>
-      <div><strong>{savedSettings.enabled ? '自动备份已开启' : '自动备份未开启'}</strong><span>{scheduleDescription}</span><small>{savedDestination.enabled ? `新备份会同时上传到${savedDestinationName}，远端保留 ${savedSettings.remote_retention || 1} 份。` : '第三方备份未启用，新备份只保存在本机。'}</small></div>
-    </div>
-    <section className="backup-password-setting">
-      <div className="settings-heading"><h3>备份密码</h3><FieldHelp label="备份密码" hint="用于加密新备份；恢复时须输入创建该备份时的密码。" placement="bottom" /></div>
-      <div className="backup-password-setting-actions"><span className={`status-pill ${savedSettings.password_configured ? 'ok' : 'warning'}`}>{savedSettings.password_configured ? '已设置' : '未设置'}</span><button type="button" className="ghost" onClick={openPasswordDialog} disabled={Boolean(working)}><KeyRound size={15} />{savedSettings.password_configured ? '更换密码' : '设置密码'}</button></div>
-    </section>
-    <div className="backup-actions"><div><strong>立即备份</strong><span>本地备份完成后，会上传到已启用的第三方目标。</span></div><button onClick={() => void createBackup()} disabled={Boolean(working)}><Database size={15} />{working === 'create' ? '备份中...' : '创建备份'}</button></div>
-    <section className="backup-import">
-      <div className="settings-heading"><h3>导入备份</h3><FieldHelp label="导入备份" hint="上传已有备份，验证密码后可恢复。" placement="bottom" /></div>
-      <button type="button" className="ghost" onClick={openUploadDialog} disabled={Boolean(working)}><ArrowUp size={15} />上传备份</button>
-    </section>
-    <section className="backup-records">
-      <div className="settings-card-head"><div className="settings-heading"><h3>备份记录</h3><FieldHelp label="备份记录" hint="恢复前会创建保护备份，保护备份不会被自动清理。" placement="bottom" /></div><button className="ghost icon-button" onClick={() => void refresh()} disabled={Boolean(working)} title="刷新备份记录" aria-label="刷新备份记录"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
-      {snapshot.backups?.length ? <div className="backup-record-list">{snapshot.backups.map(item => <div className="backup-record" key={item.id}><div className="backup-record-main"><strong>{item.origin === 'automatic' ? '自动备份' : item.origin === 'uploaded' ? '上传备份' : item.origin === 'pre_restore' ? '恢复前保护备份' : '手动备份'}</strong><span>{formatDate(item.created_at)} · {item.local_status === 'pending' ? '等待后台完成' : formatBytes(Number(item.size_bytes || 0)) + ' · 来源 ' + (item.source_version || '-')}</span>{item.remote_error && <small>{localizeErrorMessage(item.remote_error)}</small>}</div><span className={`status-pill ${item.local_status === 'pending' ? 'warning' : item.remote_status === 'failed' || (item.local_status !== 'available' && !item.remote_retrievable) ? 'danger' : item.protected ? 'warning' : 'ok'}`}>{backupStatus(item)}</span><div className="backup-record-actions">{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost icon-button" title={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} aria-label={item.local_status === 'available' ? '下载备份' : '从第三方取回并下载'} onClick={() => void downloadBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Download size={15} /></button>}{(item.local_status === 'available' || item.remote_retrievable) && <button type="button" className="ghost" onClick={() => void restoreBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}>{item.local_status === 'available' ? '恢复' : '取回并恢复'}</button>}<button type="button" className="ghost icon-button danger-text" title="删除备份" aria-label="删除备份" onClick={() => void removeBackup(item)} disabled={Boolean(working) || item.local_status === 'pending'}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">尚未创建备份。</p>}
-    </section>
-    <section className="backup-records">
-      <div className="settings-card-head"><div className="settings-heading"><h3>更新前备份</h3><FieldHelp label="更新前备份" hint="更新前创建的数据副本。保留 0 份时，更新成功后立即清理。" placement="bottom" /></div><span className="status-pill">{`保留 ${snapshot.settings?.update_retention ?? snapshot.update_retention ?? 2} 份`}</span><button className="ghost icon-button" onClick={() => void refresh(true)} disabled={Boolean(working)} title="刷新更新前备份" aria-label="刷新更新前备份"><RefreshCw size={15} className={working === 'load' ? 'spin' : ''} /></button></div>
-      {snapshot.update_backups?.length ? <div className="backup-record-list">{snapshot.update_backups.map(item => <div className="backup-record" key={item.name}><div className="backup-record-main"><strong>{item.is_latest ? '最近更新前备份' : '更新前备份'} {item.is_latest && <span className="status-pill ok" style={{marginLeft:6, fontSize:11}}>最新</span>}</strong><span>{formatDate(item.created_at)} · {formatBytes(Number(item.size_bytes || 0))}{item.target_build ? ` · 目标构建 ${item.target_build}` : ''}</span><small title={item.path} style={{overflowWrap:'anywhere'}}>{item.name}</small></div><span className={`status-pill ${item.is_latest ? 'warning' : 'ok'}`}>{item.is_latest ? '已关联' : '已保留'}</span><div className="backup-record-actions"><button type="button" className="ghost icon-button" title="查看详情" aria-label="查看详情" onClick={() => void viewUpdateBackup(item)} disabled={Boolean(working)}><Eye size={15} /></button><button type="button" className="ghost icon-button" title="下载快照" aria-label="下载快照" onClick={() => void downloadUpdateBackup(item)} disabled={Boolean(working)}><Download size={15} /></button><button type="button" className="ghost icon-button danger-text" title="删除更新前备份" aria-label="删除更新前备份" onClick={() => void removeUpdateBackup(item)} disabled={Boolean(working)}><Trash2 size={15} /></button></div></div>)}</div> : <p className="muted backup-empty">暂无更新前备份，更新时选择“备份”后会自动创建。</p>}
-    </section>
-  </section>
-  <AnimatePresence>{passwordDialogOpen && <MotionDialogPanel onCancel={closePasswordDialog} className="backup-password-dialog" ariaLabel={savedSettings.password_configured ? '更换备份恢复密码' : '设置备份恢复密码'}>
-    <header className="dialog-head"><div><h2>{savedSettings.password_configured ? '更换备份密码' : '设置备份密码'}</h2><p className="muted">密码不会显示或找回，请妥善保存。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closePasswordDialog} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-    <form id="backup-password-form" onSubmit={event => { event.preventDefault(); void saveRecoveryPassword() }}>
-      <div className="dialog-body backup-password-dialog-body">
-        {savedSettings.password_configured && <div className="backup-password-change-note"><Info size={16} aria-hidden="true" /><span>更换密码只影响之后创建的备份；已有备份仍需使用原密码恢复。</span></div>}
-        <div className="backup-password-fields">
-          <div className="form-field"><div className="form-field-meta"><label className="form-field-label" htmlFor="backup-recovery-password">{savedSettings.password_configured ? '新密码' : '恢复密码'}<em aria-label="必填">*</em></label></div><div className="form-field-control"><input id="backup-recovery-password" type="password" minLength={6} required autoComplete="new-password" value={recoveryPassword} onChange={event => { setRecoveryPassword(event.target.value); setPasswordValidationError('') }} aria-describedby="backup-password-help backup-password-error" /></div><small id="backup-password-help" className="backup-field-help">至少 6 个字符，恢复到其他主控时也需要使用。</small></div>
-          <div className="form-field"><div className="form-field-meta"><label className="form-field-label" htmlFor="backup-recovery-password-confirm">确认密码<em aria-label="必填">*</em></label></div><div className="form-field-control"><input id="backup-recovery-password-confirm" type="password" minLength={6} required autoComplete="new-password" value={recoveryPasswordConfirm} onChange={event => { setRecoveryPasswordConfirm(event.target.value); setPasswordValidationError('') }} aria-describedby="backup-password-error" /></div></div>
-        </div>
-        <p id="backup-password-error" className="backup-form-error" role="alert" aria-live="polite">{passwordValidationError}</p>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={closePasswordDialog} disabled={Boolean(working)}>取消</button><button type="submit" disabled={Boolean(working)}>{working === 'password' ? '保存中…' : savedSettings.password_configured ? '更换密码' : '设置密码'}</button></footer>
-    </form>
-  </MotionDialogPanel>}</AnimatePresence>
-  <AnimatePresence>{uploadDialogOpen && <MotionDialogPanel onCancel={closeUploadDialog} className="backup-upload-dialog" ariaLabel="上传备份">
-    <header className="dialog-head"><div><h2>上传备份</h2><p className="muted">选择备份文件并输入创建该备份时使用的恢复密码。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeUploadDialog} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-    <form id="backup-upload-form" onSubmit={event => { event.preventDefault(); void uploadBackup() }}>
-      <div className="dialog-body backup-upload-dialog-body">
-        <input ref={uploadRef} id="backup-upload-file" className="backup-upload-file-input" type="file" accept=".obk,application/octet-stream" onChange={event => { chooseUploadFile(event.target.files?.[0]); event.currentTarget.value = '' }} />
-        <button ref={uploadDropRef} type="button" className={`backup-upload-dropzone${uploadDragActive ? ' is-dragging' : ''}${uploadFile ? ' has-file' : ''}`} onClick={() => uploadRef.current?.click()} onDragEnter={event => { event.preventDefault(); setUploadDragActive(true) }} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setUploadDragActive(true) }} onDragLeave={event => { event.preventDefault(); setUploadDragActive(false) }} onDrop={event => { event.preventDefault(); setUploadDragActive(false); chooseUploadFile(event.dataTransfer.files?.[0]) }} aria-describedby={`backup-upload-file-help${uploadValidationError === 'file' ? ' backup-upload-error' : ''}`} aria-invalid={uploadValidationError === 'file'} disabled={Boolean(working)}>
-          <ArrowUpCircle size={28} aria-hidden="true" /><strong>{uploadFile ? uploadFile.name : uploadDragActive ? '松开即可选择文件' : '选择备份文件'}</strong><span id="backup-upload-file-help">{uploadFile ? `${formatBytes(uploadFile.size)} · 点击可更换文件` : '点击选择，或将 .obk 文件拖到此处'}</span>
-        </button>
-        <div className="form-field backup-upload-password-field"><div className="form-field-meta"><label className="form-field-label" htmlFor="backup-upload-password">恢复密码<em aria-label="必填">*</em></label></div><div className="form-field-control"><input ref={uploadPasswordRef} id="backup-upload-password" type="password" autoComplete="current-password" value={uploadPassword} onChange={event => { setUploadPassword(event.target.value); setUploadValidationError(current => current === 'password' ? '' : current) }} placeholder="该备份的恢复密码" aria-describedby={`backup-upload-password-help${uploadValidationError === 'password' ? ' backup-upload-error' : ''}`} aria-invalid={uploadValidationError === 'password'} /></div><small id="backup-upload-password-help" className="backup-field-help">上传时会先验证密码和文件完整性，不会立即覆盖当前数据。</small></div>
-        <p id="backup-upload-error" className="backup-form-error" role="alert" aria-live="polite">{uploadValidationError === 'file' ? '请选择要上传的备份文件。' : uploadValidationError === 'password' ? '请输入该备份的恢复密码。' : ''}</p>
-      </div>
-      <footer className="dialog-actions"><button type="button" className="ghost" onClick={closeUploadDialog} disabled={Boolean(working)}>取消</button><button type="submit" disabled={Boolean(working)}><ArrowUp size={15} aria-hidden="true" />{working === 'upload' ? '上传并验证中…' : '上传并验证'}</button></footer>
-    </form>
-  </MotionDialogPanel>}</AnimatePresence>
-  <AnimatePresence>{settingsDialogOpen && <MotionDialogPanel onCancel={closeSettingsDialog} className="backup-settings-dialog">
-    <header className="dialog-head"><div><h2>自动备份设置</h2><p className="muted">设置自动创建时间、备份保留数量和第三方存储位置。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeSettingsDialog} disabled={Boolean(working)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-    <div className="dialog-body backup-settings-dialog-body">
-      <form id="backup-settings-form" className="backup-settings-form" onSubmit={event => { event.preventDefault(); void saveSettings() }}>
-        <section className="backup-form-section">
-          <div className="backup-form-section-head"><div><strong>自动创建</strong><span>开启后，系统会按您选择的时间创建加密备份。</span></div><Switch checked={draft.enabled} onChange={checked => setDraft(current => ({ ...current, enabled: checked }))} ariaLabel="启用自动备份" /></div>
-          <div className="backup-dialog-grid">
-            <FormField label="备份频率"><Select value={draft.schedule} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, schedule: event.target.value as 'daily' | 'weekly' }))}><option value="daily">每天</option><option value="weekly">每周</option></Select></FormField>
-            {draft.schedule === 'weekly' && <FormField label="每周日期"><Select value={draft.weekday} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, weekday: Number(event.target.value) }))}>{weekdayNames.map((label, index) => <option key={label} value={index}>{label}</option>)}</Select></FormField>}
-            <FormField label="执行时间" hint="使用“流量控制”中的统计时区"><input type="time" value={draft.time} disabled={!draft.enabled} onChange={event => setDraft(current => ({ ...current, time: event.target.value || '03:00' }))} /></FormField>
-            <FormField label="本地保留数量" hint="手动、自动和上传的备份共用此数量">
-              <input
-                type="number"
-                min={1}
-                max={100}
-                placeholder="1"
-                value={(draft.local_retention as any) === '' ? '' : draft.local_retention}
-                onChange={event => setDraft(current => ({ ...current, local_retention: event.target.value === '' ? ('' as any) : Number(event.target.value) }))}
-                onBlur={event => {
-                  const n = Number(event.target.value)
-                  if (!event.target.value || isNaN(n) || n < 1) setDraft(c => ({ ...c, local_retention: 1 }))
-                  else if (n > 100) setDraft(c => ({ ...c, local_retention: 100 }))
-                }}
-              />
-            </FormField>
-            <FormField label="更新前备份保留数量" hint="更新成功后保留的更新前快照数量，0 表示成功后立即删除">
-              <input
-                type="number"
-                min={0}
-                max={10}
-                placeholder="2"
-                value={(draft.update_retention as any) === '' ? '' : draft.update_retention}
-                onChange={event => setDraft(current => ({ ...current, update_retention: event.target.value === '' ? ('' as any) : Number(event.target.value) }))}
-                onBlur={event => {
-                  const n = Number(event.target.value)
-                  if (event.target.value === '' || isNaN(n) || n < 0) setDraft(c => ({ ...c, update_retention: 0 }))
-                  else if (n > 10) setDraft(c => ({ ...c, update_retention: 10 }))
-                }}
-              />
-            </FormField>
-          </div>
-        </section>
-        <section className="backup-form-section">
-          <div className="backup-form-section-head"><div><strong>第三方备份</strong><span>启用后，新备份会同时上传一份到您自己的存储中。</span></div><Switch checked={destination.enabled} onChange={checked => updateDestination({ enabled: checked })} ariaLabel="启用第三方备份" /></div>
-          {destination.enabled && <div className="backup-dialog-grid">
-            <FormField label="存储类型"><Select value={destination.provider} onChange={event => updateDestination({ provider: event.target.value as BackupDestination['provider'] })}><option value="">请选择</option><option value="s3">S3 兼容存储</option><option value="webdav">WebDAV</option></Select></FormField>
-            <FormField label="第三方存储保留数量" hint="达到数量后，只清理当前存储位置中的旧备份">
-              <input
-                type="number"
-                min={1}
-                max={365}
-                placeholder="1"
-                value={(draft.remote_retention as any) === '' ? '' : draft.remote_retention}
-                onChange={event => setDraft(current => ({ ...current, remote_retention: event.target.value === '' ? ('' as any) : Number(event.target.value) }))}
-                onBlur={event => {
-                  const n = Number(event.target.value)
-                  if (!event.target.value || isNaN(n) || n < 1) setDraft(c => ({ ...c, remote_retention: 1 }))
-                  else if (n > 365) setDraft(c => ({ ...c, remote_retention: 365 }))
-                }}
-              />
-            </FormField>
-            {destination.provider && <><FormField label={destination.provider === 'webdav' ? 'WebDAV 地址' : '服务地址'} hint="建议使用 HTTPS 地址"><input required value={destination.endpoint || ''} onChange={event => updateDestination({ endpoint: event.target.value })} placeholder={destination.provider === 'webdav' ? 'https://dav.example.com/oboard' : 'https://s3.example.com'} /></FormField>
-            <FormField label="目录前缀" hint="系统只会管理此目录下由 OBoard 创建的备份"><input value={destination.prefix || ''} onChange={event => updateDestination({ prefix: event.target.value })} placeholder="oboard-backups" /></FormField></>}
-            {destination.provider === 's3' && <><FormField label="存储桶"><input required value={destination.bucket || ''} onChange={event => updateDestination({ bucket: event.target.value })} /></FormField><FormField label="区域"><input value={destination.region || ''} onChange={event => updateDestination({ region: event.target.value })} placeholder="us-east-1" /></FormField><FormField label="访问密钥"><input type="password" autoComplete="new-password" value={s3AccessKey} onChange={event => setS3AccessKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="访问密钥密码"><input type="password" autoComplete="new-password" value={s3SecretKey} onChange={event => setS3SecretKey(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><div className="switch-form-row backup-path-style"><span><strong>使用路径风格地址</strong><small>存储服务要求存储桶名称出现在地址路径中时开启。</small></span><Switch checked={Boolean(destination.force_path_style)} onChange={checked => updateDestination({ force_path_style: checked })} ariaLabel="使用路径风格地址" /></div></>}
-            {destination.provider === 'webdav' && <><FormField label="用户名"><input value={webdavUsername} autoComplete="username" onChange={event => setWebdavUsername(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField><FormField label="密码"><input type="password" autoComplete="new-password" value={webdavPassword} onChange={event => setWebdavPassword(event.target.value)} placeholder={draft.destination_configured ? '留空保持当前值' : ''} /></FormField></>}
-          </div>}
-          {destination.enabled && <p className="backup-destination-note">更换存储位置后，旧位置中的备份不会被自动删除。</p>}
-        </section>
-      </form>
-    </div>
-    <footer className="dialog-actions backup-settings-dialog-actions"><button type="button" className="ghost" onClick={() => void testDestination()} disabled={Boolean(working) || !destination.enabled || !destination.provider}>{working === 'test' ? '测试中…' : '测试连接'}</button><span /><button type="button" className="ghost" onClick={closeSettingsDialog} disabled={Boolean(working)}>取消</button><button type="submit" form="backup-settings-form" disabled={Boolean(working)}>{working === 'save' ? '保存中…' : '保存设置'}</button></footer>
-  </MotionDialogPanel>}</AnimatePresence>
-  <AnimatePresence>{updateBackupDetail && <MotionDialogPanel onCancel={() => setUpdateBackupDetail(null)} className="backup-password-dialog" ariaLabel="更新前备份详情">
-    <header className="dialog-head"><div><h2>更新前备份详情</h2><p className="muted">查看快照文件信息，必要时可下载或删除。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={() => setUpdateBackupDetail(null)} aria-label="关闭" title="关闭"><XIcon /></button></header>
-    <div className="dialog-body backup-password-dialog-body" style={{gap:14}}>
-      <div style={{display:'grid', gap:10}}>
-        <div><strong>文件名</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontSize:13, overflowWrap:'anywhere'}}>{updateBackupDetail.name}</div></div>
-        <div><strong>路径</strong><div title={updateBackupDetail.path} style={{marginTop:4, color:'var(--muted)', fontSize:12, overflowWrap:'anywhere'}}>{updateBackupDetail.path}</div></div>
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
-          <div><strong>大小</strong><div style={{marginTop:4, color:'var(--text-secondary)'}}>{formatBytes(Number(updateBackupDetail.size_bytes || 0))}</div></div>
-          <div><strong>状态</strong><div style={{marginTop:4}}><span className={`status-pill ${updateBackupDetail.is_latest ? 'warning' : 'ok'}`}>{updateBackupDetail.is_latest ? '最新关联' : '已保留'}</span></div></div>
-        </div>
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
-          <div><strong>创建时间</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontSize:13}}>{formatDate(updateBackupDetail.created_at)}</div></div>
-          <div><strong>修改时间</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontSize:13}}>{formatDate(updateBackupDetail.mod_time)}</div></div>
-        </div>
-        {updateBackupDetail.target_build && <div><strong>目标构建</strong><div style={{marginTop:4, color:'var(--text-secondary)', fontFamily:'monospace', fontSize:13}}>{updateBackupDetail.target_build}</div></div>}
-        <div style={{padding:'10px 12px', background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'var(--radius-md)', fontSize:12, color:'var(--muted)', lineHeight:1.6}}>更新前备份为原始 SQLite 快照，保留用于更新失败时手动恢复。删除后无法找回。</div>
-      </div>
-    </div>
-    <footer className="dialog-actions"><button type="button" className="ghost" onClick={() => setUpdateBackupDetail(null)}>关闭</button><button type="button" className="ghost" onClick={() => { const item = updateBackupDetail; setUpdateBackupDetail(null); if (item) void downloadUpdateBackup(item) }}>下载</button><button type="button" className="ghost danger-text" onClick={() => { const item = updateBackupDetail; setUpdateBackupDetail(null); if (item) void removeUpdateBackup(item) }}>删除</button></footer>
-  </MotionDialogPanel>}</AnimatePresence>
-  </>
-}
-
 function DNSProviderIcon({ provider, size = 18 }: { provider: DNSProvider; size?: number }) {
   switch (provider) {
     case 'cloudflare':
@@ -6401,13 +5676,11 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
   const [auditEnabled, setAuditEnabled] = useState(settingEnabled(data.settings?.audit_enabled))
   const [subscriptionAuditEnabled, setSubscriptionAuditEnabled] = useState(settingEnabled(data.settings?.subscription_audit_enabled))
   const [connectionAuditEnabled, setConnectionAuditEnabled] = useState(settingEnabled(data.settings?.connection_audit_enabled))
-  const [auditAction, setAuditAction] = useState<'restrict' | 'warn'>(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
   const [saving, setSaving] = useState(false)
   useEffect(() => {
     setAuditEnabled(settingEnabled(data.settings?.audit_enabled))
     setSubscriptionAuditEnabled(settingEnabled(data.settings?.subscription_audit_enabled))
     setConnectionAuditEnabled(settingEnabled(data.settings?.connection_audit_enabled))
-    setAuditAction(String(data.settings?.audit_action || 'restrict') === 'warn' ? 'warn' : 'restrict')
   }, [data.settings?.audit_enabled, data.settings?.subscription_audit_enabled, data.settings?.connection_audit_enabled, data.settings?.audit_action])
   const changeAuditEnabled = async (enabled: boolean) => {
     if (!enabled) {
@@ -6429,9 +5702,9 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
         audit_enabled: auditEnabled,
         subscription_audit_enabled: subscriptionAuditEnabled,
         connection_audit_enabled: connectionAuditEnabled,
-        audit_action: auditAction,
+        audit_action: 'warn',
       }) })
-      notify?.('审计设置已保存', 'success')
+      notify?.('审计配置已保存', 'success')
       await load?.('audit', { background: true })
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -6440,14 +5713,14 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
     }
   }
   return <section className="settings-card">
-    <div className="settings-card-head"><div><h3>审计设置</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
+    <div className="settings-card-head"><div><h3>审计配置</h3><p className="muted">统一控制订阅审计与连接审计的采集、风险评估、通知和 Agent 行为。</p></div></div>
     <div className="form settings-form single-field">
-      <FormField label="总审计开关" hint="默认关闭。开启会增加主控 CPU、内存和数据库 I/O 压力；关闭后订阅审计与连接审计全部停止，历史数据保留可查。">
+      <FormField label="行为审计" hint="分析订阅与连接活动，发现异常使用模式。关闭后停止新的行为采集与判定；历史记录仍可查看。正常鉴权、计费、限流和必要管理操作日志不受影响。">
         <div className="switch-setting-row">
           <Switch checked={auditEnabled} onChange={enabled => void changeAuditEnabled(enabled)} ariaLabel="启用总审计" />
         </div>
       </FormField>
-      <FormField label="订阅审计" hint="关闭后订阅拉取不再记录、评分或触发暂停；已有暂停状态仍保持，需管理员手动恢复。">
+      <FormField label="订阅活动" hint="关闭后停止新的订阅行为采集与判定；已有访问限制保持不变。">
         <div className="switch-setting-row">
           <Switch checked={auditEnabled && subscriptionAuditEnabled} disabled={!auditEnabled} onChange={setSubscriptionAuditEnabled} ariaLabel="启用订阅审计" />
         </div>
@@ -6457,402 +5730,22 @@ function AuditSettingsPanel({ data, client, load, notify }: any) {
           <Switch checked={auditEnabled && connectionAuditEnabled} disabled={!auditEnabled} onChange={setConnectionAuditEnabled} ariaLabel="启用连接审计" />
         </div>
       </FormField>
-      <FormField label="风险阈值处理" hint="主动限制：订阅拉取达到高风险处置阈值并满足置信度与双证据要求时，暂停具体设备并通知管理员；仅警告：不暂停、只发送风险通知，评估与记录继续。">
-        <Select variant="segmented" value={auditAction} onChange={e => setAuditAction(e.target.value as 'restrict' | 'warn')} aria-label="审计风险阈值处理方式">
-          <option value="restrict">主动限制</option>
-          <option value="warn">仅警告</option>
-        </Select>
+      <FormField label="判定模式：仅告警" hint="记录异常并通知管理员，不因行为评分自动限制账号。已有访问限制、配额和独立请求限流不受影响。">
+        <p className="muted">观察阈值与贡献上限用于判定异常强度，不是账号封禁门槛。</p>
       </FormField>
-      <div className="settings-actions"><button onClick={() => void saveAuditSettings()} disabled={saving}>{saving ? '保存中...' : '保存审计设置'}</button></div>
+      <div className="settings-actions"><button onClick={() => void saveAuditSettings()} disabled={saving}>{saving ? '保存中...' : '保存审计配置'}</button></div>
     </div>
   </section>
 }
 
-function formatAuditWindowLabel(hours: number): string {
-  if (hours >= 24 && hours % 24 === 0) return `${hours / 24} 天`
-  return `${hours} 小时`
-}
-
-function AuditConsole({ data, client, load, loading, notify }: any) {
-  const dialogs = useDialogs()
-  const [view, setView] = useState<'combined' | 'subscriptions' | 'connections' | 'policy' | 'settings' | 'operations' | 'ai'>('combined')
-  // Long windows are served from the hourly rollup, so they are available
-  // regardless of how long raw reports are kept. Their totals are exact; the
-  // risk assessment behind them only sees report-level evidence for as long as
-  // those reports exist, which the banner below states.
-  const auditRetentionDays = Math.min(30, Math.max(1, Number(data.settings?.connection_audit_retention_days) || 7))
-  const auditWindowOptions = [
-    { hours: 1, label: '最近 1 小时' },
-    { hours: 24, label: '最近 24 小时' },
-    { hours: 168, label: '最近 7 天' },
-    { hours: 720, label: '最近 30 天' },
-  ]
-  const [windowHours, setWindowHours] = useState(24)
-
-  const [risk, setRisk] = useState<'all' | AuditRiskLevel>('all')
-  const [query, setQuery] = useState('')
-  const [connectionOverview, setConnectionOverview] = useState<ConnectionAuditOverview | null>(data.connection_audit || null)
-  const [subscriptionOverview, setSubscriptionOverview] = useState<SubscriptionAuditOverview | null>(data.subscription_audit || null)
-  const [combinedOverview, setCombinedOverview] = useState<CombinedAuditOverview | null>(data.audit_risk || null)
-  const [refreshing, setRefreshing] = useState(false)
-  const [refreshRevision, setRefreshRevision] = useState(0)
-  const [loadError, setLoadError] = useState('')
-  const [connectionDetail, setConnectionDetail] = useState<ConnectionAuditUserDetail | null>(null)
-  const [subscriptionDetail, setSubscriptionDetail] = useState<SubscriptionAuditUserDetail | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const detailTriggerRef = useRef<HTMLElement | null>(null)
-  const isAdmin = hasManagementAccess(data.session?.role || data.current_user?.role)
-  const pageVisible = useDocumentVisible()
-
-  useCoalescedReadRequest(
-    `audit/risk-overview?window_hours=${windowHours}&r=${refreshRevision}`,
-    signal => client.request(`/audit/risk-overview?window_hours=${windowHours}`, { signal }),
-    {
-      onStart: () => { setRefreshing(true); setLoadError('') },
-      onSuccess: (overview: any) => {
-        setConnectionOverview(overview.connection_audit || null)
-        setSubscriptionOverview(overview.subscription_audit || null)
-        setCombinedOverview(overview.audit_risk || null)
-      },
-      onError: (error: any) => { setLoadError(localizeErrorMessage(error?.message || error)) },
-      onSettled: () => { setRefreshing(false) },
-    },
-  )
-  useRegisterPageRefresh(() => {
-    if (!pageVisible) return
-    setRefreshRevision(value => value + 1)
-  })
-
-  const filteredUsers = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    const items: Array<ConnectionAuditUser | SubscriptionAuditUser | CombinedAuditUser> = view === 'connections'
-      ? connectionOverview?.users || []
-      : view === 'subscriptions'
-        ? subscriptionOverview?.users || []
-        : combinedOverview?.users || []
-    return items.filter(item => {
-      if (risk !== 'all' && item.risk_level !== risk) return false
-      return !needle || item.username.toLowerCase().includes(needle) || String(item.nickname || '').toLowerCase().includes(needle)
-    })
-  }, [view, connectionOverview, subscriptionOverview, combinedOverview, query, risk])
-  const openConnectionUser = async (userID: number, trigger?: HTMLElement | null) => {
-    if (trigger) detailTriggerRef.current = trigger
-    setDetailLoading(true)
-    setLoadError('')
-    try {
-      const res = await client.request(`/audit/users/${userID}?window_hours=${windowHours}`)
-      setConnectionDetail(res.connection_audit_user || null)
-    } catch (error: any) {
-      setLoadError(localizeErrorMessage(error?.message || error))
-    } finally {
-      setDetailLoading(false)
-    }
-  }
-  const openSubscriptionUser = async (userID: number, trigger?: HTMLElement | null) => {
-    if (trigger) detailTriggerRef.current = trigger
-    setDetailLoading(true)
-    setLoadError('')
-    try {
-      const res = await client.request(`/audit/subscriptions/users/${userID}?window_hours=${windowHours}`)
-      setSubscriptionDetail(res.subscription_audit_user || null)
-    } catch (error: any) {
-      setLoadError(localizeErrorMessage(error?.message || error))
-    } finally {
-      setDetailLoading(false)
-    }
-  }
-  const resumeSubscription = async (user: SubscriptionAuditUser) => {
-    const confirmed = await dialogs.confirm({ title: `恢复 ${user.nickname || user.username} 的订阅？`, message: '历史审计记录会保留，新的风险窗口从恢复时间开始计算。', confirmText: '恢复拉取' })
-    if (!confirmed) return
-    try {
-      await client.request(`/users/${user.user_id}/subscription-access/resume`, { method: 'POST', body: '{}' })
-      setSubscriptionDetail(null)
-      setRefreshRevision(value => value + 1)
-      notify?.('订阅拉取权限已恢复', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    }
-  }
-  const enabled = Number(connectionOverview?.enabled_server_count || 0)
-  const geoAvailable = subscriptionOverview?.geo_database?.available !== false && connectionOverview?.geo_database?.available !== false
-  const auditMasterOff = !settingEnabled(data.settings?.audit_enabled)
-  const auditSubscriptionOff = auditMasterOff || !settingEnabled(data.settings?.subscription_audit_enabled)
-  const auditConnectionOff = auditMasterOff || !settingEnabled(data.settings?.connection_audit_enabled)
-  const auditWarnOnly = !auditMasterOff && String(data.settings?.audit_action || 'restrict') === 'warn'
-  return <Panel className="audit-console-panel">
-    {(auditMasterOff || auditSubscriptionOff || auditConnectionOff || auditWarnOnly) && <div className={`audit-console-banner ${auditMasterOff ? 'danger' : 'warning'}`}>
-      <AlertTriangle size={16} />
-      <div>
-        <strong>{auditMasterOff ? '审计台已关闭' : auditWarnOnly ? '风险阈值仅警告，未启用主动限制' : '部分审计已关闭'}</strong>
-        <span>{auditMasterOff
-          ? '订阅审计与连接审计均已停止：Agent 不再采集或上报，风险通知已暂停，历史数据仍可查看。可在 审计设置 中重新开启。'
-          : `${auditSubscriptionOff ? '订阅审计已关闭，拉取不再记录与评分；' : ''}${auditConnectionOff ? '连接审计已关闭，Agent 已停止采集与上报；' : ''}${auditWarnOnly ? '订阅拉取达到高风险处置阈值时只发送通知，不会自动暂停。' : ''}`}</span>
-      </div>
-    </div>}
-    <div className="audit-console-tabs" role="tablist" aria-label="审计视图">
-      <button type="button" role="tab" aria-selected={view === 'combined'} className={view === 'combined' ? 'active' : ''} onClick={() => setView('combined')}><Gauge size={15} />综合风险</button>
-      <button type="button" role="tab" aria-selected={view === 'subscriptions'} className={view === 'subscriptions' ? 'active' : ''} onClick={() => setView('subscriptions')}><Download size={15} />订阅风险</button>
-      <button type="button" role="tab" aria-selected={view === 'connections'} className={view === 'connections' ? 'active' : ''} onClick={() => setView('connections')}><Shield size={15} />连接风险</button>
-      {isAdmin && <button type="button" role="tab" aria-selected={view === 'policy'} className={view === 'policy' ? 'active' : ''} onClick={() => setView('policy')}><Settings2 size={15} />风险策略</button>}
-      {isAdmin && <button type="button" role="tab" aria-selected={view === 'settings'} className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}><Sliders size={15} />审计设置</button>}
-      {isAdmin && <button type="button" role="tab" aria-selected={view === 'ai'} className={view === 'ai' ? 'active' : ''} onClick={() => setView('ai')}><Bot size={15} />AI 审查 <Badge variant="secondary" style={{ fontSize: 10, padding: '1px 5px', marginLeft: 2 }}>Beta</Badge></button>}
-      <button type="button" role="tab" aria-selected={view === 'operations'} className={view === 'operations' ? 'active' : ''} onClick={() => setView('operations')}><ClipboardList size={15} />操作日志</button>
-    </div>
-    {view === 'operations' ? <AuditLogs data={data} loading={loading} embedded /> : view === 'ai' && isAdmin ? <AIAuditReviews data={data} client={client} notify={notify} /> : view === 'policy' && isAdmin ? <AuditPolicySettings initialPolicy={subscriptionOverview?.policy || connectionOverview?.policy || data.settings?.audit_policy} auditAction={String(data.settings?.audit_action || 'restrict')} client={client} notify={notify} onSaved={savedPolicy => { setSubscriptionOverview(current => current ? { ...current, policy: savedPolicy } : current); setConnectionOverview(current => current ? { ...current, policy: savedPolicy } : current) }} /> : view === 'settings' && isAdmin ? <AuditSettingsPanel data={data} client={client} load={load} notify={notify} /> : <>
-      {connectionOverview?.totals_from_rollup && (connectionOverview?.evidence_window_hours || 0) > 0 ? (
-        <div className="audit-evidence-note">
-          {(connectionOverview.totals_window_hours || 0) >= windowHours
-            ? <>统计总量覆盖完整的 {formatAuditWindowLabel(windowHours)}，数据精确。</>
-            : <>统计总量只覆盖最近 {formatAuditWindowLabel(connectionOverview.totals_window_hours || 0)}，更早的小时在本功能上线前记录，没有留下可统计的数据——它们显示为 0 是「未记录」而不是「没有活动」。</>}
-          {' '}克隆判定、节点扇度与在线设备需要逐条连接记录，这类记录只保留 {formatAuditWindowLabel(connectionOverview.evidence_window_hours || 0)}，
-          因此风险研判基于这段较短的范围。要让风险研判覆盖更长时间，请在设置中调高「连接审计保留天数」。
-        </div>
-      ) : null}
-      <div className="audit-overview-grid">
-        {view === 'combined' ? <>
-          <div><span>审计用户</span><strong>{combinedOverview?.users?.length || 0}</strong><small>{windowHours} 小时历史范围</small></div>
-          <div><span>高风险用户</span><strong>{combinedOverview?.elevated_risk_count || 0}</strong><small>连接与订阅综合评分</small></div>
-          <div><span>订阅暂停</span><strong>{combinedOverview?.suspended_count || 0}</strong><small>等待管理员恢复</small></div>
-          <div><span>启用服务器</span><strong>{enabled}</strong><small>连接审计来源</small></div>
-        </> : view === 'subscriptions' ? <>
-          <div><span>拉取用户</span><strong>{subscriptionOverview?.reporting_user_count || 0}</strong><small>{windowHours} 小时历史范围</small></div>
-          <div><span>拉取次数</span><strong>{formatCompactAuditNumber(subscriptionOverview?.total_pulls || 0)}</strong><small>{subscriptionOverview?.unique_source_ips || 0} 个来源 IP</small></div>
-          <div><span>高风险用户</span><strong>{subscriptionOverview?.elevated_risk_count || 0}</strong><small>高风险与严重</small></div>
-          <div><span>已暂停</span><strong>{subscriptionOverview?.suspended_count || 0}</strong><small>仅阻断订阅拉取</small></div>
-        </> : <>
-          <div><span>启用服务器</span><strong>{enabled}</strong><small>{enabled ? '正在接收摘要' : '全部关闭'}</small></div>
-          <div><span>活跃用户</span><strong>{connectionOverview?.reporting_user_count || 0}</strong><small>{windowHours} 小时历史范围</small></div>
-          <div><span>高风险用户</span><strong>{connectionOverview?.elevated_risk_count || 0}</strong><small>高风险与严重</small></div>
-          <div><span>来源 IP</span><strong>{connectionOverview?.unique_source_ips || 0}</strong><small>{formatCompactAuditNumber(connectionOverview?.total_connections || 0)} 次连接</small></div>
-        </>}
-      </div>
-      <div className="audit-console-toolbar">
-        <label className="log-search"><Search size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索用户" /></label>
-        <Select value={String(windowHours)} onChange={event => setWindowHours(Number(event.target.value))} aria-label="审计时间窗口">{auditWindowOptions.map(option => <option key={option.hours} value={option.hours}>{option.label}</option>)}</Select>
-        <Select value={risk} onChange={event => setRisk(event.target.value as 'all' | AuditRiskLevel)} aria-label="风险等级"><option value="all">全部风险</option><option value="confirmed">已确认</option><option value="critical">严重</option><option value="high">高风险</option><option value="alert">告警</option><option value="watch">观察</option><option value="normal">正常</option></Select>
-        <button type="button" className="ghost icon-button" onClick={() => setRefreshRevision(value => value + 1)} disabled={refreshing} aria-label="刷新审计数据" title="刷新"><RefreshCw size={15} className={refreshing ? 'spin' : ''} /></button>
-      </div>
-      {loadError ? <p className="form-error">{loadError}</p> : null}
-	  {!geoAvailable ? <div className="audit-paused-notice"><Shield size={16} /><span>IP 归属库不可用，跨地域风险判定已暂停。</span></div> : null}
-	  {view === 'connections' && !enabled && (connectionOverview?.reporting_user_count || 0) > 0 ? <div className="audit-paused-notice"><Shield size={16} /><span>当前没有服务器继续采集，以下为已保存的历史摘要。</span></div> : null}
-	  {refreshing && !combinedOverview ? <TableSkeleton /> : !filteredUsers.length ? <p className="muted">当前筛选条件下暂无审计数据</p> : view === 'combined' ? <div className="audit-user-table-wrap">
-        <table className="audit-user-table"><thead><tr><th>用户</th><th>综合判断</th><th>证据质量</th><th>连接分项</th><th>订阅分项</th><th>当前动作</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
-          {(filteredUsers as CombinedAuditUser[]).map(user => <tr key={user.user_id}>
-            <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
-            <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span>{user.risk_signals?.[0] ? <small>{user.risk_signals[0]}</small> : null}</td>
-            <td><strong>{formatAuditPercent(user.confidence)}</strong><span>{user.evidence_categories?.length || 0} 类独立证据</span>{user.counter_evidence?.length ? <small>{user.counter_evidence.length} 条反证</small> : null}</td>
-            <td><span className={`audit-risk-pill ${user.connection_risk_level || 'normal'}`}>{auditRiskLabel(user.connection_risk_level || 'normal')} · {user.connection_risk_score || 0}</span></td>
-            <td><span className={`audit-risk-pill ${user.subscription_risk_level || 'normal'}`}>{auditRiskLabel(user.subscription_risk_level || 'normal')} · {user.subscription_risk_score || 0}</span></td>
-            <td><span className={`status-pill ${user.subscription_suspended ? 'danger' : 'ok'}`}>{user.subscription_suspended ? '订阅已暂停' : auditRecommendedActionLabel(user.recommended_action)}</span></td>
-            <td>{formatTableTime(user.last_seen_at)}</td>
-            <td><div className="audit-row-actions"><button type="button" className="ghost" onClick={event => void openSubscriptionUser(user.user_id, event.currentTarget)} disabled={detailLoading || !user.subscription_observed}>订阅</button><button type="button" className="ghost" onClick={event => void openConnectionUser(user.user_id, event.currentTarget)} disabled={detailLoading || !user.connection_observed}>连接</button></div></td>
-          </tr>)}
-        </tbody></table>
-      </div> : view === 'subscriptions' ? <div className="audit-user-table-wrap">
-        <table className="audit-user-table"><thead><tr><th>用户</th><th>风险 / 置信度</th><th>身份</th><th>原始 / 逻辑拉取</th><th>路由 / 客户端族</th><th>状态</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
-          {(filteredUsers as SubscriptionAuditUser[]).map(user => <tr key={user.user_id}>
-            <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
-            <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span><small>置信度 {formatAuditPercent(user.confidence)}</small></td>
-            <td><strong>{auditIdentityLabel(user.identity_mode)}</strong><span>{user.device_count || 0} 个已识别设备</span></td>
-            <td><strong>{formatCompactAuditNumber(user.raw_request_count)}</strong><span>逻辑权重 {formatAuditDecimal(user.logical_pull_weight)}</span>{user.denied_count ? <small>{user.denied_count} 次拒绝</small> : null}</td>
-            <td><strong>{user.route_count || 0} 条路径</strong><span>{user.current_risk?.long?.client_family_count || 0} 个客户端族</span></td>
-            <td><span className={`status-pill ${user.suspended ? 'danger' : 'ok'}`}>{user.suspended ? '已暂停' : '正常'}</span></td>
-            <td>{formatTableTime(user.last_seen_at)}</td>
-            <td><button type="button" className="ghost" onClick={event => void openSubscriptionUser(user.user_id, event.currentTarget)} disabled={detailLoading}>查看</button></td>
-          </tr>)}
-        </tbody></table>
-      </div> : <div className="audit-user-table-wrap">
-        <table className="audit-user-table"><thead><tr><th>用户</th><th>风险 / 置信度</th><th>设备身份</th><th>有效在线</th><th>实时活动</th><th>测速 / 资源</th><th>最后活动</th><th aria-label="操作" /></tr></thead><tbody>
-          {(filteredUsers as ConnectionAuditUser[]).map(user => <tr key={user.user_id}>
-            <td><strong>{user.nickname || user.username}</strong><span>{user.nickname ? user.username : `用户 #${user.user_id}`}</span></td>
-            <td><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span><small>置信度 {formatAuditPercent(user.confidence)}</small></td>
-            <td><strong>{auditIdentityLabel(user.identity_mode)}</strong><span>{user.registered_device_count || 0}{user.device_limit > 0 ? ` / ${user.device_limit}` : ''} 个设备槽位</span></td>
-            <td><strong>{auditOnlineDeviceLabel(user)}</strong><span>{user.identity_mode === 'device_bound' ? '精确设备数' : '估计区间，不自动限制'}</span></td>
-            <td><strong>{formatCompactAuditNumber(user.active_connection_count || 0)}</strong><span>当前有效连接</span>{user.concurrent_route_count ? <small>{user.concurrent_route_count} 条并发有效路由</small> : null}</td>
-            <td><strong>{user.probe_episode_count || 0} 次测速</strong><span>资源压力 {formatAuditPercent(user.resource_pressure)}</span>{!user.coverage_complete ? <small>采集覆盖不完整</small> : null}</td>
-            <td>{formatTableTime(user.last_seen_at)}</td>
-            <td><button type="button" className="ghost" onClick={event => void openConnectionUser(user.user_id, event.currentTarget)} disabled={detailLoading}>查看</button></td>
-          </tr>)}
-        </tbody></table>
-      </div>}
-    </>}
-    <AnimatePresence>{connectionDetail && <ConnectionAuditUserDialog detail={connectionDetail} restoreFocus={detailTriggerRef.current} onClose={() => setConnectionDetail(null)} />}</AnimatePresence>
-    <AnimatePresence>{subscriptionDetail && <SubscriptionAuditUserDialog detail={subscriptionDetail} canResume={isAdmin} onResume={resumeSubscription} restoreFocus={detailTriggerRef.current} onClose={() => setSubscriptionDetail(null)} />}</AnimatePresence>
-  </Panel>
-}
-
-function AuditPolicySettings({ initialPolicy, auditAction, client, notify, onSaved }: { initialPolicy: AuditPolicy | undefined; auditAction: string; client: any; notify?: (message: string, tone?: ToastKind) => void; onSaved: (policy: AuditPolicy) => void }) {
-  const [policy, setPolicy] = useState<AuditPolicy>(() => auditPolicyValue(initialPolicy))
-  const [presetMode, setPresetMode] = useState<AuditPolicy['mode']>(() => auditPolicyMode(auditPolicyValue(initialPolicy)))
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    const nextPolicy = auditPolicyValue(initialPolicy)
-    setPolicy(nextPolicy)
-    setPresetMode(auditPolicyMode(nextPolicy))
-  }, [initialPolicy])
-
-  const choosePreset = (value: string) => {
-    if (value === 'custom') {
-      setPresetMode('custom')
-      setPolicy(current => ({ ...current, mode: 'custom' }))
-      return
-    }
-    const preset = auditPolicyPresets[value as keyof typeof auditPolicyPresets]
-    if (!preset) return
-    setPolicy(cloneAuditPolicy(preset))
-    setPresetMode(value as AuditPolicy['mode'])
-  }
-  const updateThreshold = (key: keyof AuditPolicy, side: keyof AuditThreshold, value: number | string) => {
-    setPresetMode('custom')
-    setPolicy(current => {
-      const threshold = current[key] as AuditThreshold
-      const next = value === '' ? ('' as any) : Math.max(0, Math.round(Number(value) || 0))
-      return { ...current, mode: 'custom', [key]: { ...threshold, [side]: next } }
-    })
-  }
-  const save = async () => {
-    if (saving) return
-    setSaving(true)
-    try {
-      const sanitizedPolicy: any = { ...policy }
-      for (const [key] of thresholds) {
-        const t = (sanitizedPolicy as any)[key] as AuditThreshold
-        sanitizedPolicy[key] = {
-          soft: Math.max(0, Number(t?.soft) || 0),
-          hard: Math.max(1, Number(t?.hard) || 1),
-        }
-      }
-      sanitizedPolicy.clone_overlap_seconds = Math.max(10, Math.min(600, Number(policy.clone_overlap_seconds) || 10))
-      sanitizedPolicy.auto_action_confidence = Math.max(0.5, Math.min(1, Number(policy.auto_action_confidence) || 0.5))
-
-      const result = await client.request('/settings', { method: 'POST', body: JSON.stringify({ audit_policy: sanitizedPolicy }) })
-      const savedPolicy = auditPolicyValue(result?.settings?.audit_policy || sanitizedPolicy)
-      setPolicy(savedPolicy)
-      setPresetMode(auditPolicyMode(savedPolicy))
-      onSaved(savedPolicy)
-      notify?.('审计风险策略已保存', 'success')
-    } catch (error: any) {
-      notify?.(localizeErrorMessage(error?.message || error), 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const thresholds: Array<[keyof AuditPolicy, string, string]> = [
-    ['raw_requests_per_60_seconds', '原始订阅请求', '每 60 秒；超限只触发 429 与资源风险'],
-    ['logical_pulls_per_10_minutes', '有效逻辑拉取', '每 10 分钟；代理/直连重试已合并'],
-    ['logical_pulls_per_24_hours', '长期逻辑拉取', '每 24 小时'],
-    ['routes_per_15_minutes', '路由新颖度', '单设备 15 分钟加权路径'],
-    ['client_families_per_24_hours', '客户端族', '单设备 24 小时，仅低权重证据'],
-    ['concurrent_routes_90_seconds', '并发有效路由', '90 秒重叠业务，不按出现过的地域计数'],
-    ['node_fanout_10_seconds', '普通业务节点扇出', '10 秒，已确认测速不计入'],
-    ['probe_episodes_10_minutes', '测速频率', '每 10 分钟，仅参与资源节流'],
-    ['active_connections', '非测速活跃连接', '单设备资源压力，不代表设备数'],
-    ['legacy_device_excess', '旧凭证设备估计超额', '仅作为区间估计的辅助信号'],
-  ]
-
-  return <section className="audit-policy-settings">
-    <div className="settings-card-head"><div><h3>风险策略</h3><p className="muted">{auditAction === 'warn' ? '当前仅记录和告警，不执行设备级自动限制。' : '只有设备身份、双重独立证据、完整覆盖和足够置信度同时满足时，才限制具体设备。地域不会单独触发限制。'}</p></div></div>
-    <div className="form settings-form single-field audit-policy-form">
-      <FormField label="策略档位" full>
-        <Select variant="segmented" value={presetMode} onChange={event => choosePreset(event.target.value)} aria-label="审计风险策略档位">
-          <option value="loose">宽松</option><option value="balanced">平衡</option><option value="strict">严格</option><option value="custom">自定义</option>
-        </Select>
-      </FormField>
-      <div className="audit-policy-thresholds" role="group" aria-label="柔性与满分阈值">
-        <div className="audit-policy-threshold-head"><span>指标</span><span>柔性阈值</span><span>满分阈值</span></div>
-        {thresholds.map(([key, label, hint]) => {
-          const threshold = policy[key] as AuditThreshold
-          return <div className="audit-policy-threshold-row" key={key}>
-            <label htmlFor={`audit-policy-${key}-soft`}><strong>{label}</strong><small>{hint}</small></label>
-            <input
-              id={`audit-policy-${key}-soft`}
-              type="number"
-              min={0}
-              max={999999}
-              placeholder="0"
-              value={(threshold.soft as any) === '' ? '' : threshold.soft}
-              aria-label={`${label}柔性阈值`}
-              onChange={event => updateThreshold(key, 'soft', event.target.value === '' ? '' : Number(event.target.value))}
-              onBlur={event => {
-                const n = Number(event.target.value)
-                if (event.target.value !== '' && (isNaN(n) || n < 0)) updateThreshold(key, 'soft', 0)
-              }}
-            />
-            <input
-              type="number"
-              min={1}
-              max={1000000}
-              placeholder="1"
-              value={(threshold.hard as any) === '' ? '' : threshold.hard}
-              aria-label={`${label}满分阈值`}
-              onChange={event => updateThreshold(key, 'hard', event.target.value === '' ? '' : Number(event.target.value))}
-              onBlur={event => {
-                const n = Number(event.target.value)
-                if (!event.target.value || isNaN(n) || n < 1) updateThreshold(key, 'hard', 1)
-              }}
-            />
-          </div>
-        })}
-      </div>
-      <div className="audit-policy-guards">
-        <FormField label="设备克隆重叠时间" hint="同一设备凭证在独立网络上持续有效传输后形成强信号。">
-          <div className="input-with-unit">
-            <input
-              type="number"
-              min={10}
-              max={600}
-              placeholder="10"
-              value={(policy.clone_overlap_seconds as any) === '' ? '' : policy.clone_overlap_seconds}
-              onChange={event => {
-                setPresetMode('custom')
-                setPolicy(current => ({ ...current, mode: 'custom', clone_overlap_seconds: event.target.value === '' ? ('' as any) : Number(event.target.value) }))
-              }}
-              onBlur={event => {
-                const n = Number(event.target.value)
-                if (!event.target.value || isNaN(n) || n < 10) setPolicy(c => ({ ...c, clone_overlap_seconds: 10 }))
-                else if (n > 600) setPolicy(c => ({ ...c, clone_overlap_seconds: 600 }))
-              }}
-            />
-            <span>秒</span>
-          </div>
-        </FormField>
-        <FormField label="自动动作最低置信度" hint="仍需至少两类独立证据、完整采集覆盖和设备专属身份。">
-          <div className="input-with-unit">
-            <input
-              type="number"
-              min={50}
-              max={100}
-              placeholder="80"
-              value={(policy.auto_action_confidence as any) === '' ? '' : Math.round(Number(policy.auto_action_confidence) * 100)}
-              onChange={event => {
-                setPresetMode('custom')
-                setPolicy(current => ({
-                  ...current,
-                  mode: 'custom',
-                  auto_action_confidence: event.target.value === '' ? ('' as any) : Number(event.target.value) / 100,
-                }))
-              }}
-              onBlur={event => {
-                const n = Number(event.target.value)
-                if (!event.target.value || isNaN(n) || n < 50) setPolicy(c => ({ ...c, auto_action_confidence: 0.5 }))
-                else if (n > 100) setPolicy(c => ({ ...c, auto_action_confidence: 1 }))
-              }}
-            />
-            <span>%</span>
-          </div>
-        </FormField>
-      </div>
-      <div className="settings-actions"><button type="button" onClick={() => void save()} disabled={saving} aria-busy={saving || undefined}>{saving ? '保存中...' : '保存风险策略'}</button></div>
-    </div>
-  </section>
+function AuditConsole({ data, client, load, notify }: any) {
+  return <AuditCenter client={client} isAdmin={canManageAdministratorAccounts(data.session?.role || data.current_user?.role)} enabled={settingEnabled(data.settings?.audit_enabled)} settings={<><AuditSettingsPanel data={data} client={client} load={load} notify={notify} /><AuditCollectionSettings client={client} /><AuditPolicySettings client={client} /><AuditRetirement client={client} /></>} renderLogs={(rows, loading) => <AuditLogs data={{ audit_logs: rows }} loading={loading} embedded />} />
 }
 
 const auditReviewEvidenceOptions = [
-  { value: 'subscription', label: '订阅拉取', description: '拉取频率、来源、客户端与拒绝记录' },
-  { value: 'connection', label: '节点连接', description: '连接来源、并发、服务器与出口摘要' },
-  { value: 'destination', label: '访问目标', description: '连接后的目标域名、地址、端口与次数' },
+  { value: 'subscription', label: '订阅活动', description: '更新次数、来源与请求结果' },
+  { value: 'connection', label: '连接活动', description: '来源活动、并发与节点摘要' },
+  { value: 'destination', label: '访问目标', description: '已采集的目标诊断信息；未采集的历史无法恢复' },
 ]
 
 function localDateTimeValue(date: Date) {
@@ -6927,7 +5820,7 @@ function AIAuditReviews({ data, client, notify }: any) {
         notify?.('该审查没有可用的错误原始日志', 'error')
         return
       }
-      await dialogs.alert({ title: 'AI 审查错误原始日志', message: <div className="ai-review-raw-grid"><section><strong>Provider 原始日志</strong><CopyBlock value={JSON.stringify(failed.error_detail, null, 2)} /></section>{failed.error ? <section><strong>错误信息</strong><CopyBlock value={failed.error} /></section> : null}</div> })
+      await dialogs.alert({ title: '辅助分析错误原始日志', message: <div className="ai-review-raw-grid"><section><strong>Provider 原始日志</strong><CopyBlock value={JSON.stringify(failed.error_detail, null, 2)} /></section>{failed.error ? <section><strong>错误信息</strong><CopyBlock value={failed.error} /></section> : null}</div> })
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -6966,7 +5859,7 @@ function AIAuditReviews({ data, client, notify }: any) {
       }) })
       setCreateOpen(false)
       await refresh(true)
-      notify?.('AI 审查已进入队列', 'success')
+      notify?.('辅助分析已进入队列', 'success')
       if (response.ai_audit_review?.id) void openDetail(response.ai_audit_review.id)
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
@@ -6980,7 +5873,7 @@ function AIAuditReviews({ data, client, notify }: any) {
       await client.request(`/audit/ai-reviews/${review.id}/cancel`, { method: 'POST', body: '{}' })
       if (detail?.review.id === review.id) setDetail(null)
       await refresh(true)
-      notify?.('AI 审查已取消', 'success')
+      notify?.('辅助分析已取消', 'success')
     } catch (error: any) {
       notify?.(localizeErrorMessage(error?.message || error), 'error')
     } finally {
@@ -6989,7 +5882,7 @@ function AIAuditReviews({ data, client, notify }: any) {
   }
   const deleteReview = async (review: AuditReview) => {
     const confirmed = await dialogs.confirm({
-      title: '删除这条 AI 审查记录？',
+      title: '删除这条 辅助分析记录？',
       message: '审查报告、证据快照、模型任务和原始日志都会永久删除，此操作不能撤销。',
       confirmText: '删除审查记录',
       tone: 'danger',
@@ -7010,10 +5903,10 @@ function AIAuditReviews({ data, client, notify }: any) {
     if (outcome.outcome === 'superseded') return
     if (outcome.outcome === 'applied') {
       if (detail?.review.id === review.id) setDetail(null)
-      notify?.('AI 审查记录已删除', 'success')
+      notify?.('辅助分析记录已删除', 'success')
       return
     }
-    notify?.(describeMutationOutcome(outcome, '删除 AI 审查记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
+    notify?.(describeMutationOutcome(outcome, '删除 辅助分析记录'), outcome.outcome === 'unknown' ? 'warning' : 'error')
   }
   const toggleEvidence = (value: string) => setDraft(current => ({ ...current, evidenceTypes: current.evidenceTypes.includes(value) ? current.evidenceTypes.filter(item => item !== value) : [...current.evidenceTypes, value] }))
   const selectedProvider = providers.find(item => item.id === draft.providerID)
@@ -7028,14 +5921,14 @@ function AIAuditReviews({ data, client, notify }: any) {
         </div>
         <span>基于已保存的审计历史生成建议，不发起节点探测或自动处置。</span>
       </div>
-      <div><button type="button" className="ghost icon-button" onClick={() => void refresh()} disabled={loadingReviews} title="刷新" aria-label="刷新 AI 审查"><RefreshCw size={15} className={loadingReviews ? 'spin' : ''} /></button><button type="button" onClick={() => setCreateOpen(true)} disabled={!providers.some(aiProviderAuditReady)}><Plus size={15} />新建审查</button></div>
+      <div><button type="button" className="ghost icon-button" onClick={() => void refresh()} disabled={loadingReviews} title="刷新" aria-label="刷新 辅助分析"><RefreshCw size={15} className={loadingReviews ? 'spin' : ''} /></button><button type="button" onClick={() => setCreateOpen(true)} disabled={!providers.some(aiProviderAuditReady)}><Plus size={15} />新建审查</button></div>
     </div>
     <div className="audit-paused-notice" style={{ background: 'var(--surface-2, rgba(0,0,0,0.02))', borderColor: 'var(--border-strong)' }}>
       <Bot size={16} />
       <span><strong>Beta 功能提示：</strong>部分功能正在开发中，可能不可用。</span>
     </div>
     {!providers.some(aiProviderAuditReady) && <div className="audit-paused-notice"><Bot size={16} /><span>请先配置至少一个测试为“可用于审计”的 Endpoint。</span></div>}
-    {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 AI 审查记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
+    {loadingReviews && !reviews.length ? <TableSkeleton /> : !reviews.length ? <div className="automation-empty"><Bot size={22} /><span>暂无 辅助分析记录</span></div> : <div className="ai-review-list">{reviews.map(review => {
       const report = review.final_output
       const reportVerdict = report?.executive?.verdict
       const reportTone = report ? auditReviewVerdictTone(reportVerdict || '') : review.status === 'failed' ? 'critical' : 'low'
@@ -7044,14 +5937,14 @@ function AIAuditReviews({ data, client, notify }: any) {
       const progress = review.job_count ? Math.round(review.completed_job_count / review.job_count * 100) : 0
       return <article key={review.id} className="ai-review-row">
         <div className="ai-review-row-main"><div><span className={`audit-risk-pill ${reportTone}`}>{auditReviewStatusLabel(review.status, reportVerdict)}</span><strong>{reportTitle}</strong></div><p>{auditReviewEvidenceLabel(review.evidence_types)} · {formatTableTime(review.window_started_at)} 至 {formatTableTime(review.window_ended_at)}</p><small>{review.resolved_user_ids.length} 个用户 · {review.resolved_server_ids.length} 台服务器 · {review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'} · {(review.input_tokens || 0) + (review.output_tokens || 0)} Token</small>{active && <div className="ai-review-progress"><span style={{ width: `${progress}%` }} /></div>}{review.error && <small className="danger-text">{review.error}</small>}</div>
-        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{review.status === 'failed' && review.error && <button type="button" className="ghost" onClick={() => void showReviewLog(review.id)} disabled={working === `log-${review.id}`}><Terminal size={14} />原始日志</button>}{active ? <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button> : <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteReview(review)} disabled={Boolean(working)} aria-label={`删除 ${formatTableTime(review.created_at)} 的 AI 审查记录`} title="删除 AI 审查记录"><Trash2 size={14} aria-hidden="true" /></button>}</div>
+        <div className="ai-review-row-actions"><button type="button" className="ghost" onClick={() => void openDetail(review.id)} disabled={working === `detail-${review.id}`}>查看</button>{review.status === 'failed' && review.error && <button type="button" className="ghost" onClick={() => void showReviewLog(review.id)} disabled={working === `log-${review.id}`}><Terminal size={14} />原始日志</button>}{active ? <button type="button" className="ghost danger-text" onClick={() => void cancelReview(review)} disabled={Boolean(working)}>取消</button> : <button type="button" className="ghost icon-button danger-text" onClick={() => void deleteReview(review)} disabled={Boolean(working)} aria-label={`删除 ${formatTableTime(review.created_at)} 的 辅助分析记录`} title="删除 辅助分析记录"><Trash2 size={14} aria-hidden="true" /></button>}</div>
       </article>
     })}</div>}
     <AnimatePresence>{createOpen && <MotionDialogPanel onCancel={() => setCreateOpen(false)} className="ai-review-create-dialog">
       <header className="dialog-head">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <h2>新建 AI 审查</h2>
+            <h2>新建 辅助分析</h2>
             <Badge variant="secondary" style={{ fontSize: 10, padding: '1px 6px' }}>Beta</Badge>
           </div>
           <p className="muted">指定对象、历史时间与审查维度。（部分功能正在开发中，可能不可用）</p>
@@ -7092,14 +5985,14 @@ function AuditReviewDetailDialog({ detail, evidence, evidenceTotal, client, work
   }
   const showEvidence = (item: AuditReviewEvidence) => dialogs.alert({ title: item.ref, message: <div className="raw-log-copy"><CopyBlock value={JSON.stringify(item.payload || {}, null, 2)} /></div> })
   return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog ai-review-detail-dialog">
-    <header className="dialog-head"><div><h2>AI 审查详情</h2><p className="muted">{formatTableTime(detail.review.created_at)} · {auditReviewStatusLabel(detail.review.status, verdict)}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
+    <header className="dialog-head"><div><h2>辅助分析详情</h2><p className="muted">{formatTableTime(detail.review.created_at)} · {auditReviewStatusLabel(detail.review.status, verdict)}</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭" title="关闭"><XIcon /></button></header>
     <div className="dialog-body ai-review-detail-body">
       <div className="ai-review-detail-meta"><span>{auditReviewEvidenceLabel(detail.review.evidence_types)}</span><span>{detail.review.resolved_user_ids.length} 个用户</span><span>{detail.review.resolved_server_ids.length} 台服务器</span><span>{detail.review.privacy_mode === 'raw' ? '原始字段' : '脱敏字段'}</span><span>{detail.review.completed_job_count}/{detail.review.job_count} 个任务完成</span></div>
       {report ? <div className="ai-review-report">
         <section className="ai-review-report-summary">
           {healthScore !== null && <div className={`ai-review-health-score ${healthScoreTone}`}>
             <strong>{healthScore}</strong>
-            <div className="ai-review-health-meter" role="meter" aria-label="AI 审查健康评分" aria-valuemin={0} aria-valuemax={100} aria-valuenow={healthScore}><span style={{ width: `${healthScore}%` }} /></div>
+            <div className="ai-review-health-meter" role="meter" aria-label="辅助分析健康评分" aria-valuemin={0} aria-valuemax={100} aria-valuenow={healthScore}><span style={{ width: `${healthScore}%` }} /></div>
             <span>{healthScore}/100</span>
           </div>}
           <div className="ai-review-report-summary-copy"><span className={`audit-risk-pill ${auditReviewVerdictTone(report.executive.verdict)}`}>{auditReviewVerdictLabel(report.executive.verdict)} · 风险 {report.executive.risk_score}/100 · 置信度 {formatAuditPercent(report.executive.evidence_confidence)}</span><h3>{report.executive.one_line_conclusion}</h3><p>数据覆盖 {formatAuditPercent(report.data_quality?.coverage)} · 基线 {report.data_quality?.baseline_days ?? '—'} 天 · 身份质量 {formatAuditPercent(report.data_quality?.identity_quality)}</p></div>
@@ -7148,109 +6041,8 @@ function auditReviewScopeLabel(review: AuditReview, users: User[], servers: Serv
   return `${userLabel} × ${serverLabel}`
 }
 
-function auditRiskLabel(level: AuditRiskLevel) {
-  return ({ normal: '正常', watch: '观察', alert: '告警', high: '高风险', critical: '严重', confirmed: '已确认' } as Record<AuditRiskLevel, string>)[level] || level
-}
-
-function auditIdentityLabel(mode: string) {
-  return ({ device_bound: '设备专属', legacy_unbound: '旧凭证', mixed: '混合身份' } as Record<string, string>)[mode] || '未知身份'
-}
-
-function auditRecommendedActionLabel(action: string) {
-  return ({ observe: '仅记录', notify_operator: '通知管理员', rebind_device_and_limit_raw_requests: '建议重新绑定', suspend_device_subscription: '暂停具体设备', reject_device_authentication: '拒绝新认证' } as Record<string, string>)[action] || '继续观察'
-}
-
 function formatAuditPercent(value: number) {
-  return `${Math.round(Math.max(0, Math.min(1, Number(value || 0))) * 100)}%`
-}
-
-function formatAuditDecimal(value: number) {
-  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(Number(value || 0))
-}
-
-function auditOnlineDeviceLabel(user: ConnectionAuditUser) {
-  if (user.identity_mode === 'device_bound') return formatCompactAuditNumber(user.online_device_count || 0)
-  const lower = user.online_device_lower || 0
-  const upper = user.online_device_upper || 0
-  const estimate = Number(user.online_device_estimate || 0)
-  if (upper > lower) return `${lower}-${upper}（约 ${formatAuditDecimal(estimate)}）`
-  return `至少 ${lower}`
-}
-
-function formatCompactAuditNumber(value: number) {
-  return new Intl.NumberFormat('zh-CN', { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(Number(value || 0))
-}
-
-function ConnectionAuditUserDialog({ detail, restoreFocus, onClose }: { detail: ConnectionAuditUserDetail; restoreFocus?: HTMLElement | null; onClose: () => void }) {
-  const user = detail.summary
-  return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog" ariaLabel="连接审计详情" restoreFocus={restoreFocus}>
-    <header className="dialog-head"><div><h2>{user.nickname || user.username}</h2><p className="muted">{user.username} · {auditIdentityLabel(user.identity_mode)} · 当前连接审计窗口</p></div><button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭连接审计详情" title="关闭"><XIcon /></button></header>
-    <div className="dialog-body audit-detail-body">
-      <AuditEvidenceSummary user={user} />
-      <div className="audit-identity-grid"><div><span>有效在线设备</span><strong>{auditOnlineDeviceLabel(user)}</strong><small>{user.identity_mode === 'device_bound' ? '设备凭证精确去重' : '旧凭证估计区间'}</small></div><div><span>实时连接</span><strong>{formatCompactAuditNumber(user.active_connection_count || 0)}</strong><small>非测速业务存在</small></div><div><span>克隆置信度</span><strong>{formatAuditPercent(user.clone_confidence)}</strong><small>{user.concurrent_route_count || 0} 条并发有效路由</small></div><div><span>采集覆盖</span><strong>{formatAuditPercent(user.coverage_quality)}</strong><small>{user.coverage_complete ? '可参与自动动作' : '仅观察，禁止自动限制'}</small></div></div>
-      <AuditEvidenceLists evidence={user.evidence_categories} counter={user.counter_evidence} />
-      {(detail.risk_events || []).length ? <div className="audit-risk-events"><div className="audit-recent-head"><div><h3>设备克隆证据</h3><span className="audit-section-note">只在同一设备凭证的独立网络上存在有效业务重叠时形成强信号。</span></div><span>15 分钟滑动窗口</span></div>{detail.risk_events.map((event, index) => <div key={`${event.started_at}-${index}`}><span className={`audit-risk-pill ${event.level}`}>{auditRiskLabel(event.level)}</span><strong>{event.route_count || event.source_ip_count} 条独立网络 · 重叠 {event.overlap_seconds || 0} 秒</strong><time>{formatTableTime(event.started_at)} - {formatTableTime(event.ended_at)}</time></div>)}</div> : null}
-      <AuditPresenceList items={detail.presence} />
-      <AuditProbeList items={detail.probe_episodes} />
-      <div className="audit-dimension-grid"><AuditDimensionList title="网络路径证据" items={detail.sources} /><AuditDimensionList title="目标" items={detail.destinations} /><AuditDimensionList title="出口" items={detail.outbounds} /><AuditDimensionList title="服务器" items={detail.servers} /></div>
-      <div className="audit-recent-head"><h3>最近连接摘要</h3><span>{detail.recent?.length || 0} 条 · 载荷与测速已分开</span></div>
-      <div className="audit-recent-list">{(detail.recent || []).map(item => <div key={item.report_id}><code title={[item.source_country, item.source_province, item.source_city, item.source_isp].filter(Boolean).join(' / ')}>{item.source_ip}</code><span>{item.probe_state === 'confirmed' ? '测速' : item.network.toUpperCase()}</span><strong>{item.destination || '未知目标'}{item.destination_port ? `:${item.destination_port}` : ''}</strong><span>{item.route_id || item.source_province || item.source_country || item.outbound_tag || '未知路径'}</span><span>{item.connection_count} 次 · {formatBytes((item.upload_bytes || 0) + (item.download_bytes || 0))}</span><time>{formatTableTime(item.ended_at)}</time></div>)}</div>
-    </div>
-  </MotionDialogPanel>
-}
-
-function AuditEvidenceSummary({ user }: { user: ConnectionAuditUser | SubscriptionAuditUser }) {
-  return <div className="audit-detail-risk"><span className={`audit-risk-pill ${user.risk_level}`}>{auditRiskLabel(user.risk_level)} · {user.risk_score}</span><div><span>置信度 {formatAuditPercent(user.confidence)}</span><span>{auditIdentityLabel(user.identity_mode)}</span><span>{auditRecommendedActionLabel(user.recommended_action)}</span></div></div>
-}
-
-function AuditEvidenceLists({ evidence, counter }: { evidence?: string[]; counter?: string[] }) {
-  return <div className="audit-evidence-grid"><section><h3>独立证据</h3>{evidence?.length ? <ul>{evidence.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">暂无独立证据</p>}</section><section><h3>反证与保护</h3>{counter?.length ? <ul>{counter.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">暂无反证</p>}</section></div>
-}
-
-function AuditPresenceList({ items }: { items: ConnectionPresenceEvent[] }) {
-  return <section className="audit-presence-section"><div className="audit-recent-head"><div><h3>实时 presence</h3><span className="audit-section-note">presence 与批量连接报告合并；最近载荷仍在 TTL 内才算有效在线。</span></div><span>{items?.length || 0} 条</span></div>{items?.length ? <div className="audit-presence-list">{items.slice(0, 24).map(item => <div key={`${item.seq}-${item.source_ip}-${item.network}`}><span className="audit-presence-state">{item.event === 'first_meaningful_payload' ? '有效载荷' : item.event === 'last_connection_closed' ? '已关闭' : item.event === 'credential_rejected' ? '凭证拒绝' : '已认证'}</span><strong>{item.device_id_hash ? '设备专属' : '旧凭证'} · {item.network.toUpperCase()}</strong><span>{item.source_ip} · 活跃 {item.active_connections}</span><time>{formatTableTime(item.at)}</time></div>)}</div> : <p className="muted">当前窗口没有 presence 事件。</p>}</section>
-}
-
-function AuditProbeList({ items }: { items: ConnectionProbeEpisode[] }) {
-  return <section className="audit-probe-section"><div className="audit-recent-head"><div><h3>测速 episode</h3><span className="audit-section-note">确认的全节点测速计为一次设备行为，不贡献设备数或服务器共享风险。</span></div><span>{items?.length || 0} 次</span></div>{items?.length ? <div className="audit-probe-list">{items.slice(0, 20).map(item => <div key={item.id}><span className={`audit-risk-pill ${item.state === 'confirmed' ? 'normal' : 'watch'}`}>{item.state === 'confirmed' ? '已确认测速' : item.state}</span><strong>{item.node_count} 个节点 · {item.connection_count} 个连接</strong><span>{formatBytes((item.upload_bytes || 0) + (item.download_bytes || 0))}</span><time>{formatTableTime(item.started_at)} - {formatTableTime(item.ended_at)}</time></div>)}</div> : <p className="muted">当前窗口没有确认测速。</p>}</section>
-}
-
-function AuditDimensionList({ title, items }: { title: string; items: ConnectionAuditDimension[] }) {
-  return <section><h3>{title}</h3>{!items?.length ? <p className="muted">暂无数据</p> : <div>{items.map(item => <div key={item.key}><span><strong>{item.label || '未标记'}</strong>{item.secondary ? <small>{item.secondary}</small> : null}</span><span>{formatCompactAuditNumber(item.connection_count)} 次</span></div>)}</div>}</section>
-}
-
-function SubscriptionAuditUserDialog({ detail, canResume, onResume, restoreFocus, onClose }: { detail: SubscriptionAuditUserDetail; canResume: boolean; onResume: (user: SubscriptionAuditUser) => Promise<void>; restoreFocus?: HTMLElement | null; onClose: () => void }) {
-  const user = detail.summary
-  const short = user.current_risk.short
-  const long = user.current_risk.long
-  return <MotionDialogPanel onCancel={onClose} className="audit-detail-dialog" ariaLabel="订阅审计详情" restoreFocus={restoreFocus}>
-    <header className="dialog-head"><div><h2>{user.nickname || user.username}</h2><p className="muted">{user.username} · {auditIdentityLabel(user.identity_mode)} · {user.pull_count} 次逻辑拉取</p></div><div className="dialog-head-actions">{user.suspended && canResume ? <button type="button" onClick={() => void onResume(user)}><RotateCcw size={14} />恢复用户订阅</button> : null}<button type="button" className="ghost dialog-close icon-button" onClick={onClose} aria-label="关闭订阅审计详情" title="关闭"><XIcon /></button></div></header>
-    <div className="dialog-body audit-detail-body">
-      <AuditEvidenceSummary user={user} />
-      {user.suspended ? <div className="audit-paused-notice"><Shield size={16} /><span>{user.suspension_reason || '订阅拉取已暂停，等待管理员恢复。'}</span></div> : null}
-      <div className="audit-identity-grid"><div><span>原始请求</span><strong>{formatCompactAuditNumber(user.raw_request_count || 0)}</strong><small>每次请求独立令牌桶限制</small></div><div><span>有效逻辑拉取</span><strong>{formatAuditDecimal(user.logical_pull_weight)}</strong><small>代理/直连重试按表示合并</small></div><div><span>网络路径</span><strong>{user.route_count || 0}</strong><small>按 ASN、国家和网段归一化</small></div><div><span>设备身份</span><strong>{auditIdentityLabel(user.identity_mode)}</strong><small>{user.device_count || 0} 个绑定设备</small></div></div>
-      <AuditEvidenceLists evidence={user.evidence_categories} counter={user.counter_evidence} />
-      <div className="audit-window-grid">
-        {[short, long].map(window => <div key={window.window_minutes}><span>{window.window_minutes < 60 ? `${window.window_minutes} 分钟` : `${window.window_minutes / 60} 小时`}</span><strong>{window.region_count} 个地域 · {window.route_count} 条路径</strong><small>{window.raw_request_count} 原始请求 · 逻辑权重 {formatAuditDecimal(window.logical_pull_weight)} · {window.client_family_count} 个客户端族</small></div>)}
-      </div>
-      <div className="audit-dimension-grid">
-        <SubscriptionAuditDimensionList title="来源 IP" items={detail.sources} />
-        <SubscriptionAuditDimensionList title="地域" items={detail.regions} />
-        <SubscriptionAuditDimensionList title="客户端" items={detail.clients} />
-        <SubscriptionAuditDimensionList title="订阅格式" items={detail.formats} />
-      </div>
-      <div className="audit-recent-head"><h3>最近拉取记录</h3><span>{detail.recent?.length || 0} 条</span></div>
-      <div className="audit-recent-list subscription-audit-recent">{(detail.recent || []).map(item => <div key={item.id}><code title={[item.source_country, item.source_province, item.source_city, item.source_isp].filter(Boolean).join(' / ')}>{item.source_ip}</code><span title={item.user_agent || ''}>{item.client_name || '未知客户端'}</span><strong>{item.format || '未知格式'}{item.age_encrypted ? ' · Age' : ''}</strong><span>{item.route_id || item.source_province || item.source_country || '未知路径'}</span><span className={item.outcome.startsWith('denied_') ? 'danger-text' : ''}>{subscriptionAuditOutcomeLabel(item.outcome)} · 原始 {item.raw_request_weight} / 逻辑 {formatAuditDecimal(item.logical_pull_weight)}</span><time>{formatTableTime(item.requested_at)}</time></div>)}</div>
-    </div>
-  </MotionDialogPanel>
-}
-
-function SubscriptionAuditDimensionList({ title, items }: { title: string; items: SubscriptionAuditDimension[] }) {
-  return <section><h3>{title}</h3>{!items?.length ? <p className="muted">暂无数据</p> : <div>{items.map(item => <div key={item.key}><span><strong>{item.label || '未标记'}</strong>{item.secondary ? <small>{item.secondary}</small> : null}</span><span>{formatCompactAuditNumber(item.pull_count)} 次</span></div>)}</div>}</section>
-}
-
-function subscriptionAuditOutcomeLabel(value: string) {
-  return ({ served: '已返回', denied_risk: '触发暂停', denied_suspended: '已拒绝', rejected_invalid_request: '请求无效' } as Record<string, string>)[value] || value
+  return Number.isFinite(value) ? `${Math.round(value * 100)}%` : '未知'
 }
 
 function AuditLogs({ data, loading, embedded = false }: any) {
@@ -7343,10 +6135,6 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
   const serverCountWatermark = String(Math.max(0, Number(totalServers) || 0)).padStart(2, '0')
   const onlineServers = summary.servers_online ?? summary.online_agents ?? summary.online_servers ?? servers.filter((s: any) => s.status === 'online').length ?? 0
   const offlineServers = Math.max(0, Number(totalServers) - Number(onlineServers))
-  const auditOverview = data.connection_audit || {}
-  const auditCalculating = auditOverview.ready === false
-  const elevatedRiskCount = Number(auditOverview.elevated_risk_count || 0)
-  const auditWindowHours = Number(auditOverview.window_hours || 24)
   const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
 
   const groupedTasks = groupTasksForTimeline(data.agent_tasks || [], labelValue)
@@ -7406,11 +6194,11 @@ function Dashboard({ data, loading, displayName: preferredDisplayName, client, c
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">
-            <span>高风险事件</span>
+            <span>审计中心</span>
             <Shield size={16} />
           </div>
-          <strong>{auditCalculating ? '—' : elevatedRiskCount}</strong>
-          <small>{auditCalculating ? '风险统计计算中' : elevatedRiskCount === 0 ? `最近 ${auditWindowHours} 小时暂无高风险` : `最近 ${auditWindowHours} 小时 · 高风险与严重`}</small>
+          <button type="button" className="ghost" onClick={() => goTab('audit')}>查看待处理事件</button>
+          <small>按账号核实异常，不将来源数量视为设备数</small>
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">
@@ -10080,12 +8868,6 @@ function serverTrafficPeriodRange(server: Server) {
   const end = server.traffic_period_end ? formatTableTime(server.traffic_period_end) : '—'
   if (start === '—' && end === '—') return '自然月（每月 1 日 00:00）'
   return `${start} 至 ${end}`
-}
-
-function timeCorrectionModeLabel(mode?: TimeCorrectionMode) {
-  if (mode === 'auto') return '自动校时'
-  if (mode === 'ntp') return '逻辑校时'
-  return '仅检测'
 }
 
 function timeCheckStatusLabel(server: Server) {
@@ -20466,7 +19248,7 @@ function MySubscriptions({ data, client, load, notify }: { data: any; client: Re
 
       <section className="sub-section self-subscription-card">
         <div className="sub-section-head">
-          <div><h3><User size={16} />我的订阅</h3><p className="muted">{user?.nickname || user?.username || '当前用户'} · {selectedFormat?.name || format}</p></div>
+          <div><h3><User size={16} />我的订阅</h3><p className="muted">{user?.nickname || user?.username || '当前用户'} · {selectedFormat?.name || format}</p><p className="muted">使用账号订阅在不同客户端导入配置，无需为每台设备单独创建订阅。</p></div>
           <span className={`sub-pill ${user?.subscription_suspended ? 'danger' : user?.subscription_token ? 'ok' : 'warn'}`}>{user?.subscription_suspended ? '已暂停' : user?.subscription_token ? '可用' : '未签发'}</span>
         </div>
         <div className="self-subscription-actions">
@@ -21649,380 +20431,6 @@ function NotificationChannelDialog({
   </MotionDialogPanel>
 }
 
-function Tasks({ data, client, loading: pageLoading }: any) {
-  const [rows, setRows] = useState<any[]>(data.agent_tasks || [])
-  const [category, setCategory] = useState<TaskCategory>('deployment')
-  const [manualRefreshing, setManualRefreshing] = useState(false)
-  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false)
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
-  const [refreshFailed, setRefreshFailed] = useState(false)
-  const requestInFlightRef = useRef(false)
-  const mountedRef = useRef(false)
-  const hasActiveTasks = useMemo(() => rows.some(task => ['pending', 'running'].includes(String(task.status || ''))), [rows])
-  const hasActiveTasksRef = useRef(hasActiveTasks)
-  hasActiveTasksRef.current = hasActiveTasks
-
-  useEffect(() => { setRows(data.agent_tasks || []) }, [data.agent_tasks])
-  useEffect(() => {
-    mountedRef.current = true
-    return () => { mountedRef.current = false }
-  }, [])
-
-  const loadTasks = React.useCallback(async (mode: 'manual' | 'background' = 'manual') => {
-    if (mode === 'background' && requestInFlightRef.current) return
-    requestInFlightRef.current = true
-    if (mode === 'manual') setManualRefreshing(true)
-    else setBackgroundRefreshing(true)
-    try {
-      const res = await client.request('/agent-tasks?limit=300')
-      if (!mountedRef.current) return
-      setRows(res.tasks || [])
-      setLastRefreshedAt(new Date())
-      setRefreshFailed(false)
-    } catch (error) {
-      if (mountedRef.current) setRefreshFailed(true)
-      console.warn('Task refresh failed:', error)
-    } finally {
-      requestInFlightRef.current = false
-      if (mountedRef.current) {
-        if (mode === 'manual') setManualRefreshing(false)
-        else setBackgroundRefreshing(false)
-      }
-    }
-  }, [client])
-  useRegisterPageRefresh(() => loadTasks('manual'))
-
-  useEffect(() => {
-    let cancelled = false
-    let timer: number | undefined
-
-    const scheduleNext = () => {
-      if (cancelled || document.visibilityState !== 'visible') return
-      timer = window.setTimeout(runRefresh, hasActiveTasksRef.current ? 3000 : 15000)
-    }
-    const runRefresh = async () => {
-      if (cancelled || document.visibilityState !== 'visible') return
-      await loadTasks('background')
-      scheduleNext()
-    }
-    const handleVisibilityChange = () => {
-      if (timer !== undefined) window.clearTimeout(timer)
-      timer = undefined
-      if (document.visibilityState === 'visible') void runRefresh()
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    if (document.visibilityState === 'visible') void runRefresh()
-    return () => {
-      cancelled = true
-      if (timer !== undefined) window.clearTimeout(timer)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [loadTasks])
-
-  const busy = manualRefreshing || pageLoading
-  const refreshing = manualRefreshing || backgroundRefreshing
-  const refreshedTime = lastRefreshedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-  return <Panel title="任务与部署">
-    <div className="section-toolbar">
-      <div>
-        <h3>任务中心</h3>
-        <p className="muted">先看各服务器最新版本的执行结果，再按任务类型查看详情。历史重试默认折叠。</p>
-      </div>
-      <div className="section-actions">
-        <div className={`live-refresh-status ${refreshFailed ? 'is-error' : 'is-active'}`} title={hasActiveTasks ? '进行中的任务通过 HTTP 每 3 秒更新' : '任务状态通过 HTTP 每 15 秒更新'}>
-          <span className="live-refresh-dot" aria-hidden="true" />
-          <span>{refreshFailed ? '自动刷新暂时失败' : refreshing ? '正在更新任务' : 'HTTP 自动刷新已开启'}</span>
-          {refreshedTime ? <time dateTime={lastRefreshedAt?.toISOString()}>更新于 {refreshedTime}</time> : null}
-        </div>
-      </div>
-    </div>
-    <DeploymentTaskOverview rows={rows} data={data} />
-    <div className="task-category-filter" role="group" aria-label="任务分类">
-      {taskCategories.map(item => <button key={item.id} type="button" className={category === item.id ? '' : 'ghost'} aria-pressed={category === item.id} onClick={() => setCategory(item.id)}>{item.label}<span>{rows.filter(task => taskCategory(task) === item.id).length}</span></button>)}
-    </div>
-    {busy && !rows.length ? <TableSkeleton /> : <TaskTimeline rows={rows.filter(task => taskCategory(task) === category)} data={data} client={client} />}
-
-  </Panel>
-}
-
-function DeploymentTaskOverview({ rows, data }: { rows: any[]; data: any }) {
-  const tasks = latestDeploymentTasks(rows)
-  const serverIDs = Array.from(new Set(tasks.map(task => Number(task.server_id || 0)))).filter(Boolean)
-  if (!serverIDs.length) return null
-  return <section className="task-deployment-overview" aria-label="最新部署状态">
-    <div><h3>最新部署状态</h3><p className="muted">按当前已加载记录中，各服务器最新配置版本汇总；执行成功不代表实时在线。</p></div>
-    <div className="task-deployment-servers">{serverIDs.map(id => {
-      const current = tasks.filter(task => Number(task.server_id) === id)
-      const status = deploymentStatusFromSummary(taskStatusSummary(current))
-      return <div className="task-deployment-server" key={id}><strong>{taskServerLabel(data, id)}</strong><span className="muted">版本 {current[0]?.config_version || '未标记'}</span>{cell(status, 'status')}</div>
-    })}</div>
-  </section>
-}
-
-function TaskTimeline({ rows, data, client }: { rows: any[]; data: any; client?: any }) {
-  const [statusFilter, setStatusFilter] = useState('all')
-  const groups = groupTasksForTimeline(rows, labelValue)
-  if (!groups.length) return <p className="muted">暂无任务</p>
-  const filtered = groups.filter(group => {
-    if (statusFilter === 'all') return true
-    const summary = serverTaskStatusSummary(group.tasks)
-    return statusFilter === 'active' ? summary.pending + summary.running > 0 : summary.failed > 0
-  })
-  const visible = filtered.filter((group, index) => index < 5 || group.tasks.some(task => ['pending', 'running'].includes(task.status)))
-  const history = filtered.filter(group => !visible.includes(group))
-  return <>
-    <div className="task-category-filter" role="group" aria-label="任务状态筛选">
-      {[['all', '全部状态'], ['active', '进行中'], ['failed', '含失败结果']].map(([value, label]) => <button key={value} type="button" className="ghost" aria-pressed={statusFilter === value} onClick={() => setStatusFilter(value)}>{label}</button>)}
-    </div>
-    {!filtered.length && <p className="muted">暂无符合条件的任务</p>}
-    <MotionList className="task-card-list">{visible.map(group => (
-      <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} client={client} />
-    ))}</MotionList>
-    {history.length > 0 && <details className="task-attempt-history task-group-history">
-      <summary>更早的任务 · {history.length} 组</summary>
-      <div className="task-card-list">{history.map(group => <TaskGroupCard key={`${group.kind}-${group.id}`} group={group} data={data} client={client} />)}</div>
-    </details>}
-  </>
-}
-
-function taskServerLabel(data: any, serverID: number) {
-  const server = (data?.servers || []).find((s: Server) => Number(s.id) === Number(serverID))
-  return server?.name || `服务器 #${serverID}`
-}
-
-function TaskGroupCard({ group, data, client }: { group: TaskGroup; data: any; client?: any }) {
-  const [expanded, setExpanded] = useState(false)
-  const [openServerID, setOpenServerID] = useState<number | null>(null)
-  const summary = serverTaskStatusSummary(group.tasks)
-  const status = deploymentStatusFromSummary(summary)
-  const serverIDs = Array.from(new Set(group.tasks.map(t => Number(t.server_id || 0)))).filter(Boolean).sort((a, b) => a - b)
-  const createdAt = String(group.tasks.map(t => t.created_at).filter(Boolean).sort()[0] || '')
-
-  const byServer = new Map<number, any[]>()
-  group.tasks.forEach(task => {
-    const sid = Number(task.server_id || 0)
-    byServer.set(sid, [...(byServer.get(sid) || []), task])
-  })
-
-  const metaBits = [
-    group.subtitle,
-    serverIDs.length ? `${serverIDs.length} 台服务器` : '',
-    `${splitTaskAttempts(group.tasks).current.length} 项当前任务`,
-  ].filter(Boolean)
-
-  // Single-server single-task groups can open details directly without an extra empty layer.
-  const isFlatSingle = group.kind === 'single' && group.tasks.length === 1
-
-  return <MotionCard tag="article" className="task-card task-group-card">
-    <button type="button" className="task-group-toggle" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}>
-      <div className="task-group-title-block">
-        <strong>{group.title}</strong>
-        <span>{metaBits.join(' · ')}</span>
-      </div>
-      <div className="task-summary">
-        {summary.succeeded > 0 && <span className="task-stat"><em>{summary.succeeded}</em> 成功</span>}
-        {summary.pending > 0 && <span className="task-stat"><em>{summary.pending}</em> 等待</span>}
-        {summary.running > 0 && <span className="task-stat"><em>{summary.running}</em> 执行中</span>}
-        {summary.failed > 0 && <span className="task-stat is-fail"><em>{summary.failed}</em> 失败</span>}
-        {summary.skipped ? <span className="task-stat"><em>{summary.skipped}</em> 跳过</span> : null}
-      </div>
-      <div className="task-group-head-right">
-        {cell(status, 'status')}
-        <ChevronRight size={16} className={expanded ? 'task-chevron open' : 'task-chevron'} />
-      </div>
-      <div className="task-meta">
-        <span>创建 {formatTableTime(createdAt)}</span>
-        <span>更新 {formatTableTime(maxTaskTime(group.tasks))}</span>
-      </div>
-    </button>
-
-    {expanded && (
-      <div className="task-group-body">
-        {isFlatSingle ? (
-          <TaskDetailList tasks={group.tasks} data={data} client={client} />
-        ) : (
-          <div className="task-server-list">
-            {serverIDs.map(serverID => {
-              const tasks = byServer.get(serverID) || []
-              const serverSummary = taskStatusSummary(tasks)
-              const serverStatus = deploymentStatusFromSummary(serverSummary)
-              const open = openServerID === serverID
-              return <div key={serverID} className={`task-server-row ${open ? 'open' : ''}`}>
-                <button type="button" className="task-server-toggle" onClick={() => setOpenServerID(open ? null : serverID)} aria-expanded={open}>
-                  <div className="task-group-title-block">
-                    <strong>{taskServerLabel(data, serverID)}</strong>
-                    <span>{tasks.length > 1 ? `当前 ${serverSummary.total} 项 · 历史 ${splitTaskAttempts(tasks).history.length} 次 · ` : ''}成功 {serverSummary.succeeded} · 失败 {serverSummary.failed} · 进行中 {serverSummary.pending + serverSummary.running}</span>
-                  </div>
-                  <div className="task-group-head-right">
-                    {cell(serverStatus, 'status')}
-                    <ChevronRight size={15} className={open ? 'task-chevron open' : 'task-chevron'} />
-                  </div>
-                </button>
-                {open && <TaskDetailList tasks={tasks} data={data} client={client} />}
-              </div>
-            })}
-            {(byServer.get(0) || []).length > 0 && (
-              <div className="task-server-row open">
-                <div className="task-server-toggle static">
-                  <div><strong>未绑定服务器</strong><span>{(byServer.get(0) || []).length} 项</span></div>
-                </div>
-                <TaskDetailList tasks={byServer.get(0) || []} data={data} client={client} />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    )}
-  </MotionCard>
-}
-
-function TaskDetailList({ tasks, data, client }: { tasks: any[]; data: any; client?: any }) {
-  const { current, history } = splitTaskAttempts(tasks)
-  const failures = history.filter(task => ['failed', 'timeout'].includes(task.status)).length
-  return <div className="task-detail-list">
-    {current.map(task => <TaskDetailCard key={task.id} task={task} data={data} client={client} />)}
-    {history.length > 0 && <details className="task-attempt-history">
-      <summary>历史执行 · {history.length} 次{failures ? ` · 曾失败 ${failures} 次` : ''}</summary>
-      <div className="task-detail-list">{history.map(task => <TaskDetailCard key={task.id} task={task} data={data} client={client} />)}</div>
-    </details>}
-  </div>
-}
-
-function taskHasDetailBody(task: any) {
-  return Boolean(String(task?.payload_json || '').trim() || String(task?.result_json || '').trim())
-}
-
-function TaskDetailCard({ task, data, client }: { task: any; data?: any; client?: any }) {
-  const [open, setOpen] = useState(false)
-  const [detail, setDetail] = useState(task)
-  const [loadingDetail, setLoadingDetail] = useState(false)
-  useEffect(() => {
-    setDetail((current: any) => {
-      if (Number(current?.id) === Number(task?.id) && taskHasDetailBody(current) && !taskHasDetailBody(task)) {
-        return { ...task, payload_json: current.payload_json, result_json: current.result_json, nonce: current.nonce }
-      }
-      return task
-    })
-  }, [task])
-  const result = parseJSONLoose(detail.result_json)
-  const payload = parseJSONLoose(detail.payload_json)
-  const error = String(result?.error || '')
-  const message = String(result?.message || '')
-  const status = result?.timeout ? 'timeout' : detail.status
-  const summary = error || message || taskSummaryFromPayload(detail.type, payload)
-  const loadDetail = async () => {
-    const next = !open
-    setOpen(next)
-    if (!next || !client || !task?.id || taskHasDetailBody(detail)) return
-    setLoadingDetail(true)
-    try {
-      const res = await client.request(`/agent-tasks/${task.id}`)
-      if (res?.task) setDetail({ ...task, ...res.task })
-    } catch (error) {
-      console.warn('Task detail load failed:', error)
-    } finally {
-      setLoadingDetail(false)
-    }
-  }
-  return <article className="task-detail-card">
-    <button type="button" className="task-detail-toggle" onClick={() => { void loadDetail() }} aria-expanded={open}>
-      <div>
-        <strong>{task.type === 'remote_exec' ? '远程命令' : task.type === 'remote_operation' ? '远程操作' : labelValue(task.type || 'task')}</strong>
-        <span className={error ? 'error-text' : ''}>{summary}</span>
-      </div>
-      <div className="task-group-head-right">
-        {cell(status, 'status')}
-        <ChevronRight size={14} className={open ? 'task-chevron open' : 'task-chevron'} />
-      </div>
-    </button>
-    {open && (
-      <div className="task-detail-body">
-        <div className="task-meta">
-          <span>任务 #{task.id}</span>
-          <span>创建 {formatTableTime(String(task.created_at || ''))}</span>
-          <span>更新 {formatTableTime(String(task.updated_at || ''))}</span>
-          {task.completed_at && <span>完成 {formatTableTime(String(task.completed_at))}</span>}
-          {task.config_version ? <span>版本 {task.config_version}</span> : null}
-        </div>
-        {loadingDetail ? <p className="muted">正在加载任务详情…</p> : null}
-        {task.type === 'apply_deployment' && Array.isArray(result?.steps) ? (
-          <div className="deployment-step-list">
-            {result.steps.map((step: any, index: number) => (
-              <div className="deployment-step-row" key={`${step?.key || 'step'}-${index}`}>
-                <div>
-                  <strong>{String(step?.label || step?.key || `步骤 ${index + 1}`)}</strong>
-                  <span className={step?.error ? 'error-text' : ''}>{String(step?.error || step?.message || '')}</span>
-                </div>
-                <div className="task-group-head-right">
-                  {cell(step?.status || 'succeeded', 'status')}
-                  <span className="muted">{Number(step?.duration_ms || 0)} ms</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <details className="task-attempt-history"><summary>查看原始数据</summary><pre>{JSON.stringify({ payload: redactTaskJSON(payload), result: redactTaskJSON(result) }, null, 2)}</pre></details>
-      </div>
-    )}
-  </article>
-}
-
-function parseJSONLoose(raw: any) {
-  if (!raw) return null
-  if (typeof raw === 'object') return raw
-  try { return JSON.parse(String(raw)) } catch { return String(raw) }
-}
-
-function redactTaskJSON(value: any): any {
-  if (value == null) return value
-  if (Array.isArray(value)) return value.map(redactTaskJSON)
-  if (typeof value !== 'object') return value
-  const out: Record<string, any> = {}
-  Object.entries(value).forEach(([key, item]) => {
-    const lower = key.toLowerCase()
-    if (lower.includes('token') || lower.includes('password') || lower.includes('secret') || lower.includes('private_key') || lower === 'config') {
-      if (lower === 'config' && typeof item === 'string') {
-        out[key] = `[config ${formatBytes(item.length)}]`
-      } else {
-        out[key] = '***'
-      }
-      return
-    }
-    out[key] = redactTaskJSON(item)
-  })
-  return out
-}
-
-function taskSummaryFromPayload(type: string, payload: any) {
-  if (type === 'apply_deployment') {
-    const count = [payload?.time_check, payload?.config, payload?.port_forwards, payload?.inbound_probe, payload?.port_forward_probe, payload?.external_egress_probe, payload?.tunnels, payload?.dns_benchmark, payload?.mtu_detection].filter(Boolean).length
-    return `${count || 1} 个部署步骤`
-  }
-  if (type === 'apply_core_config' && payload?.skipped) return '配置未变化，已跳过'
-  if (type === 'apply_core_config' && payload?.config) return `配置体积 ${formatBytes(String(payload.config).length)}`
-  if (type === 'update_agent') return payload?.source ? `来源 ${labelValue(payload.source)}` : '更新 Agent 与内核'
-  if (type === 'uninstall_agent') return payload?.purge ? '卸载 Agent 并清理本机数据' : '卸载 Agent'
-  if (type === 'update_agent_config') return '同步 Agent 本机配置'
-  if (type === 'detect_mtu') return payload?.mode ? `模式 ${labelValue(payload.mode)}` : 'MTU 检测'
-  if (type === 'check_time') return `模式 ${timeCorrectionModeLabel(payload?.correction_mode as TimeCorrectionMode)}`
-  if (type === 'probe_inbounds' || type === 'probe_inbounds_external') return payload?.entry_targets?.length ? `${payload.entry_targets.length} 个入口` : '入口端口探测'
-  if (type === 'probe_port_forwards') return payload?.rules?.length ? `${payload.rules.length} 条规则` : '端口转发探测'
-  if (type === 'probe_external_egress') return payload?.targets?.length ? `${payload.targets.length} 条分支` : '第三方出口探测'
-  if (type === 'collect_logs') return payload?.services ? `服务 ${payload.services}` : '拉取日志'
-  if (type === 'manage_logs') return `${payload?.action === 'clear' ? '清空' : '轮转'} ${payload?.services || 'all'} 日志`
-  if (payload && typeof payload === 'object') return '等待 Agent 执行'
-  return '展开查看详情'
-}
-
-function Panel({ title, children, className = '', actions = null }: any) {
-  const hasHeader = Boolean(title || actions)
-  return <section className={`panel${className ? ` ${className}` : ''}`}>
-    {hasHeader && <div className="panel-head">{title && <h2>{title}</h2>}{actions}</div>}
-    <div className="panel-body">{children}</div>
-  </section>
-}
-
 type ProtocolAuth = { username: string; uuid: string; password: string; method: string }
 
 // SnellProfile mirrors model.SnellProfile from the Controller REST contract.
@@ -22576,52 +20984,6 @@ function cloneAction(item: React.ReactElement<any>, key: React.Key, className = 
   })
 }
 
-function cell(v: any, key = '') {
-  if (v === undefined || v === null || v === '') return <span className="empty">—</span>
-  if (React.isValidElement(v)) return v
-  if (typeof v === 'boolean') return <span className={v ? 'badge success' : 'badge neutral'}>{v ? '已启用' : '已禁用'}</span>
-  if (/bytes$/i.test(key) && typeof v === 'number') return formatBytes(v)
-  if (typeof v === 'object') return <code>{JSON.stringify(v)}</code>
-  const s = String(v)
-  if (isTimeField(key)) return formatTableTime(s)
-  if (isSensitiveField(key)) return <code className="masked-value">{maskSensitiveValue(s, key)}</code>
-  const lower = s.toLowerCase()
-  if (lower === 'online') return <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--color-success)', display: 'inline-block', boxShadow: '0 0 6px var(--color-success)', verticalAlign: 'middle' }} title="在线" />
-  if (lower === 'offline') return <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: 'var(--color-danger)', display: 'inline-block', boxShadow: '0 0 6px var(--color-danger)', verticalAlign: 'middle' }} title="离线" />
-  if (['active', 'ready', 'succeeded', 'healthy', 'enabled'].includes(lower)) return <span className="badge success">{labelValue(s)}</span>
-  if (['failed', 'error', 'disabled', 'rollback_failed', 'unhealthy'].includes(lower)) return <span className="badge danger">{labelValue(s)}</span>
-  if (['partial_failed', 'timeout', 'pending', 'running', 'requested', 'needed', 'detect', 'apply', 'unknown', 'periodic', 'warning', 'skipped', 'stale'].includes(lower)) return <span className="badge warning">{labelValue(s)}</span>
-  if (s === '<redacted>') return <code>已脱敏</code>
-  if (s.startsWith('{') || s.startsWith('[') || s.length > 64) return <code>{s}</code>
-  return s
-}
-
-function isTimeField(key: string) {
-  return /(^|_)(created|updated|completed|checked|synced)_at$/i.test(key) || /_time$/i.test(key)
-}
-
-function formatTableTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-function isSensitiveField(key: string) {
-  return /(^|_)(password|token|secret|uuid|key)$/i.test(key) || ['proxy_uuid', 'proxy_password', 'subscription_token'].includes(key)
-}
-
-function maskSensitiveValue(value: string, key: string) {
-  if (!value || value === '<redacted>') return '已脱敏'
-  if (/uuid/i.test(key)) {
-    if (value.length <= 13) return value
-    return value.slice(0, 8) + '…' + value.slice(-4)
-  }
-  if (value.length <= 10) return '••••'
-  return value.slice(0, 6) + '••••' + value.slice(-4)
-}
-
-function labelValue(v: any) { return valueLabels[String(v)] || String(v) }
 function labelProtocol(p: Protocol | string) {
 	if (p === 'shadowsocks') return 'SS'
 	if (p === 'hy2') return 'HY2'
@@ -22642,21 +21004,9 @@ function humanLabel(k: string) {
   }
   return k.split('_').map(x => tokens[x] || x).join('')
 }
-function formatBytes(v: number) {
-  if (!v) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
-  let n = Number(v)
-  let i = 0
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
-  return `${n >= 10 || i === 0 ? n.toFixed(0) : n.toFixed(1)} ${units[i]}`
-}
 function formatByteRate(v: number) { return `${formatBytes(Math.max(0, Number(v) || 0))}/s` }
 function formatSpeedLimit(v: number) { return v > 0 ? `${v} Mbps` : '不限速' }
 function formatTrafficLimit(v: number) { return v > 0 ? formatBytes(v) : '不限量' }
-function formatDate(v: string) {
-  const d = new Date(v)
-  return Number.isNaN(d.getTime()) ? v : d.toLocaleString()
-}
 function trafficQuotaLabel(v?: string) {
   return v === 'quota_exceeded' ? '已达量暂停' : '正常'
 }

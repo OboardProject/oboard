@@ -178,7 +178,7 @@ func TestConfigurationReconcilerIsolatesDuplicateDirectBranchFailure(t *testing.
 	}
 	srv.reconcileConfiguration(ctx)
 	broken, err := db.ConfigurationSyncState(ctx, servers[0].ID)
-	if err != nil || broken.State != "failed" || !strings.Contains(broken.LastError, fmt.Sprintf("#%d", duplicatePathIDs[0])) || !strings.Contains(broken.LastError, fmt.Sprintf("#%d", duplicatePathIDs[1])) {
+	if err != nil || broken.State != "failed" || len(broken.Problems) != 1 || broken.Problems[0].Code != "duplicate_direct_paths" || len(broken.Problems[0].Resources) != 3 || broken.Problems[0].Resources[1].ID != fmt.Sprint(duplicatePathIDs[0]) || broken.Problems[0].Resources[2].ID != fmt.Sprint(duplicatePathIDs[1]) {
 		t.Fatalf("broken server state=%#v err=%v", broken, err)
 	}
 	for _, server := range servers[1:] {
@@ -894,6 +894,11 @@ func TestOperatorRetryRequeuesWithAdvancingConfigVersion(t *testing.T) {
 	if err := db.CreateInbound(ctx, inbound); err != nil {
 		t.Fatal(err)
 	}
+	server.ListenMode = "ipv4_only"
+	intent := &store.ServerConfigurationIntent{ActorPrincipal: "test:operator", Source: "web", Fields: []string{"listen_mode"}}
+	if err := db.UpdateServerSettings(ctx, server, store.ServerUpdateOptions{ConfigurationIntent: intent}); err != nil {
+		t.Fatal(err)
+	}
 	srv.markConfigurationChanged(ctx, "/api/v1/inbounds", http.MethodPost)
 	srv.reconcileConfiguration(ctx)
 	first := failLatestApplyDeployment(t, db, server.ID)
@@ -918,6 +923,17 @@ func TestOperatorRetryRequeuesWithAdvancingConfigVersion(t *testing.T) {
 	if err != nil || state.State != "queued" || state.LastTaskID != latest.ID || state.LastConfigVersion != latest.ConfigVersion {
 		t.Fatalf("operator retry sync state = %#v err=%v", state, err)
 	}
+	if err := db.MarkConfigurationSyncResult(ctx, server.ID, latest.ConfigVersion, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := db.ListTaskOperationRecords(ctx, []int64{server.ID}, false, intent.OperationID, "", "", 25)
+	if err != nil || len(ops) != 1 || len(ops[0].Attempts) != 2 || ops[0].Targets[0].State != "succeeded" {
+		t.Fatalf("retry lost operation evidence: %+v err=%v", ops, err)
+	}
+	if ops[0].Attempts[0].State != "failed" || ops[0].Attempts[1].ExecutionKind != "original_retry" || ops[0].Attempts[1].TaskID == nil || *ops[0].Attempts[1].TaskID != latest.ID {
+		t.Fatalf("retry overwrote history or bound wrong task: %+v", ops[0].Attempts)
+	}
+
 }
 
 // TestOperatorRetryClearsWatermarkRaisedByCoreRefresh reproduces the deadlock
@@ -1068,7 +1084,7 @@ func TestRecordConfigurationPrepareErrorWaitsOnSQLiteBusy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.State != "pending" || state.RetryCount != 0 || state.LastError != configurationSyncBusyWaitReason || state.NextRetryAt == nil {
+	if state.State != "pending" || state.RetryCount != 0 || state.LastError != configurationSyncBusyWaitReason || state.NextRetryAt == nil || len(state.Problems) != 1 || state.Problems[0].Code != "database_busy" {
 		t.Fatalf("busy prepare was recorded as a failure = %#v", state)
 	}
 	if !state.NextRetryAt.After(time.Now().UTC()) {
@@ -1083,7 +1099,7 @@ func TestRecordConfigurationPrepareErrorWaitsOnSQLiteBusy(t *testing.T) {
 	}
 	srv.recordConfigurationPrepareError(ctx, store.ConfigurationSyncState{ServerID: server.ID, WantedRevision: 81}, fmt.Errorf("invalid desired state"))
 	failed, err := db.ConfigurationSyncState(ctx, server.ID)
-	if err != nil || failed.State != "failed" || failed.RetryCount != 1 || failed.LastError != "invalid desired state" {
+	if err != nil || failed.State != "failed" || failed.RetryCount != 1 || len(failed.Problems) != 1 || failed.Problems[0].Code != "preparation_failed" || failed.LastError != failed.Problems[0].Message || strings.Contains(failed.LastError, "invalid desired state") {
 		t.Fatalf("real prepare error = %#v err=%v", failed, err)
 	}
 }

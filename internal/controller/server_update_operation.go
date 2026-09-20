@@ -298,7 +298,8 @@ func (s *Server) registerServerUpdateOperation() {
 		if err != nil {
 			return nil, err
 		}
-		if err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled); err != nil {
+		intent := &store.ServerConfigurationIntent{ActorPrincipal: principal.ID, ActorUserID: principal.UserID, Source: "automation", Fields: serverIntentFields(request.Changes)}
+		if err := s.saveServerUpdate(ctx, next, request.Changes.TrafficUsedBytes, request.Changes.AuthorizationFastLane, request.Changes.RuntimeUsersEnabled, intent); err != nil {
 			return nil, err
 		}
 		if current.TimeCorrectionMode != next.TimeCorrectionMode {
@@ -310,7 +311,7 @@ func (s *Server) registerServerUpdateOperation() {
 		if _, queued, err := s.maybeQueueStealthSwitch(ctx, *current, *next); err == nil && queued {
 			stealthQueued = true
 		}
-		result := map[string]any{"server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}
+		result := map[string]any{"operation_id": intent.OperationID, "server_id": next.ID, "revision": next.UpdatedAt.UTC().Format(time.RFC3339Nano), "changed_fields": changed}
 		if stealthQueued {
 			result["stealth_task_queued"] = true
 		}
@@ -318,7 +319,21 @@ func (s *Server) registerServerUpdateOperation() {
 	})
 }
 
-func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64, auth, users *bool) error {
+func serverIntentFields(changes any) []string {
+	data, _ := json.Marshal(changes)
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+	out := make([]string, 0, len(fields))
+	for field, value := range fields {
+		if string(value) != "null" {
+			out = append(out, field)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, trafficUsed *int64, auth, users *bool, intents ...*store.ServerConfigurationIntent) error {
 	expected := server.UpdatedAt
 	if revision, ok := automation.ApprovedResourceRevision(ctx, "server:"+strconv.FormatInt(server.ID, 10)); ok {
 		parsed, err := time.Parse(time.RFC3339Nano, revision)
@@ -328,6 +343,9 @@ func (s *Server) saveServerUpdate(ctx context.Context, server *model.Server, tra
 		expected = parsed
 	}
 	options := store.ServerUpdateOptions{ExpectedUpdatedAt: &expected, TrafficUsedBytes: trafficUsed, AuthorizationFastLane: auth, RuntimeUsersEnabled: users, RejectWhenDeleting: true}
+	if len(intents) > 0 {
+		options.ConfigurationIntent = intents[0]
+	}
 	if trafficUsed != nil {
 		settings, err := s.store.ListSettings(ctx)
 		if err != nil {

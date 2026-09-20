@@ -96,6 +96,9 @@ func postAgentAudit(t *testing.T, handler http.Handler, agentID, token string, i
 // reports next to it.
 func TestConnectionAuditPoisonedItemDoesNotBlockTheBatch(t *testing.T) {
 	fixture := newAuditReportFixture(t)
+	if _, err := fixture.db.SetAuditCollection(context.Background(), model.AuditCollectionConfig{Mode: "standard"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	items := []map[string]any{}
 	for i := 0; i < 10; i++ {
 		items = append(items, fixture.validItem("good-"+string(rune('a'+i))))

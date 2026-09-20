@@ -2,12 +2,16 @@ package controller
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -493,7 +497,7 @@ func (s *Server) reconcileConfiguration(ctx context.Context) {
 		}
 		task, ok := tasksByServer[state.ServerID]
 		if !ok {
-			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成")
+			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成", configurationLocalProblem(state.ServerID, "certificate_pending", "waiting", "automatic", "等待证书签发完成"))
 			continue
 		}
 		if err := s.store.MarkConfigurationSyncDeploymentQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task)); err != nil {
@@ -673,7 +677,7 @@ func (s *Server) requeueUnchangedDeployment(ctx context.Context, state store.Con
 	if err != nil {
 		return err
 	}
-	return s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task))
+	return s.store.MarkConfigurationSyncRetryQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, last.ID, configurationTaskPayloadDigest(task))
 }
 
 func (s *Server) lastApplyDeploymentError(ctx context.Context, serverID int64) string {
@@ -730,29 +734,23 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 	}
 	ignoredPathIDs := make(map[int64]bool)
 	affectedServerIDs := make(map[int64]bool)
-	pathByID := make(map[int64]model.ProxyPath, len(data.ProxyPaths))
-	for _, path := range data.ProxyPaths {
-		pathByID[path.ID] = path
-	}
-	conflictMessages := make([]string, 0, len(conflicts))
+	problemsByServer := make(map[int64][]model.ConfigurationSyncProblem)
 	for _, conflict := range conflicts {
 		for _, pathID := range conflict.PathIDs {
 			ignoredPathIDs[pathID] = true
 		}
+		problem := model.ConfigurationSyncProblem{Code: "duplicate_direct_paths", Category: "configuration", RetryPolicy: "after_change", Message: "同一入口存在重复的直接出口分支，请检查代理拓扑", Resources: []model.ConfigurationSyncResource{{Type: "inbound", ID: strconv.FormatInt(conflict.InboundID, 10)}}}
+		for _, pathID := range conflict.PathIDs {
+			if len(problem.Resources) < 16 {
+				problem.Resources = append(problem.Resources, model.ConfigurationSyncResource{Type: "proxy_path", ID: strconv.FormatInt(pathID, 10)})
+			}
+		}
 		for _, serverID := range s.configurationTopologyServerIDs(ctx, nil, conflict.PathIDs) {
 			affectedServerIDs[serverID] = true
-		}
-		pathNames := make([]string, 0, len(conflict.PathIDs))
-		for _, pathID := range conflict.PathIDs {
-			name := strings.TrimSpace(pathByID[pathID].Name)
-			if name == "" {
-				name = fmt.Sprintf("#%d", pathID)
-			} else {
-				name = fmt.Sprintf("%s (#%d)", name, pathID)
+			if len(problemsByServer[serverID]) < 16 {
+				problemsByServer[serverID] = append(problemsByServer[serverID], problem)
 			}
-			pathNames = append(pathNames, "「"+name+"」")
 		}
-		conflictMessages = append(conflictMessages, fmt.Sprintf("入口 %d 的直接出口分支 %s 位于同一位置；请只保留其中一条", conflict.InboundID, strings.Join(pathNames, "、")))
 	}
 	for _, rule := range data.RoutingRules {
 		if routingRuleTouchesIgnoredPaths(rule, ignoredPathIDs, data.ProxyPaths) {
@@ -761,11 +759,14 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 	}
 	validServerIDs := make(map[int64]bool)
 	claimedByServer := make(map[int64]store.ConfigurationSyncState, len(claimed))
-	message := strings.Join(conflictMessages, "；")
 	for _, state := range claimed {
 		claimedByServer[state.ServerID] = state
 		if affectedServerIDs[state.ServerID] {
-			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, message)
+			problems := problemsByServer[state.ServerID]
+			if len(problems) == 0 {
+				problems = []model.ConfigurationSyncProblem{configurationLocalProblem(state.ServerID, "related_configuration_invalid", "configuration", "after_change", "关联的代理拓扑存在配置问题")}
+			}
+			_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "", problems...)
 			continue
 		}
 		validServerIDs[state.ServerID] = true
@@ -783,7 +784,7 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 		for serverID := range groupedServers {
 			delete(validServerIDs, serverID)
 			if state, ok := claimedByServer[serverID]; ok && !affectedServerIDs[serverID] {
-				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "关联的透明转发成员存在配置问题；修复该成员后会成组重试")
+				_ = s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, "", configurationLocalProblem(state.ServerID, "related_configuration_invalid", "configuration", "after_change", "关联的透明转发成员存在配置问题；修复该成员后会成组重试"))
 			}
 		}
 	}
@@ -810,7 +811,7 @@ func (s *Server) reconcileConfigurationAroundDuplicateDirectPaths(ctx context.Co
 		}
 		task, ok := tasksByServer[serverID]
 		if !ok {
-			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成")
+			_ = s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(certificateConfigurationRetryDelay), "等待证书签发完成", configurationLocalProblem(state.ServerID, "certificate_pending", "waiting", "automatic", "等待证书签发完成"))
 			continue
 		}
 		_ = s.store.MarkConfigurationSyncQueued(ctx, state.ServerID, state.WantedRevision, version, task.ID, configurationTaskPayloadDigest(task))
@@ -1007,6 +1008,9 @@ func configurationSyncViews(states []store.ConfigurationSyncState, servers []mod
 		if state.LastError != "" {
 			item["error"] = state.LastError
 		}
+		if len(state.Problems) > 0 {
+			item["problems"] = state.Problems
+		}
 		out = append(out, item)
 	}
 	return out
@@ -1029,18 +1033,72 @@ func configurationSyncTransientBusy(err error) bool {
 	return strings.Contains(message, "SQLITE_BUSY") || strings.Contains(message, "database is locked")
 }
 
+func configurationLocalProblem(serverID int64, code, category, retry, message string) model.ConfigurationSyncProblem {
+	return model.ConfigurationSyncProblem{Code: code, Category: category, RetryPolicy: retry, Message: message, Resources: []model.ConfigurationSyncResource{{Type: "server", ID: strconv.FormatInt(serverID, 10)}}}
+}
+
+var configurationDiagnosticKey = []byte(rand.Text())
+
+// Fingerprints correlate unknown causes within this process only; they cannot
+// recover the original error text and are not a substitute for full diagnostics.
+func configurationPrepareDiagnostic(err error) string {
+	reason := "unknown"
+	var missing missingDNSCredentialError
+	var coded interface{ Code() int }
+	switch {
+	case errors.As(err, &missing):
+		reason = missingDNSCredentialCode
+	case errors.Is(err, core.ErrInvalidDesiredState):
+		reason = "invalid_desired_state"
+	case errors.Is(err, context.Canceled):
+		reason = "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		reason = "deadline_exceeded"
+	case errors.Is(err, os.ErrPermission):
+		reason = "filesystem_permission"
+	case errors.Is(err, os.ErrNotExist):
+		reason = "filesystem_not_found"
+	case errors.Is(err, sql.ErrNoRows):
+		reason = "sql_no_rows"
+	case errors.As(err, &coded):
+		reason = fmt.Sprintf("coded_error_%d", coded.Code())
+	}
+	digest := hmac.New(sha256.New, configurationDiagnosticKey)
+	if err != nil {
+		_, _ = digest.Write([]byte(err.Error()))
+	}
+	cause := err
+	for i := 0; i < 16 && errors.Unwrap(cause) != nil; i++ {
+		cause = errors.Unwrap(cause)
+	}
+	return fmt.Sprintf("reason_code %s cause_type %T fingerprint %x", reason, cause, digest.Sum(nil)[:12])
+}
+
+func configurationPrepareProblem(serverID int64, err error) model.ConfigurationSyncProblem {
+	var coded interface{ Code() string }
+	if errors.As(err, &coded) && coded.Code() == missingDNSCredentialCode {
+		return configurationLocalProblem(serverID, missingDNSCredentialCode, "configuration", "after_change", "启用 DNS 自动解析时需要选择 DNS 凭据")
+	}
+	if errors.Is(err, core.ErrInvalidDesiredState) {
+		return configurationLocalProblem(serverID, "invalid_desired_state", "configuration", "after_change", "配置校验未通过，请检查服务器配置后重试")
+	}
+	return configurationLocalProblem(serverID, "preparation_failed", "preparation", "automatic", "配置准备失败，请查看主控日志或稍后重试")
+}
+
 func (s *Server) recordConfigurationPrepareError(ctx context.Context, state store.ConfigurationSyncState, err error) {
 	if err == nil {
 		return
 	}
 	if configurationSyncTransientBusy(err) {
-		log.Printf("configuration reconciler waiting for SQLite writer on server %d: %v", state.ServerID, err)
-		if waitErr := s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(configurationSyncBusyRetryDelay), configurationSyncBusyWaitReason); waitErr != nil {
+		log.Printf("configuration reconciler waiting for SQLite writer on server %d revision %d", state.ServerID, state.WantedRevision)
+		if waitErr := s.store.MarkConfigurationSyncWaiting(ctx, state.ServerID, state.WantedRevision, time.Now().UTC().Add(configurationSyncBusyRetryDelay), configurationSyncBusyWaitReason, configurationLocalProblem(state.ServerID, "database_busy", "waiting", "automatic", configurationSyncBusyWaitReason)); waitErr != nil {
 			logConfigurationError("mark busy wait", waitErr)
 		}
 		return
 	}
-	if markErr := s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, err.Error()); markErr != nil {
+	problem := configurationPrepareProblem(state.ServerID, err)
+	log.Printf("configuration reconciler preparation server %d revision %d code %s %s", state.ServerID, state.WantedRevision, problem.Code, configurationPrepareDiagnostic(err))
+	if markErr := s.store.MarkConfigurationSyncPreparationFailure(ctx, state.ServerID, state.WantedRevision, problem.Message, problem); markErr != nil {
 		logConfigurationError("mark preparation failure", markErr)
 	}
 }

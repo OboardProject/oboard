@@ -1,3 +1,11 @@
+export type ConfigurationSyncProblem = {
+ code: string
+ category?: string
+ resources?: { type: string; id: string }[]
+ retry_policy?: string
+ message?: string
+}
+
 export type ConfigurationSyncRow = {
   server_id: number
   desired_revision?: number
@@ -6,6 +14,7 @@ export type ConfigurationSyncRow = {
   task_id?: number
   retry_count?: number
   error?: string
+  problems?: ConfigurationSyncProblem[]
   agent_reachable?: boolean
 }
 
@@ -80,14 +89,43 @@ function describeConfigurationSyncError(rawError: string) {
 
 export function configurationSyncFailureIssues(rows: ConfigurationSyncRow[]): ConfigurationSyncFailureIssue[] {
   const groups = new Map<string, { rawError: string; rows: ConfigurationSyncRow[] }>()
+  const structured = new Map<string, ConfigurationSyncFailureIssue>()
   rows.filter(item => item.state === 'failed').forEach(item => {
+    if (Array.isArray(item.problems) && item.problems.length > 0) {
+      item.problems.slice(0, 16).forEach(problem => {
+        const resources = Array.isArray(problem?.resources) ? problem.resources : []
+        const key = JSON.stringify([problem?.code, resources, problem?.retry_policy])
+        const previous = structured.get(key)
+        if (previous) {
+          if (!previous.serverIDs.includes(item.server_id)) previous.serverIDs.push(item.server_id)
+          if (item.task_id && !previous.taskIDs.includes(item.task_id)) previous.taskIDs.push(item.task_id)
+          return
+        }
+        const busy = problem?.code === 'database_busy'
+        const duplicate = problem?.code === 'duplicate_direct_paths'
+        const ref = resources.find(resource => resource?.type === 'inbound' && /^[1-9]\d*$/.test(resource.id))
+        const inboundID = ref && Number.isSafeInteger(Number(ref.id)) ? Number(ref.id) : undefined
+        structured.set(key, {
+          key, kind: busy ? 'busy' : 'config',
+          title: busy ? '主控数据库正忙' : duplicate ? '入口存在重复的直接出口分支' : '配置生成或下发失败',
+          explanation: typeof problem?.message === 'string' ? problem.message : 'Controller 没有返回具体错误信息。',
+          resolution: problem?.retry_policy === 'automatic' ? '系统将自动重试，请稍后查看。' : problem?.retry_policy === 'after_change' ? '请检查相关配置，保存后系统会重新同步。' : '请查看任务记录和服务器日志。',
+          rawError: typeof problem?.message === 'string' ? problem.message : '',
+          serverIDs: [item.server_id], taskIDs: item.task_id ? [item.task_id] : [],
+          inboundID: duplicate ? inboundID : undefined,
+          targetTab: duplicate && inboundID ? 'proxy-paths' : 'tasks',
+          targetLabel: duplicate && inboundID ? '打开代理拓扑' : '查看任务记录',
+        })
+      })
+      return
+    }
     const rawError = String(item.error || '').trim()
     const key = rawError || '__missing_error__'
     const current = groups.get(key)
     if (current) current.rows.push(item)
     else groups.set(key, { rawError, rows: [item] })
   })
-  return Array.from(groups.entries()).map(([key, group]) => {
+  return [...structured.values(), ...Array.from(groups.entries()).map(([key, group]) => {
     const description = describeConfigurationSyncError(group.rawError)
     return {
       key,
@@ -96,7 +134,7 @@ export function configurationSyncFailureIssues(rows: ConfigurationSyncRow[]): Co
       serverIDs: group.rows.map(item => item.server_id),
       taskIDs: group.rows.map(item => Number(item.task_id || 0)).filter(Boolean),
     }
-  })
+  })]
 }
 
 const configurationSyncBusyStates = ['pending', 'preparing', 'queued', 'running'] as const

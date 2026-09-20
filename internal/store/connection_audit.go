@@ -54,9 +54,10 @@ var connectionAuditNonPublicPrefixes = []netip.Prefix{
 }
 
 type ConnectionAuditAddResult struct {
-	AcceptedReportIDs []string
-	InsertedReportIDs []string
-	InsertedUserIDs   []int64
+	AcceptedReportIDs  []string
+	InsertedReportIDs  []string
+	InsertedUserIDs    []int64
+	DiscardedDetailIDs []string
 }
 
 func (s *Store) AddConnectionAuditReports(ctx context.Context, reports []model.ConnectionAuditReport) ([]string, error) {
@@ -87,10 +88,36 @@ func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []m
 	}
 	defer tx.Rollback()
 	ts := now()
+	budgetAt := time.Now()
+	var budget *auditDetailBudget
 	affectedUsers := map[int64]struct{}{}
 	dirtyHours := map[int64][]time.Time{}
 	for _, report := range reports {
 		if strings.TrimSpace(report.ReportID) == "" || report.ServerID <= 0 || report.UserID <= 0 {
+			continue
+		}
+		var exists int
+		err := tx.QueryRowContext(ctx, `select 1 from connection_audit_reports where report_id=?`, report.ReportID).Scan(&exists)
+		if err == nil {
+			result.AcceptedReportIDs = append(result.AcceptedReportIDs, report.ReportID)
+			continue
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return result, err
+		}
+		if budget == nil {
+			budget, err = newAuditDetailBudget(ctx, tx, budgetAt)
+			if err != nil {
+				return result, err
+			}
+		}
+		allowed, err := budget.allowed(ctx, tx, report.ServerID, report.UserID)
+		if err != nil {
+			return result, err
+		}
+		if !allowed {
+			result.AcceptedReportIDs = append(result.AcceptedReportIDs, report.ReportID)
+			result.DiscardedDetailIDs = append(result.DiscardedDetailIDs, report.ReportID)
 			continue
 		}
 		var payloadFirstAt, payloadLastAt any
@@ -123,6 +150,7 @@ func (s *Store) AddConnectionAuditReportsResult(ctx context.Context, reports []m
 		}
 		result.AcceptedReportIDs = append(result.AcceptedReportIDs, report.ReportID)
 		if inserted == 1 {
+			budget.inserted(report.UserID)
 			result.InsertedReportIDs = append(result.InsertedReportIDs, report.ReportID)
 			affectedUsers[report.UserID] = struct{}{}
 			if !report.StartedAt.IsZero() {

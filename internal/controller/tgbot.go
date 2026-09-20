@@ -22,6 +22,7 @@ import (
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
 	"github.com/OboardProject/oboard/internal/security"
+	"github.com/OboardProject/oboard/internal/store"
 )
 
 const (
@@ -922,43 +923,27 @@ func (s *Server) telegramBotUsers(ctx context.Context) string {
 }
 
 func (s *Server) telegramBotAudit(ctx context.Context) string {
-	connection, subscription, combined, err := s.auditOverviewData(ctx, 24)
+	page, err := s.store.ListAccountAuditEvents(ctx, store.AccountAuditQuery{Limit: 20, Status: "pending"})
 	if err != nil {
-		return "审计概览查询失败，请稍后重试。"
+		return "审计中心查询失败，请稍后重试。"
 	}
 	var builder strings.Builder
-	builder.WriteString("审计概览（24 小时）\n")
-	fmt.Fprintf(&builder, "连接审计：启用服务器 %d 台 · 上报用户 %d 人 · 连接 %d 次 · 来源 IP %d 个\n",
-		connection.EnabledServerCount, connection.ReportingUserCount, connection.TotalConnections, connection.UniqueSourceIPs)
-	fmt.Fprintf(&builder, "订阅审计：上报用户 %d 人 · 拉取 %d 次 · 来源 IP %d 个 · 已暂停 %d 人\n",
-		subscription.ReportingUsers, subscription.TotalPulls, subscription.UniqueSourceIPs, subscription.SuspendedCount)
-	fmt.Fprintf(&builder, "风险用户：连接 %d 人 · 订阅 %d 人\n", connection.ElevatedRiskCount, subscription.ElevatedRiskCount)
-	risky := make([]model.CombinedAuditUserSummary, 0, len(combined.Users))
-	for _, user := range combined.Users {
-		if user.ConnectionRiskLevel != "low" || user.SubscriptionRiskLevel != "low" || user.SubscriptionSuspended {
-			risky = append(risky, user)
+	builder.WriteString("审计中心 · 待处理事件（仅告警）\n")
+	events := page.Items.([]store.AccountAuditEvent)
+	for _, event := range events {
+		problem := "异常并发活动"
+		if event.RiskType == "exposure" {
+			problem = "订阅扩散线索"
 		}
+		fmt.Fprintf(&builder, "· 事件 #%d · 账号 #%d · %s · %d 分 · %s\n", event.ID, event.UserID, problem, event.Score, event.LastSeenAt)
 	}
-	if len(risky) > 0 {
-		builder.WriteString("风险明细：\n")
-		for _, user := range risky {
-			name := strings.TrimSpace(user.Nickname)
-			if name == "" {
-				name = user.Username
-			}
-			level := auditBotRiskLabel(user.ConnectionRiskLevel)
-			if user.SubscriptionRiskLevel != "low" {
-				level = auditBotRiskLabel(user.SubscriptionRiskLevel)
-			}
-			status := ""
-			if user.SubscriptionSuspended {
-				status = " · 订阅已暂停"
-			}
-			fmt.Fprintf(&builder, "· %s（%s%s）\n", name, level, status)
-		}
-	} else {
-		builder.WriteString("无风险用户。")
+	if len(events) == 0 {
+		builder.WriteString("暂无待处理事件；不代表采集完整或没有风险。\n")
 	}
+	if page.NextOffset != nil {
+		builder.WriteString("仅展示前20条，请打开审计中心查看其余事件。\n")
+	}
+	builder.WriteString("分数来自已保存快照，不代表已确认共享或泄露。")
 	return builder.String()
 }
 

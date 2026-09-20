@@ -68,9 +68,9 @@ func TestDashboardPageDataUsesLightTaskProjection(t *testing.T) {
 	}
 
 	auditPage := request(t, h, http.MethodGet, "/api/v1/ui/page-data?page=audit", token, nil, http.StatusOK)
-	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk"} {
+	for _, key := range []string{"connection_audit", "subscription_audit", "audit_risk", "audit_logs", "users", "servers"} {
 		if value, exists := auditPage[key]; exists && value != nil {
-			t.Fatalf("audit page-data should not embed the heavy risk overview (%q present: %#v); the console refetches /audit/risk-overview", key, value)
+			t.Fatalf("audit page-data loaded unrelated view data (%q present: %#v); each view must use its own paginated query", key, value)
 		}
 	}
 }

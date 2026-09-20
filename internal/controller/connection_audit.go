@@ -13,7 +13,6 @@ import (
 
 	"github.com/OboardProject/oboard/internal/core"
 	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/store"
 )
 
 // connectionAuditDiscardedReport tells the Agent that a specific report will
@@ -205,129 +204,17 @@ func (s *Server) agentConnectionReports(w http.ResponseWriter, r *http.Request) 
 		fail(w, err, http.StatusInternalServerError)
 		return
 	}
-	insertedReports := make(map[string]struct{}, len(addResult.InsertedReportIDs))
-	for _, reportID := range addResult.InsertedReportIDs {
-		insertedReports[reportID] = struct{}{}
-	}
-	// Device activity is deduplicated per batch and written with one
-	// statement instead of one UPDATE per report. Retries are already
-	// accounted for and must not create another write.
-	deviceActivity := make(map[string]time.Time, len(addResult.InsertedReportIDs))
-	for _, report := range reports {
-		if _, inserted := insertedReports[report.ReportID]; !inserted {
-			continue
-		}
-		if report.DeviceIDHash == "" || report.PayloadLastAt.IsZero() {
-			continue
-		}
-		if latest, ok := deviceActivity[report.DeviceIDHash]; !ok || report.PayloadLastAt.After(latest) {
-			deviceActivity[report.DeviceIDHash] = report.PayloadLastAt
-		}
-	}
-	if err := s.store.MarkUserDevicesProxyActivity(r.Context(), deviceActivity); err != nil {
-		log.Printf("mark device proxy activity: %v", err)
-	}
-	// Actions, notifications, and incident evaluation share one bounded,
-	// debounced queue. Only newly inserted reports wake it; idempotent Agent
-	// retries are acknowledged without repeating historical scans.
-	for _, userID := range addResult.InsertedUserIDs {
-		s.auditRisk.enqueue(userID)
-	}
 	accepted = append(accepted, addResult.AcceptedReportIDs...)
+	for _, id := range addResult.DiscardedDetailIDs {
+		discarded = append(discarded, connectionAuditDiscardedReport{ReportID: id, Reason: "detail_collection_disabled_or_capacity"})
+	}
 	response := map[string]any{"ok": true, "accepted_report_ids": accepted}
 	if len(discarded) > 0 {
 		s.connectionAuditDiscardedTotal.Add(uint64(len(discarded)))
-		log.Printf("connection audit discarded %d invalid report(s) from agent=%s first_reason=%s", len(discarded), server.AgentID, discarded[0].Reason)
+		log.Printf("connection audit discarded %d report(s) from agent=%s first_reason=%s", len(discarded), server.AgentID, discarded[0].Reason)
 		response["discarded_reports"] = discarded
 	}
 	write(w, http.StatusOK, response)
-}
-
-func (s *Server) applyConnectionAuditDeviceActions(ctx context.Context, userIDs []int64, evidence *store.ConnectionAuditSharedEvidence) {
-	if len(userIDs) == 0 || s.auditSettingsState(ctx).Action != model.AuditActionRestrict {
-		return
-	}
-	s.connectionAuditActionMu.Lock()
-	defer s.connectionAuditActionMu.Unlock()
-	// Evaluate only the reported users' 24h overview instead of computing the
-	// overview of every user in the system.
-	overview, err := s.store.ConnectionAuditOverviewForUsers(ctx, 24, true, s.auditPolicy(ctx), userIDs)
-	if err != nil {
-		log.Printf("evaluate connection audit device actions: %v", err)
-		return
-	}
-	targets := make(map[int64]bool, len(userIDs))
-	for _, userID := range userIDs {
-		targets[userID] = true
-	}
-	var subscriptionRisks map[int64]*model.SubscriptionAuditRisk
-	for _, connection := range overview.Users {
-		if !targets[connection.UserID] {
-			continue
-		}
-		if subscriptionRisks == nil {
-			var loadErr error
-			subscriptionRisks, loadErr = s.store.SubscriptionAuditCurrentRiskForUsers(ctx, userIDs, time.Now().UTC(), s.auditPolicy(ctx))
-			if loadErr != nil {
-				log.Printf("load subscription evidence for device action: %v", loadErr)
-				subscriptionRisks = map[int64]*model.SubscriptionAuditRisk{}
-			}
-		}
-		subscription := model.SubscriptionAuditRisk{}
-		if risk := subscriptionRisks[connection.UserID]; risk != nil {
-			subscription = *risk
-		}
-		s.applyConnectionAuditDeviceAction(ctx, connection, subscription)
-	}
-}
-
-func (s *Server) applyConnectionAuditDeviceAction(ctx context.Context, connection model.ConnectionAuditUserSummary, subscription model.SubscriptionAuditRisk) {
-	if s.auditSettingsState(ctx).Action != model.AuditActionRestrict || connection.IdentityMode != "device_bound" || !connection.CoverageComplete || connection.RiskDeviceIDHash == "" || connection.CloneConfidence < 0.80 {
-		return
-	}
-	evidence := uniqueAuditStrings(append(append([]string{}, connection.EvidenceCategories...), subscription.EvidenceCategories...))
-	if len(evidence) < 2 {
-		return
-	}
-	higher, lower := max(connection.RiskScore, subscription.Score), min(connection.RiskScore, subscription.Score)
-	totalScore := min(100, higher+int(math.Round(0.20*float64(lower))))
-	confidence := max(connection.Confidence, subscription.Confidence)
-	if connection.Confidence > 0 && subscription.Confidence > 0 {
-		confidence = math.Round(((connection.Confidence+subscription.Confidence)/2)*100) / 100
-	}
-	if totalScore < 85 || confidence < s.auditPolicy(ctx).AutoActionConfidence {
-		return
-	}
-	device, err := s.store.GetUserDeviceByHash(ctx, connection.UserID, connection.RiskDeviceIDHash)
-	if err != nil || device.Status != "active" || device.CredentialEpoch <= 0 {
-		return
-	}
-	changed := false
-	deviceID := device.ID
-	if !device.SubscriptionSuspended {
-		device, err = s.store.SetUserDeviceSubscriptionSuspended(ctx, connection.UserID, deviceID, true)
-		if err != nil {
-			log.Printf("suspend risky device subscription user=%d device=%s: %v", connection.UserID, deviceID, err)
-			return
-		}
-		changed = true
-	}
-	if totalScore >= 95 && confidence >= 0.90 && device.ProxyAccessState == "active" {
-		_, err = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "reject_new")
-		if err != nil {
-			log.Printf("reject risky device authentication user=%d device=%s: %v", connection.UserID, deviceID, err)
-			return
-		}
-		if err := s.queueUserDeviceCredentialDeployment(ctx, connection.UserID); err != nil {
-			_, _ = s.store.SetUserDeviceProxyAccessState(ctx, connection.UserID, deviceID, "active")
-			log.Printf("queue risky device credential deployment user=%d device=%s: %v", connection.UserID, deviceID, err)
-			return
-		}
-		changed = true
-	}
-	if changed {
-		s.publishRealtime("audit", "users", "deployment", "user_overview")
-	}
 }
 
 // connectionAuditRejection marks a report that can never become valid. The
@@ -456,12 +343,7 @@ func (s *Server) connectionAuditOverview(w http.ResponseWriter, r *http.Request)
 		method(w)
 		return
 	}
-	overview, _, _, err := s.auditOverviewData(r.Context(), s.auditWindowHours(r.Context(), r, 24))
-	if err != nil {
-		fail(w, err, http.StatusInternalServerError)
-		return
-	}
-	write(w, http.StatusOK, map[string]any{"connection_audit": overview})
+	retiredAuditRiskEndpoint(w)
 }
 
 func (s *Server) connectionAuditUser(w http.ResponseWriter, r *http.Request) {
@@ -474,12 +356,7 @@ func (s *Server) connectionAuditUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, errors.New("invalid audit user id"), http.StatusBadRequest)
 		return
 	}
-	detail, err := s.store.ConnectionAuditUserDetail(r.Context(), userID, s.auditWindowHours(r.Context(), r, 24), s.auditPolicy(r.Context()))
-	if err != nil {
-		fail(w, err, http.StatusNotFound)
-		return
-	}
-	write(w, http.StatusOK, map[string]any{"connection_audit_user": detail})
+	retiredAuditRiskEndpoint(w)
 }
 
 func (s *Server) enrichConnectionAuditReport(report *model.ConnectionAuditReport) {

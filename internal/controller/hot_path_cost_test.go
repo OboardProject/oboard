@@ -95,31 +95,22 @@ func TestRuntimeUserPackageIsReusedUntilRoutingChanges(t *testing.T) {
 	}
 }
 
-// The audit console polls three overview endpoints that share one computation.
-// Within the cache window they must answer from it, and a different reporting
-// window must never be served from another window's entry.
-func TestAuditOverviewIsSharedPerWindow(t *testing.T) {
+func TestRetiredAuditOverviewDoesNotQueryHistory(t *testing.T) {
 	ctx := context.Background()
-	db, srv, _, _, _ := hotPathFixture(t)
-	if _, _, _, err := srv.auditOverviewData(ctx, 24); err != nil {
+	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close()
+	srv := newTestServer(db, "audit-cost-secret", "")
 	before := db.SQLStatementCount()
-	for range 3 {
-		if _, _, _, err := srv.auditOverviewData(ctx, 24); err != nil {
-			t.Fatal(err)
+	for _, hours := range []int{24, 24, 72} {
+		if _, _, _, err := srv.auditOverviewData(ctx, hours); err == nil {
+			t.Fatal("retired overview accepted an online scoring request")
 		}
 	}
-	shared := db.SQLStatementCount() - before
-	if shared > 6 {
-		t.Fatalf("repeated overviews cost %d statements", shared)
-	}
-	before = db.SQLStatementCount()
-	if _, _, _, err := srv.auditOverviewData(ctx, 72); err != nil {
-		t.Fatal(err)
-	}
-	if db.SQLStatementCount()-before <= shared {
-		t.Fatal("a different reporting window was served from the cached one")
+	if cost := db.SQLStatementCount() - before; cost != 0 {
+		t.Fatalf("retired overviews queried history: %d statements", cost)
 	}
 }
 

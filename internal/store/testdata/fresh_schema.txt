@@ -1,3 +1,15 @@
+index account_activity_v1_checkpoint_minute on account_activity_v1_checkpoint
+index account_activity_v1_counter_minute on account_activity_v1_counter
+index account_activity_v1_coverage_minute on account_activity_v1_coverage
+index account_activity_v1_expected_account_minute on account_activity_v1_expected
+index account_activity_v1_expected_minute on account_activity_v1_expected
+index account_activity_v1_expected_stream on account_activity_v1_expected
+index account_activity_v1_pending on account_activity_v1_inbox
+index account_activity_v1_quality_minute on account_activity_v1_quality
+index account_activity_v1_source_minute on account_activity_v1_source
+index account_audit_events_page on account_audit_events
+index account_audit_notification_queue on account_audit_notifications
+index account_subscription_activity_expiry on account_subscription_activity
 index idx_access_change_targets_change on access_change_targets
 index idx_access_changes_status on access_changes
 index idx_agent_tasks_one_active_update on agent_tasks
@@ -185,6 +197,156 @@ table access_changes
     updated_at TEXT notnull=1 default=- pk=0
     kind TEXT notnull=1 default='' pk=0
     old_scope_json TEXT notnull=1 default='{}' pk=0
+table account_activity_v1_baseline
+    account INTEGER notnull=1 default=- pk=1
+    day INTEGER notnull=1 default=- pk=2
+    policy TEXT notnull=1 default=- pk=3
+    version TEXT notnull=1 default=- pk=4
+    histogram BLOB notnull=1 default=- pk=0
+    last_minute INTEGER notnull=1 default=- pk=0
+table account_activity_v1_baseline_exclusion
+    account INTEGER notnull=0 default=- pk=1
+    until_minute INTEGER notnull=1 default=- pk=0
+table account_activity_v1_boot_generation
+    server INTEGER notnull=1 default=- pk=1
+    stream TEXT notnull=1 default=- pk=2
+    started_at INTEGER notnull=1 default=- pk=0
+table account_activity_v1_checkpoint
+    server INTEGER notnull=1 default=- pk=1
+    stream TEXT notnull=1 default=- pk=2
+    boot TEXT notnull=1 default=- pk=3
+    minute INTEGER notnull=1 default=- pk=4
+    account INTEGER notnull=1 default=- pk=5
+    inbound INTEGER notnull=1 default=- pk=6
+    path INTEGER notnull=1 default=- pk=7
+    source TEXT notnull=1 default=- pk=8
+    version TEXT notnull=1 default=- pk=9
+    seq INTEGER notnull=1 default=- pk=10
+    up INTEGER notnull=1 default=- pk=0
+    down INTEGER notnull=1 default=- pk=0
+    bits INTEGER notnull=1 default=- pk=0
+table account_activity_v1_clock
+    id INTEGER notnull=0 default=- pk=1
+    now_seconds INTEGER notnull=1 default=- pk=0
+table account_activity_v1_counter
+    server INTEGER notnull=1 default=- pk=1
+    stream TEXT notnull=1 default=- pk=2
+    boot TEXT notnull=1 default=- pk=3
+    minute INTEGER notnull=1 default=- pk=4
+    account INTEGER notnull=1 default=- pk=5
+    inbound INTEGER notnull=1 default=- pk=6
+    path INTEGER notnull=1 default=- pk=7
+    source TEXT notnull=1 default=- pk=8
+    version TEXT notnull=1 default=- pk=9
+    seq INTEGER notnull=1 default=- pk=0
+    up INTEGER notnull=1 default=- pk=0
+    down INTEGER notnull=1 default=- pk=0
+    bits INTEGER notnull=1 default=- pk=0
+table account_activity_v1_coverage
+    server INTEGER notnull=1 default=- pk=1
+    stream TEXT notnull=1 default=- pk=2
+    minute INTEGER notnull=1 default=- pk=3
+    version TEXT notnull=1 default=- pk=4
+    complete INTEGER notnull=1 default=- pk=0
+    aligned INTEGER notnull=1 default=- pk=0
+table account_activity_v1_dirty
+    account INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=- pk=0
+    evaluated INTEGER notnull=1 default=0 pk=0
+table account_activity_v1_expected
+    account INTEGER notnull=1 default=- pk=1
+    server INTEGER notnull=1 default=- pk=2
+    stream TEXT notnull=1 default=- pk=3
+    minute INTEGER notnull=1 default=- pk=4
+    capable INTEGER notnull=1 default=- pk=0
+table account_activity_v1_inbox
+    server INTEGER notnull=1 default=- pk=1
+    stream TEXT notnull=1 default=- pk=2
+    boot TEXT notnull=1 default=- pk=3
+    seq INTEGER notnull=1 default=- pk=4
+    minute INTEGER notnull=1 default=- pk=0
+    digest BLOB notnull=1 default=- pk=0
+    payload BLOB notnull=0 default=- pk=0
+    gap INTEGER notnull=1 default=- pk=0
+table account_activity_v1_quality
+    account INTEGER notnull=1 default=- pk=1
+    minute INTEGER notnull=1 default=- pk=2
+    overflow INTEGER notnull=1 default=0 pk=0
+table account_activity_v1_source
+    account INTEGER notnull=1 default=- pk=1
+    minute INTEGER notnull=1 default=- pk=2
+    version TEXT notnull=1 default=- pk=3
+    source TEXT notnull=1 default=- pk=4
+    bytes INTEGER notnull=1 default=- pk=0
+    bits INTEGER notnull=1 default=- pk=0
+table account_activity_v1_stream
+    server INTEGER notnull=1 default=- pk=1
+    stream TEXT notnull=1 default=- pk=2
+    boot TEXT notnull=1 default=- pk=0
+    retired BLOB notnull=1 default=- pk=0
+    high INTEGER notnull=1 default=- pk=0
+    floor INTEGER notnull=1 default=- pk=0
+table account_audit_actions
+    id INTEGER notnull=0 default=- pk=1
+    event_id INTEGER notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=- pk=0
+    actor TEXT notnull=1 default=- pk=0
+    reason TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    expires_at INTEGER notnull=1 default=- pk=0
+    created_at INTEGER notnull=1 default=- pk=0
+    execution_status TEXT notnull=1 default='applied' pk=0
+table account_audit_dirty
+    user_id INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=- pk=0
+table account_audit_event_state
+    user_id INTEGER notnull=1 default=- pk=1
+    risk_type TEXT notnull=1 default=- pk=2
+    last_minute INTEGER notnull=1 default=- pk=0
+    high_count INTEGER notnull=1 default=- pk=0
+    low_count INTEGER notnull=1 default=- pk=0
+    cycle INTEGER notnull=1 default=- pk=0
+    active INTEGER notnull=1 default=- pk=0
+    version TEXT notnull=1 default=- pk=0
+table account_audit_events
+    id INTEGER notnull=0 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    risk_type TEXT notnull=1 default=- pk=0
+    cycle INTEGER notnull=1 default=- pk=0
+    status TEXT notnull=1 default=- pk=0
+    score INTEGER notnull=1 default=- pk=0
+    first_seen_at TEXT notnull=1 default=- pk=0
+    last_seen_at TEXT notnull=1 default=- pk=0
+    snapshot TEXT notnull=1 default=- pk=0
+table account_audit_notifications
+    id INTEGER notnull=0 default=- pk=1
+    event_id INTEGER notnull=1 default=- pk=0
+    revision INTEGER notnull=1 default=- pk=0
+    snapshot TEXT notnull=1 default=- pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    lease_token INTEGER notnull=1 default=0 pk=0
+    lease_until INTEGER notnull=1 default=0 pk=0
+    created_at INTEGER notnull=1 default=- pk=0
+table account_audit_snapshots
+    user_id INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=- pk=0
+    as_of TEXT notnull=1 default=- pk=0
+    snapshot TEXT notnull=1 default=- pk=0
+table account_audit_workflow
+    event_id INTEGER notnull=0 default=- pk=1
+    revision INTEGER notnull=1 default=1 pk=0
+    status TEXT notnull=1 default='pending' pk=0
+    muted_until INTEGER notnull=1 default=0 pk=0
+    notified_severity INTEGER notnull=1 default=0 pk=0
+table account_subscription_activity
+    user_id INTEGER notnull=0 default=- pk=1
+    state_json TEXT notnull=1 default=- pk=0
+    updated_at INTEGER notnull=1 default=- pk=0
+table account_subscription_coverage
+    id INTEGER notnull=0 default=- pk=1
+    started_at INTEGER notnull=1 default=- pk=0
+    last_at INTEGER notnull=1 default=- pk=0
+    enabled INTEGER notnull=1 default=- pk=0
 table agent_fleet_update_state
     id INTEGER notnull=0 default=- pk=1
     paused INTEGER notnull=1 default=0 pk=0
@@ -757,6 +919,41 @@ table deployment_failure_dismissals
     config_version INTEGER notnull=0 default=- pk=1
     actor_id INTEGER notnull=1 default=- pk=0
     dismissed_at TEXT notnull=1 default=- pk=0
+table device_retirement_accounts
+    batch_id INTEGER notnull=1 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=2
+    decision TEXT notnull=1 default='pending' pk=0
+    reason TEXT notnull=1 default='' pk=0
+table device_retirement_batches
+    id INTEGER notnull=0 default=- pk=1
+    state TEXT notnull=1 default=- pk=0
+    deadline TEXT notnull=1 default=- pk=0
+    actor TEXT notnull=1 default=- pk=0
+    reason TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+    revoked_at TEXT notnull=0 default=- pk=0
+    deployment_version INTEGER notnull=1 default=0 pk=0
+table device_retirement_grace_scopes
+    credential_id TEXT notnull=0 default=- pk=1
+table device_retirement_initial_grace
+    id INTEGER notnull=0 default=- pk=1
+    deadline TEXT notnull=1 default=- pk=0
+table device_retirement_nodes
+    batch_id INTEGER notnull=1 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=2
+table device_retirement_reviews
+    user_id INTEGER notnull=0 default=- pk=1
+    reason_code TEXT notnull=1 default=- pk=0
+    created_at TEXT notnull=1 default=- pk=0
+table device_retirement_scopes
+    batch_id INTEGER notnull=1 default=- pk=1
+    user_id INTEGER notnull=1 default=- pk=0
+    credential_id TEXT notnull=1 default=- pk=2
+table device_retirement_targets
+    batch_id INTEGER notnull=1 default=- pk=1
+    server_id INTEGER notnull=1 default=- pk=2
+    authorization_revision INTEGER notnull=1 default=0 pk=0
+    users_revision INTEGER notnull=1 default=0 pk=0
 table dns_benchmark_results
     id INTEGER notnull=0 default=- pk=1
     report_id TEXT notnull=1 default=- pk=0

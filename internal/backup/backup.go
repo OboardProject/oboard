@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OboardProject/oboard/internal/store"
 	"github.com/metacubex/age"
 )
 
@@ -319,28 +318,13 @@ func (m *Manager) StageRestore(ctx context.Context, archivePath, password, targe
 	if err != nil {
 		return StagedRestore{}, err
 	}
-	manifest, sourceSecret, err := extractArchive(archivePath, password, stage)
+	manifest, restored, err := prepareRestore(ctx, archivePath, password, targetVersion, m.config.MasterSecret, stage, nil)
 	if err != nil {
-		_ = os.RemoveAll(stage)
-		return StagedRestore{}, err
-	}
-	if err := CheckCompatibility(manifest.SourceVersion, targetVersion); err != nil {
 		_ = os.RemoveAll(stage)
 		return StagedRestore{}, err
 	}
 	database := filepath.Join(stage, "database.sqlite")
-	restored, err := store.OpenForRestore(database)
-	if err != nil {
-		_ = os.RemoveAll(stage)
-		return StagedRestore{}, fmt.Errorf("读取备份数据库失败：%w", err)
-	}
-	err = restored.CheckIntegrity(ctx)
-	if err == nil {
-		err = restored.RewrapEncryptedSecrets(ctx, sourceSecret, m.config.MasterSecret)
-	}
-	if err == nil {
-		err = restored.SetSetting(ctx, "controller_backup_restore_reconcile", "true")
-	}
+	err = restored.SetSetting(ctx, "controller_backup_restore_reconcile", "true")
 	if err == nil {
 		err = restored.PauseScriptSchedulerAfterRestore(ctx)
 	}
@@ -562,10 +546,20 @@ func readEnvelope(archivePath, payloadDestination string) (Manifest, int64, erro
 }
 
 func extractArchive(archivePath, password, stage string) (Manifest, string, error) {
+	return extractArchiveWithReport(archivePath, password, stage, nil)
+}
+
+func extractArchiveWithReport(archivePath, password, stage string, record func(string, error)) (result Manifest, sourceSecret string, err error) {
 	payload := filepath.Join(stage, payloadFileName)
 	manifest, _, err := readEnvelope(archivePath, payload)
+	if record != nil {
+		record("archive_format", err)
+	}
 	if err != nil {
 		return Manifest{}, "", err
+	}
+	if record != nil {
+		defer func() { record("decryption_and_files", err) }()
 	}
 	input, err := openPath(payload)
 	if err != nil {

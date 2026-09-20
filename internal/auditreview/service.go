@@ -333,6 +333,12 @@ func (s *Service) Advance(ctx context.Context, reviewID string) error {
 			return nil
 		}
 	}
+	if len(review.EvidenceTypes) == 1 && review.EvidenceTypes[0] == store.AccountAuditAssistanceEvidence {
+		if maxStage != 0 || len(stageJobs) != 1 {
+			return errors.New("invalid account assistance job shape")
+		}
+		return s.store.FinalizeAuditReview(ctx, reviewID, stageJobs[0].Output)
+	}
 	provider, err := s.store.GetAIProvider(ctx, review.ProviderID)
 	if err != nil {
 		return err

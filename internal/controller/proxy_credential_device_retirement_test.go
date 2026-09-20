@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -10,20 +11,11 @@ import (
 	"github.com/OboardProject/oboard/internal/store"
 )
 
-// TestStartupRetiresStrandedDeviceScopedCredentials starts from the real state
-// an installation carried before device-specific subscriptions were withdrawn:
-// active proxy credentials scoped to a device hash and credential epoch.
-//
-// Nothing issues a device-scoped identity any more, and credential selection
-// matches a stored row against the account identity, so such a row can never be
-// selected again. It must not simply be stranded there - the account would hold
-// an SSH inbound grant with no usable credential and would silently drop out of
-// the deployed plan. Startup reconciliation consumes the complete desired scope
-// set, so it has to retire the stranded row and issue the account-scoped
-// replacement without any dedicated migration.
-func TestStartupRetiresStrandedDeviceScopedCredentials(t *testing.T) {
+// Startup must not destroy legacy material before controlled retirement.
+func TestStartupPreservesPendingDeviceScopedCredentials(t *testing.T) {
 	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "controller.sqlite"))
+	dbPath := filepath.Join(t.TempDir(), "controller.sqlite")
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +38,16 @@ func TestStartupRetiresStrandedDeviceScopedCredentials(t *testing.T) {
 
 	// The pre-withdrawal state: the only active credential for this grant is
 	// bound to a device identity.
-	strandedScope := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, DeviceIDHash: "0123456789abcdef", CredentialEpoch: 2, Protocol: model.ProtocolSSH}
+	strandedScope := model.ProxyCredential{UserID: user.ID, InboundID: inbound.ID, PathID: pathID, Protocol: model.ProtocolSSH}
 	if err := db.ReconcileProxyCredentials(ctx, srv.sessionSecret, []model.ProxyCredential{strandedScope}); err != nil {
+		t.Fatal(err)
+	}
+	fixtureDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixtureDB.Close()
+	if _, err := fixtureDB.Exec(`update proxy_credentials set device_id_hash='0123456789abcdef',credential_epoch=2`); err != nil {
 		t.Fatal(err)
 	}
 	seeded, err := db.LoadProxyCredentials(ctx, srv.sessionSecret, []model.User{*user})
@@ -57,10 +57,11 @@ func TestStartupRetiresStrandedDeviceScopedCredentials(t *testing.T) {
 	if len(seeded[0].ProxyCredentials) != 1 || seeded[0].ProxyCredentials[0].DeviceIDHash == "" {
 		t.Fatalf("device-scoped seed not established: %#v", seeded[0].ProxyCredentials)
 	}
+	// Before reconciliation, unreviewed material is not implicitly projected.
 	deviceIdentity := seeded[0]
 	deviceIdentity.DeviceIDHash, deviceIdentity.CredentialEpoch = "0123456789abcdef", 2
-	if core.UserCredentialForRoute(deviceIdentity, inbound.ID, pathID, model.ProtocolSSH).AuthorizationKey == "" {
-		t.Fatal("seeded credential is not selectable by the identity that owned it")
+	if core.UserCredentialForRoute(deviceIdentity, inbound.ID, pathID, model.ProtocolSSH).AuthorizationKey != "" {
+		t.Fatal("unreviewed device material was implicitly projected")
 	}
 	// The account identity cannot reach it, which is exactly why leaving it
 	// active would strand the grant.
@@ -76,10 +77,21 @@ func TestStartupRetiresStrandedDeviceScopedCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyCount := 0
 	for _, credential := range reconciled[0].ProxyCredentials {
-		if credential.DeviceIDHash != "" || credential.CredentialEpoch != 0 {
-			t.Fatalf("stranded device-scoped credential survived startup: %#v", credential)
+		if credential.DeviceIDHash != "" {
+			legacyCount++
+			if credential.ID != seeded[0].ProxyCredentials[0].ID || credential.Password != seeded[0].ProxyCredentials[0].Password || credential.Username != seeded[0].ProxyCredentials[0].Username || credential.UUID != seeded[0].ProxyCredentials[0].UUID {
+				t.Fatal("legacy credential material changed")
+			}
 		}
+	}
+	if legacyCount != 1 {
+		t.Fatal("legacy credential was automatically retired")
+	}
+	var reason string
+	if err := fixtureDB.QueryRow(`select reason_code from device_retirement_reviews where user_id=?`, user.ID).Scan(&reason); err != nil || reason != "transition_pending" {
+		t.Fatalf("pending review: %q, %v", reason, err)
 	}
 	selected := core.UserCredentialForRoute(reconciled[0], inbound.ID, pathID, model.ProtocolSSH)
 	if selected.AuthorizationKey == "" || selected.ProxyUsername == "" || selected.ProxyPassword == "" {

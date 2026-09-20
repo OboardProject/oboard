@@ -574,7 +574,7 @@ func TestHTTPCertificateTaskFailureQueuesCertificateNotification(t *testing.T) {
 	}
 }
 
-func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
+func TestHistoricalConnectionAuditDoesNotNotifyUserOrAdmin(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "oboard.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -620,20 +620,12 @@ func TestConnectionAuditRiskNotificationTargetsUserAndAdmin(t *testing.T) {
 		return nil
 	}
 	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID}, nil)
-	waitNotificationCount(t, srv, &sentMu, &sent, 2)
-	sentMu.Lock()
-	for _, message := range sent {
-		if !strings.Contains(message, "异常使用提醒 · 小王") || !strings.Contains(message, "告警") || !strings.Contains(message, "设备凭证") {
-			t.Fatalf("risk notification = %q", message)
-		}
-	}
-	sentMu.Unlock()
 	srv.notifyConnectionAuditRisks(context.Background(), []int64{viewerID}, nil)
-	time.Sleep(50 * time.Millisecond)
+	srv.deliverPendingNotifications(context.Background())
 	sentMu.Lock()
 	defer sentMu.Unlock()
-	if len(sent) != 2 {
-		t.Fatalf("duplicate risk notifications = %#v", sent)
+	if len(sent) != 0 {
+		t.Fatalf("historical detail generated risk notifications: %#v", sent)
 	}
 }
 
