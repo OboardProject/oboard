@@ -1,0 +1,27 @@
+{
+  "plugin_id": "example.node-inspection",
+  "name": "节点巡检",
+  "version": "1.0.0",
+  "description": "读取授权节点状态和资源指标，可选提交内核服务状态诊断，不修改节点配置。",
+  "schema_version": 1,
+  "runtime": "oboard-js-v1",
+  "sdk_version": "oboard-sdk-v1",
+  "entry": "main",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "server_id": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+      "diagnose": { "type": "boolean" }
+    },
+    "required": ["server_id"],
+    "additionalProperties": false
+  },
+  "config_schema": { "type": "object", "additionalProperties": false },
+  "env": [
+    { "name": "REPORT_LABEL", "default": "节点巡检", "overridable": true, "sensitive": false }
+  ],
+  "secrets": [],
+  "capabilities": ["servers.status", "metrics.latest", "services.status", "operations.get"],
+  "resource_types": ["servers"],
+  "limits": { "timeout_seconds": 10, "sdk_calls": 4 }
+}

@@ -1,0 +1,18 @@
+{
+  "pages": [{
+    "id": "maintenance",
+    "title": "批量服务维护",
+    "description": "最多五个授权节点。先不勾选确认以预览，再核对节点和服务后明确确认。重启会影响服务连接。",
+    "components": [{
+      "id": "restart",
+      "type": "form",
+      "title": "预览或执行维护",
+      "fields": [
+        { "name": "server_ids", "label": "节点 ID（英文逗号分隔）", "type": "text", "required": true },
+        { "name": "service", "label": "托管服务", "type": "select", "required": true, "options": ["oboard-agent", "oboard-sb"] },
+        { "name": "confirm", "label": "确认重启；不勾选仅预览", "type": "boolean" }
+      ],
+      "action": { "label": "提交预览或维护" }
+    }]
+  }]
+}

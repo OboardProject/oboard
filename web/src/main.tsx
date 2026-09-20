@@ -287,7 +287,7 @@ const UserPlanDialog = lazyDialog(() => import('./pages/UserPlanDialog').then(mo
 import type { UserDashboardOverview } from './pages/UserDashboardPage'
 const UserDashboardPage = lazySurface(() => import('./pages/UserDashboardPage').then(module => ({ default: module.UserDashboardPage })))
 const AccountPage = lazySurface(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })))
-const ScriptsWorkspace = lazySurface(() => import('./features/scripts/ScriptsWorkspace').then(module => ({ default: module.ScriptsWorkspace })))
+const PluginsWorkspace = lazySurface(() => import('./features/plugins/PluginsWorkspace').then(module => ({ default: module.PluginsWorkspace })))
 import { automationLandingTab, isAutomationNavTab, navTabVisible as automationEntryVisible } from './automation-nav'
 
 const appBasePath = (() => {
@@ -1328,10 +1328,10 @@ const tabMeta: Record<string, { label: string; desc: string; group: string }> = 
   notifications: { label: '通知中心', desc: '', group: '' },
   tasks: { label: '任务', desc: '查询配置下发、Agent 任务和部署回执。', group: '运维' },
   audit: { label: '审计台', desc: '分析连接来源、出口行为和操作记录。', group: '运维' },
-  automation: { label: '自动化', desc: '管理脚本、MCP、审批策略、变更集与内置 AI。', group: '系统' },
-  scripts: { label: '脚本', desc: '管理受限 JavaScript 脚本、触发器和执行记录。', group: '系统' },
-  'script-triggers': { label: '脚本触发器', desc: '查看脚本定时与状态触发器。', group: '系统' },
-  'script-runs': { label: '脚本执行', desc: '查看脚本执行记录与动作阶段。', group: '系统' },
+  automation: { label: '自动化', desc: '管理插件、MCP、审批策略、变更集与内置 AI。', group: '系统' },
+  plugins: { label: '插件', desc: '管理受限 JavaScript 插件、触发器和执行记录。', group: '系统' },
+  'plugin-triggers': { label: '插件触发器', desc: '查看插件定时与状态触发器。', group: '系统' },
+  'plugin-runs': { label: '插件执行', desc: '查看插件执行记录与动作阶段。', group: '系统' },
   settings: { label: '设置', desc: '管理面板设置。', group: '系统' }
 }
 const navGroups = [
@@ -1351,7 +1351,7 @@ const tabMinimumRole: Record<string, Role> = {
 	account: 'none', dashboard: 'none', tasks: 'operator', audit: 'operator',
   'return-latency': 'operator', servers: 'operator', 'proxy-paths': 'operator',
   users: 'admin', plans: 'admin', notifications: 'viewer', automation: 'admin', settings: 'admin',
-  scripts: 'operator', 'script-triggers': 'operator', 'script-runs': 'operator',
+  plugins: 'operator', 'plugin-triggers': 'operator', 'plugin-runs': 'operator',
   nodes: 'none',
   dns: 'admin', 'dns-records': 'admin', mtu: 'operator',
 }
@@ -1457,7 +1457,7 @@ function getTabIcon(x: string) {
   if (x === 'tasks') return <CheckSquare size={18} />
   if (x === 'audit') return <ClipboardList size={18} />
   if (x === 'automation') return <Bot size={18} />
-  if (x === 'scripts' || x === 'script-triggers' || x === 'script-runs') return <Code size={18} />
+  if (x === 'plugins' || x === 'plugin-triggers' || x === 'plugin-runs') return <Code size={18} />
   if (x === 'dns') return <Globe size={18} />
   if (x === 'dns-records') return <Database size={18} />
   if (x === 'settings') return <SettingsIcon size={18} />
@@ -3259,8 +3259,8 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
   const dialogs = useDialogs()
   const role = data?.session?.role || data?.current_user?.role
   const isAdmin = canManageAdministratorAccounts(role)
-  const isScriptsView = tab !== 'automation' || !isAdmin
-  const scriptTab = tab === 'script-triggers' || tab === 'script-runs' ? tab : 'scripts'
+  const isPluginsView = tab !== 'automation' || !isAdmin
+  const pluginTab = tab === 'plugin-triggers' || tab === 'plugin-runs' ? tab : 'plugins'
   const [view, setView] = useState<'access' | 'changes' | 'ai'>('access')
   const [working, setWorking] = useState('')
   const [snapshot, setSnapshot] = useState<any>({ changesets: [], providers: [], audits: [] })
@@ -3283,13 +3283,13 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
     if (tab === 'automation' && !isAdmin) goTab(automationLandingTab())
   }, [tab, isAdmin])
   useEffect(() => {
-    if (!isScriptsView) void refresh()
-  }, [isScriptsView])
-  useRegisterPageRefresh(() => { if (!isScriptsView) return refresh() })
+    if (!isPluginsView) void refresh()
+  }, [isPluginsView])
+  useRegisterPageRefresh(() => { if (!isPluginsView) return refresh() })
   useEffect(() => {
-    if (isScriptsView) return
+    if (isPluginsView) return
     if (realtimeRevision > 0 && (realtimeResources.includes('automation') || realtimeResources.includes('all'))) void refresh()
-  }, [realtimeRevision, realtimeResources, isScriptsView])
+  }, [realtimeRevision, realtimeResources, isPluginsView])
 
   const closeConnectDialog = () => {
     setConnectDialogOpen(false)
@@ -3314,15 +3314,15 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
   }
   return <Panel className="automation-panel">
     <div className="audit-console-tabs automation-tabs" role="group" aria-label="自动化视图">
-      <button type="button" aria-pressed={isScriptsView} className={isScriptsView ? 'active' : ''} onClick={() => goTab(automationLandingTab())}><Code size={15} />脚本</button>
+      <button type="button" aria-pressed={isPluginsView} className={isPluginsView ? 'active' : ''} onClick={() => goTab(automationLandingTab())}><Code size={15} />插件</button>
       {isAdmin && <>
-        <button type="button" aria-pressed={!isScriptsView && view === 'access'} className={!isScriptsView && view === 'access' ? 'active' : ''} onClick={() => openAdminView('access')}><Key size={15} />访问凭据</button>
-        <button type="button" aria-pressed={!isScriptsView && view === 'changes'} className={!isScriptsView && view === 'changes' ? 'active' : ''} onClick={() => openAdminView('changes')}><Workflow size={15} />审批与变更</button>
-        <button type="button" aria-pressed={!isScriptsView && view === 'ai'} className={!isScriptsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
+        <button type="button" aria-pressed={!isPluginsView && view === 'access'} className={!isPluginsView && view === 'access' ? 'active' : ''} onClick={() => openAdminView('access')}><Key size={15} />访问凭据</button>
+        <button type="button" aria-pressed={!isPluginsView && view === 'changes'} className={!isPluginsView && view === 'changes' ? 'active' : ''} onClick={() => openAdminView('changes')}><Workflow size={15} />审批与变更</button>
+        <button type="button" aria-pressed={!isPluginsView && view === 'ai'} className={!isPluginsView && view === 'ai' ? 'active' : ''} onClick={() => openAdminView('ai')}><Bot size={15} />AI Provider</button>
       </>}
     </div>
-    {isScriptsView && <div className="automation-scripts" style={{ marginTop: 14, minWidth: 0 }}><ScriptsWorkspace tab={scriptTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
-    {!isScriptsView && view === 'access' && <>
+    {isPluginsView && <div className="automation-plugins" style={{ marginTop: 14, minWidth: 0 }}><PluginsWorkspace tab={pluginTab} data={data} client={client} notify={notify} onNavigate={goTab} /></div>}
+    {!isPluginsView && view === 'access' && <>
       <div className="automation-access-toolbar">
         <div><strong>MCP 客户端</strong></div>
         <button type="button" onClick={() => openConnectDialog()}><Cable size={15} />接入客户端</button>
@@ -3334,7 +3334,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
         confirm={dialogs.confirm}
       />
     </>}
-    {!isScriptsView && view === 'changes' && <div className="automation-grid automation-changes-grid">
+    {!isPluginsView && view === 'changes' && <div className="automation-grid automation-changes-grid">
       <section className="settings-card automation-changesets">
         <div className="settings-card-head"><div><h3>Changeset</h3><p className="muted">校验计划哈希、影响范围并执行已批准变更。</p></div></div>
         <div className="automation-list">{snapshot.changesets.length ? snapshot.changesets.map((item: any) => <div className="automation-row" key={item.id}><div><strong>{item.reason || item.id}</strong><span>{item.operations.map((operation: any) => operation.capability).join(' · ')}</span><small>{item.status} · 风险 {item.risk_class} · {formatTableTime(item.created_at)}</small></div><div>{item.status === 'draft' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'validate')} title="校验" aria-label="校验"><ShieldCheck size={15} /></button>}{item.status === 'awaiting_approval' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'approve')} title="批准" aria-label="批准"><BadgeCheck size={15} /></button>}{item.status === 'approved' && <button className="ghost icon-button" onClick={() => void changesetAction(item, 'apply')} title="执行" aria-label="执行"><Play size={15} /></button>}</div></div>) : <p className="muted">暂无变更集</p>}</div>
@@ -3346,7 +3346,7 @@ function AutomationWorkspace({ tab, data, client, notify, realtimeRevision, real
           : <p className="muted">暂无调用记录</p>}
       </section>
     </div>}
-    {!isScriptsView && view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
+    {!isPluginsView && view === 'ai' && <div className="automation-grid"><ProviderEditor providers={snapshot.providers} requestV2={client.requestV2} refresh={refresh} notify={notify} confirm={dialogs.confirm} onOpenLogs={() => setAiRawLogOpen(true)} /></div>}
     <AnimatePresence>{connectDialogOpen && <MotionDialogPanel onCancel={closeConnectDialog} className="automation-dialog automation-connect-dialog">
       <header className="dialog-head"><div><h2>接入 MCP 客户端</h2><p className="muted">使用当前主控公开地址生成用户级配置。</p></div><button type="button" className="ghost dialog-close icon-button" onClick={closeConnectDialog} aria-label="关闭" title="关闭"><XIcon /></button></header>
       <div className="dialog-body automation-connect-body">

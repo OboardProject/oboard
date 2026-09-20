@@ -1,0 +1,34 @@
+#!/sbin/openrc-run
+
+description="OBoard Plugin Worker"
+export OBOARD_PLUGIN_WORKER_SOCKET=/run/oboard/plugin-worker/rpc.sock
+command="/opt/oboard/oboard-plugin-worker"
+command_args="--poll-interval 2s"
+command_user="oboard-plugins:oboard"
+pidfile="/run/${RC_SVCNAME}.pid"
+supervisor="supervise-daemon"
+respawn_delay=5
+output_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
+error_log="/opt/oboard/data/logs/${RC_SVCNAME}.log"
+
+depend() {
+	need net oboard-controller
+}
+
+start_pre() {
+	checkpath -d -m 0750 -o oboard:oboard /run/oboard/plugin-worker /opt/oboard/data/logs
+	if ! prepare_plugin_cgroup; then
+		ewarn "Plugin cgroup delegation unavailable; plugin execution remains disabled."
+	fi
+}
+
+prepare_plugin_cgroup() {
+	local group=/sys/fs/cgroup/oboard-plugin-worker
+	[ -f /sys/fs/cgroup/cgroup.controllers ] || return 1
+	printf '%s\n' '+cpu +memory +pids' > /sys/fs/cgroup/cgroup.subtree_control || return 1
+	mkdir -p "$group/supervisor" || return 1
+	printf '%s\n' '+cpu +memory +pids' > "$group/cgroup.subtree_control" || return 1
+	chown oboard-plugins:oboard "$group" "$group/cgroup.procs" "$group/cgroup.subtree_control" "$group/supervisor" "$group/supervisor/cgroup.procs" || return 1
+	printf '%s\n' "$$" > "$group/supervisor/cgroup.procs" || return 1
+	export OBOARD_PLUGIN_CGROUP_ROOT="$group"
+}

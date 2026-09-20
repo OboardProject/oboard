@@ -1,0 +1,21 @@
+{
+  "pages": [
+    {
+      "id": "inspection",
+      "title": "节点巡检",
+      "description": "读取状态和资源指标；服务诊断是可选的异步状态任务，不修改配置。",
+      "components": [
+        {
+          "id": "inspect",
+          "type": "form",
+          "title": "查询节点状态",
+          "fields": [
+            { "name": "server_id", "label": "服务器 ID", "type": "text", "required": true },
+            { "name": "diagnose", "label": "提交内核服务状态诊断（需节点操作授权）", "type": "boolean" }
+          ],
+          "action": { "label": "开始巡检" }
+        }
+      ]
+    }
+  ]
+}

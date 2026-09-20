@@ -339,10 +339,13 @@ func (m *Manager) StageRestore(ctx context.Context, archivePath, password, targe
 		err = restored.RewrapEncryptedSecrets(ctx, sourceSecret, m.config.MasterSecret)
 	}
 	if err == nil {
+		err = restored.RestorePluginWebhooks(ctx, sourceSecret, m.config.MasterSecret)
+	}
+	if err == nil {
 		err = restored.SetSetting(ctx, "controller_backup_restore_reconcile", "true")
 	}
 	if err == nil {
-		err = restored.PauseScriptSchedulerAfterRestore(ctx)
+		err = restored.PausePluginSchedulerAfterRestore(ctx)
 	}
 	if err == nil {
 		err = restored.CheckIntegrity(ctx)

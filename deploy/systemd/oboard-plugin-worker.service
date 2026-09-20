@@ -1,0 +1,29 @@
+[Unit]
+Description=OBoard Plugin Worker
+After=network-online.target oboard-controller.service
+Wants=network-online.target
+Requires=oboard-controller.service
+
+[Service]
+Type=simple
+ExecStart=/opt/oboard/oboard-plugin-worker --poll-interval 2s
+Restart=on-failure
+RestartSec=5
+User=oboard-plugins
+Group=oboard
+SupplementaryGroups=oboard
+Environment=OBOARD_PLUGIN_WORKER_SOCKET=/run/oboard/plugin-worker/rpc.sock
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/oboard/plugin-worker /sys/fs/cgroup
+LockPersonality=true
+MemoryDenyWriteExecute=true
+Delegate=cpu memory pids
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/scripting"
+	"github.com/OboardProject/oboard/internal/plugin"
 )
 
 func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
@@ -81,25 +81,25 @@ func TestControllerInstallScriptUserGuidanceAndSyntax(t *testing.T) {
 		"OBOARD_UPDATE_CHANNEL",
 		"oboard-controller-updater",
 		"oboard-ai-worker",
-		"oboard-script-worker",
-		"enable-scripts",
-		"OBOARD_INSTALL_SCRIPTS",
-		"want_script_runtime",
-		"install_script_runtime",
-		"script_runtime_installed",
-		"script-runtime.wanted",
-		"未安装脚本运行环境（默认关闭）。",
-		"正在安装脚本运行环境",
-		"请回到面板启用脚本执行",
-		"prepare_script_worker_user",
-		"ensure_script_isolation_deps",
-		"script_uidmap_package",
+		"oboard-plugin-worker",
+		"enable-plugins",
+		"OBOARD_INSTALL_PLUGINS",
+		"want_plugin_runtime",
+		"install_plugin_runtime",
+		"plugin_runtime_installed",
+		"plugin-runtime.wanted",
+		"未安装插件运行环境（默认关闭）。",
+		"正在安装插件运行环境",
+		"请回到面板启用插件执行",
+		"prepare_plugin_worker_user",
+		"ensure_plugin_isolation_deps",
+		"plugin_uidmap_package",
 		"pkg_install bubblewrap",
 		"pkg_install iproute2",
 		"uidmap",
 		"shadow-utils",
 		"/sys/fs/cgroup/cgroup.controllers",
-		"oboard-scripts",
+		"oboard-plugins",
 		"prepare_controller_updater_runtime",
 		"wait_for_controller_updater",
 		"curl --unix-socket /run/oboard/controller-updater.sock",
@@ -325,7 +325,7 @@ exit 18
 	}
 }
 
-func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
+func TestControllerInstallScriptInstallsPluginIsolationDeps(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to locate test file")
@@ -344,9 +344,9 @@ func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
 		t.Skip("a POSIX shell is unavailable")
 	}
 	functions := strings.Join([]string{
-		extractShellFunction(t, script, "script_isolation_unavailable"),
-		extractShellFunction(t, script, "script_uidmap_package"),
-		extractShellFunction(t, script, "ensure_script_isolation_deps"),
+		extractShellFunction(t, script, "plugin_isolation_unavailable"),
+		extractShellFunction(t, script, "plugin_uidmap_package"),
+		extractShellFunction(t, script, "ensure_plugin_isolation_deps"),
 	}, "\n")
 
 	t.Run("installs bubblewrap and uidmap when missing", func(t *testing.T) {
@@ -384,11 +384,11 @@ func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
   done
 }`,
 			": > \"$PACKAGE_LOG\"",
-			"ensure_script_isolation_deps",
+			"ensure_plugin_isolation_deps",
 		}, "\n")
 		cmd := exec.Command(shell, "-c", harness)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("script isolation bootstrap failed: %v\n%s", err, output)
+			t.Fatalf("plugin isolation bootstrap failed: %v\n%s", err, output)
 		}
 		log, err := os.ReadFile(packageLog)
 		if err != nil {
@@ -396,7 +396,7 @@ func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
 		}
 		got := string(log)
 		if !containsShellWord(got, "bubblewrap") || !containsShellWord(got, "uidmap") {
-			t.Fatalf("missing script isolation packages: %q", got)
+			t.Fatalf("missing plugin isolation packages: %q", got)
 		}
 	})
 
@@ -422,7 +422,7 @@ func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
 			functions,
 			`pkg_install() { printf '%s\n' "$*" >> "$PACKAGE_LOG"; }`,
 			": > \"$PACKAGE_LOG\"",
-			"ensure_script_isolation_deps",
+			"ensure_plugin_isolation_deps",
 			"test ! -s \"$PACKAGE_LOG\"",
 		}, "\n")
 		cmd := exec.Command(shell, "-c", harness)
@@ -432,7 +432,7 @@ func TestControllerInstallScriptInstallsScriptIsolationDeps(t *testing.T) {
 	})
 }
 
-func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
+func TestControllerInstallPluginRuntimeIsOptional(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("unable to locate test file")
@@ -443,11 +443,11 @@ func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(content)
-	if strings.Count(script, `install_file_atomic "$work/bin/oboard-script-worker"`) != 1 {
-		t.Fatal("script-worker binary must be installed only from install_script_runtime")
+	if strings.Count(script, `install_file_atomic "$work/bin/oboard-plugin-worker"`) != 1 {
+		t.Fatal("plugin-worker binary must be installed only from install_plugin_runtime")
 	}
-	if !strings.Contains(script, "if want_script_runtime; then") {
-		t.Fatal("controller install must gate script runtime on want_script_runtime")
+	if !strings.Contains(script, "if want_plugin_runtime; then") {
+		t.Fatal("controller install must gate plugin runtime on want_plugin_runtime")
 	}
 	shell, err := exec.LookPath("dash")
 	if err != nil {
@@ -457,14 +457,20 @@ func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
 		t.Skip("a POSIX shell is unavailable")
 	}
 	root := t.TempDir()
-	unit := filepath.Join(root, "oboard-script-worker.service")
+	unit := filepath.Join(root, "oboard-plugin-worker.service")
 	configDir := filepath.Join(root, "config")
 	if err := os.MkdirAll(configDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
+	openrc := filepath.Join(root, "oboard-plugin-worker")
+	installed := strings.NewReplacer(
+		"/etc/systemd/system/oboard-plugin-worker.service", shellQuote(unit),
+		"/etc/init.d/oboard-plugin-worker", shellQuote(openrc),
+	).Replace(extractShellFunction(t, script, "plugin_runtime_installed"))
 	functions := strings.Join([]string{
-		extractShellFunction(t, script, "script_runtime_opted_in"),
-		extractShellFunction(t, script, "want_script_runtime"),
+		installed,
+		extractShellFunction(t, script, "plugin_runtime_opted_in"),
+		extractShellFunction(t, script, "want_plugin_runtime"),
 	}, "\n")
 	run := func(t *testing.T, env string) string {
 		t.Helper()
@@ -473,64 +479,82 @@ func TestControllerInstallScriptRuntimeIsOptional(t *testing.T) {
 			functions,
 			"CONTROLLER_CONFIG_DIR=" + shellQuote(configDir),
 			env,
-			`if want_script_runtime; then printf yes; else printf no; fi`,
+			`if want_plugin_runtime; then printf yes; else printf no; fi`,
 		}, "\n")
 		output, err := exec.Command(shell, "-c", harness).CombinedOutput()
 		if err != nil {
-			t.Fatalf("want_script_runtime failed: %v\n%s", err, output)
+			t.Fatalf("want_plugin_runtime failed: %v\n%s", err, output)
 		}
 		return strings.TrimSpace(string(output))
 	}
-	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
-		t.Fatalf("default install selected script runtime: %s", got)
+	if got := run(t, "ACTION=install\nOBOARD_INSTALL_PLUGINS="); got != "no" {
+		t.Fatalf("default install selected plugin runtime: %s", got)
 	}
-	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
-		t.Fatalf("default update selected script runtime: %s", got)
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS="); got != "no" {
+		t.Fatalf("default update selected plugin runtime: %s", got)
 	}
 	if err := os.WriteFile(unit, []byte("[Unit]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
-		t.Fatalf("leftover unit selected script runtime on install: %s", got)
+	if got := run(t, "ACTION=install\nOBOARD_INSTALL_PLUGINS="); got != "no" {
+		t.Fatalf("leftover unit selected plugin runtime on install: %s", got)
 	}
-	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "no" {
-		t.Fatalf("leftover unit selected script runtime on update: %s", got)
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS="); got != "no" {
+		t.Fatalf("leftover unit selected plugin runtime on update: %s", got)
 	}
-	if got := run(t, "ACTION=install\nOBOARD_INSTALL_SCRIPTS=1"); got != "yes" {
-		t.Fatalf("OBOARD_INSTALL_SCRIPTS=1 did not select script runtime: %s", got)
+	if got := run(t, "ACTION=install\nOBOARD_INSTALL_PLUGINS=1"); got != "yes" {
+		t.Fatalf("OBOARD_INSTALL_PLUGINS=1 did not select plugin runtime: %s", got)
 	}
-	if got := run(t, "ACTION=enable-scripts\nOBOARD_INSTALL_SCRIPTS="); got != "yes" {
-		t.Fatalf("enable-scripts did not select script runtime: %s", got)
+	if got := run(t, "ACTION=enable-plugins\nOBOARD_INSTALL_PLUGINS="); got != "yes" {
+		t.Fatalf("enable-plugins did not select plugin runtime: %s", got)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "script-runtime.wanted"), []byte(""), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "plugin-runtime.wanted"), []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS="); got != "yes" {
-		t.Fatalf("wanted marker did not keep script runtime: %s", got)
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS="); got != "yes" {
+		t.Fatalf("wanted marker did not keep plugin runtime: %s", got)
 	}
-	if got := run(t, "ACTION=update\nOBOARD_INSTALL_SCRIPTS=0"); got != "no" {
-		t.Fatalf("OBOARD_INSTALL_SCRIPTS=0 did not skip script runtime: %s", got)
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS=0"); got != "no" {
+		t.Fatalf("OBOARD_INSTALL_PLUGINS=0 did not skip plugin runtime: %s", got)
+	}
+	if err := os.Remove(unit); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS="); got != "no" {
+		t.Fatalf("marker without installed service selected plugin runtime: %s", got)
+	}
+	if err := os.WriteFile(openrc, []byte("#!/sbin/openrc-run\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS="); got != "yes" {
+		t.Fatalf("opted-in OpenRC service did not keep plugin runtime: %s", got)
+	}
+	if err := os.Remove(filepath.Join(configDir, "plugin-runtime.wanted")); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(t, "ACTION=update\nOBOARD_INSTALL_PLUGINS="); got != "no" {
+		t.Fatalf("OpenRC service without marker selected plugin runtime: %s", got)
 	}
 }
 
-func TestScriptRuntimeInstallCommandUsesUpdateChannel(t *testing.T) {
+func TestPluginRuntimeInstallCommandUsesUpdateChannel(t *testing.T) {
 	t.Setenv("OBOARD_UPDATE_CHANNEL", "dev")
-	command := (&Server{}).scriptRuntimeInstallCommand()
-	if !strings.Contains(command, "OBOARD_ACTION=enable-scripts") || !strings.Contains(command, "VERSION=dev") {
+	command := (&Server{}).pluginRuntimeInstallCommand()
+	if !strings.Contains(command, "OBOARD_ACTION=enable-plugins") || !strings.Contains(command, "VERSION=dev") {
 		t.Fatalf("unexpected install command: %s", command)
 	}
 }
 
-func TestEnsureScriptRuntimeForEnableRejectsMissingRuntime(t *testing.T) {
+func TestEnsurePluginRuntimeForEnableRejectsMissingRuntime(t *testing.T) {
 	s := &Server{}
-	if s.scriptRuntimeInstalled() {
-		t.Skip("host already has a script runtime unit or connected worker")
+	if s.pluginRuntimeInstalled() {
+		t.Skip("host already has a plugin runtime unit or connected worker")
 	}
-	if err := s.ensureScriptRuntimeForEnable(false); err != nil {
+	if err := s.ensurePluginRuntimeForEnable(false); err != nil {
 		t.Fatal(err)
 	}
-	err := s.ensureScriptRuntimeForEnable(true)
-	if err == nil || scripting.CodeOf(err) != model.ScriptErrorRuntimeUnavailable {
+	err := s.ensurePluginRuntimeForEnable(true)
+	if err == nil || plugin.CodeOf(err) != model.PluginErrorRuntimeUnavailable {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -677,11 +701,11 @@ func TestControllerDeploymentFilesUseSingleInstallRoot(t *testing.T) {
 		"deploy/systemd/oboard-controller.service",
 		"deploy/systemd/oboard-controller-updater.service",
 		"deploy/systemd/oboard-ai-worker.service",
-		"deploy/systemd/oboard-script-worker.service",
+		"deploy/systemd/oboard-plugin-worker.service",
 		"deploy/openrc/oboard-controller",
 		"deploy/openrc/oboard-controller-updater",
 		"deploy/openrc/oboard-ai-worker",
-		"deploy/openrc/oboard-script-worker",
+		"deploy/openrc/oboard-plugin-worker",
 		"deploy/controller.env.example",
 	}
 	for _, name := range files {

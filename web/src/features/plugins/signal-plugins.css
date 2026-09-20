@@ -1,0 +1,9 @@
+.plugin-record-list { border-block: 1px solid var(--border); background: var(--surface-solid); }
+.plugin-record-list > :last-child { border-bottom: 0; }
+.plugin-record-list .plugin-library-row { width: 100%; border-radius: 0; text-align: left; }
+.plugin-record-list strong { overflow-wrap: anywhere; }
+.plugin-record-list button:focus-visible { outline-offset: -3px; }
+@media (max-width: 640px) {
+  .plugin-record-list > div { gap: .75rem; flex-wrap: wrap; }
+  .plugin-record-list .plugin-library-row { min-height: 3.5rem; }
+}

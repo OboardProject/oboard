@@ -759,7 +759,13 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 			return err
 		}
 	}
-	if err := s.migrateScriptingSchema(ctx); err != nil {
+	if err := s.migratePluginSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.MigratePluginExtensionsSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.MigratePluginWebhookSchema(ctx); err != nil {
 		return err
 	}
 	if err := s.migrateAgentUpdateIndexes(ctx); err != nil {
@@ -931,8 +937,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 		table  string
 		column string
 		sql    string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.sql); err != nil {
 			return err
 		}
@@ -1007,8 +1012,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "users", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1016,8 +1020,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "subscription_pull_audits", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1082,8 +1085,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "servers", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1091,8 +1093,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "proxy_path_port_allocations", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1115,8 +1116,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	for _, column := range []struct {
 		name string
 		sql  string
-	}{
-	} {
+	}{} {
 		if err := s.ensureColumn(ctx, "server_metric_samples", column.name, column.sql); err != nil {
 			return err
 		}
@@ -1124,8 +1124,7 @@ func (s *Store) migrate(ctx context.Context, restore bool) error {
 	connectionAuditGeoColumns := []struct {
 		name string
 		sql  string
-	}{
-	}
+	}{}
 	for _, column := range connectionAuditGeoColumns {
 		if err := s.ensureColumn(ctx, "connection_audit_reports", column.name, column.sql); err != nil {
 			return err

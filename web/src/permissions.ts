@@ -6,7 +6,7 @@ export function canManageAdministratorAccounts(role?: string) {
   return role === 'admin'
 }
 
-export function canAuthorizeScripts(role?: string) {
+export function canAuthorizePlugins(role?: string) {
   return role === 'admin'
 }
 

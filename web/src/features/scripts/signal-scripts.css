@@ -1,9 +1,0 @@
-.script-record-list { border-block: 1px solid var(--border); background: var(--surface-solid); }
-.script-record-list > :last-child { border-bottom: 0; }
-.script-record-list .script-library-row { width: 100%; border-radius: 0; text-align: left; }
-.script-record-list strong { overflow-wrap: anywhere; }
-.script-record-list button:focus-visible { outline-offset: -3px; }
-@media (max-width: 640px) {
-  .script-record-list > div { gap: .75rem; flex-wrap: wrap; }
-  .script-record-list .script-library-row { min-height: 3.5rem; }
-}

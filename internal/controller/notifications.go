@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/OboardProject/oboard/internal/model"
-	"github.com/OboardProject/oboard/internal/scripting"
+	"github.com/OboardProject/oboard/internal/plugin"
 	"github.com/OboardProject/oboard/internal/security"
 	"github.com/OboardProject/oboard/internal/store"
 	"github.com/OboardProject/oboard/internal/version"
@@ -1442,12 +1442,12 @@ func (s *Server) notifyTaskFailure(ctx context.Context, task model.AgentTask) {
 			"Time":       s.notificationNow(ctx),
 		},
 	})
-	scriptEvent := model.ScriptEventTaskFailed
+	pluginEvent := model.PluginEventTaskFailed
 	if eventName == notificationTaskTimeout {
-		scriptEvent = model.ScriptEventTaskTimedOut
+		pluginEvent = model.PluginEventTaskTimedOut
 	}
-	_ = s.store.EnqueueScriptEvent(ctx, "script."+scriptEvent, fmt.Sprintf("task:%d", task.ID), scripting.MustJSON(map[string]any{
-		"event":     scriptEvent,
+	_ = s.store.EnqueuePluginEvent(ctx, "plugin."+pluginEvent, fmt.Sprintf("task:%d", task.ID), plugin.MustJSON(map[string]any{
+		"event":     pluginEvent,
 		"server_id": task.ServerID,
 		"task_id":   task.ID,
 		"task_type": task.Type,

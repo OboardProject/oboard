@@ -1060,7 +1060,7 @@ func (s *Server) reconcileRestoredDeployment(ctx context.Context) {
 	if err != nil || !settingBool(settings, controllerBackupRestoreReconcileSetting, false) {
 		return
 	}
-	_ = s.store.PauseScriptSchedulerAfterRestore(ctx)
+	_ = s.store.PausePluginSchedulerAfterRestore(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/deployments/apply", bytes.NewReader([]byte(`{}`)))
 	if err != nil {
 		return

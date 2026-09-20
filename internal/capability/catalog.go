@@ -496,7 +496,8 @@ func defaultDescriptors() []Descriptor {
 	descriptors = append(descriptors, nodeOperationsDescriptors(positiveID, stringValue, boolValue, nullableString)...)
 	descriptors = append(descriptors, nodeWorkspaceDescriptors(positiveID, stringValue, boolValue)...)
 	descriptors = append(descriptors, remoteAccessDescriptors(positiveID, stringValue, boolValue)...)
-	descriptors = append(descriptors, scriptDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, pluginDescriptors(positiveID, stringValue, boolValue, nullableString, nullableInteger)...)
+	descriptors = append(descriptors, PluginPackageDescriptors()...)
 	for index := range descriptors {
 		descriptors[index].Version = "1"
 		descriptors[index].Documentation = "oboard://schemas/" + descriptors[index].Name

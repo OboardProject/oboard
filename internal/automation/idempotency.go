@@ -84,7 +84,7 @@ func (s *Service) authorizeChangesetResult(ctx context.Context, principal applic
 			continue
 		}
 		filter := strings.TrimSpace(string(principal.ResourceFilter))
-		if principal.Type == model.APIPrincipalScript || filter != "" && filter != "{}" && filter != "null" {
+		if principal.Type == model.APIPrincipalPlugin || filter != "" && filter != "{}" && filter != "null" {
 			// Client-supplied refs cannot prove permission to read a previous
 			// result. Restricted callers must pass the current domain check.
 			validator := s.validator(op.Capability)

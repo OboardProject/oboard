@@ -26,6 +26,7 @@ type MutationHandler func(context.Context, application.Principal, json.RawMessag
 type RevisionResolver func(context.Context, application.Principal, json.RawMessage) (map[string]string, error)
 type ApplyObserver func(context.Context, *model.AutomationChangeset, uint64, uint64)
 type ReplayAuthorizer func(context.Context, application.Principal, model.AutomationOperation) error
+type PluginPrincipalResolver func(context.Context, *model.AutomationChangeset) (application.Principal, error)
 
 type MutationResult struct {
 	Public  any
@@ -33,16 +34,17 @@ type MutationResult struct {
 }
 
 type Service struct {
-	store             *store.Store
-	catalog           *capability.Catalog
-	mu                sync.RWMutex
-	handlers          map[string]MutationHandler
-	validators        map[string]MutationHandler
-	revisionResolvers map[string]RevisionResolver
-	applyObserver     ApplyObserver
-	replayAuthorizer  ReplayAuthorizer
-	resultAuthorizer  ReplayAuthorizer
-	now               func() time.Time
+	store                   *store.Store
+	catalog                 *capability.Catalog
+	mu                      sync.RWMutex
+	handlers                map[string]MutationHandler
+	validators              map[string]MutationHandler
+	revisionResolvers       map[string]RevisionResolver
+	applyObserver           ApplyObserver
+	replayAuthorizer        ReplayAuthorizer
+	resultAuthorizer        ReplayAuthorizer
+	pluginPrincipalResolver PluginPrincipalResolver
+	now                     func() time.Time
 }
 
 type CreateRequest struct {
@@ -80,6 +82,32 @@ func NewService(store *store.Store, catalog *capability.Catalog) *Service {
 		handlers: map[string]MutationHandler{}, validators: map[string]MutationHandler{}, revisionResolvers: map[string]RevisionResolver{},
 		now: time.Now,
 	}
+}
+
+func (s *Service) SetPluginPrincipalResolver(resolve PluginPrincipalResolver) {
+	s.mu.Lock()
+	s.pluginPrincipalResolver = resolve
+	s.mu.Unlock()
+}
+
+func (s *Service) resolveChangesetPrincipal(ctx context.Context, principal application.Principal, item *model.AutomationChangeset) (application.Principal, error) {
+	if !strings.HasPrefix(item.PrincipalID, "plugin:") {
+		return principal, nil
+	}
+	s.mu.RLock()
+	resolve := s.pluginPrincipalResolver
+	s.mu.RUnlock()
+	if resolve == nil {
+		return application.Principal{}, errors.New("plugin authorization is unavailable")
+	}
+	effective, err := resolve(ctx, item)
+	if err != nil {
+		return application.Principal{}, err
+	}
+	if effective.ID != item.PrincipalID || effective.Type != model.APIPrincipalPlugin || effective.Interactive {
+		return application.Principal{}, errors.New("invalid plugin identity")
+	}
+	return effective, nil
 }
 
 func (s *Service) RegisterValidator(name string, handler MutationHandler) {
@@ -251,6 +279,10 @@ func (s *Service) Validate(ctx context.Context, principal application.Principal,
 	if item.Status != model.ChangesetDraft && item.Status != model.ChangesetValidated && item.Status != model.ChangesetAwaitingApproval {
 		return nil, errors.New("changeset cannot be validated in its current state")
 	}
+	principal, err = s.resolveChangesetPrincipal(ctx, principal, item)
+	if err != nil {
+		return nil, err
+	}
 	validationEvidence, err := s.validateOperations(ctx, principal, item)
 	if err != nil {
 		return nil, err
@@ -342,6 +374,10 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 		_ = s.store.UpdateAutomationChangeset(ctx, item)
 		return item, errors.New("changeset plan hash no longer matches")
 	}
+	principal, err = s.resolveChangesetPrincipal(ctx, principal, item)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := s.validateOperations(ctx, principal, item); err != nil {
 		item.Status = model.ChangesetSuperseded
 		_ = s.store.UpdateAutomationChangeset(ctx, item)
@@ -369,6 +405,10 @@ func (s *Service) Apply(ctx context.Context, principal application.Principal, id
 		handler := s.handler(op.Capability)
 		if handler == nil {
 			return s.failOperation(ctx, item, op, "capability_unavailable", "capability is not executable in this Controller build")
+		}
+		principal, err = s.resolveChangesetPrincipal(ctx, principal, item)
+		if err != nil {
+			return s.failOperation(ctx, item, op, "permission_denied", "plugin authorization changed")
 		}
 		result, applyErr := handler(mutationContext, principal, op.Input)
 		completed := s.now().UTC()
@@ -887,7 +927,7 @@ func workflowExternalServerID(nextAction json.RawMessage) int64 {
 }
 
 func (s *Service) automaticAllowed(ctx context.Context, principal application.Principal, item *model.AutomationChangeset) (bool, error) {
-	if principal.Interactive {
+	if principal.Interactive || principal.Type == model.APIPrincipalPlugin && principal.ID == item.PrincipalID {
 		return s.policiesAllowAutomatic(ctx, item, false)
 	}
 	storedPrincipal, err := s.store.GetAPIPrincipal(ctx, item.PrincipalID)

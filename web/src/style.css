@@ -22368,7 +22368,7 @@ select:-webkit-autofill {
 
 .ui-tabs-panel { margin-top: 16px; }
 
-.script-library-row {
+.plugin-library-row {
   display: flex;
   width: 100%;
   min-height: 0;
@@ -22385,14 +22385,14 @@ select:-webkit-autofill {
   text-align: left;
 }
 
-.script-library-row:hover {
+.plugin-library-row:hover {
   background: var(--surface-2);
   box-shadow: none;
 }
 
-.script-library-row:last-child { border-bottom: 0; }
+.plugin-library-row:last-child { border-bottom: 0; }
 
-.script-runtime-status {
+.plugin-runtime-status {
   margin-top: 16px;
   padding: 16px;
   border: 1px solid var(--border);
@@ -22401,9 +22401,9 @@ select:-webkit-autofill {
   font-size: 13px;
 }
 
-.script-runtime-status strong { color: var(--text-strong); }
+.plugin-runtime-status strong { color: var(--text-strong); }
 
-.script-runtime-status p {
+.plugin-runtime-status p {
   margin: 4px 0 0;
   color: var(--muted);
 }

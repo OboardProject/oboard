@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/run/oboard /opt/oboard
+ReadWritePaths=/run/oboard /opt/oboard -/etc/systemd/system -/etc/init.d
 LockPersonality=true
 MemoryDenyWriteExecute=true
 
