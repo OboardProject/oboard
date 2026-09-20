@@ -6054,15 +6054,21 @@ function AuditLogs({ data, loading, embedded = false }: any) {
   return embedded ? content : <Panel title="审计日志">{content}</Panel>
 }
 
-function Dashboard({ data, loading, client, canCleanup, onCleaned }: any) {
+function Dashboard({ data, loading, displayName: preferredDisplayName, client, canCleanup, onCleaned }: any) {
   const [configHealthOpen, setConfigHealthOpen] = useState(false)
   const configHealth = configHealthSummaryOf(data)
   const summary = data.summary || {}
   const servers = data.servers || []
+  const displayName = String(preferredDisplayName || data.current_user?.nickname || data.current_user?.username || 'Admin')
 
   const totalServers = summary.servers_total ?? summary.servers ?? summary.server_count ?? servers.length ?? 0
+  const serverCountWatermark = String(Math.max(0, Number(totalServers) || 0)).padStart(2, '0')
   const onlineServers = summary.servers_online ?? summary.online_agents ?? summary.online_servers ?? servers.filter((s: any) => s.status === 'online').length ?? 0
   const offlineServers = Math.max(0, Number(totalServers) - Number(onlineServers))
+  const auditOverview = data.connection_audit || {}
+  const auditCalculating = auditOverview.ready === false
+  const elevatedRiskCount = Number(auditOverview.elevated_risk_count || 0)
+  const auditWindowHours = Number(auditOverview.window_hours || 24)
   const totalTraffic = formatBytes(dashboardServerTrafficBytes(servers))
 
   const groupedTasks = groupTasksForTimeline(data.agent_tasks || [], labelValue)
@@ -6092,30 +6098,46 @@ function Dashboard({ data, loading, client, canCleanup, onCleaned }: any) {
 
   return (
     <div className="dashboard-page">
-      <nav className="dashboard-shortcuts" aria-label="快捷操作">
-        {quickActions.map(item => <button key={item.key} type="button" className="ghost" onClick={() => goTab(item.key)}>{item.icon}<span>{item.title}</span></button>)}
-      </nav>
+      <section className="dash-welcome">
+        <div className="dash-welcome-copy">
+          <div className="dash-welcome-kicker">
+            <span className="dash-kicker-tag">总览</span>
+            <span className="dash-kicker-dot" />
+            <span className="dash-kicker-date">{formatDashDate()}</span>
+          </div>
+          <h1>欢迎回来，{displayName}</h1>
+          <p>以下是您的服务器、任务和近期活动概览。在几秒内部署配置或管理您的服务器集群。</p>
+        </div>
+        <div className="dash-welcome-actions">
+          <button type="button" className="dash-manage-btn" onClick={() => goTab('servers')}>
+            <HardDrive size={15} />
+            <span>管理服务器</span>
+          </button>
+        </div>
+        <div className="dash-watermark" aria-hidden="true">{serverCountWatermark}</div>
+      </section>
+
       <section className="stat-row">
         <div className="stat-cell">
           <div className="stat-cell-head">
             <span>我的服务器</span>
-            <ServerIcon size={16} />
+            <span className="stat-icon-wrap stat-icon-server"><ServerIcon size={16} /></span>
           </div>
           <strong>{loading && !servers.length ? '—' : totalServers}</strong>
-          <small>{onlineServers} 台在线 · {offlineServers} 台未在线</small>
+          <small>{onlineServers} 台运行中，{offlineServers} 台已停止</small>
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">
-            <span>审计中心</span>
-            <Shield size={16} />
+            <span>高风险事件</span>
+            <span className={`stat-icon-wrap ${elevatedRiskCount > 0 ? 'stat-icon-danger' : 'stat-icon-shield'}`}><Shield size={16} /></span>
           </div>
-          <button type="button" className="ghost" onClick={() => goTab('audit')}>查看待处理事件</button>
-          <small>按账号核实异常，不将来源数量视为设备数</small>
+          <strong>{loading || auditCalculating ? '—' : elevatedRiskCount}</strong>
+          <small>{auditCalculating ? '风险统计计算中' : elevatedRiskCount === 0 ? `最近 ${auditWindowHours} 小时暂无高风险` : `最近 ${auditWindowHours} 小时 · 高风险与严重`}</small>
         </div>
         <div className="stat-cell">
           <div className="stat-cell-head">
             <span>活跃流量</span>
-            <Zap size={16} />
+            <span className="stat-icon-wrap stat-icon-zap"><Zap size={16} /></span>
           </div>
           <strong>{loading && !servers.length ? '—' : totalTraffic}</strong>
           <small>{totalServers} 台服务器 · 当前账期累计</small>
@@ -6132,12 +6154,31 @@ function Dashboard({ data, loading, client, canCleanup, onCleaned }: any) {
         />
       )}
 
-      <section className="dashboard-results">
+      <section className="dash-lower">
         <div>
           <div className="dash-section-head">
             <div>
-              <h2>最新执行结果</h2>
+              <h2>快捷操作</h2>
+              <p>直达最常用的功能</p>
+            </div>
+          </div>
+          <div className="quick-grid">
+            {quickActions.map(item => (
+              <button key={item.key} type="button" className={`quick-card quick-card-${item.key}`} onClick={() => goTab(item.key)}>
+                <div className={`quick-card-icon icon-${item.key}`}>{item.icon}</div>
+                <strong>{item.title}</strong>
+                <span>{item.desc}</span>
+                <em>打开 →</em>
+              </button>
+            ))}
+          </div>
+        </div>
 
+        <div>
+          <div className="dash-section-head">
+            <div>
+              <h2>最近活动</h2>
+              <p>您账户上的最新事件</p>
             </div>
             <button type="button" className="linkish" onClick={() => goTab('tasks')}>查看全部 →</button>
           </div>
@@ -6147,14 +6188,14 @@ function Dashboard({ data, loading, client, canCleanup, onCleaned }: any) {
             ) : (
               recentTasks.map((tsk: any) => (
                 <div className="activity-item" key={tsk.id}>
-                  <div className="activity-icon">
-                    {tsk.status === 'running' ? <RefreshCw size={14} /> : tsk.status === 'success' ? <Check size={14} /> : <Info size={14} />}
+                  <div className={`activity-icon is-${tsk.status}`}>
+                    {tsk.status === 'running' ? <RefreshCw size={14} className="spin" /> : tsk.status === 'succeeded' || tsk.status === 'success' ? <Check size={14} /> : <Info size={14} />}
                   </div>
                   <div>
                     <strong>{tsk.title}</strong>
                     <span>{tsk.subtitle}</span>
                   </div>
-                  <div className="dashboard-result-state"><span>{tsk.status === 'running' ? '进行中' : tsk.status === 'success' ? '已完成' : '失败'}</span><time>{formatTableTime(tsk.createdAt)}</time></div>
+                  <time>{formatTableTime(tsk.createdAt)}</time>
                 </div>
               ))
             )}
