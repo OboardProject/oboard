@@ -72,7 +72,7 @@
 }
 .flow.proxy-flow .rf-node-heading strong { color: var(--text-primary); font-size: 14px; font-weight: 650; line-height: 1.35; }
 .flow.proxy-flow .rf-node-heading small { color: var(--muted); font-size: 10px; font-weight: 500; line-height: 1.2; }
-.flow.proxy-flow .rf-node-kind-icon { border-color: transparent; background: var(--surface-2); border-radius: 10px; }
+.flow.proxy-flow .rf-node-kind-icon { border-color: transparent; background: var(--surface-2); border-radius: var(--radius-md); }
 .flow.proxy-flow .rf-node-status { border-color: transparent; background: transparent; font-weight: 500; }
 .flow.proxy-flow .rf-node-protocol { color: var(--muted); background: var(--surface-2); border-color: transparent; font-weight: 550; }
 .flow.proxy-flow .role-chip { color: var(--muted); background: var(--surface-2); border-color: transparent; font-weight: 500; }

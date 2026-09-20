@@ -79,7 +79,7 @@
 .settings-loading > div { height: 40px; border-radius: var(--radius-sm); background: var(--surface-2); }
 
 .signal-settings.about-settings .about-product { padding-block: 20px; }
-.signal-settings.about-settings .about-product-logo { width: 40px; height: 40px; flex-basis: 40px; box-shadow: none; border-radius: 10px; }
+.signal-settings.about-settings .about-product-logo { width: 40px; height: 40px; flex-basis: 40px; box-shadow: none; border-radius: var(--radius-md); }
 .signal-settings.about-settings .about-product-title h3 { font-size: 18px; }
 .signal-settings.about-settings .about-details { display: block; }
 .signal-settings.about-settings .about-details > div { display: grid; grid-template-columns: 140px minmax(0, 1fr); padding: 14px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }

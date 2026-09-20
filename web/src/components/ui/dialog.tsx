@@ -45,7 +45,7 @@ export function Dialog({
           key="dialog-surface"
           onClose={onClose}
           rootClassName="dialog-root p-4"
-          panelClassName={`dialog relative w-full rounded-xl bg-popover text-foreground border border-border shadow-lg flex flex-col max-h-[90vh] ${isCompact ? "p-4 gap-3" : "p-6"} ${sizeClasses[size]} ${className}`}
+          panelClassName={`dialog relative w-full bg-popover text-foreground border border-border shadow-lg flex flex-col max-h-[90vh] ${isCompact ? "p-4 gap-3" : "p-6"} ${sizeClasses[size]} ${className}`}
           ariaLabelledBy={title ? titleID : undefined}
           ariaLabel={title ? undefined : "对话框"}
           portal={false}

@@ -1,5 +1,5 @@
 .surface-loading { display: grid; align-content: start; gap: 16px; min-height: 160px; width: 100%; padding: 20px; }
-.surface-loading > span { display: block; height: 14px; border-radius: 4px; background: var(--bg-control); }
+.surface-loading > span { display: block; height: 14px; border-radius: var(--radius-xs); background: var(--bg-control); }
 .surface-loading > span:first-child { width: 28%; height: 22px; }
 .surface-loading > span:last-child { width: 65%; }
 .surface-load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px; min-height: 160px; padding: 24px; color: var(--text-secondary); }

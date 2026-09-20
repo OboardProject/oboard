@@ -1,5 +1,5 @@
 .signal-plans, .signal-plan-detail, .signal-plan-form, .user-plan-dialog, .signal-exception-dialog { min-width: 0; font-variant-numeric: tabular-nums; }
-.signal-plan-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.signal-plan-list { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--surface); }
 .signal-plan-list table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .signal-plan-list th { color: var(--muted); background: var(--bg-control); font-weight: 500; text-align: left; }
 .signal-plan-list :is(th, td) { padding: 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -16,10 +16,10 @@
 .signal-plan-facts dd { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .signal-plan-content .plan-detail-actions { margin: 0; align-items: start; }
 .signal-plan-more { margin-left: auto; }
-.signal-plan-more summary { cursor: pointer; color: var(--muted); padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+.signal-plan-more summary { cursor: pointer; color: var(--muted); padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; }
 .signal-plan-more summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .signal-plan-more > div { display: flex; gap: 8px; padding-top: 8px; flex-wrap: wrap; }
-.signal-plan-content .plan-node-table-wrap { border: 1px solid var(--border); box-shadow: none; border-radius: 10px; background: var(--surface); overflow-x: auto; }
+.signal-plan-content .plan-node-table-wrap { border: 1px solid var(--border); box-shadow: none; border-radius: var(--radius-md); background: var(--surface); overflow-x: auto; }
 .signal-plan-content .plan-node-table { min-width: 650px; }
 .signal-plan-content .plan-node-table :is(th, td) { padding: 12px 8px; }
 .signal-plan-content .plan-node-save-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-block: 12px; }
@@ -32,7 +32,7 @@
 .user-plan-dialog .user-plan-dialog-card h3 { margin: 0 0 16px; font-size: 15px; }
 .user-plan-dialog .user-plan-dialog-assign { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .user-plan-dialog-assign > label, .signal-exception-dialog label { display: grid; gap: 8px; font-size: 13px; min-width: 0; }
-.user-plan-dialog .user-plan-dialog-nodes { max-height: 220px; border: 0; background: var(--bg-control); border-radius: 8px; }
+.user-plan-dialog .user-plan-dialog-nodes { max-height: 220px; border: 0; background: var(--bg-control); border-radius: var(--radius-sm); }
 .user-plan-dialog .user-plan-dialog-node { border-bottom: 1px solid var(--border); padding: 12px; }
 .signal-exception-dialog .user-plan-dialog-exception-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .signal-exception-dialog .user-plan-dialog-search-results { max-height: 260px; overflow-y: auto; margin-top: 16px; }

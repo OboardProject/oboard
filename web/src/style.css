@@ -62,16 +62,19 @@
   --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.06);
   --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.08);
 
-  --radius-2xs: 2px;
-  --radius-xs: 4px;
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* Corner scale follows the macOS 27 language: generous, concentric radii.
+     Every surface stays on these tokens so the whole panel matches. */
+  --radius-2xs: 3px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --radius-2xl: 26px;
   --radius-full: 9999px;
-  --radius-window: var(--radius-lg);
-  --radius-menu: var(--radius-md);
-  --radius-menu-item: calc(var(--radius-menu) - 4px);
+  --radius-window: var(--radius-2xl);
+  --radius-menu: var(--radius-lg);
+  --radius-menu-item: calc(var(--radius-menu) - 8px);
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-display: var(--font-sans);
@@ -7455,7 +7458,7 @@ body:has(.dialog-layer) .main {
   overflow: hidden;
   color: var(--text);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-window);
   background: var(--surface-solid);
   box-shadow: 0 28px 70px rgba(15, 23, 42, 0.28);
   touch-action: pan-y;
@@ -11845,7 +11848,7 @@ pre { overflow: auto; padding: 14px; line-height: 1.6; }
   .form button { justify-self: stretch; }
   .dialog-layer { padding: 12px 12px 0; align-items: end; touch-action: pan-y; }
   .dialog-panel { width: 100%; max-width: 100%; touch-action: pan-y; }
-  .dialog { width: 100%; max-width: 100%; max-height: 90vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; touch-action: pan-y; }
+  .dialog { width: 100%; max-width: 100%; max-height: 90vh; border-radius: var(--radius-window) var(--radius-window) 0 0; touch-action: pan-y; }
   .dialog-actions { display: grid; grid-template-columns: 1fr; }
   .copy-block,
   .command-copy { grid-template-columns: 1fr; }
@@ -17789,7 +17792,7 @@ button.user-table-compact-button:hover {
   margin: 0 0 12px;
   padding: 10px 14px;
   border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.28));
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--surface-2, #f8fafc) 88%, transparent);
   color: var(--text-secondary, #475569);
   font-size: 13px;
@@ -18981,7 +18984,7 @@ button.proxy-edge-label:hover { border-color: var(--primary); background: var(--
   padding: 8px 10px 12px;
   overflow: auto;
   overscroll-behavior: contain;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: var(--radius-window) var(--radius-window) 0 0;
   transform-origin: bottom center;
   animation-name: graph-sheet-in;
 }
@@ -20061,7 +20064,7 @@ button[aria-busy="true"] {
 	width: 20px;
 	height: 20px;
 	border: 1px solid var(--border-color);
-	border-radius: 999px;
+	border-radius: var(--radius-full);
 	color: var(--surface-solid);
 }
 .graph-source-options > button[role="radio"].is-selected .graph-source-choice-indicator { border-color: var(--color-primary); background: var(--color-primary); }

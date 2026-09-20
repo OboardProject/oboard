@@ -62,7 +62,7 @@
 .signin-card .login-passkey { min-height: 44px; border-radius: var(--radius-sm); }
 .signin-card .login-back { min-height: 40px; color: var(--text-secondary); }
 .signin-card .login-error, .signin-card .login-notice { margin: 0; overflow-wrap: anywhere; }
-.signin-brand:focus-visible { outline: 2px solid var(--primary); outline-offset: 5px; border-radius: 4px; }
+.signin-brand:focus-visible { outline: 2px solid var(--primary); outline-offset: 5px; border-radius: var(--radius-xs); }
 
 @media (max-width: 540px) {
   .signin-header { padding: max(20px, env(safe-area-inset-top)) 20px 16px; }
